@@ -102,6 +102,13 @@ export interface ACPConfigOption {
   options?: unknown;
 }
 
+export interface ACPPromptContentBlock {
+  type: 'text' | 'image';
+  text?: string;
+  mimeType?: string;
+  data?: string;
+}
+
 interface ACPPermissionOption {
   optionId: string;
   name: string;
@@ -119,6 +126,7 @@ interface ACPPermissionParams {
 export interface ACPServerEventCallbacks {
   onMessage: (message: SessionMessage) => void;
   onChunk?: (msgId: number, text: string) => void;
+  onImageChunk?: (msgId: number, image: { mimeType: string; data: string }) => void;
   onThoughtChunk?: (msgId: number, thought: string) => void;
   onToolUpdate?: (toolCallId: string, status: string) => void;
   onToolInputUpdate?: (toolCallId: string, input: unknown, title?: string, locations?: Array<{ path: string; line?: number }>) => void;
@@ -174,6 +182,15 @@ function acpExtractText(content: unknown): string {
   return '';
 }
 
+function acpExtractImage(content: unknown): { mimeType: string; data: string } | null {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) return null;
+  const obj = content as Record<string, unknown>;
+  if (obj.type === 'image' && typeof obj.mimeType === 'string' && typeof obj.data === 'string') {
+    return { mimeType: obj.mimeType, data: obj.data };
+  }
+  return null;
+}
+
 function extractACPToolContent(content: unknown): string {
   if (!content || !Array.isArray(content)) return '';
   const texts: string[] = [];
@@ -189,6 +206,17 @@ function extractACPToolContent(content: unknown): string {
     }
   }
   return texts.join('\n');
+}
+
+function extractACPToolImages(content: unknown): Array<{ mimeType: string; data: string }> {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const block = item as Record<string, unknown>;
+    if (block.type !== 'content' || !block.content || typeof block.content !== 'object') return [];
+    const image = acpExtractImage(block.content);
+    return image ? [image] : [];
+  });
 }
 
 function extractRawOutputText(rawOutput: unknown): string {
@@ -326,7 +354,7 @@ export class ACPServerClient {
   }
 
   /** Send a prompt to the session. Response arrives via the SSE stream. */
-  async sendPrompt(sessionId: string, message: string, promptId?: number): Promise<void> {
+  async sendPrompt(sessionId: string, prompt: ACPPromptContentBlock[], promptId?: number): Promise<void> {
     const id = promptId ?? this.requestId++;
     const body: JSONRPCRequest = {
       jsonrpc: '2.0',
@@ -334,7 +362,7 @@ export class ACPServerClient {
       method: 'session/prompt',
       params: {
         sessionId,
-        prompt: [{ type: 'text', text: message }],
+        prompt,
       },
     };
     const response = await fetch(this.acpUrl, {
@@ -404,6 +432,7 @@ export class ACPServerClient {
 
     let streamingMsgId: number | null = null;
     let streamingThoughtId: number | null = null;
+    let streamingUserMsgId: number | null = null;
 
     const dispatchEvent = (data: string) => {
       try {
@@ -418,12 +447,21 @@ export class ACPServerClient {
           switch (update.sessionUpdate) {
             case 'agent_message_chunk': {
               const text = acpExtractText(update.content);
-              if (!text) return;
+              const image = acpExtractImage(update.content);
+              if (!text && !image) return;
               if (streamingMsgId === null) {
                 streamingMsgId = nextId();
-                callbacks.onMessage({ id: streamingMsgId, role: 'agent', content: text, time: now, type: 'normal' });
+                callbacks.onMessage({
+                  id: streamingMsgId,
+                  role: 'agent',
+                  content: text,
+                  images: image ? [image] : undefined,
+                  time: now,
+                  type: 'normal',
+                });
               } else {
-                callbacks.onChunk?.(streamingMsgId, text);
+                if (text) callbacks.onChunk?.(streamingMsgId, text);
+                if (image) callbacks.onImageChunk?.(streamingMsgId, image);
               }
               callbacks.onStatus?.({ status: 'running' });
               break;
@@ -478,11 +516,13 @@ export class ACPServerClient {
               callbacks.onToolUpdate?.(update.toolCallId!, isError ? 'error' : 'success');
 
               const acpText = extractACPToolContent(update.content);
+              const images = extractACPToolImages(update.content);
               const resultContent = acpText || extractRawOutputText(update.rawOutput);
               callbacks.onMessage({
                 id: nextId(),
                 role: 'tool_result',
                 content: resultContent,
+                images: images.length > 0 ? images : undefined,
                 time: now,
                 type: 'normal',
                 parentToolUseId: update.toolCallId,
@@ -507,8 +547,21 @@ export class ACPServerClient {
 
             case 'user_message_chunk': {
               const text = acpExtractText(update.content);
-              if (!text) return;
-              callbacks.onMessage({ id: nextId(), role: 'user', content: text, time: now, type: 'normal' });
+              const image = acpExtractImage(update.content);
+              if (!text && !image) return;
+              if (image && streamingUserMsgId !== null) {
+                callbacks.onImageChunk?.(streamingUserMsgId, image);
+              } else {
+                streamingUserMsgId = nextId();
+                callbacks.onMessage({
+                  id: streamingUserMsgId,
+                  role: 'user',
+                  content: text,
+                  images: image ? [image] : undefined,
+                  time: now,
+                  type: 'normal',
+                });
+              }
               break;
             }
 
