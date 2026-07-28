@@ -8,6 +8,7 @@
 - `frontend/` — Next.js製のWeb UI
 - `backend/helm/agentapi-proxy/` — backendのHelm Chart（旧リポジトリ互換）
 - `frontend/helm/agentapi-ui/` — frontendのHelm Chart（旧リポジトリ互換）
+- `chart/ccplant/` — backend/frontendをまとめて配布するHelm Chart
 
 ## Development
 
@@ -32,9 +33,11 @@ docker compose up --build
 - `ghcr.io/ccplant/ccplant-frontend:vX.Y.Z`
 - `oci://ghcr.io/ccplant/charts/agentapi-proxy:vX.Y.Z`
 - `oci://ghcr.io/ccplant/charts/agentapi-ui:vX.Y.Z`
+- `oci://ghcr.io/ccplant/charts/ccplant:X.Y.Z`
 
 Helm Chartは旧リポジトリのchart名、values、テンプレートおよび`v`付きの
-version/appVersionを維持し、backendとfrontendを個別にリリースします。
+version/appVersionを維持してbackendとfrontendを個別にリリースします。
+統合`ccplant` Chartも引き続き同時にリリースします。
 
 新モノレポを正とし、`backend/`と`frontend/`はそれぞれ旧リポジトリへ
 同期PRとしてバックポートします。詳細は[移行手順](docs/migration.md)を参照してください。

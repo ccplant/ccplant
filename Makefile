@@ -19,11 +19,14 @@ frontend-build:
 
 chart-deps:
 	$(HELM) dependency build backend/helm/agentapi-proxy
+	$(HELM) dependency build chart/ccplant
 
 chart-test: chart-deps
 	$(HELM) lint backend/helm/agentapi-proxy --strict
 	$(HELM) template agentapi-proxy backend/helm/agentapi-proxy >/dev/null
 	$(HELM) lint frontend/helm/agentapi-ui --strict
 	$(HELM) template agentapi-ui frontend/helm/agentapi-ui >/dev/null
+	$(HELM) lint chart/ccplant --strict
+	$(HELM) template ccplant chart/ccplant >/dev/null
 
 test: backend-test frontend-test chart-test

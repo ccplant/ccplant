@@ -87,6 +87,8 @@ jobs:
             path: backend/helm/agentapi-proxy
           - name: agentapi-ui
             path: frontend/helm/agentapi-ui
+          - name: ccplant
+            path: chart/ccplant
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -95,12 +97,20 @@ jobs:
       - name: Set release version
         env:
           TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
           CHART_PATH: ${{ matrix.path }}
+          CHART_NAME: ${{ matrix.name }}
         run: |
-          sed -i "s/^version:.*/version: ${TAG}/" "${CHART_PATH}/Chart.yaml"
-          sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
+          if [ "${CHART_NAME}" = "ccplant" ]; then
+            sed -i "s/^version:.*/version: ${VERSION}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${VERSION}\\\"/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/tag: v0.1.0/tag: ${TAG}/g" "${CHART_PATH}/values.yaml"
+          else
+            sed -i "s/^version:.*/version: ${TAG}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
+          fi
       - name: Build dependencies
-        if: matrix.name == 'agentapi-proxy'
+        if: matrix.name != 'agentapi-ui'
         run: helm dependency build "${{ matrix.path }}"
       - run: helm lint "${{ matrix.path }}" --strict
       - run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
