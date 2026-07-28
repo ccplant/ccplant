@@ -38,18 +38,70 @@ jobs:
       - run: bun run build
         working-directory: frontend
 
-  chart:
+  charts:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            path: backend/helm/agentapi-proxy
+            dependencies: true
+          - name: frontend
+            path: frontend/helm/agentapi-ui
+            dependencies: false
+          - name: ccplant
+            path: chart/ccplant
+            dependencies: true
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
         with:
           version: v3.18.4
-      - run: helm dependency build chart/ccplant
-      - run: helm lint chart/ccplant --strict
+      - name: Build dependencies
+        if: matrix.dependencies
+        run: helm dependency build "${{ matrix.path }}"
+      - run: helm lint "${{ matrix.path }}" --strict
       - name: Render chart
+        run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
+
+  publish-dev-charts:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            path: backend/helm/agentapi-proxy
+            base-version: 0.3.0
+            dependencies: true
+          - name: frontend
+            path: frontend/helm/agentapi-ui
+            base-version: 0.1.0
+            dependencies: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+      - name: Build dependencies
+        if: matrix.dependencies
+        run: helm dependency build "${{ matrix.path }}"
+      - name: Package development chart
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          helm template ccplant chart/ccplant \
-            --set backend.redis.enabled=false \
-            --set backend.scia.enabled=false \
-            --set backend.asset.enabled=false >/dev/null
+          short_sha="${HEAD_SHA:0:7}"
+          helm package "${{ matrix.path }}" \
+            --version "${{ matrix.base-version }}-dev.ccplant.${short_sha}" \
+            --destination dist
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GH_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+      - name: Push development chart
+        env:
+          CHART_NAME: ${{ matrix.name }}
+        run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
