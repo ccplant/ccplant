@@ -45,11 +45,9 @@ jobs:
         include:
           - name: backend
             path: backend/helm/agentapi-proxy
-            compatibility-name: agentapi-proxy
             dependencies: true
           - name: frontend
             path: frontend/helm/agentapi-ui
-            compatibility-name: agentapi-ui
             dependencies: false
           - name: ccplant
             path: chart/ccplant
@@ -78,12 +76,14 @@ jobs:
         include:
           - name: backend
             path: backend/helm/agentapi-proxy
+            compatibility-name: agentapi-proxy
             context: backend
             image: ccplant/ccplant-backend
             base-version: 0.3.0
             dependencies: true
           - name: frontend
             path: frontend/helm/agentapi-ui
+            compatibility-name: agentapi-ui
             context: frontend
             image: ccplant/ccplant-frontend
             base-version: 0.1.0
