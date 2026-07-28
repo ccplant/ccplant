@@ -102,22 +102,8 @@ jobs:
       - run: helm package chart/ccplant --destination dist
       - run: helm push "dist/ccplant-${{ needs.metadata.outputs.version }}.tgz" oci://ghcr.io/ccplant/charts
 
-  packages-public:
-    needs: [images, chart]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Make release packages public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for package in ccplant-backend ccplant-frontend charts%2Fccplant; do
-            gh api --method PATCH \
-              "orgs/ccplant/packages/container/${package}" \
-              -f visibility=public
-          done
-
   release-complete:
-    needs: [binaries, packages-public]
+    needs: [binaries, images, chart]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
