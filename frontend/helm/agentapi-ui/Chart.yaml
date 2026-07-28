@@ -1,5 +1,5 @@
 apiVersion: v2
-name: agentapi-ui
+name: frontend
 description: A Helm chart for agentapi-ui Next.js application
 type: application
 version: v0.1.0

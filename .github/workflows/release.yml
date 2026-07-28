@@ -77,9 +77,18 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
-  chart:
+  charts:
     needs: [metadata, images]
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            path: backend/helm/agentapi-proxy
+          - name: frontend
+            path: frontend/helm/agentapi-ui
+          - name: ccplant
+            path: chart/ccplant
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -87,23 +96,36 @@ jobs:
           version: v3.18.4
       - name: Set release version
         env:
-          VERSION: ${{ needs.metadata.outputs.version }}
           TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          CHART_PATH: ${{ matrix.path }}
+          CHART_NAME: ${{ matrix.name }}
         run: |
-          sed -i "s/^version: .*/version: ${VERSION}/" chart/ccplant/Chart.yaml
-          sed -i "s/^appVersion: .*/appVersion: \\\"${VERSION}\\\"/" chart/ccplant/Chart.yaml
-          sed -i "s/tag: v0.1.0/tag: ${TAG}/g" chart/ccplant/values.yaml
-      - run: helm dependency build chart/ccplant
-      - run: helm lint chart/ccplant --strict
+          if [ "${CHART_NAME}" = "ccplant" ]; then
+            sed -i "s/^version:.*/version: ${VERSION}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${VERSION}\\\"/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/tag: v0.1.0/tag: ${TAG}/g" "${CHART_PATH}/values.yaml"
+          else
+            sed -i "s/^version:.*/version: ${TAG}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
+          fi
+      - name: Build dependencies
+        if: matrix.name != 'frontend'
+        run: helm dependency build "${{ matrix.path }}"
+      - run: helm lint "${{ matrix.path }}" --strict
+      - run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
       - name: Login to GHCR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "${GH_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
-      - run: helm package chart/ccplant --destination dist
-      - run: helm push "dist/ccplant-${{ needs.metadata.outputs.version }}.tgz" oci://ghcr.io/ccplant/charts
+      - run: helm package "${{ matrix.path }}" --destination dist
+      - name: Push chart
+        env:
+          CHART_NAME: ${{ matrix.name }}
+        run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
 
   release-complete:
-    needs: [binaries, images, chart]
+    needs: [binaries, images, charts]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
