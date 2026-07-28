@@ -83,9 +83,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: agentapi-proxy
+          - name: backend
             path: backend/helm/agentapi-proxy
-          - name: agentapi-ui
+          - name: frontend
             path: frontend/helm/agentapi-ui
           - name: ccplant
             path: chart/ccplant
@@ -110,7 +110,7 @@ jobs:
             sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
           fi
       - name: Build dependencies
-        if: matrix.name != 'agentapi-ui'
+        if: matrix.name != 'frontend'
         run: helm dependency build "${{ matrix.path }}"
       - run: helm lint "${{ matrix.path }}" --strict
       - run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null

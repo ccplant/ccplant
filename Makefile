@@ -23,9 +23,9 @@ chart-deps:
 
 chart-test: chart-deps
 	$(HELM) lint backend/helm/agentapi-proxy --strict
-	$(HELM) template agentapi-proxy backend/helm/agentapi-proxy >/dev/null
+	$(HELM) template backend backend/helm/agentapi-proxy >/dev/null
 	$(HELM) lint frontend/helm/agentapi-ui --strict
-	$(HELM) template agentapi-ui frontend/helm/agentapi-ui >/dev/null
+	$(HELM) template frontend frontend/helm/agentapi-ui >/dev/null
 	$(HELM) lint chart/ccplant --strict
 	$(HELM) template ccplant chart/ccplant >/dev/null
 

@@ -28,6 +28,6 @@ workflowには旧リポジトリへpushおよびPR作成できる
 ## Release
 
 単一の`vX.Y.Z`タグからbackend/frontendのコンテナ、Goバイナリ、および
-旧リポジトリ互換の`agentapi-proxy`/`agentapi-ui` Helm Chartを同じ
+旧リポジトリ互換のvalues/templatesを持つ`backend`/`frontend` Helm Chartを同じ
 `vX.Y.Z`バージョンで個別に発行します。統合`ccplant` Helm Chartも
 `X.Y.Z`バージョンで同時に発行します。

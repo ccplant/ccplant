@@ -10,13 +10,11 @@ sources:
 maintainers:
   - name: takutakahashi
 dependencies:
-  - name: agentapi-proxy
-    alias: backend
+  - name: backend
     version: 0.3.0
     repository: file://../../backend/helm/agentapi-proxy
     condition: backend.enabled
-  - name: agentapi-ui
-    alias: frontend
+  - name: frontend
     version: 0.1.0
     repository: file://../../frontend/helm/agentapi-ui
     condition: frontend.enabled

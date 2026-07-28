@@ -43,10 +43,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: agentapi-proxy
+          - name: backend
             path: backend/helm/agentapi-proxy
             dependencies: true
-          - name: agentapi-ui
+          - name: frontend
             path: frontend/helm/agentapi-ui
             dependencies: false
           - name: ccplant
@@ -73,11 +73,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: agentapi-proxy
+          - name: backend
             path: backend/helm/agentapi-proxy
             base-version: 0.3.0
             dependencies: true
-          - name: agentapi-ui
+          - name: frontend
             path: frontend/helm/agentapi-ui
             base-version: 0.1.0
             dependencies: false
