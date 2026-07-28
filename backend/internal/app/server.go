@@ -40,31 +40,32 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config             *config.Config
-	echo               *echo.Echo
-	verbose            bool
-	logger             *logger.Logger
-	oauthProvider      *auth.GitHubOAuthProvider
-	oauthSessions      sync.Map // sessionID -> OAuthSession
-	notificationSvc    *notification.Service
-	container          *di.Container                                   // Internal DI container
-	sessionManager     portrepos.SessionManager                        // Session lifecycle manager
-	settingsRepo       portrepos.SettingsRepository                    // Settings repository
-	credentialsRepo    portrepos.CredentialsRepository                 // Credentials repository
-	shareRepo          portrepos.ShareRepository                       // Share repository for session sharing
-	teamConfigRepo     portrepos.TeamConfigRepository                  // Team configuration repository
-	memoryRepo         portrepos.MemoryRepository                      // Memory repository
-	sandboxPolicyRepo  portrepos.SandboxPolicyRepository               // Sandbox policy repository
-	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
-	taskRepo           portrepos.TaskRepository                        // Task repository
-	taskGroupRepo      portrepos.TaskGroupRepository                   // Task group repository
-	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
-	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
-	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
-	apiTokenRepo       portrepos.APITokenRepository                    // Named API token repository
-	apiTokenDeps       *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
-	assetStore         services.AssetStore                             // Static asset storage backend
-	router             *Router                                         // Router for custom handler registration
+	config                    *config.Config
+	echo                      *echo.Echo
+	verbose                   bool
+	logger                    *logger.Logger
+	oauthProvider             *auth.GitHubOAuthProvider
+	oauthSessions             sync.Map // sessionID -> OAuthSession
+	notificationSvc           *notification.Service
+	container                 *di.Container                                   // Internal DI container
+	sessionManager            portrepos.SessionManager                        // Session lifecycle manager
+	settingsRepo              portrepos.SettingsRepository                    // Settings repository
+	credentialsRepo           portrepos.CredentialsRepository                 // Credentials repository
+	shareRepo                 portrepos.ShareRepository                       // Share repository for session sharing
+	teamConfigRepo            portrepos.TeamConfigRepository                  // Team configuration repository
+	memoryRepo                portrepos.MemoryRepository                      // Memory repository
+	sandboxPolicyRepo         portrepos.SandboxPolicyRepository               // Sandbox policy repository
+	sandboxDomainRepo         *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
+	taskRepo                  portrepos.TaskRepository                        // Task repository
+	taskGroupRepo             portrepos.TaskGroupRepository                   // Task group repository
+	sessionRouteRepo          portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
+	userFileRepo              portrepos.UserFileRepository                    // User-managed files repository
+	sessionProfileRepo        portrepos.SessionProfileRepository              // Session profile repository
+	initialMessageHistoryRepo portrepos.InitialMessageHistoryRepository       // Initial message history repository
+	apiTokenRepo              portrepos.APITokenRepository                    // Named API token repository
+	apiTokenDeps              *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
+	assetStore                services.AssetStore                             // Static asset storage backend
+	router                    *Router                                         // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -118,7 +119,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "assets" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "users" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "assets" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
 			}
 			return false
 		},
@@ -222,6 +223,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Set settings repository in session manager for Bedrock integration
 	k8sSessionManager.SetSettingsRepository(settingsRepo)
 	log.Printf("[SERVER] Settings repository initialized")
+	initialMessageHistoryRepo := repositories.NewKubernetesInitialMessageHistoryRepository(
+		k8sSessionManager.GetClient(),
+		k8sSessionManager.GetNamespace(),
+	)
+	log.Printf("[SERVER] Initial message history repository initialized")
 
 	// Initialize credentials repository
 	credentialsRepo := portrepos.CredentialsRepository(repositories.NewKubernetesCredentialsRepository(
@@ -347,26 +353,27 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	log.Printf("[SERVER] Asset store initialized (backend: %s)", cfg.Asset.Backend)
 
 	s := &Server{
-		config:             cfg,
-		echo:               e,
-		verbose:            verbose,
-		logger:             lgr,
-		container:          container,
-		sessionManager:     sessionManager,
-		settingsRepo:       settingsRepo,
-		credentialsRepo:    credentialsRepo,
-		shareRepo:          shareRepo,
-		teamConfigRepo:     teamConfigRepo,
-		memoryRepo:         memoryRepo,
-		sandboxPolicyRepo:  sandboxPolicyRepo,
-		sandboxDomainRepo:  sandboxDomainRepo,
-		taskRepo:           taskRepo,
-		taskGroupRepo:      taskGroupRepo,
-		sessionRouteRepo:   sessionRouteRepo,
-		userFileRepo:       userFileRepo,
-		sessionProfileRepo: sessionProfileRepo,
-		apiTokenRepo:       apiTokenRepo,
-		assetStore:         assetStore,
+		config:                    cfg,
+		echo:                      e,
+		verbose:                   verbose,
+		logger:                    lgr,
+		container:                 container,
+		sessionManager:            sessionManager,
+		settingsRepo:              settingsRepo,
+		credentialsRepo:           credentialsRepo,
+		shareRepo:                 shareRepo,
+		teamConfigRepo:            teamConfigRepo,
+		memoryRepo:                memoryRepo,
+		sandboxPolicyRepo:         sandboxPolicyRepo,
+		sandboxDomainRepo:         sandboxDomainRepo,
+		taskRepo:                  taskRepo,
+		taskGroupRepo:             taskGroupRepo,
+		sessionRouteRepo:          sessionRouteRepo,
+		userFileRepo:              userFileRepo,
+		sessionProfileRepo:        sessionProfileRepo,
+		initialMessageHistoryRepo: initialMessageHistoryRepo,
+		apiTokenRepo:              apiTokenRepo,
+		assetStore:                assetStore,
 	}
 
 	// Add logging middleware if verbose
@@ -740,7 +747,17 @@ func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
 }
 
 // CreateSession creates a new agent session
-func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (created entities.Session, err error) {
+	defer func() {
+		if err != nil || created == nil || s.initialMessageHistoryRepo == nil || startReq.Params == nil {
+			return
+		}
+		history := sessionuc.NewInitialMessageHistoryService(s.initialMessageHistoryRepo)
+		if recordErr := history.Record(context.Background(), userID, startReq.Params.Message); recordErr != nil {
+			log.Printf("[INITIAL_MESSAGE_HISTORY] Failed to record successful session start for user=%s: %v", userID, recordErr)
+		}
+	}()
+
 	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)

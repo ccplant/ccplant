@@ -2,6 +2,41 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-client';
 
+describe('AgentAPIProxyClient initial message history', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('gets the authenticated user history with a bounded limit', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        items: [{ id: 'item-1', content: 'Build it', last_used_at: '2026-07-28T00:00:00Z' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    const history = await client.getInitialMessageHistory(12);
+
+    expect(history.items[0].content).toBe('Build it');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://proxy.example.test/users/me/initial-messages?limit=12');
+  });
+
+  it('clears the authenticated user history', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(null, { status: 204 })
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await client.clearInitialMessageHistory();
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://proxy.example.test/users/me/initial-messages');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
+  });
+});
+
 describe('AgentAPIProxyClient ACP message history', () => {
   afterEach(() => {
     vi.restoreAllMocks();

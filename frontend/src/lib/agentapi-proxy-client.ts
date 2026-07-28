@@ -114,6 +114,16 @@ export interface CodexDeviceAuthTarget {
   team_id?: string;
 }
 
+export interface InitialMessageHistoryItem {
+  id: string;
+  content: string;
+  last_used_at: string;
+}
+
+export interface InitialMessageHistoryResponse {
+  items: InitialMessageHistoryItem[];
+}
+
 // GitHubUser type (moved from profile.ts)
 export interface GitHubUser {
   id: number;
@@ -1404,6 +1414,16 @@ export class AgentAPIProxyClient {
       console.log('[AgentAPIProxy] Getting user info');
     }
     return await this.makeRequest<ProxyUserInfo>('/user/info');
+  }
+
+  async getInitialMessageHistory(limit = 40): Promise<InitialMessageHistoryResponse> {
+    return await this.makeRequest<InitialMessageHistoryResponse>(
+      `/users/me/initial-messages?limit=${encodeURIComponent(limit)}`
+    );
+  }
+
+  async clearInitialMessageHistory(): Promise<void> {
+    await this.makeRequest<void>('/users/me/initial-messages', { method: 'DELETE' });
   }
 
   /**

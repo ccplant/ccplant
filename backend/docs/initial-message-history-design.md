@@ -76,11 +76,10 @@ separate client write would allow history and actual session creation to
 diverge. OpenAPI and the TypeScript client are updated with the backend
 implementation.
 
-The existing session creation paths (`POST /start` and session creation through
-`POST /acp`) call one shared history recorder after the session has been
-created. The recorder receives the authenticated user ID and the resolved
-initial message from the server-side launch flow. This keeps REST and ACP
-behavior identical and also covers non-browser clients without extra work.
+The shared server-side `CreateSession` path calls the history recorder after a
+session has been created. The recorder receives the authenticated user ID and
+the resolved initial message. This keeps REST, ACP, schedules, webhooks, and
+other non-browser callers consistent without extra client work.
 
 ### Domain and repository
 
