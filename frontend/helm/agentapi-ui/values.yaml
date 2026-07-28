@@ -31,7 +31,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/takutakahashi/agentapi-ui
+  repository: ghcr.io/ccplant/ccplant-frontend
   pullPolicy: IfNotPresent
   # Defaults to the component Chart's appVersion when empty.
   tag: ""
