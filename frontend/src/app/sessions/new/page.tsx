@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createAgentAPIClient } from '../../../lib/api'
 import type { AgentAPIProxyClient } from '../../../lib/agentapi-proxy-client'
-import { InitialMessageCache } from '../../../utils/initialMessageCache'
 import { messageTemplateManager } from '../../../utils/messageTemplateManager'
 import { MessageTemplate } from '../../../types/messageTemplate'
 import { recentMessagesManager } from '../../../utils/recentMessagesManager'
@@ -139,10 +138,20 @@ export default function NewSessionPage() {
 
   const loadRecentMessages = async () => {
     try {
+      const client = createAgentAPIProxyClientFromStorage()
+      const [serverHistory, localHistory] = await Promise.all([
+        client.getInitialMessageHistory(),
+        recentMessagesManager.getRecentMessages()
+      ])
+      const contents = [
+        ...serverHistory.items.map(item => item.content),
+        ...localHistory.map(item => item.content)
+      ]
+      setRecentMessages([...new Set(contents)].slice(0, 40))
+    } catch (error) {
+      console.error('Failed to load server initial message history, using local fallback:', error)
       const messages = await recentMessagesManager.getRecentMessages()
       setRecentMessages(messages.map(msg => msg.content))
-    } catch (error) {
-      console.error('Failed to load recent messages:', error)
     }
   }
 
@@ -286,9 +295,6 @@ export default function NewSessionPage() {
     const currentMessage = initialMessage.trim()
     const currentRepository = freeFormRepository.trim()
 
-    InitialMessageCache.addMessage(currentMessage)
-    await recentMessagesManager.saveMessage(currentMessage)
-
     if (currentRepository) {
       console.log('Adding repository to history before session creation:', { currentRepository })
       try {
@@ -349,6 +355,7 @@ export default function NewSessionPage() {
     }
 
     if (result.success) {
+      await recentMessagesManager.saveMessage(currentMessage)
       // 成功したら少し待ってから /chats に遷移
       setTimeout(() => {
         router.push('/chats')

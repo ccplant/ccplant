@@ -3029,6 +3029,90 @@
         }
       }
     },
+    "/users/me/initial-messages": {
+      "get": {
+        "summary": "List initial message history",
+        "description": "Returns the authenticated user's recent distinct initial messages, newest first.",
+        "operationId": "listInitialMessages",
+        "tags": [
+          "User"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 40,
+              "default": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Initial message history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "content",
+                          "last_used_at"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "content": {
+                            "type": "string"
+                          },
+                          "last_used_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clear initial message history",
+        "description": "Deletes all initial message history for the authenticated user.",
+        "operationId": "clearInitialMessages",
+        "tags": [
+          "User"
+        ],
+        "responses": {
+          "204": {
+            "description": "History cleared"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
     "/notification/subscribe": {
       "post": {
         "summary": "Subscribe to push notifications",

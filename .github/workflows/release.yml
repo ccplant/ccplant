@@ -106,7 +106,7 @@ jobs:
             sed -i "s/^appVersion:.*/appVersion: \\\"${VERSION}\\\"/" "${CHART_PATH}/Chart.yaml"
             sed -i "s/tag: v0.1.0/tag: ${TAG}/g" "${CHART_PATH}/values.yaml"
           else
-            sed -i "s/^version:.*/version: ${TAG}/" "${CHART_PATH}/Chart.yaml"
+            sed -i "s/^version:.*/version: ${VERSION}/" "${CHART_PATH}/Chart.yaml"
             sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
           fi
       - name: Build dependencies

@@ -12,6 +12,7 @@ import (
 	apitokenuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/api_token"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
@@ -25,28 +26,29 @@ type Router struct {
 
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
-	notificationHandlers       *controllers.NotificationHandlers
-	healthController           *controllers.HealthController
-	sessionController          *controllers.SessionController
-	acpController              *controllers.ACPController
-	settingsController         *controllers.SettingsController
-	googleOAuthController      *controllers.GoogleOAuthController
-	credentialsController      *controllers.CredentialsController
-	codexDeviceAuthController  *controllers.CodexDeviceAuthController
-	userController             *controllers.UserController
-	shareController            *controllers.ShareController
-	personalAPIKeyController   *controllers.PersonalAPIKeyController
-	apiTokenController         *controllers.APITokenController
-	memoryController           *controllers.MemoryController
-	sandboxPolicyController    *controllers.SandboxPolicyController
-	taskController             *controllers.TaskController
-	taskGroupController        *controllers.TaskGroupController
-	resourceTransferController *controllers.ResourceTransferController
-	fileController             *controllers.FileController
-	assetController            *controllers.AssetController
-	sessionProfileController   *controllers.SessionProfileController
-	provisionerController      *controllers.ProvisionerController
-	customHandlers             []CustomHandler
+	notificationHandlers            *controllers.NotificationHandlers
+	healthController                *controllers.HealthController
+	sessionController               *controllers.SessionController
+	acpController                   *controllers.ACPController
+	settingsController              *controllers.SettingsController
+	googleOAuthController           *controllers.GoogleOAuthController
+	credentialsController           *controllers.CredentialsController
+	codexDeviceAuthController       *controllers.CodexDeviceAuthController
+	userController                  *controllers.UserController
+	shareController                 *controllers.ShareController
+	personalAPIKeyController        *controllers.PersonalAPIKeyController
+	apiTokenController              *controllers.APITokenController
+	memoryController                *controllers.MemoryController
+	sandboxPolicyController         *controllers.SandboxPolicyController
+	taskController                  *controllers.TaskController
+	taskGroupController             *controllers.TaskGroupController
+	resourceTransferController      *controllers.ResourceTransferController
+	fileController                  *controllers.FileController
+	assetController                 *controllers.AssetController
+	sessionProfileController        *controllers.SessionProfileController
+	initialMessageHistoryController *controllers.InitialMessageHistoryController
+	provisionerController           *controllers.ProvisionerController
+	customHandlers                  []CustomHandler
 }
 
 // CustomHandler interface for adding custom routes
@@ -64,6 +66,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		gitSyncAWSRegion = cfg.GitSync.Encryption.AWSRegion
 	}
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc, gitSyncKMSKeyARN, gitSyncAWSRegion)
+	initialMessageHistoryService := sessionuc.NewInitialMessageHistoryService(server.initialMessageHistoryRepo)
+	initialMessageHistoryController := controllers.NewInitialMessageHistoryController(initialMessageHistoryService)
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
@@ -230,28 +234,29 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers:       controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
-			healthController:           controllers.NewHealthController(),
-			sessionController:          sessionController,
-			acpController:              acpController,
-			settingsController:         settingsController,
-			googleOAuthController:      googleOAuthController,
-			credentialsController:      credentialsController,
-			codexDeviceAuthController:  codexDeviceAuthController,
-			userController:             controllers.NewUserController(),
-			shareController:            shareController,
-			personalAPIKeyController:   personalAPIKeyController,
-			apiTokenController:         apiTokenController,
-			memoryController:           memoryController,
-			sandboxPolicyController:    sandboxPolicyController,
-			taskController:             taskController,
-			taskGroupController:        taskGroupController,
-			resourceTransferController: resourceTransferController,
-			fileController:             fileController,
-			assetController:            assetController,
-			sessionProfileController:   sessionProfileController,
-			provisionerController:      provisionerController,
-			customHandlers:             make([]CustomHandler, 0),
+			notificationHandlers:            controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
+			healthController:                controllers.NewHealthController(),
+			sessionController:               sessionController,
+			acpController:                   acpController,
+			settingsController:              settingsController,
+			googleOAuthController:           googleOAuthController,
+			credentialsController:           credentialsController,
+			codexDeviceAuthController:       codexDeviceAuthController,
+			userController:                  controllers.NewUserController(),
+			shareController:                 shareController,
+			personalAPIKeyController:        personalAPIKeyController,
+			apiTokenController:              apiTokenController,
+			memoryController:                memoryController,
+			sandboxPolicyController:         sandboxPolicyController,
+			taskController:                  taskController,
+			taskGroupController:             taskGroupController,
+			resourceTransferController:      resourceTransferController,
+			fileController:                  fileController,
+			assetController:                 assetController,
+			sessionProfileController:        sessionProfileController,
+			initialMessageHistoryController: initialMessageHistoryController,
+			provisionerController:           provisionerController,
+			customHandlers:                  make([]CustomHandler, 0),
 		},
 	}
 }
@@ -407,6 +412,8 @@ func (r *Router) registerConditionalRoutes() error {
 	// User info endpoint (requires authentication)
 	log.Printf("[ROUTES] Registering user info endpoint...")
 	r.echo.GET("/user/info", r.handlers.userController.GetUserInfo, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.GET("/users/me/initial-messages", r.handlers.initialMessageHistoryController.List, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.DELETE("/users/me/initial-messages", r.handlers.initialMessageHistoryController.DeleteAll, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 	log.Printf("[ROUTES] User info endpoint registered")
 
 	// Add notification routes if service is available
