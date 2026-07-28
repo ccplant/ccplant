@@ -1,0 +1,21 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      AGENTAPI_AUTH_STATIC_ENABLED: "false"
+      AGENTAPI_AUTH_GITHUB_ENABLED: "false"
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      AGENTAPI_PROXY_URL: http://backend:8080
+      AUTH_MODE: api_key
+      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
