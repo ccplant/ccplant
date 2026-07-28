@@ -18,13 +18,12 @@ frontend-build:
 	cd frontend && bun run build
 
 chart-deps:
-	$(HELM) dependency build chart/ccplant
+	$(HELM) dependency build backend/helm/agentapi-proxy
 
 chart-test: chart-deps
-	$(HELM) lint chart/ccplant --strict
-	$(HELM) template ccplant chart/ccplant \
-		--set backend.redis.enabled=false \
-		--set backend.scia.enabled=false \
-		--set backend.asset.enabled=false >/dev/null
+	$(HELM) lint backend/helm/agentapi-proxy --strict
+	$(HELM) template agentapi-proxy backend/helm/agentapi-proxy >/dev/null
+	$(HELM) lint frontend/helm/agentapi-ui --strict
+	$(HELM) template agentapi-ui frontend/helm/agentapi-ui >/dev/null
 
 test: backend-test frontend-test chart-test

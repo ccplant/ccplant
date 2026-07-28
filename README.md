@@ -6,7 +6,8 @@
 
 - `backend/` — Go製のAgentAPI proxyとCLI
 - `frontend/` — Next.js製のWeb UI
-- `chart/ccplant/` — backend/frontendをまとめて配布するHelm Chart
+- `backend/helm/agentapi-proxy/` — backendのHelm Chart（旧リポジトリ互換）
+- `frontend/helm/agentapi-ui/` — frontendのHelm Chart（旧リポジトリ互換）
 
 ## Development
 
@@ -29,7 +30,11 @@ docker compose up --build
 - GoReleaserでビルドした`agentapi-proxy`バイナリ
 - `ghcr.io/ccplant/ccplant-backend:vX.Y.Z`
 - `ghcr.io/ccplant/ccplant-frontend:vX.Y.Z`
-- `oci://ghcr.io/ccplant/charts/ccplant:X.Y.Z`
+- `oci://ghcr.io/ccplant/charts/agentapi-proxy:vX.Y.Z`
+- `oci://ghcr.io/ccplant/charts/agentapi-ui:vX.Y.Z`
+
+Helm Chartは旧リポジトリのchart名、values、テンプレートおよび`v`付きの
+version/appVersionを維持し、backendとfrontendを個別にリリースします。
 
 新モノレポを正とし、`backend/`と`frontend/`はそれぞれ旧リポジトリへ
 同期PRとしてバックポートします。詳細は[移行手順](docs/migration.md)を参照してください。
