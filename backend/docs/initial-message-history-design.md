@@ -25,10 +25,11 @@ the history follows the user across devices.
   whitespace and casing because both can be meaningful in prompts.
 - When an identical message is used again, move the existing entry to the
   front and update its timestamp instead of creating a duplicate.
-- Record an entry only after the session start request succeeds. Failed
-  attempts are not history.
+- Record an entry inside the server-side session creation flow only after the
+  session start request succeeds. Failed attempts are not history, and clients
+  do not need a second write request.
 - Limit an individual message to the same maximum accepted by session
-  creation. Until that limit is centralized, this endpoint must also enforce a
+  creation. Until that limit is centralized, the recorder must also enforce a
   defensive byte limit.
 - History is product data and can contain sensitive text. Do not log message
   bodies, include them in metrics labels, or expose them through team-scoped
@@ -36,13 +37,13 @@ the history follows the user across devices.
 
 ### API
 
-Expose a dedicated authenticated resource rather than adding the collection to
-`PUT /settings/:name`. A dedicated append operation avoids lost updates when
-multiple tabs concurrently update history and keeps high-churn data out of the
-settings secret.
+Expose the authenticated user's collection under the existing `/users/me`
+namespace rather than adding it to `PUT /settings/:name`. This makes the
+ownership boundary explicit and keeps high-churn data out of the settings
+secret.
 
 ```http
-GET /initial-message-history?limit=40
+GET /users/me/initial-messages?limit=40
 ```
 
 ```json
@@ -63,29 +64,23 @@ GET /initial-message-history?limit=40
 - Items are ordered by `last_used_at` descending.
 
 ```http
-POST /initial-message-history
-Content-Type: application/json
-
-{"content":"Design the retry policy"}
-```
-
-- Returns `200` with the upserted entry.
-- The server trims the content, rejects empty/oversized input, deduplicates,
-  moves the entry to the front, and evicts entries after position 40 in one
-  repository operation.
-- A client-generated idempotency key is optional for retries, but content-based
-  deduplication already makes ordinary retry behavior safe.
-
-```http
-DELETE /initial-message-history
+DELETE /users/me/initial-messages
 ```
 
 - Clears the authenticated user's history and returns `204`.
 - A per-entry delete endpoint can be added later if the UI needs it.
 
-The routes require the existing session read/create permissions for GET/POST,
-respectively. DELETE requires session create permission. OpenAPI and the
-TypeScript client are updated with the backend implementation.
+GET requires the existing session read permission. DELETE requires session
+create permission. There is deliberately no public POST endpoint: accepting a
+separate client write would allow history and actual session creation to
+diverge. OpenAPI and the TypeScript client are updated with the backend
+implementation.
+
+The existing session creation paths (`POST /start` and session creation through
+`POST /acp`) call one shared history recorder after the session has been
+created. The recorder receives the authenticated user ID and the resolved
+initial message from the server-side launch flow. This keeps REST and ACP
+behavior identical and also covers non-browser clients without extra work.
 
 ### Domain and repository
 
@@ -142,18 +137,18 @@ and ordered by `last_used_at`.
 
 ### Frontend flow
 
-1. On the new-session page, fetch server history and render it in the existing
-   recent-message chooser.
-2. After `client.start` or ACP session creation succeeds, POST the initial
-   message to history.
-3. Do not fail or roll back a successfully created session when history
-   recording fails. Report the error to telemetry and keep navigating to the
-   session.
+1. On the new-session page, fetch `GET /users/me/initial-messages` and render
+   it in the existing recent-message chooser.
+2. Session creation records the message on the server. The frontend performs
+   no history write.
+3. Do not fail or roll back a successfully created session when the
+   server-side history recorder fails. Emit a body-free structured error and
+   return the created session normally.
 4. During rollout, merge local history behind the server list, deduplicate by
    exact trimmed content, and display at most 40 items.
-5. After the first successful server fetch, import local entries oldest first
-   through POST so their final order is preserved. Mark the import complete in
-   `localStorage`.
+5. Do not upload old browser history through a general-purpose write endpoint.
+   Existing local entries remain as a temporary fallback and naturally age out
+   as new server-recorded entries accumulate.
 6. Remove `InitialMessageCache` and replace `RecentMessagesManager` with the
    server-backed client after one compatibility release. The chat composer can
    continue using the same history if that is intentional; otherwise rename
@@ -162,8 +157,8 @@ and ordered by `last_used_at`.
 ### Failure behavior
 
 - GET failure: fall back to existing local history for that page load.
-- POST failure: session creation remains successful; retain the local entry so
-  a later import can retry it.
+- Recorder failure: session creation remains successful; emit a body-free
+  structured error and increment a low-cardinality failure counter.
 - Repository conflict: retry server-side; return `503` only after bounded
   retries are exhausted.
 - Corrupt stored payload: return `500`, emit a body-free structured error, and
@@ -174,11 +169,11 @@ and ordered by `last_used_at`.
 1. Add domain types, repository port, Kubernetes implementation, conflict
    tests, controller routes, and OpenAPI.
 2. Add TypeScript client methods and controller/client tests for authorization,
-   ordering, deduplication, trimming from 41 to 40, validation, clear, and
-   concurrent updates.
-3. Switch the session creation UI to read/write the server resource with local
-   fallback and one-time import.
-4. Observe GET/POST error counts and resource sizes for one release.
+   ordering and clear; add launch/ACP tests for automatic recording,
+   deduplication, trimming from 41 to 40, validation, and concurrent updates.
+3. Switch the session creation UI to read the server resource with local
+   fallback; session creation itself performs the write.
+4. Observe GET/recorder error counts and resource sizes for one release.
 5. Delete the redundant local-only managers and migration code.
 
 ## Acceptance criteria
@@ -190,10 +185,15 @@ and ordered by `last_used_at`.
 - Users cannot read, write, or clear another user's history.
 - Team-scoped session creation does not make the history team-readable.
 - A history storage outage does not prevent session creation.
-- Existing local history is imported once without duplicates.
+- REST and ACP session creation both record history without a second client
+  request.
 
 ## Alternatives rejected
 
+- **Expose `POST /initial-message-history`:** creates a second client write
+  after session creation, so network failures can make the history disagree
+  with real session usage. Its top-level path also hides the fact that the
+  resource is always owned by the authenticated user.
 - **Add the array to user settings:** simpler wiring, but settings use whole
   resource updates and contain unrelated credentials/configuration. Frequent
   history writes increase conflict and accidental overwrite risk.
