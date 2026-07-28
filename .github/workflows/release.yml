@@ -83,6 +83,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
       - name: Set release version
         env:
           VERSION: ${{ needs.metadata.outputs.version }}

@@ -43,6 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
       - run: helm dependency build chart/ccplant
       - run: helm lint chart/ccplant --strict
       - name: Render chart
