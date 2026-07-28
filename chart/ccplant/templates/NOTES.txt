@@ -1,0 +1,7 @@
+ccplant has been installed.
+
+Backend service:
+  {{ .Release.Name }}-backend:8080
+
+Frontend service:
+  {{ .Release.Name }}-frontend:3000
