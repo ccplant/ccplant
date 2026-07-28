@@ -1,0 +1,23 @@
+global:
+  hostname: agentapi.local
+  apiHostname: api.agentapi.local
+  ingress:
+    className: nginx
+    tls:
+      enabled: false
+
+backend:
+  enabled: true
+  image:
+    repository: ghcr.io/ccplant/ccplant-backend
+    tag: v0.1.0
+  ingress:
+    enabled: false
+
+frontend:
+  enabled: true
+  image:
+    repository: ghcr.io/ccplant/ccplant-frontend
+    tag: v0.1.0
+  ingress:
+    enabled: false
