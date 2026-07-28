@@ -45,9 +45,11 @@ jobs:
         include:
           - name: backend
             path: backend/helm/agentapi-proxy
+            compatibility-name: agentapi-proxy
             dependencies: true
           - name: frontend
             path: frontend/helm/agentapi-ui
+            compatibility-name: agentapi-ui
             dependencies: false
           - name: ccplant
             path: chart/ccplant
@@ -124,3 +126,19 @@ jobs:
         env:
           CHART_NAME: ${{ matrix.name }}
         run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
+      - name: Push compatibility chart for existing development release
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          COMPATIBILITY_NAME: ${{ matrix.compatibility-name }}
+        run: |
+          short_sha="${HEAD_SHA:0:7}"
+          compatibility_dir="${RUNNER_TEMP}/${COMPATIBILITY_NAME}"
+          cp -a "${{ matrix.path }}" "${compatibility_dir}"
+          sed -i "s/^name:.*/name: ${COMPATIBILITY_NAME}/" "${compatibility_dir}/Chart.yaml"
+          helm package "${compatibility_dir}" \
+            --version "${{ matrix.base-version }}-dev.ccplant.${short_sha}" \
+            --app-version "dev.ccplant.${HEAD_SHA}" \
+            --destination compatibility-dist
+          helm push \
+            "$(find compatibility-dist -maxdepth 1 -name "${COMPATIBILITY_NAME}-*.tgz" -print -quit)" \
+            oci://ghcr.io/ccplant/charts
