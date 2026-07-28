@@ -73,6 +73,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: backend
@@ -129,7 +130,7 @@ jobs:
       - name: Push compatibility chart for existing development release
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          COMPATIBILITY_NAME: ${{ matrix.compatibility-name }}
+          COMPATIBILITY_NAME: ${{ matrix['compatibility-name'] }}
         run: |
           short_sha="${HEAD_SHA:0:7}"
           compatibility_dir="${RUNNER_TEMP}/${COMPATIBILITY_NAME}"
