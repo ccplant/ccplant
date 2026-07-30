@@ -77,12 +77,30 @@ jobs:
             path: backend/helm/agentapi-proxy
             base-version: 0.3.0
             dependencies: true
+            component: backend
+            image: ccplant/ccplant-backend
           - name: agentapi-ui
             path: frontend/helm/agentapi-ui
             base-version: 0.1.0
             dependencies: false
+            component: frontend
+            image: ccplant/ccplant-frontend
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push development image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.component }}
+          push: true
+          tags: ghcr.io/${{ matrix.image }}:dev.ccplant.${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha,scope=dev-${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=dev-${{ matrix.component }}
       - uses: azure/setup-helm@v4
         with:
           version: v3.18.4
@@ -96,6 +114,7 @@ jobs:
           short_sha="${HEAD_SHA:0:7}"
           helm package "${{ matrix.path }}" \
             --version "${{ matrix.base-version }}-dev.ccplant.${short_sha}" \
+            --app-version "dev.ccplant.${HEAD_SHA}" \
             --destination dist
       - name: Login to GHCR
         env:
