@@ -83,12 +83,15 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: backend
+          - name: agentapi-proxy
             path: backend/helm/agentapi-proxy
-          - name: frontend
+            dependencies: true
+          - name: agentapi-ui
             path: frontend/helm/agentapi-ui
+            dependencies: false
           - name: ccplant
             path: chart/ccplant
+            dependencies: true
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -110,7 +113,7 @@ jobs:
             sed -i "s/^appVersion:.*/appVersion: \\\"${TAG}\\\"/" "${CHART_PATH}/Chart.yaml"
           fi
       - name: Build dependencies
-        if: matrix.name != 'frontend'
+        if: matrix.dependencies
         run: helm dependency build "${{ matrix.path }}"
       - run: helm lint "${{ matrix.path }}" --strict
       - run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
