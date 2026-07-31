@@ -120,7 +120,8 @@ jobs:
           TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           for attempt in {1..12}; do
-            if id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id 2>/dev/null); then
+            id=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' | head -n 1)
+            if [ -n "$id" ]; then
               echo "id=${id}" >> "$GITHUB_OUTPUT"
               exit 0
             fi
