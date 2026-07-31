@@ -73,7 +73,8 @@ jobs:
           workspaces: native/src-tauri -> target
       - run: bun install --frozen-lockfile
         working-directory: native
-      - name: Check Apple release credentials
+      - id: apple
+        name: Check Apple release credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -94,11 +95,13 @@ jobs:
 
           if [ "$configured" -eq 0 ]; then
             echo "::warning::Apple credentials are not configured; publishing unsigned macOS bundles"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
           elif [ "$missing" -ne 0 ]; then
             echo "::error::Apple signing is partially configured. Set all six Apple release secrets or remove them all."
             exit 1
           else
             echo "Apple credentials are configured; bundles will be signed and notarized"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Set native app version
         env:
@@ -115,8 +118,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.metadata.outputs.tag }}
-        run: echo "id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id)" >> "$GITHUB_OUTPUT"
-      - uses: tauri-apps/tauri-action@v0
+        run: |
+          for attempt in {1..12}; do
+            if id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id 2>/dev/null); then
+              echo "id=${id}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Draft release is not visible yet (attempt ${attempt}/12); retrying..."
+            sleep 5
+          done
+          echo "::error::Draft release for ${TAG} was not found"
+          exit 1
+      - name: Build and upload unsigned native app
+        if: steps.apple.outputs.signed == 'false'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: native
+          releaseId: ${{ steps.release.outputs.id }}
+          args: --target ${{ matrix.target }} --bundles app,dmg
+      - name: Build and upload signed native app
+        if: steps.apple.outputs.signed == 'true'
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
