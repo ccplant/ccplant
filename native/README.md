@@ -148,10 +148,14 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The release workflow builds and uploads signed/notarized Apple Silicon and
-Intel `.app`/`.dmg` bundles to the draft created by GoReleaser. The release is
-published only after every component succeeds. Configure these repository
-secrets before the first release:
+The release workflow builds and uploads Apple Silicon and Intel `.app`/`.dmg`
+bundles to the draft created by GoReleaser. The release is published only after
+every component succeeds.
+
+By default, the macOS bundles are unsigned. Gatekeeper may block the first
+launch, so users must explicitly allow the app from macOS Privacy & Security
+settings. To publish signed and notarized bundles instead, configure all of
+these repository secrets:
 
 - `APPLE_CERTIFICATE`
 - `APPLE_CERTIFICATE_PASSWORD`
@@ -159,6 +163,10 @@ secrets before the first release:
 - `APPLE_ID`
 - `APPLE_PASSWORD` (an app-specific password)
 - `APPLE_TEAM_ID`
+
+If none of the secrets are configured, the workflow publishes unsigned
+bundles. If only some are configured, it fails before building to avoid a
+partially configured release.
 
 The app version is derived from the shared release tag at build time; do not
 manually edit `tauri.conf.json` for each release.

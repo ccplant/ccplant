@@ -73,7 +73,7 @@ jobs:
           workspaces: native/src-tauri -> target
       - run: bun install --frozen-lockfile
         working-directory: native
-      - name: Validate Apple release credentials
+      - name: Check Apple release credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -82,14 +82,24 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          configured=0
           missing=0
           for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             if [ -z "${!name}" ]; then
-              echo "::error::Missing required repository secret: ${name}"
-              missing=1
+              missing=$((missing + 1))
+            else
+              configured=$((configured + 1))
             fi
           done
-          exit "$missing"
+
+          if [ "$configured" -eq 0 ]; then
+            echo "::warning::Apple credentials are not configured; publishing unsigned macOS bundles"
+          elif [ "$missing" -ne 0 ]; then
+            echo "::error::Apple signing is partially configured. Set all six Apple release secrets or remove them all."
+            exit 1
+          else
+            echo "Apple credentials are configured; bundles will be signed and notarized"
+          fi
       - name: Set native app version
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
