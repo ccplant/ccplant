@@ -59,7 +59,7 @@ jobs:
         working-directory: native
       - run: bun run sidecar:build
         working-directory: native
-      - run: bun run tauri build -- --no-bundle
+      - run: bun run tauri build --no-bundle
         working-directory: native
 
   charts:
