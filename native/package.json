@@ -11,6 +11,7 @@
     "sidecar:build": "bun scripts/build-sidecar.ts",
     "sidecar:build:macos-arm64": "bun scripts/build-sidecar.ts aarch64-apple-darwin",
     "sidecar:build:macos-x64": "bun scripts/build-sidecar.ts x86_64-apple-darwin",
+    "version:set": "bun scripts/set-version.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

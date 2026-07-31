@@ -137,6 +137,32 @@ frontend build. Tauri packages the generated target-triple-suffixed executable
 through `bundle.externalBin`; generated binaries are intentionally ignored by
 Git.
 
+## Release
+
+Native app releases are part of the monorepo's existing `v*` release flow.
+Pushing a tag such as `v0.2.0` builds the backend binaries, container images,
+Helm charts, and both macOS native app architectures into one GitHub Release.
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow builds and uploads signed/notarized Apple Silicon and
+Intel `.app`/`.dmg` bundles to the draft created by GoReleaser. The release is
+published only after every component succeeds. Configure these repository
+secrets before the first release:
+
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+- `APPLE_SIGNING_IDENTITY`
+- `APPLE_ID`
+- `APPLE_PASSWORD` (an app-specific password)
+- `APPLE_TEAM_ID`
+
+The app version is derived from the shared release tag at build time; do not
+manually edit `tauri.conf.json` for each release.
+
 ## Icons
 
 `src-tauri/icons/` contains small placeholder PNGs so the project is
