@@ -47,6 +47,89 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  native-app:
+    needs: [metadata, binaries]
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: native/src-tauri -> target
+      - run: bun install --frozen-lockfile
+        working-directory: native
+      - name: Check Apple release credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          configured=0
+          missing=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              missing=$((missing + 1))
+            else
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [ "$configured" -eq 0 ]; then
+            echo "::warning::Apple credentials are not configured; publishing unsigned macOS bundles"
+          elif [ "$missing" -ne 0 ]; then
+            echo "::error::Apple signing is partially configured. Set all six Apple release secrets or remove them all."
+            exit 1
+          else
+            echo "Apple credentials are configured; bundles will be signed and notarized"
+          fi
+      - name: Set native app version
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: bun scripts/set-version.ts "$VERSION"
+        working-directory: native
+      - name: Build bundled agentapi-proxy
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bun scripts/build-sidecar.ts "$TARGET"
+        working-directory: native
+      - id: release
+        name: Find draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: echo "id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .id)" >> "$GITHUB_OUTPUT"
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: native
+          releaseId: ${{ steps.release.outputs.id }}
+          args: --target ${{ matrix.target }} --bundles app,dmg
+
   images:
     needs: metadata
     runs-on: ${{ matrix.runner }}
@@ -187,7 +270,7 @@ jobs:
         run: helm push "$(find dist -maxdepth 1 -name "${CHART_NAME}-*.tgz" -print -quit)" oci://ghcr.io/ccplant/charts
 
   release-complete:
-    needs: [binaries, images, charts]
+    needs: [binaries, images, charts, native-app]
     runs-on: ubuntu-latest
     steps:
       - name: Publish release
