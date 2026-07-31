@@ -4,9 +4,9 @@ A minimal, production-shaped **macOS menu-bar dashboard** for the
 agentapi-proxy **native External Session Manager** (ESM). Built with
 Tauri 2 + Vite + React + TypeScript.
 
-The app is a thin UI on top of the existing `agentapi-proxy native` CLI. It
-shells out to the proxy binary to read status, sessions, doctor output, and to
-restart the daemon. The native daemon is owned by launchd and runs
+The app bundles the `agentapi-proxy` Go binary as a Tauri sidecar. It uses that
+binary for first-run registration and installation, then reads status,
+sessions, doctor output, and restarts the daemon. The native daemon is owned by launchd and runs
 independently of this dashboard — closing the window simply hides it.
 
 ## Layout
@@ -36,7 +36,7 @@ native/
     └── src/
         ├── main.rs         # entry point
         ├── lib.rs          # tray menu, window hide-on-close, command registration
-        ├── binary.rs       # locate proxy via AGENTAPI_PROXY_NATIVE_BINARY or PATH
+        ├── binary.rs       # execute bundled sidecar, with development fallbacks
         ├── commands.rs     # Tauri commands wrapping `native <sub> --json`
         └── types.rs        # serde structs matching the CLI JSON
 ```
@@ -50,6 +50,8 @@ native/
 - **Doctor** card: result of `native doctor --json` (healthy / issues).
 - **Refresh** and **Restart** actions; optional 15s auto-refresh while visible.
 - **Loading / error / empty** states for every panel.
+- **First-run setup** that registers the Mac and installs its per-user
+  LaunchAgent without requiring a separately installed CLI.
 
 ## Menu-bar tray
 
@@ -71,12 +73,17 @@ keeps running regardless of the dashboard's lifecycle.
 
 ## How it talks to the proxy
 
-The Rust side locates the `agentapi-proxy` binary with this precedence:
+The Rust side executes the bundled `agentapi-proxy` sidecar by default. An
+`AGENTAPI_PROXY_NATIVE_BINARY` override remains available for development. If
+the sidecar is unavailable, the fallback lookup order is:
 
-1. `AGENTAPI_PROXY_NATIVE_BINARY` — absolute path to the proxy binary.
-2. The macOS binary managed by `native install` under
+1. The macOS binary managed by `native install` under
    `~/Library/Application Support/agentapi-native/bin/`.
-3. `agentapi-proxy` looked up on `PATH`.
+2. `agentapi-proxy` looked up on `PATH`.
+
+The first-run form invokes `native install` with the bundled sidecar. Its API
+key is passed only to that child process and is not written to GUI settings;
+the CLI continues to store only the resulting connection credential.
 
 Then it runs (JSON parsed into typed serde structs):
 
@@ -103,9 +110,8 @@ on optional fields) so partial CLI output stays forward-compatible.
   `tauri.conf.json` if you switch).
 - Rust toolchain (`rustup`) with the `aarch64-apple-darwin` and
   `x86_64-apple-darwin` targets for Tauri 2.
-- The `agentapi-proxy` binary installed and on `PATH`, **or**
-  `AGENTAPI_PROXY_NATIVE_BINARY` pointing at it. Install the daemon first with
-  `agentapi-proxy native install ...` (see `backend/README.md`).
+- Go 1.25+ when building the app, so the sidecar can be compiled from
+  `../backend`. End users do not need Go or a separately installed CLI.
 
 ## Scripts
 
@@ -115,6 +121,9 @@ bun install
 bun run dev       # Vite dev server on http://127.0.0.1:1420
 bun run check     # tsc --noEmit (typecheck)
 bun run build     # tsc --noEmit && vite build  -> dist/
+bun run sidecar:build # build the Go sidecar for the current target
+bun run sidecar:build:macos-arm64
+bun run sidecar:build:macos-x64
 bun run preview   # preview the built dist/
 bun run tauri dev # build the Rust shell, launch the menu-bar app
 bun run tauri build # produce a signed .app / .dmg bundle
@@ -122,6 +131,11 @@ bun run tauri build # produce a signed .app / .dmg bundle
 
 > The `tauri` scripts require Rust/cargo. `dev`, `check`, `build`, and
 > `preview` are pure-frontend and need only Node + the npm dependencies.
+
+`tauri dev` and `tauri build` automatically run `sidecar:build` before the
+frontend build. Tauri packages the generated target-triple-suffixed executable
+through `bundle.externalBin`; generated binaries are intentionally ignored by
+Git.
 
 ## Icons
 
@@ -153,5 +167,5 @@ This regenerates the full set (`icon.icns`, `128x128.png`, etc.) referenced by
 
 ## Caveats
 
-- The dashboard is read-only apart from **Restart**; install / uninstall /
+- The dashboard supports first-run **Install** and **Restart**; uninstall and
   rotate-token remain CLI-only by design.

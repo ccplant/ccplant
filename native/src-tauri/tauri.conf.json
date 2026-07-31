@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeDevCommand": "bun run sidecar:build && bun run dev",
+    "beforeBuildCommand": "bun run sidecar:build && bun run build"
   },
   "app": {
     "windows": [
@@ -30,6 +30,7 @@
   },
   "bundle": {
     "active": true,
+    "externalBin": ["binaries/agentapi-proxy"],
     "targets": ["app", "dmg"],
     "icon": ["icons/icon.png", "icons/icon.icns"],
     "category": "DeveloperTool",

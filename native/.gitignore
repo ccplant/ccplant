@@ -1,6 +1,7 @@
 node_modules
 dist
 src-tauri/target
+src-tauri/binaries
 src-tauri/icons/*
 !src-tauri/icons/icon.png
 !src-tauri/icons/icon.icns

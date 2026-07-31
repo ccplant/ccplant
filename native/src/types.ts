@@ -38,6 +38,14 @@ export interface RestartResult {
   message: string;
 }
 
+export interface InstallRequest {
+  upstream: string;
+  publicUrl: string;
+  name: string;
+  apiKey: string;
+  filesystemSandbox: boolean;
+}
+
 export type DashboardData = {
   status: NativeStatus | null;
   sessions: NativeSession[];

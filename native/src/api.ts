@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   DashboardData,
   DoctorResult,
+  InstallRequest,
   NativeSession,
   NativeStatus,
   RestartResult,
@@ -25,6 +26,10 @@ export async function fetchDoctor(): Promise<DoctorResult> {
 
 export async function restartDaemon(): Promise<RestartResult> {
   return invoke<RestartResult>("native_restart");
+}
+
+export async function installDaemon(request: InstallRequest): Promise<RestartResult> {
+  return invoke<RestartResult>("native_install", { request });
 }
 
 export async function showDashboard(): Promise<void> {

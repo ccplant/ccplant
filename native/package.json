@@ -8,6 +8,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
+    "sidecar:build": "bun scripts/build-sidecar.ts",
+    "sidecar:build:macos-arm64": "bun scripts/build-sidecar.ts aarch64-apple-darwin",
+    "sidecar:build:macos-x64": "bun scripts/build-sidecar.ts x86_64-apple-darwin",
     "preview": "vite preview",
     "tauri": "tauri"
   },

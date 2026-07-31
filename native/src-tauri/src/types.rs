@@ -57,3 +57,14 @@ pub struct CommandResult {
     pub ok: bool,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallRequest {
+    pub upstream: String,
+    pub public_url: String,
+    pub name: String,
+    pub api_key: String,
+    #[serde(default)]
+    pub filesystem_sandbox: bool,
+}

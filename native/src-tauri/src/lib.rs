@@ -46,7 +46,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 // responsive; the frontend will re-query after the event.
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = commands::native_restart();
+                    let _ = commands::native_restart(app.clone()).await;
                     emit_refresh(&app);
                 });
             }
@@ -72,11 +72,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             commands::native_status,
             commands::native_sessions,
             commands::native_doctor,
             commands::native_restart,
+            commands::native_install,
             show_dashboard,
         ])
         .setup(|app| {

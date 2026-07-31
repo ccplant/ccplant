@@ -9,6 +9,7 @@ import type { DashboardData } from "./types";
 import { StatusCard } from "./components/StatusCard";
 import { SessionsCard } from "./components/SessionsCard";
 import { DoctorCard } from "./components/DoctorCard";
+import { SetupCard } from "./components/SetupCard";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -132,7 +133,12 @@ export function App() {
 
       <main className="app__body">
         {state === "loading" && <LoadingState />}
-        {state === "error" && <ErrorState message={error} onRetry={() => void refresh(true)} />}
+        {state === "error" && (
+          <>
+            <SetupCard onInstalled={() => refresh(true)} />
+            <ErrorState message={error} onRetry={() => void refresh(true)} />
+          </>
+        )}
         {state === "ready" && data && (
           <>
             {data.status ? <StatusCard status={data.status} /> : <EmptyState label="No status available" />}
@@ -178,8 +184,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       <h2>Could not reach the native ESM</h2>
       <p className="state__detail">{message}</p>
       <p className="state__hint">
-        Verify the daemon is installed (`agentapi-proxy native status`) and that
-        <code>AGENTAPI_PROXY_NATIVE_BINARY</code> points at the proxy binary if it is not on your <code>PATH</code>.
+        If this Mac is already configured, verify that its LaunchAgent is running and retry.
       </p>
       <button className="btn" onClick={onRetry}>Try again</button>
     </div>

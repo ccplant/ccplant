@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use tauri::AppHandle;
+use tauri_plugin_shell::ShellExt;
+
 /// Environment variable that overrides the agentapi-proxy binary location.
 pub const BINARY_ENV: &str = "AGENTAPI_PROXY_NATIVE_BINARY";
 
@@ -105,7 +108,20 @@ fn native_command(sub: &str, json: bool) -> Result<Command, String> {
 
 /// Run a `native <sub> --json` subcommand and return its stdout as bytes.
 /// Captures stderr; on non-zero exit the stderr is returned as the error.
-pub fn run_native_json(sub: &str) -> Result<Vec<u8>, String> {
+pub async fn run_native_json(app: &AppHandle, sub: &str) -> Result<Vec<u8>, String> {
+    if std::env::var_os(BINARY_ENV).is_none() {
+        if let Ok(sidecar) = app.shell().sidecar(BINARY_NAME) {
+            let output = sidecar
+                .args([NATIVE_SUBCOMMAND, sub, "--json"])
+                .output()
+                .await
+                .map_err(|e| format!("failed to execute bundled binary: {e}"))?;
+            if output.status.success() {
+                return Ok(output.stdout);
+            }
+            return Err(command_error(sub, &output.stdout, &output.stderr));
+        }
+    }
     let mut cmd = native_command(sub, true)?;
     let output = cmd
         .output()
@@ -126,7 +142,18 @@ pub fn run_native_json(sub: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Run `native <sub>` without JSON and return (ok, combined-message).
-pub fn run_native_plain(sub: &str) -> (bool, String) {
+pub async fn run_native_plain(app: &AppHandle, sub: &str) -> (bool, String) {
+    if std::env::var_os(BINARY_ENV).is_none() {
+        if let Ok(sidecar) = app.shell().sidecar(BINARY_NAME) {
+            match sidecar.args([NATIVE_SUBCOMMAND, sub]).output().await {
+                Ok(output) => {
+                    let message = output_message(&output.stdout, &output.stderr);
+                    return (output.status.success(), message);
+                }
+                Err(error) => return (false, format!("failed to execute bundled binary: {error}")),
+            }
+        }
+    }
     match native_command(sub, false) {
         Ok(mut cmd) => match cmd.output() {
             Ok(output) => {
@@ -146,5 +173,24 @@ pub fn run_native_plain(sub: &str) -> (bool, String) {
             Err(e) => (false, format!("failed to execute: {e}")),
         },
         Err(e) => (false, e),
+    }
+}
+
+fn output_message(stdout: &[u8], stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    if !stderr.is_empty() {
+        stderr
+    } else {
+        stdout
+    }
+}
+
+fn command_error(sub: &str, stdout: &[u8], stderr: &[u8]) -> String {
+    let detail = output_message(stdout, stderr);
+    if detail.is_empty() {
+        format!("`native {sub}` failed")
+    } else {
+        format!("`native {sub}` failed: {detail}")
     }
 }

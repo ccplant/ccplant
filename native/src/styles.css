@@ -369,6 +369,14 @@ body {
 .doctor__check--ok > span { color: var(--ok); }
 .doctor__check--bad > span { color: var(--bad); font-weight: 700; }
 
+.setup__intro, .setup__hint { margin: 0; color: var(--text-muted); }
+.setup__hint { font-size: 11px; }
+.setup form { display: grid; gap: 11px; }
+.setup form > label { display: grid; gap: 4px; color: var(--text-muted); font-size: 11px; }
+.setup input:not([type="checkbox"]) { width: 100%; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg); color: var(--text); padding: 8px 9px; font: inherit; }
+.setup .setup__checkbox { display: flex; grid-template-columns: none; flex-direction: row; align-items: center; }
+.setup__error { margin: 0; color: var(--bad); font-size: 12px; }
+
 .state {
   display: flex;
   flex-direction: column;
