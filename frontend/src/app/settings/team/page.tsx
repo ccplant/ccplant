@@ -325,6 +325,34 @@ export default function TeamSettingsPage() {
           </SettingsAccordion>
 
           <SettingsAccordion
+            title="GitHub App Authentication"
+            description="Configure the GitHub App installation used by team sessions"
+            defaultOpen={false}
+          >
+            <div className="space-y-2">
+              <label htmlFor="github-app-installation-id" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Installation ID
+              </label>
+              <input
+                id="github-app-installation-id"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={settings.github_app_installation_id || ''}
+                onChange={(e) => setSettings((prev) => ({
+                  ...prev,
+                  github_app_installation_id: e.target.value,
+                }))}
+                placeholder="12345678"
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Team session の開始時に、この installation 用の短期 token を生成して GITHUB_TOKEN に設定します。
+              </p>
+            </div>
+          </SettingsAccordion>
+
+          <SettingsAccordion
             title="Environment Variables"
             description="Configure custom environment variables for team sessions"
             defaultOpen

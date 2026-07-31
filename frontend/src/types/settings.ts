@@ -131,6 +131,7 @@ export interface SettingsData {
   env_vars?: Record<string, string>;  // カスタム環境変数（保存時のみ使用）
   env_var_keys?: string[];  // 環境変数のキーのみ（読み取り時のみ、セキュリティのため値は含まない）
   preferred_team_id?: string;  // 使用するチームの ID（"org/team-slug" 形式）
+  github_app_installation_id?: string;  // Team sessions で使用する GitHub App installation ID
   memory_enabled?: boolean;  // メモリ機能の有効/無効（個人・チーム設定で使用）
   memory_summarize_drafts?: boolean;  // ドラフトメモリの自動集約設定（個人・チーム設定で使用）
   slack_user_id?: string;  // Slack User ID（設定すると Slack DM 通知が有効になる）
@@ -386,6 +387,10 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
   // 空文字列の場合は明示的にクリア（全チームマージに戻す）
   if (data.preferred_team_id !== undefined) {
     prepared.preferred_team_id = data.preferred_team_id
+  }
+
+  if (data.github_app_installation_id !== undefined) {
+    prepared.github_app_installation_id = data.github_app_installation_id.trim()
   }
 
   // Memory Enabled の処理
