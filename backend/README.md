@@ -77,13 +77,23 @@ never prints Secret values.
 
 ```bash
 agentapi-proxy doctor \
-  --namespace agentapi-ui \
-  --release agentapi-proxy
+	--namespace agentapi-ui
+```
+
+By default, both the `agentapi-proxy` and `agentapi-ui` releases are checked.
+Use one or more `--release` flags to select specific releases:
+
+```bash
+agentapi-proxy doctor -n agentapi-ui \
+  --release agentapi-proxy \
+  --release agentapi-ui
 ```
 
 The command uses the standard Kubernetes client configuration resolution
 (in-cluster credentials or `KUBECONFIG`) and exits non-zero if a release,
-Secret, key, or value is missing.
+Secret, key, or value is missing. It also performs non-blocking checks for
+sensitive-looking literal values, Deployment readiness, and ready Service
+endpoints. These checks are reported as `WARN` and do not change the exit code.
 
 ### Configuration
 

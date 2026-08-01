@@ -22,7 +22,7 @@ import (
 
 var (
 	doctorNamespace = "default"
-	doctorRelease   = "agentapi-proxy"
+	doctorReleases  = []string{"agentapi-proxy", "agentapi-ui"}
 )
 
 // DoctorCmd validates the active Helm release and every Kubernetes Secret it references.
@@ -55,13 +55,14 @@ type secretReference struct {
 
 type doctorFinding struct {
 	OK      bool
+	Warning bool
 	Subject string
 	Message string
 }
 
 func init() {
 	DoctorCmd.Flags().StringVarP(&doctorNamespace, "namespace", "n", "default", "Kubernetes namespace containing the Helm release")
-	DoctorCmd.Flags().StringVar(&doctorRelease, "release", "agentapi-proxy", "Helm release name")
+	DoctorCmd.Flags().StringSliceVar(&doctorReleases, "release", []string{"agentapi-proxy", "agentapi-ui"}, "Helm release name (may be specified multiple times)")
 }
 
 func runDoctor(cmd *cobra.Command, _ []string) error {
@@ -74,20 +75,33 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create Kubernetes client: %w", err)
 	}
 
-	findings, err := diagnoseHelmRelease(cmd.Context(), client, doctorNamespace, doctorRelease)
-	if err != nil {
-		return err
-	}
-
 	failed := false
-	for _, finding := range findings {
-		marker := "PASS"
-		if !finding.OK {
-			marker = "FAIL"
-			failed = true
+	if len(doctorReleases) == 0 {
+		return fmt.Errorf("at least one Helm release must be specified")
+	}
+	for _, releaseName := range doctorReleases {
+		releaseName = strings.TrimSpace(releaseName)
+		if releaseName == "" {
+			return fmt.Errorf("helm release name must not be empty")
 		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s: %s\n", marker, finding.Subject, finding.Message); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "== %s ==\n", releaseName); err != nil {
 			return fmt.Errorf("write doctor output: %w", err)
+		}
+		findings, err := diagnoseHelmRelease(cmd.Context(), client, doctorNamespace, releaseName)
+		if err != nil {
+			return err
+		}
+		for _, finding := range findings {
+			marker := "PASS"
+			if finding.Warning {
+				marker = "WARN"
+			} else if !finding.OK {
+				marker = "FAIL"
+				failed = true
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s: %s\n", marker, finding.Subject, finding.Message); err != nil {
+				return fmt.Errorf("write doctor output: %w", err)
+			}
 		}
 	}
 	if failed {
@@ -111,25 +125,27 @@ func diagnoseHelmRelease(ctx context.Context, client kubernetes.Interface, names
 		Message: fmt.Sprintf("%s revision %d (%s) loaded from %s", stored.Name, stored.Version, stored.Info.Status, storageSecretName),
 	}}
 	if stored.Info.Status != "deployed" {
-		findings = append(findings, doctorFinding{false, "helm status", fmt.Sprintf("expected deployed, got %q", stored.Info.Status)})
+		findings = append(findings, doctorFinding{OK: false, Subject: "helm status", Message: fmt.Sprintf("expected deployed, got %q", stored.Info.Status)})
 	} else {
-		findings = append(findings, doctorFinding{true, "helm status", "deployed"})
+		findings = append(findings, doctorFinding{OK: true, Subject: "helm status", Message: "deployed"})
 	}
+	findings = append(findings, inspectSensitiveLiterals(stored.Config)...)
+	findings = append(findings, inspectOptionalWorkload(ctx, client, namespace, releaseName)...)
 
 	references := discoverSecretReferences(stored.Config)
 	if len(references) == 0 {
-		findings = append(findings, doctorFinding{true, "secret references", "none configured"})
+		findings = append(findings, doctorFinding{OK: true, Subject: "secret references", Message: "none configured"})
 		return findings, nil
 	}
 
 	for _, ref := range references {
 		secret, getErr := client.CoreV1().Secrets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(getErr) {
-			findings = append(findings, doctorFinding{false, ref.Path, fmt.Sprintf("Secret %q does not exist", ref.Name)})
+			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q does not exist", ref.Name)})
 			continue
 		}
 		if getErr != nil {
-			findings = append(findings, doctorFinding{false, ref.Path, fmt.Sprintf("read Secret %q: %v", ref.Name, getErr)})
+			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("read Secret %q: %v", ref.Name, getErr)})
 			continue
 		}
 		findings = append(findings, validateSecretReference(ref, secret)...)
@@ -277,10 +293,10 @@ func validateSecretReference(ref secretReference, secret *corev1.Secret) []docto
 	if len(ref.Keys) == 0 {
 		for _, value := range secret.Data {
 			if len(value) > 0 {
-				return []doctorFinding{{true, ref.Path, fmt.Sprintf("Secret %q exists and contains data", ref.Name)}}
+				return []doctorFinding{{OK: true, Subject: ref.Path, Message: fmt.Sprintf("Secret %q exists and contains data", ref.Name)}}
 			}
 		}
-		return []doctorFinding{{false, ref.Path, fmt.Sprintf("Secret %q exists but contains no non-empty data", ref.Name)}}
+		return []doctorFinding{{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q exists but contains no non-empty data", ref.Name)}}
 	}
 
 	findings := make([]doctorFinding, 0, len(ref.Keys))
@@ -288,11 +304,107 @@ func validateSecretReference(ref secretReference, secret *corev1.Secret) []docto
 		value, exists := secret.Data[key]
 		switch {
 		case !exists:
-			findings = append(findings, doctorFinding{false, ref.Path, fmt.Sprintf("Secret %q is missing key %q", ref.Name, key)})
+			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q is missing key %q", ref.Name, key)})
 		case len(value) == 0:
-			findings = append(findings, doctorFinding{false, ref.Path, fmt.Sprintf("Secret %q key %q is empty", ref.Name, key)})
+			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q key %q is empty", ref.Name, key)})
 		default:
-			findings = append(findings, doctorFinding{true, ref.Path, fmt.Sprintf("Secret %q key %q exists and is non-empty", ref.Name, key)})
+			findings = append(findings, doctorFinding{OK: true, Subject: ref.Path, Message: fmt.Sprintf("Secret %q key %q exists and is non-empty", ref.Name, key)})
+		}
+	}
+	return findings
+}
+
+func inspectSensitiveLiterals(values map[string]any) []doctorFinding {
+	paths := make([]string, 0)
+	var walk func(any, string)
+	walk = func(value any, path string) {
+		switch typed := value.(type) {
+		case map[string]any:
+			if name, ok := typed["name"].(string); ok && sensitiveEnvironmentName(name) {
+				if literal, ok := nonEmptyString(typed["value"]); ok && literal != "" {
+					paths = append(paths, joinPath(path, "value"))
+				}
+			}
+			for key, child := range typed {
+				childPath := joinPath(path, key)
+				if isSensitiveLiteralKey(key) {
+					if literal, ok := nonEmptyString(child); ok && literal != "" {
+						paths = append(paths, childPath)
+					}
+				}
+				walk(child, childPath)
+			}
+		case []any:
+			for index, child := range typed {
+				walk(child, fmt.Sprintf("%s[%d]", path, index))
+			}
+		}
+	}
+	walk(values, "values")
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return []doctorFinding{{OK: true, Subject: "optional plaintext secrets", Message: "none detected"}}
+	}
+	findings := make([]doctorFinding, 0, len(paths))
+	for _, path := range paths {
+		findings = append(findings, doctorFinding{
+			Warning: true,
+			Subject: "optional plaintext secrets",
+			Message: fmt.Sprintf("%s contains a sensitive-looking literal; prefer a Secret reference", path),
+		})
+	}
+	return findings
+}
+
+func isSensitiveLiteralKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "clientsecret", "token", "password", "privatekey", "encryptionkey", "apikey":
+		return true
+	default:
+		return false
+	}
+}
+
+func sensitiveEnvironmentName(name string) bool {
+	upper := strings.ToUpper(name)
+	return strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "PRIVATE_KEY")
+}
+
+func inspectOptionalWorkload(ctx context.Context, client kubernetes.Interface, namespace, releaseName string) []doctorFinding {
+	findings := make([]doctorFinding, 0, 2)
+	deployment, err := client.AppsV1().Deployments(namespace).Get(ctx, releaseName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		findings = append(findings, doctorFinding{Warning: true, Subject: "optional deployment", Message: fmt.Sprintf("Deployment %q was not found", releaseName)})
+	case err != nil:
+		findings = append(findings, doctorFinding{Warning: true, Subject: "optional deployment", Message: fmt.Sprintf("read Deployment %q: %v", releaseName, err)})
+	default:
+		desired := int32(1)
+		if deployment.Spec.Replicas != nil {
+			desired = *deployment.Spec.Replicas
+		}
+		if deployment.Status.ReadyReplicas != desired {
+			findings = append(findings, doctorFinding{Warning: true, Subject: "optional deployment", Message: fmt.Sprintf("Deployment %q has %d/%d ready replicas", releaseName, deployment.Status.ReadyReplicas, desired)})
+		} else {
+			findings = append(findings, doctorFinding{OK: true, Subject: "optional deployment", Message: fmt.Sprintf("Deployment %q has %d/%d ready replicas", releaseName, deployment.Status.ReadyReplicas, desired)})
+		}
+	}
+
+	endpoints, err := client.CoreV1().Endpoints(namespace).Get(ctx, releaseName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		findings = append(findings, doctorFinding{Warning: true, Subject: "optional service endpoints", Message: fmt.Sprintf("Endpoints %q were not found", releaseName)})
+	case err != nil:
+		findings = append(findings, doctorFinding{Warning: true, Subject: "optional service endpoints", Message: fmt.Sprintf("read Endpoints %q: %v", releaseName, err)})
+	default:
+		ready := 0
+		for _, subset := range endpoints.Subsets {
+			ready += len(subset.Addresses)
+		}
+		if ready == 0 {
+			findings = append(findings, doctorFinding{Warning: true, Subject: "optional service endpoints", Message: fmt.Sprintf("Endpoints %q have no ready addresses", releaseName)})
+		} else {
+			findings = append(findings, doctorFinding{OK: true, Subject: "optional service endpoints", Message: fmt.Sprintf("Endpoints %q have %d ready addresses", releaseName, ready)})
 		}
 	}
 	return findings

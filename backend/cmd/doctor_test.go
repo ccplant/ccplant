@@ -41,8 +41,34 @@ func TestDiagnoseHelmReleaseChecksReferencedSecretData(t *testing.T) {
 		t.Fatalf("diagnoseHelmRelease() error = %v", err)
 	}
 	for _, finding := range findings {
-		if !finding.OK {
+		if !finding.OK && !finding.Warning {
 			t.Errorf("unexpected failed finding: %+v", finding)
+		}
+	}
+}
+
+func TestInspectSensitiveLiteralsWarnsWithoutExposingValues(t *testing.T) {
+	values := map[string]any{
+		"github": map[string]any{"token": "github-secret-value"},
+		"env": []any{
+			map[string]any{"name": "ADMIN_TOKEN", "value": "admin-secret-value"},
+			map[string]any{"name": "PUBLIC_URL", "value": "https://example.com"},
+		},
+	}
+
+	findings := inspectSensitiveLiterals(values)
+	if len(findings) != 2 {
+		t.Fatalf("len(findings) = %d, want 2", len(findings))
+	}
+	joined := findingMessages(findings)
+	for _, finding := range findings {
+		if !finding.Warning {
+			t.Errorf("finding.Warning = false, want true: %+v", finding)
+		}
+	}
+	for _, secret := range []string{"github-secret-value", "admin-secret-value"} {
+		if strings.Contains(joined, secret) {
+			t.Errorf("findings exposed secret value %q", secret)
 		}
 	}
 }
