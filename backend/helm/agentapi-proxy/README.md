@@ -476,7 +476,7 @@ helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --
 
 ## Stable control-plane Service
 
-The chart creates `agentapi-proxy-control` as a release-independent endpoint
+The chart creates `control` as a release-independent endpoint
 for session provisioners. The Service is retained when its creating release is
 uninstalled, allowing a blue/green deployment to move its selector to the new
 proxy without recreating existing session workloads.

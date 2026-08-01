@@ -74,7 +74,7 @@ http://agentapi-proxy.<namespace>.svc.cluster.local:8080
 ```
 
 新しいbackendではsession provisionerの既定callback先をRelease名に依存しない
-`agentapi-proxy-control` Serviceとする。Service selectorを旧backendから新backendへ切り替える
+`control` Serviceとする。Service selectorを旧backendから新backendへ切り替える
 ことで、対応versionで作成されたsessionは再作成せずにcontrol planeを切り替えられる。
 変更前のversionで作成され、`agentapi-proxy`を直接参照するsessionだけはlegacy sessionとして
 drainまたは互換Serviceで処理する。

@@ -77,7 +77,7 @@ service:
 controlPlaneService:
   enabled: true
   create: true
-  name: agentapi-proxy-control
+  name: control
   port: 8080
   # Preserve the Service when its creating Helm release is uninstalled. A new
   # release should use create=false and may take over traffic by updating the

@@ -3636,7 +3636,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 
 	proxyURL := m.k8sConfig.ProvisionerProxyURL
 	if proxyURL == "" {
-		proxyURL = fmt.Sprintf("http://agentapi-proxy-control.%s.svc.cluster.local:8080", m.namespace)
+		proxyURL = fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
 	}
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},

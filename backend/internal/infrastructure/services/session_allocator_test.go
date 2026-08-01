@@ -22,7 +22,7 @@ func TestAllocationProxyURLUsesStableControlPlaneServiceByDefault(t *testing.T) 
 		k8sConfig: &config.KubernetesSessionConfig{},
 	}
 
-	if got, want := manager.AllocationProxyURL(), "http://agentapi-proxy-control.test-ns.svc.cluster.local:8080"; got != want {
+	if got, want := manager.AllocationProxyURL(), "http://control.test-ns.svc.cluster.local:8080"; got != want {
 		t.Fatalf("AllocationProxyURL() = %q, want %q", got, want)
 	}
 }

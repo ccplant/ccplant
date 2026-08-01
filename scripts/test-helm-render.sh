@@ -33,9 +33,9 @@ assert_not_contains() {
 # direct Kubernetes sessions, while keeping the proxy at one replica.
 assert_contains '^  name: agentapi-proxy-session$' "$TMP_DIR/backend-default.yaml"
 assert_contains '^  replicas: 1$' "$TMP_DIR/backend-default.yaml"
-assert_contains '^  name: "?agentapi-proxy-control"?$' "$TMP_DIR/backend-default.yaml"
+assert_contains '^  name: "?control"?$' "$TMP_DIR/backend-default.yaml"
 assert_contains 'helm.sh/resource-policy: keep' "$TMP_DIR/backend-default.yaml"
-assert_contains 'value: "http://agentapi-proxy-control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-default.yaml"
+assert_contains 'value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-default.yaml"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
@@ -82,9 +82,9 @@ assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend
   --namespace default \
   --set controlPlaneService.create=false \
   --set kubernetesSession.rbac.create=false >"$TMP_DIR/backend-shadow.yaml"
-assert_not_contains '^  name: "?agentapi-proxy-control"?$' "$TMP_DIR/backend-shadow.yaml"
+assert_not_contains '^  name: "?control"?$' "$TMP_DIR/backend-shadow.yaml"
 assert_not_contains '^  name: agentapi-proxy-session$' "$TMP_DIR/backend-shadow.yaml"
-assert_contains 'value: "http://agentapi-proxy-control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-shadow.yaml"
+assert_contains 'value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-shadow.yaml"
 
 # TLS-enabled frontend URLs must use https.
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" \
