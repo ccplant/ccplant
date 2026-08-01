@@ -8,6 +8,16 @@
 helm install agentapi-ui ./helm/agentapi-ui
 ```
 
+最小構成を明示した [`values-minimal.yaml`](values-minimal.yaml) も利用できます。
+
+```bash
+helm install agentapi-ui ./helm/agentapi-ui \
+  --values ./helm/agentapi-ui/values-minimal.yaml \
+  --set config.proxyUrl=http://agentapi-proxy:8080
+```
+
+この構成でも認証Cookie用Secretは事前作成が必要です。
+
 ## 設定
 
 ### 暗号化キーの設定

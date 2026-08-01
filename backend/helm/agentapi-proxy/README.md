@@ -17,6 +17,18 @@ To install the chart with the release name `my-agentapi-proxy`:
 helm install my-agentapi-proxy ./helm/agentapi-proxy
 ```
 
+The defaults are a minimal single-replica direct-session installation. The
+same choices are explicit in [`values-minimal.yaml`](values-minimal.yaml):
+
+```bash
+helm install my-agentapi-proxy ./helm/agentapi-proxy \
+  --values ./helm/agentapi-proxy/values-minimal.yaml
+```
+
+SCIA, asset serving, persistent session workspaces, background workers,
+OpenTelemetry collection, and Redis are opt-in. More than one proxy replica
+requires the bundled Redis or `externalRedis.addr`.
+
 ### From OCI Registry (Recommended)
 
 Once published to ghcr.io, you can install directly from the OCI registry:

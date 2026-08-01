@@ -9,6 +9,10 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" >"$TMP_DIR/backend-default.yaml"
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" >"$TMP_DIR/frontend-default.yaml"
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" >"$TMP_DIR/ccplant-default.yaml"
+"$HELM_BIN" template backend-minimal "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --values "$REPO_ROOT/backend/helm/agentapi-proxy/values-minimal.yaml" >"$TMP_DIR/backend-minimal.yaml"
+"$HELM_BIN" template frontend-minimal "$REPO_ROOT/frontend/helm/agentapi-ui" \
+  --values "$REPO_ROOT/frontend/helm/agentapi-ui/values-minimal.yaml" >"$TMP_DIR/frontend-minimal.yaml"
 
 assert_contains() {
   local pattern="$1"
@@ -40,12 +44,16 @@ assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED' "$TMP_DIR/backen
 assert_not_contains '^kind: PersistentVolumeClaim$' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: scia' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: asset' "$TMP_DIR/ccplant-default.yaml"
+assert_not_contains '^kind: PersistentVolumeClaim$' "$TMP_DIR/backend-minimal.yaml"
+assert_not_contains 'app.kubernetes.io/component: scia' "$TMP_DIR/backend-minimal.yaml"
+assert_not_contains 'app.kubernetes.io/component: asset' "$TMP_DIR/backend-minimal.yaml"
 
 # The frontend must configure the environment name consumed by the application
 # and derive http URLs when TLS is disabled.
 assert_contains 'name: ALLOWED_ORIGINS' "$TMP_DIR/frontend-default.yaml"
 assert_contains 'value: "http://agentapi-ui.local"' "$TMP_DIR/frontend-default.yaml"
 assert_not_contains 'name: NEXT_PUBLIC_ALLOWED_ORIGINS' "$TMP_DIR/frontend-default.yaml"
+assert_contains 'key: cookie-encryption-secret' "$TMP_DIR/frontend-minimal.yaml"
 
 # Stock inventory must receive leader-election RBAC even when other workers and
 # Kubernetes session creation are disabled explicitly.

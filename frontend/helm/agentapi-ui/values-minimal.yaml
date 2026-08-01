@@ -1,0 +1,13 @@
+# Create this Secret before installing the standalone frontend chart:
+# kubectl create secret generic agentapi-ui-encryption \
+#   --from-literal=cookie-encryption-secret="$(openssl rand -hex 32)"
+replicaCount: 1
+
+cookieEncryptionSecret:
+  enabled: true
+  secretName: agentapi-ui-encryption
+  secretKey: cookie-encryption-secret
+
+config:
+  proxyUrl: ""
+  publicUrl: ""
