@@ -73,10 +73,11 @@ agentapi.proxy/session-id: <session-id>
 http://agentapi-proxy.<namespace>.svc.cluster.local:8080
 ```
 
-新backendも固定ラベルから既存sessionを列挙・操作できる。一方、既存session Podの
-provisioner callback先は作成時の`agentapi-proxy`で固定されるため、旧backendは既存sessionの
-drainが完了するまで残す。新規sessionはcutover後に新backendが作成し、callback先として
-`ccplant-backend`を設定する。
+新しいbackendではsession provisionerの既定callback先をRelease名に依存しない
+`agentapi-proxy-control` Serviceとする。Service selectorを旧backendから新backendへ切り替える
+ことで、対応versionで作成されたsessionは再作成せずにcontrol planeを切り替えられる。
+変更前のversionで作成され、`agentapi-proxy`を直接参照するsessionだけはlegacy sessionとして
+drainまたは互換Serviceで処理する。
 
 session用ServiceAccount/Role/RoleBindingは現在固定名`agentapi-proxy-session`であり、並行
 installすると衝突する。ccplant Chartに次のoptionを追加し、shadow installでは既存RBACを
@@ -84,15 +85,17 @@ installすると衝突する。ccplant Chartに次のoptionを追加し、shadow
 
 ```yaml
 backend:
+  controlPlaneService:
+    create: false
   kubernetesSession:
     rbac:
       create: false
     serviceAccountName: agentapi-proxy-session
 ```
 
-旧backendをuninstallする前に、session作成を一時停止してRBACをccplant管理へ引き継ぐか、
-外部管理の共通RBACとしてRelease外へ切り出す。無停止性と安全性のため、共通RBACの外部管理を
-推奨する。
+control Serviceは`helm.sh/resource-policy: keep`で保持される。旧backendをuninstallする前に
+selectorを新backendへ切り替える。session RBACは一時的に既存Releaseのものを共有し、旧backend
+削除前にccplant管理へ引き継ぐかRelease外の共通RBACとして管理する。
 
 ## Secret互換性
 
@@ -168,7 +171,7 @@ read-onlyで以下を行う。
 5. runtime Secret/PVCに旧Helm ownershipが誤って付いていないか検査する
 6. Secret reference、暗号設定、Service DNS、ServiceAccount名を検査する
 7. install先が既存RBACを安全に共有できることを検査する
-8. session ID、data Secret UID、PVC UIDのbaselineを保存する
+8. control Serviceのselectorとsession ID、data Secret UID、PVC UIDのbaselineを保存する
 
 target chartはversionだけでなくOCI digestまで固定する。
 
@@ -187,10 +190,10 @@ target chartはversionだけでなくOCI digestまで固定する。
 2. 新backendをread-only/shadow modeで検証
 3. 旧backendのbackground workerと新規session作成を停止
 4. 新backendのworkerを有効化し、leader electionを確認
-5. Ingressまたは外部routingを新Serviceへ切り替える
+5. control Service selectorとIngress/外部routingを新Serviceへ切り替える
 6. 新backendで新規session作成を有効化
 7. 旧frontendをuninstall
-8. 旧backendはlegacy session callback用としてdrain状態で維持
+8. control Service非対応のlegacy sessionがあれば旧backendをdrain状態で維持
 ```
 
 schedule、SlackBot、stock inventoryなどのworkerを新旧で同時にactiveにしない。leader

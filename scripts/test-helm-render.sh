@@ -6,7 +6,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" >"$TMP_DIR/backend-default.yaml"
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --namespace default >"$TMP_DIR/backend-default.yaml"
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" >"$TMP_DIR/frontend-default.yaml"
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" >"$TMP_DIR/ccplant-default.yaml"
 
@@ -32,6 +33,9 @@ assert_not_contains() {
 # direct Kubernetes sessions, while keeping the proxy at one replica.
 assert_contains '^  name: agentapi-proxy-session$' "$TMP_DIR/backend-default.yaml"
 assert_contains '^  replicas: 1$' "$TMP_DIR/backend-default.yaml"
+assert_contains '^  name: "?agentapi-proxy-control"?$' "$TMP_DIR/backend-default.yaml"
+assert_contains 'helm.sh/resource-policy: keep' "$TMP_DIR/backend-default.yaml"
+assert_contains 'value: "http://agentapi-proxy-control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-default.yaml"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
@@ -71,6 +75,16 @@ assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"
   --set stockInventoryWorker.enabled=true >"$TMP_DIR/backend-stock.yaml"
 assert_contains 'resources: \["leases"\]' "$TMP_DIR/backend-stock.yaml"
 assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-stock.yaml"
+
+# A shadow release reuses the stable control-plane Service and session RBAC
+# without trying to create duplicate fixed-name resources.
+"$HELM_BIN" template ccplant-shadow "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --namespace default \
+  --set controlPlaneService.create=false \
+  --set kubernetesSession.rbac.create=false >"$TMP_DIR/backend-shadow.yaml"
+assert_not_contains '^  name: "?agentapi-proxy-control"?$' "$TMP_DIR/backend-shadow.yaml"
+assert_not_contains '^  name: agentapi-proxy-session$' "$TMP_DIR/backend-shadow.yaml"
+assert_contains 'value: "http://agentapi-proxy-control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-shadow.yaml"
 
 # TLS-enabled frontend URLs must use https.
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" \

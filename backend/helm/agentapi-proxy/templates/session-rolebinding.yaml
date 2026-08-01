@@ -1,16 +1,16 @@
-{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
+{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled .Values.kubernetesSession.rbac.create }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: agentapi-proxy-session
+  name: {{ .Values.kubernetesSession.serviceAccountName }}
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: agentapi-proxy-session
+    name: {{ .Values.kubernetesSession.serviceAccountName }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: Role
-  name: agentapi-proxy-session
+  name: {{ .Values.kubernetesSession.serviceAccountName }}
   apiGroup: rbac.authorization.k8s.io
 {{- end }}
