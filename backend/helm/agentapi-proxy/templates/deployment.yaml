@@ -92,11 +92,12 @@ spec:
               {{- end }}
               value: {{ $clientId | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
-              {{- if .Values.config.auth.github.oauth.clientSecretRef.name }}
+              {{- $oauthSecretRefName := dig "clientSecretRef" "name" "" .Values.config.auth.github.oauth }}
+              {{- if $oauthSecretRefName }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.config.auth.github.oauth.clientSecretRef.name | quote }}
-                  key: {{ .Values.config.auth.github.oauth.clientSecretRef.key | quote }}
+                  name: {{ $oauthSecretRefName | quote }}
+                  key: {{ dig "clientSecretRef" "key" "client-secret" .Values.config.auth.github.oauth | quote }}
               {{- else }}
               {{- $clientSecret := .Values.config.auth.github.oauth.clientSecret }}
               {{- if .Values.global }}
@@ -494,12 +495,13 @@ spec:
               value: {{ .Values.config.encryption.key | quote }}
             {{- end }}
             # GitHub Token configuration (for backward compatibility)
-            {{- if .Values.github.tokenRef.name }}
+            {{- $githubTokenRefName := dig "tokenRef" "name" "" .Values.github }}
+            {{- if $githubTokenRefName }}
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.github.tokenRef.name | quote }}
-                  key: {{ .Values.github.tokenRef.key | quote }}
+                  name: {{ $githubTokenRefName | quote }}
+                  key: {{ dig "tokenRef" "key" "github-token" .Values.github | quote }}
             {{- else if .Values.github.token }}
             - name: GITHUB_TOKEN
               value: {{ .Values.github.token | quote }}
@@ -519,12 +521,13 @@ spec:
             - name: VAPID_PUBLIC_KEY
               value: {{ .Values.config.vapid.publicKey | quote }}
             {{- end }}
-            {{- if .Values.config.vapid.privateKeyRef.name }}
+            {{- $vapidPrivateKeyRefName := dig "privateKeyRef" "name" "" .Values.config.vapid }}
+            {{- if $vapidPrivateKeyRefName }}
             - name: VAPID_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.config.vapid.privateKeyRef.name | quote }}
-                  key: {{ .Values.config.vapid.privateKeyRef.key | quote }}
+                  name: {{ $vapidPrivateKeyRefName | quote }}
+                  key: {{ dig "privateKeyRef" "key" "vapid-private-key" .Values.config.vapid | quote }}
             {{- else if .Values.config.vapid.privateKey }}
             - name: VAPID_PRIVATE_KEY
               value: {{ .Values.config.vapid.privateKey | quote }}
