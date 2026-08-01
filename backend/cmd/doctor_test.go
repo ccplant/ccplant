@@ -1,0 +1,144 @@
+package cmd
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"strconv"
+	"strings"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+)
+
+func TestDiagnoseHelmReleaseChecksReferencedSecretData(t *testing.T) {
+	values := map[string]any{
+		"config": map[string]any{
+			"oauth": map[string]any{
+				"clientSecretRef": map[string]any{"name": "auth", "key": "client-secret"},
+			},
+		},
+		"envFrom": []any{map[string]any{
+			"secretRef": map[string]any{"name": "runtime-env"},
+		}},
+		"ingress": map[string]any{
+			"tls": []any{map[string]any{"secretName": "tls-cert"}},
+		},
+	}
+	client := fake.NewSimpleClientset(
+		helmReleaseSecret(t, "example", 1, "deployed", values),
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "auth", Namespace: "test"}, Data: map[string][]byte{"client-secret": []byte("present")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "runtime-env", Namespace: "test"}, Data: map[string][]byte{"TOKEN": []byte("present")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "tls-cert", Namespace: "test"}, Data: map[string][]byte{"tls.crt": []byte("present")}},
+	)
+
+	findings, err := diagnoseHelmRelease(context.Background(), client, "test", "example")
+	if err != nil {
+		t.Fatalf("diagnoseHelmRelease() error = %v", err)
+	}
+	for _, finding := range findings {
+		if !finding.OK {
+			t.Errorf("unexpected failed finding: %+v", finding)
+		}
+	}
+}
+
+func TestDiagnoseHelmReleaseReportsMissingAndEmptySecretValues(t *testing.T) {
+	values := map[string]any{
+		"github": map[string]any{
+			"tokenRef": map[string]any{"name": "auth", "key": "github-token"},
+		},
+		"vapid": map[string]any{
+			"privateKeyRef": map[string]any{"name": "auth", "key": "vapid-private-key"},
+		},
+		"externalRedis": map[string]any{
+			"existingSecret":            "missing",
+			"existingSecretPasswordKey": "redis-password",
+		},
+	}
+	client := fake.NewSimpleClientset(
+		helmReleaseSecret(t, "example", 2, "deployed", values),
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "auth", Namespace: "test"}, Data: map[string][]byte{
+			"github-token":     []byte(""),
+			"unrelated-secret": []byte("present"),
+		}},
+	)
+
+	findings, err := diagnoseHelmRelease(context.Background(), client, "test", "example")
+	if err != nil {
+		t.Fatalf("diagnoseHelmRelease() error = %v", err)
+	}
+	joined := findingMessages(findings)
+	for _, expected := range []string{
+		`Secret "auth" key "github-token" is empty`,
+		`Secret "auth" is missing key "vapid-private-key"`,
+		`Secret "missing" does not exist`,
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Errorf("findings do not contain %q:\n%s", expected, joined)
+		}
+	}
+}
+
+func TestLoadLatestHelmReleaseUsesHighestRevision(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		helmReleaseSecret(t, "example", 9, "superseded", map[string]any{}),
+		helmReleaseSecret(t, "example", 10, "deployed", map[string]any{}),
+	)
+
+	release, secretName, err := loadLatestHelmRelease(context.Background(), client, "test", "example")
+	if err != nil {
+		t.Fatalf("loadLatestHelmRelease() error = %v", err)
+	}
+	if release.Version != 10 {
+		t.Fatalf("release.Version = %d, want 10", release.Version)
+	}
+	if !strings.HasSuffix(secretName, ".v10") {
+		t.Fatalf("secretName = %q, want revision 10", secretName)
+	}
+}
+
+func helmReleaseSecret(t *testing.T, name string, revision int, status string, values map[string]any) *corev1.Secret {
+	t.Helper()
+	release := helmStoredRelease{Name: name, Version: revision, Info: helmReleaseInfo{Status: status}, Config: values}
+	payload, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(compressed.Len()))
+	base64.StdEncoding.Encode(encoded, compressed.Bytes())
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sh.helm.release.v1." + name + ".v" + strconv.Itoa(revision),
+			Namespace: "test",
+			Labels: map[string]string{
+				"owner":   "helm",
+				"name":    name,
+				"version": strconv.Itoa(revision),
+				"status":  status,
+			},
+		},
+		Data: map[string][]byte{"release": encoded},
+	}
+}
+
+func findingMessages(findings []doctorFinding) string {
+	var builder strings.Builder
+	for _, finding := range findings {
+		builder.WriteString(finding.Message)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
