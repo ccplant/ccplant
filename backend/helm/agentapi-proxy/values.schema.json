@@ -18,7 +18,7 @@
     },
     "kubernetesSession": {
       "type": "object",
-      "required": ["enabled", "serviceAccountName", "rbac", "pvc", "otelCollector"],
+      "required": ["enabled", "pvc", "otelCollector"],
       "properties": {
         "enabled": { "const": true },
         "serviceAccountName": { "type": "string", "minLength": 1 },

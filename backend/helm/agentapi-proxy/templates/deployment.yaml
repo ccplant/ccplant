@@ -324,7 +324,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY
               value: {{ .Values.kubernetesSession.imagePullPolicy | quote }}
             - name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT
-              value: {{ .Values.kubernetesSession.serviceAccountName | quote }}
+              value: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" | quote }}
             - name: AGENTAPI_K8S_SESSION_BASE_PORT
               value: {{ .Values.kubernetesSession.basePort | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
@@ -348,8 +348,13 @@ spec:
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
               {{- $provisionerProxyURL := dig "provisioner" "proxyUrl" "" .Values.kubernetesSession }}
               {{- if not $provisionerProxyURL }}
-                {{- if .Values.controlPlaneService.enabled }}
-                  {{- $provisionerProxyURL = printf "http://%s.%s.svc.cluster.local:%v" .Values.controlPlaneService.name .Release.Namespace .Values.controlPlaneService.port }}
+                {{- $controlPlaneService := .Values.controlPlaneService | default dict }}
+                {{- $controlEnabled := true }}
+                {{- if hasKey $controlPlaneService "enabled" }}
+                  {{- $controlEnabled = $controlPlaneService.enabled }}
+                {{- end }}
+                {{- if $controlEnabled }}
+                  {{- $provisionerProxyURL = printf "http://%s.%s.svc.cluster.local:%v" ($controlPlaneService.name | default "control") .Release.Namespace ($controlPlaneService.port | default 8080) }}
                 {{- else }}
                   {{- $provisionerProxyURL = printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port }}
                 {{- end }}

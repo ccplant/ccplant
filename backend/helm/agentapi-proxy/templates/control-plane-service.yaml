@@ -1,12 +1,19 @@
-{{- if and .Values.controlPlaneService.enabled .Values.controlPlaneService.create }}
-{{- $annotations := deepCopy (.Values.controlPlaneService.annotations | default dict) }}
-{{- if .Values.controlPlaneService.retainOnDelete }}
+{{- $control := .Values.controlPlaneService | default dict }}
+{{- $enabled := true }}
+{{- $create := true }}
+{{- $retain := true }}
+{{- if hasKey $control "enabled" }}{{- $enabled = $control.enabled }}{{- end }}
+{{- if hasKey $control "create" }}{{- $create = $control.create }}{{- end }}
+{{- if hasKey $control "retainOnDelete" }}{{- $retain = $control.retainOnDelete }}{{- end }}
+{{- if and $enabled $create }}
+{{- $annotations := deepCopy ($control.annotations | default dict) }}
+{{- if $retain }}
 {{- $_ := set $annotations "helm.sh/resource-policy" "keep" }}
 {{- end }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.controlPlaneService.name | quote }}
+  name: {{ $control.name | default "control" | quote }}
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
     app.kubernetes.io/component: control-plane
@@ -17,13 +24,13 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-    - port: {{ .Values.controlPlaneService.port }}
+    - port: {{ $control.port | default 8080 }}
       targetPort: http
       protocol: TCP
       name: http
   selector:
-    {{- if .Values.controlPlaneService.selector }}
-    {{- toYaml .Values.controlPlaneService.selector | nindent 4 }}
+    {{- if $control.selector }}
+    {{- toYaml $control.selector | nindent 4 }}
     {{- else }}
     {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: proxy
