@@ -67,7 +67,7 @@ app.kubernetes.io/name: agentapi-session
 agentapi.proxy/session-id: <session-id>
 ```
 
-一方、session Pod内のprovisionerは既定で次の固定Service名を参照する。
+変更前のversionで作成されたsession Pod内のprovisionerは、次の旧Service名を参照する。
 
 ```text
 http://agentapi-proxy.<namespace>.svc.cluster.local:8080
@@ -214,7 +214,7 @@ election対象でない処理もある前提で、toolが旧側停止→新側�
 - external Secretのname/key参照
 - PVCのBound状態と代表データread
 - 旧backend経由と新backend経由のsession ID集合が一致
-- 新規sessionのcallback先が`ccplant-backend`
+- 新規sessionのcallback先が`control`
 - background workerが新旧で二重実行されていない
 
 一定時間連続して成功するまでfinalizeを禁止する。
