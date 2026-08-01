@@ -22,7 +22,7 @@ helm install ccplant oci://ghcr.io/ccplant/charts/ccplant \
 ```
 
 `backend.*`と`frontend.*`以下には各コンポーネントChartのvaluesを指定できます。
-明示的な最小構成例は [`values-minimal.yaml`](values-minimal.yaml) を参照してください。
+デフォルトの `values.yaml` がこの最小構成を定義しています。
 
 注意事項:
 
