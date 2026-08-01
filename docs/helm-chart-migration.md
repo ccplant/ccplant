@@ -1,105 +1,124 @@
 # 分離 Helm Chart から ccplant Chart への移行設計
 
-## 目的
+## 方針
 
-`agentapi-proxy` と `agentapi-ui` を別々の Helm Release として管理している環境を、
-単一の `ccplant` Release へ安全に移行する。次を設計上の要件とする。
+`agentapi-proxy` と `agentapi-ui` の Deployment など、Helm が生成した再作成可能な
+resource は維持しない。短い停止時間を許容し、旧 Release を削除してから単一の
+`ccplant` Release を新規 install する。
 
-- 既存の Secret、PVC、Service endpoint、認証設定を保持する
-- 通常構成ではローリング更新相当の停止時間に抑える
-- 実行前に values と Kubernetes resource の差分を機械的に検査できる
-- 途中失敗から旧 Release 管理へ戻せる
-- dry-run、再実行、監査ログを標準で提供する
+保護対象は次に限定する。
 
-本書の「分離 Release」は既定で次を指すが、実際の名前は CLI option で変更できる。
+- proxy が実行時に作成した session、設定、認証情報などの resource
+- 外部から参照している Secret
+- PVC など再作成するとデータを失う resource
+- 既存 session が固定名で参照する Service、ServiceAccount、Secret
 
-| component | Release | Chart |
-|---|---|---|
-| backend | `agentapi-proxy` | `agentapi-proxy` |
-| frontend | `agentapi-ui` | `agentapi-ui` |
-| 移行先 | `ccplant` | `ccplant` |
+移行先は同じ namespace とする。namespace 自体は削除しない。
 
-## 現状の制約
+## 何が残り、何が消えるか
 
-`ccplant` は component Chart を `backend`、`frontend` という alias で参照している。
-values は原則として次のように移せる。
+### 再作成する Helm resource
+
+- backend/frontend Deployment、Service、Ingress
+- Helm 管理のServiceAccount、Role、RoleBinding、ConfigMap
+- Helm manifest に含まれる生成Secret
+- optionalなSCIA、asset serverなどのworkload
+
+### そのまま保持するruntime resource
+
+proxyがKubernetes APIで作成する以下のresourceはHelm release manifestに含まれないため、
+通常の`helm uninstall`では削除されない。
+
+- `agentapi-session-*` Service、Pod/Deployment、PVC、settings Secret
+- task、task group、memory、schedule、webhook、SlackBot
+- settings、credentials、API token、personal API key
+- session profile、sandbox policy、team config、user/team mapping
+- `agentapi-agent-files-*`、`agentapi-user-files-*`
+- notification subscription、SCIAのdynamic user Secret
+
+session専用Secretはsession ServiceをOwnerReferenceに持つ。移行中にsession Serviceを
+削除しないことが、Secretを保持する条件になる。
+
+## 既存sessionとの互換性
+
+既存sessionはRelease名ではなく、固定ラベルで再検出される。
 
 ```yaml
-# agentapi-proxy-values.yaml
-replicaCount: 2
-redis:
-  enabled: true
+app.kubernetes.io/managed-by: agentapi-proxy
+app.kubernetes.io/name: agentapi-session
+agentapi.proxy/session-id: <session-id>
 ```
 
-```yaml
-# ccplant-values.yaml
-backend:
-  replicaCount: 2
-  redis:
-    enabled: true
+一方、session Pod内のprovisionerは既定で次の固定Service名を参照する。
+
+```text
+http://agentapi-proxy.<namespace>.svc.cluster.local:8080
 ```
 
-ただし values の入れ子化だけでは in-place migration はできない。サブチャートから見た
-`.Release.Name` が `ccplant` になるため、既定では次が変わる。
-
-- resource name: `agentapi-proxy` → `ccplant-agentapi-proxy`
-- selector label: `app.kubernetes.io/instance: agentapi-proxy` → `ccplant`
-- Helm ownership annotation:
-  `meta.helm.sh/release-name: agentapi-proxy` → `ccplant`
-
-Deployment の selector は immutable なので、稼働中のリソースに新しい manifest をそのまま
-適用する方式は失敗する。また、ownership 移管後に旧 Release を `helm uninstall` すると、
-旧 Release の保存済み manifest に含まれるリソースが削除される。したがって、chart の
-互換機能と専用の移行ツールをセットで提供する。
-
-## 提案する chart 互換機能
-
-両 component Chart に `instanceOverride` を追加する。
+また、session Podは`agentapi-proxy-session` ServiceAccountを使用する。したがって移行先
+valuesではbackendのresource名を維持し、frontendの接続先を明示する。
 
 ```yaml
 backend:
   fullnameOverride: agentapi-proxy
-  instanceOverride: agentapi-proxy
+
 frontend:
-  fullnameOverride: agentapi-ui
-  instanceOverride: agentapi-ui
+  config:
+    proxyUrl: http://agentapi-proxy:8080
 ```
 
-`instanceOverride` は selector と Pod template の
-`app.kubernetes.io/instance` の両方にだけ適用し、未指定時は従来どおり
-`.Release.Name` を使う。`fullnameOverride` は既存機能を利用する。
+Deployment自体は再作成され、selectorの継続性は要求しない。必要なのはService DNS名と
+session用ServiceAccount/RBACの再作成である。
 
-ccplant Chart には操作を簡略化する preset を追加する。
+## Secret互換性
 
-```yaml
-migration:
-  preserveLegacyIdentity: false
-  legacyBackendRelease: agentapi-proxy
-  legacyFrontendRelease: agentapi-ui
-```
+Secretを次の4種類に分類する。
 
-`preserveLegacyIdentity=true` の場合、明示指定されていない
-`backend.fullnameOverride` / `backend.instanceOverride` と frontend 側の値だけを補完する。
-ただし Helm の values だけでサブチャート values を動的に書き換えるのは避け、実装時は
-親 chart の JSON schema と migration CLI が上記 4 値を生成する方式を第一候補とする。
-これにより通常 install の chart 挙動を複雑にしない。
+| 種類 | 例 | 処理 |
+|---|---|---|
+| session専用 | `agentapi-session-*-settings`、webhook payload | 保持 |
+| application data | task、schedule、credentials、API token | 保持 |
+| 外部参照 | OAuth、GitHub PEM、Slack、cookie暗号鍵 | 同じname/keyを再利用 |
+| Helm生成 | GitHub session/config、SCIA credential | 同じ入力から再生成 |
 
-互換 mode は恒久利用可能とする。identity を後で `ccplant` に変更することには
-Deployment の再作成と Service の切り替えが必要で、Release 統合とは別作業として扱う。
+暗号化済みデータには、同じ暗号方式と鍵が必須である。
+
+- `AGENTAPI_ENCRYPTION_KEY`または`config.encryption.key`
+- KMS key ID、region、IAM権限
+- Git sync用KMS設定
+
+移行ツールはSecret値を表示・複製せず、参照先のname/key、暗号方式、key fingerprintを
+比較する。install後は実際のsettings/credential復号をprobeする。
+
+## PVCの例外
+
+runtime生成のsession PVCは残る。一方、Helm manifestに直接含まれるasset PVCなどは
+`helm uninstall`で削除され得る。Redis StatefulSetのvolumeClaimTemplate由来PVCも含め、
+実際の保持動作だけに依存せずpreflightで全PVCを分類する。
+
+- データ不要: 再作成を許可
+- snapshot/backup可能: backup完了後に移行
+- 保持必須: 旧Releaseを削除する前にretain可能な構成へupgradeする
+- 分類不能: 移行をblockする
+
+保持必須PVC向けにcomponent Chartへ`helm.sh/resource-policy: keep`を設定できる
+`persistence.retainOnDelete`相当のoptionを追加する。古いChartが対応しない場合は、まず
+同じ分離Release名のまま互換Chartへupgradeしてからuninstallする。
 
 ## サポートツール
 
-`agentapi-proxy helm migrate` サブコマンドを追加し、次の lifecycle を提供する。
+`agentapi-proxy helm migrate`に次のsubcommandを追加する。
 
 ```text
 agentapi-proxy helm migrate plan
-agentapi-proxy helm migrate adopt
+agentapi-proxy helm migrate backup
+agentapi-proxy helm migrate cutover
 agentapi-proxy helm migrate verify
-agentapi-proxy helm migrate finalize
 agentapi-proxy helm migrate rollback
+agentapi-proxy helm migrate finalize
 ```
 
-共通 option:
+共通option:
 
 ```text
 --namespace <namespace>
@@ -110,158 +129,106 @@ agentapi-proxy helm migrate rollback
 --version <exact-version>
 --values-out ccplant-values.yaml
 --state-secret ccplant-migration-state
---yes
 --output text|json
+--yes
 ```
 
 ### `plan`
 
-read-only で次を行う。
+read-onlyで以下を行う。
 
-1. 旧 Release の最新 deployed revision と user-supplied values を Helm storage Secret から読む
-2. backend values を `backend.*`、frontend values を `frontend.*` に格納する
-3. image tag など、ccplant defaults で上書きされる値も旧 Release の実効値を優先する
-4. `fullnameOverride` と `instanceOverride` を生成する
-5. Secret reference の存在と key を既存の `doctor` ロジックで検査する
-6. 旧 manifest と移行先 manifest の resource identity、selector、PVC、Service port を比較する
-7. cluster-scoped resource の衝突、hook、`lookup`、CRD、pending Helm operation を検出する
-8. 移行可能性と blocking reason を text または JSON で出力する
+1. 旧Release revision、values、manifestを読む
+2. backend valuesを`backend.*`、frontend valuesを`frontend.*`へ変換する
+3. `backend.fullnameOverride`と`frontend.config.proxyUrl`を設定する
+4. cluster resourceを`recreate`、`retain`、`backup`、`block`に分類する
+5. runtime Secret/PVCに旧Helm ownershipが誤って付いていないか検査する
+6. Secret reference、暗号設定、Service DNS、ServiceAccount名を検査する
+7. install先manifestに必要なRBACがあることを検査する
+8. session ID、data Secret UID、PVC UIDのbaselineを保存する
 
-機密値は values 出力へ複製しない。旧 values に平文の機密値がある場合は warning とし、
-可能なら既存 Secret reference へ変換する候補だけを示す。
+target chartはversionだけでなくOCI digestまで固定する。
 
-`plan` の成功条件は、移行対象の全 resource が次のいずれかに分類されることとする。
+### `backup`
 
-- `adopt`: identity と spec が互換で ownership のみ変更
-- `update`: immutable field を維持したまま更新可能
-- `create`: ccplant で新規作成
-- `retain`: Helm 管理外の Secret/PVC としてそのまま参照
-- `remove-after-cutover`: 旧 chart のみにあり、finalize 後に削除可能
+- 旧Helm storage Secretと生成valuesを保存
+- application Secretはmetadata、key名、content hashだけをstate Secretへ保存
+- Secret本体と保持必須PVCは暗号化された外部backup/snapshotを要求
+- session ID、resource UID、OwnerReferenceを記録
+- backup未完了のresourceがあればcutoverを許可しない
 
-分類不能、immutable field 差分、同名の第三者所有 resource は block する。
+### `cutover`
 
-### `adopt`
+```text
+1. 新規作成を停止し、session/resource inventoryを再取得
+2. 必要に応じてbackend/frontendをscale down
+3. helm uninstall agentapi-ui
+4. helm uninstall agentapi-proxy
+5. runtime resourceと保持対象の存在・UIDを再確認
+6. helm install ccplant ... -f ccplant-values.yaml
+7. rolloutを待ち、health checkを開始
+```
 
-`plan` が生成した plan ID と完全一致する cluster state に対してだけ実行する。
-
-1. 旧 Helm storage Secret、対象 resource の UID/resourceVersion/manifest、生成 values を
-   migration state Secret に gzip 圧縮して保存する
-2. 対象 resource に migration ID と元 Release の annotation を追加する
-3. `meta.helm.sh/release-name`、`meta.helm.sh/release-namespace`、
-   `app.kubernetes.io/managed-by` を target Release 用に patch する
-4. target Release を compatibility values で作成または upgrade する
-5. rollout と application health check を実行する
-
-resource ごとの patch は UID precondition 相当の検査を行う。途中失敗時は自動で
-ownership を戻し、旧 Release を同じ revision/values で reconcile する。
-
-`helm upgrade --install --atomic` は採用済みリソースを失敗時に削除する危険があるため
-直接使わない。ツールが明示的な transaction log と compensating action を管理する。
+namespaceは削除しない。uninstall直後にsession Service、settings Secret、data Secret、PVCの
+いずれかが消えた場合はinstallへ進まずrollbackする。
 
 ### `verify`
 
-次を検査し、一定時間連続して成功した場合だけ finalize を許可する。
+- target Releaseがdeployed
+- backend/frontend rolloutとService endpoint
+- 移行前後のsession ID集合とruntime resource UIDが一致
+- 既存sessionへのroute、message送信、Pod再起動後の再provision
+- settings、credentialsの復号
+- API token認証
+- task/memory/schedule/webhook等の件数と代表read
+- external Secretのname/key参照
+- PVCのBound状態と代表データread
 
-- target Release が deployed
-- Deployment rollout 完了、Service endpoint 有効
-- backend health endpoint と frontend HTTP endpoint
-- Secret reference と PVC binding
-- 対象 resource の Helm ownership がすべて target Release
-- 旧 Release 作成の session workload が backend から参照可能
-- optional worker/Redis/SCIA/asset workload の期待数
-
-`--probe-url`、`--wait`、`--success-window` で環境固有 probe を追加できるようにする。
-
-### `finalize`
-
-旧 Release を `helm uninstall` してはいけない。verify 済み plan に対して以下を行う。
-
-1. 旧 Release の Helm storage Secret を state Secret と外部 backup file に保存済みか確認する
-2. 旧 Release の `sh.helm.release.v1.*` Secret のみを削除する
-3. migration annotation を audit 用の完了 annotation に置換する
-4. state Secret に完了時刻、chart digest、resource UID、probe 結果を記録する
-
-PVC、application Secret、workload は削除しない。state Secret の既定保持期間は 30 日とする。
+一定時間連続して成功するまでfinalizeを禁止する。
 
 ### `rollback`
 
-finalize 前を標準の rollback window とする。
+1. `helm uninstall ccplant`
+2. 旧backend/frontend Releaseを保存したversion/valuesで再install
+3. 必要なPVC/Secretをbackupから復元
+4. session DNS、RBAC、復号、APIを検証
 
-1. ccplant で新規作成された resource だけを削除する
-2. adoption 対象の ownership annotation を元 Release へ戻す
-3. 保存した旧 Helm storage Secret を復元する
-4. 両旧 Release を保存 revision/values で upgrade し reconcile する
-5. rollout と health check を実行する
+runtime resourceはrollback中も削除しない。ccplant稼働後に新規作成されたdata resourceが
+ある場合は自動削除せず、旧backendとのschema互換性を検査する。
 
-finalize 後も state Secret が残る間は同じ操作を可能にするが、ccplant 移行後に spec を
-変更している場合は `--force` なしでは停止する。
+### `finalize`
 
-## 推奨移行パス
+移行stateに完了時刻、chart digest、probe結果を記録する。backupとstate Secretは既定で
+30日保持する。
 
-### Phase 0: chart と CLI の準備
+## 移行手順
 
-- `instanceOverride` を component Chart と schema に追加
-- selector/name compatibility の render test を追加
-- `helm migrate plan/adopt/verify/finalize/rollback` を実装
-- 同一 chart version/digest を plan から finalize まで固定
+1. stagingでproduction相当のresource構成を再現してrollbackまで試験
+2. productionで`doctor`と`helm migrate plan`を実行
+3. Secret/PVC backupを取得
+4. maintenance windowで`cutover`
+5. `verify`を実行し、通常運用周期を観察
+6. 問題がなければ`finalize`
 
-### Phase 1: staging rehearsal
-
-production の Helm values と Secret/PVC の metadata を複製した namespace で plan から
-rollback まで実施する。実データの Secret 内容は複製しない。
-
-### Phase 2: production preflight
-
-```bash
-agentapi-proxy doctor -n production \
-  --release agentapi-proxy \
-  --release agentapi-ui
-
-agentapi-proxy helm migrate plan \
-  --namespace production \
-  --version 0.3.1 \
-  --values-out ccplant-values.yaml
-```
-
-plan JSON、生成 values、旧 Release revision、chart digest を変更管理記録へ添付する。
-
-### Phase 3: cutover
-
-変更凍結期間に `adopt` を実行する。API/UI の外部 hostname と Service name は compatibility
-values により維持するため、DNS や Ingress の同時切り替えは不要とする。
-
-### Phase 4: observation と finalize
-
-最低 1 回の通常運用周期（推奨 24 時間）は旧 Helm storage を残す。問題がなければ
-`verify`、`finalize` の順で実行する。
-
-## 非対応・別手順となるケース
-
-- namespace をまたぐ移行
-- backend/frontend が異なる namespace にある構成
-- 同一 component を複数 Release 配置して 1 Release に統合する構成
-- chart 外で selector/name を変更した resource
-- Helm 以外の controller が ownership annotation を継続的に上書きする構成
-- migration と同時の PVC StorageClass、Service type、hostname の変更
-
-これらは blue/green deploy とデータ移送を使う。Release 統合と application upgrade、
-resource rename、storage migration を同時に行わない。
+停止時間は旧Releaseの削除からccplantのbackend/frontendがReadyになるまで。session Podは
+原則稼働を続けるが、その間のAPI/SSE接続は切断されるためclient再接続を前提とする。
 
 ## テスト戦略
 
-- unit: values nesting、Secret redaction、resource classification、state machine、再実行
-- golden: 分離 manifest と compatibility mode の名前・selector・Service/PVC 一致
-- integration (kind): plan → adopt → verify → rollback
-- integration (kind): plan → adopt → verify → finalize、旧 storage Secret だけが消えること
-- fault injection: 各 resource patch 後、target install 中、rollout timeout 時の復旧
-- upgrade matrix: サポート対象の直近 2 minor の分離 Chart から最新 ccplant へ
+- golden: values変換、固定backend Service名、frontend proxy URL
+- kind: runtime resource作成後に旧Releaseをuninstallし、UIDが維持されること
+- kind: ccplant install後に既存sessionを列挙・操作できること
+- kind: settings/credentials/API token/task/schedule等の再読込
+- kind: session Pod再起動後のprovision成功
+- PVC: retain、snapshot/restore、blockの各経路
+- fault injection: 各uninstall後、install失敗、rollout timeout時のrollback
+- version matrix: サポート対象の直近2 minorから最新ccplantへ移行
 
-## リリース条件
+## 非対応
 
-最初は `experimental` とし、次を満たした後に stable とする。
+- namespaceをまたぐ移行
+- namespace削除を伴う移行
+- application data schemaのmigrationを同時に行う移行
+- storage class変更やPVC resizeを同時に行う移行
+- 複数の同一component Releaseを1つへ統合する移行
 
-- kind integration を CI で継続実行
-- staging と production 各 2 環境以上で成功
-- rollback drill 成功
-- migration state の機密情報レビュー完了
-- 対応元 chart version と support window を公開
+これらは別途データ移送を伴うblue/green手順を使用する。
