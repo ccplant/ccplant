@@ -90,10 +90,11 @@ agentapi-proxy doctor -n agentapi-ui \
 ```
 
 The command uses the standard Kubernetes client configuration resolution
-(in-cluster credentials or `KUBECONFIG`) and exits non-zero if a release,
-Secret, key, or value is missing. It also performs non-blocking checks for
-sensitive-looking literal values, Deployment readiness, and ready Service
-endpoints. These checks are reported as `WARN` and do not change the exit code.
+(in-cluster credentials or `KUBECONFIG`) and exits non-zero if a release or
+startup Deployment is unavailable, or if a startup-required Secret, key, or
+value is missing. Secrets for optional features such as GitHub, VAPID, SCIA,
+Slack, and ingress TLS are reported as `WARN` when incomplete. Sensitive-looking
+literal values and missing Service endpoints are also non-blocking warnings.
 
 ### Configuration
 

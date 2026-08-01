@@ -48,9 +48,10 @@ type helmReleaseInfo struct {
 }
 
 type secretReference struct {
-	Path string
-	Name string
-	Keys []string
+	Path     string
+	Name     string
+	Keys     []string
+	Required bool
 }
 
 type doctorFinding struct {
@@ -141,11 +142,11 @@ func diagnoseHelmRelease(ctx context.Context, client kubernetes.Interface, names
 	for _, ref := range references {
 		secret, getErr := client.CoreV1().Secrets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(getErr) {
-			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q does not exist", ref.Name)})
+			findings = append(findings, secretReferenceFailure(ref, fmt.Sprintf("Secret %q does not exist", ref.Name)))
 			continue
 		}
 		if getErr != nil {
-			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("read Secret %q: %v", ref.Name, getErr)})
+			findings = append(findings, secretReferenceFailure(ref, fmt.Sprintf("read Secret %q: %v", ref.Name, getErr)))
 			continue
 		}
 		findings = append(findings, validateSecretReference(ref, secret)...)
@@ -226,19 +227,24 @@ func discoverSecretReferences(values map[string]any) []secretReference {
 				switch {
 				case key == "secretName" || key == "existingSecret":
 					if name, ok := nonEmptyString(child); ok {
-						addSecretReference(refs, secretReference{childPath, name, siblingSecretKeys(typed)})
+						addSecretReference(refs, secretReference{
+							Path:     childPath,
+							Name:     name,
+							Keys:     siblingSecretKeys(typed),
+							Required: requiredSecretReference(childPath, typed),
+						})
 					}
 				case isSecretRefKey(key):
 					if refMap, ok := child.(map[string]any); ok {
 						if name, ok := nonEmptyString(refMap["name"]); ok {
-							addSecretReference(refs, secretReference{childPath, name, siblingSecretKeys(refMap)})
+							addSecretReference(refs, secretReference{Path: childPath, Name: name, Keys: siblingSecretKeys(refMap)})
 						}
 					}
 				case strings.HasSuffix(strings.ToLower(key), "secretnames"):
 					if names, ok := child.([]any); ok {
 						for index, item := range names {
 							if name, ok := nonEmptyString(item); ok {
-								addSecretReference(refs, secretReference{fmt.Sprintf("%s[%d]", childPath, index), name, nil})
+								addSecretReference(refs, secretReference{Path: fmt.Sprintf("%s[%d]", childPath, index), Name: name})
 							}
 						}
 					}
@@ -285,8 +291,16 @@ func siblingSecretKeys(values map[string]any) []string {
 }
 
 func addSecretReference(refs map[string]secretReference, ref secretReference) {
-	identity := ref.Path + "\x00" + ref.Name + "\x00" + strings.Join(ref.Keys, "\x00")
+	identity := ref.Path + "\x00" + ref.Name + "\x00" + strings.Join(ref.Keys, "\x00") + "\x00" + strconv.FormatBool(ref.Required)
 	refs[identity] = ref
+}
+
+func requiredSecretReference(path string, parent map[string]any) bool {
+	if !strings.HasSuffix(path, "cookieEncryptionSecret.secretName") {
+		return false
+	}
+	enabled, _ := parent["enabled"].(bool)
+	return enabled
 }
 
 func validateSecretReference(ref secretReference, secret *corev1.Secret) []doctorFinding {
@@ -296,7 +310,7 @@ func validateSecretReference(ref secretReference, secret *corev1.Secret) []docto
 				return []doctorFinding{{OK: true, Subject: ref.Path, Message: fmt.Sprintf("Secret %q exists and contains data", ref.Name)}}
 			}
 		}
-		return []doctorFinding{{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q exists but contains no non-empty data", ref.Name)}}
+		return []doctorFinding{secretReferenceFailure(ref, fmt.Sprintf("Secret %q exists but contains no non-empty data", ref.Name))}
 	}
 
 	findings := make([]doctorFinding, 0, len(ref.Keys))
@@ -304,14 +318,18 @@ func validateSecretReference(ref secretReference, secret *corev1.Secret) []docto
 		value, exists := secret.Data[key]
 		switch {
 		case !exists:
-			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q is missing key %q", ref.Name, key)})
+			findings = append(findings, secretReferenceFailure(ref, fmt.Sprintf("Secret %q is missing key %q", ref.Name, key)))
 		case len(value) == 0:
-			findings = append(findings, doctorFinding{OK: false, Subject: ref.Path, Message: fmt.Sprintf("Secret %q key %q is empty", ref.Name, key)})
+			findings = append(findings, secretReferenceFailure(ref, fmt.Sprintf("Secret %q key %q is empty", ref.Name, key)))
 		default:
 			findings = append(findings, doctorFinding{OK: true, Subject: ref.Path, Message: fmt.Sprintf("Secret %q key %q exists and is non-empty", ref.Name, key)})
 		}
 	}
 	return findings
+}
+
+func secretReferenceFailure(ref secretReference, message string) doctorFinding {
+	return doctorFinding{OK: false, Warning: !ref.Required, Subject: ref.Path, Message: message}
 }
 
 func inspectSensitiveLiterals(values map[string]any) []doctorFinding {
@@ -375,18 +393,18 @@ func inspectOptionalWorkload(ctx context.Context, client kubernetes.Interface, n
 	deployment, err := client.AppsV1().Deployments(namespace).Get(ctx, releaseName, metav1.GetOptions{})
 	switch {
 	case apierrors.IsNotFound(err):
-		findings = append(findings, doctorFinding{Warning: true, Subject: "optional deployment", Message: fmt.Sprintf("Deployment %q was not found", releaseName)})
+		findings = append(findings, doctorFinding{OK: false, Subject: "deployment", Message: fmt.Sprintf("Deployment %q was not found", releaseName)})
 	case err != nil:
-		findings = append(findings, doctorFinding{Warning: true, Subject: "optional deployment", Message: fmt.Sprintf("read Deployment %q: %v", releaseName, err)})
+		findings = append(findings, doctorFinding{OK: false, Subject: "deployment", Message: fmt.Sprintf("read Deployment %q: %v", releaseName, err)})
 	default:
 		desired := int32(1)
 		if deployment.Spec.Replicas != nil {
 			desired = *deployment.Spec.Replicas
 		}
 		if deployment.Status.ReadyReplicas != desired {
-			findings = append(findings, doctorFinding{Warning: true, Subject: "optional deployment", Message: fmt.Sprintf("Deployment %q has %d/%d ready replicas", releaseName, deployment.Status.ReadyReplicas, desired)})
+			findings = append(findings, doctorFinding{OK: false, Subject: "deployment", Message: fmt.Sprintf("Deployment %q has %d/%d ready replicas", releaseName, deployment.Status.ReadyReplicas, desired)})
 		} else {
-			findings = append(findings, doctorFinding{OK: true, Subject: "optional deployment", Message: fmt.Sprintf("Deployment %q has %d/%d ready replicas", releaseName, deployment.Status.ReadyReplicas, desired)})
+			findings = append(findings, doctorFinding{OK: true, Subject: "deployment", Message: fmt.Sprintf("Deployment %q has %d/%d ready replicas", releaseName, deployment.Status.ReadyReplicas, desired)})
 		}
 	}
 

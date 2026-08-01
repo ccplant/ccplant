@@ -10,12 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestDiagnoseHelmReleaseChecksReferencedSecretData(t *testing.T) {
+	replicas := int32(1)
 	values := map[string]any{
 		"config": map[string]any{
 			"oauth": map[string]any{
@@ -31,6 +33,11 @@ func TestDiagnoseHelmReleaseChecksReferencedSecretData(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(
 		helmReleaseSecret(t, "example", 1, "deployed", values),
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "example", Namespace: "test"},
+			Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+			Status:     appsv1.DeploymentStatus{ReadyReplicas: replicas},
+		},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "auth", Namespace: "test"}, Data: map[string][]byte{"client-secret": []byte("present")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "runtime-env", Namespace: "test"}, Data: map[string][]byte{"TOKEN": []byte("present")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "tls-cert", Namespace: "test"}, Data: map[string][]byte{"tls.crt": []byte("present")}},
@@ -107,6 +114,38 @@ func TestDiagnoseHelmReleaseReportsMissingAndEmptySecretValues(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("findings do not contain %q:\n%s", expected, joined)
 		}
+	}
+	for _, finding := range findings {
+		if strings.Contains(finding.Subject, "tokenRef") || strings.Contains(finding.Subject, "privateKeyRef") || strings.Contains(finding.Subject, "existingSecret") {
+			if !finding.Warning {
+				t.Errorf("optional Secret finding should be a warning: %+v", finding)
+			}
+		}
+	}
+}
+
+func TestDiagnoseHelmReleaseFailsForEnabledCookieEncryptionSecret(t *testing.T) {
+	values := map[string]any{
+		"cookieEncryptionSecret": map[string]any{
+			"enabled":    true,
+			"secretName": "cookie-secret",
+			"secretKey":  "cookie-encryption-secret",
+		},
+	}
+	client := fake.NewSimpleClientset(helmReleaseSecret(t, "agentapi-ui", 1, "deployed", values))
+
+	findings, err := diagnoseHelmRelease(context.Background(), client, "test", "agentapi-ui")
+	if err != nil {
+		t.Fatalf("diagnoseHelmRelease() error = %v", err)
+	}
+	foundRequiredFailure := false
+	for _, finding := range findings {
+		if strings.Contains(finding.Subject, "cookieEncryptionSecret") && !finding.OK && !finding.Warning {
+			foundRequiredFailure = true
+		}
+	}
+	if !foundRequiredFailure {
+		t.Fatalf("required cookie encryption Secret failure was not reported: %+v", findings)
 	}
 }
 
