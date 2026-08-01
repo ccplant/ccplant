@@ -4,6 +4,6 @@ dependencies:
   version: 0.3.0
 - name: agentapi-ui
   repository: file://../../frontend/helm/agentapi-ui
-  version: v0.1.0
-digest: sha256:b21bea02a33fd4c8181cc47d0522bf1a34f5e25b323f391d6343484269f4f46b
-generated: "2026-07-29T23:45:48.812940717Z"
+  version: 0.1.0
+digest: sha256:c1ab95c6dbcb20b1c9af9b6765d28e3bfe5bc5276e6d2bcfbbfa4506d4030cce
+generated: "2026-08-01T06:01:11.608873178Z"

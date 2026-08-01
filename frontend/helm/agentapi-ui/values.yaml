@@ -139,14 +139,9 @@ env: []
 # - name: API_URL
 #   value: "https://api.example.com"
 
-# Encryption key configuration
-encryptionKey:
-  # Enable encryption key from secret
-  enabled: true
-  # Name of the Kubernetes secret containing the encryption key
-  secretName: "agentapi-ui-encryption"
-  # Key within the secret that contains the encryption key
-  secretKey: "encryption-key"
+envFrom: []
+# - secretRef:
+#     name: agentapi-ui-runtime-secrets
 
 # Cookie encryption secret configuration
 cookieEncryptionSecret:
@@ -167,6 +162,11 @@ oauthOnlyMode:
 
 # Application configuration (runtime settings via /api/config)
 config:
+  # Public URL used for OAuth callbacks and CORS. When empty, it is derived
+  # from hostname and the ingress TLS settings.
+  publicUrl: ""
+  # Internal AgentAPI proxy URL. When empty, the umbrella release service is used.
+  proxyUrl: ""
   # Authentication mode: 'oauth_only' | 'api_key' | 'both'
   # Note: If oauthOnlyMode.enabled is true, this will be overridden to 'oauth_only'
   authMode: "both"
