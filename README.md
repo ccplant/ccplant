@@ -41,3 +41,6 @@ version/appVersionを維持し、`backend`と`frontend`の名前で個別にリ�
 
 新モノレポを正とし、`backend/`と`frontend/`はそれぞれ旧リポジトリへ
 同期PRとしてバックポートします。詳細は[移行手順](docs/migration.md)を参照してください。
+
+分離した `agentapi-proxy` / `agentapi-ui` Helm Release から統合 `ccplant`
+Release へ移す場合は、[Helm Chart 移行設計](docs/helm-chart-migration.md)を参照してください。
