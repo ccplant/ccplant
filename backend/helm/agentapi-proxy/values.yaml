@@ -248,6 +248,9 @@ resources:
 github:
   # GitHub Personal Access Token (GitHub App を使わない場合)
   token: ""
+  tokenRef:
+    name: ""
+    key: "github-token"
 
   # GitHub Enterprise Server を使用する場合は true に設定
   enterprise:
@@ -293,6 +296,9 @@ config:
       oauth:
         clientId: ""
         clientSecret: ""
+        clientSecretRef:
+          name: ""
+          key: "client-secret"
         scope: "read:user read:org project"
         baseUrl: ""
         # 許可するリダイレクトURI (カンマ区切りで複数指定可能)
@@ -309,6 +315,9 @@ config:
     publicKey: ""
     # VAPID 秘密鍵 (Web Push 通知用)
     privateKey: ""
+    privateKeyRef:
+      name: ""
+      key: "vapid-private-key"
     # VAPID 連絡先メールアドレス
     contactEmail: ""
 

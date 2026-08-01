@@ -48,6 +48,19 @@ assert_contains 'value: "http://agentapi-ui.local"' "$TMP_DIR/frontend-default.y
 assert_not_contains 'name: NEXT_PUBLIC_ALLOWED_ORIGINS' "$TMP_DIR/frontend-default.yaml"
 assert_contains 'key: cookie-encryption-secret' "$TMP_DIR/frontend-default.yaml"
 
+# Sensitive runtime values can be supplied without being stored in Helm values.
+"$HELM_BIN" template backend-secrets "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set config.auth.github.oauth.clientSecretRef.name=backend-runtime \
+  --set config.auth.github.oauth.clientSecretRef.key=oauth-client-secret \
+  --set github.tokenRef.name=backend-runtime \
+  --set config.vapid.privateKeyRef.name=backend-runtime >"$TMP_DIR/backend-secrets.yaml"
+assert_contains 'name: "backend-runtime"' "$TMP_DIR/backend-secrets.yaml"
+assert_contains 'key: "oauth-client-secret"' "$TMP_DIR/backend-secrets.yaml"
+
+"$HELM_BIN" template frontend-secrets "$REPO_ROOT/frontend/helm/agentapi-ui" \
+  --set envFrom[0].secretRef.name=frontend-runtime >"$TMP_DIR/frontend-secrets.yaml"
+assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"
+
 # Stock inventory must receive leader-election RBAC even when other workers and
 # Kubernetes session creation are disabled explicitly.
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \

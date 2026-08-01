@@ -139,6 +139,10 @@ env: []
 # - name: API_URL
 #   value: "https://api.example.com"
 
+envFrom: []
+# - secretRef:
+#     name: agentapi-ui-runtime-secrets
+
 # Cookie encryption secret configuration
 cookieEncryptionSecret:
   # Enable cookie encryption secret from secret

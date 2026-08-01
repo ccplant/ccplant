@@ -92,6 +92,12 @@ spec:
               {{- end }}
               value: {{ $clientId | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
+              {{- if .Values.config.auth.github.oauth.clientSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.config.auth.github.oauth.clientSecretRef.name | quote }}
+                  key: {{ .Values.config.auth.github.oauth.clientSecretRef.key | quote }}
+              {{- else }}
               {{- $clientSecret := .Values.config.auth.github.oauth.clientSecret }}
               {{- if .Values.global }}
                 {{- if .Values.global.github }}
@@ -110,6 +116,7 @@ spec:
                 {{- end }}
               {{- end }}
               value: {{ $clientSecret | quote }}
+              {{- end }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE
               value: {{ .Values.config.auth.github.oauth.scope | quote }}
             - name: AGENTAPI_AUTH_GITHUB_OAUTH_BASE_URL
@@ -487,7 +494,13 @@ spec:
               value: {{ .Values.config.encryption.key | quote }}
             {{- end }}
             # GitHub Token configuration (for backward compatibility)
-            {{- if .Values.github.token }}
+            {{- if .Values.github.tokenRef.name }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.github.tokenRef.name | quote }}
+                  key: {{ .Values.github.tokenRef.key | quote }}
+            {{- else if .Values.github.token }}
             - name: GITHUB_TOKEN
               value: {{ .Values.github.token | quote }}
             {{- end }}
@@ -506,7 +519,13 @@ spec:
             - name: VAPID_PUBLIC_KEY
               value: {{ .Values.config.vapid.publicKey | quote }}
             {{- end }}
-            {{- if .Values.config.vapid.privateKey }}
+            {{- if .Values.config.vapid.privateKeyRef.name }}
+            - name: VAPID_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.config.vapid.privateKeyRef.name | quote }}
+                  key: {{ .Values.config.vapid.privateKeyRef.key | quote }}
+            {{- else if .Values.config.vapid.privateKey }}
             - name: VAPID_PRIVATE_KEY
               value: {{ .Values.config.vapid.privateKey | quote }}
             {{- end }}
