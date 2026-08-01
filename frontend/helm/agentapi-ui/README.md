@@ -55,13 +55,15 @@ helm install agentapi-ui ./helm/agentapi-ui \
 
 OAuth Only Modeを有効にすると、APIキーログインが無効になり、GitHub OAuth認証のみが表示されます。
 
+公開URLは通常hostnameとIngress TLS設定から自動生成されます。リバースプロキシなどで
+外部URLが異なる場合は `config.publicUrl` に完全なURLを指定してください。
+
 #### 1. OAuth Only Mode の有効化
 
 ```yaml
 oauthOnlyMode:
   enabled: true  # OAuth Only Mode を有効化
   proxyUrl: "http://agentapi-proxy:8080"  # AgentAPI Proxy の URL
-  publicProxyUrl: ""  # クライアントサイド用URL（省略可能、proxyUrlが使用される）
 ```
 
 #### 2. カスタム設定でのインストール
@@ -70,7 +72,7 @@ oauthOnlyMode:
 helm install agentapi-ui ./helm/agentapi-ui \
   --set oauthOnlyMode.enabled=true \
   --set oauthOnlyMode.proxyUrl=http://my-proxy:8080 \
-  --set oauthOnlyMode.publicProxyUrl=http://my-public-proxy:8080
+  --set config.publicUrl=https://agentapi.example.com
 ```
 
 #### 3. OAuth Only Mode で必要なシークレット

@@ -1,5 +1,8 @@
 ccplant has been installed.
 
+The frontend requires Secret agentapi-ui-encryption with key
+cookie-encryption-secret. See chart/ccplant/README.md for the creation command.
+
 Backend service:
   {{ .Release.Name }}-backend:8080
 

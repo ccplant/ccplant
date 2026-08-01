@@ -79,10 +79,18 @@ spec:
             {{- else }}
               {{- $hostname = .Values.hostname }}
             {{- end }}
-            - name: NEXT_PUBLIC_ALLOWED_ORIGINS
-              value: "https://{{ $hostname }}"
+            {{- $tlsEnabled := false }}
+            {{- if .Values.ingress.tls }}
+              {{- $tlsEnabled = true }}
+            {{- else if and .Values.global .Values.global.ingress .Values.global.ingress.tls }}
+              {{- $tlsEnabled = .Values.global.ingress.tls.enabled | default false }}
+            {{- end }}
+            {{- $scheme := ternary "https" "http" $tlsEnabled }}
+            {{- $publicUrl := .Values.config.publicUrl | default (printf "%s://%s" $scheme $hostname) }}
+            - name: ALLOWED_ORIGINS
+              value: {{ $publicUrl | quote }}
             - name: NEXT_PUBLIC_BASE_URL
-              value: "https://{{ $hostname }}"
+              value: {{ $publicUrl | quote }}
             # Application configuration (runtime settings)
             {{- if .Values.oauthOnlyMode.enabled }}
             - name: AUTH_MODE

@@ -28,5 +28,6 @@ chart-test: chart-deps
 	$(HELM) template frontend frontend/helm/agentapi-ui >/dev/null
 	$(HELM) lint chart/ccplant --strict
 	$(HELM) template ccplant chart/ccplant >/dev/null
+	HELM=$(HELM) ./scripts/test-helm-render.sh
 
 test: backend-test frontend-test chart-test

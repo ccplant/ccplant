@@ -1,0 +1,27 @@
+# The chart defaults are intentionally suitable for a minimal direct-session
+# installation. These entries are shown explicitly for discoverability.
+backend:
+  kubernetesSession:
+    enabled: true
+    pvc:
+      enabled: false
+    otelCollector:
+      enabled: false
+  scia:
+    enabled: false
+  asset:
+    enabled: false
+  scheduleWorker:
+    enabled: false
+  slackbotCleanupWorker:
+    enabled: false
+  stockInventoryWorker:
+    enabled: false
+  redis:
+    enabled: false
+
+frontend:
+  cookieEncryptionSecret:
+    enabled: true
+    secretName: agentapi-ui-encryption
+    secretKey: cookie-encryption-secret
