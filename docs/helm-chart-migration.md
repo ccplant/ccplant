@@ -2,9 +2,9 @@
 
 ## 方針
 
-`agentapi-proxy` と `agentapi-ui` の Deployment など、Helm が生成した再作成可能な
-resource は維持しない。短い停止時間を許容し、旧 Release を削除してから単一の
-`ccplant` Release を新規 install する。
+`agentapi-proxy` と `agentapi-ui` の旧Releaseを残したまま、別名の`ccplant` Releaseを
+同じnamespaceへ先にinstallする。新Releaseが既存のruntime resourceを参照できることを
+検証してから外部トラフィックを切り替え、旧Releaseを段階的にdrain・削除する。
 
 保護対象は次に限定する。
 
@@ -17,7 +17,7 @@ resource は維持しない。短い停止時間を許容し、旧 Release を�
 
 ## 何が残り、何が消えるか
 
-### 再作成する Helm resource
+### 並行稼働後に削除する旧Helm resource
 
 - backend/frontend Deployment、Service、Ingress
 - Helm 管理のServiceAccount、Role、RoleBinding、ConfigMap
@@ -39,6 +39,24 @@ proxyがKubernetes APIで作成する以下のresourceはHelm release manifest�
 session専用Secretはsession ServiceをOwnerReferenceに持つ。移行中にsession Serviceを
 削除しないことが、Secretを保持する条件になる。
 
+## install-firstを可能にするresource名
+
+新旧ReleaseのHelm resourceが衝突しないよう、ccplant側は既定の別名を使う。
+
+| 用途 | 旧Release | 新ccplant Release |
+|---|---|---|
+| backend Service | `agentapi-proxy` | `ccplant-backend` |
+| frontend Service | `agentapi-ui` | `ccplant-frontend` |
+| backend Deployment | `agentapi-proxy` | `ccplant-backend` |
+| frontend Deployment | `agentapi-ui` | `ccplant-frontend` |
+
+`backend.fullnameOverride: agentapi-proxy`はinstall時に衝突するため設定しない。frontendは
+既定で`http://ccplant-backend:8080`を参照できる。
+
+Ingressは同一host/pathの重複を避けるため、新Releaseでは最初は無効にする。shadow検証は
+port-forwardまたは一時的な内部hostnameを使い、cutover時に既存Ingressのbackendを
+`ccplant-frontend`/`ccplant-backend`へ切り替える。
+
 ## 既存sessionとの互換性
 
 既存sessionはRelease名ではなく、固定ラベルで再検出される。
@@ -55,20 +73,26 @@ agentapi.proxy/session-id: <session-id>
 http://agentapi-proxy.<namespace>.svc.cluster.local:8080
 ```
 
-また、session Podは`agentapi-proxy-session` ServiceAccountを使用する。したがって移行先
-valuesではbackendのresource名を維持し、frontendの接続先を明示する。
+新backendも固定ラベルから既存sessionを列挙・操作できる。一方、既存session Podの
+provisioner callback先は作成時の`agentapi-proxy`で固定されるため、旧backendは既存sessionの
+drainが完了するまで残す。新規sessionはcutover後に新backendが作成し、callback先として
+`ccplant-backend`を設定する。
+
+session用ServiceAccount/Role/RoleBindingは現在固定名`agentapi-proxy-session`であり、並行
+installすると衝突する。ccplant Chartに次のoptionを追加し、shadow installでは既存RBACを
+共有する。
 
 ```yaml
 backend:
-  fullnameOverride: agentapi-proxy
-
-frontend:
-  config:
-    proxyUrl: http://agentapi-proxy:8080
+  kubernetesSession:
+    rbac:
+      create: false
+    serviceAccountName: agentapi-proxy-session
 ```
 
-Deployment自体は再作成され、selectorの継続性は要求しない。必要なのはService DNS名と
-session用ServiceAccount/RBACの再作成である。
+旧backendをuninstallする前に、session作成を一時停止してRBACをccplant管理へ引き継ぐか、
+外部管理の共通RBACとしてRelease外へ切り出す。無停止性と安全性のため、共通RBACの外部管理を
+推奨する。
 
 ## Secret互換性
 
@@ -139,11 +163,11 @@ read-onlyで以下を行う。
 
 1. 旧Release revision、values、manifestを読む
 2. backend valuesを`backend.*`、frontend valuesを`frontend.*`へ変換する
-3. `backend.fullnameOverride`と`frontend.config.proxyUrl`を設定する
+3. 新旧resource名、Ingress、固定RBACの衝突を検査してshadow valuesを生成する
 4. cluster resourceを`recreate`、`retain`、`backup`、`block`に分類する
 5. runtime Secret/PVCに旧Helm ownershipが誤って付いていないか検査する
 6. Secret reference、暗号設定、Service DNS、ServiceAccount名を検査する
-7. install先manifestに必要なRBACがあることを検査する
+7. install先が既存RBACを安全に共有できることを検査する
 8. session ID、data Secret UID、PVC UIDのbaselineを保存する
 
 target chartはversionだけでなくOCI digestまで固定する。
@@ -159,17 +183,21 @@ target chartはversionだけでなくOCI digestまで固定する。
 ### `cutover`
 
 ```text
-1. 新規作成を停止し、session/resource inventoryを再取得
-2. 必要に応じてbackend/frontendをscale down
-3. helm uninstall agentapi-ui
-4. helm uninstall agentapi-proxy
-5. runtime resourceと保持対象の存在・UIDを再確認
-6. helm install ccplant ... -f ccplant-values.yaml
-7. rolloutを待ち、health checkを開始
+1. helm install ccplant ... -f ccplant-shadow-values.yaml
+2. 新backendをread-only/shadow modeで検証
+3. 旧backendのbackground workerと新規session作成を停止
+4. 新backendのworkerを有効化し、leader electionを確認
+5. Ingressまたは外部routingを新Serviceへ切り替える
+6. 新backendで新規session作成を有効化
+7. 旧frontendをuninstall
+8. 旧backendはlegacy session callback用としてdrain状態で維持
 ```
 
-namespaceは削除しない。uninstall直後にsession Service、settings Secret、data Secret、PVCの
-いずれかが消えた場合はinstallへ進まずrollbackする。
+schedule、SlackBot、stock inventoryなどのworkerを新旧で同時にactiveにしない。leader
+election対象でない処理もある前提で、toolが旧側停止→新側開始の順序を制御する。
+
+旧backendの削除条件は、旧backendで作成されたsessionが0件、または全sessionのcallback先が
+新Serviceへ更新済みであること。条件を満たさない間はuninstallを禁止する。
 
 ### `verify`
 
@@ -182,15 +210,19 @@ namespaceは削除しない。uninstall直後にsession Service、settings Secre
 - task/memory/schedule/webhook等の件数と代表read
 - external Secretのname/key参照
 - PVCのBound状態と代表データread
+- 旧backend経由と新backend経由のsession ID集合が一致
+- 新規sessionのcallback先が`ccplant-backend`
+- background workerが新旧で二重実行されていない
 
 一定時間連続して成功するまでfinalizeを禁止する。
 
 ### `rollback`
 
-1. `helm uninstall ccplant`
-2. 旧backend/frontend Releaseを保存したversion/valuesで再install
-3. 必要なPVC/Secretをbackupから復元
-4. session DNS、RBAC、復号、APIを検証
+1. 外部routingを旧Serviceへ戻す
+2. 新規session作成と新workerを停止する
+3. 旧workerと新規session作成を再開する
+4. cutover後に新規作成されたsessionのcallback互換性を確認する
+5. 問題がなければ`helm uninstall ccplant`
 
 runtime resourceはrollback中も削除しない。ccplant稼働後に新規作成されたdata resourceが
 ある場合は自動削除せず、旧backendとのschema互換性を検査する。
@@ -205,20 +237,24 @@ runtime resourceはrollback中も削除しない。ccplant稼働後に新規作�
 1. stagingでproduction相当のresource構成を再現してrollbackまで試験
 2. productionで`doctor`と`helm migrate plan`を実行
 3. Secret/PVC backupを取得
-4. maintenance windowで`cutover`
-5. `verify`を実行し、通常運用周期を観察
-6. 問題がなければ`finalize`
+4. `ccplant`をshadow installして既存resourceのreadを検証
+5. routingとworker ownershipをcutover
+6. 旧frontendを削除し、旧backendをlegacy callback用にdrain
+7. legacy sessionがなくなったら共通RBACを引き継ぎ、旧backendを削除
+8. 問題がなければ`finalize`
 
-停止時間は旧Releaseの削除からccplantのbackend/frontendがReadyになるまで。session Podは
-原則稼働を続けるが、その間のAPI/SSE接続は切断されるためclient再接続を前提とする。
+通常の停止はIngress/routing反映中の既存接続再確立だけに限定する。Podを先にReadyにするため、
+新規HTTP requestはほぼ無停止で切り替えられる。SSE/WebSocketはclient再接続を前提とする。
 
 ## テスト戦略
 
-- golden: values変換、固定backend Service名、frontend proxy URL
-- kind: runtime resource作成後に旧Releaseをuninstallし、UIDが維持されること
-- kind: ccplant install後に既存sessionを列挙・操作できること
+- golden: values変換、shadow resource名、共有RBAC、Ingress無効化
+- kind: 新旧backendの並行稼働と既存sessionの列挙・操作
+- kind: routing切り替え中の連続HTTP probeとSSE再接続
 - kind: settings/credentials/API token/task/schedule等の再読込
 - kind: session Pod再起動後のprovision成功
+- kind: workerの旧→新handoverで二重実行されないこと
+- kind: legacy session drain後に旧backendを削除できること
 - PVC: retain、snapshot/restore、blockの各経路
 - fault injection: 各uninstall後、install失敗、rollout timeout時のrollback
 - version matrix: サポート対象の直近2 minorから最新ccplantへ移行
