@@ -46,6 +46,11 @@ export interface InstallRequest {
   filesystemSandbox: boolean;
 }
 
+export interface ResetRequest {
+  apiKey: string;
+  force: boolean;
+}
+
 export type DashboardData = {
   status: NativeStatus | null;
   sessions: NativeSession[];

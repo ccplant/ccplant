@@ -201,5 +201,7 @@ This regenerates the full set (`icon.icns`, `128x128.png`, etc.) referenced by
 
 ## Caveats
 
-- The dashboard supports first-run **Install** and **Restart**; uninstall and
-  rotate-token remain CLI-only by design.
+- The dashboard supports first-run **Install**, **Restart**, and a confirmed
+  full reset that removes the LaunchAgent, local data, and parent registration.
+  Reset requires the AgentAPI key and never stores it. Token rotation remains
+  CLI-only.

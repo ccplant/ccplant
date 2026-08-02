@@ -6,6 +6,7 @@ import type {
   InstallRequest,
   NativeSession,
   NativeStatus,
+  ResetRequest,
   RestartResult,
 } from "./types";
 
@@ -34,6 +35,10 @@ export async function restartDaemon(): Promise<RestartResult> {
 
 export async function installDaemon(request: InstallRequest): Promise<RestartResult> {
   return invoke<RestartResult>("native_install", { request });
+}
+
+export async function resetDaemon(request: ResetRequest): Promise<RestartResult> {
+  return invoke<RestartResult>("native_reset", { request });
 }
 
 export async function showDashboard(): Promise<void> {

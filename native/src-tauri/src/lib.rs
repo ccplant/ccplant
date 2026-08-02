@@ -80,6 +80,7 @@ pub fn run() {
             commands::native_doctor,
             commands::native_restart,
             commands::native_install,
+            commands::native_reset,
             show_dashboard,
         ])
         .setup(|app| {

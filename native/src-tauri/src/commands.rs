@@ -1,5 +1,7 @@
 use crate::binary::{run_native_json, run_native_plain};
-use crate::types::{CommandResult, DoctorResult, InstallRequest, NativeSession, NativeStatus};
+use crate::types::{
+    CommandResult, DoctorResult, InstallRequest, NativeSession, NativeStatus, ResetRequest,
+};
 use serde::de::DeserializeOwned;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
@@ -133,13 +135,59 @@ pub async fn native_install(
     })
 }
 
+/// Stop the LaunchAgent and remove its local data and parent registration.
+#[tauri::command]
+pub async fn native_reset(
+    app: AppHandle,
+    request: ResetRequest,
+) -> Result<CommandResult, String> {
+    if request.api_key.trim().is_empty() {
+        return Err("API key is required to remove the parent registration".to_string());
+    }
+
+    let args = uninstall_args(request.force);
+    let output = app
+        .shell()
+        .sidecar("agentapi-proxy")
+        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
+        .env("AGENTAPI_NATIVE_RESET_KEY", request.api_key)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("failed to reset native setup: {e}"))?;
+    let message = String::from_utf8_lossy(if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .trim()
+    .to_string();
+    Ok(CommandResult {
+        ok: output.status.success(),
+        message,
+    })
+}
+
+fn uninstall_args(force: bool) -> Vec<&'static str> {
+    let mut args = vec![
+        "native",
+        "uninstall",
+        "--api-key-env",
+        "AGENTAPI_NATIVE_RESET_KEY",
+    ];
+    if force {
+        args.push("--force");
+    }
+    args
+}
+
 fn is_http_url(value: &str) -> bool {
     value.starts_with("https://") || value.starts_with("http://")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_http_url, native_config_path, parse_json};
+    use super::{is_http_url, native_config_path, parse_json, uninstall_args};
     use crate::types::{DoctorResult, NativeStatus};
 
     #[test]
@@ -178,5 +226,12 @@ mod tests {
     fn native_config_uses_the_macos_application_support_directory() {
         let path = native_config_path().expect("HOME should be set during tests");
         assert!(path.ends_with("Library/Application Support/agentapi-native/config.json"));
+    }
+
+    #[test]
+    fn reset_only_forces_session_termination_when_requested() {
+        assert!(!uninstall_args(false).contains(&"--force"));
+        assert!(uninstall_args(true).contains(&"--force"));
+        assert!(uninstall_args(false).contains(&"AGENTAPI_NATIVE_RESET_KEY"));
     }
 }

@@ -11,6 +11,7 @@ import { StatusCard } from "./components/StatusCard";
 import { SessionsCard } from "./components/SessionsCard";
 import { DoctorCard } from "./components/DoctorCard";
 import { SetupCard } from "./components/SetupCard";
+import { ResetCard } from "./components/ResetCard";
 
 type LoadState = "loading" | "setup" | "ready" | "error";
 
@@ -152,6 +153,7 @@ export function App() {
             {data.status ? <StatusCard status={data.status} /> : <EmptyState label="No status available" />}
             <SessionsCard sessions={data.sessions} />
             {data.doctor ? <DoctorCard doctor={data.doctor} /> : <EmptyState label="Doctor result unavailable" />}
+            <ResetCard activeSessions={activeCount} onReset={() => refresh(true)} />
           </>
         )}
       </main>

@@ -68,3 +68,10 @@ pub struct InstallRequest {
     #[serde(default)]
     pub filesystem_sandbox: bool,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetRequest {
+    pub api_key: String,
+    pub force: bool,
+}
