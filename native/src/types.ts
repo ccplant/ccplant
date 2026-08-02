@@ -2,6 +2,7 @@
 // Keep these in sync with the serde JSON produced by the Tauri commands.
 
 export interface NativeStatus {
+  instance: string;
   service: string;
   manager_id: string;
   upstream: string;
@@ -12,6 +13,17 @@ export interface NativeStatus {
   active_sessions: number;
   health: string;
   state: string;
+}
+
+export interface NativeInstance {
+  instance: string;
+  service: string;
+  manager_id: string;
+  upstream: string;
+  public_url: string;
+  state: string;
+  config: string;
+  running: boolean;
 }
 
 export interface NativeSession {
@@ -39,8 +51,10 @@ export interface RestartResult {
 }
 
 export interface InstallRequest {
+  instance: string;
   upstream: string;
   publicUrl: string;
+  listen: string;
   name: string;
   registrationToken: string;
   filesystemSandbox: boolean;
@@ -49,6 +63,7 @@ export interface InstallRequest {
 }
 
 export interface ResetRequest {
+  instance: string;
   force: boolean;
 }
 

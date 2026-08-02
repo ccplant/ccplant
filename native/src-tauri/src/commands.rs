@@ -1,6 +1,7 @@
 use crate::binary::{run_native_json, run_native_plain};
 use crate::types::{
-    CommandResult, DoctorResult, InstallRequest, NativeSession, NativeStatus, ResetRequest,
+    CommandResult, DoctorResult, InstallRequest, NativeInstance, NativeSession, NativeStatus,
+    ResetRequest,
 };
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
@@ -13,16 +14,20 @@ use tauri_plugin_shell::ShellExt;
 /// `native doctor` can return a structured result even before installation,
 /// so the frontend cannot infer this reliably from the dashboard commands.
 #[tauri::command]
-pub fn native_is_installed() -> bool {
-    native_config_path().is_some_and(|path| path.is_file())
+pub fn native_is_installed(instance: Option<String>) -> bool {
+    native_config_path(instance.as_deref()).is_some_and(|path| path.is_file())
 }
 
-fn native_config_path() -> Option<std::path::PathBuf> {
+fn native_config_path(instance: Option<&str>) -> Option<std::path::PathBuf> {
+    let directory = match instance.filter(|name| !name.is_empty() && *name != "default") {
+        Some(name) => format!("agentapi-native-{name}"),
+        None => "agentapi-native".to_string(),
+    };
     std::env::var_os("HOME").map(|home| {
         std::path::PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("agentapi-native")
+            .join(directory)
             .join("config.json")
     })
 }
@@ -45,15 +50,21 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], sub: &str) -> Result<T, String
 
 /// `agentapi-proxy native status --json`.
 #[tauri::command]
-pub async fn native_status(app: AppHandle) -> Result<NativeStatus, String> {
-    let stdout = run_native_json(&app, "status").await?;
+pub async fn native_status(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<NativeStatus, String> {
+    let stdout = run_native_json(&app, "status", instance.as_deref()).await?;
     parse_json::<NativeStatus>(&stdout, "status")
 }
 
 /// `agentapi-proxy native sessions --json`.
 #[tauri::command]
-pub async fn native_sessions(app: AppHandle) -> Result<Vec<NativeSession>, String> {
-    let stdout = run_native_json(&app, "sessions").await?;
+pub async fn native_sessions(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<Vec<NativeSession>, String> {
+    let stdout = run_native_json(&app, "sessions", instance.as_deref()).await?;
     // `native sessions` is an alias of `session-list`; both emit a JSON array.
     parse_json::<Vec<NativeSession>>(&stdout, "sessions")
 }
@@ -61,15 +72,21 @@ pub async fn native_sessions(app: AppHandle) -> Result<Vec<NativeSession>, Strin
 /// `agentapi-proxy native doctor --json`.
 ///
 #[tauri::command]
-pub async fn native_doctor(app: AppHandle) -> Result<DoctorResult, String> {
-    let stdout = run_native_json(&app, "doctor").await?;
+pub async fn native_doctor(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<DoctorResult, String> {
+    let stdout = run_native_json(&app, "doctor", instance.as_deref()).await?;
     parse_json::<DoctorResult>(&stdout, "doctor")
 }
 
 /// `agentapi-proxy native restart`.
 #[tauri::command]
-pub async fn native_restart(app: AppHandle) -> Result<CommandResult, String> {
-    let (ok, message) = run_native_plain(&app, "restart").await;
+pub async fn native_restart(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<CommandResult, String> {
+    let (ok, message) = run_native_plain(&app, "restart", instance.as_deref()).await;
     Ok(CommandResult {
         ok,
         message: if message.is_empty() {
@@ -84,6 +101,12 @@ pub async fn native_restart(app: AppHandle) -> Result<CommandResult, String> {
     })
 }
 
+#[tauri::command]
+pub async fn native_list(app: AppHandle) -> Result<Vec<NativeInstance>, String> {
+    let stdout = run_native_json(&app, "list", None).await?;
+    parse_json::<Vec<NativeInstance>>(&stdout, "list")
+}
+
 /// Register and install the per-user LaunchAgent using the bundled CLI.
 #[tauri::command]
 pub async fn native_install(
@@ -93,11 +116,15 @@ pub async fn native_install(
     let upstream = request.upstream.trim();
     let public_url = request.public_url.trim();
     let name = request.name.trim();
+    let instance = request.instance.trim();
     if !is_http_url(upstream) || !is_http_url(public_url) {
         return Err("upstream and public URL must start with http:// or https://".to_string());
     }
     if name.is_empty() || request.registration_token.trim().is_empty() {
         return Err("name and registration token are required".to_string());
+    }
+    if instance != "default" && instance != "" && request.listen.trim().is_empty() {
+        return Err("listen address is required for a named instance".to_string());
     }
 
     let mise_path = if request.setup_nodejs {
@@ -118,6 +145,12 @@ pub async fn native_install(
         "--registration-token",
         request.registration_token.trim(),
     ];
+    if !instance.is_empty() && instance != "default" {
+        args.extend(["--instance", instance]);
+    }
+    if !request.listen.trim().is_empty() {
+        args.extend(["--listen", request.listen.trim()]);
+    }
     if request.filesystem_sandbox {
         args.push("--filesystem-sandbox");
     }
@@ -153,7 +186,7 @@ pub async fn native_install(
 /// The parent registration is deliberately retained so reset needs no API key.
 #[tauri::command]
 pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<CommandResult, String> {
-    let args = uninstall_args(request.force);
+    let args = uninstall_args(request.force, &request.instance);
     let output = app
         .shell()
         .sidecar("agentapi-proxy")
@@ -175,10 +208,17 @@ pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<Comma
     })
 }
 
-fn uninstall_args(force: bool) -> Vec<&'static str> {
-    let mut args = vec!["native", "uninstall", "--keep-registration"];
+fn uninstall_args(force: bool, instance: &str) -> Vec<String> {
+    let mut args = vec![
+        "native".into(),
+        "uninstall".into(),
+        "--keep-registration".into(),
+    ];
+    if !instance.is_empty() && instance != "default" {
+        args.extend(["--instance".into(), instance.into()]);
+    }
     if force {
-        args.push("--force");
+        args.push("--force".into());
     }
     args
 }
@@ -304,15 +344,20 @@ mod tests {
 
     #[test]
     fn native_config_uses_the_macos_application_support_directory() {
-        let path = native_config_path().expect("HOME should be set during tests");
+        let path = native_config_path(None).expect("HOME should be set during tests");
         assert!(path.ends_with("Library/Application Support/agentapi-native/config.json"));
+        let named = native_config_path(Some("ios")).expect("HOME should be set during tests");
+        assert!(named.ends_with("Library/Application Support/agentapi-native-ios/config.json"));
     }
 
     #[test]
     fn reset_only_forces_session_termination_when_requested() {
-        assert!(!uninstall_args(false).contains(&"--force"));
-        assert!(uninstall_args(true).contains(&"--force"));
-        assert!(uninstall_args(false).contains(&"--keep-registration"));
+        assert!(!uninstall_args(false, "default").contains(&"--force".to_string()));
+        assert!(uninstall_args(true, "ios").contains(&"--force".to_string()));
+        assert!(uninstall_args(false, "default").contains(&"--keep-registration".to_string()));
+        assert!(uninstall_args(false, "ios")
+            .windows(2)
+            .any(|args| args == ["--instance", "ios"]));
     }
 
     #[test]

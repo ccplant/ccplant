@@ -6,6 +6,7 @@ import type {
   InstallRequest,
   NativeSession,
   NativeStatus,
+  NativeInstance,
   ResetRequest,
   RestartResult,
 } from "./types";
@@ -13,24 +14,24 @@ import type {
 // Thin wrapper around `invoke` so the rest of the UI never touches the IPC
 // layer directly. All Tauri command names live here.
 
-export async function fetchStatus(): Promise<NativeStatus> {
-  return invoke<NativeStatus>("native_status");
+export async function fetchInstances(): Promise<NativeInstance[]> {
+  return invoke<NativeInstance[]>("native_list");
 }
 
-export async function isNativeInstalled(): Promise<boolean> {
-  return invoke<boolean>("native_is_installed");
+export async function fetchStatus(instance: string): Promise<NativeStatus> {
+  return invoke<NativeStatus>("native_status", { instance });
 }
 
-export async function fetchSessions(): Promise<NativeSession[]> {
-  return invoke<NativeSession[]>("native_sessions");
+export async function fetchSessions(instance: string): Promise<NativeSession[]> {
+  return invoke<NativeSession[]>("native_sessions", { instance });
 }
 
-export async function fetchDoctor(): Promise<DoctorResult> {
-  return invoke<DoctorResult>("native_doctor");
+export async function fetchDoctor(instance: string): Promise<DoctorResult> {
+  return invoke<DoctorResult>("native_doctor", { instance });
 }
 
-export async function restartDaemon(): Promise<RestartResult> {
-  return invoke<RestartResult>("native_restart");
+export async function restartDaemon(instance: string): Promise<RestartResult> {
+  return invoke<RestartResult>("native_restart", { instance });
 }
 
 export async function installDaemon(request: InstallRequest): Promise<RestartResult> {
@@ -46,11 +47,11 @@ export async function showDashboard(): Promise<void> {
 }
 
 /** Load every dashboard panel in parallel. Partial failures are surfaced. */
-export async function fetchDashboard(includeDoctor = true): Promise<DashboardData> {
+export async function fetchDashboard(instance: string, includeDoctor = true): Promise<DashboardData> {
   const [status, sessions, doctor] = await Promise.allSettled([
-    fetchStatus(),
-    fetchSessions(),
-    includeDoctor ? fetchDoctor() : Promise.resolve(null),
+    fetchStatus(instance),
+    fetchSessions(instance),
+    includeDoctor ? fetchDoctor(instance) : Promise.resolve(null),
   ]);
 
   const data: DashboardData = {

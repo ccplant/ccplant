@@ -3,9 +3,11 @@ import { resetDaemon } from "../api";
 
 export function ResetCard({
   activeSessions,
+  instance,
   onReset,
 }: {
   activeSessions: number;
+  instance: string;
   onReset: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -19,7 +21,7 @@ export function ResetCard({
     setSubmitting(true);
     setError("");
     try {
-      const result = await resetDaemon({ force });
+      const result = await resetDaemon({ instance, force });
       if (!result.ok) throw new Error(result.message || "Reset failed");
       setConfirmation("");
       await onReset();
@@ -34,9 +36,9 @@ export function ResetCard({
     return (
       <section className="card danger-zone">
         <header className="card__header"><h2>Danger Zone</h2></header>
-        <p>Stop the LaunchAgent and remove this Mac's local configuration and data.</p>
+        <p>Stop and remove the <strong>{instance}</strong> instance's local configuration and data.</p>
         <button className="btn btn--danger danger-zone__button" onClick={() => setExpanded(true)}>
-          Reset setup…
+          Remove instance…
         </button>
       </section>
     );
@@ -45,7 +47,7 @@ export function ResetCard({
   const canSubmit = confirmation === "RESET" && (activeSessions === 0 || force);
   return (
     <section className="card danger-zone danger-zone--expanded">
-      <header className="card__header"><h2>Reset setup</h2></header>
+      <header className="card__header"><h2>Remove {instance}</h2></header>
       <p>This removes the daemon deployment, local configuration and credentials, and session state. The registration on the parent server is kept.</p>
       <form onSubmit={(event) => void submit(event)}>
         {activeSessions > 0 && (
