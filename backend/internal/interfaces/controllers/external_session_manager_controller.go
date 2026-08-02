@@ -65,6 +65,11 @@ func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo
 	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}
+	user := auth.GetUserFromContext(ctx)
+	if req.Scope == "" && user != nil && user.UserType() == entities.UserTypeServiceAccount && user.TeamID() != "" {
+		req.Scope = "team"
+		req.TeamID = user.TeamID()
+	}
 	name, err := c.esmSettingsName(ctx, req.Scope, req.TeamID, true)
 	if err != nil {
 		return err

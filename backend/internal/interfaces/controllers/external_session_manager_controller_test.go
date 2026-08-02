@@ -133,3 +133,28 @@ func TestExternalSessionManagerEnrollmentTokenIsOneTime(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, http.StatusUnauthorized, err.(*echo.HTTPError).Code)
 }
+
+func TestServiceAccountEnrollmentTokenDefaultsToTeamScope(t *testing.T) {
+	repo := newMockSettingsRepository()
+	controller := NewSettingsController(repo, nil, "", "")
+	e := echo.New()
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "")
+	ctx.Set("internal_user", entities.NewServiceAccountUser("service-account", "org/builders", nil))
+
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, repo.settings, "org/builders")
+	require.NotContains(t, repo.settings, "service-account")
+}
+
+func TestServiceAccountEnrollmentTokenHonorsExplicitUserScope(t *testing.T) {
+	repo := newMockSettingsRepository()
+	controller := NewSettingsController(repo, nil, "", "")
+	e := echo.New()
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{Scope: "user"}, "")
+	ctx.Set("internal_user", entities.NewServiceAccountUser("service-account", "org/builders", nil))
+
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Contains(t, repo.settings, "service-account")
+}

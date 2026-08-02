@@ -261,6 +261,9 @@ agentapi-proxy native install \
 The token expires after 15 minutes, is stored only as a hash by the parent,
 and can be exchanged exactly once. The manager automatically receives and
 stores its long-lived connection token during the exchange.
+When a team-bound service account issues a token without specifying `scope`,
+the token defaults to that service account's team scope. An explicit `scope`
+still takes precedence.
 
 The preferred registration flow is:
 
