@@ -47,7 +47,6 @@ export interface InstallRequest {
 }
 
 export interface ResetRequest {
-  apiKey: string;
   force: boolean;
 }
 

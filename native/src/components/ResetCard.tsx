@@ -9,7 +9,6 @@ export function ResetCard({
   onReset: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [apiKey, setApiKey] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [force, setForce] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -20,9 +19,8 @@ export function ResetCard({
     setSubmitting(true);
     setError("");
     try {
-      const result = await resetDaemon({ apiKey, force });
+      const result = await resetDaemon({ force });
       if (!result.ok) throw new Error(result.message || "Reset failed");
-      setApiKey("");
       setConfirmation("");
       await onReset();
     } catch (cause) {
@@ -36,7 +34,7 @@ export function ResetCard({
     return (
       <section className="card danger-zone">
         <header className="card__header"><h2>Danger Zone</h2></header>
-        <p>Stop the LaunchAgent and remove this Mac's configuration, local data, and parent registration.</p>
+        <p>Stop the LaunchAgent and remove this Mac's local configuration and data.</p>
         <button className="btn btn--danger danger-zone__button" onClick={() => setExpanded(true)}>
           Reset setup…
         </button>
@@ -44,11 +42,11 @@ export function ResetCard({
     );
   }
 
-  const canSubmit = apiKey.trim() !== "" && confirmation === "RESET" && (activeSessions === 0 || force);
+  const canSubmit = confirmation === "RESET" && (activeSessions === 0 || force);
   return (
     <section className="card danger-zone danger-zone--expanded">
       <header className="card__header"><h2>Reset setup</h2></header>
-      <p>This removes the daemon deployment, local configuration and credentials, session state, and the registration on the parent server.</p>
+      <p>This removes the daemon deployment, local configuration and credentials, and session state. The registration on the parent server is kept.</p>
       <form onSubmit={(event) => void submit(event)}>
         {activeSessions > 0 && (
           <label className="danger-zone__force">
@@ -56,7 +54,6 @@ export function ResetCard({
             Terminate {activeSessions} active session{activeSessions === 1 ? "" : "s"}
           </label>
         )}
-        <label>AgentAPI key<input type="password" required autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
         <label>Type <strong>RESET</strong> to confirm<input required autoComplete="off" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
         {error && <p className="setup__error">{error}</p>}
         <div className="danger-zone__actions">
@@ -64,7 +61,7 @@ export function ResetCard({
           <button className="btn btn--danger" type="submit" disabled={submitting || !canSubmit}>{submitting ? "Resetting…" : "Reset everything"}</button>
         </div>
       </form>
-      <p className="setup__hint">The API key is passed only to the uninstall command and is not saved.</p>
+      <p className="setup__hint">No API key is required. Reinstalling can reuse the existing parent registration.</p>
     </section>
   );
 }

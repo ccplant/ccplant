@@ -202,6 +202,6 @@ This regenerates the full set (`icon.icns`, `128x128.png`, etc.) referenced by
 ## Caveats
 
 - The dashboard supports first-run **Install**, **Restart**, and a confirmed
-  full reset that removes the LaunchAgent, local data, and parent registration.
-  Reset requires the AgentAPI key and never stores it. Token rotation remains
-  CLI-only.
+  local reset that removes the LaunchAgent, configuration, credentials, and
+  session state while retaining the parent registration. Reset requires no API
+  key. Token rotation and removing the parent registration remain CLI-only.

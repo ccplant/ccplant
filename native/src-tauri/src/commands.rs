@@ -135,22 +135,18 @@ pub async fn native_install(
     })
 }
 
-/// Stop the LaunchAgent and remove its local data and parent registration.
+/// Stop the LaunchAgent and remove local configuration and data.
+/// The parent registration is deliberately retained so reset needs no API key.
 #[tauri::command]
 pub async fn native_reset(
     app: AppHandle,
     request: ResetRequest,
 ) -> Result<CommandResult, String> {
-    if request.api_key.trim().is_empty() {
-        return Err("API key is required to remove the parent registration".to_string());
-    }
-
     let args = uninstall_args(request.force);
     let output = app
         .shell()
         .sidecar("agentapi-proxy")
         .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
-        .env("AGENTAPI_NATIVE_RESET_KEY", request.api_key)
         .args(args)
         .output()
         .await
@@ -172,8 +168,7 @@ fn uninstall_args(force: bool) -> Vec<&'static str> {
     let mut args = vec![
         "native",
         "uninstall",
-        "--api-key-env",
-        "AGENTAPI_NATIVE_RESET_KEY",
+        "--keep-registration",
     ];
     if force {
         args.push("--force");
@@ -232,6 +227,6 @@ mod tests {
     fn reset_only_forces_session_termination_when_requested() {
         assert!(!uninstall_args(false).contains(&"--force"));
         assert!(uninstall_args(true).contains(&"--force"));
-        assert!(uninstall_args(false).contains(&"AGENTAPI_NATIVE_RESET_KEY"));
+        assert!(uninstall_args(false).contains(&"--keep-registration"));
     }
 }
