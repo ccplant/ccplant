@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, ExternalSessionManagerConfig, GitSyncConfig, prepareSettingsForSave } from '@/types/settings'
-import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, EnvVarsSettings, GitHubSyncSettings, CodexDeviceAuthSettings } from '@/components/settings'
+import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, EnvVarsSettings, GitHubSyncSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
 import { createAgentAPIProxyClientFromStorage, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { useToast } from '@/contexts/ToastContext'
@@ -430,6 +430,7 @@ export default function TeamSettingsPage() {
             defaultOpen={false}
           >
             <div className="space-y-4">
+              <ESMRegistrationToken scope="team" teamId={teamName} />
               {esmList.length === 0 && (
                 <p className="text-sm text-gray-500 dark:text-gray-400">チームの External Session Manager は登録されていません</p>
               )}

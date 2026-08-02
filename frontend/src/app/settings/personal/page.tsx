@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, AuthMode, ExternalSessionManagerConfig, GitSyncConfig, prepareSettingsForSave, getSendGithubTokenOnSessionStart, setSendGithubTokenOnSessionStart, EnterKeyBehavior, getEnterKeyBehavior, setEnterKeyBehavior, FontSettings as FontSettingsType, getFontSettings, setFontSettings } from '@/types/settings'
-import { BedrockSettings, SettingsAccordion, GithubTokenSettings, MCPServerSettings, MarketplaceSettings, PluginSettings, KeyBindingSettings, ClaudeOAuthSettings, FontSettings, EnvVarsSettings, SlackSettings, FileSettings, GitHubSyncSettings, CodexDeviceAuthSettings } from '@/components/settings'
+import { BedrockSettings, SettingsAccordion, GithubTokenSettings, MCPServerSettings, MarketplaceSettings, PluginSettings, KeyBindingSettings, ClaudeOAuthSettings, FontSettings, EnvVarsSettings, SlackSettings, FileSettings, GitHubSyncSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import { useToast } from '@/contexts/ToastContext'
@@ -768,6 +768,7 @@ export default function PersonalSettingsPage() {
             defaultOpen={false}
           >
             <div className="space-y-4">
+              <ESMRegistrationToken scope="user" />
               {esmList.length === 0 && !showAddEsm && (
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   外部セッションマネージャーが登録されていません

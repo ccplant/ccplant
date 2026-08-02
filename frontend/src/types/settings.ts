@@ -160,6 +160,12 @@ export interface AvailableManager {
   source_name: string;       // User ID or team ID
 }
 
+export interface ExternalSessionManagerRegistrationToken {
+  manager_id: string;
+  registration_token: string;
+  expires_at: string;
+}
+
 // Personal settings
 export type PersonalSettings = SettingsData
 
