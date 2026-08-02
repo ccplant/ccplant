@@ -67,6 +67,14 @@ pub struct InstallRequest {
     pub api_key: String,
     #[serde(default)]
     pub filesystem_sandbox: bool,
+    #[serde(default)]
+    pub setup_nodejs: bool,
+    #[serde(default = "default_nodejs_version")]
+    pub nodejs_version: String,
+}
+
+fn default_nodejs_version() -> String {
+    "lts".to_string()
 }
 
 #[derive(Debug, Deserialize)]

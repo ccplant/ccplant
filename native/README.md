@@ -52,6 +52,8 @@ native/
 - **Loading / error / empty** states for every panel.
 - **First-run setup** that registers the Mac and installs its per-user
   LaunchAgent without requiring a separately installed CLI.
+- Optional **Node.js setup with mise** that selects a global Node.js version
+  and exposes mise and its shims to every native agent session.
 
 ## Menu-bar tray
 
@@ -84,6 +86,11 @@ the sidecar is unavailable, the fallback lookup order is:
 The first-run form invokes `native install` with the bundled sidecar. Its API
 key is passed only to that child process and is not written to GUI settings;
 the CLI continues to store only the resulting connection credential.
+
+When Node.js setup is selected, the app locates an existing `mise` installation,
+runs `mise use --global node@<version>`, and passes a PATH containing the mise
+shim and binary directories to `native install --manager-env`. The default
+version selector is `lts`. mise itself is not installed by the app.
 
 Then it runs (JSON parsed into typed serde structs):
 
