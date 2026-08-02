@@ -44,6 +44,8 @@ export interface InstallRequest {
   name: string;
   apiKey: string;
   filesystemSandbox: boolean;
+  setupNodejs: boolean;
+  nodejsVersion: string;
 }
 
 export interface ResetRequest {

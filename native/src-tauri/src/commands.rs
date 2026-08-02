@@ -3,6 +3,8 @@ use crate::types::{
     CommandResult, DoctorResult, InstallRequest, NativeSession, NativeStatus, ResetRequest,
 };
 use serde::de::DeserializeOwned;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 
@@ -98,6 +100,12 @@ pub async fn native_install(
         return Err("name and API key are required".to_string());
     }
 
+    let mise_path = if request.setup_nodejs {
+        Some(setup_nodejs_with_mise(request.nodejs_version.trim())?)
+    } else {
+        None
+    };
+
     let mut args = vec![
         "native",
         "install",
@@ -112,6 +120,13 @@ pub async fn native_install(
     ];
     if request.filesystem_sandbox {
         args.push("--filesystem-sandbox");
+    }
+    let manager_path;
+    let manager_env;
+    if let Some(mise) = mise_path.as_ref() {
+        manager_path = mise_manager_path(mise)?;
+        manager_env = format!("PATH={manager_path}");
+        args.extend(["--manager-env", manager_env.as_str()]);
     }
     let output = app
         .shell()
@@ -138,10 +153,7 @@ pub async fn native_install(
 /// Stop the LaunchAgent and remove local configuration and data.
 /// The parent registration is deliberately retained so reset needs no API key.
 #[tauri::command]
-pub async fn native_reset(
-    app: AppHandle,
-    request: ResetRequest,
-) -> Result<CommandResult, String> {
+pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<CommandResult, String> {
     let args = uninstall_args(request.force);
     let output = app
         .shell()
@@ -165,11 +177,7 @@ pub async fn native_reset(
 }
 
 fn uninstall_args(force: bool) -> Vec<&'static str> {
-    let mut args = vec![
-        "native",
-        "uninstall",
-        "--keep-registration",
-    ];
+    let mut args = vec!["native", "uninstall", "--keep-registration"];
     if force {
         args.push("--force");
     }
@@ -180,9 +188,87 @@ fn is_http_url(value: &str) -> bool {
     value.starts_with("https://") || value.starts_with("http://")
 }
 
+fn setup_nodejs_with_mise(version: &str) -> Result<PathBuf, String> {
+    if version.is_empty() {
+        return Err("Node.js version is required when mise setup is enabled".to_string());
+    }
+    let mise = find_mise().ok_or_else(|| {
+        "mise was not found. Install mise first (https://mise.jdx.dev), then retry.".to_string()
+    })?;
+    let tool = format!("node@{version}");
+    let output = Command::new(&mise)
+        .args(["use", "--global", tool.as_str()])
+        .output()
+        .map_err(|e| format!("failed to run mise: {e}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        });
+        return Err(format!("mise could not set up Node.js: {}", detail.trim()));
+    }
+    Ok(mise)
+}
+
+fn find_mise() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|dir| dir.join("mise")));
+    }
+    if let Some(home) = home {
+        candidates.push(home.join(".local/bin/mise"));
+    }
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/mise"),
+        PathBuf::from("/usr/local/bin/mise"),
+    ]);
+    candidates.into_iter().find(|path| is_executable(path))
+}
+
+fn mise_manager_path(mise: &Path) -> Result<String, String> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or("HOME is not set")?;
+    let data_dir = std::env::var_os("MISE_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(|base| PathBuf::from(base).join("mise"))
+                .unwrap_or_else(|| home.join(".local/share/mise"))
+        });
+    let mut entries = vec![data_dir.join("shims")];
+    if let Some(parent) = mise.parent() {
+        entries.push(parent.to_path_buf());
+    }
+    if let Some(current) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&current));
+    } else {
+        entries.extend([
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/usr/sbin"),
+            PathBuf::from("/sbin"),
+        ]);
+    }
+    entries.dedup();
+    std::env::join_paths(entries)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|e| format!("failed to build mise PATH: {e}"))
+}
+
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_http_url, native_config_path, parse_json, uninstall_args};
+    use super::{is_http_url, mise_manager_path, native_config_path, parse_json, uninstall_args};
     use crate::types::{DoctorResult, NativeStatus};
 
     #[test]
@@ -228,5 +314,14 @@ mod tests {
         assert!(!uninstall_args(false).contains(&"--force"));
         assert!(uninstall_args(true).contains(&"--force"));
         assert!(uninstall_args(false).contains(&"--keep-registration"));
+    }
+
+    #[test]
+    fn mise_path_starts_with_shims_and_binary_directory() {
+        let path =
+            mise_manager_path(std::path::Path::new("/opt/homebrew/bin/mise")).expect("mise PATH");
+        let entries = std::env::split_paths(&std::ffi::OsString::from(path)).collect::<Vec<_>>();
+        assert!(entries[0].ends_with(".local/share/mise/shims"));
+        assert_eq!(entries[1], std::path::PathBuf::from("/opt/homebrew/bin"));
     }
 }

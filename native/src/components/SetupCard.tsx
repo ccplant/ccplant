@@ -9,6 +9,8 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
     name: "",
     apiKey: "",
     filesystemSandbox: true,
+    setupNodejs: true,
+    nodejsVersion: "lts",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -43,6 +45,13 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
         <label>This Mac's name<input required placeholder="native-mac" value={request.name} onChange={(e) => update("name", e.target.value)} /></label>
         <label>AgentAPI key<input type="password" required autoComplete="off" value={request.apiKey} onChange={(e) => update("apiKey", e.target.value)} /></label>
         <label className="setup__checkbox"><input type="checkbox" checked={request.filesystemSandbox} onChange={(e) => update("filesystemSandbox", e.target.checked)} /> Restrict session filesystem access</label>
+        <fieldset className="setup__group">
+          <label className="setup__checkbox"><input type="checkbox" checked={request.setupNodejs} onChange={(e) => update("setupNodejs", e.target.checked)} /> Set up Node.js with mise</label>
+          {request.setupNodejs && (
+            <label>Node.js version<input required placeholder="lts" value={request.nodejsVersion} onChange={(e) => update("nodejsVersion", e.target.value)} /></label>
+          )}
+          <p className="setup__hint">Uses your installed mise, sets Node.js as the global default, and adds the mise shims to the native session PATH.</p>
+        </fieldset>
         {error && <p className="setup__error">{error}</p>}
         <button className="btn" type="submit" disabled={submitting}>{submitting ? "Installing…" : "Install and connect"}</button>
       </form>
