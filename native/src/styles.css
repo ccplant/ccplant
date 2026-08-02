@@ -377,6 +377,15 @@ body {
 .setup .setup__checkbox { display: flex; grid-template-columns: none; flex-direction: row; align-items: center; }
 .setup__error { margin: 0; color: var(--bad); font-size: 12px; }
 
+.danger-zone { border-color: color-mix(in srgb, var(--bad) 35%, var(--border)); }
+.danger-zone p { margin: 0; color: var(--text-muted); }
+.danger-zone__button { align-self: flex-start; }
+.danger-zone form { display: grid; gap: 11px; }
+.danger-zone form > label { display: grid; gap: 4px; color: var(--text-muted); font-size: 11px; }
+.danger-zone form input:not([type="checkbox"]) { width: 100%; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg); color: var(--text); padding: 8px 9px; font: inherit; }
+.danger-zone form .danger-zone__force { display: flex; flex-direction: row; align-items: center; color: var(--bad); }
+.danger-zone__actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 .state {
   display: flex;
   flex-direction: column;
