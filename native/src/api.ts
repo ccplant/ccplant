@@ -16,6 +16,10 @@ export async function fetchStatus(): Promise<NativeStatus> {
   return invoke<NativeStatus>("native_status");
 }
 
+export async function isNativeInstalled(): Promise<boolean> {
+  return invoke<boolean>("native_is_installed");
+}
+
 export async function fetchSessions(): Promise<NativeSession[]> {
   return invoke<NativeSession[]>("native_sessions");
 }
