@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchDashboard,
+  isNativeInstalled,
   onRefreshRequest,
   restartDaemon,
   showDashboard,
@@ -11,7 +12,7 @@ import { SessionsCard } from "./components/SessionsCard";
 import { DoctorCard } from "./components/DoctorCard";
 import { SetupCard } from "./components/SetupCard";
 
-type LoadState = "loading" | "ready" | "error";
+type LoadState = "loading" | "setup" | "ready" | "error";
 
 export function App() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -25,6 +26,13 @@ export function App() {
   const refresh = useCallback(async (includeDoctor = true) => {
     setState((prev) => (prev === "ready" ? "ready" : "loading"));
     try {
+      if (!(await isNativeInstalled())) {
+        setData(null);
+        setWarnings([]);
+        setError("");
+        setState("setup");
+        return;
+      }
       const next = await fetchDashboard(includeDoctor);
       setData((current) => includeDoctor ? next : { ...next, doctor: current?.doctor ?? null });
       setWarnings(next.warnings ?? []);
@@ -133,9 +141,9 @@ export function App() {
 
       <main className="app__body">
         {state === "loading" && <LoadingState />}
+        {state === "setup" && <SetupCard onInstalled={() => refresh(true)} />}
         {state === "error" && (
           <>
-            <SetupCard onInstalled={() => refresh(true)} />
             <ErrorState message={error} onRetry={() => void refresh(true)} />
           </>
         )}

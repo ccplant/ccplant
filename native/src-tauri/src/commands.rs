@@ -4,6 +4,25 @@ use serde::de::DeserializeOwned;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 
+/// Whether this Mac has completed the native daemon installation.
+///
+/// `native doctor` can return a structured result even before installation,
+/// so the frontend cannot infer this reliably from the dashboard commands.
+#[tauri::command]
+pub fn native_is_installed() -> bool {
+    native_config_path().is_some_and(|path| path.is_file())
+}
+
+fn native_config_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|home| {
+        std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("agentapi-native")
+            .join("config.json")
+    })
+}
+
 /// Parse the stdout of a `native <sub> --json` command into a typed value.
 /// Tolerates leading/trailing whitespace and empty output (treated as an
 /// explicit error so the UI can surface it).
@@ -120,7 +139,7 @@ fn is_http_url(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_http_url, parse_json};
+    use super::{is_http_url, native_config_path, parse_json};
     use crate::types::{DoctorResult, NativeStatus};
 
     #[test]
@@ -153,5 +172,11 @@ mod tests {
         assert!(is_http_url("https://parent.example"));
         assert!(is_http_url("http://10.0.0.10:8080"));
         assert!(!is_http_url("file:///tmp/socket"));
+    }
+
+    #[test]
+    fn native_config_uses_the_macos_application_support_directory() {
+        let path = native_config_path().expect("HOME should be set during tests");
+        assert!(path.ends_with("Library/Application Support/agentapi-native/config.json"));
     }
 }
