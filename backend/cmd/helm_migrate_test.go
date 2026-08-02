@@ -3,13 +3,17 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -109,6 +113,79 @@ func TestValidateHelmMigratePlanOptionsRequiresExactVersion(t *testing.T) {
 	if err := validateHelmMigratePlanOptions(&base); err != nil {
 		t.Fatalf("valid version rejected: %v", err)
 	}
+}
+
+func TestRunHelmMigrateVerifyChecksShadowAndSharedLeaderLease(t *testing.T) {
+	namespace := "test"
+	holder := "agentapi-proxy-old-pod"
+	client := fake.NewSimpleClientset(
+		helmReleaseSecret(t, "ccplant", 1, "deployed", map[string]any{"backend": map[string]any{"scheduleWorker": map[string]any{"enabled": true}}}),
+		readyDeployment("ccplant-backend", namespace, 1), readyDeployment("ccplant-frontend", namespace, 1),
+		readyEndpoints("ccplant-backend", namespace), readyEndpoints("ccplant-frontend", namespace),
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "control", Namespace: namespace}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app.kubernetes.io/name": "agentapi-proxy", "app.kubernetes.io/instance": "agentapi-proxy", "app.kubernetes.io/component": "proxy"}}},
+		&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-schedule-worker", Namespace: namespace}, Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder}},
+		&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-allocator", Namespace: namespace}, Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder}},
+	)
+	o := &helmMigratePlanOptions{namespace: namespace, backendRelease: "agentapi-proxy", targetRelease: "ccplant", output: "text"}
+	probes := 0
+	probe := func(_ context.Context, service, path string) error {
+		probes++
+		if service != "ccplant-backend" || path != "/health" {
+			t.Fatalf("unexpected probe %s%s", service, path)
+		}
+		return nil
+	}
+	var out bytes.Buffer
+	if err := runHelmMigrateVerify(context.Background(), &out, client, o, probe); err != nil {
+		t.Fatalf("runHelmMigrateVerify() error = %v\n%s", err, out.String())
+	}
+	if probes != 1 {
+		t.Fatalf("probe calls = %d, want 1", probes)
+	}
+	for _, want := range []string{"Shadow verification: PASS", "Phase: shadow", "agentapi-schedule-worker", "agentapi-session-allocator"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunHelmMigrateVerifyDetectsCutoverAndProbeFailure(t *testing.T) {
+	namespace := "test"
+	holder := "new-pod"
+	client := fake.NewSimpleClientset(
+		helmReleaseSecret(t, "ccplant", 1, "deployed", map[string]any{"backend": map[string]any{}}),
+		readyDeployment("ccplant-backend", namespace, 1), readyDeployment("ccplant-frontend", namespace, 1),
+		readyEndpoints("ccplant-backend", namespace), readyEndpoints("ccplant-frontend", namespace),
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "control", Namespace: namespace}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app.kubernetes.io/name": "backend", "app.kubernetes.io/instance": "ccplant", "app.kubernetes.io/component": "proxy"}}},
+		&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-allocator", Namespace: namespace}, Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder}},
+	)
+	o := &helmMigratePlanOptions{namespace: namespace, backendRelease: "agentapi-proxy", targetRelease: "ccplant", output: "text"}
+	var out bytes.Buffer
+	err := runHelmMigrateVerify(context.Background(), &out, client, o, func(context.Context, string, string) error { return errors.New("HTTP 503") })
+	if err == nil {
+		t.Fatal("runHelmMigrateVerify() error = nil, want probe failure")
+	}
+	for _, want := range []string{"Shadow verification: FAIL", "Phase: cutover", "HTTP 503"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestMigrationCommandsUseUmbrellaBackendSelector(t *testing.T) {
+	o := &helmMigratePlanOptions{namespace: "test", backendRelease: "agentapi-proxy", frontendRelease: "agentapi-ui", targetRelease: "ccplant", chart: "chart", version: "0.3.2", valuesOut: "values.yaml"}
+	joined := strings.Join(migrationCommands(o, 0), "\n")
+	if !strings.Contains(joined, `app.kubernetes.io/name":"backend`) {
+		t.Fatalf("commands do not use umbrella backend selector:\n%s", joined)
+	}
+}
+
+func readyDeployment(name, namespace string, replicas int32) *appsv1.Deployment {
+	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: replicas}}
+}
+
+func readyEndpoints(name, namespace string) *discoveryv1.EndpointSlice {
+	return &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: name + "-test", Namespace: namespace, Labels: map[string]string{"kubernetes.io/service-name": name}}, AddressType: discoveryv1.AddressTypeIPv4, Endpoints: []discoveryv1.Endpoint{{Addresses: []string{"10.0.0.1"}}}}
 }
 
 func assertNestedValue(t *testing.T, root map[string]any, want any, path ...string) {

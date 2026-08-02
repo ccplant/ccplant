@@ -115,6 +115,20 @@ but never changes the cluster or executes those commands. A blocking finding
 causes a non-zero exit status. Use `--output json` or `--output yaml` for
 automation.
 
+After the shadow release is installed, verify it without changing routing:
+
+```bash
+agentapi-proxy helm migrate verify \
+  --namespace agentapi-ui \
+  --target-release ccplant
+```
+
+`verify` checks rollout readiness, Service endpoints, `/health` through the
+Kubernetes API Service proxy, current `control` routing, runtime resources, and
+the shared release-independent worker Leases. Run it once during shadowing and
+again after switching `control`; the reported phase changes from `shadow` to
+`cutover`.
+
 ### Configuration
 
 Configuration is managed through environment variables and Kubernetes ConfigMaps. See the Helm chart values for detailed configuration options.

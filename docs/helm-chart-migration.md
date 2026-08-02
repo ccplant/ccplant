@@ -134,7 +134,7 @@ runtime生成のsession PVCは残る。一方、Helm manifestに直接含まれ�
 
 ## サポートツール
 
-`agentapi-proxy helm migrate plan`は、clusterを変更しないpreflight専用commandである。
+`agentapi-proxy helm migrate plan`と`agentapi-proxy helm migrate verify`はclusterを変更しない。
 install、Service selector変更、uninstallは実行せず、診断結果と実行候補commandだけを出力する。
 
 実行例:
@@ -170,13 +170,38 @@ blockが1件でもあればexit codeを非zeroにする。legacy sessionと旧Re
 warningとして報告し、旧backendのuninstall前に手動で解消する。preflightが`READY`でも、表示された
 commandはoperatorが内容を確認して個別に実行する。
 
+shadow install後とcutover後には次を実行する。
+
+```bash
+agentapi-proxy helm migrate verify \
+  --namespace agentapi-ui \
+  --backend-release agentapi-proxy \
+  --target-release ccplant
+```
+
+`verify`はtarget Helm Release、backend/frontend Deployment、Service Endpoint、Kubernetes API
+proxy経由のbackend `/health`、`control` selector、session callback、runtime Secret/PVC数を検査する。
+`control`が旧backendを向いていれば`shadow`、新backendを向いていれば`cutover`と判定する。
+
+workerのLease名はRelease名に依存しない次の固定名を使う。旧・新backendを同じnamespaceで
+並行起動すると同じLeaseを競うため、各workerのleaderは常に1 Podだけになる。
+
+- `agentapi-schedule-worker`
+- `agentapi-slackbot-cleanup-worker`
+- `agentapi-stock-inventory-worker`
+- `agentapi-session-allocator`
+- `agentapi-github-sync-worker`
+
+有効なworkerについてLeaseの存在とholderも検査する。Lease duration内では旧leaderが処理を継続し、
+更新停止後に新Podが引き継ぐため、切替直後に必ず新ReleaseのPodがleaderになるとは限らない。
+
 ## 移行手順
 
 1. stagingでproduction相当のresource構成を再現してrollbackまで試験
 2. productionで`doctor`と`helm migrate plan`を実行
 3. Secret/PVC backupを取得
-4. `ccplant`をshadow installして既存resourceのreadを検証
-5. routingとworker ownershipをcutover
+4. `ccplant`をshadow installして`helm migrate verify`を実行
+5. routingをcutoverし、再度`helm migrate verify`を実行
 6. 旧frontendを削除し、旧backendをlegacy callback用にdrain
 7. legacy sessionがなくなったら共通RBACを引き継ぎ、旧backendを削除
 8. 問題がなければ`finalize`

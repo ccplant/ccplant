@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -63,6 +64,24 @@ type migrationPlan struct {
 	Commands          []string           `json:"commands" yaml:"commands"`
 }
 
+type migrationVerify struct {
+	OK            bool                   `json:"ok" yaml:"ok"`
+	Phase         string                 `json:"phase" yaml:"phase"`
+	Namespace     string                 `json:"namespace" yaml:"namespace"`
+	TargetRelease string                 `json:"targetRelease" yaml:"targetRelease"`
+	Inventory     migrationInventory     `json:"inventory" yaml:"inventory"`
+	Findings      []migrationFinding     `json:"findings" yaml:"findings"`
+	LeaderLeases  []migrationLeaderLease `json:"leaderLeases,omitempty" yaml:"leaderLeases,omitempty"`
+}
+
+type migrationLeaderLease struct {
+	Worker string `json:"worker" yaml:"worker"`
+	Name   string `json:"name" yaml:"name"`
+	Holder string `json:"holder,omitempty" yaml:"holder,omitempty"`
+}
+
+type serviceProbe func(context.Context, string, string) error
+
 func newHelmMigrateCommand() *cobra.Command {
 	o := &helmMigratePlanOptions{}
 	root := &cobra.Command{
@@ -100,6 +119,27 @@ it never installs, patches, switches traffic, or uninstalls a release.`,
 			return runHelmMigratePlan(cmd.Context(), cmd.OutOrStdout(), client, o)
 		},
 	})
+	root.AddCommand(&cobra.Command{
+		Use: "verify", Short: "Verify a running shadow or cut-over ccplant release", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateHelmMigrateVerifyOptions(o); err != nil {
+				return err
+			}
+			config, err := ctrl.GetConfig()
+			if err != nil {
+				return fmt.Errorf("get Kubernetes config: %w", err)
+			}
+			client, err := kubernetes.NewForConfig(config)
+			if err != nil {
+				return fmt.Errorf("create Kubernetes client: %w", err)
+			}
+			probe := func(ctx context.Context, service, path string) error {
+				_, probeErr := client.CoreV1().Services(o.namespace).ProxyGet("http", service, "http", path, nil).DoRaw(ctx)
+				return probeErr
+			}
+			return runHelmMigrateVerify(cmd.Context(), cmd.OutOrStdout(), client, o, probe)
+		},
+	})
 	return root
 }
 
@@ -115,6 +155,22 @@ func validateHelmMigratePlanOptions(o *helmMigratePlanOptions) error {
 	}
 	if !exactSemver.MatchString(o.version) {
 		return errors.New("--version must be an exact semantic version, for example 0.3.2")
+	}
+	if o.output != "text" && o.output != "json" && o.output != "yaml" {
+		return fmt.Errorf("unsupported output format %q", o.output)
+	}
+	return nil
+}
+
+func validateHelmMigrateVerifyOptions(o *helmMigratePlanOptions) error {
+	if strings.TrimSpace(o.namespace) == "" {
+		return errors.New("namespace must not be empty")
+	}
+	if o.backendRelease == "" || o.targetRelease == "" {
+		return errors.New("backend and target release names must not be empty")
+	}
+	if o.backendRelease == o.targetRelease {
+		return errors.New("target release must differ from the source backend release")
 	}
 	if o.output != "text" && o.output != "json" && o.output != "yaml" {
 		return fmt.Errorf("unsupported output format %q", o.output)
@@ -184,6 +240,199 @@ func runHelmMigratePlan(ctx context.Context, out io.Writer, client kubernetes.In
 		return errors.New("migration preflight found blocking problems")
 	}
 	return nil
+}
+
+func runHelmMigrateVerify(ctx context.Context, out io.Writer, client kubernetes.Interface, o *helmMigratePlanOptions, probe serviceProbe) error {
+	target, _, err := loadLatestHelmRelease(ctx, client, o.namespace, o.targetRelease)
+	if err != nil {
+		return err
+	}
+	verify := migrationVerify{Namespace: o.namespace, TargetRelease: o.targetRelease, Phase: "shadow"}
+	if target.Info.Status != "deployed" {
+		addVerifyFinding(&verify, "block", "target release", fmt.Sprintf("status is %q, expected deployed", target.Info.Status))
+	} else {
+		addVerifyFinding(&verify, "pass", "target release", fmt.Sprintf("revision %d is deployed", target.Version))
+	}
+
+	backendService := o.targetRelease + "-backend"
+	frontendService := o.targetRelease + "-frontend"
+	inspectShadowWorkload(ctx, client, o.namespace, backendService, "backend", &verify)
+	inspectShadowWorkload(ctx, client, o.namespace, frontendService, "frontend", &verify)
+	if err := probe(ctx, backendService, "/health"); err != nil {
+		addVerifyFinding(&verify, "block", "backend API probe", err.Error())
+	} else {
+		addVerifyFinding(&verify, "pass", "backend API probe", backendService+"/health returned successfully through the Kubernetes API proxy")
+	}
+
+	control, controlErr := client.CoreV1().Services(o.namespace).Get(ctx, "control", metav1.GetOptions{})
+	oldSelector := map[string]string{"app.kubernetes.io/name": "agentapi-proxy", "app.kubernetes.io/instance": o.backendRelease, "app.kubernetes.io/component": "proxy"}
+	targetSelector := map[string]string{"app.kubernetes.io/name": "backend", "app.kubernetes.io/instance": o.targetRelease, "app.kubernetes.io/component": "proxy"}
+	if controlErr != nil {
+		addVerifyFinding(&verify, "block", "control Service", controlErr.Error())
+	} else if selectorContains(control.Spec.Selector, targetSelector) {
+		verify.Phase = "cutover"
+		addVerifyFinding(&verify, "pass", "control routing", "points to the target backend")
+	} else if selectorContains(control.Spec.Selector, oldSelector) {
+		addVerifyFinding(&verify, "pass", "control routing", "still points to the source backend (shadow phase)")
+	} else {
+		addVerifyFinding(&verify, "block", "control routing", "selector points to neither the source nor target backend: "+formatStringMap(control.Spec.Selector))
+	}
+
+	inspectWorkerLeaderElection(ctx, client, o, target.Config, &verify)
+	if err := inspectVerifyRuntime(ctx, client, o, &verify); err != nil {
+		return err
+	}
+	verify.OK = !hasBlockingFinding(verify.Findings)
+	if err := writeMigrationVerify(out, o.output, verify); err != nil {
+		return err
+	}
+	if !verify.OK {
+		return errors.New("shadow migration verification failed")
+	}
+	return nil
+}
+
+func inspectShadowWorkload(ctx context.Context, client kubernetes.Interface, namespace, name, component string, verify *migrationVerify) {
+	deployment, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		addVerifyFinding(verify, "block", component+" Deployment", err.Error())
+	} else {
+		desired := int32(1)
+		if deployment.Spec.Replicas != nil {
+			desired = *deployment.Spec.Replicas
+		}
+		if desired == 0 || deployment.Status.ReadyReplicas < desired {
+			addVerifyFinding(verify, "block", component+" Deployment", fmt.Sprintf("%d/%d replicas are Ready", deployment.Status.ReadyReplicas, desired))
+		} else {
+			addVerifyFinding(verify, "pass", component+" Deployment", fmt.Sprintf("%d/%d replicas are Ready", deployment.Status.ReadyReplicas, desired))
+		}
+	}
+	endpointSlices, err := client.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{LabelSelector: "kubernetes.io/service-name=" + name})
+	if err != nil {
+		addVerifyFinding(verify, "block", component+" Service endpoints", err.Error())
+		return
+	}
+	ready := 0
+	for _, endpointSlice := range endpointSlices.Items {
+		for _, endpoint := range endpointSlice.Endpoints {
+			if endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready {
+				ready += len(endpoint.Addresses)
+			}
+		}
+	}
+	if ready == 0 {
+		addVerifyFinding(verify, "block", component+" Service endpoints", "no ready addresses")
+	} else {
+		addVerifyFinding(verify, "pass", component+" Service endpoints", fmt.Sprintf("%d ready address(es)", ready))
+	}
+}
+
+var migrationWorkerLeases = []struct {
+	valuePath string
+	worker    string
+	lease     string
+	always    bool
+}{
+	{"scheduleWorker", "schedule", schedule.ScheduleWorkerLeaseName, false},
+	{"slackbotCleanupWorker", "slackbot cleanup", schedule.SlackbotCleanupWorkerLeaseName, false},
+	{"stockInventoryWorker", "stock inventory", schedule.StockInventoryWorkerLeaseName, false},
+	{"", "session allocator", schedule.SessionAllocatorLeaseName, true},
+	{"gitSync", "GitHub sync", schedule.GitHubSyncWorkerLeaseName, false},
+}
+
+func inspectWorkerLeaderElection(ctx context.Context, client kubernetes.Interface, o *helmMigratePlanOptions, targetValues map[string]any, verify *migrationVerify) {
+	backendValues, _ := targetValues["backend"].(map[string]any)
+	if backendValues == nil {
+		backendValues = targetValues
+	}
+	for _, worker := range migrationWorkerLeases {
+		config, _ := backendValues[worker.valuePath].(map[string]any)
+		enabled := worker.always
+		if configured, ok := config["enabled"].(bool); ok {
+			enabled = configured
+		}
+		if worker.valuePath == "gitSync" {
+			interval, _ := config["syncInterval"].(string)
+			enabled = interval != "" && interval != "0"
+		}
+		if !enabled {
+			continue
+		}
+		lease, err := client.CoordinationV1().Leases(o.namespace).Get(ctx, worker.lease, metav1.GetOptions{})
+		if err != nil {
+			addVerifyFinding(verify, "block", worker.worker+" leader election", fmt.Sprintf("shared Lease/%s is missing: %v", worker.lease, err))
+			continue
+		}
+		holder := ""
+		if lease.Spec.HolderIdentity != nil {
+			holder = *lease.Spec.HolderIdentity
+		}
+		verify.LeaderLeases = append(verify.LeaderLeases, migrationLeaderLease{Worker: worker.worker, Name: worker.lease, Holder: holder})
+		if holder == "" {
+			addVerifyFinding(verify, "warn", worker.worker+" leader election", fmt.Sprintf("Lease/%s exists but has no holder", worker.lease))
+		} else {
+			addVerifyFinding(verify, "pass", worker.worker+" leader election", fmt.Sprintf("uses shared Lease/%s; current holder is %s", worker.lease, holder))
+		}
+	}
+	addVerifyFinding(verify, "pass", "leader-election contract", "worker Lease names are release-independent, so source and target contend for the same locks in this namespace")
+}
+
+func inspectVerifyRuntime(ctx context.Context, client kubernetes.Interface, o *helmMigratePlanOptions, verify *migrationVerify) error {
+	pods, err := client.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=agentapi-session"})
+	if err != nil {
+		return err
+	}
+	verify.Inventory.Sessions = len(pods.Items)
+	for _, pod := range pods.Items {
+		legacy := false
+		for _, container := range pod.Spec.Containers {
+			for _, env := range container.Env {
+				if strings.Contains(env.Value, "http://"+o.backendRelease+".") {
+					legacy = true
+				}
+			}
+		}
+		if legacy {
+			verify.Inventory.LegacySessions++
+		}
+	}
+	secrets, err := client.CoreV1().Secrets(o.namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, secret := range secrets.Items {
+		if isMigrationRuntimeSecret(secret) {
+			verify.Inventory.RuntimeSecrets++
+		}
+	}
+	pvcs, err := client.CoreV1().PersistentVolumeClaims(o.namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, pvc := range pvcs.Items {
+		if strings.HasPrefix(pvc.Name, "agentapi-session-") {
+			verify.Inventory.SessionPVCs++
+		}
+	}
+	if verify.Inventory.LegacySessions > 0 {
+		addVerifyFinding(verify, "warn", "legacy sessions", fmt.Sprintf("%d session(s) still require Service/%s", verify.Inventory.LegacySessions, o.backendRelease))
+	} else {
+		addVerifyFinding(verify, "pass", "session callbacks", "all discovered session Pods use a release-independent callback")
+	}
+	return nil
+}
+
+func selectorContains(actual, want map[string]string) bool {
+	for key, value := range want {
+		if actual[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func addVerifyFinding(verify *migrationVerify, level, subject, message string) {
+	verify.Findings = append(verify.Findings, migrationFinding{Level: level, Subject: subject, Message: message})
 }
 
 func buildMigrationShadowValues(backend, frontend map[string]any) map[string]any {
@@ -376,7 +625,7 @@ func referencedSecretsFingerprint(ctx context.Context, client kubernetes.Interfa
 }
 
 func migrationCommands(o *helmMigratePlanOptions, legacy int) []string {
-	commands := []string{fmt.Sprintf("helm upgrade --install %s %s --namespace %s --version %s --values %s --wait", o.targetRelease, o.chart, o.namespace, o.version, o.valuesOut), fmt.Sprintf("kubectl -n %s patch service control --type merge -p '{\"spec\":{\"selector\":{\"app.kubernetes.io/name\":\"agentapi-proxy\",\"app.kubernetes.io/instance\":\"%s\",\"app.kubernetes.io/component\":\"proxy\"}}}'", o.namespace, o.targetRelease)}
+	commands := []string{fmt.Sprintf("helm upgrade --install %s %s --namespace %s --version %s --values %s --wait", o.targetRelease, o.chart, o.namespace, o.version, o.valuesOut), fmt.Sprintf("agentapi-proxy helm migrate verify --namespace %s --backend-release %s --target-release %s", o.namespace, o.backendRelease, o.targetRelease), fmt.Sprintf("kubectl -n %s patch service control --type merge -p '{\"spec\":{\"selector\":{\"app.kubernetes.io/name\":\"backend\",\"app.kubernetes.io/instance\":\"%s\",\"app.kubernetes.io/component\":\"proxy\"}}}'", o.namespace, o.targetRelease)}
 	if legacy > 0 {
 		commands = append(commands, fmt.Sprintf("# Keep Service/%s until %d legacy session(s) are drained", o.backendRelease, legacy))
 	}
@@ -449,6 +698,41 @@ func writeMigrationPlan(w io.Writer, format string, plan migrationPlan) error {
 		if _, err := fmt.Fprintln(w, "  "+command); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeMigrationVerify(w io.Writer, format string, verify migrationVerify) error {
+	if format == "json" {
+		data, err := json.MarshalIndent(verify, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w, string(data))
+		return err
+	}
+	if format == "yaml" {
+		data, err := yaml.Marshal(verify)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
+		return err
+	}
+	status := "PASS"
+	if !verify.OK {
+		status = "FAIL"
+	}
+	if _, err := fmt.Fprintf(w, "Shadow verification: %s\nNamespace: %s\nTarget: %s\nPhase: %s\n", status, verify.Namespace, verify.TargetRelease, verify.Phase); err != nil {
+		return err
+	}
+	for _, finding := range verify.Findings {
+		if _, err := fmt.Fprintf(w, "[%s] %s: %s\n", strings.ToUpper(finding.Level), finding.Subject, finding.Message); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Inventory: sessions=%d legacy=%d runtime-secrets=%d session-pvcs=%d\n", verify.Inventory.Sessions, verify.Inventory.LegacySessions, verify.Inventory.RuntimeSecrets, verify.Inventory.SessionPVCs); err != nil {
+		return err
 	}
 	return nil
 }
