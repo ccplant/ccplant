@@ -2592,6 +2592,23 @@
         "responses": {"200": {"description": "Registered managers"}}
       }
     },
+    "/external-session-managers/registration-tokens": {
+      "post": {
+        "summary": "Issue a short-lived one-time External Session Manager registration token",
+        "operationId": "issueExternalSessionManagerRegistrationToken",
+        "tags": ["External Session Managers"],
+        "responses": {"201": {"description": "Registration token issued; registration_token is returned once"}}
+      }
+    },
+    "/external-session-managers/enroll": {
+      "post": {
+        "summary": "Enroll an External Session Manager with a one-time registration token",
+        "operationId": "enrollExternalSessionManager",
+        "tags": ["External Session Managers"],
+        "security": [],
+        "responses": {"200": {"description": "Manager enrolled; connection_token is returned once"}, "401": {"description": "Invalid, expired, or already-used registration token"}}
+      }
+    },
     "/external-session-managers/{id}": {
       "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
       "get": {"summary": "Get an External Session Manager", "operationId": "getExternalSessionManager", "tags": ["External Session Managers"], "responses": {"200": {"description": "Manager", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManager"}}}}}},

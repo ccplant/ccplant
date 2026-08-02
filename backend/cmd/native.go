@@ -28,7 +28,7 @@ var NativeCmd = &cobra.Command{Use: "native", Short: "Install and manage a nativ
 
 type nativeManageOptions struct {
 	upstream, publicURL, name, listen, managerID, apiKeyEnv, apiKeyFile, configPath          string
-	scope, teamID, drainTimeout                                                              string
+	scope, teamID, drainTimeout, registrationToken                                           string
 	labels                                                                                   []string
 	environment                                                                              []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
@@ -65,6 +65,7 @@ func init() {
 	f.StringVar(&nativeManageOpts.managerID, "manager-id", "", "stable manager ID (also migrates an existing registration)")
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
 	f.StringVar(&nativeManageOpts.teamID, "team-id", "", "team ID when --scope=team")
+	f.StringVar(&nativeManageOpts.registrationToken, "registration-token", "", "one-time registration token issued by the parent proxy")
 	f.StringSliceVar(&nativeManageOpts.labels, "label", nil, "allocator label in key=value form")
 	f.StringArrayVar(&nativeManageOpts.environment, "manager-env", nil, "native manager environment variable in KEY=VALUE form (repeatable)")
 	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
@@ -138,16 +139,23 @@ func runNativeInstall(_ *cobra.Command, _ []string) error {
 		}
 		environment[key] = value
 	}
-	apiKey, err := readInstallAPIKey()
-	if err != nil {
-		return err
-	}
-	registration, err := registerNativeManager(nativeManageOpts.upstream, apiKey, map[string]interface{}{
+	payload := map[string]interface{}{
 		"manager_id": nativeManageOpts.managerID, "instance_id": instanceID, "name": nativeManageOpts.name,
 		"scope": nativeManageOpts.scope, "team_id": nativeManageOpts.teamID,
 		"labels": labels, "default": nativeManageOpts.defaultManager, "public_url": nativeManageOpts.publicURL,
 		"version": nativeBuildVersion(), "rotate_token": existing.ConnectionToken == "",
-	})
+	}
+	var registration *nativeRegistrationResponse
+	if nativeManageOpts.registrationToken != "" {
+		payload["registration_token"] = nativeManageOpts.registrationToken
+		registration, err = enrollNativeManager(nativeManageOpts.upstream, payload)
+	} else {
+		apiKey, keyErr := readInstallAPIKey()
+		if keyErr != nil {
+			return keyErr
+		}
+		registration, err = registerNativeManager(nativeManageOpts.upstream, apiKey, payload)
+	}
 	if err != nil {
 		return err
 	}
@@ -714,6 +722,28 @@ func registerNativeManager(upstream, apiKey string, payload interface{}) (*nativ
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, responseError(resp)
+	}
+	var result nativeRegistrationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func enrollNativeManager(upstream string, payload interface{}) (*nativeRegistrationResponse, error) {
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(upstream, "/")+"/external-session-managers/enroll", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

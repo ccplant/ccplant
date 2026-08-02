@@ -106,3 +106,30 @@ func TestExternalSessionManagerRegistrationSupportsTeamServiceAccount(t *testing
 	require.Error(t, err)
 	require.Equal(t, http.StatusForbidden, err.(*echo.HTTPError).Code)
 }
+
+func TestExternalSessionManagerEnrollmentTokenIsOneTime(t *testing.T) {
+	repo := newMockSettingsRepository()
+	controller := NewSettingsController(repo, nil, "", "")
+	e := echo.New()
+
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var issued esmEnrollmentTokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
+	require.NotEmpty(t, issued.RegistrationToken)
+	require.NotEmpty(t, issued.ManagerID)
+
+	enrollment := ESMEnrollmentRequest{RegistrationToken: issued.RegistrationToken, InstanceID: "machine-enrolled", Name: "native-enrolled"}
+	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", enrollment, "")
+	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
+	var registered esmRegistrationResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &registered))
+	require.Equal(t, issued.ManagerID, registered.ID)
+	require.NotEmpty(t, registered.ConnectionToken)
+
+	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", enrollment, "")
+	err := controller.EnrollExternalSessionManager(ctx)
+	require.Error(t, err)
+	require.Equal(t, http.StatusUnauthorized, err.(*echo.HTTPError).Code)
+}

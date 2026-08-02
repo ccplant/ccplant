@@ -42,7 +42,7 @@ export interface InstallRequest {
   upstream: string;
   publicUrl: string;
   name: string;
-  apiKey: string;
+  registrationToken: string;
   filesystemSandbox: boolean;
 }
 

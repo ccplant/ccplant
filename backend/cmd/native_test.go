@@ -30,6 +30,20 @@ func TestRegisterNativeManager(t *testing.T) {
 	require.Equal(t, "connection-token", result.ConnectionToken)
 }
 
+func TestEnrollNativeManager(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/external-session-managers/enroll", r.URL.Path)
+		require.Empty(t, r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(nativeRegistrationResponse{ID: "manager-1", ConnectionToken: "connection-token", Created: true})
+	}))
+	defer server.Close()
+
+	result, err := enrollNativeManager(server.URL, map[string]string{"registration_token": "one-time-token"})
+	require.NoError(t, err)
+	require.Equal(t, "manager-1", result.ID)
+	require.Equal(t, "connection-token", result.ConnectionToken)
+}
+
 func TestNativeConfigPersistsSeparateInstanceID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

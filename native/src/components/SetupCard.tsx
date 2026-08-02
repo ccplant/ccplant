@@ -7,7 +7,7 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
     upstream: "",
     publicUrl: "",
     name: "",
-    apiKey: "",
+    registrationToken: "",
     filesystemSandbox: true,
   });
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +20,7 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
     try {
       const result = await installDaemon(request);
       if (!result.ok) throw new Error(result.message || "Installation failed");
-      setRequest((current) => ({ ...current, apiKey: "" }));
+      setRequest((current) => ({ ...current, registrationToken: "" }));
       await onInstalled();
     } catch (cause) {
       setError(String(cause));
@@ -41,12 +41,12 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
         <label>Parent AgentAPI URL<input type="url" required placeholder="https://agentapi.example.com" value={request.upstream} onChange={(e) => update("upstream", e.target.value)} /></label>
         <label>Public URL<input type="url" required placeholder="https://this-mac.example.com" value={request.publicUrl} onChange={(e) => update("publicUrl", e.target.value)} /></label>
         <label>This Mac's name<input required placeholder="native-mac" value={request.name} onChange={(e) => update("name", e.target.value)} /></label>
-        <label>AgentAPI key<input type="password" required autoComplete="off" value={request.apiKey} onChange={(e) => update("apiKey", e.target.value)} /></label>
+        <label>Registration token<input type="password" required autoComplete="off" value={request.registrationToken} onChange={(e) => update("registrationToken", e.target.value)} /></label>
         <label className="setup__checkbox"><input type="checkbox" checked={request.filesystemSandbox} onChange={(e) => update("filesystemSandbox", e.target.checked)} /> Restrict session filesystem access</label>
         {error && <p className="setup__error">{error}</p>}
         <button className="btn" type="submit" disabled={submitting}>{submitting ? "Installing…" : "Install and connect"}</button>
       </form>
-      <p className="setup__hint">The API key is used only for registration and is not saved by the app.</p>
+      <p className="setup__hint">The short-lived token is used once and is not saved by the app.</p>
     </section>
   );
 }

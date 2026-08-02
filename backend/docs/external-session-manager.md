@@ -242,16 +242,40 @@ agentapi-proxy native install \
   --filesystem-sandbox
 ```
 
-The registration flow is:
+Prefer a one-time registration token so the parent API key never has to be
+copied to the manager host. Issue one for the authenticated user (or include
+`{"scope":"team","team_id":"my-org/ios-team"}` for a team):
+
+```bash
+curl -X POST "$PARENT_PROXY_URL/external-session-managers/registration-tokens" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+agentapi-proxy native install \
+  --upstream "$PARENT_PROXY_URL" \
+  --public-url "https://native-mac.example.com" \
+  --registration-token "<registration_token>"
+```
+
+The token expires after 15 minutes, is stored only as a hash by the parent,
+and can be exchanged exactly once. The manager automatically receives and
+stores its long-lived connection token during the exchange.
+
+The preferred registration flow is:
 
 ```text
-native install
-  -> POST /external-session-managers
-  -> receive manager ID and one-time connection token
+authenticated user -> POST /external-session-managers/registration-tokens
+native install --registration-token ...
+  -> POST /external-session-managers/enroll
+  -> receive manager ID and connection token (returned once)
   -> install and start the native host service
   -> POST the manager heartbeat
   -> parent proxy verifies <public-url>/healthz
 ```
+
+Registration with the parent API key through `POST
+/external-session-managers` remains supported for compatibility.
 
 On macOS, configuration and credentials are stored under:
 
