@@ -55,6 +55,15 @@ native/
 - Optional **Node.js setup with mise** that selects a global Node.js version
   and exposes mise and its shims to every native agent session.
 
+Installation requires a short-lived one-time enrollment credential:
+
+```bash
+agentapi-proxy native install \
+  --upstream https://parent.example.com \
+  --public-url http://10.0.0.10:8080 \
+  --registration-token '<one-time-token>'
+```
+
 ## Menu-bar tray
 
 The app installs a system-tray icon with:
@@ -83,8 +92,8 @@ the sidecar is unavailable, the fallback lookup order is:
    `~/Library/Application Support/agentapi-native/bin/`.
 2. `agentapi-proxy` looked up on `PATH`.
 
-The first-run form invokes `native install` with the bundled sidecar. Its API
-key is passed only to that child process and is not written to GUI settings;
+The first-run form invokes `native install` with the bundled sidecar. Its
+one-time registration token is passed only to that child process and is not written to GUI settings;
 the CLI continues to store only the resulting connection credential.
 
 When Node.js setup is selected, the app locates an existing `mise` installation,

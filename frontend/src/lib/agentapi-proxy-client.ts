@@ -81,7 +81,7 @@ import {
   TaskListResponse,
   TaskListParams
 } from '../types/task';
-import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GitSyncConfig, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager } from '../types/settings';
+import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GitSyncConfig, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
@@ -1636,6 +1636,28 @@ export class AgentAPIProxyClient {
       }
       throw error;
     }
+  }
+
+  async issueExternalSessionManagerRegistrationToken(
+    scope: 'user' | 'team' = 'user',
+    teamId?: string,
+  ): Promise<ExternalSessionManagerRegistrationToken> {
+    return await this.makeRequest<ExternalSessionManagerRegistrationToken>('/external-session-managers/registration-tokens', {
+      method: 'POST',
+      body: JSON.stringify({ scope, ...(teamId ? { team_id: teamId } : {}) }),
+    });
+  }
+
+  async rotateExternalSessionManagerToken(
+    managerId: string,
+    scope: 'user' | 'team' = 'user',
+    teamId?: string,
+  ): Promise<ExternalSessionManagerConfig> {
+    const query = new URLSearchParams({ scope })
+    if (teamId) query.set('team_id', teamId)
+    return await this.makeRequest<ExternalSessionManagerConfig>(`/external-session-managers/${encodeURIComponent(managerId)}/rotate-token?${query}`, {
+      method: 'POST',
+    });
   }
 
   /**

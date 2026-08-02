@@ -64,7 +64,7 @@ pub struct InstallRequest {
     pub upstream: String,
     pub public_url: String,
     pub name: String,
-    pub api_key: String,
+    pub registration_token: String,
     #[serde(default)]
     pub filesystem_sandbox: bool,
     #[serde(default)]

@@ -96,8 +96,8 @@ pub async fn native_install(
     if !is_http_url(upstream) || !is_http_url(public_url) {
         return Err("upstream and public URL must start with http:// or https://".to_string());
     }
-    if name.is_empty() || request.api_key.trim().is_empty() {
-        return Err("name and API key are required".to_string());
+    if name.is_empty() || request.registration_token.trim().is_empty() {
+        return Err("name and registration token are required".to_string());
     }
 
     let mise_path = if request.setup_nodejs {
@@ -115,8 +115,8 @@ pub async fn native_install(
         public_url,
         "--name",
         name,
-        "--api-key-env",
-        "AGENTAPI_NATIVE_INSTALL_KEY",
+        "--registration-token",
+        request.registration_token.trim(),
     ];
     if request.filesystem_sandbox {
         args.push("--filesystem-sandbox");
@@ -132,7 +132,6 @@ pub async fn native_install(
         .shell()
         .sidecar("agentapi-proxy")
         .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
-        .env("AGENTAPI_NATIVE_INSTALL_KEY", request.api_key)
         .args(args)
         .output()
         .await
