@@ -134,114 +134,74 @@ runtime生成のsession PVCは残る。一方、Helm manifestに直接含まれ�
 
 ## サポートツール
 
-`agentapi-proxy helm migrate`に次のsubcommandを追加する。
+`agentapi-proxy helm migrate plan`と`agentapi-proxy helm migrate verify`はclusterを変更しない。
+install、Service selector変更、uninstallは実行せず、診断結果と実行候補commandだけを出力する。
 
-```text
-agentapi-proxy helm migrate plan
-agentapi-proxy helm migrate backup
-agentapi-proxy helm migrate cutover
-agentapi-proxy helm migrate verify
-agentapi-proxy helm migrate rollback
-agentapi-proxy helm migrate finalize
+実行例:
+
+```bash
+agentapi-proxy helm migrate plan \
+  --namespace agentapi-ui \
+  --backend-release agentapi-proxy \
+  --frontend-release agentapi-ui \
+  --target-release ccplant \
+  --chart oci://ghcr.io/ccplant/charts/ccplant \
+  --version 0.3.2 \
+  --values-out ccplant-shadow-values.yaml
 ```
 
-共通option:
+`--version`は`latest`やrangeを受け付けず、完全なsemantic versionを必須とする。`--output`は
+`text`、`json`、`yaml`に対応する。生成valuesはSecretを含む可能性があるためmode `0600`で保存する。
 
-```text
---namespace <namespace>
---backend-release agentapi-proxy
---frontend-release agentapi-ui
---target-release ccplant
---chart oci://ghcr.io/ccplant/charts/ccplant
---version <exact-version>
---values-out ccplant-values.yaml
---state-secret ccplant-migration-state
---output text|json
---yes
-```
-
-### `plan`
-
-read-onlyで以下を行う。
+preflightは次を検査する。
 
 1. 旧Release revision、values、manifestを読む
 2. backend valuesを`backend.*`、frontend valuesを`frontend.*`へ変換する
-3. 新旧resource名、Ingress、固定RBACの衝突を検査してshadow valuesを生成する
-4. cluster resourceを`recreate`、`retain`、`backup`、`block`に分類する
-5. runtime Secret/PVCに旧Helm ownershipが誤って付いていないか検査する
-6. Secret reference、暗号設定、Service DNS、ServiceAccount名を検査する
-7. install先が既存RBACを安全に共有できることを検査する
-8. control Serviceのselectorとsession ID、data Secret UID、PVC UIDのbaselineを保存する
+3. target Release名が未使用であることを確認する
+4. `control` Serviceの存在、selector、`helm.sh/resource-policy: keep`を確認する
+5. 固定名`agentapi-proxy-session`のServiceAccount、Role、RoleBindingを確認する
+6. valuesから参照されるSecret name/keyの存在を値を表示せず確認する
+7. runtime Secret/PVCに旧Helm ownershipが誤って付いていないか確認する
+8. session Podのcallback URLを調べ、legacy session数を報告する
+9. Secret値を表示せず、参照Secret群のfingerprintを出力する
+10. Ingress、control Service作成、session RBAC作成を無効にしたshadow valuesを生成する
 
-target chartはversionだけでなくOCI digestまで固定する。
+blockが1件でもあればexit codeを非zeroにする。legacy sessionと旧Releaseが所有する共有RBACは
+warningとして報告し、旧backendのuninstall前に手動で解消する。preflightが`READY`でも、表示された
+commandはoperatorが内容を確認して個別に実行する。
 
-### `backup`
+shadow install後とcutover後には次を実行する。
 
-- 旧Helm storage Secretと生成valuesを保存
-- application Secretはmetadata、key名、content hashだけをstate Secretへ保存
-- Secret本体と保持必須PVCは暗号化された外部backup/snapshotを要求
-- session ID、resource UID、OwnerReferenceを記録
-- backup未完了のresourceがあればcutoverを許可しない
-
-### `cutover`
-
-```text
-1. helm install ccplant ... -f ccplant-shadow-values.yaml
-2. 新backendをread-only/shadow modeで検証
-3. 旧backendのbackground workerと新規session作成を停止
-4. 新backendのworkerを有効化し、leader electionを確認
-5. control Service selectorとIngress/外部routingを新Serviceへ切り替える
-6. 新backendで新規session作成を有効化
-7. 旧frontendをuninstall
-8. control Service非対応のlegacy sessionがあれば旧backendをdrain状態で維持
+```bash
+agentapi-proxy helm migrate verify \
+  --namespace agentapi-ui \
+  --backend-release agentapi-proxy \
+  --target-release ccplant
 ```
 
-schedule、SlackBot、stock inventoryなどのworkerを新旧で同時にactiveにしない。leader
-election対象でない処理もある前提で、toolが旧側停止→新側開始の順序を制御する。
+`verify`はtarget Helm Release、backend/frontend Deployment、Service Endpoint、Kubernetes API
+proxy経由のbackend `/health`、`control` selector、session callback、runtime Secret/PVC数を検査する。
+`control`が旧backendを向いていれば`shadow`、新backendを向いていれば`cutover`と判定する。
 
-旧backendの削除条件は、旧backendで作成されたsessionが0件、または全sessionのcallback先が
-新Serviceへ更新済みであること。条件を満たさない間はuninstallを禁止する。
+workerのLease名はRelease名に依存しない次の固定名を使う。旧・新backendを同じnamespaceで
+並行起動すると同じLeaseを競うため、各workerのleaderは常に1 Podだけになる。
 
-### `verify`
+- `agentapi-schedule-worker`
+- `agentapi-slackbot-cleanup-worker`
+- `agentapi-stock-inventory-worker`
+- `agentapi-session-allocator`
+- `agentapi-github-sync-worker`
 
-- target Releaseがdeployed
-- backend/frontend rolloutとService endpoint
-- 移行前後のsession ID集合とruntime resource UIDが一致
-- 既存sessionへのroute、message送信、Pod再起動後の再provision
-- settings、credentialsの復号
-- API token認証
-- task/memory/schedule/webhook等の件数と代表read
-- external Secretのname/key参照
-- PVCのBound状態と代表データread
-- 旧backend経由と新backend経由のsession ID集合が一致
-- 新規sessionのcallback先が`control`
-- background workerが新旧で二重実行されていない
-
-一定時間連続して成功するまでfinalizeを禁止する。
-
-### `rollback`
-
-1. 外部routingを旧Serviceへ戻す
-2. 新規session作成と新workerを停止する
-3. 旧workerと新規session作成を再開する
-4. cutover後に新規作成されたsessionのcallback互換性を確認する
-5. 問題がなければ`helm uninstall ccplant`
-
-runtime resourceはrollback中も削除しない。ccplant稼働後に新規作成されたdata resourceが
-ある場合は自動削除せず、旧backendとのschema互換性を検査する。
-
-### `finalize`
-
-移行stateに完了時刻、chart digest、probe結果を記録する。backupとstate Secretは既定で
-30日保持する。
+有効なworkerについてLeaseの存在とholderも検査する。Lease duration内では旧leaderが処理を継続し、
+更新停止後に新Podが引き継ぐため、切替直後に必ず新ReleaseのPodがleaderになるとは限らない。
 
 ## 移行手順
 
 1. stagingでproduction相当のresource構成を再現してrollbackまで試験
 2. productionで`doctor`と`helm migrate plan`を実行
 3. Secret/PVC backupを取得
-4. `ccplant`をshadow installして既存resourceのreadを検証
-5. routingとworker ownershipをcutover
+4. `ccplant`をshadow installして`helm migrate verify`を実行
+5. routingをcutoverし、再度`helm migrate verify`を実行
 6. 旧frontendを削除し、旧backendをlegacy callback用にdrain
 7. legacy sessionがなくなったら共通RBACを引き継ぎ、旧backendを削除
 8. 問題がなければ`finalize`
