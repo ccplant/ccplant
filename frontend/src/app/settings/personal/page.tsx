@@ -25,8 +25,6 @@ export default function PersonalSettingsPage() {
   const [slackUserId, setSlackUserId] = useState<string>('')
   const [notificationChannels, setNotificationChannels] = useState<string[] | undefined>(undefined)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
-  const [newEsm, setNewEsm] = useState<{ name: string; default: boolean }>({ name: '', default: false })
-  const [showAddEsm, setShowAddEsm] = useState(false)
   const [editingEsmIndex, setEditingEsmIndex] = useState<number | null>(null)
   const [editEsm, setEditEsm] = useState<{ name: string; default: boolean }>({ name: '', default: false })
   const [revealedTokens, setRevealedTokens] = useState<Record<string, string>>({})
@@ -238,19 +236,6 @@ export default function PersonalSettingsPage() {
     setSettings((prev) => ({ ...prev, notification_channels: channels }))
   }
 
-  const handleAddEsm = () => {
-    if (!newEsm.name.trim()) return
-    // If new ESM is default, clear default from others
-    const updatedList = newEsm.default
-      ? esmList.map(e => ({ ...e, default: false }))
-      : [...esmList]
-    const updated = [...updatedList, { name: newEsm.name.trim(), default: newEsm.default }]
-    setEsmList(updated)
-    setSettings((prev) => ({ ...prev, external_session_managers: updated }))
-    setNewEsm({ name: '', default: false })
-    setShowAddEsm(false)
-  }
-
   const handleDeleteEsm = (index: number) => {
     const updated = esmList.filter((_, i) => i !== index)
     setEsmList(updated)
@@ -310,41 +295,20 @@ export default function PersonalSettingsPage() {
     setTimeout(() => setCopiedSecretId(null), 2000)
   }
 
-  const generateHmacSecret = (): string => {
-    const bytes = new Uint8Array(32)
-    crypto.getRandomValues(bytes)
-    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
-  }
-
   const handleRegenerateSecret = async (index: number) => {
     const esm = esmList[index]
-    const newSecret = generateHmacSecret()
-    const updatedList = esmList.map((e, i) =>
-      i === index ? { ...e, hmac_secret: newSecret } : e
-    )
-    setEsmList(updatedList)
-    const esmId = esm.id ?? `temp-${index}`
+    if (!esm.id) return
+    const esmId = esm.id
     setRegeneratingEsmId(esmId)
     try {
       const client = createAgentAPIProxyClientFromStorage()
-      const preparedSettings = prepareSettingsForSave({
-        ...settings,
-        external_session_managers: updatedList,
-      })
-      const savedSettings = await client.saveSettings(userName, preparedSettings)
-      setSettings(savedSettings)
-      setOriginalSettings(savedSettings)
-      setEsmList(savedSettings.external_session_managers || [])
-      const savedManager = savedSettings.external_session_managers?.find((m) =>
-        (esm.id && m.id === esm.id) ||
-        (!esm.id && m.name === esm.name)
-      )
-      setRevealedTokens(prev => ({ ...prev, [savedManager?.id || esmId]: newSecret }))
+      const rotated = await client.rotateExternalSessionManagerToken(esmId)
+      setEsmList((current) => current.map((manager) => manager.id === esmId ? { ...manager, has_connection_token: true } : manager))
+      setRevealedTokens(prev => ({ ...prev, [esmId]: rotated.connection_token || '' }))
       showToast('接続トークンを再発行しました', 'success')
     } catch (err) {
       console.error('Failed to regenerate secret:', err)
       showToast('再発行に失敗しました', 'error')
-      setEsmList(esmList)
     } finally {
       setRegeneratingEsmId(null)
     }
@@ -769,7 +733,7 @@ export default function PersonalSettingsPage() {
           >
             <div className="space-y-4">
               <ESMRegistrationToken scope="user" />
-              {esmList.length === 0 && !showAddEsm && (
+              {esmList.length === 0 && (
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   外部セッションマネージャーが登録されていません
                 </p>
@@ -827,7 +791,7 @@ export default function PersonalSettingsPage() {
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           <span className="text-xs text-gray-500 dark:text-gray-400">allocator 接続</span>
-                          {(esm.has_connection_token || esm.hmac_secret || (esm.id && revealedTokens[esm.id])) && (
+                          {(esm.has_connection_token || (esm.id && revealedTokens[esm.id])) && (
                             <span className="px-1.5 py-0.5 text-xs bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded">
                               token 設定済み
                             </span>
@@ -915,60 +879,6 @@ export default function PersonalSettingsPage() {
                   )}
                 </div>
               ))}
-              {showAddEsm ? (
-                <div className="p-3 border border-blue-200 dark:border-blue-800 rounded-lg space-y-3 bg-blue-50 dark:bg-blue-900/10">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">名前</label>
-                    <input
-                      type="text"
-                      value={newEsm.name}
-                      onChange={(e) => setNewEsm(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="例: 開発環境"
-                      className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <p className="text-xs text-gray-600 dark:text-gray-400">
-                    保存すると接続トークンが発行されます。External Session Managerはこの token で 親プロキシ に接続します。
-                  </p>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={newEsm.default}
-                      onChange={(e) => setNewEsm(prev => ({ ...prev, default: e.target.checked }))}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                    <span className="text-xs text-gray-700 dark:text-gray-300">デフォルトマネージャーに設定する（manager_id 未指定時に自動使用）</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleAddEsm}
-                      disabled={!newEsm.name.trim()}
-                      className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      追加
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setShowAddEsm(false); setNewEsm({ name: '', default: false }) }}
-                      className="px-3 py-1.5 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                    >
-                      キャンセル
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowAddEsm(true)}
-                  className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  マネージャーを追加
-                </button>
-              )}
             </div>
           </SettingsAccordion>
 

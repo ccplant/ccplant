@@ -27,48 +27,25 @@ remote session. That URL is `SESSION_MANAGER_PUBLIC_URL`.
 
 ## 親プロキシ: Register the Manager
 
-Register an ESM without `url`. 親プロキシ generates a one-time `connection_token`
-when `hmac_secret` is omitted.
+Issue a short-lived registration token from the Web settings page or `POST
+/external-session-managers/registration-tokens`, then give only that token to
+the manager host. Direct registration through settings or a parent API key is
+not supported.
 
-```bash
-PARENT_PROXY_URL="https://parent-proxy.example.com"
-API_KEY="<parent-proxy-api-key>"
-USERNAME="<github-username>"
-
-curl -X PUT "$PARENT_PROXY_URL/settings/$USERNAME" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "external_session_managers": [
-      {
-        "id": "dev-esm-allocator",
-        "name": "Dev ESM Allocator",
-        "default": false
-      }
-    ]
-  }'
-```
-
-The response includes the token only at creation or rotation time:
+The issuance response contains a registration token that expires after 15
+minutes and can be exchanged once:
 
 ```json
 {
-  "external_session_managers": [
-    {
-      "id": "dev-esm-allocator",
-      "name": "Dev ESM Allocator",
-      "has_connection_token": true,
-      "connection_token": "<generated-token>",
-      "default": false
-    }
-  ]
+  "manager_id": "dev-esm-allocator",
+  "registration_token": "<one-time-token>",
+  "expires_at": "2026-08-02T07:00:00Z"
 }
 ```
 
-Store `<generated-token>` securely. It is not returned by later settings reads.
-
-When updating settings, preserve any existing managers that should remain
-registered. The `external_session_managers` array represents the desired list.
+The manager exchanges it through `/external-session-managers/enroll` and
+stores the returned connection token. Neither token is returned by later
+settings reads.
 
 ## External Session Manager: Required Environment
 
@@ -188,7 +165,7 @@ token, installs the host service, starts it, and sends the first heartbeat.
 
 Before registering, prepare:
 
-- An API key for the parent proxy with permission to create sessions.
+- A one-time registration token issued by the parent proxy.
 - An upstream URL for the parent proxy.
 - A public URL through which the parent proxy can reach the native manager.
   The parent must be able to request `<public-url>/healthz` and proxy session
@@ -198,12 +175,11 @@ Before registering, prepare:
 For a user-scoped macOS manager with the filesystem sandbox enabled:
 
 ```bash
-export AGENTAPI_KEY="<parent-proxy-api-key>"
-
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
   --public-url "https://native-mac.example.com" \
   --name "ios-builder" \
+  --registration-token "<registration-token>" \
   --label purpose=ios \
   --filesystem-sandbox
 ```
@@ -242,8 +218,7 @@ agentapi-proxy native install \
   --filesystem-sandbox
 ```
 
-Prefer a one-time registration token so the parent API key never has to be
-copied to the manager host. Issue one for the authenticated user (or include
+Issue a one-time registration token for the authenticated user (or include
 `{"scope":"team","team_id":"my-org/ios-team"}` for a team):
 
 ```bash
@@ -265,7 +240,7 @@ When a team-bound service account issues a token without specifying `scope`,
 the token defaults to that service account's team scope. An explicit `scope`
 still takes precedence.
 
-The preferred registration flow is:
+The registration flow is:
 
 ```text
 authenticated user -> POST /external-session-managers/registration-tokens
@@ -276,9 +251,6 @@ native install --registration-token ...
   -> POST the manager heartbeat
   -> parent proxy verifies <public-url>/healthz
 ```
-
-Registration with the parent API key through `POST
-/external-session-managers` remains supported for compatibility.
 
 On macOS, configuration and credentials are stored under:
 
@@ -297,8 +269,7 @@ agentapi-proxy native doctor
 `native status` reports the manager ID, upstream and public URLs, active
 sessions, and whether the filesystem sandbox is enabled. `native doctor`
 checks local configuration permissions, service health, and the parent
-heartbeat. If registration must retain an existing identity, pass the existing
-ID with `--manager-id`.
+heartbeat.
 
 List native sessions and inspect their provisioner logs directly from the host:
 

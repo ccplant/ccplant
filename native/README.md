@@ -53,8 +53,7 @@ native/
 - **First-run setup** that registers the Mac and installs its per-user
   LaunchAgent without requiring a separately installed CLI.
 
-The CLI also accepts a short-lived one-time enrollment credential, so the
-parent proxy API key does not need to be copied to the manager host:
+Installation requires a short-lived one-time enrollment credential:
 
 ```bash
 agentapi-proxy native install \

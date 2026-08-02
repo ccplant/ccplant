@@ -31,9 +31,10 @@ export function ESMRegistrationToken({ scope, teamId }: Props) {
 
   const copy = async (kind: 'token' | 'command') => {
     if (!issued) return
+    const teamFlags = scope === 'team' && teamId ? ` --scope team --team-id ${JSON.stringify(teamId)}` : ''
     const value = kind === 'token'
       ? issued.registration_token
-      : `agentapi-proxy native install --upstream <parent-proxy-url> --public-url <manager-public-url> --registration-token ${JSON.stringify(issued.registration_token)}`
+      : `agentapi-proxy native install --upstream <parent-proxy-url> --public-url <manager-public-url> --registration-token ${JSON.stringify(issued.registration_token)}${teamFlags}`
     await navigator.clipboard.writeText(value)
     setCopied(kind)
     setTimeout(() => setCopied(null), 2000)

@@ -19,10 +19,6 @@ export default function TeamSettingsPage() {
   const [gitSyncConfig, setGitSyncConfig] = useState<GitSyncConfig | undefined>(undefined)
   const [credentialsMetadata, setCredentialsMetadata] = useState<CredentialsMetadata | null>(null)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
-  const [newEsmName, setNewEsmName] = useState('')
-  const [newEsmDefault, setNewEsmDefault] = useState(false)
-  const [revealedTokens, setRevealedTokens] = useState<Record<string, string>>({})
-  const [copiedEsmId, setCopiedEsmId] = useState<string | null>(null)
   const { showToast } = useToast()
   const hasUnsavedChangesRef = useRef(false)
 
@@ -59,7 +55,6 @@ export default function TeamSettingsPage() {
       setSettings(data)
       setOriginalSettings(data)
       setEsmList(data.external_session_managers || [])
-      setRevealedTokens({})
       setTeamName(name)
       setIsTeamLoaded(true)
 
@@ -179,31 +174,12 @@ export default function TeamSettingsPage() {
     setSettings((prev) => ({ ...prev, external_session_managers: managers }))
   }
 
-  const handleAddEsm = () => {
-    const name = newEsmName.trim()
-    if (!name) return
-    const managers = newEsmDefault
-      ? esmList.map((manager) => ({ ...manager, default: false }))
-      : [...esmList]
-    updateEsmList([...managers, { name, default: newEsmDefault }])
-    setNewEsmName('')
-    setNewEsmDefault(false)
-  }
-
   const handleToggleEsmDefault = (index: number) => {
     const selected = !esmList[index].default
     updateEsmList(esmList.map((manager, current) => ({
       ...manager,
       default: current === index ? selected : false,
     })))
-  }
-
-  const handleCopyEsmCommand = async (manager: ExternalSessionManagerConfig) => {
-    if (!manager.id || !revealedTokens[manager.id]) return
-    const command = `agentapi-proxy native install --upstream <parent-proxy-url> --public-url <external-session-manager-url> --name ${JSON.stringify(manager.name)} --manager-id ${JSON.stringify(manager.id)} --scope team --team-id ${JSON.stringify(teamName)}`
-    await navigator.clipboard.writeText(command)
-    setCopiedEsmId(manager.id)
-    setTimeout(() => setCopiedEsmId(null), 2000)
   }
 
   const handleSave = async () => {
@@ -224,16 +200,7 @@ export default function TeamSettingsPage() {
       setSettings(savedSettings)
       setOriginalSettings(savedSettings)
       setEsmList(savedSettings.external_session_managers || [])
-      const tokens: Record<string, string> = {}
-      for (const manager of savedSettings.external_session_managers || []) {
-        if (manager.id && manager.connection_token) tokens[manager.id] = manager.connection_token
-      }
-      if (Object.keys(tokens).length > 0) {
-        setRevealedTokens((previous) => ({ ...previous, ...tokens }))
-        showToast('Team External Session Manager の接続トークンを発行しました', 'success')
-      } else {
-        showToast('Team settings saved successfully!', 'success')
-      }
+      showToast('Team settings saved successfully!', 'success')
     } catch (err) {
       console.error('Failed to save team settings:', err)
       setError('Failed to save settings')
@@ -443,14 +410,6 @@ export default function TeamSettingsPage() {
                         {manager.default && <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">デフォルト</span>}
                         {manager.has_connection_token && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">token 設定済み</span>}
                       </div>
-                      {manager.id && revealedTokens[manager.id] && (
-                        <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 dark:border-emerald-800 dark:bg-emerald-900/10">
-                          <p className="break-all font-mono text-xs text-gray-700 dark:text-gray-200">{revealedTokens[manager.id]}</p>
-                          <button type="button" onClick={() => handleCopyEsmCommand(manager)} className="mt-2 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400">
-                            {copiedEsmId === manager.id ? 'team 用起動コマンドをコピーしました' : 'team 用 native install コマンドをコピー'}
-                          </button>
-                        </div>
-                      )}
                     </div>
                     <button type="button" onClick={() => handleToggleEsmDefault(index)} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 dark:border-gray-600 dark:text-gray-300">
                       {manager.default ? '★' : '☆'}
@@ -461,18 +420,6 @@ export default function TeamSettingsPage() {
                   </div>
                 </div>
               ))}
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/10">
-                <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">名前</label>
-                <div className="flex gap-2">
-                  <input type="text" value={newEsmName} onChange={(event) => setNewEsmName(event.target.value)} placeholder="例: team-builders" className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
-                  <button type="button" onClick={handleAddEsm} disabled={!newEsmName.trim()} className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">追加</button>
-                </div>
-                <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                  <input type="checkbox" checked={newEsmDefault} onChange={(event) => setNewEsmDefault(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600" />
-                  チームのデフォルトマネージャーに設定する
-                </label>
-                <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">追加後に Team Settings を保存すると接続トークンが一度だけ表示されます。</p>
-              </div>
             </div>
           </SettingsAccordion>
 

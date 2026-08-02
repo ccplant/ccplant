@@ -431,7 +431,6 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Registering settings endpoints...")
 		r.echo.POST("/external-session-managers/registration-tokens", r.handlers.settingsController.IssueExternalSessionManagerEnrollmentToken, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.POST("/external-session-managers/enroll", r.handlers.settingsController.EnrollExternalSessionManager)
-		r.echo.POST("/external-session-managers", r.handlers.settingsController.RegisterExternalSessionManager, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.GET("/external-session-managers", r.handlers.settingsController.ListExternalSessionManagers, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/external-session-managers/:id", r.handlers.settingsController.GetExternalSessionManager, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PATCH("/external-session-managers/:id", r.handlers.settingsController.PatchExternalSessionManager, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))

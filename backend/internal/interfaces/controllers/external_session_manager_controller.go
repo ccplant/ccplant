@@ -15,17 +15,13 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-type ESMRegistrationRequest struct {
-	ManagerID   string            `json:"manager_id,omitempty"`
-	InstanceID  string            `json:"instance_id"`
-	Name        string            `json:"name"`
-	Scope       string            `json:"scope,omitempty"`
-	TeamID      string            `json:"team_id,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Default     bool              `json:"default,omitempty"`
-	PublicURL   string            `json:"public_url,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	RotateToken bool              `json:"rotate_token,omitempty"`
+type ESMUpdateRequest struct {
+	InstanceID string            `json:"instance_id"`
+	Name       string            `json:"name"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	Default    bool              `json:"default,omitempty"`
+	PublicURL  string            `json:"public_url,omitempty"`
+	Version    string            `json:"version,omitempty"`
 }
 
 type ESMHeartbeatRequest struct {
@@ -163,67 +159,6 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 	return echo.NewHTTPError(http.StatusUnauthorized, "invalid or already used registration token")
 }
 
-func (c *SettingsController) RegisterExternalSessionManager(ctx echo.Context) error {
-	var req ESMRegistrationRequest
-	if err := ctx.Bind(&req); err != nil || strings.TrimSpace(req.InstanceID) == "" || strings.TrimSpace(req.Name) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "instance_id and name are required")
-	}
-	name, err := c.esmSettingsName(ctx, req.Scope, req.TeamID, true)
-	if err != nil {
-		return err
-	}
-
-	c.esmMu.Lock()
-	defer c.esmMu.Unlock()
-	settings, err := c.findOrCreateSettings(ctx, name)
-	if err != nil {
-		return err
-	}
-	managers := append([]entities.ExternalSessionManagerEntry(nil), settings.ExternalSessionManagers()...)
-	idx := -1
-	for i := range managers {
-		if managers[i].InstanceID == req.InstanceID || (req.ManagerID != "" && managers[i].ID == req.ManagerID) {
-			idx = i
-			break
-		}
-	}
-	created := idx < 0
-	connectionToken := ""
-	if created || req.RotateToken {
-		connectionToken, err = generateSettingsESMSecret(32)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate connection token")
-		}
-		if created {
-			managerID := req.ManagerID
-			if managerID == "" {
-				managerID = uuid.NewString()
-			}
-			managers = append(managers, entities.ExternalSessionManagerEntry{ID: managerID, InstanceID: req.InstanceID, HMACSecret: connectionToken})
-			idx = len(managers) - 1
-		} else {
-			managers[idx].HMACSecret = connectionToken
-		}
-	}
-	if req.Default {
-		for i := range managers {
-			managers[i].Default = false
-		}
-	}
-	manager := &managers[idx]
-	manager.InstanceID = req.InstanceID
-	manager.Name = req.Name
-	manager.Labels = req.Labels
-	manager.Default = req.Default
-	manager.PublicURL = req.PublicURL
-	manager.Version = req.Version
-	settings.SetExternalSessionManagers(managers)
-	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save external session manager")
-	}
-	return ctx.JSON(http.StatusOK, esmRegistrationResponse{ExternalSessionManagerResponse: esmResponse(*manager, connectionToken), Created: created})
-}
-
 func (c *SettingsController) ListExternalSessionManagers(ctx echo.Context) error {
 	name, err := c.esmSettingsName(ctx, ctx.QueryParam("scope"), ctx.QueryParam("team_id"), false)
 	if err != nil {
@@ -255,7 +190,7 @@ func (c *SettingsController) GetExternalSessionManager(ctx echo.Context) error {
 }
 
 func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error {
-	var req ESMRegistrationRequest
+	var req ESMUpdateRequest
 	if err := ctx.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}
