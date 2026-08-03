@@ -10,8 +10,6 @@ pub struct NativeStatus {
     pub service: String,
     pub manager_id: String,
     pub upstream: String,
-    #[serde(default = "default_public_access")]
-    pub public_access: String,
     pub public_url: String,
     #[serde(default)]
     pub labels: std::collections::BTreeMap<String, String>,
@@ -85,6 +83,8 @@ pub struct InstallRequest {
     #[serde(default = "default_instance")]
     pub instance: String,
     pub upstream: String,
+    #[serde(default = "default_public_access")]
+    pub public_access: String,
     pub public_url: String,
     pub listen: String,
     pub name: String,
