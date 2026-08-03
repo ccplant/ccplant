@@ -102,6 +102,50 @@ pub async fn native_restart(
     })
 }
 
+/// Replace the installed manager with the app-bundled binary and restart it.
+#[tauri::command]
+pub async fn native_update(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<CommandResult, String> {
+    let args = update_args(instance.as_deref());
+    let output = app
+        .shell()
+        .sidecar("agentapi-proxy")
+        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("failed to update native manager: {e}"))?;
+    let message = String::from_utf8_lossy(if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    })
+    .trim()
+    .to_string();
+    Ok(CommandResult {
+        ok: output.status.success(),
+        message: if message.is_empty() {
+            if output.status.success() {
+                "Native manager updated and restarted.".to_string()
+            } else {
+                "Native manager update failed.".to_string()
+            }
+        } else {
+            message
+        },
+    })
+}
+
+fn update_args(instance: Option<&str>) -> Vec<&str> {
+    let mut args = vec!["native", "update"];
+    if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+        args.extend(["--instance", name]);
+    }
+    args
+}
+
 #[tauri::command]
 pub async fn native_list(app: AppHandle) -> Result<Vec<NativeInstance>, String> {
     let stdout = run_native_json(&app, "list", None).await?;
@@ -400,7 +444,7 @@ fn is_executable(path: &Path) -> bool {
 mod tests {
     use super::{
         is_http_url, mise_manager_path, native_config_path, parse_json, public_url_from_host,
-        resolve_public_url, uninstall_args,
+        resolve_public_url, uninstall_args, update_args,
     };
     use crate::types::{DoctorResult, NativeStatus};
 
@@ -472,6 +516,16 @@ mod tests {
         assert!(uninstall_args(false, "ios")
             .windows(2)
             .any(|args| args == ["--instance", "ios"]));
+    }
+
+    #[test]
+    fn update_selects_the_requested_instance() {
+        assert_eq!(update_args(None), ["native", "update"]);
+        assert_eq!(update_args(Some("default")), ["native", "update"]);
+        assert_eq!(
+            update_args(Some("ios")),
+            ["native", "update", "--instance", "ios"]
+        );
     }
 
     #[test]

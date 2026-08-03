@@ -5,6 +5,7 @@ import {
   onRefreshRequest,
   restartDaemon,
   showDashboard,
+  updateDaemon,
 } from "./api";
 import type { DashboardData, NativeInstance } from "./types";
 import { StatusCard } from "./components/StatusCard";
@@ -21,6 +22,7 @@ export function App() {
   const [error, setError] = useState<string>("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [restarting, setRestarting] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [instances, setInstances] = useState<NativeInstance[]>([]);
@@ -97,6 +99,19 @@ export function App() {
     [data],
   );
 
+  const handleUpdate = useCallback(async () => {
+    setUpdating(true);
+    try {
+      const result = await updateDaemon(selectedInstance);
+      if (!result.ok) setWarnings([result.message]);
+      await refresh(true);
+    } catch (err) {
+      setWarnings([`update failed: ${String(err)}`]);
+    } finally {
+      setUpdating(false);
+    }
+  }, [refresh, selectedInstance]);
+
   return (
     <div className="app">
       <header className="app__header">
@@ -121,9 +136,17 @@ export function App() {
             {state === "loading" ? "Refreshing…" : "Refresh"}
           </button>
           <button
+            className="btn btn--ghost"
+            onClick={() => void handleUpdate()}
+            disabled={updating || restarting || activeCount > 0}
+            title={activeCount > 0 ? "Finish active sessions before updating" : "Replace the native manager with the binary bundled in this app"}
+          >
+            {updating ? "Updating…" : "Update manager"}
+          </button>
+          <button
             className="btn btn--danger"
             onClick={() => void handleRestart()}
-            disabled={restarting}
+            disabled={restarting || updating}
             title="Restart the native ESM daemon"
           >
             {restarting ? "Restarting…" : "Restart"}

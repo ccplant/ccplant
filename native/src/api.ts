@@ -34,6 +34,10 @@ export async function restartDaemon(instance: string): Promise<RestartResult> {
   return invoke<RestartResult>("native_restart", { instance });
 }
 
+export async function updateDaemon(instance: string): Promise<RestartResult> {
+  return invoke<RestartResult>("native_update", { instance });
+}
+
 export async function installDaemon(request: InstallRequest): Promise<RestartResult> {
   return invoke<RestartResult>("native_install", { request });
 }

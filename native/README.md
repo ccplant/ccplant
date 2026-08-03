@@ -79,6 +79,7 @@ The app installs a system-tray icon with:
 - **Show Dashboard** — reveals and focuses the window.
 - **Refresh** — emits a `dashboard://refresh` event the frontend listens for.
 - **Restart** — runs `native restart` on a background thread, then refreshes.
+- **Update manager** — replaces the installed manager with the app-bundled binary and restarts it; disabled while sessions are active.
 - **Quit** — exits the dashboard only.
 
 A single left-click on the tray icon also reveals the dashboard.
@@ -118,6 +119,7 @@ Then it runs (JSON parsed into typed serde structs):
 | `native sessions --json`        | `native_sessions`| `Vec<NativeSession>` |
 | `native doctor --json`          | `native_doctor`  | `DoctorResult`   |
 | `native restart`                | `native_restart` | `CommandResult`  |
+| `native update`                 | `native_update`  | `CommandResult`  |
 
 `sessions` is the alias of `session-list` and emits a JSON array. `doctor`
 returns an overall `ok` value plus structured checks so the dashboard can show
