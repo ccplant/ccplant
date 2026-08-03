@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct NativeStatus {
+    #[serde(default = "default_instance")]
+    pub instance: String,
     pub service: String,
     pub manager_id: String,
     pub upstream: String,
@@ -18,6 +20,23 @@ pub struct NativeStatus {
     pub active_sessions: i64,
     pub health: String,
     pub state: String,
+}
+
+fn default_instance() -> String {
+    "default".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NativeInstance {
+    pub instance: String,
+    pub service: String,
+    pub manager_id: String,
+    pub upstream: String,
+    pub public_url: String,
+    pub state: String,
+    pub config: String,
+    #[serde(default)]
+    pub running: bool,
 }
 
 /// Mirrors `nativeSessionListEntry` in `backend/cmd/native.go`.
@@ -61,8 +80,13 @@ pub struct CommandResult {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRequest {
+    #[serde(default = "default_instance")]
+    pub instance: String,
     pub upstream: String,
+    #[serde(default = "default_public_access")]
+    pub public_access: String,
     pub public_url: String,
+    pub listen: String,
     pub name: String,
     pub registration_token: String,
     #[serde(default)]
@@ -77,8 +101,14 @@ fn default_nodejs_version() -> String {
     "lts".to_string()
 }
 
+fn default_public_access() -> String {
+    "tailscale".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResetRequest {
+    #[serde(default = "default_instance")]
+    pub instance: String,
     pub force: bool,
 }

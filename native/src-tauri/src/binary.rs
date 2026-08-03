@@ -38,14 +38,27 @@ pub fn resolve_binary() -> Result<PathBuf, String> {
     }
 
     if let Some(home) = std::env::var_os("HOME") {
-        let managed = PathBuf::from(home)
+        let application_support = PathBuf::from(home)
             .join("Library")
-            .join("Application Support")
+            .join("Application Support");
+        let managed = application_support
             .join("agentapi-native")
             .join("bin")
             .join(BINARY_NAME);
         if is_executable(&managed) {
             return Ok(managed);
+        }
+        if let Ok(entries) = std::fs::read_dir(application_support) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if !name.to_string_lossy().starts_with("agentapi-native-") {
+                    continue;
+                }
+                let candidate = entry.path().join("bin").join(BINARY_NAME);
+                if is_executable(&candidate) {
+                    return Ok(candidate);
+                }
+            }
         }
     }
 
@@ -108,11 +121,19 @@ fn native_command(sub: &str, json: bool) -> Result<Command, String> {
 
 /// Run a `native <sub> --json` subcommand and return its stdout as bytes.
 /// Captures stderr; on non-zero exit the stderr is returned as the error.
-pub async fn run_native_json(app: &AppHandle, sub: &str) -> Result<Vec<u8>, String> {
+pub async fn run_native_json(
+    app: &AppHandle,
+    sub: &str,
+    instance: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let mut args = vec![NATIVE_SUBCOMMAND, sub, "--json"];
+    if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+        args.extend(["--instance", name]);
+    }
     if std::env::var_os(BINARY_ENV).is_none() {
         if let Ok(sidecar) = app.shell().sidecar(BINARY_NAME) {
             let output = sidecar
-                .args([NATIVE_SUBCOMMAND, sub, "--json"])
+                .args(args.clone())
                 .output()
                 .await
                 .map_err(|e| format!("failed to execute bundled binary: {e}"))?;
@@ -123,6 +144,9 @@ pub async fn run_native_json(app: &AppHandle, sub: &str) -> Result<Vec<u8>, Stri
         }
     }
     let mut cmd = native_command(sub, true)?;
+    if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+        cmd.arg("--instance").arg(name);
+    }
     let output = cmd
         .output()
         .map_err(|e| format!("failed to execute: {e}"))?;
@@ -142,10 +166,18 @@ pub async fn run_native_json(app: &AppHandle, sub: &str) -> Result<Vec<u8>, Stri
 }
 
 /// Run `native <sub>` without JSON and return (ok, combined-message).
-pub async fn run_native_plain(app: &AppHandle, sub: &str) -> (bool, String) {
+pub async fn run_native_plain(
+    app: &AppHandle,
+    sub: &str,
+    instance: Option<&str>,
+) -> (bool, String) {
+    let mut args = vec![NATIVE_SUBCOMMAND, sub];
+    if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+        args.extend(["--instance", name]);
+    }
     if std::env::var_os(BINARY_ENV).is_none() {
         if let Ok(sidecar) = app.shell().sidecar(BINARY_NAME) {
-            match sidecar.args([NATIVE_SUBCOMMAND, sub]).output().await {
+            match sidecar.args(args).output().await {
                 Ok(output) => {
                     let message = output_message(&output.stdout, &output.stderr);
                     return (output.status.success(), message);
@@ -155,23 +187,28 @@ pub async fn run_native_plain(app: &AppHandle, sub: &str) -> (bool, String) {
         }
     }
     match native_command(sub, false) {
-        Ok(mut cmd) => match cmd.output() {
-            Ok(output) => {
-                let msg = {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !stderr.is_empty() {
-                        stderr
-                    } else if !stdout.is_empty() {
-                        stdout
-                    } else {
-                        String::new()
-                    }
-                };
-                (output.status.success(), msg)
+        Ok(mut cmd) => {
+            if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+                cmd.arg("--instance").arg(name);
             }
-            Err(e) => (false, format!("failed to execute: {e}")),
-        },
+            match cmd.output() {
+                Ok(output) => {
+                    let msg = {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if !stderr.is_empty() {
+                            stderr
+                        } else if !stdout.is_empty() {
+                            stdout
+                        } else {
+                            String::new()
+                        }
+                    };
+                    (output.status.success(), msg)
+                }
+                Err(e) => (false, format!("failed to execute: {e}")),
+            }
+        }
         Err(e) => (false, e),
     }
 }

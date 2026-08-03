@@ -54,6 +54,8 @@ native/
   LaunchAgent without requiring a separately installed CLI.
 - Optional **Node.js setup with mise** that selects a global Node.js version
   and exposes mise and its shims to every native agent session.
+- Multiple named instances, with an instance selector and instance-scoped add,
+  restart, diagnostics, session listing, and removal actions.
 
 Installation requires a short-lived one-time enrollment credential:
 
@@ -63,6 +65,12 @@ agentapi-proxy native install \
   --public-url http://10.0.0.10:8080 \
   --registration-token '<one-time-token>'
 ```
+
+The app asks how the parent reaches the Mac: **Tailscale**, **LAN**, or a
+**Custom URL**. Tailscale and LAN combine the selected route's IPv4 address with
+the listen port; Custom URL supports TLS, reverse proxies, NAT, and port
+mappings. The app always passes the resolved URL explicitly because the CLI
+keeps `--public-url` required.
 
 ## Menu-bar tray
 
@@ -105,6 +113,7 @@ Then it runs (JSON parsed into typed serde structs):
 
 | Command                         | Tauri command    | Rust struct      |
 |---------------------------------|------------------|------------------|
+| `native list --json`            | `native_list`    | `Vec<NativeInstance>` |
 | `native status --json`          | `native_status`  | `NativeStatus`   |
 | `native sessions --json`        | `native_sessions`| `Vec<NativeSession>` |
 | `native doctor --json`          | `native_doctor`  | `DoctorResult`   |
@@ -113,6 +122,10 @@ Then it runs (JSON parsed into typed serde structs):
 `sessions` is the alias of `session-list` and emits a JSON array. `doctor`
 returns an overall `ok` value plus structured checks so the dashboard can show
 partial failures without parsing human-readable output.
+
+The dashboard passes `--instance <name>` to instance-scoped commands. The
+default instance deliberately omits that flag so existing installations keep
+their historical paths and `com.agentapi.native` LaunchAgent label.
 
 The struct fields mirror `nativeStatusOutput` / `nativeSessionListEntry` in
 `backend/cmd/native.go` (`#[serde(rename_all = "snake_case")]` + `#[serde(default)]`

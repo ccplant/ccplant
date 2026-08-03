@@ -2,10 +2,13 @@ import { useState, type FormEvent } from "react";
 import { installDaemon } from "../api";
 import type { InstallRequest } from "../types";
 
-export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> }) {
+export function SetupCard({ onInstalled, initialInstance = "default" }: { onInstalled: (instance: string) => Promise<void>; initialInstance?: string }) {
   const [request, setRequest] = useState<InstallRequest>({
+    instance: initialInstance,
     upstream: "",
+    publicAccess: "tailscale",
     publicUrl: "",
+    listen: initialInstance === "default" ? ":8080" : ":8081",
     name: "",
     registrationToken: "",
     filesystemSandbox: true,
@@ -23,7 +26,7 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
       const result = await installDaemon(request);
       if (!result.ok) throw new Error(result.message || "Installation failed");
       setRequest((current) => ({ ...current, registrationToken: "" }));
-      await onInstalled();
+      await onInstalled(request.instance);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -37,11 +40,22 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
 
   return (
     <section className="card setup">
-      <header className="card__header"><h2>Set up this Mac</h2></header>
+      <header className="card__header"><h2>Add native ESM instance</h2></header>
       <p className="setup__intro">The agentapi-proxy CLI is bundled with this app. Register this Mac and install its per-user LaunchAgent to get started.</p>
       <form onSubmit={(event) => void submit(event)}>
+        <label>Instance name<input required pattern="[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?" value={request.instance} onChange={(e) => update("instance", e.target.value)} /></label>
         <label>Parent AgentAPI URL<input type="url" required placeholder="https://agentapi.example.com" value={request.upstream} onChange={(e) => update("upstream", e.target.value)} /></label>
-        <label>Public URL<input type="url" required placeholder="https://this-mac.example.com" value={request.publicUrl} onChange={(e) => update("publicUrl", e.target.value)} /></label>
+        <label>Public access<select value={request.publicAccess} onChange={(e) => update("publicAccess", e.target.value as InstallRequest["publicAccess"])}>
+          <option value="tailscale">Tailscale</option>
+          <option value="lan">LAN</option>
+          <option value="custom">Custom URL</option>
+        </select></label>
+        {request.publicAccess === "custom" && (
+          <label>Public URL<input type="url" required placeholder="https://this-mac.example.com" value={request.publicUrl} onChange={(e) => update("publicUrl", e.target.value)} /></label>
+        )}
+        {request.publicAccess === "tailscale" && <p className="setup__hint">Uses the Tailscale IPv4 address and the listen port.</p>}
+        {request.publicAccess === "lan" && <p className="setup__hint">Uses the LAN address selected by the route to the parent AgentAPI and the listen port.</p>}
+        <label>Listen address<input required placeholder=":8081" value={request.listen} onChange={(e) => update("listen", e.target.value)} /></label>
         <label>This Mac's name<input required placeholder="native-mac" value={request.name} onChange={(e) => update("name", e.target.value)} /></label>
         <label>Registration token<input type="password" required autoComplete="off" value={request.registrationToken} onChange={(e) => update("registrationToken", e.target.value)} /></label>
         <label className="setup__checkbox"><input type="checkbox" checked={request.filesystemSandbox} onChange={(e) => update("filesystemSandbox", e.target.checked)} /> Restrict session filesystem access</label>
@@ -55,7 +69,7 @@ export function SetupCard({ onInstalled }: { onInstalled: () => Promise<void> })
         {error && <p className="setup__error">{error}</p>}
         <button className="btn" type="submit" disabled={submitting}>{submitting ? "Installing…" : "Install and connect"}</button>
       </form>
-      <p className="setup__hint">The short-lived token is used once and is not saved by the app.</p>
+      <p className="setup__hint">The app resolves the selected access route and passes an explicit Public URL to the CLI. The short-lived token is used once and is not saved by the app.</p>
     </section>
   );
 }

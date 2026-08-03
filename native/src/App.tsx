@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchDashboard,
-  isNativeInstalled,
+  fetchInstances,
   onRefreshRequest,
   restartDaemon,
   showDashboard,
 } from "./api";
-import type { DashboardData } from "./types";
+import type { DashboardData, NativeInstance } from "./types";
 import { StatusCard } from "./components/StatusCard";
 import { SessionsCard } from "./components/SessionsCard";
 import { DoctorCard } from "./components/DoctorCard";
@@ -23,18 +23,27 @@ export function App() {
   const [restarting, setRestarting] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [instances, setInstances] = useState<NativeInstance[]>([]);
+  const [selectedInstance, setSelectedInstance] = useState("default");
+  const [adding, setAdding] = useState(false);
 
   const refresh = useCallback(async (includeDoctor = true) => {
     setState((prev) => (prev === "ready" ? "ready" : "loading"));
     try {
-      if (!(await isNativeInstalled())) {
+      const available = await fetchInstances();
+      setInstances(available);
+      if (available.length === 0) {
         setData(null);
         setWarnings([]);
         setError("");
         setState("setup");
         return;
       }
-      const next = await fetchDashboard(includeDoctor);
+      const target = available.some((item) => item.instance === selectedInstance)
+        ? selectedInstance
+        : available[0].instance;
+      if (target !== selectedInstance) setSelectedInstance(target);
+      const next = await fetchDashboard(target, includeDoctor);
       setData((current) => includeDoctor ? next : { ...next, doctor: current?.doctor ?? null });
       setWarnings(next.warnings ?? []);
       setState("ready");
@@ -43,7 +52,7 @@ export function App() {
       setError(String(err));
       setState("error");
     }
-  }, []);
+  }, [selectedInstance]);
 
   // Initial load.
   useEffect(() => {
@@ -73,7 +82,7 @@ export function App() {
   const handleRestart = useCallback(async () => {
     setRestarting(true);
     try {
-      const result = await restartDaemon();
+      const result = await restartDaemon(selectedInstance);
       if (!result.ok) setWarnings([result.message]);
       await refresh(true);
     } catch (err) {
@@ -81,7 +90,7 @@ export function App() {
     } finally {
       setRestarting(false);
     }
-  }, [refresh]);
+  }, [refresh, selectedInstance]);
 
   const activeCount = useMemo(
     () => data?.status?.active_sessions ?? data?.sessions.length ?? 0,
@@ -96,6 +105,14 @@ export function App() {
           <span className="app__subtitle">External Session Manager</span>
         </div>
         <div className="app__actions">
+          {instances.length > 0 && (
+            <select value={selectedInstance} onChange={(event) => setSelectedInstance(event.target.value)}>
+              {instances.map((item) => <option key={item.instance} value={item.instance}>{item.instance}</option>)}
+            </select>
+          )}
+          <button className="btn btn--ghost" onClick={() => setAdding((value) => !value)}>
+            {adding ? "Cancel add" : "Add instance"}
+          </button>
           <button
             className="btn btn--ghost"
             onClick={() => void refresh(true)}
@@ -142,18 +159,18 @@ export function App() {
 
       <main className="app__body">
         {state === "loading" && <LoadingState />}
-        {state === "setup" && <SetupCard onInstalled={() => refresh(true)} />}
+        {(state === "setup" || adding) && <SetupCard initialInstance={instances.length === 0 ? "default" : ""} onInstalled={async (instance) => { setSelectedInstance(instance); setAdding(false); await refresh(true); }} />}
         {state === "error" && (
           <>
             <ErrorState message={error} onRetry={() => void refresh(true)} />
           </>
         )}
-        {state === "ready" && data && (
+        {state === "ready" && data && !adding && (
           <>
             {data.status ? <StatusCard status={data.status} /> : <EmptyState label="No status available" />}
             <SessionsCard sessions={data.sessions} />
             {data.doctor ? <DoctorCard doctor={data.doctor} /> : <EmptyState label="Doctor result unavailable" />}
-            <ResetCard activeSessions={activeCount} onReset={() => refresh(true)} />
+            <ResetCard instance={selectedInstance} activeSessions={activeCount} onReset={() => refresh(true)} />
           </>
         )}
       </main>

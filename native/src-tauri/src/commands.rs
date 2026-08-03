@@ -1,8 +1,10 @@
 use crate::binary::{run_native_json, run_native_plain};
 use crate::types::{
-    CommandResult, DoctorResult, InstallRequest, NativeSession, NativeStatus, ResetRequest,
+    CommandResult, DoctorResult, InstallRequest, NativeInstance, NativeSession, NativeStatus,
+    ResetRequest,
 };
 use serde::de::DeserializeOwned;
+use std::net::{ToSocketAddrs, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::AppHandle;
@@ -13,16 +15,20 @@ use tauri_plugin_shell::ShellExt;
 /// `native doctor` can return a structured result even before installation,
 /// so the frontend cannot infer this reliably from the dashboard commands.
 #[tauri::command]
-pub fn native_is_installed() -> bool {
-    native_config_path().is_some_and(|path| path.is_file())
+pub fn native_is_installed(instance: Option<String>) -> bool {
+    native_config_path(instance.as_deref()).is_some_and(|path| path.is_file())
 }
 
-fn native_config_path() -> Option<std::path::PathBuf> {
+fn native_config_path(instance: Option<&str>) -> Option<std::path::PathBuf> {
+    let directory = match instance.filter(|name| !name.is_empty() && *name != "default") {
+        Some(name) => format!("agentapi-native-{name}"),
+        None => "agentapi-native".to_string(),
+    };
     std::env::var_os("HOME").map(|home| {
         std::path::PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("agentapi-native")
+            .join(directory)
             .join("config.json")
     })
 }
@@ -45,15 +51,21 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], sub: &str) -> Result<T, String
 
 /// `agentapi-proxy native status --json`.
 #[tauri::command]
-pub async fn native_status(app: AppHandle) -> Result<NativeStatus, String> {
-    let stdout = run_native_json(&app, "status").await?;
+pub async fn native_status(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<NativeStatus, String> {
+    let stdout = run_native_json(&app, "status", instance.as_deref()).await?;
     parse_json::<NativeStatus>(&stdout, "status")
 }
 
 /// `agentapi-proxy native sessions --json`.
 #[tauri::command]
-pub async fn native_sessions(app: AppHandle) -> Result<Vec<NativeSession>, String> {
-    let stdout = run_native_json(&app, "sessions").await?;
+pub async fn native_sessions(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<Vec<NativeSession>, String> {
+    let stdout = run_native_json(&app, "sessions", instance.as_deref()).await?;
     // `native sessions` is an alias of `session-list`; both emit a JSON array.
     parse_json::<Vec<NativeSession>>(&stdout, "sessions")
 }
@@ -61,15 +73,21 @@ pub async fn native_sessions(app: AppHandle) -> Result<Vec<NativeSession>, Strin
 /// `agentapi-proxy native doctor --json`.
 ///
 #[tauri::command]
-pub async fn native_doctor(app: AppHandle) -> Result<DoctorResult, String> {
-    let stdout = run_native_json(&app, "doctor").await?;
+pub async fn native_doctor(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<DoctorResult, String> {
+    let stdout = run_native_json(&app, "doctor", instance.as_deref()).await?;
     parse_json::<DoctorResult>(&stdout, "doctor")
 }
 
 /// `agentapi-proxy native restart`.
 #[tauri::command]
-pub async fn native_restart(app: AppHandle) -> Result<CommandResult, String> {
-    let (ok, message) = run_native_plain(&app, "restart").await;
+pub async fn native_restart(
+    app: AppHandle,
+    instance: Option<String>,
+) -> Result<CommandResult, String> {
+    let (ok, message) = run_native_plain(&app, "restart", instance.as_deref()).await;
     Ok(CommandResult {
         ok,
         message: if message.is_empty() {
@@ -84,6 +102,12 @@ pub async fn native_restart(app: AppHandle) -> Result<CommandResult, String> {
     })
 }
 
+#[tauri::command]
+pub async fn native_list(app: AppHandle) -> Result<Vec<NativeInstance>, String> {
+    let stdout = run_native_json(&app, "list", None).await?;
+    parse_json::<Vec<NativeInstance>>(&stdout, "list")
+}
+
 /// Register and install the per-user LaunchAgent using the bundled CLI.
 #[tauri::command]
 pub async fn native_install(
@@ -91,13 +115,22 @@ pub async fn native_install(
     request: InstallRequest,
 ) -> Result<CommandResult, String> {
     let upstream = request.upstream.trim();
-    let public_url = request.public_url.trim();
+    let public_url = resolve_public_url(
+        request.public_access.trim(),
+        request.public_url.trim(),
+        request.listen.trim(),
+        upstream,
+    )?;
     let name = request.name.trim();
-    if !is_http_url(upstream) || !is_http_url(public_url) {
+    let instance = request.instance.trim();
+    if !is_http_url(upstream) || !is_http_url(&public_url) {
         return Err("upstream and public URL must start with http:// or https://".to_string());
     }
     if name.is_empty() || request.registration_token.trim().is_empty() {
         return Err("name and registration token are required".to_string());
+    }
+    if instance != "default" && instance != "" && request.listen.trim().is_empty() {
+        return Err("listen address is required for a named instance".to_string());
     }
 
     let mise_path = if request.setup_nodejs {
@@ -111,13 +144,18 @@ pub async fn native_install(
         "install",
         "--upstream",
         upstream,
-        "--public-url",
-        public_url,
         "--name",
         name,
         "--registration-token",
         request.registration_token.trim(),
     ];
+    args.extend(["--public-url", public_url.as_str()]);
+    if !instance.is_empty() && instance != "default" {
+        args.extend(["--instance", instance]);
+    }
+    if !request.listen.trim().is_empty() {
+        args.extend(["--listen", request.listen.trim()]);
+    }
     if request.filesystem_sandbox {
         args.push("--filesystem-sandbox");
     }
@@ -149,11 +187,97 @@ pub async fn native_install(
     })
 }
 
+fn resolve_public_url(
+    access: &str,
+    custom_url: &str,
+    listen: &str,
+    upstream: &str,
+) -> Result<String, String> {
+    match access {
+        "custom" => {
+            if is_http_url(custom_url) {
+                Ok(custom_url.trim_end_matches('/').to_string())
+            } else {
+                Err("Custom public URL must start with http:// or https://".to_string())
+            }
+        }
+        "tailscale" => public_url_from_host(tailscale_ipv4()?, listen),
+        "lan" => public_url_from_host(lan_route_ip(upstream)?, listen),
+        _ => Err("Public access must be tailscale, lan, or custom".to_string()),
+    }
+}
+
+fn public_url_from_host(host: String, listen: &str) -> Result<String, String> {
+    let port = listen
+        .rsplit_once(':')
+        .map(|(_, port)| port)
+        .filter(|port| !port.is_empty() && port.parse::<u16>().is_ok())
+        .ok_or_else(|| "Listen address must include a valid port".to_string())?;
+    Ok(format!("http://{host}:{port}"))
+}
+
+fn tailscale_ipv4() -> Result<String, String> {
+    let candidates = [
+        PathBuf::from("tailscale"),
+        PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+        PathBuf::from("/opt/homebrew/bin/tailscale"),
+        PathBuf::from("/usr/local/bin/tailscale"),
+    ];
+    let output = candidates
+        .iter()
+        .find_map(|candidate| Command::new(candidate).args(["ip", "-4"]).output().ok())
+        .ok_or_else(|| "Tailscale is not installed; choose LAN or Custom URL".to_string())?;
+    if !output.status.success() {
+        return Err("Tailscale is not connected; choose LAN or Custom URL".to_string());
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find(|value| value.parse::<std::net::Ipv4Addr>().is_ok())
+        .map(str::to_string)
+        .ok_or_else(|| "Tailscale did not report an IPv4 address".to_string())
+}
+
+fn lan_route_ip(upstream: &str) -> Result<String, String> {
+    let authority = upstream
+        .strip_prefix("https://")
+        .or_else(|| upstream.strip_prefix("http://"))
+        .ok_or_else(|| "Parent AgentAPI URL is invalid".to_string())?
+        .split('/')
+        .next()
+        .unwrap_or("");
+    let default_port = if upstream.starts_with("https://") {
+        443
+    } else {
+        80
+    };
+    let (host, port) = authority
+        .rsplit_once(':')
+        .and_then(|(host, port)| port.parse::<u16>().ok().map(|port| (host, port)))
+        .unwrap_or((authority, default_port));
+    let target = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| "Could not resolve the parent host for LAN detection".to_string())?
+        .find(|address| address.is_ipv4())
+        .ok_or_else(|| "Could not resolve the parent host for LAN detection".to_string())?;
+    let socket = UdpSocket::bind("0.0.0.0:0")
+        .map_err(|e| format!("Could not inspect the LAN route: {e}"))?;
+    socket
+        .connect(target)
+        .map_err(|e| format!("Could not inspect the LAN route: {e}"))?;
+    let address = socket
+        .local_addr()
+        .map_err(|e| format!("Could not inspect the LAN route: {e}"))?;
+    if address.ip().is_loopback() || address.ip().is_unspecified() {
+        return Err("The detected LAN address is not reachable".to_string());
+    }
+    Ok(address.ip().to_string())
+}
+
 /// Stop the LaunchAgent and remove local configuration and data.
 /// The parent registration is deliberately retained so reset needs no API key.
 #[tauri::command]
 pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<CommandResult, String> {
-    let args = uninstall_args(request.force);
+    let args = uninstall_args(request.force, &request.instance);
     let output = app
         .shell()
         .sidecar("agentapi-proxy")
@@ -175,10 +299,17 @@ pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<Comma
     })
 }
 
-fn uninstall_args(force: bool) -> Vec<&'static str> {
-    let mut args = vec!["native", "uninstall", "--keep-registration"];
+fn uninstall_args(force: bool, instance: &str) -> Vec<String> {
+    let mut args = vec![
+        "native".into(),
+        "uninstall".into(),
+        "--keep-registration".into(),
+    ];
+    if !instance.is_empty() && instance != "default" {
+        args.extend(["--instance".into(), instance.into()]);
+    }
     if force {
-        args.push("--force");
+        args.push("--force".into());
     }
     args
 }
@@ -267,7 +398,10 @@ fn is_executable(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_http_url, mise_manager_path, native_config_path, parse_json, uninstall_args};
+    use super::{
+        is_http_url, mise_manager_path, native_config_path, parse_json, public_url_from_host,
+        resolve_public_url, uninstall_args,
+    };
     use crate::types::{DoctorResult, NativeStatus};
 
     #[test]
@@ -303,16 +437,41 @@ mod tests {
     }
 
     #[test]
+    fn builds_public_urls_for_selected_access() {
+        assert_eq!(
+            public_url_from_host("100.64.0.10".to_string(), ":8081").unwrap(),
+            "http://100.64.0.10:8081"
+        );
+        assert!(public_url_from_host("192.168.1.20".to_string(), "missing").is_err());
+        assert_eq!(
+            resolve_public_url(
+                "custom",
+                "https://esm.example.com/",
+                ":8080",
+                "https://parent.example.com"
+            )
+            .unwrap(),
+            "https://esm.example.com"
+        );
+        assert!(resolve_public_url("unknown", "", ":8080", "https://parent.example.com").is_err());
+    }
+
+    #[test]
     fn native_config_uses_the_macos_application_support_directory() {
-        let path = native_config_path().expect("HOME should be set during tests");
+        let path = native_config_path(None).expect("HOME should be set during tests");
         assert!(path.ends_with("Library/Application Support/agentapi-native/config.json"));
+        let named = native_config_path(Some("ios")).expect("HOME should be set during tests");
+        assert!(named.ends_with("Library/Application Support/agentapi-native-ios/config.json"));
     }
 
     #[test]
     fn reset_only_forces_session_termination_when_requested() {
-        assert!(!uninstall_args(false).contains(&"--force"));
-        assert!(uninstall_args(true).contains(&"--force"));
-        assert!(uninstall_args(false).contains(&"--keep-registration"));
+        assert!(!uninstall_args(false, "default").contains(&"--force".to_string()));
+        assert!(uninstall_args(true, "ios").contains(&"--force".to_string()));
+        assert!(uninstall_args(false, "default").contains(&"--keep-registration".to_string()));
+        assert!(uninstall_args(false, "ios")
+            .windows(2)
+            .any(|args| args == ["--instance", "ios"]));
     }
 
     #[test]
