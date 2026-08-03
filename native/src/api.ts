@@ -26,6 +26,19 @@ export async function fetchSessions(instance: string): Promise<NativeSession[]> 
   return invoke<NativeSession[]>("native_sessions", { instance });
 }
 
+export async function fetchLogs(
+  instance: string,
+  target: { daemon: true } | { daemon: false; sessionId: string },
+  tail = 500,
+): Promise<string> {
+  return invoke<string>("native_logs", {
+    instance,
+    daemon: target.daemon,
+    sessionId: target.daemon ? null : target.sessionId,
+    tail,
+  });
+}
+
 export async function fetchDoctor(instance: string): Promise<DoctorResult> {
   return invoke<DoctorResult>("native_doctor", { instance });
 }

@@ -1,4 +1,4 @@
-use crate::binary::{run_native_json, run_native_plain};
+use crate::binary::{run_native_json, run_native_logs, run_native_plain};
 use crate::types::{
     CommandResult, DoctorResult, InstallRequest, NativeInstance, NativeSession, NativeStatus,
     ResetRequest,
@@ -68,6 +68,28 @@ pub async fn native_sessions(
     let stdout = run_native_json(&app, "sessions", instance.as_deref()).await?;
     // `native sessions` is an alias of `session-list`; both emit a JSON array.
     parse_json::<Vec<NativeSession>>(&stdout, "sessions")
+}
+
+/// Return the tail of the session-manager log or a session's combined
+/// provisioner/agent log. Following is intentionally handled by UI polling so
+/// no long-lived child process crosses the Tauri IPC boundary.
+#[tauri::command]
+pub async fn native_logs(
+    app: AppHandle,
+    instance: Option<String>,
+    session_id: Option<String>,
+    daemon: bool,
+    tail: Option<usize>,
+) -> Result<String, String> {
+    let tail = tail.unwrap_or(500).clamp(1, 5000);
+    let session_id = session_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    if !daemon && session_id.is_none() {
+        return Err("a session ID is required for session logs".to_string());
+    }
+    if daemon && session_id.is_some() {
+        return Err("session ID cannot be combined with daemon logs".to_string());
+    }
+    run_native_logs(&app, instance.as_deref(), session_id, daemon, tail).await
 }
 
 /// `agentapi-proxy native doctor --json`.
