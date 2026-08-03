@@ -298,9 +298,11 @@ func (c *Client) LoadSession(ctx context.Context, sessionId, cwd string, mcpServ
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return fmt.Errorf("acp session/load: parse result: %w", err)
 	}
-	c.setSessionRuntimeInfo(result.SessionId, result.Modes, result.ConfigOptions)
+	// session/load responses do not echo sessionId; the loaded ID is the one
+	// supplied by the client in the request.
+	c.setSessionRuntimeInfo(sessionId, result.Modes, result.ConfigOptions)
 	if c.verbose {
-		log.Printf("[acp] session loaded: id=%s configOptions=%d", result.SessionId, len(result.ConfigOptions))
+		log.Printf("[acp] session loaded: id=%s configOptions=%d", sessionId, len(result.ConfigOptions))
 	}
 	return nil
 }
