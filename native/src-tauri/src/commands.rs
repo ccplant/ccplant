@@ -117,8 +117,11 @@ pub async fn native_install(
     let public_url = request.public_url.trim();
     let name = request.name.trim();
     let instance = request.instance.trim();
-    if !is_http_url(upstream) || !is_http_url(public_url) {
-        return Err("upstream and public URL must start with http:// or https://".to_string());
+    if !is_http_url(upstream) || (!public_url.is_empty() && !is_http_url(public_url)) {
+        return Err(
+            "upstream and, when specified, public URL must start with http:// or https://"
+                .to_string(),
+        );
     }
     if name.is_empty() || request.registration_token.trim().is_empty() {
         return Err("name and registration token are required".to_string());
@@ -138,13 +141,14 @@ pub async fn native_install(
         "install",
         "--upstream",
         upstream,
-        "--public-url",
-        public_url,
         "--name",
         name,
         "--registration-token",
         request.registration_token.trim(),
     ];
+    if !public_url.is_empty() {
+        args.extend(["--public-url", public_url]);
+    }
     if !instance.is_empty() && instance != "default" {
         args.extend(["--instance", instance]);
     }

@@ -66,6 +66,11 @@ agentapi-proxy native install \
   --registration-token '<one-time-token>'
 ```
 
+The public URL field is optional in the app. When empty, the CLI derives an
+HTTP URL from the listen port and the Tailscale address, route-selected local
+address, or host name. Explicit URLs remain available for TLS, reverse proxies,
+NAT, and port mappings.
+
 ## Menu-bar tray
 
 The app installs a system-tray icon with:
