@@ -78,6 +78,7 @@ pub fn run() {
             commands::native_status,
             commands::native_list,
             commands::native_sessions,
+            commands::native_logs,
             commands::native_doctor,
             commands::native_restart,
             commands::native_update,

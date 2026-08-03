@@ -47,6 +47,8 @@ native/
   public URL, state directory, filesystem-sandbox flag, and labels.
 - **Active session count** in the header.
 - **Sessions** table: id, status, pid, start time, with an empty state.
+- **Logs** viewer: live tail for the session manager or each session's combined
+  provisioner and agent stdout/stderr.
 - **Doctor** card: result of `native doctor --json` (healthy / issues).
 - **Refresh** and **Restart** actions; optional 15s auto-refresh while visible.
 - **Loading / error / empty** states for every panel.
@@ -117,6 +119,7 @@ Then it runs (JSON parsed into typed serde structs):
 | `native list --json`            | `native_list`    | `Vec<NativeInstance>` |
 | `native status --json`          | `native_status`  | `NativeStatus`   |
 | `native sessions --json`        | `native_sessions`| `Vec<NativeSession>` |
+| `native logs --tail 500 …`      | `native_logs`    | `String`        |
 | `native doctor --json`          | `native_doctor`  | `DoctorResult`   |
 | `native restart`                | `native_restart` | `CommandResult`  |
 | `native update`                 | `native_update`  | `CommandResult`  |

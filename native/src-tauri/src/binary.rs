@@ -213,6 +213,54 @@ pub async fn run_native_plain(
     }
 }
 
+/// Run `native logs` with a bounded tail and return stdout.
+pub async fn run_native_logs(
+    app: &AppHandle,
+    instance: Option<&str>,
+    session_id: Option<&str>,
+    daemon: bool,
+    tail: usize,
+) -> Result<String, String> {
+    let tail_value = tail.to_string();
+    let mut args = vec![NATIVE_SUBCOMMAND, "logs", "--tail", tail_value.as_str()];
+    if daemon {
+        args.push("--daemon");
+    } else if let Some(id) = session_id {
+        args.push(id);
+    }
+    if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+        args.extend(["--instance", name]);
+    }
+    if std::env::var_os(BINARY_ENV).is_none() {
+        if let Ok(sidecar) = app.shell().sidecar(BINARY_NAME) {
+            let output = sidecar
+                .args(args.clone())
+                .output()
+                .await
+                .map_err(|e| format!("failed to execute bundled binary: {e}"))?;
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+            return Err(command_error("logs", &output.stdout, &output.stderr));
+        }
+    }
+    let mut cmd = native_command("logs", false)?;
+    cmd.arg("--tail").arg(&tail_value);
+    if daemon {
+        cmd.arg("--daemon");
+    } else if let Some(id) = session_id {
+        cmd.arg(id);
+    }
+    if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
+        cmd.arg("--instance").arg(name);
+    }
+    let output = cmd.output().map_err(|e| format!("failed to execute: {e}"))?;
+    if !output.status.success() {
+        return Err(command_error("logs", &output.stdout, &output.stderr));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 fn output_message(stdout: &[u8], stderr: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(stdout).trim().to_string();

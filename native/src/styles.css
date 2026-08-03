@@ -341,6 +341,55 @@ body {
   text-overflow: ellipsis;
 }
 
+.logs__header {
+  gap: 12px;
+}
+
+.logs__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logs select,
+.app__actions select {
+  min-width: 150px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-elev);
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.logs__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.logs__hint {
+  margin: -4px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.logs__output {
+  height: 280px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 75%, black 25%);
+  color: var(--text);
+  font: 11px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .doctor__message {
   margin: 0;
   font-size: 13px;
