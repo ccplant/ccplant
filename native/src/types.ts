@@ -75,6 +75,8 @@ export interface InstallRequest {
   filesystemSandbox: boolean;
   setupNodejs: boolean;
   nodejsVersion: string;
+  setupGithubCli: boolean;
+  githubCliVersion: string;
 }
 
 export interface ResetRequest {

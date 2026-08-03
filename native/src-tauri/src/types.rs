@@ -119,10 +119,18 @@ pub struct InstallRequest {
     pub setup_nodejs: bool,
     #[serde(default = "default_nodejs_version")]
     pub nodejs_version: String,
+    #[serde(default)]
+    pub setup_github_cli: bool,
+    #[serde(default = "default_github_cli_version")]
+    pub github_cli_version: String,
 }
 
 fn default_nodejs_version() -> String {
     "lts".to_string()
+}
+
+fn default_github_cli_version() -> String {
+    "latest".to_string()
 }
 
 fn default_public_access() -> String {

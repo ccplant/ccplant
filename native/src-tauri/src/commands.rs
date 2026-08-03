@@ -202,8 +202,15 @@ pub async fn native_install(
         return Err("listen address is required for a named instance".to_string());
     }
 
-    let mise_path = if request.setup_nodejs {
-        Some(setup_nodejs_with_mise(request.nodejs_version.trim())?)
+    let mise_path = if request.setup_nodejs || request.setup_github_cli {
+        Some(setup_agent_tools_with_mise(
+            request
+                .setup_nodejs
+                .then_some(request.nodejs_version.trim()),
+            request
+                .setup_github_cli
+                .then_some(request.github_cli_version.trim()),
+        )?)
     } else {
         None
     };
@@ -231,7 +238,7 @@ pub async fn native_install(
     let manager_path;
     let manager_env;
     if let Some(mise) = mise_path.as_ref() {
-        manager_path = mise_manager_path(mise)?;
+        manager_path = mise_manager_path(mise, request.setup_nodejs, request.setup_github_cli)?;
         manager_env = format!("PATH={manager_path}");
         args.extend(["--manager-env", manager_env.as_str()]);
     }
@@ -541,16 +548,30 @@ fn is_http_url(value: &str) -> bool {
     value.starts_with("https://") || value.starts_with("http://")
 }
 
-fn setup_nodejs_with_mise(version: &str) -> Result<PathBuf, String> {
-    if version.is_empty() {
-        return Err("Node.js version is required when mise setup is enabled".to_string());
-    }
+fn setup_agent_tools_with_mise(
+    node_version: Option<&str>,
+    github_cli_version: Option<&str>,
+) -> Result<PathBuf, String> {
     let mise = find_mise().ok_or_else(|| {
         "mise was not found. Install mise first (https://mise.jdx.dev), then retry.".to_string()
     })?;
-    let tool = format!("node@{version}");
+    let mut tools = Vec::new();
+    if let Some(version) = node_version {
+        if version.is_empty() {
+            return Err("Node.js version is required when mise setup is enabled".to_string());
+        }
+        tools.push(format!("node@{version}"));
+    }
+    if let Some(version) = github_cli_version {
+        if version.is_empty() {
+            return Err("GitHub CLI version is required when mise setup is enabled".to_string());
+        }
+        tools.push(format!("github-cli@{version}"));
+    }
+    let mut args = vec!["use", "--global"];
+    args.extend(tools.iter().map(String::as_str));
     let output = Command::new(&mise)
-        .args(["use", "--global", tool.as_str()])
+        .args(args)
         .output()
         .map_err(|e| format!("failed to run mise: {e}"))?;
     if !output.status.success() {
@@ -559,7 +580,10 @@ fn setup_nodejs_with_mise(version: &str) -> Result<PathBuf, String> {
         } else {
             &output.stderr
         });
-        return Err(format!("mise could not set up Node.js: {}", detail.trim()));
+        return Err(format!(
+            "mise could not set up agent tools: {}",
+            detail.trim()
+        ));
     }
     Ok(mise)
 }
@@ -580,11 +604,11 @@ fn find_mise() -> Option<PathBuf> {
     candidates.into_iter().find(|path| is_executable(path))
 }
 
-fn mise_manager_path(mise: &Path) -> Result<String, String> {
+fn mise_tool_bin(mise: &Path, tool: &str) -> Result<PathBuf, String> {
     let output = Command::new(mise)
-        .args(["which", "node"])
+        .args(["which", tool])
         .output()
-        .map_err(|e| format!("failed to resolve Node.js with mise: {e}"))?;
+        .map_err(|e| format!("failed to resolve {tool} with mise: {e}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
             &output.stdout
@@ -592,19 +616,30 @@ fn mise_manager_path(mise: &Path) -> Result<String, String> {
             &output.stderr
         });
         return Err(format!(
-            "mise could not resolve the Node.js executable: {}",
+            "mise could not resolve the {tool} executable: {}",
             detail.trim()
         ));
     }
-    let node = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    let node_bin = node
+    let executable = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    executable
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
-        .ok_or("mise returned an invalid Node.js executable path")?;
-    mise_manager_path_with_node_bin(mise, node_bin)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("mise returned an invalid {tool} executable path"))
 }
 
-fn mise_manager_path_with_node_bin(mise: &Path, node_bin: &Path) -> Result<String, String> {
+fn mise_manager_path(mise: &Path, node: bool, github_cli: bool) -> Result<String, String> {
+    let mut tool_bins = Vec::new();
+    if node {
+        tool_bins.push(mise_tool_bin(mise, "node")?);
+    }
+    if github_cli {
+        tool_bins.push(mise_tool_bin(mise, "gh")?);
+    }
+    mise_manager_path_with_tool_bins(mise, &tool_bins)
+}
+
+fn mise_manager_path_with_tool_bins(mise: &Path, tool_bins: &[PathBuf]) -> Result<String, String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or("HOME is not set")?;
@@ -616,10 +651,11 @@ fn mise_manager_path_with_node_bin(mise: &Path, node_bin: &Path) -> Result<Strin
                 .unwrap_or_else(|| home.join(".local/share/mise"))
         });
     // Native sessions use an isolated HOME. A mise shim would therefore resolve
-    // configuration and installs relative to the session instead of the host
-    // where Node.js was installed. Put the selected Node.js bin directory first
-    // so npx/node remain usable without exposing the host HOME to the session.
-    let mut entries = vec![node_bin.to_path_buf(), data_dir.join("shims")];
+    // configuration and installs relative to the session instead of the host.
+    // Put each selected tool's concrete bin directory first so it remains usable
+    // without exposing the host HOME to the session.
+    let mut entries = tool_bins.to_vec();
+    entries.push(data_dir.join("shims"));
     if let Some(parent) = mise.parent() {
         entries.push(parent.to_path_buf());
     }
@@ -650,7 +686,7 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_manager_command, is_http_url, mise_manager_path_with_node_bin, native_config_path,
+        check_manager_command, is_http_url, mise_manager_path_with_tool_bins, native_config_path,
         normalize_manager_path, parse_json, public_url_from_host, resolve_public_url,
         uninstall_args, update_args,
     };
@@ -738,9 +774,14 @@ mod tests {
 
     #[test]
     fn mise_path_starts_with_node_bin_then_shims_and_mise_binary_directory() {
-        let path = mise_manager_path_with_node_bin(
+        let path = mise_manager_path_with_tool_bins(
             std::path::Path::new("/opt/homebrew/bin/mise"),
-            std::path::Path::new("/Users/test/.local/share/mise/installs/node/24.18.1/bin"),
+            &[
+                std::path::PathBuf::from("/Users/test/.local/share/mise/installs/node/24.18.1/bin"),
+                std::path::PathBuf::from(
+                    "/Users/test/.local/share/mise/installs/github-cli/2.97.0/bin",
+                ),
+            ],
         )
         .expect("mise PATH");
         let entries = std::env::split_paths(&std::ffi::OsString::from(path)).collect::<Vec<_>>();
@@ -748,8 +789,14 @@ mod tests {
             entries[0],
             std::path::PathBuf::from("/Users/test/.local/share/mise/installs/node/24.18.1/bin")
         );
-        assert!(entries[1].ends_with(".local/share/mise/shims"));
-        assert_eq!(entries[2], std::path::PathBuf::from("/opt/homebrew/bin"));
+        assert_eq!(
+            entries[1],
+            std::path::PathBuf::from(
+                "/Users/test/.local/share/mise/installs/github-cli/2.97.0/bin"
+            )
+        );
+        assert!(entries[2].ends_with(".local/share/mise/shims"));
+        assert_eq!(entries[3], std::path::PathBuf::from("/opt/homebrew/bin"));
     }
 
     #[test]
