@@ -1106,6 +1106,98 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 	return restored
 }
 
+// EnsureSessionWorkload lazily recreates a missing Pod/Deployment while the
+// canonical Service, settings Secret, snapshot, and (when enabled) PVC remain.
+// It is invoked by authenticated GET traffic to the session chat routes.
+func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id string) (entities.Session, bool, error) {
+	session := m.GetSession(id)
+	if session == nil {
+		return nil, false, fmt.Errorf("session %s not found", id)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return session, false, nil
+	}
+	if _, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("canonical service for session %s not found", id)
+		}
+		return session, false, fmt.Errorf("get canonical service: %w", err)
+	}
+	readyEndpoint, err := m.sessionHasReadyEndpoint(ctx, ks.ServiceName())
+	if err != nil {
+		return session, false, err
+	}
+
+	if m.isPVCEnabled() {
+		_, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, ks.DeploymentName(), metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if readyEndpoint {
+				return session, false, nil
+			}
+			ks.SetStatus("starting")
+			return session, true, nil
+		case !errors.IsNotFound(err):
+			return session, false, fmt.Errorf("get deployment: %w", err)
+		}
+		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
+			return session, false, err
+		}
+		if err := m.createDeployment(ctx, ks, ks.Request()); err != nil && !errors.IsAlreadyExists(err) {
+			return session, false, fmt.Errorf("recreate deployment: %w", err)
+		}
+	} else {
+		_, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, ks.DeploymentName(), metav1.GetOptions{})
+		switch {
+		case err == nil:
+			if readyEndpoint {
+				return session, false, nil
+			}
+			ks.SetStatus("starting")
+			return session, true, nil
+		case !errors.IsNotFound(err):
+			return session, false, fmt.Errorf("get pod: %w", err)
+		}
+		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
+			return session, false, err
+		}
+		if err := m.createPod(ctx, ks, ks.Request()); err != nil && !errors.IsAlreadyExists(err) {
+			return session, false, fmt.Errorf("recreate pod: %w", err)
+		}
+	}
+
+	ks.SetStatus("starting")
+	log.Printf("[K8S_SESSION] Lazily recreated workload for session %s after chat access", id)
+	go m.watchAgentAPIStatus(context.Background(), ks)
+	go m.watchDeploymentStatus(context.Background(), ks)
+	return session, true, nil
+}
+
+func (m *KubernetesSessionManager) requireSessionSettingsSecret(ctx context.Context, session *KubernetesSession) error {
+	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+		return fmt.Errorf("get restart settings secret %s: %w", name, err)
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) sessionHasReadyEndpoint(ctx context.Context, serviceName string) (bool, error) {
+	endpoints, err := m.client.CoreV1().Endpoints(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get session endpoints: %w", err)
+	}
+	for _, subset := range endpoints.Subsets {
+		if len(subset.Addresses) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // runtimeStatusOverrideFromRedis reads the latest agentapi runtime status from
 // Redis and, when it is more informative than the current in-memory status,
 // applies it to the session via SetStatusSilent so no additional broadcast is
