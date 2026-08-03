@@ -77,6 +77,30 @@ pub struct CommandResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagerEnvironment {
+    pub path: String,
+    pub commands: Vec<CommandCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandCheck {
+    pub command: String,
+    pub required: bool,
+    pub found: bool,
+    pub path: String,
+    pub version: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateManagerEnvironmentRequest {
+    #[serde(default = "default_instance")]
+    pub instance: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRequest {

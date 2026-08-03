@@ -83,6 +83,8 @@ pub fn run() {
             commands::native_restart,
             commands::native_update,
             commands::native_install,
+            commands::native_environment,
+            commands::native_update_environment,
             commands::native_reset,
             show_dashboard,
         ])

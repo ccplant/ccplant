@@ -7,6 +7,7 @@ import type {
   NativeSession,
   NativeStatus,
   NativeInstance,
+  ManagerEnvironment,
   ResetRequest,
   RestartResult,
 } from "./types";
@@ -49,6 +50,16 @@ export async function restartDaemon(instance: string): Promise<RestartResult> {
 
 export async function updateDaemon(instance: string): Promise<RestartResult> {
   return invoke<RestartResult>("native_update", { instance });
+}
+
+export async function fetchEnvironment(instance: string): Promise<ManagerEnvironment> {
+  return invoke<ManagerEnvironment>("native_environment", { instance });
+}
+
+export async function updateEnvironment(instance: string, path: string): Promise<RestartResult> {
+  return invoke<RestartResult>("native_update_environment", {
+    request: { instance, path },
+  });
 }
 
 export async function installDaemon(request: InstallRequest): Promise<RestartResult> {

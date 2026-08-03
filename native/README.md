@@ -50,6 +50,9 @@ native/
 - **Logs** viewer: live tail for the session manager or each session's combined
   provisioner and agent stdout/stderr.
 - **Doctor** card: result of `native doctor --json` (healthy / issues).
+- **Manager environment** card: add or edit PATH entries, restart the selected
+  instance after saving, and verify `node`, `npx`, `mise`, `gh`, and `git` with
+  their resolved locations and versions.
 - **Refresh** and **Restart** actions; optional 15s auto-refresh while visible.
 - **Loading / error / empty** states for every panel.
 - **First-run setup** that registers the Mac and installs its per-user
