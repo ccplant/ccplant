@@ -402,6 +402,30 @@ fn find_mise() -> Option<PathBuf> {
 }
 
 fn mise_manager_path(mise: &Path) -> Result<String, String> {
+    let output = Command::new(mise)
+        .args(["which", "node"])
+        .output()
+        .map_err(|e| format!("failed to resolve Node.js with mise: {e}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        });
+        return Err(format!(
+            "mise could not resolve the Node.js executable: {}",
+            detail.trim()
+        ));
+    }
+    let node = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let node_bin = node
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or("mise returned an invalid Node.js executable path")?;
+    mise_manager_path_with_node_bin(mise, node_bin)
+}
+
+fn mise_manager_path_with_node_bin(mise: &Path, node_bin: &Path) -> Result<String, String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or("HOME is not set")?;
@@ -412,7 +436,11 @@ fn mise_manager_path(mise: &Path) -> Result<String, String> {
                 .map(|base| PathBuf::from(base).join("mise"))
                 .unwrap_or_else(|| home.join(".local/share/mise"))
         });
-    let mut entries = vec![data_dir.join("shims")];
+    // Native sessions use an isolated HOME. A mise shim would therefore resolve
+    // configuration and installs relative to the session instead of the host
+    // where Node.js was installed. Put the selected Node.js bin directory first
+    // so npx/node remain usable without exposing the host HOME to the session.
+    let mut entries = vec![node_bin.to_path_buf(), data_dir.join("shims")];
     if let Some(parent) = mise.parent() {
         entries.push(parent.to_path_buf());
     }
@@ -443,8 +471,8 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_http_url, mise_manager_path, native_config_path, parse_json, public_url_from_host,
-        resolve_public_url, uninstall_args, update_args,
+        is_http_url, mise_manager_path_with_node_bin, native_config_path, parse_json,
+        public_url_from_host, resolve_public_url, uninstall_args, update_args,
     };
     use crate::types::{DoctorResult, NativeStatus};
 
@@ -529,11 +557,18 @@ mod tests {
     }
 
     #[test]
-    fn mise_path_starts_with_shims_and_binary_directory() {
-        let path =
-            mise_manager_path(std::path::Path::new("/opt/homebrew/bin/mise")).expect("mise PATH");
+    fn mise_path_starts_with_node_bin_then_shims_and_mise_binary_directory() {
+        let path = mise_manager_path_with_node_bin(
+            std::path::Path::new("/opt/homebrew/bin/mise"),
+            std::path::Path::new("/Users/test/.local/share/mise/installs/node/24.18.1/bin"),
+        )
+        .expect("mise PATH");
         let entries = std::env::split_paths(&std::ffi::OsString::from(path)).collect::<Vec<_>>();
-        assert!(entries[0].ends_with(".local/share/mise/shims"));
-        assert_eq!(entries[1], std::path::PathBuf::from("/opt/homebrew/bin"));
+        assert_eq!(
+            entries[0],
+            std::path::PathBuf::from("/Users/test/.local/share/mise/installs/node/24.18.1/bin")
+        );
+        assert!(entries[1].ends_with(".local/share/mise/shims"));
+        assert_eq!(entries[2], std::path::PathBuf::from("/opt/homebrew/bin"));
     }
 }
