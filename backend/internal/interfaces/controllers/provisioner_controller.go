@@ -3,7 +3,9 @@ package controllers
 import (
 	"context"
 	"crypto/subtle"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ type ProvisionerController struct {
 	allocationQueue  sessionallocation.Queue
 	settingsRepo     repositories.SettingsRepository
 	sessionRouteRepo repositories.SessionRouteRepository
+	stateStore       services.SessionStateStore
 }
 
 type ProvisionerManager interface {
@@ -29,8 +32,48 @@ type ProvisionerManager interface {
 	UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req services.ProvisionRequestStatusUpdate) error
 }
 
-func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository) *ProvisionerController {
-	return &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository, stateStore ...services.SessionStateStore) *ProvisionerController {
+	pc := &ProvisionerController{manager: manager, allocationQueue: allocationQueue, settingsRepo: settingsRepo, sessionRouteRepo: sessionRouteRepo}
+	if len(stateStore) > 0 {
+		pc.stateStore = stateStore[0]
+	}
+	return pc
+}
+
+const maxSessionStateBytes = 128 << 20
+
+func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes))
+	if err != nil {
+		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+	}
+	if err := pc.stateStore.Save(c.Request().Context(), c.Param("sessionId"), body); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
+	}
+	body, err := pc.stateStore.Load(c.Request().Context(), c.Param("sessionId"))
+	if os.IsNotExist(err) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.Blob(http.StatusOK, "application/gzip", body)
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {

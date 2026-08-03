@@ -203,24 +203,16 @@ bucket versioning と server-side encryption を有効化する。
 
 ### Claude
 
-Claude ACP に `SessionStore` implementation を注入する。現行 Claude ACP はこの option を
-外部設定から受け取らないため、upstream への設定追加または ccplant 側 wrapper が必要になる。
-
-- `append`: `{projectKey, sessionId, subpath}` ごとの append log / chunk object を書く
-- `load`: chunk を順に結合して SDK に返す
-- `listSessions`: continuation metadata から mtime を返す
-- `listSubkeys`: subagent transcript を列挙する
-- `delete`: retention policy に従って tombstone を作る
-
-SDK が resume 前に一時 `CLAUDE_CONFIG_DIR` へ materialize するため、独自 init copy は不要。
-flush は durability を優先して `eager`、または turn-end で明示 flush する。
+Claude の Stop hook が `agentapi-proxy client backup-session-state` を呼ぶ。CLI は main / subagent
+transcript と `.acp-session-id` だけを archive にし、provisioner token で backend の内部 API
+へ送る。S3 credentials は session Pod に渡さず、backend が Garage へ upload する。
 
 ### Codex
 
-sidecar / checkpoint controller が対象 rollout を staging directory へ copy し、zstd 圧縮、
-checksum 付与、upload する。復元 init container は `current.json` を解決し、rollout を元の
-`CODEX_HOME/sessions/YYYY/MM/DD/` 形式に戻す。`state_*.sqlite` は復元せず、app-server の
-fallback scan と再 index に任せる。
+Codex の Stop hook も同じ CLI / backend API を使う。CLI が対象 rollout と
+`.acp-session-id` を gzip archive にし、backend が Garage へ upload する。復元時は rollout
+を元の `CODEX_HOME/sessions/YYYY/MM/DD/` 形式に戻す。`state_*.sqlite` は復元せず、
+app-server の fallback scan と再 index に任せる。
 
 Codex rollout は実行中に追記されるため、turn-end checkpoint を主 commit point とする。
 途中 checkpoint は改行で完結した JSONL record までを snapshot に含める。

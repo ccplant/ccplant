@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -146,6 +148,7 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
 	normalizeNativeSettings(settings)
+	injectSessionPersistenceHook(settings)
 	startedAt := time.Now()
 	s.setPhase("provision:start")
 	log.Printf("[PROVISIONER] Starting provisioning for session %s", settings.Session.ID)
@@ -203,6 +206,13 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
+	if settings.Session.ResumeFrom != "" {
+		s.setPhase("provision:restore-session-state")
+		if err := s.restoreSessionState(ctx, settings.Session.ResumeFrom); err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
+			return
+		}
+	}
 
 	// ── Step 2.3: docker login for DinD registries ───────────────────────────
 	s.setPhase("provision:post-setup")
@@ -384,6 +394,51 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
+	if settings == nil || !settings.Session.PersistenceEnabled || (settings.Session.AgentType != "claude-acp" && settings.Session.AgentType != "codex-acp") {
+		return
+	}
+	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": "agentapi-proxy client backup-session-state", "timeout": 30}}}
+	appendStop := func(root map[string]interface{}) map[string]interface{} {
+		if root == nil {
+			root = map[string]interface{}{}
+		}
+		hooks, _ := root["hooks"].(map[string]interface{})
+		if hooks == nil {
+			hooks = map[string]interface{}{}
+		}
+		stops := asInterfaceSlice(hooks["Stop"])
+		hooks["Stop"] = append(stops, hook)
+		root["hooks"] = hooks
+		return root
+	}
+	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
+	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+}
+
+func (s *Server) restoreSessionState(ctx context.Context, sourceID string) error {
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	token := os.Getenv("PROVISIONER_TOKEN")
+	if proxy == "" || token == "" {
+		return fmt.Errorf("provisioner proxy credentials are missing")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return sessionstate.Unpack(resp.Body, runtimeHome, workdirRepoPath)
 }
 
 func trustNativeWorkspace(configPath, workspace string) error {

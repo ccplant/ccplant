@@ -4896,14 +4896,16 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		scope = "user"
 	}
 	settings.Session = sessionsettings.SessionMeta{
-		ID:        session.id,
-		UserID:    req.UserID,
-		Scope:     scope,
-		TeamID:    req.TeamID,
-		AgentType: req.AgentType,
-		Oneshot:   req.Oneshot,
-		Teams:     req.Teams,
-		MemoryKey: req.MemoryKey,
+		ID:                 session.id,
+		UserID:             req.UserID,
+		Scope:              scope,
+		TeamID:             req.TeamID,
+		AgentType:          req.AgentType,
+		Oneshot:            req.Oneshot,
+		Teams:              req.Teams,
+		MemoryKey:          req.MemoryKey,
+		ResumeFrom:         req.ResumeFrom,
+		PersistenceEnabled: m.config.SessionPersistence.Backend != "",
 	}
 	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
 
@@ -4914,6 +4916,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"AGENTAPI_USER_ID":    req.UserID,
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
+	}
+	if req.ResumeFrom != "" {
+		env["AGENTAPI_RESUME_FROM"] = req.ResumeFrom
 	}
 
 	// Add Claude Code telemetry configuration
