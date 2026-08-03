@@ -206,11 +206,26 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
-	if settings.Session.ResumeFrom != "" {
+	restoreSource := settings.Session.ResumeFrom
+	restoreRequired := restoreSource != ""
+	if restoreSource == "" && settings.Session.PersistenceEnabled {
+		// Pod replacement keeps the proxy session ID. Use that stable ID as the
+		// implicit snapshot key so restart recovery needs no API parameter.
+		restoreSource = settings.Session.ID
+	}
+	if restoreSource != "" {
 		s.setPhase("provision:restore-session-state")
-		if err := s.restoreSessionState(ctx, settings.Session.ResumeFrom); err != nil {
+		found, err := s.restoreSessionState(ctx, restoreSource)
+		if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
 			return
+		}
+		if !found && restoreRequired {
+			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: snapshot %s was not found", restoreSource))
+			return
+		}
+		if found {
+			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
 		}
 	}
 
@@ -421,27 +436,33 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
 }
 
-func (s *Server) restoreSessionState(ctx context.Context, sourceID string) error {
+func (s *Server) restoreSessionState(ctx context.Context, sourceID string) (bool, error) {
 	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
 	token := os.Getenv("PROVISIONER_TOKEN")
 	if proxy == "" || token == "" {
-		return fmt.Errorf("provisioner proxy credentials are missing")
+		return false, fmt.Errorf("provisioner proxy credentials are missing")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return false, fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
-	return sessionstate.Unpack(resp.Body, runtimeHome, workdirRepoPath)
+	if err := sessionstate.Unpack(resp.Body, runtimeHome, workdirRepoPath); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func trustNativeWorkspace(configPath, workspace string) error {

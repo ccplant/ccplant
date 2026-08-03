@@ -142,10 +142,10 @@ ACPContinuation
   created/updated/last-restored timestamps
 ```
 
-新規セッション作成 API には `resume_from` を追加する。`resume_from` が指定された場合は
-owner、agent type、CWD identity、checksum、adapter compatibility を検証し、状態を配置して
-から agent を起動する。起動後の `session/load` が失敗した場合は新規 session を作らず、
-復元失敗として返す。
+主経路は同一 proxy session ID の Pod 再作成である。provisioner は永続化が有効なら毎回
+自分の proxy session ID を snapshot key として検索し、初回起動の 404 は新規 session、
+snapshot があれば状態を配置してから `session/load` する。`resume_from` は別 proxy session
+から明示的に移行する副次的な API とし、その場合の 404 / load failure は復元失敗として返す。
 
 同一 continuation への同時 writer は禁止し lease を取る。分岐したい場合は各 ACP の
 fork API を使って新しい continuation ID を発行する。
@@ -226,7 +226,7 @@ Codex rollout は実行中に追記されるため、turn-end checkpoint を主 
 
 1. ACP package を pin し、`.acp-session-id` の保存場所を continuation state 配下へ変更する
 2. volume backend と共通 manifest / lease / strict restore を実装する
-3. 実 Pod restart E2E を Claude / Codex 各 1 本追加する
+3. 同一 proxy session ID の Pod を強制削除・再作成する E2E を Claude / Codex 各 1 本追加する
 4. object backend を追加する（Claude `SessionStore`、Codex rollout checkpointer）
 5. forced Pod deletion、途中 JSONL、checksum mismatch、異なる CWD / agent type を試験する
 
