@@ -1,7 +1,7 @@
 use crate::binary::{run_native_json, run_native_logs, run_native_plain};
 use crate::types::{
-    CommandResult, DoctorResult, InstallRequest, NativeInstance, NativeSession, NativeStatus,
-    ResetRequest,
+    CommandCheck, CommandResult, DoctorResult, InstallRequest, ManagerEnvironment, NativeInstance,
+    NativeSession, NativeStatus, ResetRequest, UpdateManagerEnvironmentRequest,
 };
 use serde::de::DeserializeOwned;
 use std::net::{ToSocketAddrs, UdpSocket};
@@ -82,7 +82,10 @@ pub async fn native_logs(
     tail: Option<usize>,
 ) -> Result<String, String> {
     let tail = tail.unwrap_or(500).clamp(1, 5000);
-    let session_id = session_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    let session_id = session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
     if !daemon && session_id.is_none() {
         return Err("a session ID is required for session logs".to_string());
     }
@@ -199,8 +202,15 @@ pub async fn native_install(
         return Err("listen address is required for a named instance".to_string());
     }
 
-    let mise_path = if request.setup_nodejs {
-        Some(setup_nodejs_with_mise(request.nodejs_version.trim())?)
+    let mise_path = if request.setup_nodejs || request.setup_github_cli {
+        Some(setup_agent_tools_with_mise(
+            request
+                .setup_nodejs
+                .then_some(request.nodejs_version.trim()),
+            request
+                .setup_github_cli
+                .then_some(request.github_cli_version.trim()),
+        )?)
     } else {
         None
     };
@@ -228,7 +238,7 @@ pub async fn native_install(
     let manager_path;
     let manager_env;
     if let Some(mise) = mise_path.as_ref() {
-        manager_path = mise_manager_path(mise)?;
+        manager_path = mise_manager_path(mise, request.setup_nodejs, request.setup_github_cli)?;
         manager_env = format!("PATH={manager_path}");
         args.extend(["--manager-env", manager_env.as_str()]);
     }
@@ -251,6 +261,160 @@ pub async fn native_install(
         ok: output.status.success(),
         message,
     })
+}
+
+const REQUIRED_MANAGER_COMMANDS: [&str; 5] = ["node", "npx", "mise", "gh", "git"];
+
+/// Read the configured manager PATH and check the commands needed to launch agents.
+#[tauri::command]
+pub fn native_environment(instance: Option<String>) -> Result<ManagerEnvironment, String> {
+    let config_path =
+        native_config_path(instance.as_deref()).ok_or_else(|| "HOME is not set".to_string())?;
+    let config = read_native_config(&config_path)?;
+    let path = config
+        .pointer("/manager_environment/PATH")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        .to_string();
+    let commands = REQUIRED_MANAGER_COMMANDS
+        .iter()
+        .map(|command| check_manager_command(command, &path))
+        .collect();
+    Ok(ManagerEnvironment { path, commands })
+}
+
+/// Atomically save the manager PATH, then restart the selected LaunchAgent.
+#[tauri::command]
+pub async fn native_update_environment(
+    app: AppHandle,
+    request: UpdateManagerEnvironmentRequest,
+) -> Result<CommandResult, String> {
+    let path = normalize_manager_path(&request.path)?;
+    let config_path =
+        native_config_path(Some(&request.instance)).ok_or_else(|| "HOME is not set".to_string())?;
+    let mut config = read_native_config(&config_path)?;
+    let root = config
+        .as_object_mut()
+        .ok_or_else(|| "native config must be a JSON object".to_string())?;
+    let environment = root
+        .entry("manager_environment")
+        .or_insert_with(|| serde_json::json!({}));
+    let environment = environment
+        .as_object_mut()
+        .ok_or_else(|| "manager_environment must be a JSON object".to_string())?;
+    environment.insert("PATH".to_string(), serde_json::Value::String(path));
+    write_native_config(&config_path, &config)?;
+
+    let (ok, message) = run_native_plain(&app, "restart", Some(&request.instance)).await;
+    Ok(CommandResult {
+        ok,
+        message: if message.is_empty() {
+            if ok {
+                "Manager PATH saved and daemon restarted.".to_string()
+            } else {
+                "Manager PATH was saved, but the daemon restart failed.".to_string()
+            }
+        } else {
+            message
+        },
+    })
+}
+
+fn read_native_config(path: &Path) -> Result<serde_json::Value, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("failed to read native config {}: {e}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| format!("failed to parse native config {}: {e}", path.display()))
+}
+
+fn write_native_config(path: &Path, config: &serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "native config has no parent directory".to_string())?;
+    let temporary = parent.join(format!("config.json.dashboard.{}.tmp", std::process::id()));
+    let bytes = serde_json::to_vec_pretty(config)
+        .map_err(|e| format!("failed to serialize native config: {e}"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|e| format!("failed to create temporary native config: {e}"))?;
+    file.write_all(&bytes)
+        .and_then(|_| file.write_all(b"\n"))
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("failed to write temporary native config: {e}"))?;
+    std::fs::rename(&temporary, path).map_err(|e| format!("failed to replace native config: {e}"))
+}
+
+fn normalize_manager_path(value: &str) -> Result<String, String> {
+    let mut entries = Vec::new();
+    for entry in value
+        .split(':')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        if !entry.starts_with('/') {
+            return Err(format!("PATH entry must be absolute: {entry}"));
+        }
+        if !entries.contains(&entry) {
+            entries.push(entry);
+        }
+    }
+    if entries.is_empty() {
+        return Err("PATH must contain at least one absolute directory".to_string());
+    }
+    Ok(entries.join(":"))
+}
+
+fn check_manager_command(command: &str, path: &str) -> CommandCheck {
+    let executable = std::env::split_paths(&std::ffi::OsString::from(path))
+        .map(|directory| directory.join(command))
+        .find(|candidate| is_executable(candidate));
+    let Some(executable) = executable else {
+        return CommandCheck {
+            command: command.to_string(),
+            required: true,
+            found: false,
+            path: String::new(),
+            version: String::new(),
+            message: format!("{command} was not found in the manager PATH"),
+        };
+    };
+    let output = Command::new(&executable).arg("--version").output();
+    let (version, message) = match output {
+        Ok(output) => {
+            let text = if output.stdout.is_empty() {
+                &output.stderr
+            } else {
+                &output.stdout
+            };
+            let version = String::from_utf8_lossy(text)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let message = if output.status.success() {
+                String::new()
+            } else {
+                "command exists but its version check failed".to_string()
+            };
+            (version, message)
+        }
+        Err(error) => (String::new(), format!("could not run command: {error}")),
+    };
+    CommandCheck {
+        command: command.to_string(),
+        required: true,
+        found: true,
+        path: executable.to_string_lossy().into_owned(),
+        version,
+        message,
+    }
 }
 
 fn resolve_public_url(
@@ -384,16 +548,30 @@ fn is_http_url(value: &str) -> bool {
     value.starts_with("https://") || value.starts_with("http://")
 }
 
-fn setup_nodejs_with_mise(version: &str) -> Result<PathBuf, String> {
-    if version.is_empty() {
-        return Err("Node.js version is required when mise setup is enabled".to_string());
-    }
+fn setup_agent_tools_with_mise(
+    node_version: Option<&str>,
+    github_cli_version: Option<&str>,
+) -> Result<PathBuf, String> {
     let mise = find_mise().ok_or_else(|| {
         "mise was not found. Install mise first (https://mise.jdx.dev), then retry.".to_string()
     })?;
-    let tool = format!("node@{version}");
+    let mut tools = Vec::new();
+    if let Some(version) = node_version {
+        if version.is_empty() {
+            return Err("Node.js version is required when mise setup is enabled".to_string());
+        }
+        tools.push(format!("node@{version}"));
+    }
+    if let Some(version) = github_cli_version {
+        if version.is_empty() {
+            return Err("GitHub CLI version is required when mise setup is enabled".to_string());
+        }
+        tools.push(format!("github-cli@{version}"));
+    }
+    let mut args = vec!["use", "--global"];
+    args.extend(tools.iter().map(String::as_str));
     let output = Command::new(&mise)
-        .args(["use", "--global", tool.as_str()])
+        .args(args)
         .output()
         .map_err(|e| format!("failed to run mise: {e}"))?;
     if !output.status.success() {
@@ -402,7 +580,10 @@ fn setup_nodejs_with_mise(version: &str) -> Result<PathBuf, String> {
         } else {
             &output.stderr
         });
-        return Err(format!("mise could not set up Node.js: {}", detail.trim()));
+        return Err(format!(
+            "mise could not set up agent tools: {}",
+            detail.trim()
+        ));
     }
     Ok(mise)
 }
@@ -423,11 +604,11 @@ fn find_mise() -> Option<PathBuf> {
     candidates.into_iter().find(|path| is_executable(path))
 }
 
-fn mise_manager_path(mise: &Path) -> Result<String, String> {
+fn mise_tool_bin(mise: &Path, tool: &str) -> Result<PathBuf, String> {
     let output = Command::new(mise)
-        .args(["which", "node"])
+        .args(["which", tool])
         .output()
-        .map_err(|e| format!("failed to resolve Node.js with mise: {e}"))?;
+        .map_err(|e| format!("failed to resolve {tool} with mise: {e}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
             &output.stdout
@@ -435,19 +616,30 @@ fn mise_manager_path(mise: &Path) -> Result<String, String> {
             &output.stderr
         });
         return Err(format!(
-            "mise could not resolve the Node.js executable: {}",
+            "mise could not resolve the {tool} executable: {}",
             detail.trim()
         ));
     }
-    let node = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    let node_bin = node
+    let executable = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    executable
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
-        .ok_or("mise returned an invalid Node.js executable path")?;
-    mise_manager_path_with_node_bin(mise, node_bin)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("mise returned an invalid {tool} executable path"))
 }
 
-fn mise_manager_path_with_node_bin(mise: &Path, node_bin: &Path) -> Result<String, String> {
+fn mise_manager_path(mise: &Path, node: bool, github_cli: bool) -> Result<String, String> {
+    let mut tool_bins = Vec::new();
+    if node {
+        tool_bins.push(mise_tool_bin(mise, "node")?);
+    }
+    if github_cli {
+        tool_bins.push(mise_tool_bin(mise, "gh")?);
+    }
+    mise_manager_path_with_tool_bins(mise, &tool_bins)
+}
+
+fn mise_manager_path_with_tool_bins(mise: &Path, tool_bins: &[PathBuf]) -> Result<String, String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or("HOME is not set")?;
@@ -459,10 +651,11 @@ fn mise_manager_path_with_node_bin(mise: &Path, node_bin: &Path) -> Result<Strin
                 .unwrap_or_else(|| home.join(".local/share/mise"))
         });
     // Native sessions use an isolated HOME. A mise shim would therefore resolve
-    // configuration and installs relative to the session instead of the host
-    // where Node.js was installed. Put the selected Node.js bin directory first
-    // so npx/node remain usable without exposing the host HOME to the session.
-    let mut entries = vec![node_bin.to_path_buf(), data_dir.join("shims")];
+    // configuration and installs relative to the session instead of the host.
+    // Put each selected tool's concrete bin directory first so it remains usable
+    // without exposing the host HOME to the session.
+    let mut entries = tool_bins.to_vec();
+    entries.push(data_dir.join("shims"));
     if let Some(parent) = mise.parent() {
         entries.push(parent.to_path_buf());
     }
@@ -493,8 +686,9 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_http_url, mise_manager_path_with_node_bin, native_config_path, parse_json,
-        public_url_from_host, resolve_public_url, uninstall_args, update_args,
+        check_manager_command, is_http_url, mise_manager_path_with_tool_bins, native_config_path,
+        normalize_manager_path, parse_json, public_url_from_host, resolve_public_url,
+        uninstall_args, update_args,
     };
     use crate::types::{DoctorResult, NativeStatus};
 
@@ -580,9 +774,14 @@ mod tests {
 
     #[test]
     fn mise_path_starts_with_node_bin_then_shims_and_mise_binary_directory() {
-        let path = mise_manager_path_with_node_bin(
+        let path = mise_manager_path_with_tool_bins(
             std::path::Path::new("/opt/homebrew/bin/mise"),
-            std::path::Path::new("/Users/test/.local/share/mise/installs/node/24.18.1/bin"),
+            &[
+                std::path::PathBuf::from("/Users/test/.local/share/mise/installs/node/24.18.1/bin"),
+                std::path::PathBuf::from(
+                    "/Users/test/.local/share/mise/installs/github-cli/2.97.0/bin",
+                ),
+            ],
         )
         .expect("mise PATH");
         let entries = std::env::split_paths(&std::ffi::OsString::from(path)).collect::<Vec<_>>();
@@ -590,7 +789,34 @@ mod tests {
             entries[0],
             std::path::PathBuf::from("/Users/test/.local/share/mise/installs/node/24.18.1/bin")
         );
-        assert!(entries[1].ends_with(".local/share/mise/shims"));
-        assert_eq!(entries[2], std::path::PathBuf::from("/opt/homebrew/bin"));
+        assert_eq!(
+            entries[1],
+            std::path::PathBuf::from(
+                "/Users/test/.local/share/mise/installs/github-cli/2.97.0/bin"
+            )
+        );
+        assert!(entries[2].ends_with(".local/share/mise/shims"));
+        assert_eq!(entries[3], std::path::PathBuf::from("/opt/homebrew/bin"));
+    }
+
+    #[test]
+    fn manager_path_requires_absolute_entries_and_removes_duplicates() {
+        assert_eq!(
+            normalize_manager_path(" /opt/homebrew/bin:/usr/bin:/opt/homebrew/bin ").unwrap(),
+            "/opt/homebrew/bin:/usr/bin"
+        );
+        assert!(normalize_manager_path("relative/bin:/usr/bin").is_err());
+        assert!(normalize_manager_path("::").is_err());
+    }
+
+    #[test]
+    fn command_check_uses_only_the_configured_manager_path() {
+        let found = check_manager_command("sh", "/bin");
+        assert!(found.found);
+        assert_eq!(found.path, "/bin/sh");
+
+        let missing = check_manager_command("sh", "/directory/that/does/not/exist");
+        assert!(!missing.found);
+        assert!(missing.message.contains("manager PATH"));
     }
 }

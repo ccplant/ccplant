@@ -77,6 +77,30 @@ pub struct CommandResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagerEnvironment {
+    pub path: String,
+    pub commands: Vec<CommandCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandCheck {
+    pub command: String,
+    pub required: bool,
+    pub found: bool,
+    pub path: String,
+    pub version: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateManagerEnvironmentRequest {
+    #[serde(default = "default_instance")]
+    pub instance: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRequest {
@@ -95,10 +119,18 @@ pub struct InstallRequest {
     pub setup_nodejs: bool,
     #[serde(default = "default_nodejs_version")]
     pub nodejs_version: String,
+    #[serde(default)]
+    pub setup_github_cli: bool,
+    #[serde(default = "default_github_cli_version")]
+    pub github_cli_version: String,
 }
 
 fn default_nodejs_version() -> String {
     "lts".to_string()
+}
+
+fn default_github_cli_version() -> String {
+    "latest".to_string()
 }
 
 fn default_public_access() -> String {

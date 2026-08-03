@@ -14,6 +14,8 @@ export function SetupCard({ onInstalled, initialInstance = "default" }: { onInst
     filesystemSandbox: true,
     setupNodejs: true,
     nodejsVersion: "lts",
+    setupGithubCli: true,
+    githubCliVersion: "latest",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -60,11 +62,16 @@ export function SetupCard({ onInstalled, initialInstance = "default" }: { onInst
         <label>Registration token<input type="password" required autoComplete="off" value={request.registrationToken} onChange={(e) => update("registrationToken", e.target.value)} /></label>
         <label className="setup__checkbox"><input type="checkbox" checked={request.filesystemSandbox} onChange={(e) => update("filesystemSandbox", e.target.checked)} /> Restrict session filesystem access</label>
         <fieldset className="setup__group">
+          <legend>Agent command setup</legend>
           <label className="setup__checkbox"><input type="checkbox" checked={request.setupNodejs} onChange={(e) => update("setupNodejs", e.target.checked)} /> Set up Node.js with mise</label>
           {request.setupNodejs && (
             <label>Node.js version<input required placeholder="lts" value={request.nodejsVersion} onChange={(e) => update("nodejsVersion", e.target.value)} /></label>
           )}
-          <p className="setup__hint">Uses your installed mise, sets Node.js as the global default, and adds the mise shims to the native session PATH.</p>
+          <label className="setup__checkbox"><input type="checkbox" checked={request.setupGithubCli} onChange={(e) => update("setupGithubCli", e.target.checked)} /> Set up GitHub CLI with mise</label>
+          {request.setupGithubCli && (
+            <label>GitHub CLI version<input required placeholder="latest" value={request.githubCliVersion} onChange={(e) => update("githubCliVersion", e.target.value)} /></label>
+          )}
+          <p className="setup__hint">Installs the selected tools globally with mise and adds their resolved bin directories to the native session PATH.</p>
         </fieldset>
         {error && <p className="setup__error">{error}</p>}
         <button className="btn" type="submit" disabled={submitting}>{submitting ? "Installing…" : "Install and connect"}</button>

@@ -241,6 +241,94 @@ body {
   letter-spacing: 0.04em;
 }
 
+.card__hint {
+  margin: -4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.environment__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.environment__path {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.environment__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.environment__add {
+  display: flex;
+  gap: 8px;
+}
+
+.environment__add input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 6px 9px;
+}
+
+.environment__message {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--neutral-weak);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.environment__commands {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.environment__commands li {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.environment__commands p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.environment__command--ok > span { color: var(--ok); }
+.environment__command--bad > span { color: var(--bad); }
+
 .setup__group {
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -50,12 +50,15 @@ native/
 - **Logs** viewer: live tail for the session manager or each session's combined
   provisioner and agent stdout/stderr.
 - **Doctor** card: result of `native doctor --json` (healthy / issues).
+- **Manager environment** card: add or edit PATH entries, restart the selected
+  instance after saving, and verify `node`, `npx`, `mise`, `gh`, and `git` with
+  their resolved locations and versions.
 - **Refresh** and **Restart** actions; optional 15s auto-refresh while visible.
 - **Loading / error / empty** states for every panel.
 - **First-run setup** that registers the Mac and installs its per-user
   LaunchAgent without requiring a separately installed CLI.
-- Optional **Node.js setup with mise** that selects a global Node.js version
-  and exposes mise and its shims to every native agent session.
+- Optional **agent command setup with mise** that selects global Node.js and
+  GitHub CLI versions and exposes their resolved binaries to every native agent session.
 - Multiple named instances, with an instance selector and instance-scoped add,
   restart, diagnostics, session listing, and removal actions.
 
@@ -107,10 +110,11 @@ The first-run form invokes `native install` with the bundled sidecar. Its
 one-time registration token is passed only to that child process and is not written to GUI settings;
 the CLI continues to store only the resulting connection credential.
 
-When Node.js setup is selected, the app locates an existing `mise` installation,
-runs `mise use --global node@<version>`, and passes a PATH containing the mise
-shim and binary directories to `native install --manager-env`. The default
-version selector is `lts`. mise itself is not installed by the app.
+When command setup is selected, the app locates an existing `mise` installation,
+runs `mise use --global node@<version> github-cli@<version>`, and passes a PATH
+containing the resolved `node` and `gh` binary directories plus the mise shim
+and binary directories to `native install --manager-env`. The defaults are
+Node.js `lts` and GitHub CLI `latest`. mise itself is not installed by the app.
 
 Then it runs (JSON parsed into typed serde structs):
 

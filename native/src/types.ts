@@ -50,6 +50,20 @@ export interface RestartResult {
   message: string;
 }
 
+export interface ManagerEnvironment {
+  path: string;
+  commands: CommandCheck[];
+}
+
+export interface CommandCheck {
+  command: string;
+  required: boolean;
+  found: boolean;
+  path: string;
+  version: string;
+  message: string;
+}
+
 export interface InstallRequest {
   instance: string;
   upstream: string;
@@ -61,6 +75,8 @@ export interface InstallRequest {
   filesystemSandbox: boolean;
   setupNodejs: boolean;
   nodejsVersion: string;
+  setupGithubCli: boolean;
+  githubCliVersion: string;
 }
 
 export interface ResetRequest {
