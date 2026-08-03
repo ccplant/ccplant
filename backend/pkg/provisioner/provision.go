@@ -400,7 +400,9 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	if settings == nil || !settings.Session.PersistenceEnabled || (settings.Session.AgentType != "claude-acp" && settings.Session.AgentType != "codex-acp") {
 		return
 	}
-	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": "agentapi-proxy client backup-session-state", "timeout": 30}}}
+	// Give the agent's local thread store a moment to flush its rollout/index
+	// after the turn completes before taking a consistent checkpoint.
+	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": "sleep 2 && agentapi-proxy client backup-session-state", "timeout": 30}}}
 	appendStop := func(root map[string]interface{}) map[string]interface{} {
 		if root == nil {
 			root = map[string]interface{}{}
