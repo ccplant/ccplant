@@ -35,6 +35,9 @@ func TestPackUnpackCodex(t *testing.T) {
 	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
 	rollout := filepath.Join(".codex", "sessions", "2026", "08", "03", "rollout-x-"+id+".jsonl")
 	mustWrite(t, filepath.Join(srcHome, rollout), "rollout\n")
+	mustWrite(t, filepath.Join(srcHome, ".codex", "state_5.sqlite"), "db")
+	mustWrite(t, filepath.Join(srcHome, ".codex", "state_5.sqlite-wal"), "wal")
+	mustWrite(t, filepath.Join(srcHome, ".codex", "session_index.jsonl"), "index")
 	var archive bytes.Buffer
 	if err := Pack(&archive, "codex-acp", id, srcHome, srcCwd); err != nil {
 		t.Fatal(err)
@@ -44,6 +47,9 @@ func TestPackUnpackCodex(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFile(t, filepath.Join(dstHome, rollout), "rollout\n")
+	assertFile(t, filepath.Join(dstHome, ".codex", "state_5.sqlite"), "db")
+	assertFile(t, filepath.Join(dstHome, ".codex", "state_5.sqlite-wal"), "wal")
+	assertFile(t, filepath.Join(dstHome, ".codex", "session_index.jsonl"), "index")
 }
 
 func mustWrite(t *testing.T, path, content string) {

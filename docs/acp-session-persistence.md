@@ -97,12 +97,13 @@ thread ID から rollout を検索し、それを initial history として再�
 必須:
 
 - `${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-*-<threadId>.jsonl`
+- `${CODEX_HOME:-~/.codex}/state_*.sqlite*`
+- `${CODEX_HOME:-~/.codex}/session_index.jsonl`
 - `{cwd}/.acp-session-id`
 
-現在の local store は state DB の index を利用できるが、index がなくても `sessions/`
-以下を走査して thread ID を含む rollout を発見できる。したがって単一 thread の再開に
-必要な canonical data は該当 rollout JSONL であり、`state_*.sqlite` は必須保存対象に
-しない。index は復元後に再構築させる。
+rollout JSONL が会話の canonical data である。一方、現行 app-server の開発環境での
+実機検証では rollout 単体だと `thread/resume` が thread を解決できなかったため、
+SQLite index（WAL/SHM を含む）と session index も同じ checkpoint に含める。
 
 条件付きで必要:
 
@@ -209,10 +210,9 @@ transcript と `.acp-session-id` だけを archive にし、provisioner token �
 
 ### Codex
 
-Codex の Stop hook も同じ CLI / backend API を使う。CLI が対象 rollout と
-`.acp-session-id` を gzip archive にし、backend が Garage へ upload する。復元時は rollout
-を元の `CODEX_HOME/sessions/YYYY/MM/DD/` 形式に戻す。`state_*.sqlite` は復元せず、
-app-server の fallback scan と再 index に任せる。
+Codex の Stop hook も同じ CLI / backend API を使う。CLI が対象 rollout、SQLite index、
+session index、`.acp-session-id` を gzip archive にし、backend が Garage へ upload する。
+復元時はすべて元の `CODEX_HOME` 配下へ戻す。
 
 Codex rollout は実行中に追記されるため、turn-end checkpoint を主 commit point とする。
 途中 checkpoint は改行で完結した JSONL record までを snapshot に含める。

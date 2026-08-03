@@ -85,6 +85,24 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 	if err != nil {
 		return err
 	}
+	if agentType == "codex-acp" {
+		// Current Codex app-server resolves thread/resume through its local index.
+		// Keep the SQLite database and WAL pair together with the rollout.
+		codexHome := filepath.Join(home, ".codex")
+		entries, readErr := os.ReadDir(codexHome)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return readErr
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if name != "session_index.jsonl" && (!strings.HasPrefix(name, "state_") || !strings.Contains(name, ".sqlite")) {
+				continue
+			}
+			if err := add(filepath.Join(codexHome, name), filepath.Join("home", ".codex", name)); err != nil {
+				return err
+			}
+		}
+	}
 	if err := tw.Close(); err != nil {
 		return err
 	}
