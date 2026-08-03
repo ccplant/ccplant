@@ -458,6 +458,17 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 	}
 
 	session.SetProvisionSettings(sessionSettings)
+	// Persist restart settings before creating the provision request or workload.
+	// A Pod can be evicted at any point after the workload is created; waiting for
+	// the first provisioning cycle to finish leaves such a replacement unable to
+	// auto-provision itself.
+	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after settings secret creation failure: %v", delErr)
+		}
+		m.cleanupSession(id)
+		return nil, fmt.Errorf("failed to create session settings secret: %w", err)
+	}
 	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after provision request creation failure: %v", delErr)
@@ -879,6 +890,11 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	// Build session settings and create a provision request for the adopted pod.
 	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
 	session.SetProvisionSettings(sessionSettings)
+	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
+		m.cleanupSession(stockID)
+		cancel()
+		return nil, fmt.Errorf("failed to create session settings secret for stock session: %w", err)
+	}
 	if err := m.CreateProvisionRequest(ctx, session); err != nil {
 		m.cleanupSession(stockID)
 		cancel()
@@ -1016,13 +1032,6 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 		log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
 		session.SetStatus("error")
 		return
-	}
-
-	// Persist settings Secret for automatic re-provisioning on Pod restart.
-	if ps := session.ProvisionSettings(); ps != nil {
-		if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create settings secret for stock session %s: %v", session.id, err)
-		}
 	}
 
 	// Don't downgrade to "active" if watchAgentAPIStatus already detected the
@@ -3495,14 +3504,6 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 					log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
 					session.SetStatus("error")
 					return
-				}
-
-				// Create settings Secret for Pod restart recovery (after successful provisioning).
-				if ps := session.ProvisionSettings(); ps != nil {
-					if err := m.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), ps); err != nil {
-						log.Printf("[K8S_SESSION] Warning: failed to create settings secret for session %s: %v", session.id, err)
-						// Non-fatal: session works without it, but Pod restart will require re-provisioning
-					}
 				}
 
 				session.SetStatus("active")
