@@ -172,12 +172,10 @@ Before registering, prepare:
 traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
   when the native machine is not directly reachable from the cluster.
 
-`--public-url` may be omitted. The CLI then builds an HTTP URL using the listen
-port and, in order, a Tailscale IPv4 address, the local address selected for the
-route to the parent proxy, or the host name. The detected URL is printed before
-registration and is still verified by the parent heartbeat. Specify
-`--public-url` explicitly when the parent reaches the host through DNS, TLS, a
-reverse proxy, NAT, or a port mapping that differs from `--listen`.
+The CLI requires `--public-url`; it does not guess which host network is
+reachable from the parent. The macOS app can construct this explicit value from
+either the Tailscale IPv4 address or the LAN route to the parent. Use a custom
+URL for DNS, TLS, reverse proxies, NAT, or port mappings.
 
 Multiple managers can run on one host. Give every additional manager a unique
 instance name, listen address, and public URL:

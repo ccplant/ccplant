@@ -176,32 +176,6 @@ func TestNativeInstallPathsDefaultLinuxPreservesHistoricalPaths(t *testing.T) {
 	require.Equal(t, "/var/log/agentapi-native", paths.logDir)
 }
 
-func TestNativePublicURLFor(t *testing.T) {
-	publicURL, err := nativePublicURLFor(":8080", "100.64.0.10")
-	require.NoError(t, err)
-	require.Equal(t, "http://100.64.0.10:8080", publicURL)
-
-	publicURL, err = nativePublicURLFor("0.0.0.0:8081", "builder.local")
-	require.NoError(t, err)
-	require.Equal(t, "http://builder.local:8081", publicURL)
-
-	publicURL, err = nativePublicURLFor("192.168.1.20:8082", "ignored.example")
-	require.NoError(t, err)
-	require.Equal(t, "http://192.168.1.20:8082", publicURL)
-
-	publicURL, err = nativePublicURLFor("[::]:8083", "fd7a:115c:a1e0::1")
-	require.NoError(t, err)
-	require.Equal(t, "http://[fd7a:115c:a1e0::1]:8083", publicURL)
-
-	_, err = nativePublicURLFor("missing-port", "builder.local")
-	require.ErrorContains(t, err, "a port is required")
-
-	_, err = nativePublicURLFor("127.0.0.1:8080", "builder.local")
-	require.ErrorContains(t, err, "loopback-only")
-	_, err = nativePublicURLFor("localhost:8080", "builder.local")
-	require.ErrorContains(t, err, "loopback-only")
-}
-
 func TestNativeInstallPathsNonDefaultLinuxIsIsolated(t *testing.T) {
 	paths, err := nativeInstallPathsFor("linux", "ci", "")
 	require.NoError(t, err)

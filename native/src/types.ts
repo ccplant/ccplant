@@ -53,6 +53,7 @@ export interface RestartResult {
 export interface InstallRequest {
   instance: string;
   upstream: string;
+  publicAccess: "tailscale" | "lan" | "custom";
   publicUrl: string;
   listen: string;
   name: string;

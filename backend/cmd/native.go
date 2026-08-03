@@ -2,14 +2,12 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -77,7 +75,7 @@ func init() {
 	install := &cobra.Command{Use: "install", Short: "Register and install the native ESM daemon", RunE: runNativeInstall}
 	f := install.Flags()
 	f.StringVar(&nativeManageOpts.upstream, "upstream", "", "parent agentapi-proxy URL")
-	f.StringVar(&nativeManageOpts.publicURL, "public-url", "", "parent-reachable URL for this host (auto-detected when omitted)")
+	f.StringVar(&nativeManageOpts.publicURL, "public-url", "", "parent-reachable URL for this host")
 	f.StringVar(&nativeManageOpts.name, "name", "", "human-readable manager name")
 	f.StringVar(&nativeManageOpts.listen, "listen", ":8080", "native ESM listen address")
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
@@ -138,8 +136,8 @@ func validateNativeInstanceName(name string) error {
 }
 
 func runNativeInstall(command *cobra.Command, _ []string) error {
-	if nativeManageOpts.upstream == "" {
-		return errors.New("--upstream is required")
+	if nativeManageOpts.upstream == "" || nativeManageOpts.publicURL == "" {
+		return errors.New("--upstream and --public-url are required")
 	}
 	if nativeManageOpts.filesystemSandbox && runtime.GOOS != "darwin" {
 		return errors.New("--filesystem-sandbox is only supported on macOS")
@@ -153,14 +151,6 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 	}
 	if instance != nativeDefaultInstance && !command.Flags().Changed("listen") {
 		return errors.New("--listen is required for non-default instances; specify a distinct port so it does not collide with the default :8080")
-	}
-	if strings.TrimSpace(nativeManageOpts.publicURL) == "" {
-		publicURL, detectErr := detectNativePublicURL(nativeManageOpts.listen, nativeManageOpts.upstream)
-		if detectErr != nil {
-			return fmt.Errorf("determine --public-url automatically: %w", detectErr)
-		}
-		nativeManageOpts.publicURL = publicURL
-		_, _ = fmt.Fprintf(command.OutOrStdout(), "Auto-detected public URL: %s\n", publicURL)
 	}
 	hostname, _ := os.Hostname()
 	if nativeManageOpts.name == "" {
@@ -237,81 +227,6 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 	}
 	fmt.Printf("Native ESM installed\nInstance: %s\nManager ID: %s\nService: %s\nLabels: %s\n", instance, registration.ID, nativeServiceName(instance), formatLabels(labels))
 	return nil
-}
-
-func detectNativePublicURL(listen, upstream string) (string, error) {
-	host := tailscaleIPv4()
-	if host == "" {
-		host = nativeRouteIP(upstream)
-	}
-	if host == "" {
-		host, _ = os.Hostname()
-	}
-	if host == "" {
-		return "", errors.New("no routable host address was found; specify --public-url")
-	}
-	return nativePublicURLFor(listen, host)
-}
-
-func nativePublicURLFor(listen, host string) (string, error) {
-	listenHost, port, err := net.SplitHostPort(listen)
-	if err != nil || port == "" {
-		return "", fmt.Errorf("invalid --listen %q; a port is required", listen)
-	}
-	if strings.EqualFold(listenHost, "localhost") {
-		return "", fmt.Errorf("--listen %q is loopback-only; specify --public-url for a reachable proxy or bind to a routable address", listen)
-	}
-	if explicit := net.ParseIP(strings.Trim(listenHost, "[]")); explicit != nil && !explicit.IsUnspecified() {
-		if explicit.IsLoopback() {
-			return "", fmt.Errorf("--listen %q is loopback-only; specify --public-url for a reachable proxy or bind to a routable address", listen)
-		}
-		host = explicit.String()
-	}
-	host = strings.Trim(strings.TrimSpace(host), "[]")
-	if host == "" {
-		return "", errors.New("public host is empty")
-	}
-	return "http://" + net.JoinHostPort(host, port), nil
-}
-
-func tailscaleIPv4() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "tailscale", "ip", "-4").Output()
-	if err != nil {
-		return ""
-	}
-	for _, field := range strings.Fields(string(output)) {
-		if ip := net.ParseIP(field); ip != nil && ip.To4() != nil && !ip.IsLoopback() {
-			return ip.String()
-		}
-	}
-	return ""
-}
-
-func nativeRouteIP(upstream string) string {
-	parsed, err := url.Parse(upstream)
-	if err != nil || parsed.Hostname() == "" {
-		return ""
-	}
-	port := parsed.Port()
-	if port == "" {
-		if parsed.Scheme == "http" {
-			port = "80"
-		} else {
-			port = "443"
-		}
-	}
-	connection, err := net.DialTimeout("udp", net.JoinHostPort(parsed.Hostname(), port), 2*time.Second)
-	if err != nil {
-		return ""
-	}
-	defer connection.Close() //nolint:errcheck
-	address, ok := connection.LocalAddr().(*net.UDPAddr)
-	if !ok || address.IP == nil || address.IP.IsLoopback() || address.IP.IsUnspecified() {
-		return ""
-	}
-	return address.IP.String()
 }
 
 type nativeInstallPaths struct{ config, credentials, state, binary, service, logDir string }
