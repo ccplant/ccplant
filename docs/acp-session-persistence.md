@@ -1,0 +1,242 @@
+# ACP セッション永続化設計（Claude / Codex）
+
+## 目的
+
+`claude-acp` と `codex-acp` の Pod / プロセスを作り直しても、ACP の
+`session/load` で同じ会話を再開できるようにする。ここで扱うのは会話状態であり、
+workdir、認証情報、ユーザー設定の永続化は既存機能の責務とする。
+
+この設計は 2026-08-03 時点の以下の実装を調査した結果に基づく。
+
+- `@agentclientprotocol/claude-agent-acp`:
+  [commit 08e0e7f](https://github.com/agentclientprotocol/claude-agent-acp/tree/08e0e7f14ee1e221626a436b54b46ca32f2fe242)
+  （Claude Agent SDK `0.3.220`）
+- `@agentclientprotocol/codex-acp`:
+  [commit efa3789](https://github.com/agentclientprotocol/codex-acp/tree/efa3789c3909838590f2f7cf24682ec4a0e987e4)
+  （`@openai/codex ^0.145.0`）
+- Codex app-server:
+  [commit 8922a78](https://github.com/openai/codex/tree/8922a784fe6aa80683fe97c2dcdfdc361478aa7f)
+
+現状は両 ACP パッケージを `@latest` で起動するため、保存形式を無条件に固定契約とは
+みなせない。実装時にはパッケージを pin し、adapter version を snapshot manifest に
+記録する。
+
+## ACP とローカル状態の関係
+
+ACP の `sessionId` 自体に会話内容は入っていない。再開には次の 2 つが両方必要になる。
+
+1. `acp-server` が保存する `{cwd}/.acp-session-id`
+2. その ID から各 agent が検索する durable state
+
+現在の `acp-server` は起動時に `.acp-session-id` を読み、agent が
+`loadSession` capability を返した場合に `session/load` を呼ぶ。失敗するとログを出して
+新規セッションへフォールバックする。そのため ID だけを残しても、agent 側の durable
+state が消えれば引き継ぎにはならない。また、このフォールバックはデータ消失を見逃し
+やすいため、引き継ぎを明示指定した場合は fail closed に変更する。
+
+## Claude ACP の調査結果
+
+### `session/load` の動作
+
+Claude ACP の `loadSession` は次を行う。
+
+1. Claude Agent SDK の `query` を `resume: <ACP sessionId>` 付きで生成する
+2. SDK の `getSessionMessages(sessionId)` で履歴を読み、ACP client に replay する
+3. transcript がなければ `Resource not found` を返す
+
+ACP session ID と Claude SDK session ID は同じ UUID である。CWD は保存先を決める
+project key に関与するため、復元前後で同じ正規化済み CWD を使う必要がある。
+
+### 再開に必要な保存対象
+
+必須:
+
+- `{CLAUDE_CONFIG_DIR:-~/.claude}/projects/<project-key>/<sessionId>.jsonl`
+- `{cwd}/.acp-session-id`
+
+条件付きで必要:
+
+- `{CLAUDE_CONFIG_DIR}/projects/<project-key>/<sessionId>/subagents/**/*.jsonl`
+- 同じ場所の subagent metadata sidecar（存在する場合）
+
+subagent transcript がなくても main session は再開できるが、subagent 履歴の完全な replay
+や関連機能が欠ける。したがってディレクトリごと保存する。
+
+再開だけには不要で、別管理にするもの:
+
+- `~/.claude/.credentials.json`（既存 managed files / credentials）
+- `~/.claude/settings.json`, `~/.claude.json`, plugins, skills（起動時 compile）
+- project の `memory/`、todos、command history、cache（会話再開とは別機能）
+
+Claude Agent SDK `0.3.220` には `SessionStore` があり、main transcript と subagent
+subkey を外部 store に mirror / materialize できる。オブジェクトストレージ方式では、
+ホーム全体を archive するよりこの API を使う方が保存境界が明確である。
+
+注意点:
+
+- `sessionStore` の mirror はローカル transcript 書き込み後に行われる。
+- `listSubkeys` を実装しない store では resume 時に main transcript しか復元されない。
+- file checkpointing の backup blob は `SessionStore` で mirror されないため、現バージョン
+  では `enableFileCheckpointing` と併用できない。
+
+## Codex ACP の調査結果
+
+### `session/load` の動作
+
+Codex ACP の `loadSession` は Codex app-server に次を送る。
+
+1. `thread/resume { threadId: <ACP sessionId> }`
+2. `thread/read { threadId, includeTurns: true }`
+3. 得られた thread history を ACP client に replay する
+
+ACP session ID と Codex thread ID は同じ UUID である。app-server の local thread store は
+thread ID から rollout を検索し、それを initial history として再開する。
+
+### 再開に必要な保存対象
+
+必須:
+
+- `${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-*-<threadId>.jsonl`
+- `{cwd}/.acp-session-id`
+
+現在の local store は state DB の index を利用できるが、index がなくても `sessions/`
+以下を走査して thread ID を含む rollout を発見できる。したがって単一 thread の再開に
+必要な canonical data は該当 rollout JSONL であり、`state_*.sqlite` は必須保存対象に
+しない。index は復元後に再構築させる。
+
+条件付きで必要:
+
+- 子 agent も個別 thread として後から再開・参照する要件がある場合、その rollout
+- archive 済み thread を対象にする場合は `archived_sessions/` 内の該当 rollout
+
+再開だけには不要で、別管理にするもの:
+
+- `~/.codex/auth.json`（既存 managed files / credentials）
+- `~/.codex/config.toml`, hooks, skills（起動時 compile）
+- `history.jsonl`, logs, cache, `state_*.sqlite`（履歴一覧や検索の補助状態）
+- `memories/`（会話再開とは別機能）
+
+Codex には Claude SDK の `SessionStore` に相当する、ACP package から設定可能な安定した
+オブジェクトストレージ adapter は現時点でない。upstream には experimental
+`ThreadStore` abstraction があるが public config は local / in-memory のみである。
+従って最初のオブジェクトストレージ実装は rollout file を checkpoint する sidecar 方式
+とする。
+
+## 共通データモデル
+
+proxy DB に次の metadata を持ち、blob 本体とは分離する。
+
+```text
+ACPContinuation
+  id                 引き継ぎ用の不変 ID
+  owner scope        user または team
+  agent type         claude-acp | codex-acp
+  acp session id     Claude session UUID / Codex thread UUID
+  cwd identity       repository + clone path の論理 ID
+  backend            volume | object
+  object/version     volume path または object generation
+  adapter version    npm package version + state format version
+  checkpoint status  pending | ready | corrupt
+  checksum/size
+  created/updated/last-restored timestamps
+```
+
+新規セッション作成 API には `resume_from` を追加する。`resume_from` が指定された場合は
+owner、agent type、CWD identity、checksum、adapter compatibility を検証し、状態を配置して
+から agent を起動する。起動後の `session/load` が失敗した場合は新規 session を作らず、
+復元失敗として返す。
+
+同一 continuation への同時 writer は禁止し lease を取る。分岐したい場合は各 ACP の
+fork API を使って新しい continuation ID を発行する。
+
+## パターン A: ボリューム永続化
+
+### 配置
+
+セッション Pod に user / team scope の RWX PVC を `/session-state` として mount する。
+
+```text
+/session-state/<scope>/<owner>/<continuation-id>/
+  manifest.json
+  acp-session-id
+  claude/projects/<project-key>/<sessionId>.jsonl
+  claude/projects/<project-key>/<sessionId>/...
+  codex/sessions/YYYY/MM/DD/rollout-...-<threadId>.jsonl
+```
+
+agent の通常ホームを丸ごと PVC にしない。init container が manifest の allowlist だけを
+runtime home に materialize し、agent 終了時または checkpoint 時に atomic rename で
+volume 側へ反映する。これにより credentials / generated config との上書き競合を避ける。
+
+Claude は transcript を直接 volume 配下へ置く専用 `CLAUDE_CONFIG_DIR` も選べるが、設定や
+credentials まで同じ root に入るため、MVP では allowlist copy を共通方式とする。
+
+### checkpoint
+
+- turn 完了時（bridge が prompt 完了を観測した直後）
+- 30 秒ごとの dirty check（生成中の Pod loss 対策）
+- SIGTERM / preStop（best effort）
+
+JSONL の途中行を公開しないよう、copy -> fsync -> manifest generation 更新の順に commit
+する。復元は `ready` generation のみを読む。
+
+### 特性
+
+- 長所: 実装が単純、追記が安価、復元が速い
+- 短所: RWX storage が必要、cluster / region を越えにくい、PVC 障害ドメインに依存
+
+## パターン B: オブジェクトストレージ永続化
+
+### object layout
+
+```text
+acp-sessions/<scope>/<owner>/<continuation-id>/
+  generations/<generation>/manifest.json
+  generations/<generation>/claude/<project-key>/<sessionId>.jsonl.zst
+  generations/<generation>/claude/<project-key>/<sessionId>/...jsonl.zst
+  generations/<generation>/codex/<threadId>/rollout.jsonl.zst
+  current.json
+```
+
+`current.json` は全 blob の upload と checksum 検証後に更新する commit marker である。
+bucket versioning と server-side encryption を有効化する。
+
+### Claude
+
+Claude ACP に `SessionStore` implementation を注入する。現行 Claude ACP はこの option を
+外部設定から受け取らないため、upstream への設定追加または ccplant 側 wrapper が必要になる。
+
+- `append`: `{projectKey, sessionId, subpath}` ごとの append log / chunk object を書く
+- `load`: chunk を順に結合して SDK に返す
+- `listSessions`: continuation metadata から mtime を返す
+- `listSubkeys`: subagent transcript を列挙する
+- `delete`: retention policy に従って tombstone を作る
+
+SDK が resume 前に一時 `CLAUDE_CONFIG_DIR` へ materialize するため、独自 init copy は不要。
+flush は durability を優先して `eager`、または turn-end で明示 flush する。
+
+### Codex
+
+sidecar / checkpoint controller が対象 rollout を staging directory へ copy し、zstd 圧縮、
+checksum 付与、upload する。復元 init container は `current.json` を解決し、rollout を元の
+`CODEX_HOME/sessions/YYYY/MM/DD/` 形式に戻す。`state_*.sqlite` は復元せず、app-server の
+fallback scan と再 index に任せる。
+
+Codex rollout は実行中に追記されるため、turn-end checkpoint を主 commit point とする。
+途中 checkpoint は改行で完結した JSONL record までを snapshot に含める。
+
+### 特性
+
+- 長所: cluster / region 非依存、高い耐久性、lifecycle / versioning を使える
+- 短所: Claude と Codex で adapter が異なる、転送遅延と request cost、整合性制御が必要
+
+## 推奨する実装順
+
+1. ACP package を pin し、`.acp-session-id` の保存場所を continuation state 配下へ変更する
+2. volume backend と共通 manifest / lease / strict restore を実装する
+3. 実 Pod restart E2E を Claude / Codex 各 1 本追加する
+4. object backend を追加する（Claude `SessionStore`、Codex rollout checkpointer）
+5. forced Pod deletion、途中 JSONL、checksum mismatch、異なる CWD / agent type を試験する
+
+受け入れ条件は「履歴が UI に replay される」だけでなく、再起動後の追加 prompt が再起動前
+の固有 token を回答でき、同じ ACP session ID の transcript / rollout に追記されることとする。
