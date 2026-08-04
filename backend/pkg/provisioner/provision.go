@@ -449,7 +449,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 	if proxy == "" || token == "" {
 		return false, fmt.Errorf("provisioner proxy credentials are missing")
 	}
-	restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
 	if err != nil {

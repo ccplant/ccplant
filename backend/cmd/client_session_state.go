@@ -41,7 +41,7 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/gzip")
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
