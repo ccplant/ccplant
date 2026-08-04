@@ -10,6 +10,10 @@ import (
 
 func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/session-state/session-1/download-url" {
+			w.WriteHeader(http.StatusNotImplemented)
+			return
+		}
 		if r.URL.Path != "/internal/session-state/session-1" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
