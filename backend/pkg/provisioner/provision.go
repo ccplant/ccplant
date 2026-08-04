@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -37,6 +38,8 @@ const (
 	// absent; the provisioner writes the file itself from SessionSettings so
 	// that both paths behave identically.
 )
+
+var errSessionStateBackendUnavailable = errors.New("session persistence backend is unavailable")
 
 var runtimeHome = provisionerHome()
 var sessionEnvFile = filepath.Join(runtimeHome, ".session", "env")
@@ -220,15 +223,15 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			restoreCWD = workdirRepoPath
 		}
 		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
-		if err != nil {
+		if errors.Is(err, errSessionStateBackendUnavailable) {
+			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
+		} else if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
 			return
-		}
-		if !found && restoreRequired {
+		} else if !found && restoreRequired {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: snapshot %s was not found", restoreSource))
 			return
-		}
-		if found {
+		} else if found {
 			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
 		}
 	}
@@ -446,7 +449,9 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 	if proxy == "" || token == "" {
 		return false, fmt.Errorf("provisioner proxy credentials are missing")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
+	restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
 	if err != nil {
 		return false, err
 	}
@@ -458,6 +463,9 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return false, errSessionStateBackendUnavailable
 	}
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

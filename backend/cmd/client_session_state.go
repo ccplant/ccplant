@@ -48,6 +48,10 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			_, _ = fmt.Fprintln(os.Stderr, "session state backup skipped: persistence backend is unavailable")
+			return nil
+		}
 		return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
 	}
 	return nil

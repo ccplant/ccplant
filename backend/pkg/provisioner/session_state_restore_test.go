@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,5 +28,22 @@ func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
 	}
 	if found {
 		t.Fatal("missing initial snapshot was reported as restored")
+	}
+}
+
+func TestRestoreSessionStateUnavailableCanBeSkipped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	t.Setenv("PROVISIONER_PROXY_URL", server.URL)
+	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
+
+	found, err := (&Server{httpClient: server.Client()}).restoreSessionState(context.Background(), "session-1", t.TempDir())
+	if found {
+		t.Fatal("unavailable backend was reported as restored")
+	}
+	if !errors.Is(err, errSessionStateBackendUnavailable) {
+		t.Fatalf("error = %v, want errSessionStateBackendUnavailable", err)
 	}
 }

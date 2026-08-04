@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -54,7 +55,8 @@ func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
 		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
 	}
 	if err := pc.stateStore.Save(c.Request().Context(), c.Param("sessionId"), body); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("[SESSION_STATE] Backup skipped because persistence backend is unavailable: %v", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
 	return c.NoContent(http.StatusNoContent)
 }
@@ -71,7 +73,8 @@ func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
 		return c.NoContent(http.StatusNotFound)
 	}
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("[SESSION_STATE] Restore skipped because persistence backend is unavailable: %v", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
 	return c.Blob(http.StatusOK, "application/gzip", body)
 }

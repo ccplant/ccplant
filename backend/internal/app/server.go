@@ -348,7 +348,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	log.Printf("[SERVER] Asset store initialized (backend: %s)", cfg.Asset.Backend)
 	sessionStateStore, err := services.NewSessionStateStore(context.Background(), cfg.SessionPersistence)
 	if err != nil {
-		log.Fatalf("[SERVER] Failed to initialize session state store: %v", err)
+		if cfg.SessionPersistence.Backend != "s3" {
+			log.Fatalf("[SERVER] Failed to initialize session state store: %v", err)
+		}
+		log.Printf("[SERVER] Session persistence disabled because S3 store initialization failed: %v", err)
+		sessionStateStore = nil
 	}
 
 	s := &Server{
