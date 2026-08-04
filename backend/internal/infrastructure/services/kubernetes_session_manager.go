@@ -306,6 +306,13 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 }
 
 func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, sessionID string, svc *corev1.Service) error {
+	// Mark the session before deleting its workload so the deployment watcher
+	// cannot race with suspension and replace the canonical state with stopped.
+	if session := m.GetSession(sessionID); session != nil {
+		if ks, ok := session.(*KubernetesSession); ok {
+			ks.SetStatus("suspended")
+		}
+	}
 	workloadName := strings.TrimSuffix(svc.Name, "-svc")
 	if m.isPVCEnabled() {
 		err := m.client.AppsV1().Deployments(m.namespace).Delete(ctx, workloadName, metav1.DeleteOptions{})
@@ -322,11 +329,6 @@ func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, s
 	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":%q}}}`, sessionSuspendAtAnnotation, sessionSuspendedAtAnnotation, suspendedAt))
 	if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, svc.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		return err
-	}
-	if session := m.GetSession(sessionID); session != nil {
-		if ks, ok := session.(*KubernetesSession); ok {
-			ks.SetStatus("suspended")
-		}
 	}
 	log.Printf("[K8S_SESSION] Suspended session %s; canonical state retained for lazy resume", sessionID)
 	return nil
@@ -3663,7 +3665,9 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			ready, err := m.isSessionWorkloadReady(context.Background(), session)
 			if err != nil {
 				if errors.IsNotFound(err) {
-					session.SetStatus("stopped")
+					if session.Status() != "suspended" {
+						session.SetStatus("stopped")
+					}
 					return
 				}
 				continue
