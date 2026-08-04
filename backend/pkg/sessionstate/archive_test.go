@@ -11,6 +11,8 @@ func TestPackUnpackClaude(t *testing.T) {
 	srcHome, srcCwd := t.TempDir(), t.TempDir()
 	id := "11111111-1111-1111-1111-111111111111"
 	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
+	mustWrite(t, filepath.Join(srcCwd, "src", "main.go"), "package main\n")
+	mustWrite(t, filepath.Join(srcCwd, ".git", "HEAD"), "ref: refs/heads/main\n")
 	mustWrite(t, filepath.Join(srcHome, ".claude", "projects", "project", id+".jsonl"), "main\n")
 	mustWrite(t, filepath.Join(srcHome, ".claude", "projects", "project", id, "subagents", "agent-a.jsonl"), "sub\n")
 	mustWrite(t, filepath.Join(srcHome, ".claude", "projects", "project", "other.jsonl"), "nope\n")
@@ -23,6 +25,8 @@ func TestPackUnpackClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFile(t, filepath.Join(dstCwd, ".acp-session-id"), id)
+	assertFile(t, filepath.Join(dstCwd, "src", "main.go"), "package main\n")
+	assertFile(t, filepath.Join(dstCwd, ".git", "HEAD"), "ref: refs/heads/main\n")
 	assertFile(t, filepath.Join(dstHome, ".claude", "projects", "project", id+".jsonl"), "main\n")
 	if _, err := os.Stat(filepath.Join(dstHome, ".claude", "projects", "project", "other.jsonl")); !os.IsNotExist(err) {
 		t.Fatalf("unrelated transcript restored: %v", err)
@@ -33,6 +37,11 @@ func TestPackUnpackCodex(t *testing.T) {
 	srcHome, srcCwd := t.TempDir(), t.TempDir()
 	id := "22222222-2222-2222-2222-222222222222"
 	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
+	executable := filepath.Join(srcCwd, "scripts", "run.sh")
+	mustWrite(t, executable, "#!/bin/sh\n")
+	if err := os.Chmod(executable, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	rollout := filepath.Join(".codex", "sessions", "2026", "08", "03", "rollout-x-"+id+".jsonl")
 	mustWrite(t, filepath.Join(srcHome, rollout), "rollout\n")
 	mustWrite(t, filepath.Join(srcHome, ".codex", "state_5.sqlite"), "db")
@@ -50,6 +59,14 @@ func TestPackUnpackCodex(t *testing.T) {
 	assertFile(t, filepath.Join(dstHome, ".codex", "state_5.sqlite"), "db")
 	assertFile(t, filepath.Join(dstHome, ".codex", "state_5.sqlite-wal"), "wal")
 	assertFile(t, filepath.Join(dstHome, ".codex", "session_index.jsonl"), "index")
+	assertFile(t, filepath.Join(dstCwd, "scripts", "run.sh"), "#!/bin/sh\n")
+	info, err := os.Stat(filepath.Join(dstCwd, "scripts", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("restored executable mode = %v", info.Mode().Perm())
+	}
 }
 
 func mustWrite(t *testing.T, path, content string) {

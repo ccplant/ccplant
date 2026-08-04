@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Pack writes the minimum local files required by ACP session/load.
+// Pack writes the ACP state and workspace files required to resume a session.
 func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 	if sessionID == "" {
 		return fmt.Errorf("ACP session id is empty")
@@ -33,7 +33,7 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 			return err
 		}
 		h.Name = filepath.ToSlash(name)
-		h.Mode = 0o600
+		h.Mode = int64(info.Mode().Perm())
 		if err := tw.WriteHeader(h); err != nil {
 			return err
 		}
@@ -49,6 +49,30 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 		return closeErr
 	}
 	if err := add(filepath.Join(cwd, ".acp-session-id"), "cwd/.acp-session-id"); err != nil {
+		return err
+	}
+	// Preserve the complete working tree, including .git metadata, untracked
+	// files, and local edits. Symlinks and other special files are skipped so a
+	// workspace cannot cause files outside cwd to be read into the snapshot.
+	if err := filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil {
+			return err
+		}
+		if rel == ".acp-session-id" {
+			return nil
+		}
+		return add(path, filepath.Join("cwd", rel))
+	}); err != nil {
 		return err
 	}
 	var root string
@@ -67,7 +91,7 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if info.IsDir() || !info.Mode().IsRegular() {
 			return nil
 		}
 		name := info.Name()
@@ -134,8 +158,8 @@ func Unpack(r io.Reader, home, cwd string) error {
 		}
 		var target string
 		switch {
-		case clean == filepath.Join("cwd", ".acp-session-id"):
-			target = filepath.Join(cwd, ".acp-session-id")
+		case strings.HasPrefix(clean, "cwd"+string(filepath.Separator)):
+			target = filepath.Join(cwd, strings.TrimPrefix(clean, "cwd"+string(filepath.Separator)))
 		case strings.HasPrefix(clean, "home"+string(filepath.Separator)):
 			target = filepath.Join(home, strings.TrimPrefix(clean, "home"+string(filepath.Separator)))
 		default:
@@ -155,6 +179,9 @@ func Unpack(r io.Reader, home, cwd string) error {
 		}
 		if closeErr != nil {
 			return closeErr
+		}
+		if err := os.Chmod(target, os.FileMode(h.Mode)&0o777); err != nil {
+			return err
 		}
 	}
 }
