@@ -27,6 +27,7 @@ func TestPackUnpackGitWorkspaceUsesDelta(t *testing.T) {
 	}
 	mustWrite(t, filepath.Join(srcCwd, "new.txt"), "new\n")
 	mustWrite(t, filepath.Join(srcCwd, "ignored", "large.bin"), strings.Repeat("x", 1<<20))
+	mustWrite(t, filepath.Join(srcCwd, "node_modules", "not-gitignored.bin"), strings.Repeat("y", 1<<20))
 	id := "33333333-3333-3333-3333-333333333333"
 	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
 	mustWrite(t, filepath.Join(srcHome, ".claude", "projects", "p", id+".jsonl"), "chat\n")
@@ -50,6 +51,9 @@ func TestPackUnpackGitWorkspaceUsesDelta(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dstCwd, "ignored", "large.bin")); !os.IsNotExist(err) {
 		t.Fatalf("ignored file restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstCwd, "node_modules", "not-gitignored.bin")); !os.IsNotExist(err) {
+		t.Fatalf("cache file restored: %v", err)
 	}
 	status := runTestGit(t, dstCwd, "status", "--porcelain")
 	if !strings.Contains(status, "MM changed.txt") || !strings.Contains(status, " D deleted.txt") || !strings.Contains(status, "?? new.txt") {

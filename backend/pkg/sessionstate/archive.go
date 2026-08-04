@@ -208,7 +208,7 @@ func packGitWorkspace(tw *tar.Writer, cwd string, add func(string, string) error
 	}
 	for _, raw := range bytes.Split(untracked, []byte{0}) {
 		rel := string(raw)
-		if rel == "" || rel == ".acp-session-id" {
+		if rel == "" || rel == ".acp-session-id" || excludedUntrackedPath(rel) {
 			continue
 		}
 		if err := add(filepath.Join(cwd, filepath.FromSlash(rel)), filepath.Join("cwd", filepath.FromSlash(rel))); err != nil {
@@ -216,6 +216,20 @@ func packGitWorkspace(tw *tar.Writer, cwd string, add func(string, string) error
 		}
 	}
 	return true, nil
+}
+
+func excludedUntrackedPath(path string) bool {
+	excluded := map[string]bool{
+		"node_modules": true, ".cache": true, ".venv": true, "venv": true,
+		"dist": true, "build": true, "target": true, ".next": true,
+		".turbo": true, ".pytest_cache": true, "__pycache__": true, "coverage": true,
+	}
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if excluded[component] {
+			return true
+		}
+	}
+	return false
 }
 
 // Unpack restores a trusted backend snapshot without permitting path traversal.
