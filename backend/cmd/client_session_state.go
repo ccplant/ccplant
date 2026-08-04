@@ -21,6 +21,29 @@ import (
 )
 
 var backupSessionStateCmd = &cobra.Command{Use: "backup-session-state", Short: "Back up ACP state through the proxy", Args: cobra.NoArgs, RunE: runBackupSessionState}
+var scheduleSessionSuspendCmd = &cobra.Command{Use: "schedule-session-suspend", Short: "Schedule persisted session suspension", Args: cobra.NoArgs, RunE: runScheduleSessionSuspend}
+
+func runScheduleSessionSuspend(_ *cobra.Command, _ []string) error {
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	token := os.Getenv("PROVISIONER_TOKEN")
+	id := os.Getenv("AGENTAPI_SESSION_ID")
+	if proxy == "" || token == "" || id == "" {
+		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
+	}
+	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+id+"/suspend", token, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("schedule session suspend failed: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
 
 func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
@@ -39,14 +62,21 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 		home = "/home/agentapi"
 	}
 	client := &http.Client{Timeout: 10 * time.Minute}
+	strict := os.Getenv("AGENTAPI_REQUIRE_SESSION_STATE_BACKUP") == "1"
 	direct, err := beginDirectUpload(client, proxy, token, id)
 	if err == nil && direct != nil {
 		if err := uploadSessionStateDirect(context.Background(), client, proxy, token, id, agentType, readACPSessionID(cwd), home, cwd, *direct); err != nil {
+			if strict {
+				return fmt.Errorf("session state backup required before suspend: %w", err)
+			}
 			_, _ = fmt.Fprintf(os.Stderr, "session state backup skipped: direct persistence transfer failed: %v\n", err)
 		}
 		return nil
 	}
 	if err != nil {
+		if strict {
+			return fmt.Errorf("session state backup required before suspend: %w", err)
+		}
 		_, _ = fmt.Fprintf(os.Stderr, "session state backup skipped: persistence backend is unavailable: %v\n", err)
 		return nil
 	}
@@ -68,6 +98,9 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		if resp.StatusCode == http.StatusServiceUnavailable {
+			if strict {
+				return fmt.Errorf("session state backup required before suspend: persistence backend is unavailable")
+			}
 			_, _ = fmt.Fprintln(os.Stderr, "session state backup skipped: persistence backend is unavailable")
 			return nil
 		}

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,7 +22,9 @@ func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
 		MemoryRequest: "128Mi", MemoryLimit: "512Mi",
 	}}
 	client := fake.NewSimpleClientset(
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-svc", Namespace: "test-ns"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-svc", Namespace: "test-ns", Annotations: map[string]string{
+			sessionSuspendedAtAnnotation: time.Now().UTC().Format(time.RFC3339Nano),
+		}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-settings", Namespace: "test-ns"}},
 	)
 	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
@@ -35,6 +38,7 @@ func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
 		"test-ns", 9000, nil, nil,
 	)
 	manager.sessions[session.id] = session
+	session.SetStatus("suspended")
 
 	got, restoring, err := manager.EnsureSessionWorkload(context.Background(), session.id)
 	if err != nil {
@@ -45,5 +49,12 @@ func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
 	}
 	if _, err := client.AppsV1().Deployments("test-ns").Get(context.Background(), session.DeploymentName(), metav1.GetOptions{}); err != nil {
 		t.Fatalf("deployment was not recreated: %v", err)
+	}
+	service, err := client.CoreV1().Services("test-ns").Get(context.Background(), session.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.Annotations[sessionSuspendedAtAnnotation] != "" {
+		t.Fatalf("suspended annotation was not cleared: %#v", service.Annotations)
 	}
 }
