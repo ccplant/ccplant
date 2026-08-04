@@ -451,6 +451,50 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 	}
 	restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+	directReq, directErr := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID+"/download-url", nil)
+	if directErr == nil {
+		directReq.Header.Set("Authorization", "Bearer "+token)
+		directResp, err := s.httpClient.Do(directReq)
+		if err != nil {
+			return false, errSessionStateBackendUnavailable
+		}
+		if directResp.StatusCode == http.StatusOK {
+			var signed struct {
+				URL string `json:"url"`
+			}
+			decodeErr := json.NewDecoder(io.LimitReader(directResp.Body, 64<<10)).Decode(&signed)
+			directResp.Body.Close()
+			if decodeErr != nil || signed.URL == "" {
+				return false, fmt.Errorf("invalid direct restore response")
+			}
+			objectReq, reqErr := http.NewRequestWithContext(restoreCtx, http.MethodGet, signed.URL, nil)
+			if reqErr != nil {
+				return false, reqErr
+			}
+			objectResp, reqErr := s.httpClient.Do(objectReq)
+			if reqErr != nil {
+				return false, errSessionStateBackendUnavailable
+			}
+			defer objectResp.Body.Close()
+			if objectResp.StatusCode == http.StatusNotFound {
+				return false, nil
+			}
+			if objectResp.StatusCode != http.StatusOK {
+				return false, errSessionStateBackendUnavailable
+			}
+			if err := sessionstate.Unpack(objectResp.Body, runtimeHome, cwd); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		directResp.Body.Close()
+		if directResp.StatusCode == http.StatusServiceUnavailable {
+			return false, errSessionStateBackendUnavailable
+		}
+		if directResp.StatusCode != http.StatusNotImplemented {
+			return false, fmt.Errorf("direct restore endpoint returned HTTP %d", directResp.StatusCode)
+		}
+	}
 	req, err := http.NewRequestWithContext(restoreCtx, http.MethodGet, proxy+"/internal/session-state/"+sourceID, nil)
 	if err != nil {
 		return false, err
