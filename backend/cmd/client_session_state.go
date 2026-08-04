@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,12 +31,13 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	if home == "" {
 		home = "/home/agentapi"
 	}
-	var body bytes.Buffer
-	if err := sessionstate.Pack(&body, agentType, readACPSessionID(cwd), home, cwd); err != nil {
-		return err
-	}
-	req, err := http.NewRequest(http.MethodPut, proxy+"/internal/session-state/"+id, &body)
+	bodyReader, bodyWriter := io.Pipe()
+	go func() {
+		bodyWriter.CloseWithError(sessionstate.Pack(bodyWriter, agentType, readACPSessionID(cwd), home, cwd))
+	}()
+	req, err := http.NewRequest(http.MethodPut, proxy+"/internal/session-state/"+id, bodyReader)
 	if err != nil {
+		_ = bodyReader.Close()
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
