@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -78,11 +79,14 @@ func (s *volumeSessionStateStore) Load(_ context.Context, id string) (io.ReadClo
 }
 
 type sessionStateS3Client interface {
-	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+}
+type sessionStateS3Uploader interface {
+	Upload(context.Context, *s3.PutObjectInput, ...func(*manager.Uploader)) (*manager.UploadOutput, error)
 }
 type s3SessionStateStore struct {
 	client         sessionStateS3Client
+	uploader       sessionStateS3Uploader
 	bucket, prefix string
 }
 
@@ -109,7 +113,12 @@ func newS3SessionStateStore(ctx context.Context, cfg *config.MemoryS3Config) (Se
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	return &s3SessionStateStore{client: s3.NewFromConfig(awsCfg, s3opts...), bucket: cfg.Bucket, prefix: prefix}, nil
+	client := s3.NewFromConfig(awsCfg, s3opts...)
+	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+		u.PartSize = 8 << 20
+		u.Concurrency = 2
+	})
+	return &s3SessionStateStore{client: client, uploader: uploader, bucket: cfg.Bucket, prefix: prefix}, nil
 }
 func (s *s3SessionStateStore) key(id string) (string, error) {
 	if err := safeSessionStateID(id); err != nil {
@@ -122,7 +131,7 @@ func (s *s3SessionStateStore) Save(ctx context.Context, id string, data io.Reade
 	if err != nil {
 		return err
 	}
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k), Body: data, ContentType: aws.String("application/gzip")})
+	_, err = s.uploader.Upload(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k), Body: data, ContentType: aws.String("application/gzip")})
 	return err
 }
 func (s *s3SessionStateStore) Load(ctx context.Context, id string) (io.ReadCloser, error) {
