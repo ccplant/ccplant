@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -234,7 +235,7 @@ func uploadDirectPart(ctx context.Context, client *http.Client, proxy, token, id
 		return "", err
 	}
 	put.ContentLength = int64(len(data))
-	result, err := client.Do(put)
+	result, err := objectStorageClient(signed.URL, client.Timeout).Do(put)
 	if err != nil {
 		return "", err
 	}
@@ -243,6 +244,20 @@ func uploadDirectPart(ctx context.Context, client *http.Client, proxy, token, id
 		return "", fmt.Errorf("upload part HTTP %d", result.StatusCode)
 	}
 	return result.Header.Get("ETag"), nil
+}
+
+func objectStorageClient(rawURL string, timeout time.Duration) *http.Client {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (!strings.HasSuffix(parsed.Hostname(), ".svc") && !strings.HasSuffix(parsed.Hostname(), ".cluster.local")) {
+		return &http.Client{Timeout: timeout}
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Timeout: timeout}
+	}
+	direct := transport.Clone()
+	direct.Proxy = nil
+	return &http.Client{Timeout: timeout, Transport: direct}
 }
 
 func abortDirectUpload(client *http.Client, proxy, token, id, uploadID string) {

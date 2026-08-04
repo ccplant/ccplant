@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -471,7 +472,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			if reqErr != nil {
 				return false, reqErr
 			}
-			objectResp, reqErr := s.httpClient.Do(objectReq)
+			objectResp, reqErr := sessionStateObjectClient(signed.URL).Do(objectReq)
 			if reqErr != nil {
 				return false, errSessionStateBackendUnavailable
 			}
@@ -519,6 +520,20 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 		return false, err
 	}
 	return true, nil
+}
+
+func sessionStateObjectClient(rawURL string) *http.Client {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (!strings.HasSuffix(parsed.Hostname(), ".svc") && !strings.HasSuffix(parsed.Hostname(), ".cluster.local")) {
+		return http.DefaultClient
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultClient
+	}
+	direct := transport.Clone()
+	direct.Proxy = nil
+	return &http.Client{Transport: direct}
 }
 
 func trustNativeWorkspace(configPath, workspace string) error {
