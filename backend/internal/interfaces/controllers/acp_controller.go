@@ -534,20 +534,6 @@ func (c *ACPController) proxyResultToBridge(ctx echo.Context, req acpRequest) er
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
-	if ensurer, ok := c.sessionManagerProvider.GetSessionManager().(portrepos.SessionWorkloadEnsurer); ok {
-		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), sessionId)
-		if err != nil {
-			return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "failed to resume session workload: " + err.Error()})
-		}
-		if ensured != nil {
-			session = ensured
-		}
-		if restoring {
-			ctx.Response().Header().Set("Retry-After", "2")
-			return ctx.JSON(http.StatusAccepted, map[string]string{"session_id": sessionId, "status": "restoring"})
-		}
-	}
-
 	addr := session.Addr()
 	if addr == "" {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "session has no address"})
@@ -612,20 +598,6 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 		log.Printf("[ACP] HandleSessionSSE: permission denied (sessionId=%s)", sessionId)
 		return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 	}
-	if ensurer, ok := c.sessionManagerProvider.GetSessionManager().(portrepos.SessionWorkloadEnsurer); ok {
-		ensured, restoring, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), sessionId)
-		if err != nil {
-			return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"message": "failed to resume session workload: " + err.Error()})
-		}
-		if ensured != nil {
-			session = ensured
-		}
-		if restoring {
-			ctx.Response().Header().Set("Retry-After", "2")
-			return ctx.JSON(http.StatusAccepted, map[string]string{"session_id": sessionId, "status": "restoring"})
-		}
-	}
-
 	addr := session.Addr()
 	if addr == "" {
 		log.Printf("[ACP] HandleSessionSSE: session has no address (sessionId=%s)", sessionId)

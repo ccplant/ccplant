@@ -312,6 +312,7 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.POST("/start", r.handlers.sessionController.StartSession)
 	r.echo.GET("/search", r.handlers.sessionController.SearchSessions)
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
+	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 
 	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)

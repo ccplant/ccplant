@@ -15,6 +15,7 @@ interface SessionListSidebarProps {
 function getStatusDotClass(status: SessionStatus): string {
   switch (status) {
     case 'active':   return 'bg-green-500'
+    case 'suspended':return 'bg-violet-500'
     case 'running':  return 'bg-yellow-400 animate-pulse'
     case 'starting': return 'bg-yellow-400 animate-pulse'
     case 'creating': return 'bg-blue-400 animate-pulse'
@@ -207,7 +208,9 @@ export default function SessionListSidebar({
                         </p>
                       )}
                       <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-0.5 leading-none">
-                        {session.status === 'running' ? (
+                        {session.status === 'suspended' ? (
+                          <span className="text-violet-600 dark:text-violet-400">サスペンド中</span>
+                        ) : session.status === 'running' ? (
                           <span className="text-yellow-500 dark:text-yellow-400">実行中</span>
                         ) : running && session.status !== 'active' ? (
                           <span className="text-yellow-500 dark:text-yellow-400">

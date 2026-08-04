@@ -7,6 +7,25 @@ describe('AgentAPIProxyClient ACP message history', () => {
     vi.restoreAllMocks();
   });
 
+  it('resumes a session only through the explicit resume endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ session_id: 'session-1', status: 'restoring' }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.resumeSession('session-1')).resolves.toEqual({
+      session_id: 'session-1',
+      status: 'restoring',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/sessions/session-1/resume',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('rejects when history cannot be fetched instead of returning an empty history', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('connection lost'));
     const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });

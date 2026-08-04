@@ -427,6 +427,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (session.status === 'running') {
       return { status: 'running' as const, colorClass: 'bg-yellow-500 animate-pulse', text: 'Running' }
     }
+    if (session.status === 'suspended') {
+      return { status: 'suspended' as const, colorClass: 'bg-violet-500', text: 'Suspended' }
+    }
 
     // ステータスが取得できていない場合
     if (!agentStatus) {

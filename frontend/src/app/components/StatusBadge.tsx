@@ -76,6 +76,14 @@ export default function StatusBadge({ status, className = '' }: StatusBadgeProps
           icon: '🟢',
           label: 'Active'
         }
+      case 'suspended':
+        return {
+          bg: 'bg-violet-100 dark:bg-violet-950',
+          text: 'text-violet-800 dark:text-violet-200',
+          border: 'border-violet-300 dark:border-violet-700',
+          icon: '💤',
+          label: 'Suspended'
+        }
       case 'unhealthy':
         return {
           bg: 'bg-red-100 dark:bg-red-900',

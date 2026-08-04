@@ -38,7 +38,7 @@ func runScheduleSessionSuspend(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("schedule session suspend failed: HTTP %d", resp.StatusCode)
 	}
@@ -135,7 +135,7 @@ func beginDirectUpload(client *http.Client, proxy, token, id string) (*directUpl
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotImplemented {
 		return nil, nil
 	}
@@ -235,7 +235,7 @@ func uploadSessionStateDirect(ctx context.Context, client *http.Client, proxy, t
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("complete upload HTTP %d", resp.StatusCode)
 	}
@@ -259,7 +259,7 @@ func uploadDirectPart(ctx context.Context, client *http.Client, proxy, token, id
 	} else {
 		err = fmt.Errorf("presign part HTTP %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		return "", err
 	}
@@ -272,7 +272,7 @@ func uploadDirectPart(ctx context.Context, client *http.Client, proxy, token, id
 	if err != nil {
 		return "", err
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 	if result.StatusCode/100 != 2 {
 		return "", fmt.Errorf("upload part HTTP %d", result.StatusCode)
 	}
@@ -302,7 +302,7 @@ func abortDirectUpload(client *http.Client, proxy, token, id, uploadID string) {
 	if err == nil {
 		resp, callErr := client.Do(req)
 		if callErr == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}
 }

@@ -464,7 +464,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 				URL string `json:"url"`
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(directResp.Body, 64<<10)).Decode(&signed)
-			directResp.Body.Close()
+			_ = directResp.Body.Close()
 			if decodeErr != nil || signed.URL == "" {
 				return false, fmt.Errorf("invalid direct restore response")
 			}
@@ -476,7 +476,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			if reqErr != nil {
 				return false, errSessionStateBackendUnavailable
 			}
-			defer objectResp.Body.Close()
+			defer func() { _ = objectResp.Body.Close() }()
 			if objectResp.StatusCode == http.StatusNotFound {
 				return false, nil
 			}
@@ -488,7 +488,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			}
 			return true, nil
 		}
-		directResp.Body.Close()
+		_ = directResp.Body.Close()
 		if directResp.StatusCode == http.StatusServiceUnavailable {
 			return false, errSessionStateBackendUnavailable
 		}
