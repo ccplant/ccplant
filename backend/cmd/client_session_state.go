@@ -248,7 +248,11 @@ func uploadDirectPart(ctx context.Context, client *http.Client, proxy, token, id
 
 func objectStorageClient(rawURL string, timeout time.Duration) *http.Client {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || (!strings.HasSuffix(parsed.Hostname(), ".svc") && !strings.HasSuffix(parsed.Hostname(), ".cluster.local")) {
+	if err != nil {
+		return &http.Client{Timeout: timeout}
+	}
+	hostname := parsed.Hostname()
+	if strings.Contains(hostname, ".") && !strings.HasSuffix(hostname, ".svc") && !strings.HasSuffix(hostname, ".cluster.local") {
 		return &http.Client{Timeout: timeout}
 	}
 	transport, ok := http.DefaultTransport.(*http.Transport)

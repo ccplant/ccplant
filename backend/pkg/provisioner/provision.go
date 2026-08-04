@@ -524,7 +524,11 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 
 func sessionStateObjectClient(rawURL string) *http.Client {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || (!strings.HasSuffix(parsed.Hostname(), ".svc") && !strings.HasSuffix(parsed.Hostname(), ".cluster.local")) {
+	if err != nil {
+		return http.DefaultClient
+	}
+	hostname := parsed.Hostname()
+	if strings.Contains(hostname, ".") && !strings.HasSuffix(hostname, ".svc") && !strings.HasSuffix(hostname, ".cluster.local") {
 		return http.DefaultClient
 	}
 	transport, ok := http.DefaultTransport.(*http.Transport)
