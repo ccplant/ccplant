@@ -215,7 +215,11 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	if restoreSource != "" {
 		s.setPhase("provision:restore-session-state")
-		found, err := s.restoreSessionState(ctx, restoreSource)
+		restoreCWD := filepath.Dir(workdirRepoPath)
+		if settings.Repository != nil && strings.TrimSpace(settings.Repository.FullName) != "" {
+			restoreCWD = workdirRepoPath
+		}
+		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
 		if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
 			return
@@ -436,7 +440,7 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
 }
 
-func (s *Server) restoreSessionState(ctx context.Context, sourceID string) (bool, error) {
+func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
 	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
 	token := os.Getenv("PROVISIONER_TOKEN")
 	if proxy == "" || token == "" {
@@ -459,7 +463,7 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID string) (bool
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return false, fmt.Errorf("backend returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
-	if err := sessionstate.Unpack(resp.Body, runtimeHome, workdirRepoPath); err != nil {
+	if err := sessionstate.Unpack(resp.Body, runtimeHome, cwd); err != nil {
 		return false, err
 	}
 	return true, nil

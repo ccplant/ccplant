@@ -21,7 +21,7 @@ func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
 	t.Setenv("PROVISIONER_PROXY_URL", server.URL)
 	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
 
-	found, err := (&Server{httpClient: server.Client()}).restoreSessionState(context.Background(), "session-1")
+	found, err := (&Server{httpClient: server.Client()}).restoreSessionState(context.Background(), "session-1", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
