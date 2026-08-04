@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,8 +18,8 @@ import (
 
 // SessionStateStore is the backend-owned durable store for ACP snapshots.
 type SessionStateStore interface {
-	Save(context.Context, string, []byte) error
-	Load(context.Context, string) ([]byte, error)
+	Save(context.Context, string, io.Reader) error
+	Load(context.Context, string) (io.ReadCloser, error)
 }
 
 type volumeSessionStateStore struct{ root string }
@@ -48,7 +47,7 @@ func (s *volumeSessionStateStore) path(id string) (string, error) {
 	}
 	return filepath.Join(s.root, id+".tar.gz"), nil
 }
-func (s *volumeSessionStateStore) Save(_ context.Context, id string, data []byte) error {
+func (s *volumeSessionStateStore) Save(_ context.Context, id string, data io.Reader) error {
 	p, err := s.path(id)
 	if err != nil {
 		return err
@@ -59,7 +58,7 @@ func (s *volumeSessionStateStore) Save(_ context.Context, id string, data []byte
 	}
 	name := tmp.Name()
 	defer func() { _ = os.Remove(name) }()
-	if _, err = tmp.Write(data); err == nil {
+	if _, err = io.Copy(tmp, data); err == nil {
 		err = tmp.Sync()
 	}
 	if closeErr := tmp.Close(); err == nil {
@@ -70,12 +69,12 @@ func (s *volumeSessionStateStore) Save(_ context.Context, id string, data []byte
 	}
 	return os.Rename(name, p)
 }
-func (s *volumeSessionStateStore) Load(_ context.Context, id string) ([]byte, error) {
+func (s *volumeSessionStateStore) Load(_ context.Context, id string) (io.ReadCloser, error) {
 	p, err := s.path(id)
 	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(p)
+	return os.Open(p)
 }
 
 type sessionStateS3Client interface {
@@ -118,15 +117,15 @@ func (s *s3SessionStateStore) key(id string) (string, error) {
 	}
 	return s.prefix + id + ".tar.gz", nil
 }
-func (s *s3SessionStateStore) Save(ctx context.Context, id string, data []byte) error {
+func (s *s3SessionStateStore) Save(ctx context.Context, id string, data io.Reader) error {
 	k, err := s.key(id)
 	if err != nil {
 		return err
 	}
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k), Body: bytes.NewReader(data), ContentType: aws.String("application/gzip")})
+	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k), Body: data, ContentType: aws.String("application/gzip")})
 	return err
 }
-func (s *s3SessionStateStore) Load(ctx context.Context, id string) ([]byte, error) {
+func (s *s3SessionStateStore) Load(ctx context.Context, id string) (io.ReadCloser, error) {
 	k, err := s.key(id)
 	if err != nil {
 		return nil, err
@@ -139,8 +138,7 @@ func (s *s3SessionStateStore) Load(ctx context.Context, id string) ([]byte, erro
 		}
 		return nil, err
 	}
-	defer func() { _ = out.Body.Close() }()
-	return io.ReadAll(out.Body)
+	return out.Body, nil
 }
 
 // NewSessionStateStore builds the configured backend. Empty backend disables persistence.

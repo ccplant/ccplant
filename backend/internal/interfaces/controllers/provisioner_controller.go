@@ -3,7 +3,7 @@ package controllers
 import (
 	"context"
 	"crypto/subtle"
-	"io"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -41,7 +41,7 @@ func NewProvisionerController(manager ProvisionerManager, allocationQueue sessio
 	return pc
 }
 
-const maxSessionStateBytes = 128 << 20
+const maxSessionStateBytes = 1 << 30
 
 func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
 	if !pc.authorized(c) {
@@ -50,11 +50,12 @@ func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
 	if pc.stateStore == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes))
-	if err != nil {
-		return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
-	}
+	body := http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes)
 	if err := pc.stateStore.Save(c.Request().Context(), c.Param("sessionId"), body); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+		}
 		log.Printf("[SESSION_STATE] Backup skipped because persistence backend is unavailable: %v", err)
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
@@ -76,7 +77,8 @@ func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
 		log.Printf("[SESSION_STATE] Restore skipped because persistence backend is unavailable: %v", err)
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
-	return c.Blob(http.StatusOK, "application/gzip", body)
+	defer func() { _ = body.Close() }()
+	return c.Stream(http.StatusOK, "application/gzip", body)
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {

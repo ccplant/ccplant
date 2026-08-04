@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const maxRestoredFileBytes = 1 << 30
+
 // Pack writes the ACP state and workspace files required to resume a session.
 func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 	if sessionID == "" {
@@ -172,7 +174,7 @@ func Unpack(r io.Reader, home, cwd string) error {
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(f, io.LimitReader(tr, 128<<20))
+		_, copyErr := io.Copy(f, io.LimitReader(tr, maxRestoredFileBytes))
 		closeErr := f.Close()
 		if copyErr != nil {
 			return copyErr
