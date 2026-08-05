@@ -1,177 +1,222 @@
-# Team trigger の username による認証ファイル選択設計
+# Team trigger の実行ユーザーと認証ファイル選択設計
 
 ## 目的
 
-team scope の Webhook / SlackBot がレンダリングした session tag に `username` がある場合、そのユーザー用に保存された managed credential files をセッションへ注入する。
+team scope の Webhook / SlackBot が作るSessionについて、次のidentityを分離する。
 
-セッションの scope と team ownership は変更しない。
+- `TriggerUserID`: Webhook / SlackBot設定を作成したユーザー
+- `UserID`: delivery eventから解決した、そのSessionの実行ユーザー
+- `Scope` / `TeamID`: Sessionのアクセス範囲。team triggerではteamのまま
 
-## 既存機能
+GitHub webhook payloadの`user.login`などを`UserID`としてSessionへ渡し、`credential_source: session_user`を指定すると、そのユーザーのmanaged credential filesを利用できるようにする。
 
-`SessionParams.CredentialSource` / `RunServerRequest.CredentialSource` が、セッションに注入する managed credential files の所有元を選択する。既存値だけではsession user以外の任意ユーザーを、session identityから独立して指定することはできない。
+## 現状
 
-| `credential_source` | 認証ファイルの所有元 |
+Webhook / SlackBot entityの`UserID`はtrigger作成者を表し、Session起動時にも同じ値を`RunServerRequest.UserID`へ渡している。したがって現状のteam triggerでは、trigger作成者とsession userが暗黙に同一である。
+
+既存の`credential_source`は次の値を持つ。
+
+| 値 | managed credential filesの所有元 |
 |---|---|
 | `session_user` | `RunServerRequest.UserID` |
 | `team` | `RunServerRequest.TeamID` |
 | `none` | 注入しない |
-| 未指定 | user scope は session user、team scope は注入なし |
+| 未指定 | user scopeはsession user、team scopeは注入なし |
 
-Kubernetes session manager は、選択したownerに対応する `agentapi-agent-files-<sanitized-owner>` Secretを読み、provision settingsのmanaged filesへ埋め込む。
+このままevent由来usernameを`UserID`へ入れると、trigger作成者を参照する手段が失われる。また、eventにusernameがない場合にtrigger作成者へ暗黙fallbackすると、`session_user`の意味がdeliveryごとに変わってしまう。
 
-この仕組みが扱うのは認証ファイルだけである。`agentapi-user-files-*` の一般user-managed filesはuser scope sessionにしか注入されない。
+## 提案
 
-## 提案する振る舞い
+### Session identityに`TriggerUserID`を追加する
 
-team scope triggerに明示的なcredential routing設定を追加する。
+`RunServerRequest`、Session entity、永続化metadata、provision settingsに`TriggerUserID`を追加する。
+
+```go
+type RunServerRequest struct {
+    UserID        string // eventから解決したsession user
+    TriggerUserID string // trigger設定の作成者。通常の手動起動では空
+    Scope         ResourceScope
+    TeamID        string
+    // ...
+}
+```
+
+team triggerからの起動例:
+
+```text
+UserID:        payload由来のusername
+TriggerUserID: webhook.UserID() / slackbot.UserID()
+Scope:         team
+TeamID:        webhook.TeamID() / slackbot.TeamID()
+```
+
+`TriggerUserID`はownership判定には使用しない。Sessionへのアクセス可否は引き続き`Scope=team`と`TeamID`で決まる。
+
+### `credential_source: trigger_user`を追加する
+
+| 値 | managed credential filesの所有元 |
+|---|---|
+| `session_user` | event由来の`UserID` |
+| `trigger_user` | trigger設定作成者の`TriggerUserID` |
+| `team` | `TeamID` |
+| `none` | 注入しない |
+
+Kubernetes session managerの選択処理は次のようにする。
+
+```go
+switch req.CredentialSource {
+case "session_user":
+    credentialOwner = req.UserID
+case "trigger_user":
+    credentialOwner = req.TriggerUserID
+case "team":
+    credentialOwner = req.TeamID
+case "none":
+case "":
+    if req.Scope == entities.ScopeUser || req.Scope == "" {
+        credentialOwner = req.UserID
+    }
+}
+```
+
+`trigger_user`なのに`TriggerUserID`が空の場合は設定エラーとして起動を拒否する。別ownerへfallbackしない。
+
+## EventからのUserID解決
+
+要件どおり、render済みの`tags.username`をUserIDとして使用する。
 
 ```json
 {
-  "name": "Team issue router",
   "scope": "team",
   "team_id": "acme/platform",
-  "credential_routing": {
-    "tag": "username",
-    "targets": {
-      "alice": "alice",
-      "bob": "user-0187"
-    },
-    "on_unresolved": "reject"
-  },
   "session_config": {
     "tags": {
-      "username": "{{.issue.assignee.login}}"
+      "username": "{{.user.login}}"
+    },
+    "params": {
+      "credential_source": "session_user"
     }
   }
 }
 ```
 
-`targets` は外部イベントから得た値と、managed credentialsのcanonical owner IDとの静的mappingである。イベント中の値を直接credential ownerとして採用しない。
+GitHub payloadの種類によってユーザーフィールドは異なりうるため、固定JSON pathではなく既存のtag template renderingを利用する。例えばイベントに応じて`{{.user.login}}`、`{{.sender.login}}`、`{{.issue.user.login}}`を設定できる。
 
-### 解決結果
+### 解決規則
 
-一致した場合、`LaunchRequest` を次のように構築する。
+1. session configのtagsをdelivery payloadでrenderする
+2. `tags["username"]`の前後空白を除去する
+3. 空でなければその文字列を`Session.UserID`とする
+4. `TriggerUserID`には常にtrigger entityの`UserID`を設定する
+5. `username` tagが設定されているのにrender結果が空の場合はtrigger作成者へfallbackしない
 
-```text
-UserID:           trigger.UserID（変更しない）
-Scope:            team
-TeamID:           trigger.TeamID
-Teams:            [trigger.TeamID]
-CredentialOwnerID: targets[tags[tag]]
-```
+`username` tag自体を設定していない既存triggerは、互換性のため現在どおりtrigger作成者を`UserID`として起動する。
 
-既存の`credential_source=session_user`は`RunServerRequest.UserID`しか参照できない。`UserID`をrouting対象へ差し替えると、認証ファイルだけでなく個人API key、settings、実行ユーザーnamespace、`AGENTAPI_USER_ID`などにも影響する。そのため、認証ファイルの参照先だけを表す内部フィールド`CredentialOwnerID`を追加する。この値が空でなければKubernetes session managerは既存の`CredentialSource`解決より優先して使用する。management APIの通常session start requestには公開しない。
+空の場合の挙動は明示設定にする。
 
-Sessionの作成者、アクセス範囲、team settings、team memory/profileの選択はteam scopeのまま維持する。
-
-### 既存設定との互換性
-
-- `credential_routing` がなければ現在の挙動を維持する
-- `username` tagだけではroutingしない
-- `credential_routing` と明示的な `session_config.params.credential_source` の同時指定はvalidation errorにする
-- user scope triggerでは `credential_routing` を禁止する
-
-## 「検証」の意味
-
-現在のno-auth構成では、usernameの本人性、在籍、team membershipは検証できない。`MemoryUserRepository` もプロセスローカルであり、credential routingのidentity authorityには使えない。
-
-検証するのは次の項目だけである。
-
-1. triggerがteam scopeである
-2. routing tagの値が静的な`targets`に完全一致する
-3. mapped owner IDが空でない
-4. 設定が管理APIを通じて保存された正しい形式である
-
-対象のcredential Secretが存在しないことはvalidation errorにしない。ユーザーがまだ認証ファイルを登録していない正常ケースがあるため、既存実装どおりファイルなしで起動する。ただしdelivery record / logに`credential_files_found=false`を残すと運用しやすい。
-
-管理API自体が無認証なら、allowlistもセキュリティ境界にはならない。その構成では本機能を無効にするか、Webhook/SlackBot設定の変更経路をAPI keyなどで保護する必要がある。
-
-## セキュリティ上の注意
-
-team scope sessionはteamから閲覧できるため、個人credentialを注入すると、そのcredentialをteam sessionの利用者が使用できる。これは個人sessionへのroutingより強い共有である。
-
-そのため以下を必須とする。
-
-- credential routingはdefault disabled
-- team-ownedの静的allowlistを必須にする
-- 外部payloadからowner IDを直接指定させない
-- routing対象ユーザーが、このteamでcredentialを共有することに同意している運用を前提にする
-- logとsession tagsへ`credential_owner`、`credential_routing_source`、`trigger_team_id`を記録する
-- credential内容、Secret名の生値、ファイル内容はログへ出さない
-
-より厳格にする場合は、ユーザー側に`team_id`単位のcredential sharing consentを永続化し、allowlistとの両方が一致したときだけ注入する。このconsent storeがない初期実装では、team管理者によるallowlistを唯一の許可情報とする。
-
-## 実装箇所
-
-### Domain / persistence
-
-WebhookとSlackBotに共通の設定型を追加する。
-
-```go
-type CredentialRoutingConfig struct {
-    Tag          string            `json:"tag"`
-    Targets      map[string]string `json:"targets"`
-    OnUnresolved string            `json:"on_unresolved"`
+```json
+"session_config": {
+  "tags": {"username": "{{.user.login}}"},
+  "on_user_id_unresolved": "reject"
 }
 ```
 
-Kubernetes-backed repositories、controller DTO、OpenAPI、import/exportへ追加する。
+初期実装は`reject`のみを許可する。`trigger_user` fallbackが必要なら、将来`on_user_id_unresolved: use_trigger_user`として明示的に追加する。
 
-### 共通resolver
+## 認証がない構成での意味
 
-`internal/usecases/session/credential_router.go` にpureなresolverを置く。
+現在のno-auth構成では、payloadのusernameがCCPlantに登録済みか、本人か、team memberかは検証できない。GitHub webhookでは署名により「GitHubから受信したpayloadである」ことは確認できるが、`user.login`とCCPlant UserIDの対応までは保証しない。
 
-```go
-func ResolveCredentialOwner(
-    triggerScope entities.ResourceScope,
-    tags map[string]string,
-    config *entities.CredentialRoutingConfig,
-) (ownerID string, matched bool, err error)
-```
+したがって初期実装では、renderしたusernameをそのままcanonical UserIDとして扱う。これはidentity verificationではなくnaming conventionである。
 
-`UserRepository`には依存しない。
+managed credential Secretが存在しなければ、既存実装どおりcredentialなしで起動する。usernameの存在確認には使わない。
+
+## セキュリティ
+
+`credential_source: session_user`をteam triggerで使うと、event payloadに現れたusernameの個人credentialがteam sessionへ注入される。team sessionを閲覧・操作できるユーザーからそのcredentialを利用できるため、明示的なopt-inが必要である。
+
+- team triggerの既定`credential_source`は引き続き`none`
+- `tags.username`だけではcredentialを注入しない
+- 管理者が`credential_source: session_user`を明示した場合だけ注入する
+- Webhook signature / Slack Socket Modeの検証を必須とする
+- `UserID`をSecret名へ変換するときは既存sanitize処理を使う
+- sanitize後の衝突を防ぐため、可能ならSecret annotation内のraw owner IDも照合する
+- log / session metadataに`user_id`, `trigger_user_id`, `credential_source`を記録する
+- credential内容はログに出さない
+
+管理APIも無認証の場合、この設定はsecurity boundaryにならない。その構成で個人credentialをteam sessionへ注入する機能は有効化すべきではない。
+
+## 各triggerへの組み込み
 
 ### Webhook
 
-`WebhookSessionService`でtagsのtemplate renderingとmergeが完了した後に解決する。match時は次を変更する。
+`WebhookSessionService`でsession config merge後にtagsをrenderし、`tags.username`からUserIDを解決する。
 
-- `LaunchRequest.CredentialOwnerID = credentialOwner`
+```go
+LaunchRequest{
+    UserID:        resolvedUserID,
+    TriggerUserID: webhook.UserID(),
+    Scope:         webhook.Scope(),
+    TeamID:        webhook.TeamID(),
+    CredentialSource: renderedParams.CredentialSource,
+}
+```
 
-`Scope`, `TeamID`, `Teams`は既存のteam identityを維持する。
+GitHub / custom webhookの両方で同じ処理を使う。
 
 ### SlackBot
 
-`SlackBotEventHandler`でもrendered tagsから同じresolverを呼び、同じcredential用フィールドだけを変更する。
+`SlackBotEventHandler`でも同じtemplate resolverを使う。Slack user IDとCCPlant UserIDが異なる場合は、template入力へ対応表からcanonical usernameを追加する別機能が必要になる。両者が同じ運用なら`{{.event.user}}`を使用できる。
 
-Slack thread reuse時は、既存sessionの`credential_owner` tagもfilterへ含める。同じthreadでrouting targetが変わった場合、別のcredentialを既存Podへ後付けできないため、新規sessionを作る。
+### Scheduleと手動起動
 
-pending dedup keyにもcredential ownerを含める。
+- Schedule: `TriggerUserID=schedule.UserID()`を設定する。`UserID`は現行どおりschedule ownerを維持する
+- 手動起動: `TriggerUserID`は空。`credential_source=trigger_user`はvalidation error
 
-## エラー方針
+これにより`trigger_user`の意味が外部trigger全体で一貫する。
 
-- tagなし/空: routingしない。team scopeの通常起動
-- allowlist mismatch: `on_unresolved=reject`なら起動しない
-- invalid config: management APIで400、delivery時に検出した場合は起動しない
-- credential Secretなし: credentialなしで起動し、監査情報へ記録
+## Session reuseとlimit
 
-未解決時にteam credentialやtrigger作成者のcredentialへfallbackしない。
+reuse filterには既存tagsに加えて`UserID`を含める。同じrepository/threadでもevent由来userが異なる場合、異なるcredentialを持つ新規Sessionを作る。
+
+SlackBotのpending dedup keyにもresolved `UserID`を含める。
+
+`max_sessions`はtrigger全体の上限を維持し、`webhook_id` / `slackbot_id`単位で数える。
+
+## API / persistence変更
+
+- `WebhookSessionConfig`
+  - `on_user_id_unresolved`
+- `SessionParams.CredentialSource`
+  - enumへ`trigger_user`を追加
+- `RunServerRequest` / `LaunchRequest`
+  - `TriggerUserID`
+- Session implementation / Kubernetes labels or annotations
+  - raw `trigger_user_id`を保存
+- provision settings
+  - 必要なら監査用`TriggerUserID`を追加
+- OpenAPI、Webhook/SlackBot import/export、management skillsを更新
 
 ## テスト計画
 
-- routingなしのteam triggerは`CredentialSource`未指定のまま
-- allowlist matchでscope/team/UserIDを維持し、CredentialOwnerIDだけが設定される
-- allowlist mismatchはreject
-- user scopeでcredential routingを拒否
-- explicit credential sourceとの競合を拒否
-- WebhookとSlackBotで同じresolver結果になる
-- credential ownerが異なるSlack thread sessionをreuseしない
-- Kubernetes session managerがmapped ownerの`agentapi-agent-files-*`だけを読む
-- 一般user-managed filesはteam sessionへ注入されない
+- team webhookで`user.login`がSession.UserIDになる
+- Sessionは`Scope=team`, `TeamID=trigger.TeamID`のまま
+- `TriggerUserID`はtrigger作成者になる
+- `credential_source=session_user`はevent由来UserIDのcredentialを読む
+- `credential_source=trigger_user`はtrigger作成者のcredentialを読む
+- unresolved user IDはtrigger作成者へfallbackせずreject
+- `trigger_user`かつ`TriggerUserID`空はreject
+- team triggerでcredential source未指定ならcredentialなし
+- user IDが異なる既存Sessionをreuseしない
+- user ID以外のteam settings / ownershipが変わらない
+- managed credential Secretなしでもcredentialなしで起動できる
+- 一般user-managed filesはteam scope Sessionへ注入されない
 
 ## 実装順序
 
-1. `CredentialRoutingConfig`とpure resolver
-2. Webhook/SlackBot persistence・management API・OpenAPI
-3. Webhook launchへの組み込み
-4. SlackBot launch/reuse/dedupへの組み込み
-5. audit tags、delivery record、feature flag
+1. `TriggerUserID`をSession作成経路と永続化へ追加
+2. `credential_source=trigger_user`を追加
+3. rendered `tags.username`からのUserID解決とunresolved policyを追加
+4. Webhook / SlackBot / Scheduleへ組み込む
+5. reuse、audit metadata、OpenAPI、import/exportを更新
+6. unit / integration tests
