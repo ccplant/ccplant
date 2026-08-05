@@ -74,14 +74,20 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	for k, v := range params.Tags {
 		tags[k] = v
 	}
-	triggeredUserID := strings.TrimSpace(tags["username"])
-	tags["triggered_user_id"] = triggeredUserID
-
 	// Render session params with template evaluation
 	renderedParams, err := configrender.RenderSessionParams(sessionConfig, params.Payload)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to render session params: %w", err)
 	}
+	credentialSource := ""
+	if renderedParams != nil {
+		credentialSource = renderedParams.CredentialSource
+	}
+	triggeredUserID := resolveTriggeredUserID(tags, params.Payload, credentialSource)
+	if triggeredUserID != "" && strings.TrimSpace(tags["username"]) == "" {
+		tags["username"] = triggeredUserID
+	}
+	tags["triggered_user_id"] = triggeredUserID
 
 	initialMessage, err := s.determineInitialMessage(sessionConfig, renderedParams, params.Payload, params.DefaultMessage)
 	if err != nil {
@@ -168,27 +174,37 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		Docker:                   docker,
 		AuthProxy:                authProxy,
 		SessionTTL:               sessionTTL,
-		CredentialSource: func() string {
-			if renderedParams != nil {
-				return renderedParams.CredentialSource
-			}
-			return ""
-		}(),
-		RepoInfo:         repoInfo,
-		WebhookPayload:   webhookPayload,
-		SessionProfileID: sessionProfileID,
-		ReuseSession:     sessionConfig != nil && sessionConfig.ReuseSession(),
-		ReuseMatchTags:   tags,
-		ReuseMessage:     reuseMessage,
-		StopBeforeReuse:  true,
-		MaxSessions:      webhook.MaxSessions(),
-		LimitMatchTags:   map[string]string{"webhook_id": webhook.ID()},
+		CredentialSource:         credentialSource,
+		RepoInfo:                 repoInfo,
+		WebhookPayload:           webhookPayload,
+		SessionProfileID:         sessionProfileID,
+		ReuseSession:             sessionConfig != nil && sessionConfig.ReuseSession(),
+		ReuseMatchTags:           tags,
+		ReuseMessage:             reuseMessage,
+		StopBeforeReuse:          true,
+		MaxSessions:              webhook.MaxSessions(),
+		LimitMatchTags:           map[string]string{"webhook_id": webhook.ID()},
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
 	}
 
 	return result.SessionID, result.SessionReused, nil
+}
+
+func resolveTriggeredUserID(tags map[string]string, payload map[string]interface{}, credentialSource string) string {
+	if username := strings.TrimSpace(tags["username"]); username != "" {
+		return username
+	}
+	if credentialSource != "triggered_user" {
+		return ""
+	}
+	user, ok := payload["user"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	login, _ := user["login"].(string)
+	return strings.TrimSpace(login)
 }
 
 // RecordDelivery records a webhook delivery event.
@@ -263,6 +279,15 @@ func (s *WebhookSessionService) DryRunSessionConfig(params SessionCreationParams
 	if err != nil {
 		return &DryRunResult{Error: fmt.Sprintf("failed to render session params: %v", err)}, nil
 	}
+	credentialSource := ""
+	if renderedParams != nil {
+		credentialSource = renderedParams.CredentialSource
+	}
+	triggeredUserID := resolveTriggeredUserID(tags, params.Payload, credentialSource)
+	if triggeredUserID != "" && strings.TrimSpace(tags["username"]) == "" {
+		tags["username"] = triggeredUserID
+	}
+	tags["triggered_user_id"] = triggeredUserID
 
 	initialMessage, err := s.determineInitialMessage(sessionConfig, renderedParams, params.Payload, params.DefaultMessage)
 	if err != nil {

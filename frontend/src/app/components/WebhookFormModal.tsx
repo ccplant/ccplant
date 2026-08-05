@@ -226,6 +226,22 @@ export default function WebhookFormModal({
     )
   }
 
+  const updateCredentialSource = (index: number, credentialSource: TriggerFormData['credentialSource']) => {
+    setTriggers((prev) =>
+      prev.map((trigger, i) => {
+        if (i !== index) return trigger
+        if (credentialSource !== 'triggered_user' || trigger.tags.username) {
+          return { ...trigger, credentialSource }
+        }
+        return {
+          ...trigger,
+          credentialSource,
+          tags: { ...trigger.tags, username: '{{.user.login}}' },
+        }
+      })
+    )
+  }
+
   const toggleTriggerEvent = (index: number, event: string) => {
     const trigger = triggers[index]
     const newEvents = trigger.events.includes(event)
@@ -1129,9 +1145,8 @@ export default function WebhookFormModal({
                         <select
                           id={`trigger-credential-source-${index}`}
                           value={trigger.credentialSource}
-                          onChange={(e) => updateTrigger(
+                          onChange={(e) => updateCredentialSource(
                             index,
-                            'credentialSource',
                             e.target.value as TriggerFormData['credentialSource']
                           )}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm dark:bg-gray-700 dark:text-white"
@@ -1143,7 +1158,7 @@ export default function WebhookFormModal({
                           <option value="none">使用しない</option>
                         </select>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          「Webhookをトリガーしたユーザー」は、タグ username の値に対応する認証ファイルを使用し、見つからない場合はチームへフォールバックします。
+                          「Webhookをトリガーしたユーザー」を選ぶと、未設定の場合は username: {'{{.user.login}}'} を自動追加します。認証ファイルが見つからない場合はチームへフォールバックします。
                         </p>
                       </div>
 
