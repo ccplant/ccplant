@@ -185,10 +185,14 @@ func (s *memoryKVStore) Get(_ context.Context, kind kvstore.Kind, namespace, key
 	return record, nil
 }
 
-func (s *memoryKVStore) Delete(_ context.Context, kind kvstore.Kind, namespace, key string) error {
+func (s *memoryKVStore) Delete(_ context.Context, kind kvstore.Kind, namespace, key string, version int64) error {
 	mapKey := memoryKVKey(kind, namespace, key)
-	if _, ok := s.records[mapKey]; !ok {
+	record, ok := s.records[mapKey]
+	if !ok {
 		return kvstore.ErrNotFound
+	}
+	if record.Version != version {
+		return kvstore.ErrConflict
 	}
 	delete(s.records, mapKey)
 	return nil
