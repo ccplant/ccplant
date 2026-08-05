@@ -74,6 +74,8 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	for k, v := range params.Tags {
 		tags[k] = v
 	}
+	triggeredUserID := strings.TrimSpace(tags["username"])
+	tags["triggered_user_id"] = triggeredUserID
 
 	// Render session params with template evaluation
 	renderedParams, err := configrender.RenderSessionParams(sessionConfig, params.Payload)
@@ -149,6 +151,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	}
 	result, err := s.launcher.Launch(ctx, sessionID, sessionuc.LaunchRequest{
 		UserID:                   webhook.UserID(),
+		TriggeredUserID:          triggeredUserID,
 		Scope:                    webhook.Scope(),
 		TeamID:                   webhook.TeamID(),
 		Teams:                    sessionuc.ResolveTeams(webhook.Scope(), webhook.TeamID(), webhook.UserTeams()),
@@ -165,15 +168,21 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		Docker:                   docker,
 		AuthProxy:                authProxy,
 		SessionTTL:               sessionTTL,
-		RepoInfo:                 repoInfo,
-		WebhookPayload:           webhookPayload,
-		SessionProfileID:         sessionProfileID,
-		ReuseSession:             sessionConfig != nil && sessionConfig.ReuseSession(),
-		ReuseMatchTags:           tags,
-		ReuseMessage:             reuseMessage,
-		StopBeforeReuse:          true,
-		MaxSessions:              webhook.MaxSessions(),
-		LimitMatchTags:           map[string]string{"webhook_id": webhook.ID()},
+		CredentialSource: func() string {
+			if renderedParams != nil {
+				return renderedParams.CredentialSource
+			}
+			return ""
+		}(),
+		RepoInfo:         repoInfo,
+		WebhookPayload:   webhookPayload,
+		SessionProfileID: sessionProfileID,
+		ReuseSession:     sessionConfig != nil && sessionConfig.ReuseSession(),
+		ReuseMatchTags:   tags,
+		ReuseMessage:     reuseMessage,
+		StopBeforeReuse:  true,
+		MaxSessions:      webhook.MaxSessions(),
+		LimitMatchTags:   map[string]string{"webhook_id": webhook.ID()},
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create session: %w", err)
