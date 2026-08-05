@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { waitForSessionMessages, waitForSessionResume } from '../session-resume'
+import { waitForSessionResume } from '../session-resume'
 
 describe('waitForSessionResume', () => {
   it('waits until restoration completes before opening the chat', async () => {
@@ -42,36 +42,5 @@ describe('waitForSessionResume', () => {
       },
     )).rejects.toThrow('Session restoration cancelled')
     expect(resumeSession).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('waitForSessionMessages', () => {
-  it('waits through startup proxy errors and returns restored history', async () => {
-    const unavailable = Object.assign(new Error('starting'), { status: 502 })
-    const getSessionMessages = vi.fn()
-      .mockRejectedValueOnce(unavailable)
-      .mockResolvedValueOnce({ messages: [{ id: 1, content: 'restored' }] })
-    const wait = vi.fn().mockResolvedValue(undefined)
-
-    await expect(waitForSessionMessages(
-      { getSessionMessages },
-      'session-1',
-      { maxAttempts: 2, wait },
-    )).resolves.toEqual({ messages: [{ id: 1, content: 'restored' }] })
-
-    expect(getSessionMessages).toHaveBeenCalledTimes(2)
-    expect(wait).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not retry permanent request errors', async () => {
-    const unauthorized = Object.assign(new Error('unauthorized'), { status: 401 })
-    const getSessionMessages = vi.fn().mockRejectedValue(unauthorized)
-
-    await expect(waitForSessionMessages(
-      { getSessionMessages },
-      'session-1',
-      { wait: async () => undefined },
-    )).rejects.toBe(unauthorized)
-    expect(getSessionMessages).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,11 +1,10 @@
 'use client'
 
-import { Suspense, use, useEffect, useState } from 'react'
+import { use, useEffect } from 'react'
 import type { ReactNode } from 'react'
-import LoadingSpinner from '../../components/LoadingSpinner'
 import AgentAPIChat from '../../components/AgentAPIChat'
 import { createAgentAPIProxyClientFromStorage } from '../../../lib/agentapi-proxy-client'
-import { waitForSessionMessages, waitForSessionResume } from '../../../lib/session-resume'
+import { waitForSessionResume } from '../../../lib/session-resume'
 
 interface SessionPageProps {
   params: Promise<{
@@ -21,38 +20,20 @@ export default function SessionPage({ params }: SessionPageProps) {
 }
 
 function OpenedSession({ sessionId }: { sessionId: string }) {
-  const [opened, setOpened] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
   useEffect(() => {
     let cancelled = false
     const client = createAgentAPIProxyClientFromStorage()
     const options = { cancelled: () => cancelled }
     waitForSessionResume(client, sessionId, options)
-      .then(() => waitForSessionMessages(client, sessionId, options))
-      .then(() => {
-        if (!cancelled) setOpened(true)
-      })
       .catch((err) => {
-        console.error('[SessionPage] Failed to resume session:', err)
-        if (!cancelled) setError('セッションを再開できませんでした。')
+        if (!cancelled) console.error('[SessionPage] Failed to resume session:', err)
       })
     return () => { cancelled = true }
   }, [sessionId])
 
-  if (error) {
-    return <ChatShell><div className="py-12 text-center text-red-600 dark:text-red-400">{error}</div></ChatShell>
-  }
-
-  if (!opened) {
-    return <ChatShell><LoadingSpinner /></ChatShell>
-  }
-
   return (
     <ChatShell>
-      <Suspense fallback={<LoadingSpinner />}>
-        <AgentAPIChat sessionId={sessionId} />
-      </Suspense>
+      <AgentAPIChat sessionId={sessionId} />
     </ChatShell>
   )
 }
