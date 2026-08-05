@@ -61,20 +61,20 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
-            - /usr/local/bin/agentapi-proxy
+            - /bin/sh
           args:
-            - kv-store
-            - migrate
-            - --namespace
-            - {{ .Release.Namespace | quote }}
-            - --output
-            - {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
-            {{- if (dig "kvStore" "migration" "dryRun" false .Values.config) }}
-            - --dry-run
-            {{- end }}
-            {{- if (dig "kvStore" "migration" "overwrite" false .Values.config) }}
-            - --overwrite
-            {{- end }}
+            - -ec
+            - >-
+              /usr/local/bin/agentapi-proxy kv-store migrate
+              --namespace {{ .Release.Namespace | quote }}
+              --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
+              {{- if (dig "kvStore" "migration" "dryRun" false .Values.config) }} --dry-run{{- end }}
+              {{- if (dig "kvStore" "migration" "overwrite" false .Values.config) }} --overwrite{{- end }}
+              {{- if not (dig "kvStore" "migration" "dryRun" false .Values.config) }}
+              && /usr/local/bin/agentapi-proxy kv-store verify
+              --namespace {{ .Release.Namespace | quote }}
+              --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
+              {{- end }}
           env:
             - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
               value: {{ dig "kvStore" "primary" "backend" "" .Values.config | quote }}

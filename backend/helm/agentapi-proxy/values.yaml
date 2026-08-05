@@ -360,7 +360,7 @@ config:
       # rollback (default when secondary is configured) or best_effort
       mode: ""
     migration:
-      # Run primary -> secondary migration before the proxy container starts.
+      # Migrate primary -> secondary and verify equality before the proxy starts.
       enabled: false
       dryRun: false
       overwrite: false

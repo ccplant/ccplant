@@ -121,8 +121,10 @@ config:
 ```
 
 The init container uses the same direct values or Secret references as the
-proxy. A conflict prevents the new Pod from starting unless `overwrite` is
-explicitly enabled. Keep `overwrite: false` for normal idempotent rollouts.
+proxy, and runs `kv-store verify` immediately after migration. A conflict or
+verification mismatch prevents the new Pod from starting unless the migration
+conflict is explicitly resolved with `overwrite`. Keep `overwrite: false` for
+normal idempotent rollouts.
 
 After migration, verify both directions with the configured store pair:
 
