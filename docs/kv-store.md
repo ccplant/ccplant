@@ -22,6 +22,24 @@ Kubernetes, while `libsql` stores it only in libSQL. Existing Kubernetes data is
 not read, copied, changed, or deleted in libSQL mode. Pod-mounted Secrets and
 ConfigMaps are operational resources outside this KV boundary.
 
+The server also accepts all three settings as environment variables:
+`AGENTAPI_KV_STORE_BACKEND`, `AGENTAPI_KV_STORE_DATABASE_URL`, and
+`AGENTAPI_KV_STORE_AUTH_TOKEN`. With Helm, leave `databaseUrl` and `authToken`
+empty and provide the connection values from a Secret via `envFrom`:
+
+```yaml
+config:
+  kvStore:
+    backend: libsql
+
+envFrom:
+  - secretRef:
+      name: agentapi-libsql
+```
+
+The Secret must contain keys named `AGENTAPI_KV_STORE_DATABASE_URL` and, when
+authentication is enabled, `AGENTAPI_KV_STORE_AUTH_TOKEN`.
+
 The `agentapi_kv` table stores a resource kind, namespace, key, complete JSON
 document, and optimistic version. Both Secret and ConfigMap repositories retain
 their existing labels and selectors. Migration is deliberately not performed by
