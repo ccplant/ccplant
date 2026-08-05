@@ -1,18 +1,18 @@
-# Team trigger の実行ユーザーと認証ファイル選択設計
+# Team trigger の triggered user と認証ファイル選択設計
 
 ## 目的
 
-team scope の Webhook / SlackBot が作るSessionについて、次のidentityを分離する。
+team scope の Webhook / SlackBot が作るSessionで、trigger設定の所有者とeventを発生させたユーザーを区別する。
 
-- `TriggerUserID`: Webhook / SlackBot設定を作成したユーザー
-- `UserID`: delivery eventから解決した、そのSessionの実行ユーザー
+- `UserID`: trigger設定の所有者。現在の挙動を維持
+- `TriggeredUserID`: delivery eventを発生させたユーザー
 - `Scope` / `TeamID`: Sessionのアクセス範囲。team triggerではteamのまま
 
-GitHub webhook payloadの`user.login`などを`UserID`としてSessionへ渡し、`credential_source: session_user`を指定すると、そのユーザーのmanaged credential filesを利用できるようにする。
+GitHub webhook payloadの`user.login`などを`TriggeredUserID`としてSessionへ渡し、`credential_source: triggered_user`で、そのユーザーのmanaged credential filesを選択できるようにする。
 
 ## 現状
 
-Webhook / SlackBot entityの`UserID`はtrigger作成者を表し、Session起動時にも同じ値を`RunServerRequest.UserID`へ渡している。したがって現状のteam triggerでは、trigger作成者とsession userが暗黙に同一である。
+Webhook / SlackBot entityの`UserID`はtrigger設定の所有者を表し、Session起動時にも同じ値を`RunServerRequest.UserID`へ渡している。
 
 既存の`credential_source`は次の値を持つ。
 
@@ -23,20 +23,20 @@ Webhook / SlackBot entityの`UserID`はtrigger作成者を表し、Session起動
 | `none` | 注入しない |
 | 未指定 | user scopeはsession user、team scopeは注入なし |
 
-このままevent由来usernameを`UserID`へ入れると、trigger作成者を参照する手段が失われる。また、eventにusernameがない場合にtrigger作成者へ暗黙fallbackすると、`session_user`の意味がdeliveryごとに変わってしまう。
+event由来usernameを`UserID`へ上書きすると、個人API key、settings、実行ユーザーnamespace、`AGENTAPI_USER_ID`などにも影響し、trigger設定所有者の情報も失われる。したがって`UserID`は変更せず、別フィールドを追加する。
 
 ## 提案
 
-### Session identityに`TriggerUserID`を追加する
+### `TriggeredUserID`を追加する
 
-`RunServerRequest`、Session entity、永続化metadata、provision settingsに`TriggerUserID`を追加する。
+`RunServerRequest`、`LaunchRequest`、Session entity、永続化metadataに`TriggeredUserID`を追加する。
 
 ```go
 type RunServerRequest struct {
-    UserID        string // eventから解決したsession user
-    TriggerUserID string // trigger設定の作成者。通常の手動起動では空
-    Scope         ResourceScope
-    TeamID        string
+    UserID          string // trigger設定の所有者
+    TriggeredUserID string // eventを発生させたユーザー
+    Scope           ResourceScope
+    TeamID          string
     // ...
 }
 ```
@@ -44,20 +44,20 @@ type RunServerRequest struct {
 team triggerからの起動例:
 
 ```text
-UserID:        payload由来のusername
-TriggerUserID: webhook.UserID() / slackbot.UserID()
-Scope:         team
-TeamID:        webhook.TeamID() / slackbot.TeamID()
+UserID:          webhook.UserID() / slackbot.UserID()
+TriggeredUserID: rendered tags["username"]
+Scope:           team
+TeamID:          webhook.TeamID() / slackbot.TeamID()
 ```
 
-`TriggerUserID`はownership判定には使用しない。Sessionへのアクセス可否は引き続き`Scope=team`と`TeamID`で決まる。
+`TriggeredUserID`はSessionのownership判定には使用しない。アクセス可否は引き続き`Scope=team`と`TeamID`で決まる。
 
-### `credential_source: trigger_user`を追加する
+### `credential_source: triggered_user`を追加する
 
 | 値 | managed credential filesの所有元 |
 |---|---|
-| `session_user` | event由来の`UserID` |
-| `trigger_user` | trigger設定作成者の`TriggerUserID` |
+| `session_user` | trigger設定所有者である`UserID` |
+| `triggered_user` | event actorである`TriggeredUserID` |
 | `team` | `TeamID` |
 | `none` | 注入しない |
 
@@ -67,8 +67,8 @@ Kubernetes session managerの選択処理は次のようにする。
 switch req.CredentialSource {
 case "session_user":
     credentialOwner = req.UserID
-case "trigger_user":
-    credentialOwner = req.TriggerUserID
+case "triggered_user":
+    credentialOwner = req.TriggeredUserID
 case "team":
     credentialOwner = req.TeamID
 case "none":
@@ -79,11 +79,11 @@ case "":
 }
 ```
 
-`trigger_user`なのに`TriggerUserID`が空の場合は設定エラーとして起動を拒否する。別ownerへfallbackしない。
+`credential_source=triggered_user`なのに`TriggeredUserID`が空の場合は起動を拒否する。`session_user`やteam credentialへfallbackしない。
 
-## EventからのUserID解決
+## EventからのTriggeredUserID解決
 
-要件どおり、render済みの`tags.username`をUserIDとして使用する。
+要件どおり、render済みの`tags.username`を使用する。
 
 ```json
 {
@@ -94,70 +94,59 @@ case "":
       "username": "{{.user.login}}"
     },
     "params": {
-      "credential_source": "session_user"
+      "credential_source": "triggered_user"
     }
   }
 }
 ```
 
-GitHub payloadの種類によってユーザーフィールドは異なりうるため、固定JSON pathではなく既存のtag template renderingを利用する。例えばイベントに応じて`{{.user.login}}`、`{{.sender.login}}`、`{{.issue.user.login}}`を設定できる。
+GitHub eventの種類によってフィールドが異なる場合は、既存のtag templateで`{{.sender.login}}`や`{{.issue.user.login}}`などを指定する。
 
-### 解決規則
+解決順序:
 
 1. session configのtagsをdelivery payloadでrenderする
 2. `tags["username"]`の前後空白を除去する
-3. 空でなければその文字列を`Session.UserID`とする
-4. `TriggerUserID`には常にtrigger entityの`UserID`を設定する
-5. `username` tagが設定されているのにrender結果が空の場合はtrigger作成者へfallbackしない
+3. 空でなければ`TriggeredUserID`へ設定する
+4. `UserID`はtrigger entityの`UserID`のまま維持する
+5. `credential_source=triggered_user`で値が空ならrejectする
 
-`username` tag自体を設定していない既存triggerは、互換性のため現在どおりtrigger作成者を`UserID`として起動する。
-
-空の場合の挙動は明示設定にする。
-
-```json
-"session_config": {
-  "tags": {"username": "{{.user.login}}"},
-  "on_user_id_unresolved": "reject"
-}
-```
-
-初期実装は`reject`のみを許可する。`trigger_user` fallbackが必要なら、将来`on_user_id_unresolved: use_trigger_user`として明示的に追加する。
+`tags.username`がない場合でも、`credential_source`が`triggered_user`でなければ従来どおり起動できる。
 
 ## 認証がない構成での意味
 
-現在のno-auth構成では、payloadのusernameがCCPlantに登録済みか、本人か、team memberかは検証できない。GitHub webhookでは署名により「GitHubから受信したpayloadである」ことは確認できるが、`user.login`とCCPlant UserIDの対応までは保証しない。
+no-auth構成では、payloadのusernameがCCPlantに登録済みか、本人か、team memberかは検証できない。GitHub webhook署名が保証するのはpayloadの送信元と改ざんされていないことまでであり、GitHub loginとCCPlant credential ownerの対応はnaming conventionである。
 
-したがって初期実装では、renderしたusernameをそのままcanonical UserIDとして扱う。これはidentity verificationではなくnaming conventionである。
+初期実装ではrenderしたusernameをそのままcanonical credential owner IDとして扱う。`MemoryUserRepository`でのlookupは行わない。
 
-managed credential Secretが存在しなければ、既存実装どおりcredentialなしで起動する。usernameの存在確認には使わない。
+対応するmanaged credential Secretが存在しなければ、既存実装どおりcredentialなしで起動する案もあるが、`credential_source=triggered_user`を明示した意図を尊重し、初期実装では起動失敗とする方が安全である。具体的には`credential source resolved but credential files not found`をdelivery errorとして記録する。
 
 ## セキュリティ
 
-`credential_source: session_user`をteam triggerで使うと、event payloadに現れたusernameの個人credentialがteam sessionへ注入される。team sessionを閲覧・操作できるユーザーからそのcredentialを利用できるため、明示的なopt-inが必要である。
+team scope Sessionに個人credentialを注入すると、team Sessionを操作できるユーザーからcredentialを使用できる。この機能は明示的なopt-inとする。
 
 - team triggerの既定`credential_source`は引き続き`none`
 - `tags.username`だけではcredentialを注入しない
-- 管理者が`credential_source: session_user`を明示した場合だけ注入する
+- `credential_source=triggered_user`を明示した場合だけ注入する
 - Webhook signature / Slack Socket Modeの検証を必須とする
-- `UserID`をSecret名へ変換するときは既存sanitize処理を使う
-- sanitize後の衝突を防ぐため、可能ならSecret annotation内のraw owner IDも照合する
-- log / session metadataに`user_id`, `trigger_user_id`, `credential_source`を記録する
+- `TriggeredUserID`をSecret名へ変換するときは既存sanitize処理を使う
+- sanitize後の衝突を防ぐため、Secret annotation内のraw owner IDも照合する
+- log / Session metadataに`user_id`, `triggered_user_id`, `credential_source`を記録する
 - credential内容はログに出さない
 
-管理APIも無認証の場合、この設定はsecurity boundaryにならない。その構成で個人credentialをteam sessionへ注入する機能は有効化すべきではない。
+管理APIも無認証の場合、この設定はsecurity boundaryにならない。その構成で個人credentialをteam Sessionへ注入する機能は有効化すべきではない。
 
 ## 各triggerへの組み込み
 
 ### Webhook
 
-`WebhookSessionService`でsession config merge後にtagsをrenderし、`tags.username`からUserIDを解決する。
+`WebhookSessionService`でsession config merge後にtagsをrenderし、`tags.username`から`TriggeredUserID`を解決する。
 
 ```go
 LaunchRequest{
-    UserID:        resolvedUserID,
-    TriggerUserID: webhook.UserID(),
-    Scope:         webhook.Scope(),
-    TeamID:        webhook.TeamID(),
+    UserID:          webhook.UserID(),
+    TriggeredUserID: strings.TrimSpace(tags["username"]),
+    Scope:           webhook.Scope(),
+    TeamID:          webhook.TeamID(),
     CredentialSource: renderedParams.CredentialSource,
 }
 ```
@@ -166,57 +155,52 @@ GitHub / custom webhookの両方で同じ処理を使う。
 
 ### SlackBot
 
-`SlackBotEventHandler`でも同じtemplate resolverを使う。Slack user IDとCCPlant UserIDが異なる場合は、template入力へ対応表からcanonical usernameを追加する別機能が必要になる。両者が同じ運用なら`{{.event.user}}`を使用できる。
+`SlackBotEventHandler`でもrender済み`tags.username`から`TriggeredUserID`を設定する。Slack user IDとCCPlant usernameが異なる場合は、template入力へcanonical usernameを供給する別機能が必要になる。
 
 ### Scheduleと手動起動
 
-- Schedule: `TriggerUserID=schedule.UserID()`を設定する。`UserID`は現行どおりschedule ownerを維持する
-- 手動起動: `TriggerUserID`は空。`credential_source=trigger_user`はvalidation error
-
-これにより`trigger_user`の意味が外部trigger全体で一貫する。
+event actorが存在しないため`TriggeredUserID`は空のままにする。`credential_source=triggered_user`はvalidation errorとする。
 
 ## Session reuseとlimit
 
-reuse filterには既存tagsに加えて`UserID`を含める。同じrepository/threadでもevent由来userが異なる場合、異なるcredentialを持つ新規Sessionを作る。
+reuse filterには既存tagsに加えて`TriggeredUserID`を含める。同じrepository/threadでもevent actorが異なる場合、異なるcredentialを持つ新規Sessionを作る。
 
-SlackBotのpending dedup keyにもresolved `UserID`を含める。
+SlackBotのpending dedup keyにも`TriggeredUserID`を含める。
 
 `max_sessions`はtrigger全体の上限を維持し、`webhook_id` / `slackbot_id`単位で数える。
 
 ## API / persistence変更
 
-- `WebhookSessionConfig`
-  - `on_user_id_unresolved`
 - `SessionParams.CredentialSource`
-  - enumへ`trigger_user`を追加
+  - enumへ`triggered_user`を追加
 - `RunServerRequest` / `LaunchRequest`
-  - `TriggerUserID`
-- Session implementation / Kubernetes labels or annotations
-  - raw `trigger_user_id`を保存
+  - `TriggeredUserID`
+- Session implementation / Kubernetes metadata
+  - raw `triggered_user_id`をannotationへ保存
+- Session filter
+  - reuse用に`TriggeredUserID`を追加
 - provision settings
-  - 必要なら監査用`TriggerUserID`を追加
+  - 必要なら監査用`TriggeredUserID`を追加
 - OpenAPI、Webhook/SlackBot import/export、management skillsを更新
 
 ## テスト計画
 
-- team webhookで`user.login`がSession.UserIDになる
+- team webhookでrendered `tags.username`が`TriggeredUserID`になる
+- `UserID`はtrigger設定所有者のまま
 - Sessionは`Scope=team`, `TeamID=trigger.TeamID`のまま
-- `TriggerUserID`はtrigger作成者になる
-- `credential_source=session_user`はevent由来UserIDのcredentialを読む
-- `credential_source=trigger_user`はtrigger作成者のcredentialを読む
-- unresolved user IDはtrigger作成者へfallbackせずreject
-- `trigger_user`かつ`TriggerUserID`空はreject
+- `credential_source=session_user`は従来どおり`UserID`のcredentialを読む
+- `credential_source=triggered_user`は`TriggeredUserID`のcredentialを読む
+- `TriggeredUserID`空で`triggered_user`指定ならfallbackせずreject
 - team triggerでcredential source未指定ならcredentialなし
-- user IDが異なる既存Sessionをreuseしない
-- user ID以外のteam settings / ownershipが変わらない
-- managed credential Secretなしでもcredentialなしで起動できる
+- triggered userが異なる既存Sessionをreuseしない
+- managed credential Secretがない場合はdelivery error
 - 一般user-managed filesはteam scope Sessionへ注入されない
 
 ## 実装順序
 
-1. `TriggerUserID`をSession作成経路と永続化へ追加
-2. `credential_source=trigger_user`を追加
-3. rendered `tags.username`からのUserID解決とunresolved policyを追加
-4. Webhook / SlackBot / Scheduleへ組み込む
+1. `TriggeredUserID`をSession作成経路と永続化へ追加
+2. `credential_source=triggered_user`を追加
+3. rendered `tags.username`からのTriggeredUserID解決を追加
+4. Webhook / SlackBotへ組み込む
 5. reuse、audit metadata、OpenAPI、import/exportを更新
 6. unit / integration tests
