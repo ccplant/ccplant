@@ -4,6 +4,7 @@ import { Suspense, use, useEffect, useState } from 'react'
 import LoadingSpinner from '../../components/LoadingSpinner'
 import AgentAPIChat from '../../components/AgentAPIChat'
 import { createAgentAPIProxyClientFromStorage } from '../../../lib/agentapi-proxy-client'
+import { waitForSessionResume } from '../../../lib/session-resume'
 
 interface SessionPageProps {
   params: Promise<{
@@ -25,7 +26,7 @@ function OpenedSession({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     let cancelled = false
     const client = createAgentAPIProxyClientFromStorage()
-    client.resumeSession(sessionId)
+    waitForSessionResume(client, sessionId)
       .then(() => {
         if (!cancelled) setOpened(true)
       })
@@ -40,7 +41,14 @@ function OpenedSession({ sessionId }: { sessionId: string }) {
     return <div className="h-dvh flex items-center justify-center text-red-600 dark:text-red-400">{error}</div>
   }
 
-  if (!opened) return <LoadingSpinner />
+  if (!opened) {
+    return (
+      <div className="h-dvh flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <LoadingSpinner />
+        <p className="-mt-8 text-sm text-gray-600 dark:text-gray-400">セッションを復帰してチャット履歴を読み込んでいます…</p>
+      </div>
+    )
+  }
 
   return (
     <div className="h-dvh bg-gray-50" style={{ position: 'relative', overflow: 'hidden' }}>
