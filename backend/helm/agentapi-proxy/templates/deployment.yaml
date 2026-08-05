@@ -158,6 +158,7 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
+            {{- end }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}
