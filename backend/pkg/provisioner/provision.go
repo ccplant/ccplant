@@ -225,6 +225,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
 		if errors.Is(err, errSessionStateBackendUnavailable) {
+			if restoreRequired {
+				s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
+				return
+			}
 			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
 		} else if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
