@@ -1300,7 +1300,35 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	log.Printf("[K8S_SESSION] Lazily recreated workload for session %s after chat access", id)
 	go m.watchAgentAPIStatus(context.Background(), ks)
 	go m.watchDeploymentStatus(context.Background(), ks)
+	go m.scheduleSuspendWhenRestoredWorkloadReady(ks)
 	return session, true, nil
+}
+
+func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
+	timeout := time.Duration(m.k8sConfig.PodStartTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		ready, err := m.isSessionWorkloadReady(ctx, session)
+		if err == nil && ready {
+			if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+				log.Printf("[K8S_SESSION] Failed to schedule post-resume suspend for session %s: %v", session.ID(), err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			log.Printf("[K8S_SESSION] Timed out waiting to schedule post-resume suspend for session %s", session.ID())
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (m *KubernetesSessionManager) clearSessionSuspendState(ctx context.Context, serviceName string) error {
