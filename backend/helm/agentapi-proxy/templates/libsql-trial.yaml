@@ -1,4 +1,5 @@
-{{- if .Values.libsqlTrial.enabled }}
+{{- $trial := .Values.libsqlTrial | default dict }}
+{{- if ($trial.enabled | default false) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,7 +21,7 @@ spec:
     spec:
       containers:
         - name: libsql-server
-          image: {{ .Values.libsqlTrial.image | quote }}
+          image: {{ ($trial.image | default "ghcr.io/tursodatabase/libsql-server:3ec6803") | quote }}
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -37,7 +38,7 @@ spec:
       volumes:
         - name: data
           emptyDir:
-            sizeLimit: {{ .Values.libsqlTrial.storageSize | quote }}
+              sizeLimit: {{ ($trial.storageSize | default "1Gi") | quote }}
 ---
 apiVersion: v1
 kind: Service

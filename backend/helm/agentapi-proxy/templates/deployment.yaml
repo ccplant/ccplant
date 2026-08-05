@@ -67,15 +67,15 @@ spec:
             - name: HOME
               value: "/home/agentapi"
             - name: AGENTAPI_KV_STORE_BACKEND
-              value: {{ .Values.config.kvStore.backend | quote }}
+              value: {{ dig "kvStore" "backend" "kubernetes" .Values.config | quote }}
             - name: AGENTAPI_KV_STORE_DATABASE_URL
-              value: {{ .Values.config.kvStore.databaseUrl | quote }}
+              value: {{ dig "kvStore" "databaseUrl" "" .Values.config | quote }}
             - name: AGENTAPI_KV_STORE_AUTH_TOKEN
-              value: {{ .Values.config.kvStore.authToken | quote }}
+              value: {{ dig "kvStore" "authToken" "" .Values.config | quote }}
             - name: AGENTAPI_KV_STORE_KUBERNETES_PROJECTION
-              value: {{ .Values.config.kvStore.kubernetesProjection | quote }}
+              value: {{ dig "kvStore" "kubernetesProjection" true .Values.config | quote }}
             - name: AGENTAPI_KV_STORE_LEGACY_FALLBACK
-              value: {{ .Values.config.kvStore.legacyFallback | quote }}
+              value: {{ dig "kvStore" "legacyFallback" true .Values.config | quote }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}
