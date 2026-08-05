@@ -181,6 +181,19 @@ credentials まで同じ root に入るため、MVP では allowlist copy を共
 JSONL の途中行を公開しないよう、copy -> fsync -> manifest generation 更新の順に commit
 する。復元は `ready` generation のみを読む。
 
+### turn 後の自動 suspend / resume
+
+永続化が有効な ACP session は Stop hook で checkpoint が完了した後、既定で 1 時間後の
+suspend を予約する。期限は session の canonical Kubernetes Service の annotation に保存
+されるため、proxy の再起動や replica の切り替えでも失われない。期限到来時には
+Deployment / Pod だけを削除し、Service、settings Secret、PVC、snapshot は保持する。
+
+停止中の session を開くと既存の lazy workload restore が同じ proxy session ID で workload
+を再作成し、snapshot から ACP session を復元する。猶予時間は
+`session_persistence.suspend_after`（環境変数
+`AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER`）で変更でき、`0` で無効化できる。期限時点で
+新しい turn が実行中なら suspend は延期され、その turn の Stop hook で期限が再設定される。
+
 ### 特性
 
 - 長所: 実装が単純、追記が安価、復元が速い
