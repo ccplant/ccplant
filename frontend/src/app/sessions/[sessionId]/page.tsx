@@ -4,7 +4,7 @@ import { Suspense, use, useEffect, useState } from 'react'
 import LoadingSpinner from '../../components/LoadingSpinner'
 import AgentAPIChat from '../../components/AgentAPIChat'
 import { createAgentAPIProxyClientFromStorage } from '../../../lib/agentapi-proxy-client'
-import { waitForSessionResume } from '../../../lib/session-resume'
+import { waitForSessionMessages, waitForSessionResume } from '../../../lib/session-resume'
 
 interface SessionPageProps {
   params: Promise<{
@@ -27,6 +27,7 @@ function OpenedSession({ sessionId }: { sessionId: string }) {
     let cancelled = false
     const client = createAgentAPIProxyClientFromStorage()
     waitForSessionResume(client, sessionId)
+      .then(() => waitForSessionMessages(client, sessionId))
       .then(() => {
         if (!cancelled) setOpened(true)
       })
