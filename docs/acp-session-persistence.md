@@ -183,6 +183,10 @@ JSONL の途中行を公開しないよう、copy -> fsync -> manifest generatio
 
 ### turn 後の自動 suspend / resume
 
+checkpoint には ACP の会話状態に加えて Git workspace の HEAD commit、checkout 中の
+branch（detached HEAD を含む）、staged / unstaged の差分、無視対象を除く untracked file を
+保存する。復元時は同じ commit と branch を checkout してから差分を適用する。
+
 永続化が有効な ACP session は Stop hook で checkpoint が完了した後、既定で 1 時間後の
 suspend を予約する。期限は session の canonical Kubernetes Service の annotation に保存
 されるため、proxy の再起動や replica の切り替えでも失われない。期限到来時には
