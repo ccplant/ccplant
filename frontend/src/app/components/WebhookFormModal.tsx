@@ -236,7 +236,10 @@ export default function WebhookFormModal({
         return {
           ...trigger,
           credentialSource,
-          tags: { ...trigger.tags, username: '{{.user.login}}' },
+          tags: {
+            ...trigger.tags,
+            username: webhookType === 'github' ? '{{.sender.login}}' : '{{.user.login}}',
+          },
         }
       })
     )
@@ -1158,7 +1161,7 @@ export default function WebhookFormModal({
                           <option value="none">使用しない</option>
                         </select>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          「Webhookをトリガーしたユーザー」を選ぶと、未設定の場合は username: {'{{.user.login}}'} を自動追加します。認証ファイルが見つからない場合はチームへフォールバックします。
+                          「Webhookをトリガーしたユーザー」を選ぶと、未設定の場合は username: {webhookType === 'github' ? '{{.sender.login}}' : '{{.user.login}}'} を自動追加します。認証ファイルが見つからない場合はチームへフォールバックします。
                         </p>
                       </div>
 

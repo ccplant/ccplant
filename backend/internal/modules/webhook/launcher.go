@@ -199,12 +199,19 @@ func resolveTriggeredUserID(tags map[string]string, payload map[string]interface
 	if credentialSource != "triggered_user" {
 		return ""
 	}
-	user, ok := payload["user"].(map[string]interface{})
-	if !ok {
-		return ""
+	// GitHub identifies the actor that delivered the event as sender. Custom
+	// webhook payloads may instead expose a top-level user object.
+	for _, key := range []string{"sender", "user"} {
+		user, ok := payload[key].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		login, _ := user["login"].(string)
+		if login = strings.TrimSpace(login); login != "" {
+			return login
+		}
 	}
-	login, _ := user["login"].(string)
-	return strings.TrimSpace(login)
+	return ""
 }
 
 // RecordDelivery records a webhook delivery event.

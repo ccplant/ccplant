@@ -18,6 +18,16 @@ func TestResolveTriggeredUserID(t *testing.T) {
 			want:             "configured-user",
 		},
 		{
+			name: "uses github sender login as the triggering user",
+			tags: map[string]string{},
+			payload: map[string]interface{}{
+				"sender": map[string]interface{}{"login": " github-sender "},
+				"user":   map[string]interface{}{"login": "payload-user"},
+			},
+			credentialSource: "triggered_user",
+			want:             "github-sender",
+		},
+		{
 			name:             "defaults to payload user login for triggered user credentials",
 			tags:             map[string]string{},
 			payload:          map[string]interface{}{"user": map[string]interface{}{"login": " github-user "}},
