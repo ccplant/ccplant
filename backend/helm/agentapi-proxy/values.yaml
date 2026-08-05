@@ -319,6 +319,14 @@ config:
   # ホスト名設定 (例: agentapi.example.com)
   hostname: ""
 
+  # Application KV persistence. "kubernetes" preserves the default behavior.
+  kvStore:
+    backend: kubernetes
+    databaseUrl: ""
+    authToken: ""
+    kubernetesProjection: true
+    legacyFallback: true
+
   # 認証設定
   auth:
     static:

@@ -508,6 +508,16 @@ type RedisConfig struct {
 	WriteTimeout string `json:"write_timeout" mapstructure:"write_timeout"`
 }
 
+// KVStoreConfig configures persistence for application data represented as
+// Kubernetes Secrets and ConfigMaps by the repository layer.
+type KVStoreConfig struct {
+	Backend              string `json:"backend" mapstructure:"backend"`
+	DatabaseURL          string `json:"database_url" mapstructure:"database_url"`
+	AuthToken            string `json:"auth_token" mapstructure:"auth_token"`
+	KubernetesProjection bool   `json:"kubernetes_projection" mapstructure:"kubernetes_projection"`
+	LegacyFallback       bool   `json:"legacy_fallback" mapstructure:"legacy_fallback"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// Auth represents authentication configuration
@@ -540,6 +550,9 @@ type Config struct {
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
 	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
+	// KVStore controls storage for application KV data currently backed by
+	// Kubernetes Secrets and ConfigMaps.
+	KVStore KVStoreConfig `json:"kv_store" mapstructure:"kv_store"`
 	// GitSync holds proxy-level GitHub sync settings (e.g. KMS encryption key).
 	GitSync GitSyncProxyConfig `json:"git_sync" mapstructure:"git_sync"`
 }
@@ -1060,6 +1073,11 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
+	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
+	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
+	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
+	_ = v.BindEnv("kv_store.kubernetes_projection", "AGENTAPI_KV_STORE_KUBERNETES_PROJECTION")
+	_ = v.BindEnv("kv_store.legacy_fallback", "AGENTAPI_KV_STORE_LEGACY_FALLBACK")
 
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")

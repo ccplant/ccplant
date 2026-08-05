@@ -36,6 +36,7 @@ import (
 
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -189,6 +190,20 @@ func NewKubernetesSessionManagerWithClient(
 
 	// Determine namespace
 	namespace := resolveKubernetesNamespace(k8sConfig.Namespace)
+
+	if cfg.KVStore.Backend == "libsql" {
+		if strings.TrimSpace(cfg.KVStore.DatabaseURL) == "" {
+			return nil, fmt.Errorf("kv_store.database_url is required for libSQL")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		store, err := kvstore.NewLibSQLStore(ctx, cfg.KVStore.DatabaseURL, cfg.KVStore.AuthToken)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("initialize libSQL KV store: %w", err)
+		}
+		client = kvstore.NewKubernetesAdapter(client, store, cfg.KVStore.KubernetesProjection, cfg.KVStore.LegacyFallback)
+		log.Printf("[K8S_SESSION] libSQL KV store enabled (kubernetes_projection=%t, legacy_fallback=%t)", cfg.KVStore.KubernetesProjection, cfg.KVStore.LegacyFallback)
+	}
 
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)
 
