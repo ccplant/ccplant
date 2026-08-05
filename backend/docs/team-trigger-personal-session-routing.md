@@ -9,7 +9,9 @@
 
 このため、レンダリング後の session tags に `username=<CCPlant username>` があっても、セッションの所有者は変わらない。
 
-本機能では、**team scope の Webhook / SlackBot に限り**、レンダリング後の `username` tag が CCPlant の有効なユーザーに一致し、そのユーザーがトリガーの team に所属する場合、セッションをそのユーザーの user scope で起動する。
+本機能では、**team scope の Webhook / SlackBot に限り**、レンダリング後の `username` tag がチーム管理の routing allowlist に一致した場合、対応する user ID の user scope でセッションを起動する。
+
+重要: 現在の CCPlant には、Webhook delivery 時に「その username が実在する本人である」「その人が現在も team member である」と証明できる認証・ユーザーディレクトリがない。したがって本設計における検証は本人確認ではなく、**信頼された管理面で事前登録された routing rule との照合**である。
 
 ## 提案する振る舞い
 
@@ -19,22 +21,30 @@
 |---|---|---|---|
 | `user` | なし/あり | 評価しない | 現行どおり trigger owner の `user` scope |
 | `team` | なし/空 | 対象外 | 現行どおり `team` scope |
-| `team` | あり | active、team member、`session:create` あり | `user` / 解決した user ID |
-| `team` | あり | ユーザーなし、inactive、非 member、権限なし | セッションを作らず routing error |
+| `team` | あり | team routing allowlist に完全一致 | `user` / 登録済み user ID |
+| `team` | あり | allowlist にない、または mapping が無効 | セッションを作らず routing error |
 
-`username` が指定されたのに解決できない場合は team scope へフォールバックしない。typo や退職済みユーザーを共有スコープへ誤配送することを防ぐため、fail-closed とする。
+`username` が指定されたのに解決できない場合は team scope へフォールバックしない。typo や allowlist から削除済みの target を共有スコープへ誤配送することを防ぐため、fail-closed とする。
 
-username の比較は、初期実装では `UserRepository.FindByUsername` と同じ完全一致とする。大文字小文字の正規化を導入する場合はユーザー登録側と一緒に一意制約を定義し、ルーター単独では行わない。
+username の比較は完全一致とする。大文字小文字の正規化は行わない。
 
 ## API 設計
 
-既存の `session_config.tags` を利用するため、破壊的な API 変更は不要である。
+イベントから得る値には既存の `session_config.tags` を利用する。加えて、信頼境界となる allowlist を team-owned trigger の設定に明示する。
 
 ```json
 {
   "name": "Team issue router",
   "scope": "team",
   "team_id": "acme/platform",
+  "personal_routing": {
+    "tag": "username",
+    "targets": {
+      "alice": "alice",
+      "bob": "user-0187"
+    },
+    "on_unresolved": "reject"
+  },
   "session_config": {
     "tags": {
       "username": "{{.issue.assignee.login}}",
@@ -44,20 +54,11 @@ username の比較は、初期実装では `UserRepository.FindByUsername` と�
 }
 ```
 
-SlackBot でも同様に `session_config.tags.username` を使う。Slack の `<@U...>` は CCPlant username ではないため、Slack user ID から CCPlant username への対応付けは本機能の範囲外である。テンプレートの入力に username を供給する連携、または固定値を利用する。
+`targets` は `CCPlant username -> session owner UserID` の対応であり、Webhook/SlackBot の管理 API からのみ変更できる。Webhook payload や Slack message はこの mapping 自体を変更できない。
 
-将来、暗黙の tag semantics を避けたい場合は、後方互換な明示設定を追加できる。
+SlackBot でも同様に `session_config.tags.username` を使う。Slack の `<@U...>` は CCPlant username ではないため、必要なら `targets` の key に Slack user ID を使い `tag` を `slack_user_id` にする。外部入力をそのまま owner ID として採用してはならない。
 
-```json
-"session_config": {
-  "routing": {
-    "user_tag": "username",
-    "on_unresolved": "reject"
-  }
-}
-```
-
-ただし第一段階では要件どおり予約 tag `username` を使用し、設定項目は増やさない。
+`personal_routing` がない既存 trigger は routing を行わない。偶然 `username` tag をメタデータ用途に使っている既存設定の挙動は変わらない。
 
 ## コンポーネント設計
 
@@ -81,8 +82,14 @@ type TriggerIdentityRequest struct {
     Tags          map[string]string
 }
 
+type PersonalRoutingConfig struct {
+    Tag          string
+    Targets      map[string]string // external value -> canonical UserID
+    OnUnresolved string
+}
+
 type TriggerIdentityResolver struct {
-    users repositories.UserRepository
+    // No UserRepository dependency: it is not an identity authority in no-auth mode.
 }
 
 func (r *TriggerIdentityResolver) Resolve(
@@ -94,19 +101,17 @@ func (r *TriggerIdentityResolver) Resolve(
 処理順は次のとおり。
 
 1. trigger scope が `team` 以外なら現行 identity を返す
-2. `strings.TrimSpace(tags["username"])` が空なら現行 identity を返す
-3. `UserRepository.FindByUsername` で CCPlant user を取得する
-4. `user.Status() == active` を検証する
-5. `user.UserType() != service_account` を検証する
-6. `user.IsMemberOfTeam(triggerTeamID)` を検証する
-7. `user.HasPermission(session:create)` を検証する
-8. user scope identity を返す
-   - `UserID = string(user.ID())`
+2. `personal_routing` がなければ現行 identity を返す
+3. `strings.TrimSpace(tags[personalRouting.Tag])` が空なら現行 identity を返す
+4. 値を `personalRouting.Targets` で完全一致検索する
+5. 未登録なら routing error を返す
+6. 登録された canonical UserID で user scope identity を返す
+   - `UserID = personalRouting.Targets[value]`
    - `Scope = user`
    - `TeamID = ""`
-   - `Teams = user の現在の全 team memberships`
+   - `Teams = []`（認証由来の membership は存在しない）
 
-個人スコープへ切り替わった後も、そのユーザーが通常の API から user-scoped session を作る場合と同じ settings / credentials / default SessionProfile を適用する。そのため `Teams` は Webhook/SlackBot 作成者のキャッシュ値ではなく、解決対象ユーザーの現在の membership から構成する。
+個人スコープへ切り替わった後は、canonical UserID に紐づく user settings / credentials / default SessionProfile を適用する。これらが未作成でも session 起動自体を禁止する根拠にはしない。必要な credential がなく provision に失敗した場合は通常の session 起動エラーとして扱う。
 
 ### 2. Webhook への組み込み
 
@@ -147,19 +152,15 @@ SlackBot は thread reuse を `LaunchUseCase` の外で処理しているため�
 
 ### 4. DI
 
-`proxyServer` が保持する `UserRepository` を次へ注入する。
-
-- `webhook.NewHandlers(..., userRepo)`
-- `slackbot.NewSlackBotEventHandler(..., userRepo)`
-
-`cmd/server.go` の Webhook handler / Slack Socket manager の両方を更新する。現在の `MemoryUserRepository` はプロセスローカルなので、複数 replica で username 解決を保証するには user repository の永続化または共有キャッシュが前提となる。すでに認証ユーザーが replica 間で共有される構成なら、その実体を注入する。
+resolver は Webhook / SlackBot entity に永続化された `personal_routing` のみを入力にするため、`UserRepository` の注入は不要である。routing 設定は既存の Kubernetes-backed Webhook / SlackBot repository に保存され、replica 間で共有される。
 
 ## セキュリティと認可
 
-- **team trigger のみ**が owner を指定できる。user-owned trigger から別ユーザーへの impersonation は禁止する。
-- 対象ユーザーは trigger の `team_id` の member に限定する。admin であっても membership がなければ対象外とする。
-- active status と `session:create` permission を delivery 時点で再評価する。
-- service account は個人 scope の対象外とする。
+- **team trigger のみ**が owner を指定できる。user-owned trigger から別ユーザーへの routing は禁止する。
+- incoming event が owner ID を直接指定することは禁止し、必ず静的な `targets` mapping を通す。
+- no-auth mode では本人性、在籍、team membership、active status、permission は検証できない。これらを検証済みと表現しない。
+- routing の権限根拠は、Webhook/SlackBot 設定を変更できる管理面の credential と webhook signature / Slack Socket Mode の真正性である。
+- 管理面にも認証がない deployment では、この機能は security boundary にならない。user scope は isolation ではなく namespace として扱うか、機能を無効化する。
 - `username` tag は session に残し、監査可能にする。さらに以下の system tags を追加する。
   - `trigger_scope=team`
   - `trigger_team_id=<team>`
@@ -171,16 +172,14 @@ SlackBot は thread reuse を `LaunchUseCase` の外で処理しているため�
 
 resolver の sentinel error を定義する。
 
-- `ErrRoutingUserNotFound`
-- `ErrRoutingUserIneligible`
-- `ErrRoutingUserNotTeamMember`
-- `ErrRoutingUserPermissionDenied`
+- `ErrRoutingTargetNotConfigured`
+- `ErrRoutingTargetInvalid`
 
 外部応答は情報漏えい防止のため一律の routing error に変換する。内部ログと Webhook delivery record では error code を保持する。
 
 - Webhook: delivery status を `failed`、session ID は空にする
 - SlackBot: session を作らず thread に汎用エラーを通知する
-- dry-run: resolved `scope`, `user_id`, `team_id` と routing error を返す。ただし API caller が team resource を閲覧できる既存認可を通過していること
+- dry-run: resolved `scope`, `user_id`, `team_id` と routing error を返す。管理 API が無認証で公開される構成では user ID の露出を避け、match の成否だけを返す
 
 ## 競合・再利用・上限
 
@@ -198,11 +197,12 @@ SlackBot の pending dedup key も `channel:thread:scope:userID/teamID` にす�
 
 ### Resolver unit tests
 
+- team + routing config なしは team identity のまま
 - team + username なしは team identity のまま
 - user trigger + 他人の username は無視
-- active member + session:create は user identity へ変換
-- unknown / inactive / suspended / service account / non-member / permission なしは reject
-- 解決対象ユーザーの全 teams が返る
+- allowlist match は登録された UserID の user identity へ変換
+- allowlist mismatch / 空の mapped UserID は reject
+- repository lookup や membership check を行わない
 - username の前後空白を除去する
 
 ### Webhook tests
@@ -227,12 +227,12 @@ SlackBot の pending dedup key も `channel:thread:scope:userID/teamID` にす�
 
 - team Webhook/SlackBot 作成者と routing target が異なるケース
 - target user の user settings、personal credentials、default SessionProfile が適用される
-- target user が team を離れた後は新規 delivery が reject される
+- allowlist を削除した後は新規 delivery が reject される
 
 ## ロールアウト
 
 1. resolver、identity-aware filter、監査 tag を feature flag 配下で実装する
-2. dry-run で既存 team triggers の `username` tag 使用状況と解決可否を確認する
+2. dry-run で team triggers の routing value と allowlist match を確認する
 3. Webhook で有効化し、delivery failure と session owner を監視する
 4. SlackBot で有効化する
 5. 問題がなければ feature flag を既定 enabled にする
@@ -250,8 +250,9 @@ feature flag 例: `TEAM_TRIGGER_USERNAME_ROUTING_ENABLED=false`。既存設定�
 
 ## 設計上の判断
 
-- username から直接 UserID を組み立てず、必ず repository で canonical user を取得する
-- routing 判定はテンプレート処理ではなく application use case に置き、Webhook と SlackBot で同じ認可を使う
+- username から直接 UserID を組み立てず、team-owned の静的 mapping で canonical UserID に変換する
+- routing 判定はテンプレート処理ではなく application use case に置き、Webhook と SlackBot で同じ routing policy を使う
 - routing failure は fallback せず reject する
 - resource owner（Webhook/SlackBot）は変更せず、作成される Session の identity だけを変更する
 - reuse は tags だけでなく identity boundary を含める
+- 認証なしでは user の本人性や team membership を検証できないことを明示し、user scope を認可境界として過信しない
