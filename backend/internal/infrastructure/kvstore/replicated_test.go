@@ -13,6 +13,18 @@ type failingStore struct {
 	deleteErr error
 }
 
+type normalizingStore struct{ *memoryStore }
+
+func (s *normalizingStore) Create(ctx context.Context, record Record) (Record, error) {
+	record.Value = append(record.Value, []byte("-canonical")...)
+	return s.memoryStore.Create(ctx, record)
+}
+
+func (s *normalizingStore) Update(ctx context.Context, record Record) (Record, error) {
+	record.Value = append(record.Value, []byte("-canonical")...)
+	return s.memoryStore.Update(ctx, record)
+}
+
 func (s *failingStore) Create(ctx context.Context, record Record) (Record, error) {
 	if s.createErr != nil {
 		return Record{}, s.createErr
@@ -47,6 +59,24 @@ func TestReplicatedStoreCreateWritesBoth(t *testing.T) {
 	}
 	if created.Version != 1 || len(primary.records) != 1 || len(secondary.records) != 1 {
 		t.Fatalf("create was not replicated: created=%+v primary=%v secondary=%v", created, primary.records, secondary.records)
+	}
+}
+
+func TestReplicatedStoreMirrorsPrimaryCanonicalValue(t *testing.T) {
+	ctx := context.Background()
+	primary := &normalizingStore{memoryStore: newMemoryStore()}
+	secondary := newMemoryStore()
+	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	created, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "key", Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryRecord, err := secondary.Get(ctx, created.Kind, created.Namespace, created.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(created.Value) != "value-canonical" || string(secondaryRecord.Value) != string(created.Value) {
+		t.Fatalf("primary=%q secondary=%q", created.Value, secondaryRecord.Value)
 	}
 }
 

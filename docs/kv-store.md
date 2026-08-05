@@ -70,30 +70,59 @@ document, and optimistic version. Both Secret and ConfigMap repositories retain
 their existing labels and selectors. Migration is deliberately not performed by
 server startup.
 
-## Migrating from Kubernetes
+## Migrating from primary to secondary
 
-Stop writes to the source deployment, then preview the application records and
-destination conflicts:
+With replicated storage configured, the command reads the same
+`AGENTAPI_KV_STORE_PRIMARY_*` and `AGENTAPI_KV_STORE_SECONDARY_*` variables as
+the server. Stop writes to the source deployment, then preview the application
+records and destination conflicts:
 
 ```bash
 agentapi-proxy kv-store migrate \
   --namespace agentapi-ui \
-  --database-url https://database.example.turso.io \
-  --auth-token "$AGENTAPI_KV_STORE_AUTH_TOKEN" \
   --dry-run
 ```
 
 Run the same command without `--dry-run` to copy the records. The command does
-not modify or delete Kubernetes objects. It copies only known application KV
-resource families; operational objects such as Helm data, runtime configuration,
-Leases, and Pod-mounted notification subscription Secrets remain in Kubernetes.
+not modify or delete source objects. It copies only known application KV
+resource families; when Kubernetes is the source, operational objects such as
+Helm data, runtime configuration, Leases, and Pod-mounted notification
+subscription Secrets remain in Kubernetes.
 
 The migration is idempotent. An identical libSQL record is skipped. A different
 record is reported as a conflict and is left unchanged; after reviewing the
 conflict, `--overwrite` updates it from the Kubernetes source. `--output json`
-provides machine-readable results. The database URL and token can alternatively
-be supplied with `AGENTAPI_KV_STORE_DATABASE_URL` and
-`AGENTAPI_KV_STORE_AUTH_TOKEN`.
+provides machine-readable results. Explicit `--primary-backend`,
+`--primary-database-url`, `--secondary-backend`, and
+`--secondary-database-url` flags are also available. The legacy
+`--database-url` and `--auth-token` form remains supported as a
+Kubernetes-to-libSQL migration.
+
+The Helm chart can run the idempotent migration in an init container before a
+new proxy Pod starts accepting writes:
+
+```yaml
+config:
+  kvStore:
+    backend: ""
+    primary:
+      backend: kubernetes
+    secondary:
+      backend: libsql
+      databaseUrlSecretRef:
+        name: agentapi-libsql
+        key: database-url
+    replication:
+      mode: rollback
+    migration:
+      enabled: true
+      dryRun: false
+      overwrite: false
+```
+
+The init container uses the same direct values or Secret references as the
+proxy. A conflict prevents the new Pod from starting unless `overwrite` is
+explicitly enabled. Keep `overwrite: false` for normal idempotent rollouts.
 
 For local development, a server is not required. A local SQLite-compatible
 libSQL file can be used directly:

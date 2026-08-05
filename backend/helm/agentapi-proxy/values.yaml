@@ -359,6 +359,12 @@ config:
     replication:
       # rollback (default when secondary is configured) or best_effort
       mode: ""
+    migration:
+      # Run primary -> secondary migration before the proxy container starts.
+      enabled: false
+      dryRun: false
+      overwrite: false
+      output: text
 
   # 認証設定
   auth:

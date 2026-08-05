@@ -145,6 +145,52 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	}
 }
 
+func TestMigrateConfiguredStorePair(t *testing.T) {
+	ctx := context.Background()
+	source, destination := newMemoryKVStore(), newMemoryKVStore()
+	value := []byte(`{"metadata":{"name":"task","namespace":"test","labels":{"agentapi.proxy/type":"task"}},"data":{"task.json":"source"}}`)
+	if _, err := source.Create(ctx, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "task", Value: value}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := migrateKVStores(ctx, source, destination, kvStoreMigrateOptions{namespace: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Copied != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	got, err := destination.Get(ctx, kvstore.KindConfigMap, "test", "task")
+	if err != nil || string(got.Value) != string(value) {
+		t.Fatalf("destination record = %#v, err=%v", got, err)
+	}
+}
+
+func TestMigrationStoreConfigsUseReplicatedEnvironment(t *testing.T) {
+	options := kvStoreMigrateOptions{
+		primaryBackend:       "kubernetes",
+		secondaryBackend:     "libsql",
+		secondaryDatabaseURL: "http://libsql:8080",
+		secondaryAuthToken:   "token",
+	}
+	primary, secondary, err := options.storeConfigs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary.backend != "kubernetes" || secondary.backend != "libsql" || secondary.databaseURL != "http://libsql:8080" || secondary.authToken != "token" {
+		t.Fatalf("primary=%#v secondary=%#v", primary, secondary)
+	}
+}
+
+func TestMigrationStoreConfigsPreserveLegacyFlags(t *testing.T) {
+	primary, secondary, err := (kvStoreMigrateOptions{legacyDatabaseURL: "file:///tmp/legacy.db", legacyAuthToken: "token"}).storeConfigs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary.backend != "kubernetes" || secondary.backend != "libsql" || secondary.databaseURL != "file:///tmp/legacy.db" {
+		t.Fatalf("primary=%#v secondary=%#v", primary, secondary)
+	}
+}
+
 type memoryKVStore struct {
 	records map[string]kvstore.Record
 }

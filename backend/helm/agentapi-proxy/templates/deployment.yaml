@@ -53,6 +53,76 @@ spec:
         runAsUser: 999
         runAsGroup: 999
         {{- end }}
+      {{- if (dig "kvStore" "migration" "enabled" false .Values.config) }}
+      initContainers:
+        - name: kv-store-migrate
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - kv-store
+            - migrate
+            - --namespace
+            - {{ .Release.Namespace | quote }}
+            - --output
+            - {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
+            {{- if (dig "kvStore" "migration" "dryRun" false .Values.config) }}
+            - --dry-run
+            {{- end }}
+            {{- if (dig "kvStore" "migration" "overwrite" false .Values.config) }}
+            - --overwrite
+            {{- end }}
+          env:
+            - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
+              value: {{ dig "kvStore" "primary" "backend" "" .Values.config | quote }}
+            {{- $migrationPrimaryDatabaseSecret := dig "kvStore" "primary" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $migrationPrimaryDatabaseSecret }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationPrimaryDatabaseSecret | quote }}
+                  key: {{ dig "kvStore" "primary" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL
+              value: {{ dig "kvStore" "primary" "databaseUrl" "" .Values.config | quote }}
+            {{- end }}
+            {{- $migrationPrimaryAuthSecret := dig "kvStore" "primary" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $migrationPrimaryAuthSecret }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationPrimaryAuthSecret | quote }}
+                  key: {{ dig "kvStore" "primary" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN
+              value: {{ dig "kvStore" "primary" "authToken" "" .Values.config | quote }}
+            {{- end }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_BACKEND
+              value: {{ dig "kvStore" "secondary" "backend" "" .Values.config | quote }}
+            {{- $migrationSecondaryDatabaseSecret := dig "kvStore" "secondary" "databaseUrlSecretRef" "name" "" .Values.config }}
+            {{- if $migrationSecondaryDatabaseSecret }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecondaryDatabaseSecret | quote }}
+                  key: {{ dig "kvStore" "secondary" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL
+              value: {{ dig "kvStore" "secondary" "databaseUrl" "" .Values.config | quote }}
+            {{- end }}
+            {{- $migrationSecondaryAuthSecret := dig "kvStore" "secondary" "authTokenSecretRef" "name" "" .Values.config }}
+            {{- if $migrationSecondaryAuthSecret }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $migrationSecondaryAuthSecret | quote }}
+                  key: {{ dig "kvStore" "secondary" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
+              value: {{ dig "kvStore" "secondary" "authToken" "" .Values.config | quote }}
+            {{- end }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
