@@ -37,6 +37,7 @@ export interface SessionParams {
   github_token?: string;
   agent_type?: string;
   oneshot?: boolean;
+  credential_source?: 'session_user' | 'triggered_user' | 'team' | 'none';
 }
 
 // Session configuration for webhook triggers

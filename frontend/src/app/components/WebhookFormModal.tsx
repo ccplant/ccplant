@@ -36,6 +36,7 @@ interface TriggerFormData {
   reuseSession: boolean
   mountPayload: boolean
   oneshot: boolean
+  credentialSource: '' | 'session_user' | 'triggered_user' | 'team' | 'none'
   goTemplate?: string
   environment: Record<string, string>
   tags: Record<string, string>
@@ -54,6 +55,7 @@ const emptyTrigger: TriggerFormData = {
   reuseSession: false,
   mountPayload: false,
   oneshot: false,
+  credentialSource: '',
   goTemplate: '',
   environment: {},
   tags: {},
@@ -112,6 +114,7 @@ export default function WebhookFormModal({
             reuseSession: t.session_config?.reuse_session ?? false,
             mountPayload: t.session_config?.mount_payload ?? false,
             oneshot: t.session_config?.params?.oneshot ?? false,
+            credentialSource: t.session_config?.params?.credential_source || '',
             goTemplate: t.conditions.go_template || '',
             environment: t.session_config?.environment || {},
             tags: t.session_config?.tags || {},
@@ -220,6 +223,25 @@ export default function WebhookFormModal({
   const updateTrigger = (index: number, field: keyof TriggerFormData, value: unknown) => {
     setTriggers((prev) =>
       prev.map((t, i) => (i === index ? { ...t, [field]: value } : t))
+    )
+  }
+
+  const updateCredentialSource = (index: number, credentialSource: TriggerFormData['credentialSource']) => {
+    setTriggers((prev) =>
+      prev.map((trigger, i) => {
+        if (i !== index) return trigger
+        if (credentialSource !== 'triggered_user' || trigger.tags.username) {
+          return { ...trigger, credentialSource }
+        }
+        return {
+          ...trigger,
+          credentialSource,
+          tags: {
+            ...trigger.tags,
+            username: webhookType === 'github' ? '{{.sender.login}}' : '{{.user.login}}',
+          },
+        }
+      })
     )
   }
 
@@ -385,6 +407,9 @@ export default function WebhookFormModal({
         }
         // Always set oneshot explicitly (true or false)
         session_config.params.oneshot = t.oneshot
+        if (t.credentialSource) {
+          session_config.params.credential_source = t.credentialSource
+        }
 
         return {
           id: t.id,
@@ -1111,6 +1136,34 @@ export default function WebhookFormModal({
                       <p className="text-xs text-gray-500 dark:text-gray-400 -mt-3 ml-6">
                         有効にすると、セッション終了後に自動的に削除されます
                       </p>
+
+                      {/* Credential Source */}
+                      <div>
+                        <label
+                          htmlFor={`trigger-credential-source-${index}`}
+                          className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                        >
+                          認証ファイルの参照元
+                        </label>
+                        <select
+                          id={`trigger-credential-source-${index}`}
+                          value={trigger.credentialSource}
+                          onChange={(e) => updateCredentialSource(
+                            index,
+                            e.target.value as TriggerFormData['credentialSource']
+                          )}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm dark:bg-gray-700 dark:text-white"
+                        >
+                          <option value="">デフォルト（team scopeでは認証ファイルなし）</option>
+                          <option value="triggered_user">Webhookをトリガーしたユーザー</option>
+                          <option value="team">チーム</option>
+                          <option value="session_user">Webhook設定の所有者</option>
+                          <option value="none">使用しない</option>
+                        </select>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          「Webhookをトリガーしたユーザー」を選ぶと、未設定の場合は username: {webhookType === 'github' ? '{{.sender.login}}' : '{{.user.login}}'} を自動追加します。認証ファイルが見つからない場合はチームへフォールバックします。
+                        </p>
+                      </div>
 
                       {/* Reuse Message Template */}
                       {trigger.reuseSession && (
