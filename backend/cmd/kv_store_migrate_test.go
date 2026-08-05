@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -99,6 +100,48 @@ func TestMigrateKubernetesKVDryRunDoesNotWrite(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), kvstore.KindSecret, "test", "agentapi-schedules"); !errors.Is(err, kvstore.ErrNotFound) {
 		t.Fatalf("dry-run wrote a record: %v", err)
+	}
+}
+
+func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset(
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "test", Labels: map[string]string{"agentapi.proxy/settings": "true"}}, Data: map[string][]byte{"settings.json": []byte(`{"name":"local-e2e"}`)}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "task"}}, Data: map[string]string{"task.json": `{"title":"migrate me"}`}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "notification-subscriptions-user", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/component": "notification-subscription"}}},
+	)
+	databaseURL := "file://" + filepath.Join(t.TempDir(), "migration.db")
+	store, err := kvstore.NewLibSQLStore(ctx, databaseURL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	result, err := migrateKubernetesKV(ctx, client, store, kvStoreMigrateOptions{namespace: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Selected != 2 || result.Copied != 2 {
+		t.Fatalf("unexpected migration result: %#v", result)
+	}
+	for _, identity := range []struct {
+		kind kvstore.Kind
+		key  string
+	}{{kvstore.KindSecret, "settings"}, {kvstore.KindConfigMap, "task"}} {
+		if _, err := store.Get(ctx, identity.kind, "test", identity.key); err != nil {
+			t.Fatalf("read migrated %s/%s: %v", identity.kind, identity.key, err)
+		}
+	}
+	if _, err := store.Get(ctx, kvstore.KindSecret, "test", "notification-subscriptions-user"); !errors.Is(err, kvstore.ErrNotFound) {
+		t.Fatalf("operational Secret was migrated: %v", err)
+	}
+
+	second, err := migrateKubernetesKV(ctx, client, store, kvStoreMigrateOptions{namespace: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Skipped != 2 {
+		t.Fatalf("expected idempotent skips, got %#v", second)
 	}
 }
 

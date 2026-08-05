@@ -52,6 +52,16 @@ provides machine-readable results. The database URL and token can alternatively
 be supplied with `AGENTAPI_KV_STORE_DATABASE_URL` and
 `AGENTAPI_KV_STORE_AUTH_TOKEN`.
 
+For local development, a server is not required. A local SQLite-compatible
+libSQL file can be used directly:
+
+```bash
+agentapi-proxy kv-store migrate \
+  --namespace agentapi-ui-dev \
+  --database-url "file:///tmp/agentapi-kv.db" \
+  --dry-run
+```
+
 After a successful migration, configure `kv_store.backend: libsql` and the same
 database connection values before restarting the deployment. Keep the Kubernetes
 objects until the libSQL-backed deployment has been verified so rollback remains
