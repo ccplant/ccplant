@@ -5,6 +5,11 @@ documents through one storage adapter. Operational resources such as Pod-mounted
 Secrets, Deployments, Services, PVCs, and leader-election Leases remain
 Kubernetes resources.
 
+The boundary is dependency-based rather than name-based. The
+`KubernetesSessionManager` receives only the raw Kubernetes client. Every
+repository and handler outside it receives the persistence client, which is
+backed exclusively by the selected KV backend.
+
 ```yaml
 kv_store:
   backend: libsql

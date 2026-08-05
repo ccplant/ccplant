@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -53,9 +52,6 @@ type secretAdapter struct {
 }
 
 func (a *secretAdapter) Create(ctx context.Context, object *corev1.Secret, opts metav1.CreateOptions) (*corev1.Secret, error) {
-	if !isPersistentKV(KindSecret, object.Name) {
-		return a.SecretInterface.Create(ctx, object, opts)
-	}
 	value, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
@@ -71,9 +67,6 @@ func (a *secretAdapter) Create(ctx context.Context, object *corev1.Secret, opts 
 }
 
 func (a *secretAdapter) Update(ctx context.Context, object *corev1.Secret, opts metav1.UpdateOptions) (*corev1.Secret, error) {
-	if !isPersistentKV(KindSecret, object.Name) {
-		return a.SecretInterface.Update(ctx, object, opts)
-	}
 	version, _ := strconv.ParseInt(object.ResourceVersion, 10, 64)
 	value, err := json.Marshal(object)
 	if err != nil {
@@ -89,9 +82,6 @@ func (a *secretAdapter) Update(ctx context.Context, object *corev1.Secret, opts 
 }
 
 func (a *secretAdapter) Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.Secret, error) {
-	if !isPersistentKV(KindSecret, name) {
-		return a.SecretInterface.Get(ctx, name, opts)
-	}
 	record, err := a.store.Get(ctx, KindSecret, a.namespace, name)
 	if err != nil {
 		return nil, storageError(secretResource, name, err)
@@ -106,9 +96,6 @@ func (a *secretAdapter) Get(ctx context.Context, name string, opts metav1.GetOpt
 }
 
 func (a *secretAdapter) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	if !isPersistentKV(KindSecret, name) {
-		return a.SecretInterface.Delete(ctx, name, opts)
-	}
 	err := a.store.Delete(ctx, KindSecret, a.namespace, name)
 	if err != nil {
 		return storageError(secretResource, name, err)
@@ -146,9 +133,6 @@ type configMapAdapter struct {
 }
 
 func (a *configMapAdapter) Create(ctx context.Context, object *corev1.ConfigMap, opts metav1.CreateOptions) (*corev1.ConfigMap, error) {
-	if !isPersistentKV(KindConfigMap, object.Name) {
-		return a.ConfigMapInterface.Create(ctx, object, opts)
-	}
 	value, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
@@ -164,9 +148,6 @@ func (a *configMapAdapter) Create(ctx context.Context, object *corev1.ConfigMap,
 }
 
 func (a *configMapAdapter) Update(ctx context.Context, object *corev1.ConfigMap, opts metav1.UpdateOptions) (*corev1.ConfigMap, error) {
-	if !isPersistentKV(KindConfigMap, object.Name) {
-		return a.ConfigMapInterface.Update(ctx, object, opts)
-	}
 	version, _ := strconv.ParseInt(object.ResourceVersion, 10, 64)
 	value, err := json.Marshal(object)
 	if err != nil {
@@ -182,9 +163,6 @@ func (a *configMapAdapter) Update(ctx context.Context, object *corev1.ConfigMap,
 }
 
 func (a *configMapAdapter) Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.ConfigMap, error) {
-	if !isPersistentKV(KindConfigMap, name) {
-		return a.ConfigMapInterface.Get(ctx, name, opts)
-	}
 	record, err := a.store.Get(ctx, KindConfigMap, a.namespace, name)
 	if err != nil {
 		return nil, storageError(configMapResource, name, err)
@@ -199,9 +177,6 @@ func (a *configMapAdapter) Get(ctx context.Context, name string, opts metav1.Get
 }
 
 func (a *configMapAdapter) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	if !isPersistentKV(KindConfigMap, name) {
-		return a.ConfigMapInterface.Delete(ctx, name, opts)
-	}
 	err := a.store.Delete(ctx, KindConfigMap, a.namespace, name)
 	if err != nil {
 		return storageError(configMapResource, name, err)
@@ -241,36 +216,4 @@ func storageError(resource schema.GroupResource, name string, err error) error {
 	default:
 		return err
 	}
-}
-
-// isPersistentKV separates application documents from operational Kubernetes
-// resources. New document families must be registered here and covered by the
-// adapter tests; arbitrary Pod-mounted Secrets are never redirected.
-func isPersistentKV(kind Kind, name string) bool {
-	prefixes := map[Kind][]string{
-		KindSecret: {
-			"agentapi-api-token-", "agentapi-agent-files-", "agentapi-personal-api-key-",
-			"agentapi-session-profile-", "agentapi-session-route-", "agentapi-settings-",
-			"agentapi-slackbot-", "agentapi-team-config-", "agentapi-user-files-",
-			"agentapi-webhook-", "agentapi-schedule-", "agentapi-session-allocation-",
-			"agentapi-provision-request-", "agentapi-notification-",
-		},
-		KindConfigMap: {
-			"agentapi-memory-", "agentapi-oauth-state-", "agentapi-sandbox-domains-",
-			"agentapi-sandbox-policy-", "agentapi-task-group-", "agentapi-task-",
-		},
-	}
-	exact := map[Kind]map[string]bool{
-		KindSecret:    {"agentapi-schedules": true},
-		KindConfigMap: {"agentapi-session-shares": true, "agentapi-user-team-mapping": true},
-	}
-	if exact[kind][name] {
-		return true
-	}
-	for _, prefix := range prefixes[kind] {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
 }
