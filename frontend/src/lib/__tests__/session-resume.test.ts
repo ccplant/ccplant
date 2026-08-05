@@ -28,6 +28,21 @@ describe('waitForSessionResume', () => {
       { maxAttempts: 2, wait: async () => undefined },
     )).rejects.toThrow('Timed out waiting for the session workload to resume')
   })
+
+  it('stops polling after the chat screen is left', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({ session_id: 'session-1', status: 'restoring' })
+    let cancelled = false
+
+    await expect(waitForSessionResume(
+      { resumeSession },
+      'session-1',
+      {
+        cancelled: () => cancelled,
+        wait: async () => { cancelled = true },
+      },
+    )).rejects.toThrow('Session restoration cancelled')
+    expect(resumeSession).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('waitForSessionMessages', () => {

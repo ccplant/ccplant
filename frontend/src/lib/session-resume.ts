@@ -12,6 +12,11 @@ interface ResumeOptions {
   intervalMs?: number
   maxAttempts?: number
   wait?: (milliseconds: number) => Promise<void>
+  cancelled?: () => boolean
+}
+
+function throwIfCancelled(cancelled?: () => boolean) {
+  if (cancelled?.()) throw new Error('Session restoration cancelled')
 }
 
 export async function waitForSessionResume(
@@ -24,9 +29,13 @@ export async function waitForSessionResume(
   const wait = options.wait ?? ((milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds)))
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    throwIfCancelled(options.cancelled)
     const result = await client.resumeSession(sessionId)
     if (result.status !== 'restoring') return result
-    if (attempt + 1 < maxAttempts) await wait(intervalMs)
+    if (attempt + 1 < maxAttempts) {
+      await wait(intervalMs)
+      throwIfCancelled(options.cancelled)
+    }
   }
 
   throw new Error('Timed out waiting for the session workload to resume')
@@ -42,6 +51,7 @@ export async function waitForSessionMessages(
   const wait = options.wait ?? ((milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds)))
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    throwIfCancelled(options.cancelled)
     try {
       return await client.getSessionMessages(sessionId, { limit: 50, direction: 'tail' })
     } catch (error) {
@@ -51,6 +61,7 @@ export async function waitForSessionMessages(
       if (status !== undefined && ![404, 502, 503].includes(status)) throw error
       if (attempt + 1 >= maxAttempts) break
       await wait(intervalMs)
+      throwIfCancelled(options.cancelled)
     }
   }
 
