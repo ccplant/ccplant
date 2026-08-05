@@ -201,8 +201,8 @@ func NewKubernetesSessionManagerWithClient(
 		if err != nil {
 			return nil, fmt.Errorf("initialize libSQL KV store: %w", err)
 		}
-		client = kvstore.NewKubernetesAdapter(client, store, cfg.KVStore.KubernetesProjection, cfg.KVStore.LegacyFallback)
-		log.Printf("[K8S_SESSION] libSQL KV store enabled (kubernetes_projection=%t, legacy_fallback=%t)", cfg.KVStore.KubernetesProjection, cfg.KVStore.LegacyFallback)
+		client = kvstore.NewKubernetesAdapter(client, store)
+		log.Printf("[K8S_SESSION] libSQL KV store enabled")
 	}
 
 	log.Printf("[K8S_SESSION] Initialized KubernetesSessionManager in namespace: %s", namespace)

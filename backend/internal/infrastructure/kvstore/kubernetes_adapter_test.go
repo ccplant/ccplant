@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -64,7 +65,7 @@ func TestAdapterPersistsSecretAndConfigMap(t *testing.T) {
 	ctx := context.Background()
 	kube := fake.NewSimpleClientset()
 	store := newMemoryStore()
-	client := NewKubernetesAdapter(kube, store, true, true)
+	client := NewKubernetesAdapter(kube, store)
 	if _, err := client.CoreV1().Secrets("ns").Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-settings-test", Labels: map[string]string{"app": "test"}}, Data: map[string][]byte{"key": []byte("value")}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,37 +75,34 @@ func TestAdapterPersistsSecretAndConfigMap(t *testing.T) {
 	if len(store.records) != 2 {
 		t.Fatalf("stored %d records, want 2", len(store.records))
 	}
-	if _, err := kube.CoreV1().Secrets("ns").Get(ctx, "agentapi-settings-test", metav1.GetOptions{}); err != nil {
-		t.Fatalf("Secret projection: %v", err)
+	if _, err := kube.CoreV1().Secrets("ns").Get(ctx, "agentapi-settings-test", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("Secret must not be written to Kubernetes: %v", err)
 	}
-	if _, err := kube.CoreV1().ConfigMaps("ns").Get(ctx, "agentapi-task-test", metav1.GetOptions{}); err != nil {
-		t.Fatalf("ConfigMap projection: %v", err)
+	if _, err := kube.CoreV1().ConfigMaps("ns").Get(ctx, "agentapi-task-test", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("ConfigMap must not be written to Kubernetes: %v", err)
 	}
 }
 
-func TestAdapterReadsLegacyWithoutMigration(t *testing.T) {
+func TestAdapterDoesNotReadLegacyKubernetesKV(t *testing.T) {
 	ctx := context.Background()
 	legacy := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-task-legacy", Namespace: "ns"}, Data: map[string]string{"old": "data"}}
 	kube := fake.NewSimpleClientset(legacy)
 	store := newMemoryStore()
-	client := NewKubernetesAdapter(kube, store, false, true)
+	client := NewKubernetesAdapter(kube, store)
 	got, err := client.CoreV1().ConfigMaps("ns").Get(ctx, "agentapi-task-legacy", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Data["old"] != "data" {
-		t.Fatalf("unexpected legacy value: %#v", got.Data)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("Get() error = %v, want NotFound (got=%v)", err, got)
 	}
 	if len(store.records) != 0 {
 		t.Fatal("legacy read must not migrate data")
 	}
 }
 
-func TestAdapterListMergesStoreAndLegacy(t *testing.T) {
+func TestAdapterListUsesStoreOnly(t *testing.T) {
 	ctx := context.Background()
 	kube := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "ns", Labels: map[string]string{"scope": "user"}}})
 	store := newMemoryStore()
-	client := NewKubernetesAdapter(kube, store, false, true)
+	client := NewKubernetesAdapter(kube, store)
 	if _, err := client.CoreV1().Secrets("ns").Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-settings-new", Labels: map[string]string{"scope": "user"}}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +110,7 @@ func TestAdapterListMergesStoreAndLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.Items) != 2 {
-		t.Fatalf("listed %d records, want 2", len(list.Items))
+	if len(list.Items) != 1 {
+		t.Fatalf("listed %d records, want 1", len(list.Items))
 	}
 }

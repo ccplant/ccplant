@@ -8,9 +8,6 @@ kv_store:
   backend: kubernetes
   database_url: ""
   auth_token: ""
-  kubernetes_projection: true
-  # Read pre-existing objects from Kubernetes without copying them to libSQL.
-  legacy_fallback: true
 
 # Authentication configuration
 auth:

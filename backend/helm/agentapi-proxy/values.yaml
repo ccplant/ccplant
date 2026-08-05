@@ -324,8 +324,6 @@ config:
     backend: kubernetes
     databaseUrl: ""
     authToken: ""
-    kubernetesProjection: true
-    legacyFallback: true
 
   # 認証設定
   auth:

@@ -511,11 +511,9 @@ type RedisConfig struct {
 // KVStoreConfig configures persistence for application data represented as
 // Kubernetes Secrets and ConfigMaps by the repository layer.
 type KVStoreConfig struct {
-	Backend              string `json:"backend" mapstructure:"backend"`
-	DatabaseURL          string `json:"database_url" mapstructure:"database_url"`
-	AuthToken            string `json:"auth_token" mapstructure:"auth_token"`
-	KubernetesProjection bool   `json:"kubernetes_projection" mapstructure:"kubernetes_projection"`
-	LegacyFallback       bool   `json:"legacy_fallback" mapstructure:"legacy_fallback"`
+	Backend     string `json:"backend" mapstructure:"backend"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
 }
 
 // Config represents the proxy configuration
@@ -1076,8 +1074,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
 	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
-	_ = v.BindEnv("kv_store.kubernetes_projection", "AGENTAPI_KV_STORE_KUBERNETES_PROJECTION")
-	_ = v.BindEnv("kv_store.legacy_fallback", "AGENTAPI_KV_STORE_LEGACY_FALLBACK")
 
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
