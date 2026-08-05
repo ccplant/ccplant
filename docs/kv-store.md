@@ -23,3 +23,7 @@ The `agentapi_kv` table stores a resource kind, namespace, key, complete JSON
 document, and optimistic version. Both Secret and ConfigMap repositories retain
 their existing labels and selectors. Migration is deliberately not performed by
 server startup and will be provided as an explicit, separately reviewed command.
+
+For development-only validation, the Helm chart can start an ephemeral server
+with `libsqlTrial.enabled=true`. Its `emptyDir` is discarded with the Pod and it
+does not scan or import Kubernetes objects.

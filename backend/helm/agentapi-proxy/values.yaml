@@ -872,3 +872,9 @@ externalRedis:
   dialTimeout: "5s"
   readTimeout: "3s"
   writeTimeout: "3s"
+
+# Ephemeral libSQL Server for development trials only.
+libsqlTrial:
+  enabled: false
+  image: ghcr.io/tursodatabase/libsql-server:3ec6803
+  storageSize: 1Gi
