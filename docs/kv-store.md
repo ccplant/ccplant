@@ -25,7 +25,47 @@ ConfigMaps are operational resources outside this KV boundary.
 The `agentapi_kv` table stores a resource kind, namespace, key, complete JSON
 document, and optimistic version. Both Secret and ConfigMap repositories retain
 their existing labels and selectors. Migration is deliberately not performed by
-server startup and will be provided as an explicit, separately reviewed command.
+server startup.
+
+## Migrating from Kubernetes
+
+Stop writes to the source deployment, then preview the application records and
+destination conflicts:
+
+```bash
+agentapi-proxy kv-store migrate \
+  --namespace agentapi-ui \
+  --database-url https://database.example.turso.io \
+  --auth-token "$AGENTAPI_KV_STORE_AUTH_TOKEN" \
+  --dry-run
+```
+
+Run the same command without `--dry-run` to copy the records. The command does
+not modify or delete Kubernetes objects. It copies only known application KV
+resource families; operational objects such as Helm data, runtime configuration,
+Leases, and Pod-mounted notification subscription Secrets remain in Kubernetes.
+
+The migration is idempotent. An identical libSQL record is skipped. A different
+record is reported as a conflict and is left unchanged; after reviewing the
+conflict, `--overwrite` updates it from the Kubernetes source. `--output json`
+provides machine-readable results. The database URL and token can alternatively
+be supplied with `AGENTAPI_KV_STORE_DATABASE_URL` and
+`AGENTAPI_KV_STORE_AUTH_TOKEN`.
+
+For local development, a server is not required. A local SQLite-compatible
+libSQL file can be used directly:
+
+```bash
+agentapi-proxy kv-store migrate \
+  --namespace agentapi-ui-dev \
+  --database-url "file:///tmp/agentapi-kv.db" \
+  --dry-run
+```
+
+After a successful migration, configure `kv_store.backend: libsql` and the same
+database connection values before restarting the deployment. Keep the Kubernetes
+objects until the libSQL-backed deployment has been verified so rollback remains
+possible.
 
 For development-only validation, the Helm chart can start an ephemeral server
 with `libsqlTrial.enabled=true`. Its `emptyDir` is discarded with the Pod and it
