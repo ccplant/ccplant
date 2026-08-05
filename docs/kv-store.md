@@ -124,6 +124,19 @@ The init container uses the same direct values or Secret references as the
 proxy. A conflict prevents the new Pod from starting unless `overwrite` is
 explicitly enabled. Keep `overwrite: false` for normal idempotent rollouts.
 
+After migration, verify both directions with the configured store pair:
+
+```bash
+agentapi-proxy kv-store verify \
+  --namespace agentapi-ui \
+  --output text
+```
+
+The command compares application-owned record values while ignoring backend
+versions. It reports `matched`, `missing-primary`, `missing-secondary`, and
+`different` records, and exits non-zero when any mismatch exists. Use
+`--output json` for automation.
+
 For local development, a server is not required. A local SQLite-compatible
 libSQL file can be used directly:
 
