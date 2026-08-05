@@ -21,7 +21,7 @@ interface SessionProfileFormModalProps {
 }
 
 type KeyValuePair = { key: string; value: string }
-const SUPPORTED_AGENT_TYPES = new Set(['claude-legacy', 'claude-acp', 'codex-acp', 'pi-ollama', 'cursor'])
+const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi-ollama', 'cursor'])
 
 const normalizeAgentType = (value?: string): string => {
   return value && SUPPORTED_AGENT_TYPES.has(value) ? value : ''
@@ -551,6 +551,7 @@ export default function SessionProfileFormModal({
                     <div className="space-y-2">
                       {([
                         { value: '', label: 'デフォルト', description: 'agent_type を送信しない' },
+                        { value: 'auto', label: '自動選択', description: 'Codex auth.json があれば Codex ACP、それ以外は Claude ACP' },
                         { value: 'claude-legacy', label: 'Claude Legacy', description: 'agent_type=claude-legacy を送信' },
                         { value: 'claude-acp', label: 'Claude ACP', description: 'agent_type=claude-acp を送信' },
                         { value: 'codex-acp', label: 'Codex ACP', description: 'agent_type=codex-acp を送信' },
