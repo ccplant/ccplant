@@ -68,7 +68,13 @@ switch req.CredentialSource {
 case "session_user":
     credentialOwner = req.UserID
 case "triggered_user":
-    credentialOwner = req.TriggeredUserID
+    if req.TriggeredUserID != "" {
+        credentialOwner = req.TriggeredUserID
+    } else if req.Scope == entities.ScopeTeam {
+        credentialOwner = req.TeamID
+    } else {
+        return ErrTriggeredUserUnavailable
+    }
 case "team":
     credentialOwner = req.TeamID
 case "none":
@@ -79,7 +85,9 @@ case "":
 }
 ```
 
-`credential_source=triggered_user`なのに`TriggeredUserID`が空の場合は起動を拒否する。`session_user`やteam credentialへfallbackしない。
+`credential_source=triggered_user`で`TriggeredUserID`が空の場合は、team credentialを選択する。trigger設定所有者である`session_user`へはfallbackしない。
+
+このfallbackはteam scopeでのみ許可する。user scopeで`TriggeredUserID`が空なら設定エラーとする。
 
 ## EventからのTriggeredUserID解決
 
@@ -108,7 +116,7 @@ GitHub eventの種類によってフィールドが異なる場合は、既存�
 2. `tags["username"]`の前後空白を除去する
 3. 空でなければ`TriggeredUserID`へ設定する
 4. `UserID`はtrigger entityの`UserID`のまま維持する
-5. `credential_source=triggered_user`で値が空ならrejectする
+5. `credential_source=triggered_user`で値が空ならteam credentialを使う
 
 `tags.username`がない場合でも、`credential_source`が`triggered_user`でなければ従来どおり起動できる。
 
@@ -118,7 +126,9 @@ no-auth構成では、payloadのusernameがCCPlantに登録済みか、本人か
 
 初期実装ではrenderしたusernameをそのままcanonical credential owner IDとして扱う。`MemoryUserRepository`でのlookupは行わない。
 
-対応するmanaged credential Secretが存在しなければ、既存実装どおりcredentialなしで起動する案もあるが、`credential_source=triggered_user`を明示した意図を尊重し、初期実装では起動失敗とする方が安全である。具体的には`credential source resolved but credential files not found`をdelivery errorとして記録する。
+`TriggeredUserID`に対応するmanaged credential Secretが存在しない場合も、team credentialへfallbackする。team credentialも存在しなければ、既存のteam scope起動と同様にcredentialなしで起動する。認証ファイルの欠落だけではSession起動を拒否しない。
+
+fallback結果は`credential_source_effective=triggered_user|team|none`としてmetadataとdelivery recordへ残す。
 
 ## セキュリティ
 
@@ -127,6 +137,7 @@ team scope Sessionに個人credentialを注入すると、team Sessionを操作�
 - team triggerの既定`credential_source`は引き続き`none`
 - `tags.username`だけではcredentialを注入しない
 - `credential_source=triggered_user`を明示した場合だけ注入する
+- triggered userを解決できない、またはcredentialがない場合はteam credentialへfallbackし、trigger設定所有者のcredentialは使わない
 - Webhook signature / Slack Socket Modeの検証を必須とする
 - `TriggeredUserID`をSecret名へ変換するときは既存sanitize処理を使う
 - sanitize後の衝突を防ぐため、Secret annotation内のraw owner IDも照合する
@@ -159,7 +170,15 @@ GitHub / custom webhookの両方で同じ処理を使う。
 
 ### Scheduleと手動起動
 
-event actorが存在しないため`TriggeredUserID`は空のままにする。`credential_source=triggered_user`はvalidation errorとする。
+event actorが存在しないため`TriggeredUserID`は空のままにする。Scheduleで`credential_source=triggered_user`を指定した場合、team scopeならteam credentialへfallbackし、user scopeならvalidation errorとする。手動起動では`triggered_user`を公開しない。
+
+## Team ownershipとservice account
+
+team scope Sessionは`Scope=team`と`TeamID`によってすでにteam所有になる。`UserID`はtrigger設定所有者の監査情報として維持する。
+
+Kubernetes session managerはteam scope Session作成時にteam service accountをbest-effortでensureし、そのservice account API keyをSession settingsへ注入している。このため、fallback時にSessionの`UserID`をservice account IDへ置き換える必要はない。
+
+将来「Sessionのactorを必ずservice accountとして記録する」要件が出た場合は、`CreatedByUserID`と`EffectiveUserID`を別フィールドにする。今回のcredential fallbackだけを理由に既存`UserID`の意味は変更しない。
 
 ## Session reuseとlimit
 
@@ -190,10 +209,11 @@ SlackBotのpending dedup keyにも`TriggeredUserID`を含める。
 - Sessionは`Scope=team`, `TeamID=trigger.TeamID`のまま
 - `credential_source=session_user`は従来どおり`UserID`のcredentialを読む
 - `credential_source=triggered_user`は`TriggeredUserID`のcredentialを読む
-- `TriggeredUserID`空で`triggered_user`指定ならfallbackせずreject
+- `TriggeredUserID`空で`triggered_user`指定ならteam credentialへfallback
+- triggered userのcredential Secretなしでもteam credentialへfallback
+- team credentialもなければcredentialなしでSessionを起動
 - team triggerでcredential source未指定ならcredentialなし
 - triggered userが異なる既存Sessionをreuseしない
-- managed credential Secretがない場合はdelivery error
 - 一般user-managed filesはteam scope Sessionへ注入されない
 
 ## 実装順序
