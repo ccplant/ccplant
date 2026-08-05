@@ -326,6 +326,13 @@ config:
     # AGENTAPI_KV_STORE_AUTH_TOKEN through env/envFrom instead.
     databaseUrl: ""
     authToken: ""
+    # Secret references take precedence over databaseUrl/authToken.
+    databaseUrlSecretRef:
+      name: ""
+      key: "database-url"
+    authTokenSecretRef:
+      name: ""
+      key: "auth-token"
 
   # 認証設定
   auth:

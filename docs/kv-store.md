@@ -22,6 +22,31 @@ Kubernetes, while `libsql` stores it only in libSQL. Existing Kubernetes data is
 not read, copied, changed, or deleted in libSQL mode. Pod-mounted Secrets and
 ConfigMaps are operational resources outside this KV boundary.
 
+The Helm values can contain the connection values directly:
+
+```yaml
+config:
+  kvStore:
+    backend: libsql
+    databaseUrl: https://database.example.turso.io
+    authToken: token
+```
+
+For production, the values can instead reference keys in a Kubernetes Secret.
+Secret references take precedence over the direct values:
+
+```yaml
+config:
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: agentapi-libsql
+      key: database-url
+    authTokenSecretRef:
+      name: agentapi-libsql
+      key: auth-token
+```
+
 The server also accepts all three settings as environment variables:
 `AGENTAPI_KV_STORE_BACKEND`, `AGENTAPI_KV_STORE_DATABASE_URL`, and
 `AGENTAPI_KV_STORE_AUTH_TOKEN`. With Helm, leave `databaseUrl` and `authToken`
