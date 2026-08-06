@@ -189,6 +189,47 @@ func TestGitHubAuthProvider_AuthenticateRejectsUserOutsideConfiguredTeams(t *tes
 	assert.Contains(t, err.Error(), "does not belong to any configured team")
 }
 
+func TestGitHubAuthProvider_AuthenticateAllowsUserOutsideConfiguredTeamsWhenEnabled(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/user":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(&GitHubUserInfo{
+				Login: "outsider",
+				ID:    12345,
+			})
+		case "/orgs/test-org/teams/developers/memberships/outsider":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+		BaseURL: mockServer.URL,
+		UserMapping: config.GitHubUserMapping{
+			DefaultRole:           "guest",
+			DefaultPermissions:    []string{"read"},
+			AllowUsersWithoutTeam: true,
+			TeamRoleMapping: map[string]config.TeamRoleRule{
+				"test-org/developers": {
+					Role:        "developer",
+					Permissions: []string{"write"},
+				},
+			},
+		},
+	})
+
+	user, err := provider.Authenticate(context.Background(), "valid-github-token")
+
+	require.NoError(t, err)
+	assert.Equal(t, "outsider", user.UserID)
+	assert.Equal(t, "guest", user.Role)
+	assert.Equal(t, []string{"read"}, user.Permissions)
+	assert.Empty(t, user.GitHubUser.Teams)
+}
+
 func TestGitHubAuthProvider_GetUser(t *testing.T) {
 	tests := []struct {
 		name         string

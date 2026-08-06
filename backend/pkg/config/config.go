@@ -81,9 +81,10 @@ type GitHubOAuthConfig struct {
 
 // GitHubUserMapping represents user role mapping configuration
 type GitHubUserMapping struct {
-	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
-	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
-	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
+	DefaultRole           string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
+	DefaultPermissions    []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
+	AllowUsersWithoutTeam bool                    `json:"allow_users_without_team" mapstructure:"allow_users_without_team" yaml:"allow_users_without_team"`
+	TeamRoleMapping       map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
 }
 
 // TeamRoleRule represents a team-based role rule
@@ -831,8 +832,9 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			BaseURL:     v.GetString("auth.github.base_url"),
 			TokenHeader: v.GetString("auth.github.token_header"),
 			UserMapping: GitHubUserMapping{
-				DefaultRole:        v.GetString("auth.github.user_mapping.default_role"),
-				DefaultPermissions: v.GetStringSlice("auth.github.user_mapping.default_permissions"),
+				DefaultRole:           v.GetString("auth.github.user_mapping.default_role"),
+				DefaultPermissions:    v.GetStringSlice("auth.github.user_mapping.default_permissions"),
+				AllowUsersWithoutTeam: v.GetBool("auth.github.user_mapping.allow_users_without_team"),
 			},
 		}
 		log.Printf("[CONFIG] Initialized GitHub auth config from environment variables")
@@ -1030,6 +1032,9 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		if v.IsSet("auth.github.user_mapping.default_permissions") {
 			config.Auth.GitHub.UserMapping.DefaultPermissions = v.GetStringSlice("auth.github.user_mapping.default_permissions")
 		}
+		if v.IsSet("auth.github.user_mapping.allow_users_without_team") {
+			config.Auth.GitHub.UserMapping.AllowUsersWithoutTeam = v.GetBool("auth.github.user_mapping.allow_users_without_team")
+		}
 
 		// Override OAuth settings if already exists
 		if config.Auth.GitHub.OAuth != nil {
@@ -1067,6 +1072,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.github.token_header")
 	_ = v.BindEnv("auth.github.user_mapping.default_role")
 	_ = v.BindEnv("auth.github.user_mapping.default_permissions")
+	_ = v.BindEnv("auth.github.user_mapping.allow_users_without_team")
 
 	// GitHub OAuth configuration
 	_ = v.BindEnv("auth.github.oauth.client_id")
