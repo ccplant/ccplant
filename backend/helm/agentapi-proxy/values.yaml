@@ -879,7 +879,7 @@ redis:
   # https://github.com/bitnami/charts/tree/main/bitnami/redis
   architecture: standalone
   image:
-    tag: 8.0.3-debian-12-r1
+    tag: latest
     pullPolicy: IfNotPresent
   auth:
     enabled: false
