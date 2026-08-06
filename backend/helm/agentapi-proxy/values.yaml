@@ -489,6 +489,9 @@ authConfig:
 # Example configuration structure:
 # github:
 #   user_mapping:
+#     # Allow users who do not belong to any configured team to authenticate.
+#     # They receive default_role and default_permissions. Defaults to false.
+#     allow_users_without_team: false
 #     default_role: "user"
 #     default_permissions:
 #       - "read"
