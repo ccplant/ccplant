@@ -1,8 +1,12 @@
 package webhook
 
-import "testing"
+import (
+	"testing"
 
-func TestResolveTriggeredUserID(t *testing.T) {
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+)
+
+func TestResolveTriggeredUsername(t *testing.T) {
 	tests := []struct {
 		name             string
 		tags             map[string]string
@@ -10,6 +14,13 @@ func TestResolveTriggeredUserID(t *testing.T) {
 		credentialSource string
 		want             string
 	}{
+		{
+			name:             "uses github sender tag",
+			tags:             map[string]string{"github_sender": " octocat ", "username": "legacy-user"},
+			payload:          map[string]interface{}{},
+			credentialSource: "github_sender",
+			want:             "octocat",
+		},
 		{
 			name:             "uses explicit username tag",
 			tags:             map[string]string{"username": " configured-user "},
@@ -52,9 +63,38 @@ func TestResolveTriggeredUserID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveTriggeredUserID(tt.tags, tt.payload, tt.credentialSource); got != tt.want {
-				t.Fatalf("resolveTriggeredUserID() = %q, want %q", got, tt.want)
+			if got := resolveTriggeredUsername(tt.tags, tt.payload, tt.credentialSource); got != tt.want {
+				t.Fatalf("resolveTriggeredUsername() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveCredentialSource(t *testing.T) {
+	params := &entities.SessionParams{CredentialSource: "team"}
+
+	if got := resolveCredentialSource(map[string]string{"credential_source": " github_sender "}, params); got != "github_sender" {
+		t.Fatalf("resolveCredentialSource() = %q, want github_sender", got)
+	}
+	if got := resolveCredentialSource(map[string]string{}, params); got != "team" {
+		t.Fatalf("resolveCredentialSource() fallback = %q, want team", got)
+	}
+}
+
+func TestApplyTriggeredUsernameTags(t *testing.T) {
+	tags := map[string]string{}
+
+	got := applyTriggeredUsernameTags(tags, map[string]interface{}{
+		"sender": map[string]interface{}{"login": "github-user"},
+	}, "triggered_user")
+
+	if got != "github-user" {
+		t.Fatalf("applyTriggeredUsernameTags() = %q, want github-user", got)
+	}
+	if tags["username"] != "github-user" {
+		t.Fatalf("username tag = %q, want github-user", tags["username"])
+	}
+	if tags["triggered_user_id"] != "github-user" {
+		t.Fatalf("triggered_user_id tag = %q, want github-user", tags["triggered_user_id"])
 	}
 }
