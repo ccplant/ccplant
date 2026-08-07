@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -89,7 +90,16 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				current, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+				if getErr != nil {
+					return getErr
+				}
+				updated := secret.DeepCopy()
+				updated.ResourceVersion = current.ResourceVersion
+				_, updateErr := r.client.CoreV1().Secrets(r.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+				return updateErr
+			})
 			if err != nil {
 				return fmt.Errorf("failed to update session route secret: %w", err)
 			}
