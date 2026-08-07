@@ -87,6 +87,9 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			<-ctx.Done()
 			return ctx.Err()
 		}
+		if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
+			go runSessionControlClient(ctx, client, cfg, provisionReq.Settings.Session.AgentType)
+		}
 		srv.runProvision(ctx, provisionReq.Settings)
 		<-ctx.Done()
 		return ctx.Err()

@@ -23,11 +23,13 @@ import (
 	"github.com/redis/go-redis/v9"
 	corerepo "github.com/takutakahashi/agentapi-proxy/internal/core/repository"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	"github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	infrasessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessioncontrol"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -43,34 +45,35 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config             *config.Config
-	echo               *echo.Echo
-	verbose            bool
-	logger             *logger.Logger
-	oauthProvider      *auth.GitHubOAuthProvider
-	oauthSessions      sync.Map // sessionID -> OAuthSession
-	notificationSvc    *notification.Service
-	container          *di.Container                                   // Internal DI container
-	sessionManager     portrepos.SessionManager                        // Session lifecycle manager
-	persistenceClient  kubernetes.Interface                            // Secret/ConfigMap client for non-session application data
-	kvStore            kvstore.Store                                   // non-nil when persistenceClient is backed by libSQL
-	settingsRepo       portrepos.SettingsRepository                    // Settings repository
-	credentialsRepo    portrepos.CredentialsRepository                 // Credentials repository
-	shareRepo          portrepos.ShareRepository                       // Share repository for session sharing
-	teamConfigRepo     portrepos.TeamConfigRepository                  // Team configuration repository
-	memoryRepo         portrepos.MemoryRepository                      // Memory repository
-	sandboxPolicyRepo  portrepos.SandboxPolicyRepository               // Sandbox policy repository
-	sandboxDomainRepo  *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
-	taskRepo           portrepos.TaskRepository                        // Task repository
-	taskGroupRepo      portrepos.TaskGroupRepository                   // Task group repository
-	sessionRouteRepo   portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
-	userFileRepo       portrepos.UserFileRepository                    // User-managed files repository
-	sessionProfileRepo portrepos.SessionProfileRepository              // Session profile repository
-	apiTokenRepo       portrepos.APITokenRepository                    // Named API token repository
-	apiTokenDeps       *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
-	assetStore         services.AssetStore                             // Static asset storage backend
-	sessionStateStore  services.SessionStateStore
-	router             *Router // Router for custom handler registration
+	config              *config.Config
+	echo                *echo.Echo
+	verbose             bool
+	logger              *logger.Logger
+	oauthProvider       *auth.GitHubOAuthProvider
+	oauthSessions       sync.Map // sessionID -> OAuthSession
+	notificationSvc     *notification.Service
+	container           *di.Container                                   // Internal DI container
+	sessionManager      portrepos.SessionManager                        // Session lifecycle manager
+	persistenceClient   kubernetes.Interface                            // Secret/ConfigMap client for non-session application data
+	kvStore             kvstore.Store                                   // non-nil when persistenceClient is backed by libSQL
+	settingsRepo        portrepos.SettingsRepository                    // Settings repository
+	credentialsRepo     portrepos.CredentialsRepository                 // Credentials repository
+	shareRepo           portrepos.ShareRepository                       // Share repository for session sharing
+	teamConfigRepo      portrepos.TeamConfigRepository                  // Team configuration repository
+	memoryRepo          portrepos.MemoryRepository                      // Memory repository
+	sandboxPolicyRepo   portrepos.SandboxPolicyRepository               // Sandbox policy repository
+	sandboxDomainRepo   *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
+	taskRepo            portrepos.TaskRepository                        // Task repository
+	taskGroupRepo       portrepos.TaskGroupRepository                   // Task group repository
+	sessionRouteRepo    portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
+	userFileRepo        portrepos.UserFileRepository                    // User-managed files repository
+	sessionProfileRepo  portrepos.SessionProfileRepository              // Session profile repository
+	apiTokenRepo        portrepos.APITokenRepository                    // Named API token repository
+	apiTokenDeps        *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
+	assetStore          services.AssetStore                             // Static asset storage backend
+	sessionStateStore   services.SessionStateStore
+	sessionControlStore sessioncontrol.Store
+	router              *Router // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -372,30 +375,39 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionStateStore = nil
 	}
 
+	var sessionControlStore sessioncontrol.Store
+	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
+		sessionControlStore = buildSessionControlStore(cfg)
+		if sessionControlStore != nil {
+			k8sSessionManager.SetSessionControlStore(sessionControlStore)
+		}
+	}
+
 	s := &Server{
-		config:             cfg,
-		echo:               e,
-		verbose:            verbose,
-		logger:             lgr,
-		container:          container,
-		sessionManager:     sessionManager,
-		persistenceClient:  persistenceClient,
-		kvStore:            applicationKVStore,
-		settingsRepo:       settingsRepo,
-		credentialsRepo:    credentialsRepo,
-		shareRepo:          shareRepo,
-		teamConfigRepo:     teamConfigRepo,
-		memoryRepo:         memoryRepo,
-		sandboxPolicyRepo:  sandboxPolicyRepo,
-		sandboxDomainRepo:  sandboxDomainRepo,
-		taskRepo:           taskRepo,
-		taskGroupRepo:      taskGroupRepo,
-		sessionRouteRepo:   sessionRouteRepo,
-		userFileRepo:       userFileRepo,
-		sessionProfileRepo: sessionProfileRepo,
-		apiTokenRepo:       apiTokenRepo,
-		assetStore:         assetStore,
-		sessionStateStore:  sessionStateStore,
+		config:              cfg,
+		echo:                e,
+		verbose:             verbose,
+		logger:              lgr,
+		container:           container,
+		sessionManager:      sessionManager,
+		persistenceClient:   persistenceClient,
+		kvStore:             applicationKVStore,
+		settingsRepo:        settingsRepo,
+		credentialsRepo:     credentialsRepo,
+		shareRepo:           shareRepo,
+		teamConfigRepo:      teamConfigRepo,
+		memoryRepo:          memoryRepo,
+		sandboxPolicyRepo:   sandboxPolicyRepo,
+		sandboxDomainRepo:   sandboxDomainRepo,
+		taskRepo:            taskRepo,
+		taskGroupRepo:       taskGroupRepo,
+		sessionRouteRepo:    sessionRouteRepo,
+		userFileRepo:        userFileRepo,
+		sessionProfileRepo:  sessionProfileRepo,
+		apiTokenRepo:        apiTokenRepo,
+		assetStore:          assetStore,
+		sessionStateStore:   sessionStateStore,
+		sessionControlStore: sessionControlStore,
 	}
 
 	// Add logging middleware if verbose
@@ -571,6 +583,33 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	s.setupRoutes()
 
 	return s
+}
+
+func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
+	if cfg.Redis.Addr == "" {
+		log.Printf("[SESSION_CONTROL] Disabled: Redis is required")
+		return nil
+	}
+	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if cfg.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("[SESSION_CONTROL] Disabled: Redis ping failed: %v", err)
+		_ = client.Close()
+		return nil
+	}
+	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
+	return infrasessioncontrol.NewRedisStore(client)
 }
 
 func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Interface) (kvstore.Store, bool, error) {
