@@ -53,6 +53,9 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	}); err != nil {
 		log.Printf("[PROVISIONER] Initial connect failed: %v", err)
 	}
+	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
+		go runSessionControlClient(ctx, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
+	}
 
 	for {
 		select {
@@ -86,9 +89,6 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			log.Printf("[PROVISIONER] Provision request %s ignored because provisioning is already %s", provisionReq.RequestID, srv.GetStatus())
 			<-ctx.Done()
 			return ctx.Err()
-		}
-		if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
-			go runSessionControlClient(ctx, client, cfg, provisionReq.Settings.Session.AgentType)
 		}
 		srv.runProvision(ctx, provisionReq.Settings)
 		<-ctx.Done()

@@ -25,6 +25,8 @@ type Event struct {
 }
 
 type Store interface {
+	TouchConnection(ctx context.Context, sessionID string) error
+	IsConnected(ctx context.Context, sessionID string) (bool, error)
 	EnqueueCommand(ctx context.Context, sessionID string, command Command) (string, error)
 	ReadCommands(ctx context.Context, sessionID, after string, wait time.Duration, count int64) ([]Command, error)
 	AckCommand(ctx context.Context, sessionID, streamID string) error

@@ -8,6 +8,13 @@ Enable the feature with `sessionControl.enabled=true` in the Helm values. Redis 
 configured. If Redis is unavailable at backend startup, or the feature is disabled, the existing
 direct session HTTP/SSE path remains active.
 
+Compatibility is selected per session, not per deployment. A session provisioner renews a
+75-second capability lease whenever it opens a command poll or uploads events. The backend only
+enqueues commands for sessions with a live lease. Sessions created with an older image never
+publish the lease and continue to receive the existing direct HTTP/RPC calls. If Redis or the
+control client becomes unavailable and the lease expires, the backend automatically returns that
+session to direct transport.
+
 ## Transport
 
 The session provisioner polls for commands:

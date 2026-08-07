@@ -47,6 +47,9 @@ func (sc *SessionControlController) WaitCommands(c echo.Context) error {
 	if !sc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
+	if err := sc.store.TouchConnection(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
 	commands, err := sc.store.ReadCommands(c.Request().Context(), c.Param("sessionId"), c.QueryParam("after"), parseWait(c.QueryParam("wait")), parseControlCount(c.QueryParam("count")))
 	if err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
@@ -60,6 +63,9 @@ func (sc *SessionControlController) WaitCommands(c echo.Context) error {
 func (sc *SessionControlController) AppendEvents(c echo.Context) error {
 	if !sc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
+	}
+	if err := sc.store.TouchConnection(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 	}
 	var request struct {
 		Events []core.Event `json:"events"`

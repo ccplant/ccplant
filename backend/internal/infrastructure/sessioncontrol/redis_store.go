@@ -13,6 +13,7 @@ import (
 const (
 	defaultMaxLen = int64(10000)
 	streamTTL     = 30 * time.Minute
+	connectionTTL = 75 * time.Second
 )
 
 type RedisStore struct {
@@ -26,6 +27,9 @@ func eventKey(sessionID string) string   { return "agentapi:session:{" + session
 func commandAckKey(sessionID string) string {
 	return "agentapi:session:{" + sessionID + "}:command-ack"
 }
+func connectionKey(sessionID string) string {
+	return "agentapi:session:{" + sessionID + "}:control-connection"
+}
 func eventDedupKey(sessionID, eventID string) string {
 	return "agentapi:session:{" + sessionID + "}:event:" + eventID
 }
@@ -38,6 +42,21 @@ if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
 end
 return ''
 `)
+
+func (s *RedisStore) TouchConnection(ctx context.Context, sessionID string) error {
+	if err := s.client.Set(ctx, connectionKey(sessionID), time.Now().UTC().Format(time.RFC3339Nano), connectionTTL).Err(); err != nil {
+		return fmt.Errorf("touch session control connection: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStore) IsConnected(ctx context.Context, sessionID string) (bool, error) {
+	exists, err := s.client.Exists(ctx, connectionKey(sessionID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("check session control connection: %w", err)
+	}
+	return exists > 0, nil
+}
 
 func (s *RedisStore) EnqueueCommand(ctx context.Context, sessionID string, command core.Command) (string, error) {
 	payload, err := json.Marshal(command)
