@@ -514,7 +514,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_BASE_PORT
               value: {{ .Values.kubernetesSession.basePort | quote }}
             - name: SESSION_CONTROL_LONG_POLL_ENABLED
-              value: {{ .Values.sessionControl.enabled | default false | quote }}
+              value: {{ dig "enabled" false (.Values.sessionControl | default dict) | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
               value: {{ .Values.kubernetesSession.resources.requests.cpu | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_LIMIT
