@@ -29,6 +29,7 @@ type LaunchRequest struct {
 
 	// Session configuration
 	Environment              map[string]string
+	ProfileEnvironment       map[string]string
 	Tags                     map[string]string
 	InitialMessage           string
 	GithubToken              string
@@ -196,6 +197,7 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		UserID:                   req.UserID,
 		TriggeredUserID:          req.TriggeredUserID,
 		Environment:              req.Environment,
+		ProfileEnvironment:       req.ProfileEnvironment,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,
 		TeamID:                   req.TeamID,
@@ -347,16 +349,13 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	if cfg.MCPServers() != nil {
 		req.ProfileMCPServers = cfg.MCPServers()
 	}
-	// Environment: profile is base, request overrides key-by-key
+	// Keep profile environment separate so settings resolution can apply it above
+	// team/user settings while still allowing explicit request values to win.
 	if len(cfg.Environment()) > 0 {
-		merged := make(map[string]string, len(cfg.Environment()))
+		req.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
 		for k, v := range cfg.Environment() {
-			merged[k] = v
+			req.ProfileEnvironment[k] = v
 		}
-		for k, v := range req.Environment {
-			merged[k] = v
-		}
-		req.Environment = merged
 	}
 	// Tags: profile is base, request overrides key-by-key
 	if len(cfg.Tags()) > 0 {
