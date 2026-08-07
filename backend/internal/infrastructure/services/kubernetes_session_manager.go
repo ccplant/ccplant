@@ -3973,6 +3973,9 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 			claudeArgs = v
 		}
 	}
+	if claudeArgs == "" && req.ProfileEnvironment != nil {
+		claudeArgs = req.ProfileEnvironment["CLAUDE_ARGS"]
+	}
 	if claudeArgs == "" {
 		claudeArgs = os.Getenv("CLAUDE_ARGS")
 	}
@@ -3988,8 +3991,17 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		)
 	}
 
-	// Add environment variables from request (except CLAUDE_ARGS which is already handled)
+	// Profile environment overrides team/user envFrom settings. Explicit request
+	// values are merged last and remain highest priority.
+	sessionEnv := make(map[string]string, len(req.ProfileEnvironment)+len(req.Environment))
+	for k, v := range req.ProfileEnvironment {
+		sessionEnv[k] = v
+	}
 	for k, v := range req.Environment {
+		sessionEnv[k] = v
+	}
+	// Add the merged session environment (except CLAUDE_ARGS which is already handled).
+	for k, v := range sessionEnv {
 		if k != "CLAUDE_ARGS" {
 			envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 		}
@@ -5361,8 +5373,17 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	for k, v := range materialized.EnvVars {
 		env[k] = v
 	}
-
 	m.setTeamGitHubInstallationToken(ctx, req, env)
+
+	// Session profile settings override all team/user settings, including
+	// Bedrock-derived environment variables and team credentials.
+	for k, v := range req.ProfileEnvironment {
+		env[k] = v
+	}
+	// Explicit session request values remain the highest-priority user input.
+	for k, v := range req.Environment {
+		env[k] = v
+	}
 
 	if req.AgentType == "pi-ollama" {
 		ensurePiOllamaSettingsEnv(env)
