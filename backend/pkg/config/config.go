@@ -483,9 +483,8 @@ type SessionManagerConfig struct {
 	// ConnectionToken authenticates this manager to 親プロキシ's allocator endpoint.
 	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
 	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
-	// PublicURL is the URL 親プロキシ should use to route requests back to this manager.
-	// It is included in allocation completion results. Can also be set via
-	// SESSION_MANAGER_PUBLIC_URL.
+	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
+	// to this manager when the outbound control lease is unavailable.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
 }
 

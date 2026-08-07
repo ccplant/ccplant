@@ -75,7 +75,7 @@ func init() {
 	install := &cobra.Command{Use: "install", Short: "Register and install the native ESM daemon", RunE: runNativeInstall}
 	f := install.Flags()
 	f.StringVar(&nativeManageOpts.upstream, "upstream", "", "parent agentapi-proxy URL")
-	f.StringVar(&nativeManageOpts.publicURL, "public-url", "", "parent-reachable URL for this host")
+	f.StringVar(&nativeManageOpts.publicURL, "public-url", "", "optional legacy URL reachable from the parent proxy")
 	f.StringVar(&nativeManageOpts.name, "name", "", "human-readable manager name")
 	f.StringVar(&nativeManageOpts.listen, "listen", ":8080", "native ESM listen address")
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
@@ -137,8 +137,8 @@ func validateNativeInstanceName(name string) error {
 }
 
 func runNativeInstall(command *cobra.Command, _ []string) error {
-	if nativeManageOpts.upstream == "" || nativeManageOpts.publicURL == "" {
-		return errors.New("--upstream and --public-url are required")
+	if nativeManageOpts.upstream == "" {
+		return errors.New("--upstream is required")
 	}
 	if nativeManageOpts.filesystemSandbox && runtime.GOOS != "darwin" {
 		return errors.New("--filesystem-sandbox is only supported on macOS")

@@ -66,7 +66,7 @@ func init() {
 	f.StringVar(&nativeSessionManagerOptions.upstreamURL, "upstream-url", "", "parent agentapi-proxy URL")
 	f.StringVar(&nativeSessionManagerOptions.connectionToken, "connection-token", "", "ESM connection/HMAC token")
 	f.StringVar(&nativeSessionManagerOptions.upstreamAuthToken, "upstream-auth-token", "", "optional parent proxy authentication token")
-	f.StringVar(&nativeSessionManagerOptions.publicURL, "public-url", "", "URL used by the parent proxy to route sessions")
+	f.StringVar(&nativeSessionManagerOptions.publicURL, "public-url", "", "optional legacy URL used by the parent proxy")
 	f.StringVar(&nativeSessionManagerOptions.stateDir, "state-dir", "./native-sessions", "native session state directory")
 	f.StringVar(&nativeSessionManagerOptions.binaryPath, "binary", "", "agentapi-proxy binary used for provisioners")
 	f.StringVar(&nativeSessionManagerOptions.managerID, "manager-id", "", "registered external session manager ID")
@@ -109,8 +109,8 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 			o.filesystemSandbox = cfg.FilesystemSandbox.Enabled
 		}
 	}
-	if o.upstreamURL == "" || o.connectionToken == "" || o.publicURL == "" {
-		return fmt.Errorf("--upstream-url, --connection-token and --public-url are required")
+	if o.upstreamURL == "" || o.connectionToken == "" {
+		return fmt.Errorf("--upstream-url and --connection-token are required")
 	}
 	manager, err := services.NewNativeSessionManager(o.stateDir, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.binaryPath, o.filesystemSandbox)
 	if err != nil {
@@ -135,6 +135,9 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	defer cancel()
 	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuth(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.publicURL)
 	go worker.Start(ctx)
+	localURL := "http://127.0.0.1" + o.listen
+	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
+	go controlWorker.Start(ctx)
 	if o.managerID != "" {
 		go runNativeHeartbeat(ctx, o.upstreamURL, o.managerID, o.connectionToken, o.publicURL, manager)
 	}

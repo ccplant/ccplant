@@ -23,6 +23,7 @@ const (
 type routeJSON struct {
 	SessionID       string            `json:"session_id"`
 	RemoteSessionID string            `json:"remote_session_id"`
+	ManagerID       string            `json:"manager_id,omitempty"`
 	ProxyURL        string            `json:"proxy_url"`
 	HMACSecret      string            `json:"hmac_secret"`
 	UserID          string            `json:"user_id,omitempty"`
@@ -57,6 +58,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 	data, err := json.Marshal(&routeJSON{
 		SessionID:       route.SessionID,
 		RemoteSessionID: route.RemoteSessionID,
+		ManagerID:       route.ManagerID,
 		ProxyURL:        route.ProxyURL,
 		HMACSecret:      route.HMACSecret,
 		UserID:          route.UserID,
@@ -121,6 +123,7 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 	return &portrepos.SessionRoute{
 		SessionID:       rj.SessionID,
 		RemoteSessionID: rj.RemoteSessionID,
+		ManagerID:       rj.ManagerID,
 		ProxyURL:        rj.ProxyURL,
 		HMACSecret:      rj.HMACSecret,
 		UserID:          rj.UserID,
@@ -158,6 +161,7 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 		routes = append(routes, &portrepos.SessionRoute{
 			SessionID:       rj.SessionID,
 			RemoteSessionID: rj.RemoteSessionID,
+			ManagerID:       rj.ManagerID,
 			ProxyURL:        rj.ProxyURL,
 			HMACSecret:      rj.HMACSecret,
 			UserID:          rj.UserID,

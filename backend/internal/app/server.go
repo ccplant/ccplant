@@ -21,11 +21,13 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
+	"github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	corerepo "github.com/takutakahashi/agentapi-proxy/internal/core/repository"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	infraesmcontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
@@ -73,6 +75,8 @@ type Server struct {
 	assetStore          services.AssetStore                             // Static asset storage backend
 	sessionStateStore   services.SessionStateStore
 	sessionControlStore sessioncontrol.Store
+	esmControlStore     esmcontrol.Store
+	esmControlTunnel    *infraesmcontrol.Tunnel
 	router              *Router // Router for custom handler registration
 }
 
@@ -376,10 +380,18 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 
 	var sessionControlStore sessioncontrol.Store
+	var esmControlStore esmcontrol.Store
+	var esmControlTunnel *infraesmcontrol.Tunnel
 	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
 		sessionControlStore = buildSessionControlStore(cfg)
 		if sessionControlStore != nil {
 			k8sSessionManager.SetSessionControlStore(sessionControlStore)
+		}
+		if sessionControlStore != nil {
+			esmControlStore = buildESMControlStore(cfg)
+			if esmControlStore != nil {
+				esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
+			}
 		}
 	}
 
@@ -408,6 +420,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		assetStore:          assetStore,
 		sessionStateStore:   sessionStateStore,
 		sessionControlStore: sessionControlStore,
+		esmControlStore:     esmControlStore,
+		esmControlTunnel:    esmControlTunnel,
 	}
 
 	// Add logging middleware if verbose
@@ -610,6 +624,32 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 	}
 	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
 	return infrasessioncontrol.NewRedisStore(client)
+}
+
+func buildESMControlStore(cfg *config.Config) esmcontrol.Store {
+	if cfg.Redis.Addr == "" {
+		return nil
+	}
+	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if cfg.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("[ESM_CONTROL] Disabled: Redis ping failed: %v", err)
+		_ = client.Close()
+		return nil
+	}
+	log.Printf("[ESM_CONTROL] Outbound manager tunnel enabled")
+	return infraesmcontrol.NewRedisStore(client)
 }
 
 func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Interface) (kvstore.Store, bool, error) {
@@ -1124,6 +1164,7 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		}
 		route := &portrepos.SessionRoute{
 			SessionID:      sessionID,
+			ManagerID:      esm.ID,
 			HMACSecret:     esm.HMACSecret,
 			UserID:         userID,
 			Scope:          string(startReq.Scope),

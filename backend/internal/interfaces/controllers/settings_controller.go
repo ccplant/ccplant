@@ -29,6 +29,11 @@ type SettingsController struct {
 	gitSyncKMSKeyARN string                // optional; non-empty when GitHub sync encryption is configured
 	gitSyncAWSRegion string
 	esmMu            sync.Mutex
+	esmControlTunnel ESMControlTunnel
+}
+
+func (c *SettingsController) SetESMControlTunnel(tunnel ESMControlTunnel) {
+	c.esmControlTunnel = tunnel
 }
 
 // NewSettingsController creates new settings controller
