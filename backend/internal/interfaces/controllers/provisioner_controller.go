@@ -336,7 +336,7 @@ func allocationMetadata(req *sessionallocation.AllocationRequest) *sessionalloca
 }
 
 func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Context) error {
-	_, managerSecret, ok := pc.authorizedExternalManager(c)
+	managerID, managerSecret, ok := pc.authorizedExternalManager(c)
 	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
@@ -370,8 +370,10 @@ func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Contex
 				SessionID:  allocation.SessionID,
 				StartedAt:  time.Now(),
 				HMACSecret: managerSecret,
+				ManagerID:  managerID,
 			}
 		}
+		route.ManagerID = managerID
 		route.RemoteSessionID = result.AllocatedSessionID
 		route.ProxyURL = result.ProxyURL
 		if route.HMACSecret == "" {

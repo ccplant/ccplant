@@ -306,7 +306,8 @@ func (c *SettingsController) HeartbeatExternalSessionManager(ctx echo.Context) e
 					managers[i].Version = req.Version
 				}
 				managers[i].ActiveSessions = req.ActiveSessions
-				if managers[i].PublicURL != "" {
+				outboundConnected := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), managers[i].ID)
+				if managers[i].PublicURL != "" && !outboundConnected {
 					probeCtx, cancel := context.WithTimeout(ctx.Request().Context(), 3*time.Second)
 					probeReq, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, strings.TrimRight(managers[i].PublicURL, "/")+"/healthz", nil)
 					probeResp, probeErr := http.DefaultClient.Do(probeReq)
@@ -323,7 +324,11 @@ func (c *SettingsController) HeartbeatExternalSessionManager(ctx echo.Context) e
 				if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 					return echo.NewHTTPError(http.StatusInternalServerError, "failed to save heartbeat")
 				}
-				return ctx.JSON(http.StatusOK, map[string]interface{}{"status": "ok", "manager_id": managers[i].ID, "server_time": managers[i].LastHeartbeatAt})
+				transport := "public_url"
+				if outboundConnected {
+					transport = "outbound_control"
+				}
+				return ctx.JSON(http.StatusOK, map[string]interface{}{"status": "ok", "manager_id": managers[i].ID, "server_time": managers[i].LastHeartbeatAt, "transport": transport})
 			}
 		}
 	}

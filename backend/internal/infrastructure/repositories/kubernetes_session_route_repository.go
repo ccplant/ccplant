@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
@@ -23,6 +24,7 @@ const (
 type routeJSON struct {
 	SessionID       string            `json:"session_id"`
 	RemoteSessionID string            `json:"remote_session_id"`
+	ManagerID       string            `json:"manager_id,omitempty"`
 	ProxyURL        string            `json:"proxy_url"`
 	HMACSecret      string            `json:"hmac_secret"`
 	UserID          string            `json:"user_id,omitempty"`
@@ -57,6 +59,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 	data, err := json.Marshal(&routeJSON{
 		SessionID:       route.SessionID,
 		RemoteSessionID: route.RemoteSessionID,
+		ManagerID:       route.ManagerID,
 		ProxyURL:        route.ProxyURL,
 		HMACSecret:      route.HMACSecret,
 		UserID:          route.UserID,
@@ -87,7 +90,16 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				current, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+				if getErr != nil {
+					return getErr
+				}
+				updated := secret.DeepCopy()
+				updated.ResourceVersion = current.ResourceVersion
+				_, updateErr := r.client.CoreV1().Secrets(r.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+				return updateErr
+			})
 			if err != nil {
 				return fmt.Errorf("failed to update session route secret: %w", err)
 			}
@@ -121,6 +133,7 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 	return &portrepos.SessionRoute{
 		SessionID:       rj.SessionID,
 		RemoteSessionID: rj.RemoteSessionID,
+		ManagerID:       rj.ManagerID,
 		ProxyURL:        rj.ProxyURL,
 		HMACSecret:      rj.HMACSecret,
 		UserID:          rj.UserID,
@@ -158,6 +171,7 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 		routes = append(routes, &portrepos.SessionRoute{
 			SessionID:       rj.SessionID,
 			RemoteSessionID: rj.RemoteSessionID,
+			ManagerID:       rj.ManagerID,
 			ProxyURL:        rj.ProxyURL,
 			HMACSecret:      rj.HMACSecret,
 			UserID:          rj.UserID,

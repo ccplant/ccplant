@@ -6,7 +6,6 @@ export interface NativeStatus {
   service: string;
   manager_id: string;
   upstream: string;
-  public_url: string;
   labels: Record<string, string>;
   version: string;
   filesystem_sandbox: boolean;
@@ -20,7 +19,6 @@ export interface NativeInstance {
   service: string;
   manager_id: string;
   upstream: string;
-  public_url: string;
   state: string;
   config: string;
   running: boolean;
@@ -67,8 +65,6 @@ export interface CommandCheck {
 export interface InstallRequest {
   instance: string;
   upstream: string;
-  publicAccess: "tailscale" | "lan" | "custom";
-  publicUrl: string;
   listen: string;
   name: string;
   registrationToken: string;

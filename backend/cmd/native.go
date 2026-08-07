@@ -42,7 +42,7 @@ var NativeCmd = &cobra.Command{
 }
 
 type nativeManageOptions struct {
-	upstream, publicURL, name, listen, apiKeyEnv, apiKeyFile, configPath, instance           string
+	upstream, name, listen, apiKeyEnv, apiKeyFile, configPath, instance                      string
 	scope, teamID, drainTimeout, registrationToken                                           string
 	labels                                                                                   []string
 	environment                                                                              []string
@@ -75,7 +75,6 @@ func init() {
 	install := &cobra.Command{Use: "install", Short: "Register and install the native ESM daemon", RunE: runNativeInstall}
 	f := install.Flags()
 	f.StringVar(&nativeManageOpts.upstream, "upstream", "", "parent agentapi-proxy URL")
-	f.StringVar(&nativeManageOpts.publicURL, "public-url", "", "parent-reachable URL for this host")
 	f.StringVar(&nativeManageOpts.name, "name", "", "human-readable manager name")
 	f.StringVar(&nativeManageOpts.listen, "listen", ":8080", "native ESM listen address")
 	f.StringVar(&nativeManageOpts.scope, "scope", "user", "registration scope: user or team")
@@ -137,8 +136,8 @@ func validateNativeInstanceName(name string) error {
 }
 
 func runNativeInstall(command *cobra.Command, _ []string) error {
-	if nativeManageOpts.upstream == "" || nativeManageOpts.publicURL == "" {
-		return errors.New("--upstream and --public-url are required")
+	if nativeManageOpts.upstream == "" {
+		return errors.New("--upstream is required")
 	}
 	if nativeManageOpts.filesystemSandbox && runtime.GOOS != "darwin" {
 		return errors.New("--filesystem-sandbox is only supported on macOS")
@@ -198,7 +197,7 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 	}
 	payload := map[string]interface{}{
 		"instance_id": instanceID, "name": nativeManageOpts.name,
-		"labels": labels, "default": nativeManageOpts.defaultManager, "public_url": nativeManageOpts.publicURL,
+		"labels": labels, "default": nativeManageOpts.defaultManager,
 		"version": nativeBuildVersion(), "registration_token": nativeManageOpts.registrationToken,
 	}
 	registration, err := enrollNativeManager(nativeManageOpts.upstream, payload)
@@ -213,7 +212,7 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 		return errors.New("registration did not return a connection token; run native rotate-token")
 	}
 	cfg := nativeDaemonConfig{Listen: nativeManageOpts.listen, UpstreamURL: strings.TrimRight(nativeManageOpts.upstream, "/"),
-		ConnectionToken: token, PublicURL: strings.TrimRight(nativeManageOpts.publicURL, "/"), StateDir: paths.state,
+		ConnectionToken: token, StateDir: paths.state,
 		BinaryPath: paths.binary, ManagerID: registration.ID, InstanceID: instanceID, Scope: nativeManageOpts.scope, TeamID: nativeManageOpts.teamID,
 		Labels: labels, ManagerEnvironment: environment, Version: nativeBuildVersion(),
 		FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox}}
@@ -419,7 +418,6 @@ type nativeStatusOutput struct {
 	Service           string            `json:"service"`
 	ManagerID         string            `json:"manager_id"`
 	Upstream          string            `json:"upstream"`
-	PublicURL         string            `json:"public_url"`
 	Labels            map[string]string `json:"labels"`
 	Version           string            `json:"version"`
 	FilesystemSandbox bool              `json:"filesystem_sandbox"`
@@ -451,12 +449,12 @@ func runNativeStatus(command *cobra.Command, _ []string) error {
 	}
 	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
 	status := nativeStatusOutput{Instance: instance, Service: service, ManagerID: cfg.ManagerID, Upstream: cfg.UpstreamURL,
-		PublicURL: cfg.PublicURL, Labels: cfg.Labels, Version: cfg.Version, FilesystemSandbox: cfg.FilesystemSandbox.Enabled,
+		Labels: cfg.Labels, Version: cfg.Version, FilesystemSandbox: cfg.FilesystemSandbox.Enabled,
 		ActiveSessions: len(active), Health: health, State: cfg.StateDir}
 	if nativeManageOpts.jsonOutput {
 		return json.NewEncoder(command.OutOrStdout()).Encode(status)
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager ID: %s\nUpstream: %s\nPublic URL: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, cfg.ManagerID, cfg.UpstreamURL, cfg.PublicURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager ID: %s\nUpstream: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, cfg.ManagerID, cfg.UpstreamURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
 	return err
 }
 
@@ -921,7 +919,7 @@ func enrollNativeManager(upstream string, payload interface{}) (*nativeRegistrat
 }
 
 func sendNativeHeartbeat(cfg nativeDaemonConfig) error {
-	body, _ := json.Marshal(map[string]interface{}{"public_url": cfg.PublicURL, "version": nativeBuildVersion()})
+	body, _ := json.Marshal(map[string]interface{}{"version": nativeBuildVersion()})
 	req, _ := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.UpstreamURL, "/")+"/external-session-managers/"+cfg.ManagerID+"/heartbeat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+cfg.ConnectionToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -1210,7 +1208,6 @@ type nativeInstanceListEntry struct {
 	Service    string `json:"service"`
 	ManagerID  string `json:"manager_id"`
 	Upstream   string `json:"upstream"`
-	PublicURL  string `json:"public_url"`
 	State      string `json:"state"`
 	BinaryPath string `json:"binary_path,omitempty"`
 	Config     string `json:"config"`
@@ -1274,7 +1271,7 @@ func discoverNativeInstances(defaultConfig, pattern string) []nativeInstanceList
 		}
 		entries = append(entries, nativeInstanceListEntry{
 			Instance: name, Service: nativeServiceName(name), ManagerID: cfg.ManagerID,
-			Upstream: cfg.UpstreamURL, PublicURL: cfg.PublicURL, State: cfg.StateDir,
+			Upstream: cfg.UpstreamURL, State: cfg.StateDir,
 			BinaryPath: cfg.BinaryPath, Config: configPath, Running: nativeServiceRunning(name),
 		})
 	}

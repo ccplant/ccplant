@@ -47,6 +47,7 @@ type HandlerRegistry struct {
 	sessionProfileController   *controllers.SessionProfileController
 	provisionerController      *controllers.ProvisionerController
 	sessionControlController   *controllers.SessionControlController
+	esmControlController       *controllers.ESMControlController
 	customHandlers             []CustomHandler
 }
 
@@ -65,6 +66,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		gitSyncAWSRegion = cfg.GitSync.Encryption.AWSRegion
 	}
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc, gitSyncKMSKeyARN, gitSyncAWSRegion)
+	settingsController.SetESMControlTunnel(server.esmControlTunnel)
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
@@ -110,6 +112,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSessionRouteRepository(server.GetSessionRouteRepository()),
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
+		controllers.WithESMControlTunnel(server.esmControlTunnel),
 	)
 
 	// Create share controller if share repository is available
@@ -221,15 +224,20 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	var provisionerController *controllers.ProvisionerController
 	var sessionControlController *controllers.SessionControlController
+	var esmControlController *controllers.ESMControlController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
 		if server.sessionControlStore != nil {
 			sessionControlController = controllers.NewSessionControlController(server.sessionControlStore, k8sManager)
 		}
+		if server.esmControlStore != nil {
+			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController)
+		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 
 	acpController := controllers.NewACPController(server, server, server.GetSessionRouteRepository())
+	acpController.SetESMControlTunnel(server.esmControlTunnel)
 
 	return &Router{
 		echo:   e,
@@ -257,6 +265,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionProfileController:   sessionProfileController,
 			provisionerController:      provisionerController,
 			sessionControlController:   sessionControlController,
+			esmControlController:       esmControlController,
 			customHandlers:             make([]CustomHandler, 0),
 		},
 	}
@@ -367,6 +376,13 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/sessions/:sessionId/control/events/wait", r.handlers.sessionControlController.WaitEvents,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		log.Printf("[ROUTES] Internal session control long-poll endpoints registered")
+	}
+	if r.handlers.esmControlController != nil {
+		r.echo.GET("/internal/external-session-manager/control/commands", r.handlers.esmControlController.WaitCommands)
+		r.echo.POST("/internal/external-session-manager/control/frames", r.handlers.esmControlController.AppendFrames)
+		r.echo.GET("/internal/external-session-managers/:managerId/control/commands", r.handlers.esmControlController.WaitCommands)
+		r.echo.POST("/internal/external-session-managers/:managerId/control/frames", r.handlers.esmControlController.AppendFrames)
+		log.Printf("[ROUTES] Internal outbound ESM control endpoints registered")
 	}
 
 	// Session sharing routes

@@ -840,7 +840,11 @@ func startSessionManagerAllocator(ctx context.Context, configData *config.Config
 
 	worker := sessionmanager.NewAllocatorWorker(sessionManager, upstreamURL, token, configData.SessionManager.PublicURL)
 	go worker.Start(ctx)
+	instanceID, _ := os.Hostname()
+	controlWorker := sessionmanager.NewControlWorker(upstreamURL, token, "", "", instanceID, configData.SessionManager.HMACSecret)
+	go controlWorker.Start(ctx)
 	log.Printf("[SESSION_MANAGER_ALLOCATOR] Started outbound allocator polling upstream: %s", upstreamURL)
+	log.Printf("[ESM_CONTROL] Started outbound session control polling upstream: %s", upstreamURL)
 }
 
 // registerGitHubSyncHandlers registers GitHub bidirectional sync REST API handlers.

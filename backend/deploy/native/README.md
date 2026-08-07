@@ -9,7 +9,6 @@ Use the management command to register the machine with the parent proxy, instal
 ```bash
 sudo agentapi-proxy native install \
   --upstream https://cc-api.example.com \
-  --public-url http://10.0.0.10:8080 \
   --name native-builder-01 \
   --registration-token '<one-time-token>' \
   --label pool=native \
@@ -31,8 +30,8 @@ agentapi-proxy native uninstall
 
 Linux stores non-secret configuration in `/etc/agentapi-native/config.json`, the connection token in `/etc/agentapi-native/credentials.json`, state in `/var/lib/agentapi-native`, and the managed executable in `/usr/local/libexec/agentapi-proxy/`. macOS uses `~/Library/Application Support/agentapi-native/` and `~/Library/LaunchAgents/com.agentapi.native.plist`.
 
-The daemon needs a parent proxy URL, its enrolled connection token, a
-parent-reachable public URL, and a private state directory. Labels such as
+The daemon needs a parent proxy URL, its enrolled connection token, and a
+private state directory. Labels such as
 `os`, `arch`, and `pool` are submitted during enrollment. A session tag such
 as `allocator.os=linux` is matched against those labels.
 

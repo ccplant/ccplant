@@ -13,6 +13,7 @@ import (
 type SessionRoute struct {
 	SessionID       string // 親プロキシ's session ID (user-facing)
 	RemoteSessionID string // External Session Manager's session ID
+	ManagerID       string // External Session Manager registration ID
 	ProxyURL        string // Base URL of External Session Manager (e.g. "http://esm:8080")
 	HMACSecret      string // HMAC secret for authenticating requests to External Session Manager
 	// Metadata for session listing

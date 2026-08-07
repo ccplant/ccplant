@@ -9,6 +9,10 @@ requests. 親プロキシ does not need to send session creation requests to the
 This is useful for development and for environments where the ESM should
 register itself by token.
 
+Current ESMs also keep an outbound control poll open. Normal session HTTP and SSE
+traffic is carried as short-lived Redis-backed RPC commands fetched over that poll;
+the ESM posts response frames back to 親プロキシ. The ESM never connects to Redis.
+
 ## Data Flow
 
 ```text
@@ -16,14 +20,15 @@ user -> 親プロキシ /start
         親プロキシ queues an allocation for manager_id
         ESM polls 親プロキシ with SESSION_MANAGER_CONNECTION_TOKEN
         ESM creates/adopts a local session
-        ESM reports remote_session_id and SESSION_MANAGER_PUBLIC_URL
+        ESM reports remote_session_id
 user -> 親プロキシ /:sessionId/*
-        親プロキシ HMAC-signs and forwards traffic to the ESM
+        親プロキシ queues an authenticated manager-scoped RPC
+        ESM polls, dispatches it locally, and posts response/SSE frames
 ```
 
-親プロキシ still needs a routable URL for the ESM after allocation, because normal
-session traffic such as `/status`, messages, and delete is proxied to the
-remote session. That URL is `SESSION_MANAGER_PUBLIC_URL`.
+`SESSION_MANAGER_PUBLIC_URL` is optional. It is retained only as a compatibility
+fallback for older managers that do not maintain an outbound control lease. A current
+ESM can run behind NAT or a firewall without accepting traffic from 親プロキシ.
 
 ## 親プロキシ: Register the Manager
 
@@ -57,8 +62,7 @@ export SESSION_MANAGER_ENABLED=true
 export SESSION_MANAGER_UPSTREAM_URL="https://parent-proxy.example.com"
 export SESSION_MANAGER_CONNECTION_TOKEN="<generated-token>"
 export SESSION_MANAGER_HMAC_SECRET="<generated-token>"
-export SESSION_MANAGER_PUBLIC_URL="https://esm.example.com"
-export AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL="https://esm.example.com"
+export AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL="http://control.<esm-namespace>.svc.cluster.local:8080"
 ```
 
 Important details:
@@ -67,8 +71,8 @@ Important details:
   allocator endpoint.
 - `SESSION_MANAGER_HMAC_SECRET` must match the manager token stored in 親プロキシ.
   親プロキシ uses that same secret to sign proxied requests to the ESM.
-- `SESSION_MANAGER_PUBLIC_URL` is the URL 親プロキシ stores in the session route
-  after allocation. It must be reachable from 親プロキシ.
+- `SESSION_MANAGER_PUBLIC_URL` is optional and only enables fallback for older
+  parent/manager combinations.
 - `AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL` should point at the ESM so
   provisioned session pods call back to the correct manager.
 
@@ -150,8 +154,6 @@ In dev, the working configuration was:
 - Manager ID: `dev-esm-allocator`
 - 親プロキシ URL for ESM polling:
   `http://agentapi-proxy.agentapi-ui-dev.svc.cluster.local:8080`
-- ESM public URL for routes:
-  `http://agentapi-proxy-esm-dev.agentapi-ui-dev.svc.cluster.local:8080`
 - Connection token stored in Secret:
   `agentapi-proxy-esm-dev-token`, key `connection_token`
 - The same token used as `SESSION_MANAGER_CONNECTION_TOKEN` and
@@ -167,25 +169,20 @@ Before registering, prepare:
 
 - A one-time registration token issued by the parent proxy.
 - An upstream URL for the parent proxy.
-- A public URL through which the parent proxy can reach the native manager.
-  The parent must be able to request `<public-url>/healthz` and proxy session
-traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
-  when the native machine is not directly reachable from the cluster.
 
-The CLI requires `--public-url`; it does not guess which host network is
-reachable from the parent. The macOS app can construct this explicit value from
-either the Tailscale IPv4 address or the LAN route to the parent. Use a custom
-URL for DNS, TLS, reverse proxies, NAT, or port mappings.
+The native manager opens an authenticated outbound control poll. It does not
+need a parent-reachable address, VPN route, reverse proxy, or inbound firewall
+rule.
 
 Multiple managers can run on one host. Give every additional manager a unique
-instance name, listen address, and public URL:
+instance name and listen address:
 
 ```bash
 agentapi-proxy native install --instance build-a --listen :8081 \
-  --upstream "$PARENT_PROXY_URL" --public-url "https://native.example.com:8081" \
+  --upstream "$PARENT_PROXY_URL" \
   --name build-a --registration-token "<registration-token>"
 agentapi-proxy native install --instance build-b --listen :8082 \
-  --upstream "$PARENT_PROXY_URL" --public-url "https://native.example.com:8082" \
+  --upstream "$PARENT_PROXY_URL" \
   --name build-b --registration-token "<registration-token>"
 
 agentapi-proxy native list
@@ -204,7 +201,6 @@ For a user-scoped macOS manager with the filesystem sandbox enabled:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --name "ios-builder" \
   --registration-token "<registration-token>" \
   --label purpose=ios \
@@ -224,7 +220,6 @@ NATIVE_BIN="$HOME/Library/Application Support/agentapi-native/bin"
 
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --manager-env "PATH=$NODE_BIN:$NATIVE_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 ```
 
@@ -237,7 +232,6 @@ manager. To register it for a team instead of the current user:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --name "team-ios-builder" \
   --scope team \
   --team-id "my-org/ios-team" \
@@ -256,7 +250,6 @@ curl -X POST "$PARENT_PROXY_URL/external-session-managers/registration-tokens" \
 
 agentapi-proxy native install \
   --upstream "$PARENT_PROXY_URL" \
-  --public-url "https://native-mac.example.com" \
   --registration-token "<registration_token>"
 ```
 
@@ -275,9 +268,26 @@ native install --registration-token ...
   -> POST /external-session-managers/enroll
   -> receive manager ID and connection token (returned once)
   -> install and start the native host service
-  -> POST the manager heartbeat
-  -> parent proxy verifies <public-url>/healthz
+  -> GET the outbound allocation and control long polls
+  -> POST the manager heartbeat and response frames
 ```
+
+## Outbound control authentication
+
+The allocation poll, control poll, response frames, and heartbeat all use the
+manager-specific connection token. 親プロキシ resolves the token to exactly one
+manager ID and rejects cross-manager access. Each RPC request is additionally bound
+to that manager in Redis; response frames from another manager are rejected.
+
+The control lease expires after 75 seconds. While it is live, 親プロキシ never probes
+or connects to `public_url`. If the lease is absent, routes with a legacy public URL
+fall back to direct HMAC-signed HTTP; routes without one return 503 until the manager
+reconnects.
+
+Commands and response frames expire from Redis after five minutes. User
+Authorization, API-key, cookie, and manager-token headers are removed before a
+command is stored. Redis remains an ephemeral relay and is accessed only by the
+parent backend.
 
 On macOS, configuration and credentials are stored under:
 
@@ -297,7 +307,7 @@ agentapi-proxy native status
 agentapi-proxy native doctor
 ```
 
-`native status` reports the manager ID, upstream and public URLs, active
+`native status` reports the manager ID, upstream URL, active
 sessions, and whether the filesystem sandbox is enabled. `native doctor`
 checks local configuration permissions, service health, and the parent
 heartbeat.
@@ -345,7 +355,6 @@ it when installing the manager:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --filesystem-sandbox
 ```
 

@@ -18,7 +18,6 @@ export function StatusCard({ status }: Props) {
         <Field label="Manager ID" value={status.manager_id || "—"} mono />
         <Field label="Version" value={status.version || "—"} mono />
         <Field label="Upstream" value={status.upstream || "—"} mono />
-        <Field label="Public URL" value={status.public_url || "—"} mono />
         <Field label="State dir" value={status.state || "—"} mono />
         <Field
           label="Filesystem sandbox"
