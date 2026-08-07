@@ -157,6 +157,7 @@ jobs:
 
   images:
     needs: metadata
+    timeout-minutes: 15
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -179,10 +180,18 @@ jobs:
           - component: frontend
             image: ccplant/ccplant-frontend
             platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            # Next.js compilation is architecture-independent and has
+            # occasionally stalled on the hosted arm64 runner. Build it on the
+            # amd64 runner and emulate only the small arm64 runtime stage.
+            runner: ubuntu-24.04
             arch: arm64
+            qemu: true
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.qemu == true
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -196,7 +205,9 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-from: |
+            type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+            type=gha,scope=${{ matrix.component }}-amd64
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
       - name: Export digest
         env:

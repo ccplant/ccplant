@@ -1,15 +1,13 @@
-# Use the official Bun image as base
-FROM oven/bun:1.3.5-alpine AS base
+# Build Next.js on the build host architecture. The generated standalone output
+# is architecture-independent, so cross-platform images only need an
+# architecture-specific Bun runtime in the final stage.
+FROM --platform=$BUILDPLATFORM oven/bun:1.3.5-alpine AS base
 
 # Set working directory
 WORKDIR /app
 
 # Copy package files
 COPY package.json bun.lockb* ./
-
-# Install dependencies
-FROM base AS deps
-RUN bun install --frozen-lockfile --production
 
 # Build stage
 FROM base AS builder
