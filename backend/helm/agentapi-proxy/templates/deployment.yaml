@@ -515,6 +515,8 @@ spec:
               value: {{ .Values.kubernetesSession.basePort | quote }}
             - name: SESSION_CONTROL_LONG_POLL_ENABLED
               value: {{ dig "enabled" false (.Values.sessionControl | default dict) | quote }}
+            - name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED
+              value: {{ dig "directRuntimeEnabled" false (.Values.sessionControl | default dict) | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
               value: {{ .Values.kubernetesSession.resources.requests.cpu | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_LIMIT

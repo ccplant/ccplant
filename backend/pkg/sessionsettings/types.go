@@ -193,6 +193,20 @@ type SessionSettings struct {
 	// was introduced.  The provisioner falls back to this field when Files is empty.
 	Credentials       string   `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 	UnsyncedFilePaths []string `yaml:"unsynced_file_paths,omitempty" json:"unsynced_file_paths,omitempty"`
+	// ParentRuntime configures the Session Pod's outbound reverse-RPC connection
+	// to the parent proxy. It is populated only for externally allocated sessions.
+	ParentRuntime *ParentRuntimeConfig `yaml:"parent_runtime,omitempty" json:"parent_runtime,omitempty"`
+}
+
+// ParentRuntimeConfig is the per-session bootstrap material used by the
+// provisioner to connect directly to the parent proxy after local provisioning.
+type ParentRuntimeConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	Endpoint   string `yaml:"endpoint" json:"endpoint"`
+	SessionID  string `yaml:"session_id" json:"session_id"`
+	ManagerID  string `yaml:"manager_id" json:"manager_id"`
+	Token      string `yaml:"token" json:"token"`
+	Generation int64  `yaml:"generation" json:"generation"`
 }
 
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.

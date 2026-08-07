@@ -28,6 +28,14 @@ type AllocationRequest struct {
 	AllocatedSessionID string                           `json:"allocated_session_id,omitempty"`
 	Requirements       Requirements                     `json:"requirements"`
 	UpdatedAt          time.Time                        `json:"updated_at"`
+	Runtime            *RuntimeBootstrap                `json:"runtime,omitempty"`
+}
+
+// RuntimeBootstrap carries the one-generation credential an allocated Session
+// Pod uses to establish a direct outbound runtime channel to the parent proxy.
+type RuntimeBootstrap struct {
+	Token      string `json:"token"`
+	Generation int64  `json:"generation"`
 }
 
 type AllocationResult struct {

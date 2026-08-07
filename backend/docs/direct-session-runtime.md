@@ -2,8 +2,11 @@
 
 ## Status
 
-Proposed design. This document defines the target architecture and migration plan; it does not
-change the current API behavior by itself.
+The direct request/frame data path, per-generation authentication, ESM allocation bootstrap, and
+stock/non-stock Pod worker are implemented behind
+`AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED=true`. The typed lifecycle operation queue and explicit
+event/snapshot endpoints remain later migration phases; delete and resume therefore continue to
+use the ESM control tunnel for now.
 
 ## Summary
 
@@ -135,7 +138,9 @@ but public routing must work through generic request/response frames.
 
 ### Endpoints
 
-All endpoints are on the parent proxy and use the per-session runtime bearer token.
+All endpoints are on the parent proxy and use the per-session runtime bearer token. The first two
+are implemented in the initial data-path release; `events` and `snapshot` are planned for the
+state-reconciliation phase.
 
 ```text
 GET  /internal/session-runtime/{sessionId}/requests

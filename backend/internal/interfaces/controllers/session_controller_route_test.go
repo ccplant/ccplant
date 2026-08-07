@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +29,25 @@ func (m *ensuringSessionManager) EnsureSessionWorkload(_ context.Context, id str
 
 type routeSessionManagerProvider struct {
 	manager repositories.SessionManager
+}
+
+type directRuntimeTunnel struct {
+	managerID string
+	path      string
+}
+
+func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) bool {
+	return managerID == "public-id"
+}
+
+func (t *directRuntimeTunnel) Do(_ context.Context, managerID, _, _ string, req *http.Request) (*http.Response, error) {
+	t.managerID = managerID
+	t.path = req.URL.Path
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"status":"stable"}`)),
+	}, nil
 }
 
 func (p *routeSessionManagerProvider) GetSessionManager() repositories.SessionManager {
@@ -163,5 +183,29 @@ func TestRouteToSessionExternalRouteBypassesLocalEnsurer(t *testing.T) {
 	}
 	if len(manager.ensuredIDs) != 0 {
 		t.Fatalf("external route unexpectedly ensured local IDs %v", manager.ensuredIDs)
+	}
+}
+
+func TestRouteToSessionUsesDirectSessionRuntime(t *testing.T) {
+	manager := &ensuringSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}
+	tunnel := &directRuntimeTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager},
+		nil,
+		controllers.WithSessionRouteRepository(&fakeACPRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a", Transport: "direct_session_runtime",
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.managerID != "public-id" || tunnel.path != "/status" {
+		t.Fatalf("direct tunnel manager=%q path=%q", tunnel.managerID, tunnel.path)
 	}
 }

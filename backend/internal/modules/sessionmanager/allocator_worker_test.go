@@ -67,6 +67,29 @@ func TestAllocatorWorkerPointsOneshotDeletionAtUpstreamProxy(t *testing.T) {
 	}
 }
 
+func TestAllocatorWorkerInjectsDirectParentRuntime(t *testing.T) {
+	worker := newAllocatorWorkerWithClient(&fakeAllocatorSessionManager{}, &fakeExternalAllocatorClient{}, "https://parent.example", "")
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)}}
+	request := &entities.RunServerRequest{}
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "public-session", ManagerID: "manager-a", ProvisionSettings: settings, Request: request,
+		Runtime: &sessionallocation.RuntimeBootstrap{Token: "runtime-secret", Generation: 2},
+	})
+
+	if settings.ParentRuntime == nil {
+		t.Fatal("parent runtime was not injected into provision settings")
+	}
+	if got := settings.ParentRuntime.Endpoint; got != "https://parent.example" {
+		t.Fatalf("endpoint=%q", got)
+	}
+	if settings.ParentRuntime.SessionID != "public-session" || settings.ParentRuntime.ManagerID != "manager-a" || settings.ParentRuntime.Generation != 2 {
+		t.Fatalf("unexpected runtime config: %#v", settings.ParentRuntime)
+	}
+	if request.ParentRuntime != settings.ParentRuntime {
+		t.Fatal("request did not receive the same runtime bootstrap")
+	}
+}
+
 func TestAllocatorWorkerLeavesRegularSessionEndpointUnchanged(t *testing.T) {
 	worker := newAllocatorWorkerWithClient(&fakeAllocatorSessionManager{}, &fakeExternalAllocatorClient{}, "https://proxy.example", "https://esm.example")
 	settings := &sessionsettings.SessionSettings{

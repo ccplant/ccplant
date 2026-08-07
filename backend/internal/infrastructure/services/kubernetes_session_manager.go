@@ -1006,7 +1006,14 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	}
 
 	// Build session settings and create a provision request for the adopted pod.
-	sessionSettings := m.buildSessionSettings(ctx, session, req, webhookPayload)
+	// External allocations already carry fully-resolved settings, including the
+	// direct parent runtime bootstrap, and must not be re-resolved locally.
+	var sessionSettings *sessionsettings.SessionSettings
+	if req.ProvisionSettings != nil {
+		sessionSettings = req.ProvisionSettings
+	} else {
+		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
+	}
 	session.SetProvisionSettings(sessionSettings)
 	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
 		m.cleanupSession(stockID)
@@ -5848,6 +5855,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 		log.Printf("[K8S_SESSION] DinD enabled for session %s (registries: %d)", session.id, len(registries))
 	}
+	settings.ParentRuntime = req.ParentRuntime
 
 	return settings
 }

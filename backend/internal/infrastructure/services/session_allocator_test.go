@@ -95,7 +95,7 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 	settings := &sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{UserID: "test-user", Scope: string(entities.ScopeUser)},
 	}
-	if err := manager.SubmitExternalSessionAllocation(context.Background(), "manager-a", "test-session", settings, req); err != nil {
+	if err := manager.SubmitExternalSessionAllocation(context.Background(), "manager-a", "test-session", settings, req, nil); err != nil {
 		t.Fatalf("SubmitExternalSessionAllocation() error = %v", err)
 	}
 

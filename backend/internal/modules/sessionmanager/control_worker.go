@@ -87,7 +87,7 @@ func (w *ControlWorker) poll(ctx context.Context, cursor string) ([]core.Command
 	if err != nil {
 		return nil, cursor, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, cursor, nil
 	}
@@ -105,8 +105,8 @@ func (w *ControlWorker) poll(ctx context.Context, cursor string) ([]core.Command
 }
 
 func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
-	commandCtx := ctx
-	cancel := func() {}
+	var commandCtx context.Context
+	var cancel context.CancelFunc
 	if !command.Deadline.IsZero() {
 		commandCtx, cancel = context.WithDeadline(ctx, command.Deadline)
 	} else {
@@ -144,7 +144,7 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 		w.postExecutionError(ctx, command, err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	sequence := int64(0)
 	start := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, Sequence: sequence, Status: resp.StatusCode, Headers: map[string][]string(resp.Header.Clone()), CreatedAt: time.Now().UTC()}
