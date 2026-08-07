@@ -147,7 +147,9 @@ type UpdateSessionAnnotationsRequest struct {
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
 	Environment map[string]string `json:"environment,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
+	// ProfileEnvironment is resolved from SessionProfileID and is never accepted from the API.
+	ProfileEnvironment map[string]string `json:"-"`
+	Tags               map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters
 	Params *SessionParams `json:"params,omitempty"`
 	// Scope defines the ownership scope ("user" or "team"). Defaults to "user".
@@ -179,8 +181,10 @@ type RunServerRequest struct {
 	UserID     string
 	// TriggeredUserID identifies the external actor that caused a trigger-backed session.
 	// It is distinct from UserID, which remains the trigger configuration owner.
-	TriggeredUserID          string
-	Environment              map[string]string
+	TriggeredUserID string
+	Environment     map[string]string
+	// ProfileEnvironment is applied above team/user settings and below explicit Environment.
+	ProfileEnvironment       map[string]string
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo
 	InitialMessage           string

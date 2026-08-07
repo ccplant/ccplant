@@ -198,16 +198,13 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			cfg := profile.Config()
 			startReq.ProfileMCPServers = cfg.MCPServers()
 
-			// Environment: profile is base, request keys override
+			// Keep profile environment separate so it can override team/user
+			// settings without overriding explicit request keys.
 			if len(cfg.Environment()) > 0 {
-				merged := make(map[string]string, len(cfg.Environment()))
+				startReq.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
 				for k, v := range cfg.Environment() {
-					merged[k] = v
+					startReq.ProfileEnvironment[k] = v
 				}
-				for k, v := range startReq.Environment {
-					merged[k] = v
-				}
-				startReq.Environment = merged
 			}
 
 			// Tags: profile is base, request keys override

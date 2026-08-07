@@ -190,6 +190,32 @@ func TestLaunchPropagatesProfileMCPServers(t *testing.T) {
 	}
 }
 
+func TestLaunchKeepsProfileEnvironmentSeparateFromExplicitEnvironment(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "environment", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetEnvironment(map[string]string{"SHARED": "profile", "PROFILE_ONLY": "profile-value"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser,
+		Environment: map[string]string{"SHARED": "request"},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.ProfileEnvironment["SHARED"]; got != "profile" {
+		t.Fatalf("profile environment SHARED = %q, want profile", got)
+	}
+	if got := sessionManager.req.Environment["SHARED"]; got != "request" {
+		t.Fatalf("explicit environment SHARED = %q, want request", got)
+	}
+}
+
 func TestLaunchAppliesDefaultProfileSandbox(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "default", "user-1")
