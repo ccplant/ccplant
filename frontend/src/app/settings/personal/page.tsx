@@ -286,7 +286,6 @@ export default function PersonalSettingsPage() {
       'SESSION_MANAGER_UPSTREAM_URL=<parent-proxy-url>',
       `SESSION_MANAGER_CONNECTION_TOKEN=${token}`,
       `SESSION_MANAGER_HMAC_SECRET=${token}`,
-      'SESSION_MANAGER_PUBLIC_URL=<external-session-manager-url>',
       'AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL=<external-session-manager-url>',
       'agentapi-proxy server',
     ].join(' ')

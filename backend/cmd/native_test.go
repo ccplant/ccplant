@@ -116,12 +116,12 @@ func TestReadNativeSessionList(t *testing.T) {
 func TestNativeGUIJSONContracts(t *testing.T) {
 	statusJSON, err := json.Marshal(nativeStatusOutput{
 		Instance: "default", Service: "running", ManagerID: "manager-1", Upstream: "https://parent.example",
-		PublicURL: "https://mac.example", ActiveSessions: 2, Health: "ok",
+		ActiveSessions: 2, Health: "ok",
 	})
 	require.NoError(t, err)
 	require.JSONEq(t, `{
 		"instance":"default","service":"running","manager_id":"manager-1","upstream":"https://parent.example",
-		"public_url":"https://mac.example","labels":null,"version":"",
+		"labels":null,"version":"",
 		"filesystem_sandbox":false,"active_sessions":2,"health":"ok","state":""
 	}`, string(statusJSON))
 

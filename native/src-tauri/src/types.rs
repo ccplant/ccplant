@@ -10,7 +10,6 @@ pub struct NativeStatus {
     pub service: String,
     pub manager_id: String,
     pub upstream: String,
-    pub public_url: String,
     #[serde(default)]
     pub labels: std::collections::BTreeMap<String, String>,
     pub version: String,
@@ -32,7 +31,6 @@ pub struct NativeInstance {
     pub service: String,
     pub manager_id: String,
     pub upstream: String,
-    pub public_url: String,
     pub state: String,
     pub config: String,
     #[serde(default)]
@@ -107,9 +105,6 @@ pub struct InstallRequest {
     #[serde(default = "default_instance")]
     pub instance: String,
     pub upstream: String,
-    #[serde(default = "default_public_access")]
-    pub public_access: String,
-    pub public_url: String,
     pub listen: String,
     pub name: String,
     pub registration_token: String,
@@ -131,10 +126,6 @@ fn default_nodejs_version() -> String {
 
 fn default_github_cli_version() -> String {
     "latest".to_string()
-}
-
-fn default_public_access() -> String {
-    "tailscale".to_string()
 }
 
 #[derive(Debug, Deserialize)]

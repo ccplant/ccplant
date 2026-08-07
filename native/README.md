@@ -43,8 +43,8 @@ native/
 
 ## What it shows
 
-- **Service** card: service state, health, manager ID, version, upstream /
-  public URL, state directory, filesystem-sandbox flag, and labels.
+- **Service** card: service state, health, manager ID, version, upstream,
+  state directory, filesystem-sandbox flag, and labels.
 - **Active session count** in the header.
 - **Sessions** table: id, status, pid, start time, with an empty state.
 - **Logs** viewer: live tail for the session manager or each session's combined
@@ -67,15 +67,11 @@ Installation requires a short-lived one-time enrollment credential:
 ```bash
 agentapi-proxy native install \
   --upstream https://parent.example.com \
-  --public-url http://10.0.0.10:8080 \
   --registration-token '<one-time-token>'
 ```
 
-The app asks how the parent reaches the Mac: **Tailscale**, **LAN**, or a
-**Custom URL**. Tailscale and LAN combine the selected route's IPv4 address with
-the listen port; Custom URL supports TLS, reverse proxies, NAT, and port
-mappings. The app always passes the resolved URL explicitly because the CLI
-keeps `--public-url` required.
+The manager establishes an authenticated outbound control poll to the parent,
+so the Mac does not need a parent-reachable address or inbound firewall rule.
 
 ## Menu-bar tray
 

@@ -154,8 +154,6 @@ In dev, the working configuration was:
 - Manager ID: `dev-esm-allocator`
 - 親プロキシ URL for ESM polling:
   `http://agentapi-proxy.agentapi-ui-dev.svc.cluster.local:8080`
-- ESM public URL for routes:
-  `http://agentapi-proxy-esm-dev.agentapi-ui-dev.svc.cluster.local:8080`
 - Connection token stored in Secret:
   `agentapi-proxy-esm-dev-token`, key `connection_token`
 - The same token used as `SESSION_MANAGER_CONNECTION_TOKEN` and
@@ -171,25 +169,20 @@ Before registering, prepare:
 
 - A one-time registration token issued by the parent proxy.
 - An upstream URL for the parent proxy.
-- A public URL through which the parent proxy can reach the native manager.
-  The parent must be able to request `<public-url>/healthz` and proxy session
-traffic through the same URL. A VPN, Tailscale, or reverse tunnel can be used
-  when the native machine is not directly reachable from the cluster.
 
-The CLI requires `--public-url`; it does not guess which host network is
-reachable from the parent. The macOS app can construct this explicit value from
-either the Tailscale IPv4 address or the LAN route to the parent. Use a custom
-URL for DNS, TLS, reverse proxies, NAT, or port mappings.
+The native manager opens an authenticated outbound control poll. It does not
+need a parent-reachable address, VPN route, reverse proxy, or inbound firewall
+rule.
 
 Multiple managers can run on one host. Give every additional manager a unique
-instance name, listen address, and public URL:
+instance name and listen address:
 
 ```bash
 agentapi-proxy native install --instance build-a --listen :8081 \
-  --upstream "$PARENT_PROXY_URL" --public-url "https://native.example.com:8081" \
+  --upstream "$PARENT_PROXY_URL" \
   --name build-a --registration-token "<registration-token>"
 agentapi-proxy native install --instance build-b --listen :8082 \
-  --upstream "$PARENT_PROXY_URL" --public-url "https://native.example.com:8082" \
+  --upstream "$PARENT_PROXY_URL" \
   --name build-b --registration-token "<registration-token>"
 
 agentapi-proxy native list
@@ -208,7 +201,6 @@ For a user-scoped macOS manager with the filesystem sandbox enabled:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --name "ios-builder" \
   --registration-token "<registration-token>" \
   --label purpose=ios \
@@ -228,7 +220,6 @@ NATIVE_BIN="$HOME/Library/Application Support/agentapi-native/bin"
 
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --manager-env "PATH=$NODE_BIN:$NATIVE_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 ```
 
@@ -241,7 +232,6 @@ manager. To register it for a team instead of the current user:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --name "team-ios-builder" \
   --scope team \
   --team-id "my-org/ios-team" \
@@ -260,7 +250,6 @@ curl -X POST "$PARENT_PROXY_URL/external-session-managers/registration-tokens" \
 
 agentapi-proxy native install \
   --upstream "$PARENT_PROXY_URL" \
-  --public-url "https://native-mac.example.com" \
   --registration-token "<registration_token>"
 ```
 
@@ -318,7 +307,7 @@ agentapi-proxy native status
 agentapi-proxy native doctor
 ```
 
-`native status` reports the manager ID, upstream and public URLs, active
+`native status` reports the manager ID, upstream URL, active
 sessions, and whether the filesystem sandbox is enabled. `native doctor`
 checks local configuration permissions, service health, and the parent
 heartbeat.
@@ -366,7 +355,6 @@ it when installing the manager:
 ```bash
 agentapi-proxy native install \
   --upstream "https://parent-proxy.example.com" \
-  --public-url "https://native-mac.example.com" \
   --filesystem-sandbox
 ```
 
