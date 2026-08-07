@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	coresessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -155,6 +156,13 @@ type KubernetesSessionManager struct {
 	sessionAllocatorEnabled bool
 
 	sessionAllocationNotifier coreallocation.Notifier
+	sessionControlStore       coresessioncontrol.Store
+}
+
+func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontrol.Store) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.sessionControlStore = store
 }
 
 // NewKubernetesSessionManager creates a new KubernetesSessionManager
@@ -1878,6 +1886,17 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	if status != "active" && status != "starting" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
+	if store := m.connectedSessionControlStore(ctx, id); store != nil {
+		payload, err := json.Marshal(map[string]string{"content": message})
+		if err != nil {
+			return fmt.Errorf("marshal session control prompt: %w", err)
+		}
+		_, err = store.EnqueueCommand(ctx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "prompt", Payload: payload, CreatedAt: time.Now().UTC()})
+		if err != nil {
+			return fmt.Errorf("enqueue session control prompt: %w", err)
+		}
+		return nil
+	}
 
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
@@ -2020,6 +2039,13 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 	if status != "active" && status != "starting" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
+	if store := m.connectedSessionControlStore(ctx, id); store != nil {
+		_, err := store.EnqueueCommand(ctx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "cancel", CreatedAt: time.Now().UTC()})
+		if err != nil {
+			return fmt.Errorf("enqueue session control cancel: %w", err)
+		}
+		return nil
+	}
 
 	// Build service name and endpoint URL for the agentapi /action endpoint
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
@@ -2086,6 +2112,28 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 
 	log.Printf("[K8S_SESSION] Successfully sent stop_agent signal to session %s (agentType=%q)", id, agentType)
 	return nil
+}
+
+func (m *KubernetesSessionManager) getSessionControlStore() coresessioncontrol.Store {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.sessionControlStore
+}
+
+func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Context, sessionID string) coresessioncontrol.Store {
+	store := m.getSessionControlStore()
+	if store == nil {
+		return nil
+	}
+	connected, err := store.IsConnected(ctx, sessionID)
+	if err != nil {
+		log.Printf("[SESSION_CONTROL] Failed to check connection for session %s; using direct transport: %v", sessionID, err)
+		return nil
+	}
+	if !connected {
+		return nil
+	}
+	return store
 }
 
 func isACPAgentType(agentType string) bool {
@@ -3965,6 +4013,12 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 			}},
 		},
 	)
+	if m.getSessionControlStore() != nil {
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "SESSION_CONTROL_LONG_POLL_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "SESSION_CONTROL_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
+		)
+	}
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment
 	claudeArgs := ""

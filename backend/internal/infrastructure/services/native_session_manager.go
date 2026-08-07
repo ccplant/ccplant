@@ -187,6 +187,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
 		"PROVISIONER_PROXY_URL="+m.proxyURL,
 		"PROVISIONER_TOKEN="+m.provisionerToken,
+		"SESSION_CONTROL_TOKEN="+deriveSessionControlToken(m.provisionerToken, id),
 		"PROVISIONER_UPSTREAM_AUTH_TOKEN="+m.upstreamAuthToken,
 		"POD_NAME=native-"+id,
 		"POD_NAMESPACE=native",
@@ -256,6 +257,10 @@ func reserveTCPPort() (int, error) {
 
 func (m *NativeSessionManager) ValidateProvisionerToken(token string) bool {
 	return token != "" && token == m.provisionerToken
+}
+
+func (m *NativeSessionManager) ValidateSessionControlToken(sessionID, token string) bool {
+	return validateSessionControlToken(m.provisionerToken, sessionID, token)
 }
 
 func (m *NativeSessionManager) UsesRemoteProvisioner() bool { return true }

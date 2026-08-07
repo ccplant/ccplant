@@ -46,6 +46,7 @@ type HandlerRegistry struct {
 	assetController            *controllers.AssetController
 	sessionProfileController   *controllers.SessionProfileController
 	provisionerController      *controllers.ProvisionerController
+	sessionControlController   *controllers.SessionControlController
 	customHandlers             []CustomHandler
 }
 
@@ -219,8 +220,12 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	}
 
 	var provisionerController *controllers.ProvisionerController
+	var sessionControlController *controllers.SessionControlController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
+		if server.sessionControlStore != nil {
+			sessionControlController = controllers.NewSessionControlController(server.sessionControlStore, k8sManager)
+		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
 
@@ -251,6 +256,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			assetController:            assetController,
 			sessionProfileController:   sessionProfileController,
 			provisionerController:      provisionerController,
+			sessionControlController:   sessionControlController,
 			customHandlers:             make([]CustomHandler, 0),
 		},
 	}
@@ -354,6 +360,13 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.provisionerController.GetNextExternalSessionAllocation)
 		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.provisionerController.CompleteExternalSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
+	}
+	if r.handlers.sessionControlController != nil {
+		r.echo.GET("/internal/session-control/:sessionId/commands", r.handlers.sessionControlController.WaitCommands)
+		r.echo.POST("/internal/session-control/:sessionId/events", r.handlers.sessionControlController.AppendEvents)
+		r.echo.GET("/sessions/:sessionId/control/events/wait", r.handlers.sessionControlController.WaitEvents,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		log.Printf("[ROUTES] Internal session control long-poll endpoints registered")
 	}
 
 	// Session sharing routes

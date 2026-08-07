@@ -430,6 +430,20 @@ helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --set redis.enabled=true
 ```
 
+To route runtime prompts, cancellation, and session events through outbound-only
+session HTTPS long polling, enable session control together with Redis:
+
+```bash
+helm upgrade agentapi-proxy ./helm/agentapi-proxy \
+  --set redis.enabled=true \
+  --set sessionControl.enabled=true
+```
+
+Only backend pods connect to Redis. Session pods receive the backend control-plane
+URL and provisioner token, but no Redis address or credentials. See
+[`docs/session-control-long-poll.md`](../../docs/session-control-long-poll.md) for
+the transport and retention model.
+
 ## Troubleshooting
 
 ### Check Deployment status

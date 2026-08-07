@@ -18,13 +18,14 @@ import (
 )
 
 type PullClientConfig struct {
-	ProxyURL          string
-	Token             string
-	UpstreamAuthToken string
-	SessionID         string
-	PodName           string
-	Namespace         string
-	CAFile            string
+	ProxyURL            string
+	Token               string
+	SessionControlToken string
+	UpstreamAuthToken   string
+	SessionID           string
+	PodName             string
+	Namespace           string
+	CAFile              string
 }
 
 type pullProvisionRequest struct {
@@ -52,6 +53,9 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		"namespace":  cfg.Namespace,
 	}); err != nil {
 		log.Printf("[PROVISIONER] Initial connect failed: %v", err)
+	}
+	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") && cfg.SessionControlToken != "" {
+		go runSessionControlClient(ctx, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
 	}
 
 	for {

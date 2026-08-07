@@ -900,6 +900,11 @@ redis:
         memory: "256Mi"
         cpu: "200m"
 
+# Session-to-backend runtime control over authenticated HTTPS long polling.
+# Redis is only accessed by backend pods; session pods never receive Redis credentials.
+sessionControl:
+  enabled: false
+
 # 外部 Redis を使用する場合の設定（redis.enabled=false のときのみ有効）
 externalRedis:
   # addr: "your-redis-host:6379"
