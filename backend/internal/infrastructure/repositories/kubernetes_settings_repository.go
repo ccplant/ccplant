@@ -163,7 +163,14 @@ func (r *KubernetesSettingsRepository) Save(ctx context.Context, settings *entit
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			// Update existing
+			// Preserve the current resource version for optimistic concurrency.
+			// This is required by Kubernetes and by KV-store adapters such as
+			// libSQL, which map ResourceVersion to their record version.
+			existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("failed to get existing settings secret: %w", getErr)
+			}
+			secret.ResourceVersion = existing.ResourceVersion
 			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to update settings secret: %w", err)
