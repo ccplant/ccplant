@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
@@ -14,6 +16,7 @@ type SessionControlController struct {
 	store     core.Store
 	manager   ProvisionerManager
 	authorize func(echo.Context) bool
+	connected sync.Map
 }
 
 type sessionControlSessionReader interface {
@@ -49,6 +52,9 @@ func (sc *SessionControlController) WaitCommands(c echo.Context) error {
 	}
 	if err := sc.store.TouchConnection(c.Request().Context(), c.Param("sessionId")); err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
+	if _, loaded := sc.connected.LoadOrStore(c.Param("sessionId"), struct{}{}); !loaded {
+		log.Printf("[SESSION_CONTROL] Session %s connected through command long poll", c.Param("sessionId"))
 	}
 	commands, err := sc.store.ReadCommands(c.Request().Context(), c.Param("sessionId"), c.QueryParam("after"), parseWait(c.QueryParam("wait")), parseControlCount(c.QueryParam("count")))
 	if err != nil {
