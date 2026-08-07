@@ -4014,7 +4014,10 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		},
 	)
 	if m.getSessionControlStore() != nil {
-		envVars = append(envVars, corev1.EnvVar{Name: "SESSION_CONTROL_LONG_POLL_ENABLED", Value: "true"})
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "SESSION_CONTROL_LONG_POLL_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "SESSION_CONTROL_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
+		)
 	}
 
 	// Add CLAUDE_ARGS from request environment or proxy's environment

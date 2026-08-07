@@ -24,7 +24,7 @@ func TestPollControlCommandsUsesHTTPSAPIAndCursor(t *testing.T) {
 	defer server.Close()
 
 	commands, err := pollControlCommands(context.Background(), server.Client(), PullClientConfig{
-		ProxyURL: server.URL, Token: "provisioner-secret", SessionID: "session-1",
+		ProxyURL: server.URL, Token: "provisioner-secret", SessionControlToken: "provisioner-secret", SessionID: "session-1",
 	}, "12-3")
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestPollControlCommandsNoContent(t *testing.T) {
 	defer server.Close()
 
 	commands, err := pollControlCommands(context.Background(), server.Client(), PullClientConfig{
-		ProxyURL: server.URL, Token: "token", SessionID: "session-1",
+		ProxyURL: server.URL, Token: "token", SessionControlToken: "token", SessionID: "session-1",
 	}, "0-0")
 	if err != nil {
 		t.Fatal(err)

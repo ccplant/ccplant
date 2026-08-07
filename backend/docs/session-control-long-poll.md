@@ -21,7 +21,7 @@ The session provisioner polls for commands:
 
 ```http
 GET /internal/session-control/{sessionId}/commands?after={cursor}&wait=30s
-Authorization: Bearer {provisioner-token}
+Authorization: Bearer {session-control-token}
 ```
 
 The response is `204 No Content` on timeout, or a command batch with a Redis Stream cursor. The
@@ -30,7 +30,7 @@ events:
 
 ```http
 POST /internal/session-control/{sessionId}/events
-Authorization: Bearer {provisioner-token}
+Authorization: Bearer {session-control-token}
 Content-Type: application/json
 
 {"events":[{"id":"...","type":"command_completed","command_id":"...","command_stream_id":"..."}]}
@@ -61,3 +61,8 @@ clients must treat the session history/snapshot as the resynchronization source.
 - Session pods connect only to the backend control-plane HTTPS endpoint and their own loopback
   runtime.
 - Redis configuration and credentials are not copied into session pod environment variables.
+
+Each session pod receives a distinct `SESSION_CONTROL_TOKEN`. The backend derives it
+deterministically with HMAC-SHA-256 from the backend-only provisioner master token and the session
+ID, so no session-to-token lookup table is stored. Control requests are authorized against the
+session ID in the URL; a token issued to one session cannot access another session's streams.

@@ -28,6 +28,7 @@ type ProvisionerController struct {
 
 type ProvisionerManager interface {
 	ValidateProvisionerToken(token string) bool
+	ValidateSessionControlToken(sessionID, token string) bool
 	ConnectProvisioner(ctx context.Context, req services.ProvisionerConnectRequest) error
 	ClaimProvisionRequest(ctx context.Context, sessionID, podName string) (*services.ProvisionRequest, bool, error)
 	UpdateProvisionRequestStatus(ctx context.Context, sessionID, requestID string, req services.ProvisionRequestStatusUpdate) error

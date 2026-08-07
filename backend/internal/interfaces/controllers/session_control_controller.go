@@ -15,7 +15,6 @@ import (
 type SessionControlController struct {
 	store     core.Store
 	manager   ProvisionerManager
-	authorize func(echo.Context) bool
 	connected sync.Map
 }
 
@@ -23,18 +22,11 @@ type sessionControlSessionReader interface {
 	GetSession(string) entities.Session
 }
 
-func NewSessionControlController(store core.Store, manager ProvisionerManager, provisioner *ProvisionerController) *SessionControlController {
-	controller := &SessionControlController{store: store, manager: manager}
-	if provisioner != nil {
-		controller.authorize = provisioner.authorized
-	}
-	return controller
+func NewSessionControlController(store core.Store, manager ProvisionerManager) *SessionControlController {
+	return &SessionControlController{store: store, manager: manager}
 }
 
 func (sc *SessionControlController) authorized(c echo.Context) bool {
-	if sc.authorize != nil {
-		return sc.authorize(c)
-	}
 	if sc.manager == nil {
 		return false
 	}
@@ -43,7 +35,7 @@ func (sc *SessionControlController) authorized(c echo.Context) bool {
 	if len(h) <= len(prefix) || h[:len(prefix)] != prefix {
 		return false
 	}
-	return sc.manager.ValidateProvisionerToken(h[len(prefix):])
+	return sc.manager.ValidateSessionControlToken(c.Param("sessionId"), h[len(prefix):])
 }
 
 func (sc *SessionControlController) WaitCommands(c echo.Context) error {

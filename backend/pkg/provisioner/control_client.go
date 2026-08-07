@@ -96,7 +96,7 @@ func pollControlCommands(ctx context.Context, client *http.Client, cfg PullClien
 	if err != nil {
 		return nil, err
 	}
-	authorizePullRequest(req, cfg)
+	authorizeControlRequest(req, cfg)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -204,7 +204,7 @@ func postControlEvents(ctx context.Context, client *http.Client, cfg PullClientC
 	if err != nil {
 		return err
 	}
-	authorizePullRequest(req, cfg)
+	authorizeControlRequest(req, cfg)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -215,6 +215,10 @@ func postControlEvents(ctx context.Context, client *http.Client, cfg PullClientC
 		return fmt.Errorf("event upload returned HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func authorizeControlRequest(req *http.Request, cfg PullClientConfig) {
+	req.Header.Set("Authorization", "Bearer "+cfg.SessionControlToken)
 }
 
 func forwardRuntimeEvents(ctx context.Context, client *http.Client, cfg PullClientConfig) {
