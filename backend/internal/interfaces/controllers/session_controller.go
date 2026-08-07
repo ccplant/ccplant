@@ -990,7 +990,7 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		}
 		defer resp.Body.Close()
 		copyResponseHeaders(ctx.Response().Header(), resp.Header)
-		return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+		return streamTunnelResponse(ctx, resp)
 	}
 	if route.ProxyURL == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
@@ -1181,6 +1181,26 @@ func copyResponseHeaders(target, source http.Header) {
 	for key, values := range source {
 		for _, value := range values {
 			target.Add(key, value)
+		}
+	}
+}
+
+func streamTunnelResponse(ctx echo.Context, resp *http.Response) error {
+	ctx.Response().WriteHeader(resp.StatusCode)
+	buffer := make([]byte, 64*1024)
+	for {
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			if _, writeErr := ctx.Response().Write(buffer[:n]); writeErr != nil {
+				return writeErr
+			}
+			ctx.Response().Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
 		}
 	}
 }
