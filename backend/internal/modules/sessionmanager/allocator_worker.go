@@ -14,11 +14,12 @@ import (
 )
 
 type AllocatorWorker struct {
-	sessionManager      repositories.SessionManager
-	client              sessionallocation.ExternalAllocatorClient
-	upstreamURL         string
-	publicURL           string
-	applyRuntimeProfile bool
+	sessionManager         repositories.SessionManager
+	client                 sessionallocation.ExternalAllocatorClient
+	upstreamURL            string
+	publicURL              string
+	applyRuntimeProfile    bool
+	appliedProfileRevision string
 }
 
 type directSessionManager interface {
@@ -58,6 +59,7 @@ func newAllocatorWorkerWithClient(sessionManager repositories.SessionManager, cl
 }
 
 func (w *AllocatorWorker) Start(ctx context.Context) {
+	hadPollError := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -68,14 +70,50 @@ func (w *AllocatorWorker) Start(ctx context.Context) {
 		allocation, ok, err := w.client.NextExternal(ctx, 30*time.Second)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to poll allocation: %v", err)
+			hadPollError = true
 			sleepOrDone(ctx, 5*time.Second)
 			continue
 		}
+		w.syncRuntimeProfile(ctx, hadPollError)
+		hadPollError = false
 		if !ok {
 			continue
 		}
 		w.process(ctx, allocation)
 	}
+}
+
+func (w *AllocatorWorker) syncRuntimeProfile(ctx context.Context, force bool) {
+	if !w.applyRuntimeProfile {
+		return
+	}
+	applier, ok := w.sessionManager.(runtimeProfileApplier)
+	if !ok {
+		return
+	}
+	source, ok := w.client.(sessionallocation.RuntimeProfileClient)
+	if !ok {
+		return
+	}
+	revision := source.RuntimeProfileRevision()
+	if revision == "" || (!force && revision == w.appliedProfileRevision) {
+		return
+	}
+	snapshot, err := source.GetRuntimeProfile(ctx)
+	if err != nil {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to synchronize parent runtime profile: %v", err)
+		return
+	}
+	if snapshot == nil || snapshot.Profile == nil || snapshot.Revision == "" {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Parent returned an empty runtime profile snapshot")
+		return
+	}
+	if err := applier.ApplyRuntimeProfile(ctx, snapshot.Profile); err != nil {
+		log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to apply synchronized parent runtime profile: %v", err)
+		return
+	}
+	w.appliedProfileRevision = snapshot.Revision
+	log.Printf("[SESSION_MANAGER_ALLOCATOR] Synchronized parent runtime profile revision %s", snapshot.Revision)
 }
 
 func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionallocation.AllocationRequest) {

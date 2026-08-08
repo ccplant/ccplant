@@ -88,6 +88,14 @@ the parent proxy's effective configuration. Before creating the local session,
 the ESM applies that profile and idempotently ensures its inherited session
 ServiceAccount, Role, and RoleBinding.
 
+The allocation long-poll also carries a content-derived profile revision. On
+startup, after a parent connection failure recovers, or when that revision
+changes, the ESM fetches and applies the current snapshot immediately. A
+revision mismatch makes the parent end the current long-poll without waiting,
+so configuration changes deployed with a parent restart do not wait for a
+fixed synchronization interval. The profile on each allocation remains the
+final consistency check before session creation.
+
 The inherited profile includes:
 
 - the session ServiceAccount;

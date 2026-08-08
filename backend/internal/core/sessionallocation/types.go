@@ -39,6 +39,13 @@ type RuntimeBootstrap struct {
 	Generation int64  `json:"generation"`
 }
 
+// RuntimeProfileSnapshot is the parent-owned profile and its stable content
+// revision. ESMs use the revision to avoid reapplying unchanged settings.
+type RuntimeProfileSnapshot struct {
+	Revision string                          `json:"revision"`
+	Profile  *sessionsettings.RuntimeProfile `json:"profile"`
+}
+
 type AllocationResult struct {
 	Status             Status `json:"status"`
 	Message            string `json:"message,omitempty"`

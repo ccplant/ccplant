@@ -2,7 +2,10 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -16,6 +19,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type ProvisionerController struct {
@@ -36,6 +40,24 @@ type ProvisionerManager interface {
 
 type sessionSuspendScheduler interface {
 	ScheduleSessionSuspend(ctx context.Context, sessionID string) error
+}
+
+type externalRuntimeProfileProvider interface {
+	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+}
+
+func (pc *ProvisionerController) externalRuntimeProfileSnapshot() (*sessionallocation.RuntimeProfileSnapshot, error) {
+	provider, ok := pc.allocationQueue.(externalRuntimeProfileProvider)
+	if !ok {
+		return nil, errors.New("runtime profile is unavailable")
+	}
+	profile := provider.ExternalRuntimeProfile()
+	data, err := json.Marshal(profile)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	return &sessionallocation.RuntimeProfileSnapshot{Revision: hex.EncodeToString(sum[:]), Profile: profile}, nil
 }
 
 func NewProvisionerController(manager ProvisionerManager, allocationQueue sessionallocation.Queue, settingsRepo repositories.SettingsRepository, sessionRouteRepo repositories.SessionRouteRepository, stateStore ...services.SessionStateStore) *ProvisionerController {
@@ -301,6 +323,12 @@ func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context
 	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
+	if snapshot, snapshotErr := pc.externalRuntimeProfileSnapshot(); snapshotErr == nil {
+		c.Response().Header().Set("X-AgentAPI-Runtime-Profile-Revision", snapshot.Revision)
+		if _, present := c.QueryParams()["profile_revision"]; present && c.QueryParam("profile_revision") != snapshot.Revision {
+			return c.NoContent(http.StatusNoContent)
+		}
+	}
 	wait := parseWait(c.QueryParam("wait"))
 	req, found, err := pc.allocationQueue.NextExternalSessionAllocation(c.Request().Context(), managerID, wait)
 	if err != nil {
@@ -313,6 +341,17 @@ func (pc *ProvisionerController) GetNextExternalSessionAllocation(c echo.Context
 		req = allocationMetadata(req)
 	}
 	return c.JSON(http.StatusOK, req)
+}
+
+func (pc *ProvisionerController) GetExternalSessionManagerRuntimeProfile(c echo.Context) error {
+	if _, _, ok := pc.authorizedExternalManager(c); !ok {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	snapshot, err := pc.externalRuntimeProfileSnapshot()
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, snapshot)
 }
 
 func allocationMetadata(req *sessionallocation.AllocationRequest) *sessionallocation.AllocationRequest {

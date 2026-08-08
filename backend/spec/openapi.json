@@ -4964,7 +4964,8 @@
         "security": [{"BearerAuth": []}],
         "parameters": [
           {"name": "wait", "in": "query", "schema": {"type": "string", "default": "30s"}},
-          {"name": "metadata_only", "in": "query", "schema": {"type": "boolean", "default": false}}
+          {"name": "metadata_only", "in": "query", "schema": {"type": "boolean", "default": false}},
+          {"name": "profile_revision", "in": "query", "description": "Last runtime profile revision applied by the ESM. A mismatch ends the long-poll immediately and returns the current revision header.", "schema": {"type": "string"}}
         ],
         "responses": {
           "200": {
@@ -5029,8 +5030,28 @@
               }
             }
           },
-          "204": {"description": "Long-poll timeout"},
+          "204": {
+            "description": "Long-poll timeout or runtime profile revision mismatch",
+            "headers": {"X-AgentAPI-Runtime-Profile-Revision": {"schema": {"type": "string"}}}
+          },
           "401": {"description": "Invalid manager connection token"}
+        }
+      }
+    },
+    "/internal/external-session-manager/runtime-profile": {
+      "get": {
+        "summary": "Get the parent runtime profile snapshot",
+        "description": "Returns the current content-addressed runtime profile after the allocation long-poll reports a new revision.",
+        "operationId": "getExternalSessionManagerRuntimeProfile",
+        "tags": ["External Session Managers"],
+        "security": [{"BearerAuth": []}],
+        "responses": {
+          "200": {
+            "description": "Current runtime profile snapshot",
+            "content": {"application/json": {"schema": {"type": "object", "required": ["revision", "profile"], "properties": {"revision": {"type": "string"}, "profile": {"type": "object"}}}}}
+          },
+          "401": {"description": "Invalid manager connection token"},
+          "503": {"description": "Runtime profile unavailable"}
         }
       }
     },

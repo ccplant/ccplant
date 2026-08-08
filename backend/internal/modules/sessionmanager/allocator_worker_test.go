@@ -134,6 +134,34 @@ func TestAllocatorWorkerCanIgnoreParentRuntimeProfile(t *testing.T) {
 	}
 }
 
+func TestAllocatorWorkerSynchronizesChangedRuntimeProfileRevision(t *testing.T) {
+	profile := &sessionsettings.RuntimeProfile{Version: 1}
+	client := &fakeRuntimeProfileClient{
+		fakeExternalAllocatorClient: fakeExternalAllocatorClient{},
+		revision:                    "revision-1",
+		snapshot: &sessionallocation.RuntimeProfileSnapshot{
+			Revision: "revision-1",
+			Profile:  profile,
+		},
+	}
+	manager := &fakeAllocatorSessionManager{}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://esm.example")
+
+	worker.syncRuntimeProfile(context.Background(), false)
+	worker.syncRuntimeProfile(context.Background(), false)
+	if client.profileGets != 1 {
+		t.Fatalf("profile gets = %d, want 1", client.profileGets)
+	}
+	if manager.appliedProfile != profile || worker.appliedProfileRevision != "revision-1" {
+		t.Fatalf("profile synchronization failed: manager=%#v revision=%q", manager.appliedProfile, worker.appliedProfileRevision)
+	}
+
+	worker.syncRuntimeProfile(context.Background(), true)
+	if client.profileGets != 2 {
+		t.Fatalf("profile gets after reconnect = %d, want 2", client.profileGets)
+	}
+}
+
 func TestAllocatorWorkerRejectsAllocationWhenRuntimeProfileCannotBeApplied(t *testing.T) {
 	client := &fakeExternalAllocatorClient{}
 	manager := &fakeAllocatorSessionManager{profileErr: errors.New("rbac denied")}
@@ -235,6 +263,20 @@ func TestAllocatorWorkerCompletesErrorWhenLocalSessionCreationFails(t *testing.T
 
 type fakeExternalAllocatorClient struct {
 	completed []completedAllocation
+}
+
+type fakeRuntimeProfileClient struct {
+	fakeExternalAllocatorClient
+	revision    string
+	snapshot    *sessionallocation.RuntimeProfileSnapshot
+	profileGets int
+}
+
+func (c *fakeRuntimeProfileClient) RuntimeProfileRevision() string { return c.revision }
+
+func (c *fakeRuntimeProfileClient) GetRuntimeProfile(context.Context) (*sessionallocation.RuntimeProfileSnapshot, error) {
+	c.profileGets++
+	return c.snapshot, nil
 }
 
 type completedAllocation struct {

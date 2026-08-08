@@ -373,6 +373,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.DELETE("/internal/session-state/:sessionId/uploads/:uploadId", r.handlers.provisionerController.AbortSessionStateUpload)
 		r.echo.GET("/internal/session-state/:sessionId/download-url", r.handlers.provisionerController.PresignSessionStateDownload)
 		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.provisionerController.GetNextExternalSessionAllocation)
+		r.echo.GET("/internal/external-session-manager/runtime-profile", r.handlers.provisionerController.GetExternalSessionManagerRuntimeProfile)
 		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.provisionerController.CompleteExternalSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
