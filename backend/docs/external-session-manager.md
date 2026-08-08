@@ -96,10 +96,12 @@ The inherited profile includes:
 - the SCIA and config-renderer images, proxy port, `NO_PROXY`, credential IDs,
   and integration host/path rules.
 
-There are intentionally no ESM-side override flags for these fields. Change the
-parent proxy configuration to update all Kubernetes ESMs. An older parent that
-does not send `runtime_profile` retains the ESM's existing local configuration
-for upgrade compatibility.
+There are intentionally no per-field ESM-side override flags for these fields.
+Kubernetes ESMs always apply the profile. Native ESMs ignore it by default and
+can opt in to the whole profile at installation time with
+`native install --inherit-runtime-profile`. An older parent that does not send
+`runtime_profile` retains the ESM's existing local configuration for upgrade
+compatibility.
 
 ## Kubernetes Example
 

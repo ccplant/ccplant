@@ -112,6 +112,28 @@ func TestAllocatorWorkerAppliesParentRuntimeProfileBeforeCreatingSession(t *test
 	}
 }
 
+func TestAllocatorWorkerCanIgnoreParentRuntimeProfile(t *testing.T) {
+	client := &fakeExternalAllocatorClient{}
+	manager := &fakeAllocatorSessionManager{profileErr: errors.New("must not be called")}
+	worker := NewAllocatorWorkerWithClient(manager, client, "https://native.example")
+	worker.applyRuntimeProfile = false
+
+	worker.process(context.Background(), &sessionallocation.AllocationRequest{
+		SessionID: "parent-session",
+		ProvisionSettings: &sessionsettings.SessionSettings{
+			Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+		},
+		RuntimeProfile: &sessionsettings.RuntimeProfile{Version: 1},
+	})
+
+	if manager.appliedProfile != nil {
+		t.Fatalf("applied profile = %#v, want nil", manager.appliedProfile)
+	}
+	if manager.created != 1 {
+		t.Fatalf("created = %d, want 1", manager.created)
+	}
+}
+
 func TestAllocatorWorkerRejectsAllocationWhenRuntimeProfileCannotBeApplied(t *testing.T) {
 	client := &fakeExternalAllocatorClient{}
 	manager := &fakeAllocatorSessionManager{profileErr: errors.New("rbac denied")}

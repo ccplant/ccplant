@@ -47,6 +47,7 @@ type nativeManageOptions struct {
 	labels                                                                                   []string
 	environment                                                                              []string
 	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
+	inheritRuntimeProfile                                                                    bool
 	logsFollow, logsDaemon                                                                   bool
 	jsonOutput                                                                               bool
 	logsTail                                                                                 int
@@ -85,6 +86,7 @@ func init() {
 	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
 	f.BoolVar(&nativeManageOpts.force, "force", false, "install even if the existing state directory contains sessions")
 	f.BoolVar(&nativeManageOpts.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
+	f.BoolVar(&nativeManageOpts.inheritRuntimeProfile, "inherit-runtime-profile", false, "apply runtime profile received from the parent proxy")
 
 	status := &cobra.Command{Use: "status", Short: "Show daemon and connection status", RunE: runNativeStatus}
 	status.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
@@ -215,7 +217,8 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 		ConnectionToken: token, StateDir: paths.state,
 		BinaryPath: paths.binary, ManagerID: registration.ID, InstanceID: instanceID, Scope: nativeManageOpts.scope, TeamID: nativeManageOpts.teamID,
 		Labels: labels, ManagerEnvironment: environment, Version: nativeBuildVersion(),
-		FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox}}
+		FilesystemSandbox:     nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox},
+		InheritRuntimeProfile: nativeManageOpts.inheritRuntimeProfile}
 	if err := installNativeService(paths, cfg); err != nil {
 		return err
 	}
