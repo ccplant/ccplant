@@ -34,3 +34,17 @@ GET /usage?from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z
 GET /usage?team_id=example/team
 GET /sessions/{sessionId}/usage
 ```
+
+For browser-side analytics, authorized raw events can be exported as Parquet:
+
+```text
+GET /usage/export.parquet?from=2026-08-01T00:00:00Z&to=2026-09-01T00:00:00Z
+GET /usage/export.parquet?team_id=example/team&model=gpt-5
+```
+
+The export defaults to the last 30 days and is limited to a 90-day range and
+100,000 events. The proxy applies personal or team authorization before
+generating the file. It includes timestamps, session/model identifiers, and
+token counts, but excludes user IDs, team IDs, event IDs, and message content.
+The frontend helper in `src/lib/usage-parquet.ts` loads this file into a local
+DuckDB-Wasm `usage_events` view so visualization SQL remains browser-local.

@@ -338,6 +338,8 @@ func (r *Router) registerCoreRoutes() error {
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/usage", r.handlers.usageController.Get,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/usage/export.parquet", r.handlers.usageController.ExportParquet,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/sessions/:sessionId/usage", r.handlers.usageController.GetSession,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	}

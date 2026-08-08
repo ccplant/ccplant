@@ -37,8 +37,12 @@ type UsageQuery struct {
 	SessionID string
 	UserID    string
 	TeamID    string
+	AgentType string
+	Provider  string
+	Model     string
 	From      *time.Time
 	To        *time.Time
+	Limit     int
 }
 
 type UsageSummary struct {

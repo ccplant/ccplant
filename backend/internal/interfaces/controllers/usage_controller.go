@@ -1,17 +1,38 @@
 package controllers
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/parquet-go/parquet-go"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
-const maxUsageEventsPerRequest = 1000
+const (
+	maxUsageEventsPerRequest = 1000
+	maxUsageExportEvents     = 100000
+	maxUsageExportRange      = 90 * 24 * time.Hour
+)
+
+type usageParquetRow struct {
+	OccurredAt         time.Time `parquet:"occurred_at,timestamp(microsecond)"`
+	SessionID          string    `parquet:"session_id,dict"`
+	AgentSessionID     string    `parquet:"agent_session_id,dict"`
+	AgentType          string    `parquet:"agent_type,dict"`
+	Provider           string    `parquet:"provider,dict"`
+	Model              string    `parquet:"model,dict"`
+	InputTokens        int64     `parquet:"input_tokens"`
+	OutputTokens       int64     `parquet:"output_tokens"`
+	CachedInputTokens  int64     `parquet:"cached_input_tokens"`
+	CacheCreationToken int64     `parquet:"cache_creation_tokens"`
+	ReasoningTokens    int64     `parquet:"reasoning_tokens"`
+}
 
 type UsageController struct {
 	repo     portrepos.UsageRepository
@@ -19,23 +40,91 @@ type UsageController struct {
 }
 
 func (c *UsageController) Get(ctx echo.Context) error {
-	authz := auth.GetAuthorizationContext(ctx)
-	if authz == nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
-	}
-	query := entities.UsageQuery{}
-	if teamID := ctx.QueryParam("team_id"); teamID != "" {
-		if !authz.CanAccessTeam(teamID) {
-			return echo.NewHTTPError(http.StatusForbidden, "not authorized for team")
-		}
-		query.TeamID = teamID
-	} else {
-		query.UserID = authz.PersonalScope.UserID
+	query, err := c.authorizedQuery(ctx)
+	if err != nil {
+		return err
 	}
 	if err := bindUsageRange(ctx, &query); err != nil {
 		return err
 	}
 	return c.aggregate(ctx, query)
+}
+
+func (c *UsageController) authorizedQuery(ctx echo.Context) (entities.UsageQuery, error) {
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil {
+		return entities.UsageQuery{}, echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	query := entities.UsageQuery{
+		SessionID: ctx.QueryParam("session_id"), AgentType: ctx.QueryParam("agent_type"),
+		Provider: ctx.QueryParam("provider"), Model: ctx.QueryParam("model"),
+	}
+	if teamID := ctx.QueryParam("team_id"); teamID != "" {
+		if !authz.CanAccessTeam(teamID) {
+			return entities.UsageQuery{}, echo.NewHTTPError(http.StatusForbidden, "not authorized for team")
+		}
+		query.TeamID = teamID
+	} else {
+		query.UserID = authz.PersonalScope.UserID
+	}
+	return query, nil
+}
+
+func (c *UsageController) ExportParquet(ctx echo.Context) error {
+	query, err := c.authorizedQuery(ctx)
+	if err != nil {
+		return err
+	}
+	if err := bindUsageRange(ctx, &query); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if query.To == nil {
+		query.To = &now
+	}
+	if query.From == nil {
+		from := query.To.Add(-30 * 24 * time.Hour)
+		query.From = &from
+	}
+	if query.To.Sub(*query.From) > maxUsageExportRange {
+		return echo.NewHTTPError(http.StatusBadRequest, "export range must not exceed 90 days")
+	}
+	query.Limit = maxUsageExportEvents + 1
+	events, err := c.repo.ListEvents(ctx.Request().Context(), query)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to export usage")
+	}
+	if len(events) > maxUsageExportEvents {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "usage export exceeds 100000 events; narrow the filters")
+	}
+	output, err := encodeUsageParquet(events)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode usage export")
+	}
+	ctx.Response().Header().Set(echo.HeaderContentDisposition, `attachment; filename="usage.parquet"`)
+	ctx.Response().Header().Set("X-Usage-Event-Count", fmt.Sprintf("%d", len(events)))
+	return ctx.Blob(http.StatusOK, "application/vnd.apache.parquet", output)
+}
+
+func encodeUsageParquet(events []entities.UsageEvent) ([]byte, error) {
+	rows := make([]usageParquetRow, len(events))
+	for i, event := range events {
+		rows[i] = usageParquetRow{
+			OccurredAt: event.OccurredAt, SessionID: event.SessionID, AgentSessionID: event.AgentSessionID,
+			AgentType: event.AgentType, Provider: event.Provider, Model: event.Model,
+			InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, CachedInputTokens: event.CachedInputTokens,
+			CacheCreationToken: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens,
+		}
+	}
+	var output bytes.Buffer
+	writer := parquet.NewGenericWriter[usageParquetRow](&output)
+	if _, err := writer.Write(rows); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }
 
 func (c *UsageController) GetSession(ctx echo.Context) error {

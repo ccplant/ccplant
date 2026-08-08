@@ -118,10 +118,45 @@ COALESCE(SUM(cached_input_tokens),0), COALESCE(SUM(cache_creation_tokens),0), CO
 	return summary, nil
 }
 
+func (r *LibSQLUsageRepository) ListEvents(ctx context.Context, query entities.UsageQuery) ([]entities.UsageEvent, error) {
+	where, args := usageWhere(query)
+	statement := `SELECT session_id, agent_session_id, agent_type, provider, model,
+input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, reasoning_tokens, occurred_at
+FROM agentapi_usage_events WHERE ` + where + ` ORDER BY occurred_at ASC`
+	if query.Limit > 0 {
+		statement += ` LIMIT ?`
+		args = append(args, query.Limit)
+	}
+	rows, err := r.db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list usage events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []entities.UsageEvent{}
+	for rows.Next() {
+		var event entities.UsageEvent
+		var occurredAt string
+		if err := rows.Scan(&event.SessionID, &event.AgentSessionID, &event.AgentType, &event.Provider, &event.Model,
+			&event.InputTokens, &event.OutputTokens, &event.CachedInputTokens, &event.CacheCreationTokens,
+			&event.ReasoningTokens, &occurredAt); err != nil {
+			return nil, fmt.Errorf("scan usage event: %w", err)
+		}
+		event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurredAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse usage event occurred_at: %w", err)
+		}
+		result = append(result, event)
+	}
+	return result, rows.Err()
+}
+
 func usageWhere(query entities.UsageQuery) (string, []interface{}) {
 	where := []string{"1=1"}
 	args := []interface{}{}
-	for column, value := range map[string]string{"session_id": query.SessionID, "user_id": query.UserID, "team_id": query.TeamID} {
+	for column, value := range map[string]string{
+		"session_id": query.SessionID, "user_id": query.UserID, "team_id": query.TeamID,
+		"agent_type": query.AgentType, "provider": query.Provider, "model": query.Model,
+	} {
 		if value != "" {
 			where = append(where, column+" = ?")
 			args = append(args, value)
