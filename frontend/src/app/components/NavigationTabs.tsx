@@ -79,15 +79,6 @@ const allTabs: Tab[] = [
     ),
   },
   {
-    label: 'Usage',
-    href: '/usage',
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3v18h18M7 16v-4m5 4V7m5 9v-6" />
-      </svg>
-    ),
-  },
-  {
     label: 'Integrations',
     href: '/integrations',
     icon: (
