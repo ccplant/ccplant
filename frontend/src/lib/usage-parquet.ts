@@ -1,8 +1,9 @@
-import * as duckdb from '@duckdb/duckdb-wasm'
+import type { AsyncDuckDB } from '@duckdb/duckdb-wasm'
 
-let databasePromise: Promise<duckdb.AsyncDuckDB> | null = null
+let databasePromise: Promise<AsyncDuckDB> | null = null
 
-async function createDatabase(): Promise<duckdb.AsyncDuckDB> {
+async function createDatabase(): Promise<AsyncDuckDB> {
+  const duckdb = await import('@duckdb/duckdb-wasm/dist/duckdb-browser')
   const bundles = duckdb.getJsDelivrBundles()
   const bundle = await duckdb.selectBundle(bundles)
   if (!bundle.mainWorker) throw new Error('DuckDB-Wasm worker is unavailable')
@@ -17,7 +18,7 @@ async function createDatabase(): Promise<duckdb.AsyncDuckDB> {
   return database
 }
 
-function getDatabase(): Promise<duckdb.AsyncDuckDB> {
+function getDatabase(): Promise<AsyncDuckDB> {
   if (typeof window === 'undefined') throw new Error('DuckDB-Wasm is only available in the browser')
   databasePromise ??= createDatabase()
   return databasePromise
