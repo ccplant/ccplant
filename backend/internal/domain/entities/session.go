@@ -210,6 +210,9 @@ type RunServerRequest struct {
 	// instead of building it from the other request fields.
 	// Used by the session manager forwarding path (small-cluster mode).
 	ProvisionSettings *sessionsettings.SessionSettings
+	// ParentRuntime is internal bootstrap material for a Session Pod that
+	// connects directly to the parent proxy. It is never accepted from user JSON.
+	ParentRuntime *sessionsettings.ParentRuntimeConfig
 	// SessionTTL is the duration after the last message before this session is auto-deleted.
 	// Stored as a Go duration string (e.g. "48h"). Empty means use the global cleanup TTL.
 	SessionTTL string

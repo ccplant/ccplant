@@ -82,6 +82,22 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionalloca
 		})
 		return
 	}
+	if allocation.Runtime != nil {
+		parentRuntime := &sessionsettings.ParentRuntimeConfig{
+			Enabled:    true,
+			Endpoint:   w.upstreamURL,
+			SessionID:  allocation.SessionID,
+			ManagerID:  allocation.ManagerID,
+			Token:      allocation.Runtime.Token,
+			Generation: allocation.Runtime.Generation,
+		}
+		if settings != nil {
+			settings.ParentRuntime = parentRuntime
+		}
+		if allocation.Request != nil {
+			allocation.Request.ParentRuntime = parentRuntime
+		}
+	}
 
 	// The public session ID belongs to the upstream proxy. Keep the oneshot Stop
 	// hook pointed at that proxy so it deletes both the allocated session and the

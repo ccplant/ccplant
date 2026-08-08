@@ -103,7 +103,7 @@ func (t *Tunnel) waitForFirstFrame(ctx context.Context, requestID string) ([]cor
 }
 
 func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initial []core.ResponseFrame, writer *io.PipeWriter) {
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 	if writeFrames(writer, initial) {
 		return
 	}

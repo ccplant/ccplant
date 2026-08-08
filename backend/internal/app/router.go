@@ -48,6 +48,7 @@ type HandlerRegistry struct {
 	provisionerController      *controllers.ProvisionerController
 	sessionControlController   *controllers.SessionControlController
 	esmControlController       *controllers.ESMControlController
+	sessionRuntimeController   *controllers.SessionRuntimeController
 	customHandlers             []CustomHandler
 }
 
@@ -225,6 +226,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var provisionerController *controllers.ProvisionerController
 	var sessionControlController *controllers.SessionControlController
 	var esmControlController *controllers.ESMControlController
+	var sessionRuntimeController *controllers.SessionRuntimeController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
 		if server.sessionControlStore != nil {
@@ -232,6 +234,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController)
+			if server.sessionRouteRepo != nil {
+				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo)
+			}
 		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
@@ -266,6 +271,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			provisionerController:      provisionerController,
 			sessionControlController:   sessionControlController,
 			esmControlController:       esmControlController,
+			sessionRuntimeController:   sessionRuntimeController,
 			customHandlers:             make([]CustomHandler, 0),
 		},
 	}
@@ -383,6 +389,11 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/external-session-managers/:managerId/control/commands", r.handlers.esmControlController.WaitCommands)
 		r.echo.POST("/internal/external-session-managers/:managerId/control/frames", r.handlers.esmControlController.AppendFrames)
 		log.Printf("[ROUTES] Internal outbound ESM control endpoints registered")
+	}
+	if r.handlers.sessionRuntimeController != nil {
+		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)
+		r.echo.POST("/internal/session-runtime/:sessionId/frames", r.handlers.sessionRuntimeController.AppendFrames)
+		log.Printf("[ROUTES] Direct Session Pod runtime endpoints registered")
 	}
 
 	// Session sharing routes

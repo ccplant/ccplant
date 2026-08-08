@@ -259,7 +259,7 @@ func (m *KubernetesSessionManager) claimNextSessionAllocation(ctx context.Contex
 	return nil, false, nil
 }
 
-func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.Context, managerID, sessionID string, settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) error {
+func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.Context, managerID, sessionID string, settings *sessionsettings.SessionSettings, req *entities.RunServerRequest, runtime *sessionallocation.RuntimeBootstrap) error {
 	if err := m.CreateProvisionRequestFromSettings(ctx, sessionID, settings); err != nil {
 		return fmt.Errorf("failed to create external provision request: %w", err)
 	}
@@ -271,6 +271,7 @@ func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.C
 		Status:            sessionallocation.StatusPending,
 		Requirements:      sessionRequirements(req),
 		UpdatedAt:         time.Now().UTC(),
+		Runtime:           runtime,
 	}
 	if err := m.saveSessionAllocation(ctx, allocation); err != nil {
 		_ = m.deleteProvisionRequest(context.Background(), sessionID)

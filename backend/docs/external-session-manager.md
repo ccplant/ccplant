@@ -1,5 +1,9 @@
 # External Session Manager
 
+> **Proposed architecture:** [`direct-session-runtime.md`](direct-session-runtime.md) defines the
+> migration that removes ESM from steady-state session traffic. The behavior below describes the
+> current implementation until that migration is complete.
+
 External Session Manager (ESM) lets a main agentapi-proxy instance route session
 workloads to another agentapi-proxy instance. The main proxy is called **親プロキシ**.
 The external manager remains **External Session Manager** or **ESM**.

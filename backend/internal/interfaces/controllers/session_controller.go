@@ -942,7 +942,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 // It signs the request with HMAC-SHA256 before forwarding.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
-	if route.RemoteSessionID == "" || (route.ProxyURL == "" && route.ManagerID == "") {
+	if route.RemoteSessionID == "" || (route.ProxyURL == "" && route.ManagerID == "" && route.Transport != repositories.SessionRouteTransportDirectRuntime) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
 
@@ -952,9 +952,8 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		if authzCtx == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
-		// Basic auth check - we can't check session ownership without the actual session object,
-		// but we can verify the user is authenticated. Full ownership check would require
-		// fetching session info from B.
+		// The route lookup itself is authoritative for legacy entries that may not
+		// yet contain ownership metadata. New routes persist the owner fields.
 	}
 
 	// Build target URL: replace A's session ID with B's remote session ID in the path
@@ -969,6 +968,30 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		return echo.NewHTTPError(http.StatusBadRequest, "Failed to read request body")
 	}
 	ctx.Request().Body = io.NopCloser(bytes.NewReader(body))
+
+	if route.Transport == repositories.SessionRouteTransportDirectRuntime {
+		if c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.SessionID) {
+			ctx.Response().Header().Set("Retry-After", "2")
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Session runtime connection is unavailable")
+		}
+		suffix := strings.TrimPrefix(originalPath, "/"+sessionID)
+		if suffix == "" {
+			suffix = "/"
+		}
+		requestURL := &url.URL{Scheme: "http", Host: "session.local", Path: suffix, RawQuery: ctx.Request().URL.RawQuery}
+		req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, requestURL.String(), bytes.NewReader(body))
+		if reqErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build direct runtime request")
+		}
+		req.Header = ctx.Request().Header.Clone()
+		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
+		if tunnelErr != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
+		}
+		defer func() { _ = resp.Body.Close() }()
+		copyResponseHeaders(ctx.Response().Header(), resp.Header)
+		return streamTunnelResponse(ctx, resp)
+	}
 
 	if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		requestURL := &url.URL{Scheme: "http", Host: "esm.local", Path: targetPath, RawQuery: ctx.Request().URL.RawQuery}
@@ -988,7 +1011,7 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		if tunnelErr != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		copyResponseHeaders(ctx.Response().Header(), resp.Header)
 		return streamTunnelResponse(ctx, resp)
 	}

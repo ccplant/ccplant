@@ -78,6 +78,9 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			_ = reportProvisionRequestStatus(ctx, client, cfg, provisionReq.RequestID, StatusError, "provision request has no settings")
 			continue
 		}
+		if runtime := provisionReq.Settings.ParentRuntime; runtime != nil && runtime.Enabled {
+			go runDirectRuntimeClient(ctx, client.Transport, runtime, cfg.PodName)
+		}
 
 		srv.SetStatusReporter(func(st Status, msg string) {
 			go func() {

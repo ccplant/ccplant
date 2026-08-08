@@ -904,6 +904,9 @@ redis:
 # Redis is only accessed by backend pods; session pods never receive Redis credentials.
 sessionControl:
   enabled: false
+  # Route newly allocated ESM sessions through a per-session outbound channel
+  # from the Session Pod directly to the parent proxy.
+  directRuntimeEnabled: false
 
 # 外部 Redis を使用する場合の設定（redis.enabled=false のときのみ有効）
 externalRedis:

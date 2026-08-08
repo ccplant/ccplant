@@ -444,6 +444,11 @@ URL and provisioner token, but no Redis address or credentials. See
 [`docs/session-control-long-poll.md`](../../docs/session-control-long-poll.md) for
 the transport and retention model.
 
+For ESM sessions, enable the direct Session Pod-to-parent runtime transport with
+`--set sessionControl.directRuntimeEnabled=true`. This requires
+`sessionControl.enabled=true` and Redis. See
+[`docs/direct-session-runtime.md`](../../docs/direct-session-runtime.md).
+
 ## Troubleshooting
 
 ### Check Deployment status

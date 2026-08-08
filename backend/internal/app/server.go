@@ -2,7 +2,11 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -47,37 +51,38 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config              *config.Config
-	echo                *echo.Echo
-	verbose             bool
-	logger              *logger.Logger
-	oauthProvider       *auth.GitHubOAuthProvider
-	oauthSessions       sync.Map // sessionID -> OAuthSession
-	notificationSvc     *notification.Service
-	container           *di.Container                                   // Internal DI container
-	sessionManager      portrepos.SessionManager                        // Session lifecycle manager
-	persistenceClient   kubernetes.Interface                            // Secret/ConfigMap client for non-session application data
-	kvStore             kvstore.Store                                   // non-nil when persistenceClient is backed by libSQL
-	settingsRepo        portrepos.SettingsRepository                    // Settings repository
-	credentialsRepo     portrepos.CredentialsRepository                 // Credentials repository
-	shareRepo           portrepos.ShareRepository                       // Share repository for session sharing
-	teamConfigRepo      portrepos.TeamConfigRepository                  // Team configuration repository
-	memoryRepo          portrepos.MemoryRepository                      // Memory repository
-	sandboxPolicyRepo   portrepos.SandboxPolicyRepository               // Sandbox policy repository
-	sandboxDomainRepo   *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
-	taskRepo            portrepos.TaskRepository                        // Task repository
-	taskGroupRepo       portrepos.TaskGroupRepository                   // Task group repository
-	sessionRouteRepo    portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
-	userFileRepo        portrepos.UserFileRepository                    // User-managed files repository
-	sessionProfileRepo  portrepos.SessionProfileRepository              // Session profile repository
-	apiTokenRepo        portrepos.APITokenRepository                    // Named API token repository
-	apiTokenDeps        *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
-	assetStore          services.AssetStore                             // Static asset storage backend
-	sessionStateStore   services.SessionStateStore
-	sessionControlStore sessioncontrol.Store
-	esmControlStore     esmcontrol.Store
-	esmControlTunnel    *infraesmcontrol.Tunnel
-	router              *Router // Router for custom handler registration
+	config                      *config.Config
+	echo                        *echo.Echo
+	verbose                     bool
+	logger                      *logger.Logger
+	oauthProvider               *auth.GitHubOAuthProvider
+	oauthSessions               sync.Map // sessionID -> OAuthSession
+	notificationSvc             *notification.Service
+	container                   *di.Container                                   // Internal DI container
+	sessionManager              portrepos.SessionManager                        // Session lifecycle manager
+	persistenceClient           kubernetes.Interface                            // Secret/ConfigMap client for non-session application data
+	kvStore                     kvstore.Store                                   // non-nil when persistenceClient is backed by libSQL
+	settingsRepo                portrepos.SettingsRepository                    // Settings repository
+	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
+	shareRepo                   portrepos.ShareRepository                       // Share repository for session sharing
+	teamConfigRepo              portrepos.TeamConfigRepository                  // Team configuration repository
+	memoryRepo                  portrepos.MemoryRepository                      // Memory repository
+	sandboxPolicyRepo           portrepos.SandboxPolicyRepository               // Sandbox policy repository
+	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
+	taskRepo                    portrepos.TaskRepository                        // Task repository
+	taskGroupRepo               portrepos.TaskGroupRepository                   // Task group repository
+	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
+	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
+	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
+	apiTokenRepo                portrepos.APITokenRepository                    // Named API token repository
+	apiTokenDeps                *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
+	assetStore                  services.AssetStore                             // Static asset storage backend
+	sessionStateStore           services.SessionStateStore
+	sessionControlStore         sessioncontrol.Store
+	esmControlStore             esmcontrol.Store
+	esmControlTunnel            *infraesmcontrol.Tunnel
+	directSessionRuntimeEnabled bool
+	router                      *Router // Router for custom handler registration
 }
 
 // NewServer creates a new server instance
@@ -395,33 +400,40 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 	}
 
+	directRuntimeEnabled := strings.EqualFold(os.Getenv("AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED"), "true")
+	if directRuntimeEnabled && esmControlTunnel == nil {
+		log.Printf("[DIRECT_RUNTIME] Disabled: session control Redis store is unavailable")
+		directRuntimeEnabled = false
+	}
+
 	s := &Server{
-		config:              cfg,
-		echo:                e,
-		verbose:             verbose,
-		logger:              lgr,
-		container:           container,
-		sessionManager:      sessionManager,
-		persistenceClient:   persistenceClient,
-		kvStore:             applicationKVStore,
-		settingsRepo:        settingsRepo,
-		credentialsRepo:     credentialsRepo,
-		shareRepo:           shareRepo,
-		teamConfigRepo:      teamConfigRepo,
-		memoryRepo:          memoryRepo,
-		sandboxPolicyRepo:   sandboxPolicyRepo,
-		sandboxDomainRepo:   sandboxDomainRepo,
-		taskRepo:            taskRepo,
-		taskGroupRepo:       taskGroupRepo,
-		sessionRouteRepo:    sessionRouteRepo,
-		userFileRepo:        userFileRepo,
-		sessionProfileRepo:  sessionProfileRepo,
-		apiTokenRepo:        apiTokenRepo,
-		assetStore:          assetStore,
-		sessionStateStore:   sessionStateStore,
-		sessionControlStore: sessionControlStore,
-		esmControlStore:     esmControlStore,
-		esmControlTunnel:    esmControlTunnel,
+		config:                      cfg,
+		echo:                        e,
+		verbose:                     verbose,
+		logger:                      lgr,
+		container:                   container,
+		sessionManager:              sessionManager,
+		persistenceClient:           persistenceClient,
+		kvStore:                     applicationKVStore,
+		settingsRepo:                settingsRepo,
+		credentialsRepo:             credentialsRepo,
+		shareRepo:                   shareRepo,
+		teamConfigRepo:              teamConfigRepo,
+		memoryRepo:                  memoryRepo,
+		sandboxPolicyRepo:           sandboxPolicyRepo,
+		sandboxDomainRepo:           sandboxDomainRepo,
+		taskRepo:                    taskRepo,
+		taskGroupRepo:               taskGroupRepo,
+		sessionRouteRepo:            sessionRouteRepo,
+		userFileRepo:                userFileRepo,
+		sessionProfileRepo:          sessionProfileRepo,
+		apiTokenRepo:                apiTokenRepo,
+		assetStore:                  assetStore,
+		sessionStateStore:           sessionStateStore,
+		sessionControlStore:         sessionControlStore,
+		esmControlStore:             esmControlStore,
+		esmControlTunnel:            esmControlTunnel,
+		directSessionRuntimeEnabled: directRuntimeEnabled,
 	}
 
 	// Add logging middleware if verbose
@@ -1153,7 +1165,21 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	if !ok {
 		return nil, fmt.Errorf("external session manager allocator requires allocation queue")
 	}
-	if err := allocationQueue.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq); err != nil {
+	var runtimeBootstrap *sessionallocation.RuntimeBootstrap
+	runtimeTokenHash := ""
+	transport := portrepos.SessionRouteTransportESMTunnel
+	generation := int64(0)
+	if s.directSessionRuntimeEnabled && s.esmControlTunnel != nil && s.sessionRouteRepo != nil {
+		token, tokenHash, tokenErr := newDirectRuntimeToken()
+		if tokenErr != nil {
+			return nil, fmt.Errorf("create direct session runtime credential: %w", tokenErr)
+		}
+		generation = 1
+		transport = portrepos.SessionRouteTransportDirectRuntime
+		runtimeTokenHash = tokenHash
+		runtimeBootstrap = &sessionallocation.RuntimeBootstrap{Token: token, Generation: generation}
+	}
+	if err := allocationQueue.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq, runtimeBootstrap); err != nil {
 		return nil, err
 	}
 	startedAt := time.Now()
@@ -1163,15 +1189,18 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 			tags = map[string]string{}
 		}
 		route := &portrepos.SessionRoute{
-			SessionID:      sessionID,
-			ManagerID:      esm.ID,
-			HMACSecret:     esm.HMACSecret,
-			UserID:         userID,
-			Scope:          string(startReq.Scope),
-			TeamID:         startReq.TeamID,
-			Tags:           tags,
-			StartedAt:      startedAt,
-			InitialMessage: initialMessage,
+			SessionID:        sessionID,
+			ManagerID:        esm.ID,
+			HMACSecret:       esm.HMACSecret,
+			UserID:           userID,
+			Scope:            string(startReq.Scope),
+			TeamID:           startReq.TeamID,
+			Tags:             tags,
+			StartedAt:        startedAt,
+			InitialMessage:   initialMessage,
+			Transport:        transport,
+			RuntimeTokenHash: runtimeTokenHash,
+			Generation:       generation,
 		}
 		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
 			log.Printf("[REMOTE_SESSION] Warning: failed to save pending session route: %v", saveErr)
@@ -1187,6 +1216,16 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 		startedAt,
 		"creating",
 	), nil
+}
+
+func newDirectRuntimeToken() (string, string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	digest := sha256.Sum256([]byte(token))
+	return token, hex.EncodeToString(digest[:]), nil
 }
 
 func githubTokenForStartRequest(startReq entities.StartRequest) string {
