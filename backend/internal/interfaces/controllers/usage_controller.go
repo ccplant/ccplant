@@ -27,6 +27,14 @@ type usageParquetRow struct {
 	AgentType          string    `parquet:"agent_type,dict"`
 	Provider           string    `parquet:"provider,dict"`
 	Model              string    `parquet:"model,dict"`
+	OwnerUserID        string    `parquet:"owner_user_id,dict"`
+	TriggeredUserID    string    `parquet:"triggered_user_id,dict"`
+	SessionProfileID   string    `parquet:"session_profile_id,dict"`
+	TriggerType        string    `parquet:"trigger_type,dict"`
+	TriggerID          string    `parquet:"trigger_id,dict"`
+	WebhookID          string    `parquet:"webhook_id,dict"`
+	ScheduleID         string    `parquet:"schedule_id,dict"`
+	SlackbotID         string    `parquet:"slackbot_id,dict"`
 	InputTokens        int64     `parquet:"input_tokens"`
 	OutputTokens       int64     `parquet:"output_tokens"`
 	CachedInputTokens  int64     `parquet:"cached_input_tokens"`
@@ -112,6 +120,9 @@ func encodeUsageParquet(events []entities.UsageEvent) ([]byte, error) {
 		rows[i] = usageParquetRow{
 			OccurredAt: event.OccurredAt, SessionID: event.SessionID, AgentSessionID: event.AgentSessionID,
 			AgentType: event.AgentType, Provider: event.Provider, Model: event.Model,
+			OwnerUserID: event.OwnerUserID, TriggeredUserID: event.TriggeredUserID,
+			SessionProfileID: event.SessionProfileID, TriggerType: event.TriggerType, TriggerID: event.TriggerID,
+			WebhookID: event.WebhookID, ScheduleID: event.ScheduleID, SlackbotID: event.SlackbotID,
 			InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, CachedInputTokens: event.CachedInputTokens,
 			CacheCreationToken: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens,
 		}
@@ -200,6 +211,23 @@ func (c *UsageController) Create(ctx echo.Context) error {
 		event.UserID = session.UserID()
 		event.Scope = string(session.Scope())
 		event.TeamID = session.TeamID()
+		event.OwnerUserID = session.UserID()
+		tags := session.Tags()
+		event.TriggeredUserID = tags["triggered_user_id"]
+		event.SessionProfileID = tags["session_profile_id"]
+		event.WebhookID = tags["webhook_id"]
+		event.ScheduleID = tags["schedule_id"]
+		event.SlackbotID = tags["slackbot_id"]
+		switch {
+		case event.WebhookID != "":
+			event.TriggerType, event.TriggerID = "webhook", event.WebhookID
+		case event.ScheduleID != "":
+			event.TriggerType, event.TriggerID = "schedule", event.ScheduleID
+		case event.SlackbotID != "":
+			event.TriggerType, event.TriggerID = "slackbot", event.SlackbotID
+		default:
+			event.TriggerType = "manual"
+		}
 	}
 	result, err := c.repo.InsertEvents(ctx.Request().Context(), batch.Events)
 	if err != nil {

@@ -57,6 +57,48 @@ reasoning_tokens INTEGER NOT NULL DEFAULT 0, occurred_at TEXT NOT NULL, received
 			return fmt.Errorf("initialize usage schema: %w", err)
 		}
 	}
+	for _, column := range []string{
+		"owner_user_id TEXT", "triggered_user_id TEXT", "session_profile_id TEXT",
+		"trigger_type TEXT", "trigger_id TEXT", "webhook_id TEXT", "schedule_id TEXT", "slackbot_id TEXT",
+	} {
+		if err := r.ensureUsageColumn(ctx, column); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *LibSQLUsageRepository) ensureUsageColumn(ctx context.Context, definition string) error {
+	name := strings.Fields(definition)[0]
+	rows, err := r.db.QueryContext(ctx, `PRAGMA table_info(agentapi_usage_events)`)
+	if err != nil {
+		return fmt.Errorf("inspect usage schema: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var columnName, columnType string
+		var notNull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan usage schema: %w", err)
+		}
+		found = found || columnName == name
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE agentapi_usage_events ADD COLUMN `+definition); err != nil {
+		// Multiple proxy replicas can initialize the shared database concurrently.
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return nil
+		}
+		return fmt.Errorf("add usage column %s: %w", name, err)
+	}
 	return nil
 }
 
@@ -70,11 +112,12 @@ func (r *LibSQLUsageRepository) InsertEvents(ctx context.Context, events []entit
 	receivedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, event := range events {
 		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_usage_events
-(event_id,session_id,agent_session_id,turn_id,response_id,user_id,scope,team_id,agent_type,provider,model,input_tokens,output_tokens,cached_input_tokens,cache_creation_tokens,reasoning_tokens,occurred_at,received_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event.EventID, event.SessionID, event.AgentSessionID, event.TurnID,
+(event_id,session_id,agent_session_id,turn_id,response_id,user_id,scope,team_id,agent_type,provider,model,input_tokens,output_tokens,cached_input_tokens,cache_creation_tokens,reasoning_tokens,occurred_at,received_at,owner_user_id,triggered_user_id,session_profile_id,trigger_type,trigger_id,webhook_id,schedule_id,slackbot_id)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event.EventID, event.SessionID, event.AgentSessionID, event.TurnID,
 			event.ResponseID, event.UserID, event.Scope, event.TeamID, event.AgentType, event.Provider, event.Model,
 			event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.CacheCreationTokens, event.ReasoningTokens,
-			event.OccurredAt.UTC().Format(time.RFC3339Nano), receivedAt)
+			event.OccurredAt.UTC().Format(time.RFC3339Nano), receivedAt, event.OwnerUserID, event.TriggeredUserID,
+			event.SessionProfileID, event.TriggerType, event.TriggerID, event.WebhookID, event.ScheduleID, event.SlackbotID)
 		if err != nil {
 			return entities.UsageInsertResult{}, fmt.Errorf("insert usage event: %w", err)
 		}
@@ -121,7 +164,9 @@ COALESCE(SUM(cached_input_tokens),0), COALESCE(SUM(cache_creation_tokens),0), CO
 func (r *LibSQLUsageRepository) ListEvents(ctx context.Context, query entities.UsageQuery) ([]entities.UsageEvent, error) {
 	where, args := usageWhere(query)
 	statement := `SELECT session_id, agent_session_id, agent_type, provider, model,
-input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, reasoning_tokens, occurred_at
+input_tokens, output_tokens, cached_input_tokens, cache_creation_tokens, reasoning_tokens, occurred_at,
+COALESCE(owner_user_id,''), COALESCE(triggered_user_id,''), COALESCE(session_profile_id,''),
+COALESCE(trigger_type,''), COALESCE(trigger_id,''), COALESCE(webhook_id,''), COALESCE(schedule_id,''), COALESCE(slackbot_id,'')
 FROM agentapi_usage_events WHERE ` + where + ` ORDER BY occurred_at ASC`
 	if query.Limit > 0 {
 		statement += ` LIMIT ?`
@@ -138,7 +183,8 @@ FROM agentapi_usage_events WHERE ` + where + ` ORDER BY occurred_at ASC`
 		var occurredAt string
 		if err := rows.Scan(&event.SessionID, &event.AgentSessionID, &event.AgentType, &event.Provider, &event.Model,
 			&event.InputTokens, &event.OutputTokens, &event.CachedInputTokens, &event.CacheCreationTokens,
-			&event.ReasoningTokens, &occurredAt); err != nil {
+			&event.ReasoningTokens, &occurredAt, &event.OwnerUserID, &event.TriggeredUserID, &event.SessionProfileID,
+			&event.TriggerType, &event.TriggerID, &event.WebhookID, &event.ScheduleID, &event.SlackbotID); err != nil {
 			return nil, fmt.Errorf("scan usage event: %w", err)
 		}
 		event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurredAt)

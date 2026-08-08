@@ -148,6 +148,10 @@ func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req Launc
 		profile := uc.resolveSessionProfile(ctx, req)
 		if profile != nil {
 			applyProfileToLaunchRequest(profile.Config(), &req)
+			if req.Tags == nil {
+				req.Tags = make(map[string]string)
+			}
+			req.Tags["session_profile_id"] = profile.ID()
 		}
 	}
 

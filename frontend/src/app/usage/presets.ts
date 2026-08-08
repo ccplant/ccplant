@@ -50,6 +50,19 @@ GROUP BY model
 ORDER BY input_tokens + cache_tokens + output_tokens DESC`,
   },
   {
+    id: 'triggers',
+    label: '起動元別',
+    description: '手動・Webhook・Scheduleなどの利用量',
+    chart: 'bar',
+    sql: `SELECT
+  trigger_type,
+  COUNT(DISTINCT session_id) AS sessions,
+  SUM(input_tokens + cached_input_tokens + cache_creation_tokens + output_tokens) AS tokens
+FROM usage_events
+GROUP BY trigger_type
+ORDER BY tokens DESC`,
+  },
+  {
     id: 'sessions',
     label: '時間別セッション数',
     description: 'usageが発生したユニークセッション数',

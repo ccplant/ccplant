@@ -15,6 +15,8 @@ func TestEncodeUsageParquet(t *testing.T) {
 	data, err := encodeUsageParquet([]entities.UsageEvent{{
 		SessionID: "session-1", AgentSessionID: "thread-1", AgentType: "codex-acp",
 		Provider: "openai", Model: "gpt-test", InputTokens: 10, OutputTokens: 2,
+		OwnerUserID: "user-1", TriggeredUserID: "actor-1", SessionProfileID: "profile-1",
+		TriggerType: "webhook", TriggerID: "webhook-1", WebhookID: "webhook-1",
 		CachedInputTokens: 4, CacheCreationTokens: 1, ReasoningTokens: 3, OccurredAt: occurredAt,
 	}})
 	if err != nil {
@@ -30,7 +32,8 @@ func TestEncodeUsageParquet(t *testing.T) {
 	if err != nil && err != io.EOF {
 		t.Fatal(err)
 	}
-	if n != 1 || rows[0].SessionID != "session-1" || rows[0].Model != "gpt-test" || rows[0].InputTokens != 10 || !rows[0].OccurredAt.Equal(occurredAt) {
+	if n != 1 || rows[0].SessionID != "session-1" || rows[0].Model != "gpt-test" || rows[0].InputTokens != 10 ||
+		rows[0].OwnerUserID != "user-1" || rows[0].SessionProfileID != "profile-1" || rows[0].TriggerID != "webhook-1" || !rows[0].OccurredAt.Equal(occurredAt) {
 		t.Fatalf("unexpected parquet row: %#v", rows[:n])
 	}
 }

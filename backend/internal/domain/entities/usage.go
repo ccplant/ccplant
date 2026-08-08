@@ -12,6 +12,14 @@ type UsageEvent struct {
 	UserID              string    `json:"-"`
 	Scope               string    `json:"-"`
 	TeamID              string    `json:"-"`
+	OwnerUserID         string    `json:"owner_user_id,omitempty"`
+	TriggeredUserID     string    `json:"triggered_user_id,omitempty"`
+	SessionProfileID    string    `json:"session_profile_id,omitempty"`
+	TriggerType         string    `json:"trigger_type,omitempty"`
+	TriggerID           string    `json:"trigger_id,omitempty"`
+	WebhookID           string    `json:"webhook_id,omitempty"`
+	ScheduleID          string    `json:"schedule_id,omitempty"`
+	SlackbotID          string    `json:"slackbot_id,omitempty"`
 	AgentType           string    `json:"agent_type"`
 	Provider            string    `json:"provider,omitempty"`
 	Model               string    `json:"model"`

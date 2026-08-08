@@ -15,7 +15,7 @@ func TestLibSQLUsageRepositoryDeduplicatesEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = repo.Close() }()
-	event := entities.UsageEvent{EventID: "event-1", SessionID: "session-1", UserID: "user-1", Scope: "user", AgentType: "claude-acp", Model: "model-1", InputTokens: 10, OutputTokens: 2, OccurredAt: time.Now()}
+	event := entities.UsageEvent{EventID: "event-1", SessionID: "session-1", UserID: "user-1", Scope: "user", AgentType: "claude-acp", Model: "model-1", InputTokens: 10, OutputTokens: 2, OwnerUserID: "user-1", SessionProfileID: "profile-1", TriggerType: "schedule", TriggerID: "schedule-1", ScheduleID: "schedule-1", OccurredAt: time.Now()}
 	first, err := repo.InsertEvents(context.Background(), []entities.UsageEvent{event})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestLibSQLUsageRepositoryDeduplicatesEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].SessionID != "session-1" || events[0].InputTokens != 10 {
+	if len(events) != 1 || events[0].SessionID != "session-1" || events[0].InputTokens != 10 || events[0].OwnerUserID != "user-1" || events[0].SessionProfileID != "profile-1" || events[0].ScheduleID != "schedule-1" {
 		t.Fatalf("events = %#v", events)
 	}
 }

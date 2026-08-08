@@ -22,6 +22,14 @@ const usageSchema = [
   ['agent_type', 'VARCHAR', 'codex・claude-codeなどのエージェント種別'],
   ['provider', 'VARCHAR', 'モデルプロバイダー'],
   ['model', 'VARCHAR', '利用したモデル名'],
+  ['owner_user_id', 'VARCHAR', 'セッションを所有・起動したユーザー'],
+  ['triggered_user_id', 'VARCHAR', 'WebhookやSlackイベントを発生させた外部ユーザー'],
+  ['session_profile_id', 'VARCHAR', '適用されたセッションプロファイルID'],
+  ['trigger_type', 'VARCHAR', '起動元。manual・webhook・schedule・slackbot'],
+  ['trigger_id', 'VARCHAR', '起動元リソースのID'],
+  ['webhook_id', 'VARCHAR', 'Webhook起動時のWebhook ID'],
+  ['schedule_id', 'VARCHAR', 'Schedule起動時のSchedule ID'],
+  ['slackbot_id', 'VARCHAR', 'SlackBot起動時のSlackBot ID'],
   ['input_tokens', 'BIGINT', '入力トークン数'],
   ['output_tokens', 'BIGINT', '出力トークン数'],
   ['cached_input_tokens', 'BIGINT', 'キャッシュから読み込んだ入力トークン数'],
@@ -102,7 +110,7 @@ export default function UsagePage() {
           <details className="mt-4 rounded-xl border border-gray-200 bg-gray-50 open:bg-white dark:border-gray-700 dark:bg-gray-950/40 dark:open:bg-gray-950/20">
             <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-200">
               usage_events スキーマ
-              <span className="ml-2 font-normal text-gray-400">11 columns</span>
+              <span className="ml-2 font-normal text-gray-400">19 columns</span>
             </summary>
             <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-700">
               <table className="min-w-full text-left text-xs">
