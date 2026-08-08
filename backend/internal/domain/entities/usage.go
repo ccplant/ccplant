@@ -48,6 +48,7 @@ type UsageSummary struct {
 	CachedInputTokens   int64            `json:"cached_input_tokens"`
 	CacheCreationTokens int64            `json:"cache_creation_tokens"`
 	ReasoningTokens     int64            `json:"reasoning_tokens"`
+	ByDay               []UsageBreakdown `json:"by_day"`
 	ByModel             []UsageBreakdown `json:"by_model"`
 	BySession           []UsageBreakdown `json:"by_session"`
 }

@@ -40,4 +40,7 @@ func TestLibSQLUsageRepositoryDeduplicatesEvents(t *testing.T) {
 	if len(summary.ByModel) != 1 || summary.ByModel[0].Key != "model-1" || len(summary.BySession) != 1 || summary.BySession[0].Key != "session-1" {
 		t.Fatalf("breakdowns = model:%#v session:%#v", summary.ByModel, summary.BySession)
 	}
+	if len(summary.ByDay) != 1 || summary.ByDay[0].Key != event.OccurredAt.UTC().Format("2006-01-02") {
+		t.Fatalf("daily breakdown = %#v", summary.ByDay)
+	}
 }

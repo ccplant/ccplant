@@ -15,6 +15,7 @@ export interface UsageSummary {
   cached_input_tokens: number
   cache_creation_tokens: number
   reasoning_tokens: number
+  by_day: UsageBreakdown[]
   by_model: UsageBreakdown[]
   by_session: UsageBreakdown[]
 }

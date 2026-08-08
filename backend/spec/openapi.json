@@ -5457,7 +5457,7 @@
       },
       "UsageSummary": {
         "type": "object",
-        "required": ["events", "input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_tokens", "reasoning_tokens", "by_model", "by_session"],
+        "required": ["events", "input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_tokens", "reasoning_tokens", "by_day", "by_model", "by_session"],
         "properties": {
           "events": { "type": "integer", "format": "int64" },
           "input_tokens": { "type": "integer", "format": "int64" },
@@ -5465,6 +5465,7 @@
           "cached_input_tokens": { "type": "integer", "format": "int64" },
           "cache_creation_tokens": { "type": "integer", "format": "int64" },
           "reasoning_tokens": { "type": "integer", "format": "int64" },
+          "by_day": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } },
           "by_model": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } },
           "by_session": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } }
         }
