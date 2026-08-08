@@ -42,10 +42,22 @@ type UsageQuery struct {
 }
 
 type UsageSummary struct {
-	Events              int64 `json:"events"`
-	InputTokens         int64 `json:"input_tokens"`
-	OutputTokens        int64 `json:"output_tokens"`
-	CachedInputTokens   int64 `json:"cached_input_tokens"`
-	CacheCreationTokens int64 `json:"cache_creation_tokens"`
-	ReasoningTokens     int64 `json:"reasoning_tokens"`
+	Events              int64            `json:"events"`
+	InputTokens         int64            `json:"input_tokens"`
+	OutputTokens        int64            `json:"output_tokens"`
+	CachedInputTokens   int64            `json:"cached_input_tokens"`
+	CacheCreationTokens int64            `json:"cache_creation_tokens"`
+	ReasoningTokens     int64            `json:"reasoning_tokens"`
+	ByModel             []UsageBreakdown `json:"by_model"`
+	BySession           []UsageBreakdown `json:"by_session"`
+}
+
+type UsageBreakdown struct {
+	Key                 string `json:"key"`
+	Events              int64  `json:"events"`
+	InputTokens         int64  `json:"input_tokens"`
+	OutputTokens        int64  `json:"output_tokens"`
+	CachedInputTokens   int64  `json:"cached_input_tokens"`
+	CacheCreationTokens int64  `json:"cache_creation_tokens"`
+	ReasoningTokens     int64  `json:"reasoning_tokens"`
 }

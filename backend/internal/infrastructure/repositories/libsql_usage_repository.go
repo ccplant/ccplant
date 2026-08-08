@@ -97,6 +97,28 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event.EventID, event.SessionID, e
 func (r *LibSQLUsageRepository) Close() error { return r.db.Close() }
 
 func (r *LibSQLUsageRepository) Aggregate(ctx context.Context, query entities.UsageQuery) (entities.UsageSummary, error) {
+	where, args := usageWhere(query)
+	columns := `COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+COALESCE(SUM(cached_input_tokens),0), COALESCE(SUM(cache_creation_tokens),0), COALESCE(SUM(reasoning_tokens),0)`
+	statement := `SELECT ` + columns + ` FROM agentapi_usage_events WHERE ` + where
+	var summary entities.UsageSummary
+	if err := r.db.QueryRowContext(ctx, statement, args...).Scan(&summary.Events, &summary.InputTokens, &summary.OutputTokens,
+		&summary.CachedInputTokens, &summary.CacheCreationTokens, &summary.ReasoningTokens); err != nil {
+		return entities.UsageSummary{}, fmt.Errorf("aggregate usage events: %w", err)
+	}
+	var err error
+	summary.ByModel, err = r.aggregateBy(ctx, "model", where, args)
+	if err != nil {
+		return entities.UsageSummary{}, err
+	}
+	summary.BySession, err = r.aggregateBy(ctx, "session_id", where, args)
+	if err != nil {
+		return entities.UsageSummary{}, err
+	}
+	return summary, nil
+}
+
+func usageWhere(query entities.UsageQuery) (string, []interface{}) {
 	where := []string{"1=1"}
 	args := []interface{}{}
 	for column, value := range map[string]string{"session_id": query.SessionID, "user_id": query.UserID, "team_id": query.TeamID} {
@@ -113,13 +135,25 @@ func (r *LibSQLUsageRepository) Aggregate(ctx context.Context, query entities.Us
 		where = append(where, "occurred_at < ?")
 		args = append(args, query.To.UTC().Format(time.RFC3339Nano))
 	}
-	statement := `SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+	return strings.Join(where, " AND "), args
+}
+
+func (r *LibSQLUsageRepository) aggregateBy(ctx context.Context, column, where string, args []interface{}) ([]entities.UsageBreakdown, error) {
+	statement := `SELECT ` + column + `, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
 COALESCE(SUM(cached_input_tokens),0), COALESCE(SUM(cache_creation_tokens),0), COALESCE(SUM(reasoning_tokens),0)
-FROM agentapi_usage_events WHERE ` + strings.Join(where, " AND ")
-	var summary entities.UsageSummary
-	if err := r.db.QueryRowContext(ctx, statement, args...).Scan(&summary.Events, &summary.InputTokens, &summary.OutputTokens,
-		&summary.CachedInputTokens, &summary.CacheCreationTokens, &summary.ReasoningTokens); err != nil {
-		return entities.UsageSummary{}, fmt.Errorf("aggregate usage events: %w", err)
+FROM agentapi_usage_events WHERE ` + where + ` GROUP BY ` + column + ` ORDER BY SUM(input_tokens + output_tokens + cached_input_tokens + cache_creation_tokens) DESC`
+	rows, err := r.db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate usage by %s: %w", column, err)
 	}
-	return summary, nil
+	defer func() { _ = rows.Close() }()
+	result := []entities.UsageBreakdown{}
+	for rows.Next() {
+		var item entities.UsageBreakdown
+		if err := rows.Scan(&item.Key, &item.Events, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.CacheCreationTokens, &item.ReasoningTokens); err != nil {
+			return nil, fmt.Errorf("scan usage by %s: %w", column, err)
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }

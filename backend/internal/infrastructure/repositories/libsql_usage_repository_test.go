@@ -37,4 +37,7 @@ func TestLibSQLUsageRepositoryDeduplicatesEvents(t *testing.T) {
 	if summary.Events != 1 || summary.InputTokens != 10 || summary.OutputTokens != 2 {
 		t.Fatalf("summary = %#v", summary)
 	}
+	if len(summary.ByModel) != 1 || summary.ByModel[0].Key != "model-1" || len(summary.BySession) != 1 || summary.BySession[0].Key != "session-1" {
+		t.Fatalf("breakdowns = model:%#v session:%#v", summary.ByModel, summary.BySession)
+	}
 }

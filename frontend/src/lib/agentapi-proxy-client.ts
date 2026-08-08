@@ -83,6 +83,7 @@ import {
 } from '../types/task';
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GitSyncConfig, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
+import { UsageQuery, UsageSummary } from '../types/usage';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 // CredentialsMetadata represents the metadata returned by the credentials API
@@ -1410,6 +1411,15 @@ export class AgentAPIProxyClient {
       console.log('[AgentAPIProxy] Getting user info');
     }
     return await this.makeRequest<ProxyUserInfo>('/user/info');
+  }
+
+  async getUsage(params: UsageQuery = {}): Promise<UsageSummary> {
+    const searchParams = new URLSearchParams()
+    if (params.team_id) searchParams.set('team_id', params.team_id)
+    if (params.from) searchParams.set('from', params.from)
+    if (params.to) searchParams.set('to', params.to)
+    const query = searchParams.toString()
+    return this.makeRequest<UsageSummary>(`/usage${query ? `?${query}` : ''}`)
   }
 
   /**
