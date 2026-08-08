@@ -81,7 +81,7 @@ import {
   TaskListResponse,
   TaskListParams
 } from '../types/task';
-import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GitSyncConfig, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
+import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
@@ -2918,39 +2918,6 @@ export class AgentAPIProxyClient {
         method: 'session/cancel',
         params: { sessionId: acpSessionId },
       }),
-    });
-  }
-
-  async getGitSyncConfig(name: string): Promise<GitSyncConfig | null> {
-    try {
-      const settings = await this.getSettings(name);
-      return settings.git_sync ?? null;
-    } catch (err) {
-      if (err instanceof AgentAPIProxyError && err.status === 404) return null;
-      throw err;
-    }
-  }
-
-  async updateGitSyncConfig(name: string, config: GitSyncConfig): Promise<GitSyncConfig> {
-    const result = await this.saveSettings(name, { git_sync: config });
-    return result.git_sync!;
-  }
-
-  async deleteGitSyncConfig(name: string): Promise<void> {
-    await this.makeRequest<unknown>(`/settings/${encodeURIComponent(name)}/sync`, {
-      method: 'DELETE',
-    });
-  }
-
-  async gitSyncPush(name: string): Promise<void> {
-    await this.makeRequest<unknown>(`/settings/${encodeURIComponent(name)}/sync/push`, {
-      method: 'POST',
-    });
-  }
-
-  async gitSyncPull(name: string): Promise<void> {
-    await this.makeRequest<unknown>(`/settings/${encodeURIComponent(name)}/sync/pull`, {
-      method: 'POST',
     });
   }
 
