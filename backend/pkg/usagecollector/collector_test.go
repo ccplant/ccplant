@@ -45,3 +45,24 @@ func TestCollectRequiresTranscriptPath(t *testing.T) {
 		t.Fatal("expected missing transcript path error")
 	}
 }
+
+func TestCollectCodexTokenCount(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	content := `{"timestamp":"2026-08-08T13:41:12Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":9999},"last_token_usage":{"input_tokens":14916,"cached_input_tokens":11008,"cache_write_input_tokens":7,"output_tokens":16,"reasoning_output_tokens":3,"total_tokens":14932}}}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hook, _ := json.Marshal(map[string]string{"thread_id": "codex-thread", "transcript_path": path})
+	events, err := Collect(hook, "codex-acp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	got := events[0]
+	if got.InputTokens != 14916 || got.OutputTokens != 16 || got.CachedInputTokens != 11008 || got.CacheCreationTokens != 7 || got.ReasoningTokens != 3 {
+		t.Fatalf("unexpected Codex usage event: %#v", got)
+	}
+}

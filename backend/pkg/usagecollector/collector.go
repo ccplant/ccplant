@@ -56,14 +56,25 @@ func Collect(hookJSON []byte, agentType string) ([]entities.UsageEvent, error) {
 			candidate = message
 		}
 		usage, ok := candidate["usage"].(map[string]interface{})
+		// Codex rollout transcripts emit usage as an event_msg token_count.
+		// last_token_usage is the per-turn delta; total_token_usage is cumulative
+		// and would over-count when every Stop hook scans the whole transcript.
+		if !ok {
+			if payload, payloadOK := root["payload"].(map[string]interface{}); payloadOK && text(payload, "type") == "token_count" {
+				if info, infoOK := payload["info"].(map[string]interface{}); infoOK {
+					usage, ok = info["last_token_usage"].(map[string]interface{})
+					candidate = payload
+				}
+			}
+		}
 		if !ok {
 			continue
 		}
 		inputTokens := number(usage, "input_tokens", "inputTokens")
 		outputTokens := number(usage, "output_tokens", "outputTokens")
 		cached := number(usage, "cache_read_input_tokens", "cached_input_tokens", "cachedInputTokens")
-		created := number(usage, "cache_creation_input_tokens", "cache_creation_tokens", "cacheCreationTokens")
-		reasoning := number(usage, "reasoning_tokens", "reasoningTokens")
+		created := number(usage, "cache_creation_input_tokens", "cache_creation_tokens", "cacheCreationTokens", "cache_write_input_tokens")
+		reasoning := number(usage, "reasoning_tokens", "reasoningTokens", "reasoning_output_tokens")
 		if inputTokens+outputTokens+cached+created+reasoning == 0 {
 			continue
 		}
