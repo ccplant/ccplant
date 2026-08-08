@@ -5,7 +5,8 @@
   "packageManager": "bun@1.2.16",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "copy-duckdb-assets": "mkdir -p public/duckdb && cp node_modules/@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm node_modules/@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js public/duckdb/",
+    "build": "bun run copy-duckdb-assets && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",

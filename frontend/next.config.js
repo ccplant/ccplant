@@ -7,7 +7,7 @@ const withPWA = require('next-pwa')({
     document: '/offline',
   },
   // manifest.json の自動生成を無効化（manifest.ts を使用）
-  publicExcludes: ['!manifest.json'],
+  publicExcludes: ['!manifest.json', '!duckdb/**/*'],
   buildExcludes: [/manifest\.json$/],
 })
 
