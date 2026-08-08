@@ -530,6 +530,14 @@ type KVStoreConfig struct {
 	Replication KVStoreReplicationConfig `json:"replication" mapstructure:"replication"`
 }
 
+// UsageConfig configures the dedicated libSQL database used for usage events.
+// It is intentionally independent from KVStoreConfig.
+type UsageConfig struct {
+	Enabled     bool   `json:"enabled" mapstructure:"enabled"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+}
+
 // Config represents the proxy configuration
 type Config struct {
 	// Auth represents authentication configuration
@@ -565,6 +573,8 @@ type Config struct {
 	// KVStore controls storage for application KV data currently backed by
 	// Kubernetes Secrets and ConfigMaps.
 	KVStore KVStoreConfig `json:"kv_store" mapstructure:"kv_store"`
+	// Usage controls response-level token usage collection.
+	Usage UsageConfig `json:"usage" mapstructure:"usage"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -1043,6 +1053,9 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
 	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
 	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
+	_ = v.BindEnv("usage.enabled", "AGENTAPI_USAGE_ENABLED")
+	_ = v.BindEnv("usage.database_url", "AGENTAPI_USAGE_DATABASE_URL")
+	_ = v.BindEnv("usage.auth_token", "AGENTAPI_USAGE_AUTH_TOKEN")
 
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
@@ -1231,6 +1244,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.aws.allowed_account_ids", []string{})
 	v.SetDefault("auth.aws.team_tag_key", "Team")
 	v.SetDefault("auth.aws.cache_ttl", "1h")
+	v.SetDefault("usage.enabled", false)
 
 	// Role-based environment files defaults
 	v.SetDefault("role_env_files.enabled", false)

@@ -266,6 +266,19 @@ async function handleProxyRequest(
 
     // Handle non-JSON responses
     const contentType = response.headers.get('content-type');
+
+    // Preserve successful binary/file responses byte-for-byte. Converting
+    // these through response.text() and NextResponse.json() corrupts Parquet,
+    // images, and other non-JSON payloads.
+    if (response.ok && !contentType?.includes('application/json')) {
+      const passthroughHeaders = new Headers();
+      for (const name of ['content-type', 'content-disposition', 'content-length', 'etag', 'last-modified', 'x-usage-event-count']) {
+        const value = response.headers.get(name);
+        if (value) passthroughHeaders.set(name, value);
+      }
+      return new NextResponse(response.body, { status: response.status, headers: passthroughHeaders });
+    }
+
     let responseData: unknown;
     
     try {

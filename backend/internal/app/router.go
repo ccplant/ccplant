@@ -49,6 +49,7 @@ type HandlerRegistry struct {
 	sessionControlController   *controllers.SessionControlController
 	esmControlController       *controllers.ESMControlController
 	sessionRuntimeController   *controllers.SessionRuntimeController
+	usageController            *controllers.UsageController
 	customHandlers             []CustomHandler
 }
 
@@ -238,6 +239,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	acpController := controllers.NewACPController(server, server, server.GetSessionRouteRepository())
 	acpController.SetESMControlTunnel(server.esmControlTunnel)
+	var usageController *controllers.UsageController
+	if server.usageRepo != nil {
+		usageController = controllers.NewUsageController(server.usageRepo, server.sessionManager)
+	}
 
 	return &Router{
 		echo:   e,
@@ -267,6 +272,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionControlController:   sessionControlController,
 			esmControlController:       esmControlController,
 			sessionRuntimeController:   sessionRuntimeController,
+			usageController:            usageController,
 			customHandlers:             make([]CustomHandler, 0),
 		},
 	}
@@ -327,6 +333,16 @@ func (r *Router) registerCoreRoutes() error {
 	log.Printf("[ROUTES] Registering session management endpoints...")
 	r.echo.POST("/start", r.handlers.sessionController.StartSession)
 	r.echo.GET("/search", r.handlers.sessionController.SearchSessions)
+	if r.handlers.usageController != nil {
+		r.echo.POST("/internal/usage-events", r.handlers.usageController.Create,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/usage", r.handlers.usageController.Get,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/usage/export.parquet", r.handlers.usageController.ExportParquet,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/sessions/:sessionId/usage", r.handlers.usageController.GetSession,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)

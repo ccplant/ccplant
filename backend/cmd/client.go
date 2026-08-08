@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/client"
+	"github.com/takutakahashi/agentapi-proxy/pkg/usagecollector"
 )
 
 var (
@@ -91,7 +93,8 @@ var (
 
 // cycle subcommand flags
 var (
-	cycleMaxCount int
+	cycleMaxCount  int
+	usageAgentType string
 )
 
 // resolveClient creates a client using flags if provided, otherwise falling back
@@ -186,6 +189,13 @@ Examples:
   agentapi-proxy client cycle --session-id my-session`,
 	Args: cobra.NoArgs,
 	RunE: runCycle,
+}
+
+var reportUsageCmd = &cobra.Command{
+	Use:   "report-usage",
+	Short: "Report token usage from a Stop hook transcript",
+	Args:  cobra.NoArgs,
+	RunE:  runReportUsage,
 }
 
 var sendCmd = &cobra.Command{
@@ -612,8 +622,10 @@ func init() {
 
 	// cycle flags
 	cycleCmd.Flags().IntVar(&cycleMaxCount, "max-count", 10, "Maximum number of cycles (0 means unlimited, default: 10). Exits when the count in /tmp/check/CYCLE_COUNT reaches this limit.")
+	reportUsageCmd.Flags().StringVar(&usageAgentType, "agent-type", "", "Agent type recorded with usage events")
 
 	ClientCmd.AddCommand(cycleCmd)
+	ClientCmd.AddCommand(reportUsageCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -627,6 +639,33 @@ func init() {
 	ClientCmd.AddCommand(assetCmd)
 	ClientCmd.AddCommand(backupSessionStateCmd)
 	ClientCmd.AddCommand(scheduleSessionSuspendCmd)
+}
+
+func runReportUsage(cmd *cobra.Command, args []string) error {
+	hookInput, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read stop hook input: %w", err)
+	}
+	events, err := usagecollector.Collect(hookInput, usageAgentType)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		fmt.Println("No usage events found")
+		return nil
+	}
+	c, resolvedSessionID, err := resolveClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := c.ReportUsage(ctx, &entities.UsageEventBatch{SessionID: resolvedSessionID, Events: events})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Usage reported: accepted=%d duplicates=%d\n", result.Accepted, result.Duplicates)
+	return nil
 }
 
 const (

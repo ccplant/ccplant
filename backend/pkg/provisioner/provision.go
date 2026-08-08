@@ -152,6 +152,7 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
 	normalizeNativeSettings(settings)
+	injectUsageReportingHook(settings)
 	injectSessionPersistenceHook(settings)
 	startedAt := time.Now()
 	s.setPhase("provision:start")
@@ -442,6 +443,34 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	}
 	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
 	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+}
+
+func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {
+	if settings == nil || !settings.UsageReportingEnabled {
+		return
+	}
+	agentType := settings.Session.AgentType
+	command := fmt.Sprintf("agentapi-proxy client report-usage --agent-type %s >> /tmp/usage-report.log 2>&1", shellQuote(agentType))
+	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 15}}}
+	appendStop := func(root map[string]interface{}) map[string]interface{} {
+		if root == nil {
+			root = map[string]interface{}{}
+		}
+		hooks, _ := root["hooks"].(map[string]interface{})
+		if hooks == nil {
+			hooks = map[string]interface{}{}
+		}
+		// Usage must run before destructive oneshot hooks remove the session.
+		hooks["Stop"] = append([]interface{}{hook}, asInterfaceSlice(hooks["Stop"])...)
+		root["hooks"] = hooks
+		return root
+	}
+	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
+	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {

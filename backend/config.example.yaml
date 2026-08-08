@@ -47,3 +47,8 @@ auth:
       client_secret: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET}"
       scope: "read:user read:org project"
       base_url: ""  # Defaults to auth.github.base_url
+# Dedicated libSQL persistence for response-level token usage.
+usage:
+  enabled: false
+  database_url: ""
+  auth_token: ""

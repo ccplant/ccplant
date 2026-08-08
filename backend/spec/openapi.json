@@ -15,6 +15,92 @@
     }
   ],
   "paths": {
+    "/usage": {
+      "get": {
+        "summary": "Get usage totals",
+        "description": "Returns token usage totals for the authenticated user, or for an accessible team when team_id is supplied.",
+        "operationId": "getUsage",
+        "tags": ["Usage"],
+        "parameters": [
+          { "name": "team_id", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+        ],
+        "responses": {
+          "200": { "description": "Aggregated usage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageSummary" } } } },
+          "403": { "description": "Not authorized for the requested team" }
+        }
+      }
+    },
+    "/usage/export.parquet": {
+      "get": {
+        "summary": "Export filtered usage events as Parquet",
+        "description": "Returns authorized raw usage events for local analytics with DuckDB-Wasm. Defaults to 30 days; the maximum range is 90 days and the maximum result is 100000 events.",
+        "operationId": "exportUsageParquet",
+        "tags": ["Usage"],
+        "parameters": [
+          { "name": "team_id", "in": "query", "schema": { "type": "string" } },
+          { "name": "session_id", "in": "query", "schema": { "type": "string" } },
+          { "name": "agent_type", "in": "query", "schema": { "type": "string" } },
+          { "name": "provider", "in": "query", "schema": { "type": "string" } },
+          { "name": "model", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+        ],
+        "responses": {
+          "200": { "description": "Parquet usage export", "headers": { "X-Usage-Event-Count": { "schema": { "type": "integer" } } }, "content": { "application/vnd.apache.parquet": { "schema": { "type": "string", "format": "binary" } } } },
+          "400": { "description": "Invalid or excessive date range" },
+          "403": { "description": "Not authorized for the requested scope" },
+          "413": { "description": "More than 100000 events matched" }
+        }
+      }
+    },
+    "/sessions/{sessionId}/usage": {
+      "get": {
+        "summary": "Get session usage totals",
+        "operationId": "getSessionUsage",
+        "tags": ["Usage"],
+        "parameters": [
+          { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+        ],
+        "responses": {
+          "200": { "description": "Aggregated session usage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageSummary" } } } },
+          "403": { "description": "Not authorized for the session" },
+          "404": { "description": "Session not found" }
+        }
+      }
+    },
+    "/internal/usage-events": {
+      "post": {
+        "summary": "Record session usage events",
+        "description": "Stores idempotent response-level token usage events reported by a session Stop hook. Session ownership is resolved by the server.",
+        "operationId": "createUsageEvents",
+        "tags": ["Usage"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UsageEventBatch" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Events stored or identified as duplicates",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UsageInsertResult" }
+              }
+            }
+          },
+          "400": { "description": "Invalid usage event batch" },
+          "403": { "description": "Not authorized for the session" },
+          "404": { "description": "Session not found" }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health check",
@@ -5352,6 +5438,73 @@
           "total"
         ]
       },
+      "UsageEventBatch": {
+        "type": "object",
+        "required": ["session_id", "events"],
+        "properties": {
+          "session_id": { "type": "string" },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": { "$ref": "#/components/schemas/UsageEvent" }
+          }
+        }
+      },
+      "UsageEvent": {
+        "type": "object",
+        "required": ["event_id", "agent_type", "model", "input_tokens", "output_tokens", "occurred_at"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "agent_session_id": { "type": "string" },
+          "turn_id": { "type": "string" },
+          "response_id": { "type": "string" },
+          "agent_type": { "type": "string" },
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "input_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
+          "output_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
+          "cached_input_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
+          "cache_creation_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
+          "reasoning_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
+          "occurred_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "UsageInsertResult": {
+        "type": "object",
+        "required": ["accepted", "duplicates"],
+        "properties": {
+          "accepted": { "type": "integer" },
+          "duplicates": { "type": "integer" }
+        }
+      },
+      "UsageSummary": {
+        "type": "object",
+        "required": ["events", "input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_tokens", "reasoning_tokens", "by_model", "by_session"],
+        "properties": {
+          "events": { "type": "integer", "format": "int64" },
+          "input_tokens": { "type": "integer", "format": "int64" },
+          "output_tokens": { "type": "integer", "format": "int64" },
+          "cached_input_tokens": { "type": "integer", "format": "int64" },
+          "cache_creation_tokens": { "type": "integer", "format": "int64" },
+          "reasoning_tokens": { "type": "integer", "format": "int64" },
+          "by_model": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } },
+          "by_session": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } }
+        }
+      },
+      "UsageBreakdown": {
+        "type": "object",
+        "required": ["key", "events", "input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_tokens", "reasoning_tokens"],
+        "properties": {
+          "key": { "type": "string" },
+          "events": { "type": "integer", "format": "int64" },
+          "input_tokens": { "type": "integer", "format": "int64" },
+          "output_tokens": { "type": "integer", "format": "int64" },
+          "cached_input_tokens": { "type": "integer", "format": "int64" },
+          "cache_creation_tokens": { "type": "integer", "format": "int64" },
+          "reasoning_tokens": { "type": "integer", "format": "int64" }
+        }
+      },
       "StartRequest": {
         "type": "object",
         "properties": {
@@ -7889,6 +8042,10 @@
     }
   ],
   "tags": [
+    {
+      "name": "Usage",
+      "description": "Response-level token usage collection"
+    },
     {
       "name": "Health",
       "description": "Health check endpoints"

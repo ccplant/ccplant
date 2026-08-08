@@ -205,6 +205,10 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	if c.sessionProfileRepo != nil {
 		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
 		if profile != nil {
+			if startReq.Tags == nil {
+				startReq.Tags = make(map[string]string)
+			}
+			startReq.Tags["session_profile_id"] = profile.ID()
 			cfg := profile.Config()
 			startReq.ProfileMCPServers = cfg.MCPServers()
 

@@ -49,3 +49,5 @@ next-env.d.ts
 /blob-report/
 /playwright/.cache/package-lock.json
 .serena/
+# DuckDB-Wasm runtime assets are copied from node_modules during builds.
+/public/duckdb/

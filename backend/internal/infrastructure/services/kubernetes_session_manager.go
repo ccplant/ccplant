@@ -5488,6 +5488,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	settings.Env = env
+	settings.UsageReportingEnabled = m.config.Usage.Enabled
 
 	settings.Pi = sessionsettings.PiConfig{
 		SettingsJSON: buildPiSettingsJSON(env),
