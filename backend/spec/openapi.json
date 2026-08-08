@@ -4955,6 +4955,85 @@
         }
       }
     },
+    "/internal/external-session-manager/allocations/next": {
+      "get": {
+        "summary": "Long-poll the next External Session Manager allocation",
+        "description": "Internal manager-token-authenticated allocation endpoint. Kubernetes allocations include the parent-owned runtime_profile that the ESM must apply before creating the session.",
+        "operationId": "getNextExternalSessionManagerAllocation",
+        "tags": ["External Session Managers"],
+        "security": [{"BearerAuth": []}],
+        "parameters": [
+          {"name": "wait", "in": "query", "schema": {"type": "string", "default": "30s"}},
+          {"name": "metadata_only", "in": "query", "schema": {"type": "boolean", "default": false}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Allocation claimed for the authenticated manager",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {"type": "string"},
+                    "manager_id": {"type": "string"},
+                    "request": {"type": "object"},
+                    "provision_settings": {"type": "object"},
+                    "runtime": {"type": "object"},
+                    "status": {"type": "string", "enum": ["pending", "allocating", "assigned", "error"]},
+                    "requirements": {"type": "object"},
+                    "updated_at": {"type": "string", "format": "date-time"},
+                    "runtime_profile": {
+                      "type": "object",
+                      "description": "Versioned NFA, SCIA, and session identity configuration inherited from the parent proxy. ESM-local overrides are not supported.",
+                      "required": ["version", "kubernetes", "scia"],
+                      "properties": {
+                        "version": {"type": "integer", "enum": [1]},
+                        "kubernetes": {
+                          "type": "object",
+                          "properties": {
+                            "service_account": {"type": "string"},
+                            "network_filter_image": {"type": "string"},
+                            "network_filter_cpu_request": {"type": "string"},
+                            "network_filter_cpu_limit": {"type": "string"},
+                            "network_filter_memory_request": {"type": "string"},
+                            "network_filter_memory_limit": {"type": "string"},
+                            "network_filter_init_cpu_request": {"type": "string"},
+                            "network_filter_init_cpu_limit": {"type": "string"},
+                            "network_filter_init_memory_request": {"type": "string"},
+                            "network_filter_init_memory_limit": {"type": "string"}
+                          }
+                        },
+                        "scia": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {"type": "boolean"},
+                            "session_sidecar_enabled": {"type": "boolean"},
+                            "session_sidecar_image": {"type": "string"},
+                            "session_sidecar_config_image": {"type": "string"},
+                            "session_sidecar_port": {"type": "integer"},
+                            "credential": {"type": "string"},
+                            "user_namespace": {"type": "string"},
+                            "no_proxy": {"type": "string"},
+                            "google_hosts": {"type": "array", "items": {"type": "string"}},
+                            "google_paths": {"type": "array", "items": {"type": "string"}},
+                            "todoist_credential": {"type": "string"},
+                            "todoist_hosts": {"type": "array", "items": {"type": "string"}},
+                            "todoist_paths": {"type": "array", "items": {"type": "string"}}
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "required": ["session_id", "request", "status", "requirements", "updated_at"]
+                }
+              }
+            }
+          },
+          "204": {"description": "Long-poll timeout"},
+          "401": {"description": "Invalid manager connection token"}
+        }
+      }
+    },
     "/internal/session-runtime/{sessionId}/requests": {
       "get": {
         "summary": "Long-poll direct runtime requests for a Session Pod",

@@ -209,6 +209,44 @@ type ParentRuntimeConfig struct {
 	Generation int64  `yaml:"generation" json:"generation"`
 }
 
+// RuntimeProfile is the parent-owned Kubernetes session runtime configuration
+// inherited by an External Session Manager for every allocation. ESMs do not
+// expose independent overrides for these fields.
+type RuntimeProfile struct {
+	Version    int                      `yaml:"version" json:"version"`
+	Kubernetes KubernetesRuntimeProfile `yaml:"kubernetes" json:"kubernetes"`
+	Scia       SciaRuntimeProfile       `yaml:"scia" json:"scia"`
+}
+
+type KubernetesRuntimeProfile struct {
+	ServiceAccount                 string `yaml:"service_account" json:"service_account"`
+	NetworkFilterImage             string `yaml:"network_filter_image" json:"network_filter_image"`
+	NetworkFilterCPURequest        string `yaml:"network_filter_cpu_request" json:"network_filter_cpu_request"`
+	NetworkFilterCPULimit          string `yaml:"network_filter_cpu_limit" json:"network_filter_cpu_limit"`
+	NetworkFilterMemoryRequest     string `yaml:"network_filter_memory_request" json:"network_filter_memory_request"`
+	NetworkFilterMemoryLimit       string `yaml:"network_filter_memory_limit" json:"network_filter_memory_limit"`
+	NetworkFilterInitCPURequest    string `yaml:"network_filter_init_cpu_request" json:"network_filter_init_cpu_request"`
+	NetworkFilterInitCPULimit      string `yaml:"network_filter_init_cpu_limit" json:"network_filter_init_cpu_limit"`
+	NetworkFilterInitMemoryRequest string `yaml:"network_filter_init_memory_request" json:"network_filter_init_memory_request"`
+	NetworkFilterInitMemoryLimit   string `yaml:"network_filter_init_memory_limit" json:"network_filter_init_memory_limit"`
+}
+
+type SciaRuntimeProfile struct {
+	Enabled                   bool     `yaml:"enabled" json:"enabled"`
+	SessionSidecarEnabled     bool     `yaml:"session_sidecar_enabled" json:"session_sidecar_enabled"`
+	SessionSidecarImage       string   `yaml:"session_sidecar_image" json:"session_sidecar_image"`
+	SessionSidecarConfigImage string   `yaml:"session_sidecar_config_image" json:"session_sidecar_config_image"`
+	SessionSidecarPort        int      `yaml:"session_sidecar_port" json:"session_sidecar_port"`
+	Credential                string   `yaml:"credential" json:"credential"`
+	UserNamespace             string   `yaml:"user_namespace" json:"user_namespace"`
+	NoProxy                   string   `yaml:"no_proxy" json:"no_proxy"`
+	GoogleHosts               []string `yaml:"google_hosts" json:"google_hosts"`
+	GooglePaths               []string `yaml:"google_paths" json:"google_paths"`
+	TodoistCredential         string   `yaml:"todoist_credential" json:"todoist_credential"`
+	TodoistHosts              []string `yaml:"todoist_hosts" json:"todoist_hosts"`
+	TodoistPaths              []string `yaml:"todoist_paths" json:"todoist_paths"`
+}
+
 // OtelCollectorConfig holds OpenTelemetry Collector configuration for in-process mode.
 // When set, the provisioner will launch otelcol as a subprocess after user context
 // is established, ensuring metrics labels (user_id, session_id, etc.) are correct

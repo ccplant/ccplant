@@ -24,6 +24,10 @@ type directSessionManager interface {
 	CreateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error)
 }
 
+type runtimeProfileApplier interface {
+	ApplyRuntimeProfile(ctx context.Context, profile *sessionsettings.RuntimeProfile) error
+}
+
 func NewAllocatorWorker(sessionManager repositories.SessionManager, upstreamURL, token, publicURL string) *AllocatorWorker {
 	return newAllocatorWorkerWithClient(sessionManager, infrasessionallocation.NewClient(upstreamURL, token), upstreamURL, publicURL)
 }
@@ -67,6 +71,16 @@ func (w *AllocatorWorker) Start(ctx context.Context) {
 }
 
 func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionallocation.AllocationRequest) {
+	if applier, ok := w.sessionManager.(runtimeProfileApplier); ok && allocation.RuntimeProfile != nil {
+		if err := applier.ApplyRuntimeProfile(ctx, allocation.RuntimeProfile); err != nil {
+			log.Printf("[SESSION_MANAGER_ALLOCATOR] Failed to apply parent runtime profile: %v", err)
+			_ = w.client.CompleteExternal(context.Background(), allocation.SessionID, sessionallocation.AllocationResult{
+				Status:  sessionallocation.StatusError,
+				Message: "failed to apply parent runtime profile: " + err.Error(),
+			})
+			return
+		}
+	}
 	remoteProvisioner := false
 	if manager, ok := w.sessionManager.(interface{ UsesRemoteProvisioner() bool }); ok {
 		remoteProvisioner = manager.UsesRemoteProvisioner()

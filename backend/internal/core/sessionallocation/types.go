@@ -29,6 +29,7 @@ type AllocationRequest struct {
 	Requirements       Requirements                     `json:"requirements"`
 	UpdatedAt          time.Time                        `json:"updated_at"`
 	Runtime            *RuntimeBootstrap                `json:"runtime,omitempty"`
+	RuntimeProfile     *sessionsettings.RuntimeProfile  `json:"runtime_profile,omitempty"`
 }
 
 // RuntimeBootstrap carries the one-generation credential an allocated Session

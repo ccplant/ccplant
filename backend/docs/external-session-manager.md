@@ -80,6 +80,27 @@ Important details:
 - `AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL` should point at the ESM so
   provisioned session pods call back to the correct manager.
 
+### Parent-owned session runtime profile
+
+Kubernetes ESMs do not independently configure the NFA or SCIA session runtime.
+Every external allocation carries a versioned `runtime_profile` generated from
+the parent proxy's effective configuration. Before creating the local session,
+the ESM applies that profile and idempotently ensures its inherited session
+ServiceAccount, Role, and RoleBinding.
+
+The inherited profile includes:
+
+- the session ServiceAccount;
+- the NFA image and resource requests/limits, including its init containers;
+- whether the SCIA session sidecar is enabled;
+- the SCIA and config-renderer images, proxy port, `NO_PROXY`, credential IDs,
+  and integration host/path rules.
+
+There are intentionally no ESM-side override flags for these fields. Change the
+parent proxy configuration to update all Kubernetes ESMs. An older parent that
+does not send `runtime_profile` retains the ESM's existing local configuration
+for upgrade compatibility.
+
 ## Kubernetes Example
 
 This is the shape used in the `agentapi-ui-dev` development environment.
