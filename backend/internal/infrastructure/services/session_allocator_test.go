@@ -85,6 +85,10 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.KubernetesSession.Namespace = "test-ns"
+	cfg.KubernetesSession.NetworkFilterImage = "nfa:parent"
+	cfg.Scia.Enabled = true
+	cfg.Scia.SessionSidecarEnabled = true
+	cfg.Scia.SessionSidecarImage = "scia:parent"
 
 	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
 	if err != nil {
@@ -119,6 +123,12 @@ func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {
 	}
 	if allocation.ProvisionSettings == nil {
 		t.Fatalf("allocation.ProvisionSettings is nil")
+	}
+	if allocation.RuntimeProfile == nil || allocation.RuntimeProfile.Version != 1 {
+		t.Fatalf("allocation.RuntimeProfile = %#v", allocation.RuntimeProfile)
+	}
+	if allocation.RuntimeProfile.Kubernetes.NetworkFilterImage != "nfa:parent" || allocation.RuntimeProfile.Scia.SessionSidecarImage != "scia:parent" {
+		t.Fatalf("allocation runtime profile did not inherit parent config: %#v", allocation.RuntimeProfile)
 	}
 	provision, err := manager.getProvisionRequest(context.Background(), "test-session")
 	if err != nil {

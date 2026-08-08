@@ -32,7 +32,8 @@ func TestNativeConfigPersistsSeparateInstanceID(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	credentialsPath := filepath.Join(dir, "credentials.json")
 	want := nativeDaemonConfig{ManagerID: "manager-1", InstanceID: "machine-1", ConnectionToken: "secret", CredentialsPath: credentialsPath,
-		ManagerEnvironment: map[string]string{"PATH": "/opt/mise/bin:/usr/bin:/bin"}, FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: true}}
+		ManagerEnvironment: map[string]string{"PATH": "/opt/mise/bin:/usr/bin:/bin"}, FilesystemSandbox: nativeFilesystemSandboxConfig{Enabled: true},
+		InheritRuntimeProfile: true}
 	data, err := json.Marshal(want)
 	require.NoError(t, err)
 	var stored nativeDaemonConfig

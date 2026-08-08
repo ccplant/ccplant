@@ -35,6 +35,7 @@ var NativeSessionManagerCmd = &cobra.Command{
 var nativeSessionManagerOptions struct {
 	listen, upstreamURL, connectionToken, upstreamAuthToken, stateDir, binaryPath, managerID, configPath string
 	filesystemSandbox                                                                                    bool
+	inheritRuntimeProfile                                                                                bool
 }
 
 type nativeFilesystemSandboxConfig struct {
@@ -42,22 +43,23 @@ type nativeFilesystemSandboxConfig struct {
 }
 
 type nativeDaemonConfig struct {
-	Listen             string                        `json:"listen"`
-	UpstreamURL        string                        `json:"upstream_url"`
-	ConnectionToken    string                        `json:"connection_token"`
-	CredentialsPath    string                        `json:"credentials_path,omitempty"`
-	UpstreamAuthToken  string                        `json:"upstream_auth_token,omitempty"`
-	PublicURL          string                        `json:"public_url,omitempty"` // legacy config input; outbound control does not use it
-	StateDir           string                        `json:"state_dir"`
-	BinaryPath         string                        `json:"binary_path,omitempty"`
-	ManagerID          string                        `json:"manager_id,omitempty"`
-	InstanceID         string                        `json:"instance_id,omitempty"`
-	Scope              string                        `json:"scope,omitempty"`
-	TeamID             string                        `json:"team_id,omitempty"`
-	Labels             map[string]string             `json:"labels,omitempty"`
-	ManagerEnvironment map[string]string             `json:"manager_environment,omitempty"`
-	Version            string                        `json:"version,omitempty"`
-	FilesystemSandbox  nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
+	Listen                string                        `json:"listen"`
+	UpstreamURL           string                        `json:"upstream_url"`
+	ConnectionToken       string                        `json:"connection_token"`
+	CredentialsPath       string                        `json:"credentials_path,omitempty"`
+	UpstreamAuthToken     string                        `json:"upstream_auth_token,omitempty"`
+	PublicURL             string                        `json:"public_url,omitempty"` // legacy config input; outbound control does not use it
+	StateDir              string                        `json:"state_dir"`
+	BinaryPath            string                        `json:"binary_path,omitempty"`
+	ManagerID             string                        `json:"manager_id,omitempty"`
+	InstanceID            string                        `json:"instance_id,omitempty"`
+	Scope                 string                        `json:"scope,omitempty"`
+	TeamID                string                        `json:"team_id,omitempty"`
+	Labels                map[string]string             `json:"labels,omitempty"`
+	ManagerEnvironment    map[string]string             `json:"manager_environment,omitempty"`
+	Version               string                        `json:"version,omitempty"`
+	FilesystemSandbox     nativeFilesystemSandboxConfig `json:"filesystem_sandbox,omitempty"`
+	InheritRuntimeProfile bool                          `json:"inherit_runtime_profile,omitempty"`
 }
 
 func init() {
@@ -71,6 +73,7 @@ func init() {
 	f.StringVar(&nativeSessionManagerOptions.managerID, "manager-id", "", "registered external session manager ID")
 	f.StringVar(&nativeSessionManagerOptions.configPath, "config", "", "JSON daemon configuration file")
 	f.BoolVar(&nativeSessionManagerOptions.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
+	f.BoolVar(&nativeSessionManagerOptions.inheritRuntimeProfile, "inherit-runtime-profile", false, "apply runtime profile received from the parent proxy")
 }
 
 func runNativeSessionManager(command *cobra.Command, _ []string) error {
@@ -104,6 +107,9 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		if !command.Flags().Changed("filesystem-sandbox") {
 			o.filesystemSandbox = cfg.FilesystemSandbox.Enabled
 		}
+		if !command.Flags().Changed("inherit-runtime-profile") {
+			o.inheritRuntimeProfile = cfg.InheritRuntimeProfile
+		}
 	}
 	if o.upstreamURL == "" || o.connectionToken == "" {
 		return fmt.Errorf("--upstream-url and --connection-token are required")
@@ -129,7 +135,7 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuth(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, "")
+	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuthAndRuntimeProfile(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, "", o.inheritRuntimeProfile)
 	go worker.Start(ctx)
 	localURL := "http://127.0.0.1" + o.listen
 	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)

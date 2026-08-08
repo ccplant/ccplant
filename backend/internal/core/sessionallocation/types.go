@@ -29,6 +29,7 @@ type AllocationRequest struct {
 	Requirements       Requirements                     `json:"requirements"`
 	UpdatedAt          time.Time                        `json:"updated_at"`
 	Runtime            *RuntimeBootstrap                `json:"runtime,omitempty"`
+	RuntimeProfile     *sessionsettings.RuntimeProfile  `json:"runtime_profile,omitempty"`
 }
 
 // RuntimeBootstrap carries the one-generation credential an allocated Session
@@ -36,6 +37,13 @@ type AllocationRequest struct {
 type RuntimeBootstrap struct {
 	Token      string `json:"token"`
 	Generation int64  `json:"generation"`
+}
+
+// RuntimeProfileSnapshot is the parent-owned profile and its stable content
+// revision. ESMs use the revision to avoid reapplying unchanged settings.
+type RuntimeProfileSnapshot struct {
+	Revision string                          `json:"revision"`
+	Profile  *sessionsettings.RuntimeProfile `json:"profile"`
 }
 
 type AllocationResult struct {

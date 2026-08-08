@@ -272,6 +272,7 @@ func (m *KubernetesSessionManager) SubmitExternalSessionAllocation(ctx context.C
 		Requirements:      sessionRequirements(req),
 		UpdatedAt:         time.Now().UTC(),
 		Runtime:           runtime,
+		RuntimeProfile:    m.ExternalRuntimeProfile(),
 	}
 	if err := m.saveSessionAllocation(ctx, allocation); err != nil {
 		_ = m.deleteProvisionRequest(context.Background(), sessionID)
