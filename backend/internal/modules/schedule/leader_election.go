@@ -21,7 +21,6 @@ const (
 	SlackbotCleanupWorkerLeaseName = "agentapi-slackbot-cleanup-worker"
 	StockInventoryWorkerLeaseName  = "agentapi-stock-inventory-worker"
 	SessionAllocatorLeaseName      = "agentapi-session-allocator"
-	GitHubSyncWorkerLeaseName      = "agentapi-github-sync-worker"
 )
 
 // LeaderElectionConfig contains configuration for leader election
