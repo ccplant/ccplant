@@ -41,24 +41,6 @@ export interface APIMCPServerResponse {
 // 認証モード
 export type AuthMode = 'oauth' | 'bedrock';
 
-// GitHub Sync 暗号化ステータス（読み取り専用 — KMS 設定はプロキシ側で管理）
-export interface GitSyncEncryptionConfig {
-  dek_version?: number;
-  dek_ready?: boolean;
-}
-
-// GitHub Sync 設定（API レスポンス: github_token は返らない）
-export interface GitSyncConfig {
-  enabled: boolean;
-  repo_full_name: string;  // "owner/repo"
-  branch: string;
-  root_path: string;       // e.g. "agentapi-config/"
-  auto_push: boolean;
-  has_github_token?: boolean;  // トークン設定済みか（読み取り時のみ）
-  github_token?: string;       // PAT（PUT 時のみ使用、GET では返らない）
-  encryption?: GitSyncEncryptionConfig;
-}
-
 export interface GoogleOAuthStatus {
   enabled: boolean;
   health_ok: boolean;
@@ -137,7 +119,6 @@ export interface SettingsData {
   slack_user_id?: string;  // Slack User ID（設定すると Slack DM 通知が有効になる）
   notification_channels?: string[];  // Active notification channels (e.g. ["web", "slack"])
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers
-  git_sync?: GitSyncConfig;  // GitHub sync configuration (token redacted in responses)
   default_session_profile_id?: string;  // Default session profile ID for this settings scope
 }
 

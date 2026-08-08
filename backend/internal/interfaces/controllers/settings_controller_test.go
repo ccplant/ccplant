@@ -219,7 +219,7 @@ func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			h := NewSettingsController(repo, nil, "", "")
+			h := NewSettingsController(repo, nil)
 
 			body, err := json.Marshal(tt.requestBody)
 			require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 
 func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
 	repo := newMockSettingsRepository()
-	h := NewSettingsController(repo, nil, "", "")
+	h := NewSettingsController(repo, nil)
 
 	defaultProfileID := "profile-1"
 	body, err := json.Marshal(UpdateSettingsRequest{
@@ -286,7 +286,7 @@ func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
 
 func TestUpdateSettingsRejectsDirectExternalSessionManagerRegistration(t *testing.T) {
 	repo := newMockSettingsRepository()
-	h := NewSettingsController(repo, nil, "", "")
+	h := NewSettingsController(repo, nil)
 	managers := []ExternalSessionManagerRequest{{Name: "legacy-manager"}}
 	body, err := json.Marshal(UpdateSettingsRequest{ExternalSessionManagers: &managers})
 	require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestUpdateSettingsRejectsDirectExternalSessionManagerRegistration(t *testin
 
 func TestUpdateSettings_GitHubAppInstallationID(t *testing.T) {
 	repo := newMockSettingsRepository()
-	h := NewSettingsController(repo, nil, "", "")
+	h := NewSettingsController(repo, nil)
 	installationID := "4242"
 	body, err := json.Marshal(UpdateSettingsRequest{GitHubAppInstallationID: &installationID})
 	require.NoError(t, err)
@@ -333,7 +333,7 @@ func TestUpdateSettings_GitHubAppInstallationID(t *testing.T) {
 
 func TestUpdateSettings_RejectsInvalidGitHubAppInstallationID(t *testing.T) {
 	repo := newMockSettingsRepository()
-	h := NewSettingsController(repo, nil, "", "")
+	h := NewSettingsController(repo, nil)
 	installationID := "not-a-number"
 	body, err := json.Marshal(UpdateSettingsRequest{GitHubAppInstallationID: &installationID})
 	require.NoError(t, err)

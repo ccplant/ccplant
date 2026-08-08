@@ -190,7 +190,6 @@ workerのLease名はRelease名に依存しない次の固定名を使う。旧�
 - `agentapi-slackbot-cleanup-worker`
 - `agentapi-stock-inventory-worker`
 - `agentapi-session-allocator`
-- `agentapi-github-sync-worker`
 
 有効なworkerについてLeaseの存在とholderも検査する。Lease duration内では旧leaderが処理を継続し、
 更新停止後に新Podが引き継ぐため、切替直後に必ず新ReleaseのPodがleaderになるとは限らない。

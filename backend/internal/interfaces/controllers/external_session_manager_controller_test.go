@@ -42,7 +42,7 @@ func TestExternalSessionManagerEnrollmentAndHeartbeatUsesToken(t *testing.T) {
 	defer probe.Close()
 
 	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil, "", "")
+	controller := NewSettingsController(repo, nil)
 	e := echo.New()
 	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
 	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
@@ -73,7 +73,7 @@ func TestExternalSessionManagerEnrollmentAndHeartbeatUsesToken(t *testing.T) {
 
 func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T) {
 	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil, "", "")
+	controller := NewSettingsController(repo, nil)
 	e := echo.New()
 	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
 	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
@@ -96,7 +96,7 @@ func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T
 
 func TestExternalSessionManagerHeartbeatSkipsPublicProbeWithOutboundLease(t *testing.T) {
 	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil, "", "")
+	controller := NewSettingsController(repo, nil)
 	controller.SetESMControlTunnel(connectedESMTunnel{})
 	e := echo.New()
 	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
@@ -119,7 +119,7 @@ func TestExternalSessionManagerHeartbeatSkipsPublicProbeWithOutboundLease(t *tes
 
 func TestExternalSessionManagerEnrollmentTokenIsOneTime(t *testing.T) {
 	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil, "", "")
+	controller := NewSettingsController(repo, nil)
 	e := echo.New()
 
 	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
@@ -146,7 +146,7 @@ func TestExternalSessionManagerEnrollmentTokenIsOneTime(t *testing.T) {
 
 func TestServiceAccountEnrollmentTokenDefaultsToTeamScope(t *testing.T) {
 	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil, "", "")
+	controller := NewSettingsController(repo, nil)
 	e := echo.New()
 	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "")
 	ctx.Set("internal_user", entities.NewServiceAccountUser("service-account", "org/builders", nil))
@@ -159,7 +159,7 @@ func TestServiceAccountEnrollmentTokenDefaultsToTeamScope(t *testing.T) {
 
 func TestServiceAccountEnrollmentTokenHonorsExplicitUserScope(t *testing.T) {
 	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil, "", "")
+	controller := NewSettingsController(repo, nil)
 	e := echo.New()
 	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{Scope: "user"}, "")
 	ctx.Set("internal_user", entities.NewServiceAccountUser("service-account", "org/builders", nil))

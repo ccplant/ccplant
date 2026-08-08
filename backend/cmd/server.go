@@ -25,10 +25,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/webhook"
-	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
-	githubsync "github.com/takutakahashi/agentapi-proxy/pkg/github_sync"
-	importexport "github.com/takutakahashi/agentapi-proxy/pkg/import"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 	"k8s.io/client-go/kubernetes"
@@ -148,12 +145,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 
 	// Register webhook handlers (requires Kubernetes mode)
 	registerWebhookHandlers(configData, proxyServer)
-
-	// Register import/export handlers (requires Kubernetes mode)
-	registerImportExportHandlers(configData, proxyServer)
-
-	// Register GitHub sync handlers (requires Kubernetes mode)
-	registerGitHubSyncHandlers(configData, proxyServer)
 
 	// Register SlackBot handlers (requires Kubernetes mode)
 	registerSlackBotHandlers(configData, proxyServer)
@@ -658,43 +649,6 @@ func buildSessionAllocationNotifier(configData *config.Config) sessionallocation
 	return infrasessionallocation.NewRedisNotifier(client)
 }
 
-// registerImportExportHandlers registers import/export REST API handlers
-func registerImportExportHandlers(configData *config.Config, proxyServer *app.Server) {
-	log.Printf("[IMPORT_EXPORT_HANDLERS] Registering import/export handlers...")
-
-	// Determine namespace
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
-
-	// Create schedule manager
-	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
-
-	// Create webhook repository
-	webhookRepo := repositories.NewKubernetesWebhookRepository(proxyServer.GetPersistenceClient(), namespace)
-
-	// Set default GitHub Enterprise host if configured
-	if configData.Webhook.GitHubEnterpriseHost != "" {
-		webhookRepo.SetDefaultGitHubEnterpriseHost(configData.Webhook.GitHubEnterpriseHost)
-	}
-
-	// Get settings repository from server
-	settingsRepo := proxyServer.GetSettingsRepository()
-
-	// Create encryption service for import/export
-	encryptionFactory := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION")
-	encryptionService, err := encryptionFactory.Create()
-	if err != nil {
-		log.Printf("[IMPORT_EXPORT_HANDLERS] Failed to create encryption service, using noop: %v", err)
-		encryptionService = services.NewNoopEncryptionService()
-	}
-	log.Printf("[IMPORT_EXPORT_HANDLERS] Using encryption algorithm: %s", encryptionService.Algorithm())
-
-	// Create and register import/export handlers
-	importExportHandlers := importexport.NewHandlers(scheduleManager, webhookRepo, settingsRepo, encryptionService)
-	proxyServer.AddCustomHandler(importExportHandlers)
-
-	log.Printf("[IMPORT_EXPORT_HANDLERS] Import/export handlers registered successfully")
-}
-
 // registerSlackBotHandlers registers SlackBot management REST API handlers
 func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SLACKBOT_HANDLERS] Registering slackbot handlers...")
@@ -845,94 +799,6 @@ func startSessionManagerAllocator(ctx context.Context, configData *config.Config
 	go controlWorker.Start(ctx)
 	log.Printf("[SESSION_MANAGER_ALLOCATOR] Started outbound allocator polling upstream: %s", upstreamURL)
 	log.Printf("[ESM_CONTROL] Started outbound session control polling upstream: %s", upstreamURL)
-}
-
-// registerGitHubSyncHandlers registers GitHub bidirectional sync REST API handlers.
-func registerGitHubSyncHandlers(configData *config.Config, proxyServer *app.Server) {
-	log.Printf("[GITHUB_SYNC] Registering GitHub sync handlers...")
-
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[GITHUB_SYNC] Kubernetes config not available, skipping GitHub sync handlers: %v", err)
-		return
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[GITHUB_SYNC] Failed to create Kubernetes client, skipping GitHub sync handlers: %v", err)
-		return
-	}
-
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
-
-	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
-	webhookRepo := repositories.NewKubernetesWebhookRepository(proxyServer.GetPersistenceClient(), namespace)
-	settingsRepo := proxyServer.GetSettingsRepository()
-	memoryRepo := proxyServer.GetMemoryRepository()
-	taskRepo := proxyServer.GetTaskRepository()
-	taskGroupRepo := proxyServer.GetTaskGroupRepository()
-
-	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(proxyServer.GetPersistenceClient(), namespace))
-	slackbotRepo := portrepos.SlackBotRepository(repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace))
-
-	syncHandlers := githubsync.NewHandlers(
-		settingsRepo,
-		scheduleManager,
-		webhookRepo,
-		memoryRepo,
-		taskRepo,
-		taskGroupRepo,
-		userFileRepo,
-		slackbotRepo,
-		configData.GitSync.Encryption.KMSKeyARN,
-		configData.GitSync.Encryption.AWSRegion,
-		configData.GitSync.GitHubApp.InstallationID,
-	)
-	if sessionProfileRepo := proxyServer.GetSessionProfileRepository(); sessionProfileRepo != nil {
-		syncHandlers.Syncer().SetSessionProfileRepository(sessionProfileRepo)
-	}
-	proxyServer.AddCustomHandler(syncHandlers)
-
-	if interval := configData.GitSync.SyncInterval; interval != "" && interval != "0" {
-		d, err := time.ParseDuration(interval)
-		if err != nil {
-			log.Printf("[GITHUB_SYNC] Invalid sync_interval %q: %v — periodic sync disabled", interval, err)
-		} else {
-			syncNamespace := configData.GitSync.Namespace
-			if syncNamespace == "" {
-				syncNamespace = namespace
-			}
-			leaseDuration := 15 * time.Second
-			renewDeadline := 10 * time.Second
-			retryPeriod := 2 * time.Second
-			if v := configData.GitSync.LeaseDuration; v != "" {
-				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
-					leaseDuration = parsed
-				}
-			}
-			if v := configData.GitSync.RenewDeadline; v != "" {
-				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
-					renewDeadline = parsed
-				}
-			}
-			if v := configData.GitSync.RetryPeriod; v != "" {
-				if parsed, parseErr := time.ParseDuration(v); parseErr == nil {
-					retryPeriod = parsed
-				}
-			}
-			electionConfig := schedule.LeaderElectionConfig{
-				LeaseDuration: leaseDuration,
-				RenewDeadline: renewDeadline,
-				RetryPeriod:   retryPeriod,
-				Namespace:     syncNamespace,
-			}
-			leaderWorker := githubsync.NewLeaderWorker(syncHandlers.Syncer(), settingsRepo, d, client, electionConfig)
-			go leaderWorker.Run(context.Background())
-			log.Printf("[GITHUB_SYNC] Periodic sync worker started with leader election (interval=%s)", interval)
-		}
-	}
-
-	log.Printf("[GITHUB_SYNC] GitHub sync handlers registered successfully")
 }
 
 // registerMCPHandler registers MCP HTTP handler

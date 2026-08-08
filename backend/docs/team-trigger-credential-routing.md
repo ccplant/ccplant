@@ -200,7 +200,7 @@ SlackBotのpending dedup keyにも`TriggeredUserID`を含める。
   - reuse用に`TriggeredUserID`を追加
 - provision settings
   - 必要なら監査用`TriggeredUserID`を追加
-- OpenAPI、Webhook/SlackBot import/export、management skillsを更新
+- OpenAPI と management skills を更新
 
 ## テスト計画
 
@@ -222,5 +222,5 @@ SlackBotのpending dedup keyにも`TriggeredUserID`を含める。
 2. `credential_source=triggered_user`を追加
 3. rendered `tags.username`からのTriggeredUserID解決を追加
 4. Webhook / SlackBotへ組み込む
-5. reuse、audit metadata、OpenAPI、import/exportを更新
+5. reuse、audit metadata、OpenAPIを更新
 6. unit / integration tests

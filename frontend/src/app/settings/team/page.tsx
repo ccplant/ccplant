@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, ExternalSessionManagerConfig, GitSyncConfig, prepareSettingsForSave } from '@/types/settings'
-import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, EnvVarsSettings, GitHubSyncSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
+import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, ExternalSessionManagerConfig, prepareSettingsForSave } from '@/types/settings'
+import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, EnvVarsSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
 import { createAgentAPIProxyClientFromStorage, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { useToast } from '@/contexts/ToastContext'
@@ -16,7 +16,6 @@ export default function TeamSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isTeamLoaded, setIsTeamLoaded] = useState(false)
-  const [gitSyncConfig, setGitSyncConfig] = useState<GitSyncConfig | undefined>(undefined)
   const [credentialsMetadata, setCredentialsMetadata] = useState<CredentialsMetadata | null>(null)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
   const { showToast } = useToast()
@@ -64,13 +63,6 @@ export default function TeamSettingsPage() {
         setCredentialsMetadata(null)
       }
 
-      // GitHub Sync 設定を読み込み
-      try {
-        const syncConfig = await client.getGitSyncConfig(name)
-        setGitSyncConfig(syncConfig ?? undefined)
-      } catch {
-        setGitSyncConfig(undefined)
-      }
     } catch (err) {
       console.error('Failed to load team settings:', err)
       setError('Failed to load team settings. The team may not exist or you may not have permission.')
@@ -132,33 +124,6 @@ export default function TeamSettingsPage() {
 
   const handleMCPServersChange = (servers: Record<string, APIMCPServerConfig>) => {
     setSettings((prev) => ({ ...prev, mcp_servers: servers }))
-  }
-
-  const handleGitSyncSave = async (config: GitSyncConfig) => {
-    const client = createAgentAPIProxyClientFromStorage()
-    const saved = await client.updateGitSyncConfig(teamName, config)
-    setGitSyncConfig(saved)
-    showToast('GitHub Sync 設定を保存しました', 'success')
-  }
-
-  const handleGitSyncDelete = async () => {
-    if (!confirm('GitHub Sync 設定を削除しますか？')) return
-    const client = createAgentAPIProxyClientFromStorage()
-    await client.deleteGitSyncConfig(teamName)
-    setGitSyncConfig(undefined)
-    showToast('GitHub Sync 設定を削除しました', 'success')
-  }
-
-  const handleGitSyncPush = async () => {
-    const client = createAgentAPIProxyClientFromStorage()
-    await client.gitSyncPush(teamName)
-    showToast('Push が完了しました', 'success')
-  }
-
-  const handleGitSyncPull = async () => {
-    const client = createAgentAPIProxyClientFromStorage()
-    await client.gitSyncPull(teamName)
-    showToast('Pull が完了しました', 'success')
   }
 
   const handleEnvVarsChange = (updates: Record<string, string>) => {
@@ -375,20 +340,6 @@ export default function TeamSettingsPage() {
             defaultOpen
           >
             <EnvVarsSettings envVarKeys={settings.env_var_keys} onChange={handleEnvVarsChange} />
-          </SettingsAccordion>
-
-          <SettingsAccordion
-            title="GitHub Sync"
-            description="設定・スケジュール・Webhook・Slackbot を GitHub リポジトリに双方向同期"
-            defaultOpen={false}
-          >
-            <GitHubSyncSettings
-              config={gitSyncConfig}
-              onSave={handleGitSyncSave}
-              onDelete={gitSyncConfig ? handleGitSyncDelete : undefined}
-              onPush={gitSyncConfig ? handleGitSyncPush : undefined}
-              onPull={gitSyncConfig ? handleGitSyncPull : undefined}
-            />
           </SettingsAccordion>
 
           <SettingsAccordion

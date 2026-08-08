@@ -337,7 +337,6 @@ var migrationWorkerLeases = []struct {
 	{"slackbotCleanupWorker", "slackbot cleanup", schedule.SlackbotCleanupWorkerLeaseName, false},
 	{"stockInventoryWorker", "stock inventory", schedule.StockInventoryWorkerLeaseName, false},
 	{"", "session allocator", schedule.SessionAllocatorLeaseName, true},
-	{"gitSync", "GitHub sync", schedule.GitHubSyncWorkerLeaseName, false},
 }
 
 func inspectWorkerLeaderElection(ctx context.Context, client kubernetes.Interface, o *helmMigratePlanOptions, targetValues map[string]any, verify *migrationVerify) {
@@ -350,10 +349,6 @@ func inspectWorkerLeaderElection(ctx context.Context, client kubernetes.Interfac
 		enabled := worker.always
 		if configured, ok := config["enabled"].(bool); ok {
 			enabled = configured
-		}
-		if worker.valuePath == "gitSync" {
-			interval, _ := config["syncInterval"].(string)
-			enabled = interval != "" && interval != "0"
 		}
 		if !enabled {
 			continue
