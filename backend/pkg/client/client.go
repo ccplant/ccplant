@@ -12,12 +12,43 @@ import (
 	"strings"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // HTTPClient defines the interface for making HTTP requests
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+// ReportUsage sends response-level usage events collected by a session Stop hook.
+func (c *Client) ReportUsage(ctx context.Context, batch *entities.UsageEventBatch) (*entities.UsageInsertResult, error) {
+	body, err := json.Marshal(batch)
+	if err != nil {
+		return nil, fmt.Errorf("marshal usage events: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/usage-events", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.applyMiddlewares(req); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("report usage failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var result entities.UsageInsertResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // RequestMiddleware is a function that modifies an HTTP request

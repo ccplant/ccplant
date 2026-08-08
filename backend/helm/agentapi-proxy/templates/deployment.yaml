@@ -231,6 +231,20 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            - name: AGENTAPI_USAGE_ENABLED
+              value: {{ dig "usage" "enabled" false .Values.config | quote }}
+            {{- if (dig "usage" "enabled" false .Values.config) }}
+            - name: AGENTAPI_USAGE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "config.usage.databaseUrlSecretRef.name is required when usage is enabled" (dig "usage" "databaseUrlSecretRef" "name" "" .Values.config) | quote }}
+                  key: {{ dig "usage" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            - name: AGENTAPI_USAGE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "config.usage.authTokenSecretRef.name is required when usage is enabled" (dig "usage" "authTokenSecretRef" "name" "" .Values.config) | quote }}
+                  key: {{ dig "usage" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- end }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}

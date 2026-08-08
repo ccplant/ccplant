@@ -319,6 +319,17 @@ config:
   # ホスト名設定 (例: agentapi.example.com)
   hostname: ""
 
+  # Response-level token usage persistence. Credentials are supplied only via
+  # an operator-managed Secret and are independent from kvStore.
+  usage:
+    enabled: false
+    databaseUrlSecretRef:
+      name: ""
+      key: "database-url"
+    authTokenSecretRef:
+      name: ""
+      key: "auth-token"
+
   # Application KV persistence. "kubernetes" preserves the default behavior.
   kvStore:
     # Legacy primary-only configuration.

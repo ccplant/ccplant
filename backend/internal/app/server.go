@@ -58,10 +58,11 @@ type Server struct {
 	oauthProvider               *auth.GitHubOAuthProvider
 	oauthSessions               sync.Map // sessionID -> OAuthSession
 	notificationSvc             *notification.Service
-	container                   *di.Container                                   // Internal DI container
-	sessionManager              portrepos.SessionManager                        // Session lifecycle manager
-	persistenceClient           kubernetes.Interface                            // Secret/ConfigMap client for non-session application data
-	kvStore                     kvstore.Store                                   // non-nil when persistenceClient is backed by libSQL
+	container                   *di.Container            // Internal DI container
+	sessionManager              portrepos.SessionManager // Session lifecycle manager
+	persistenceClient           kubernetes.Interface     // Secret/ConfigMap client for non-session application data
+	kvStore                     kvstore.Store            // non-nil when persistenceClient is backed by libSQL
+	usageRepo                   portrepos.UsageRepository
 	settingsRepo                portrepos.SettingsRepository                    // Settings repository
 	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
 	shareRepo                   portrepos.ShareRepository                       // Share repository for session sharing
@@ -198,6 +199,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	if wrapPersistence {
 		persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
 		log.Printf("[SERVER] Non-session persistence initialized with configured KV store")
+	}
+	var usageRepo portrepos.UsageRepository
+	if cfg.Usage.Enabled {
+		usageRepo, err = repositories.NewLibSQLUsageRepository(context.Background(), cfg.Usage.DatabaseURL, cfg.Usage.AuthToken)
+		if err != nil {
+			log.Fatalf("Failed to initialize usage store: %v", err)
+		}
+		log.Printf("[SERVER] Usage persistence initialized")
 	}
 
 	// Initialize cross-pod status synchronisation via Redis (optional).
@@ -415,6 +424,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionManager:              sessionManager,
 		persistenceClient:           persistenceClient,
 		kvStore:                     applicationKVStore,
+		usageRepo:                   usageRepo,
 		settingsRepo:                settingsRepo,
 		credentialsRepo:             credentialsRepo,
 		shareRepo:                   shareRepo,
@@ -1516,10 +1526,14 @@ func buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID strin
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (s *Server) Shutdown(timeout time.Duration) error {
 	managerErr := s.sessionManager.Shutdown(timeout)
-	if s.kvStore != nil {
-		return errors.Join(managerErr, s.kvStore.Close())
+	var usageErr error
+	if s.usageRepo != nil {
+		usageErr = s.usageRepo.Close()
 	}
-	return managerErr
+	if s.kvStore != nil {
+		return errors.Join(managerErr, usageErr, s.kvStore.Close())
+	}
+	return errors.Join(managerErr, usageErr)
 }
 
 // GetEcho returns the Echo instance for external access

@@ -1,0 +1,40 @@
+package repositories
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+)
+
+func TestLibSQLUsageRepositoryDeduplicatesEvents(t *testing.T) {
+	repo, err := NewLibSQLUsageRepository(context.Background(), "file://"+filepath.Join(t.TempDir(), "usage.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.Close() }()
+	event := entities.UsageEvent{EventID: "event-1", SessionID: "session-1", UserID: "user-1", Scope: "user", AgentType: "claude-acp", Model: "model-1", InputTokens: 10, OutputTokens: 2, OccurredAt: time.Now()}
+	first, err := repo.InsertEvents(context.Background(), []entities.UsageEvent{event})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Accepted != 1 || first.Duplicates != 0 {
+		t.Fatalf("first = %#v", first)
+	}
+	second, err := repo.InsertEvents(context.Background(), []entities.UsageEvent{event})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Accepted != 0 || second.Duplicates != 1 {
+		t.Fatalf("second = %#v", second)
+	}
+	summary, err := repo.Aggregate(context.Background(), entities.UsageQuery{UserID: "user-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Events != 1 || summary.InputTokens != 10 || summary.OutputTokens != 2 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
