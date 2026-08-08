@@ -4,17 +4,12 @@ let databasePromise: Promise<AsyncDuckDB> | null = null
 
 async function createDatabase(): Promise<AsyncDuckDB> {
   const duckdb = await import('@duckdb/duckdb-wasm/dist/duckdb-browser')
-  const bundles = duckdb.getJsDelivrBundles()
-  const bundle = await duckdb.selectBundle(bundles)
-  if (!bundle.mainWorker) throw new Error('DuckDB-Wasm worker is unavailable')
-
-  const workerUrl = URL.createObjectURL(new Blob([
-    `importScripts(${JSON.stringify(bundle.mainWorker)});`,
-  ], { type: 'text/javascript' }))
-  const worker = new Worker(workerUrl)
+  // Keep both assets same-origin. The app CSP intentionally blocks external
+  // scripts and blob workers, so CDN bundles cannot initialize here.
+  const mainModule = new URL('@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm', import.meta.url).toString()
+  const worker = new Worker(new URL('@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js', import.meta.url))
   const database = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker)
-  await database.instantiate(bundle.mainModule, bundle.pthreadWorker)
-  URL.revokeObjectURL(workerUrl)
+  await database.instantiate(mainModule)
   return database
 }
 
