@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Activity, ArrowDownToLine, ArrowUpFromLine, BrainCircuit, Database, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import TopBar from '../components/TopBar'
 import NavigationTabs from '../components/NavigationTabs'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
@@ -20,7 +19,6 @@ const emptySummary: UsageSummary = {
   cached_input_tokens: 0,
   cache_creation_tokens: 0,
   reasoning_tokens: 0,
-  by_day: [],
   by_model: [],
   by_session: [],
 }
@@ -92,43 +90,6 @@ function BreakdownTable({ title, rows, sessions = false }: { title: string; rows
   )
 }
 
-function UsageChart({ rows }: { rows: UsageBreakdown[] }) {
-  const data = rows.map((row) => ({
-    date: row.key,
-    label: new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric' }).format(new Date(`${row.key}T00:00:00Z`)),
-    Input: row.input_tokens,
-    Output: row.output_tokens,
-    Cache: row.cached_input_tokens + row.cache_creation_tokens,
-  }))
-
-  return (
-    <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-      <div className="mb-5">
-        <h2 className="font-semibold text-gray-900 dark:text-white">Token usage over time</h2>
-        <p className="mt-1 text-xs text-gray-400">日別のトークン利用量</p>
-      </div>
-      {data.length === 0 ? (
-        <p className="py-16 text-center text-sm text-gray-400">この期間のデータはありません</p>
-      ) : (
-        <div className="h-80 w-full" data-testid="usage-chart">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" className="text-gray-200 dark:text-gray-800" />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} minTickGap={24} />
-              <YAxis tickFormatter={formatTokens} tickLine={false} axisLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} width={48} />
-              <Tooltip formatter={(value) => exactTokens(Number(value))} labelFormatter={(_, payload) => payload?.[0]?.payload?.date || ''} contentStyle={{ borderRadius: 12, borderColor: '#e5e7eb' }} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Input" stackId="tokens" fill="#6366f1" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="Cache" stackId="tokens" fill="#22d3ee" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="Output" stackId="tokens" fill="#a855f7" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-    </section>
-  )
-}
-
 export default function UsagePage() {
   const { selectedTeam } = useTeamScope()
   const [range, setRange] = useState<Range>('30d')
@@ -147,7 +108,7 @@ export default function UsagePage() {
     try {
       const client = createAgentAPIProxyClientFromStorage()
       const data = await client.getUsage({ team_id: selectedTeam || undefined, from })
-      setSummary({ ...emptySummary, ...data, by_day: data.by_day || [], by_model: data.by_model || [], by_session: data.by_session || [] })
+      setSummary({ ...emptySummary, ...data, by_model: data.by_model || [], by_session: data.by_session || [] })
       setError(null)
     } catch (err) {
       console.error('[UsagePage] Failed to fetch usage:', err)
@@ -196,7 +157,6 @@ export default function UsagePage() {
                 <BrainCircuit className="h-4 w-4" /> Reasoning tokens: <strong>{exactTokens(summary.reasoning_tokens)}</strong>
               </div>
             )}
-            <UsageChart rows={summary.by_day} />
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
               <BreakdownTable title="By model" rows={summary.by_model} />
               <BreakdownTable title="By session" rows={summary.by_session} sessions />
