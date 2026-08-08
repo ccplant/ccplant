@@ -15,6 +15,20 @@ type QueryRow = Record<string, unknown>
 
 const colors = ['#6366f1', '#06b6d4', '#a855f7', '#f59e0b', '#10b981', '#ef4444']
 
+const usageSchema = [
+  ['occurred_at', 'TIMESTAMP', 'モデル応答が発生した日時'],
+  ['session_id', 'VARCHAR', 'proxyのセッションID'],
+  ['agent_session_id', 'VARCHAR', 'エージェント側のセッションID'],
+  ['agent_type', 'VARCHAR', 'codex・claude-codeなどのエージェント種別'],
+  ['provider', 'VARCHAR', 'モデルプロバイダー'],
+  ['model', 'VARCHAR', '利用したモデル名'],
+  ['input_tokens', 'BIGINT', '入力トークン数'],
+  ['output_tokens', 'BIGINT', '出力トークン数'],
+  ['cached_input_tokens', 'BIGINT', 'キャッシュから読み込んだ入力トークン数'],
+  ['cache_creation_tokens', 'BIGINT', 'キャッシュ作成に使った入力トークン数'],
+  ['reasoning_tokens', 'BIGINT', '推論トークン数'],
+] as const
+
 function displayValue(value: unknown): string {
   if (value == null) return ''
   if (value instanceof Date) return value.toLocaleString('ja-JP')
@@ -85,6 +99,21 @@ export default function UsagePage() {
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {usagePresets.map((preset) => <button key={preset.id} onClick={() => selectPreset(preset)} className="rounded-xl border border-gray-200 p-3 text-left hover:border-indigo-400 hover:bg-indigo-50/50 dark:border-gray-700 dark:hover:border-indigo-600 dark:hover:bg-indigo-950/20"><span className="block text-sm font-medium text-gray-800 dark:text-gray-200">{preset.label}</span><span className="mt-1 block text-xs text-gray-400">{preset.description}</span></button>)}
           </div>
+          <details className="mt-4 rounded-xl border border-gray-200 bg-gray-50 open:bg-white dark:border-gray-700 dark:bg-gray-950/40 dark:open:bg-gray-950/20">
+            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-200">
+              usage_events スキーマ
+              <span className="ml-2 font-normal text-gray-400">11 columns</span>
+            </summary>
+            <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-700">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-gray-100 text-gray-500 dark:bg-gray-800/70 dark:text-gray-400"><tr><th className="px-4 py-2 font-medium">列名</th><th className="px-4 py-2 font-medium">型</th><th className="px-4 py-2 font-medium">内容</th></tr></thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                  {usageSchema.map(([name, type, description]) => <tr key={name}><td className="whitespace-nowrap px-4 py-2 font-mono text-indigo-600 dark:text-indigo-400">{name}</td><td className="whitespace-nowrap px-4 py-2 font-mono text-gray-500">{type}</td><td className="px-4 py-2 text-gray-600 dark:text-gray-300">{description}</td></tr>)}
+                </tbody>
+              </table>
+            </div>
+            <p className="border-t border-gray-200 px-4 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">テーブル名は <code className="rounded bg-gray-100 px-1 py-0.5 font-mono dark:bg-gray-800">usage_events</code>。1行は1回のモデル応答で、現在選択中の期間・Personal/Teamに絞られたデータです。</p>
+          </details>
           <textarea value={sql} onChange={(event) => setSql(event.target.value)} spellCheck={false} className="mt-4 min-h-64 w-full resize-y rounded-xl border border-gray-800 bg-gray-950 p-4 font-mono text-sm leading-6 text-gray-100 outline-none focus:border-indigo-500" aria-label="Usage SQL" />
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="truncate text-xs text-gray-400">SQLはブラウザ内のDuckDB-Wasmでのみ実行されます</p>
