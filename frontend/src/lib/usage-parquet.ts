@@ -19,7 +19,12 @@ function getDatabase(): Promise<AsyncDuckDB> {
   return databasePromise
 }
 
-function normalizeValue(value: unknown): unknown {
+function normalizeValue(value: unknown, arrowType: string): unknown {
+  if ((typeof value === 'bigint' || typeof value === 'number') && arrowType.toLowerCase().includes('timestamp')) {
+    // Arrow's JavaScript row accessor exposes timestamps as epoch milliseconds.
+    // Converting them as plain numbers produces values such as 1786... on axes.
+    return new Date(Number(value))
+  }
   if (typeof value === 'bigint') return Number(value)
   return value
 }
@@ -43,9 +48,12 @@ export async function queryUsageParquet<T extends Record<string, unknown>>(
   try {
     await connection.query(`CREATE OR REPLACE TEMP VIEW usage_events AS SELECT * FROM read_parquet('${fileName}')`)
     const result = await connection.query(sql)
-    const fields = result.schema.fields.map((field) => field.name)
+    const fields = result.schema.fields.map((field) => ({
+      name: field.name,
+      type: field.type.toString(),
+    }))
     return result.toArray().map((row) => Object.fromEntries(
-      fields.map((field) => [field, normalizeValue(row[field])]),
+      fields.map((field) => [field.name, normalizeValue(row[field.name], field.type)]),
     ) as T)
   } finally {
     await connection.close()

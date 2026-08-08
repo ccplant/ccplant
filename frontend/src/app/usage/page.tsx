@@ -17,6 +17,7 @@ const colors = ['#6366f1', '#06b6d4', '#a855f7', '#f59e0b', '#10b981', '#ef4444'
 
 function displayValue(value: unknown): string {
   if (value == null) return ''
+  if (value instanceof Date) return value.toLocaleString('ja-JP')
   if (typeof value === 'number') return new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 }).format(value)
   return String(value)
 }
