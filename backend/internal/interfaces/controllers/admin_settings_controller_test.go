@@ -29,7 +29,7 @@ func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
 	cfg := &proxyconfig.Config{
 		Auth: proxyconfig.AuthConfig{
 			Static: &proxyconfig.StaticAuthConfig{Enabled: true, HeaderName: "X-Admin-Key"},
-			GitHub: &proxyconfig.GitHubAuthConfig{Enabled: true, OAuth: &proxyconfig.GitHubOAuthConfig{ClientID: "helm-client", ClientSecret: "helm-secret", Scope: "read:user"}},
+			GitHub: &proxyconfig.GitHubAuthConfig{Enabled: true, OAuth: &proxyconfig.GitHubOAuthConfig{ClientID: "helm-client", ClientSecret: "helm-secret", Scope: "read:user"}, UserMapping: proxyconfig.GitHubUserMapping{TeamRoleMapping: map[string]proxyconfig.TeamRoleRule{"example/admins": {Role: "admin", Permissions: []string{"session:access"}}}}},
 		},
 		KubernetesSession: proxyconfig.KubernetesSessionConfig{Image: "session:helm", CPURequest: "500m", PVCEnabled: &pvcEnabled},
 		KVStore:           proxyconfig.KVStoreConfig{Backend: "libsql", DatabaseURL: "libsql://helm", AuthToken: "db-secret"},
@@ -49,6 +49,10 @@ func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
 	require.Equal(t, "session:helm", response.Sections["sessions"].(map[string]interface{})["image"])
 	require.Equal(t, "https://helm.example", response.Sections["notifications"].(map[string]interface{})["base_url"])
 	require.Equal(t, false, response.Sections["security"].(map[string]interface{})["session_control_enabled"])
+	mapping := response.Sections["authentication"].(map[string]interface{})["team_role_mapping"].(map[string]interface{})
+	rule := mapping["example/admins"].(map[string]interface{})
+	require.Equal(t, "admin", rule["role"])
+	require.Equal(t, []interface{}{"session:access"}, rule["permissions"])
 	require.True(t, response.SecretConfigured["github.oauth.client_secret"])
 	require.True(t, response.SecretConfigured["storage.database_auth_token"])
 	_, exposed := getNestedString(response.Sections, "github.oauth.client_secret")

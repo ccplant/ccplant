@@ -92,16 +92,33 @@ interface TeamRoleRow extends TeamRoleRule {
 function parseTeamRoleRows(value: unknown): { rows: TeamRoleRow[]; error?: string } {
   if (value === undefined || value === null || value === '') return { rows: [] }
   try {
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('mapping must be an object')
+    let parsed = value
+    for (let depth = 0; depth < 2 && typeof parsed === 'string'; depth++) parsed = JSON.parse(parsed)
+    const normalizePermissions = (raw: unknown): string[] => {
+      if (Array.isArray(raw)) return raw.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+      if (typeof raw === 'string') return raw.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)
+      if (raw && typeof raw === 'object') return Object.entries(raw as Record<string, unknown>).flatMap(([key, item]) => {
+        const clean = (text: string) => text.replace(/^\s*-?\s*["']?/, '').replace(/["']?\s*$/, '')
+        if (item === true) return [clean(key)]
+        return typeof item === 'string' ? [`${clean(key)}:${clean(item)}`] : []
+      })
+      return []
+    }
+    if (Array.isArray(parsed)) {
+      return { rows: parsed.map((rawRule) => {
+        const rule = rawRule && typeof rawRule === 'object' ? rawRule as Record<string, unknown> : {}
+        return { team: typeof rule.team === 'string' ? rule.team : '', role: typeof rule.role === 'string' ? rule.role : 'user', permissions: normalizePermissions(rule.permissions), env_file: typeof rule.env_file === 'string' ? rule.env_file : typeof rule.envFile === 'string' ? rule.envFile : '' }
+      }) }
+    }
+    if (!parsed || typeof parsed !== 'object') throw new Error('mapping must be an object')
     return {
       rows: Object.entries(parsed as Record<string, unknown>).map(([team, rawRule]) => {
-        const rule = rawRule && typeof rawRule === 'object' ? rawRule as Record<string, unknown> : {}
+        const rule = rawRule && typeof rawRule === 'object' ? rawRule as Record<string, unknown> : { role: rawRule }
         return {
           team,
           role: typeof rule.role === 'string' ? rule.role : 'user',
-          permissions: Array.isArray(rule.permissions) ? rule.permissions.filter((item): item is string => typeof item === 'string') : [],
-          env_file: typeof rule.env_file === 'string' ? rule.env_file : '',
+          permissions: normalizePermissions(rule.permissions),
+          env_file: typeof rule.env_file === 'string' ? rule.env_file : typeof rule.envFile === 'string' ? rule.envFile : '',
         }
       }),
     }

@@ -197,9 +197,7 @@ func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
 		put("authentication.allow_users_without_team", cfg.Auth.GitHub.UserMapping.AllowUsersWithoutTeam)
 		put("authentication.default_role", cfg.Auth.GitHub.UserMapping.DefaultRole)
 		put("authentication.default_permissions", strings.Join(cfg.Auth.GitHub.UserMapping.DefaultPermissions, "\n"))
-		if encoded, err := json.Marshal(cfg.Auth.GitHub.UserMapping.TeamRoleMapping); err == nil {
-			put("authentication.team_role_mapping", string(encoded))
-		}
+		put("authentication.team_role_mapping", cfg.Auth.GitHub.UserMapping.TeamRoleMapping)
 		if cfg.Auth.GitHub.OAuth != nil {
 			put("github.oauth.client_id", cfg.Auth.GitHub.OAuth.ClientID)
 			put("github.oauth.client_secret", cfg.Auth.GitHub.OAuth.ClientSecret)
