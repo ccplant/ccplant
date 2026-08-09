@@ -74,6 +74,12 @@ assert_contains 'key: "OTEL_EXPORTER_OTLP_HEADERS"' "$TMP_DIR/backend-otel.yaml"
 assert_contains 'fieldPath: metadata.name' "$TMP_DIR/backend-otel.yaml"
 assert_contains 'deployment.environment=development,service.namespace=ccplant,service.version=dev-test,service.instance.id=\$\(POD_NAME\)' "$TMP_DIR/backend-otel.yaml"
 
+# Upgrades from chart versions that predate observability values may reuse a
+# values object without that key. Rendering must remain backward compatible.
+"$HELM_BIN" template backend-legacy "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set-json 'observability=null' >"$TMP_DIR/backend-legacy.yaml"
+assert_not_contains 'name: OTEL_EXPORTER_OTLP_ENDPOINT' "$TMP_DIR/backend-legacy.yaml"
+
 "$HELM_BIN" template frontend-secrets "$REPO_ROOT/frontend/helm/agentapi-ui" \
   --set envFrom[0].secretRef.name=frontend-runtime >"$TMP_DIR/frontend-secrets.yaml"
 assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"
