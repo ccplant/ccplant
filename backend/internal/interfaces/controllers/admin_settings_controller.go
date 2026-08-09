@@ -14,6 +14,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	proxyconfig "github.com/takutakahashi/agentapi-proxy/pkg/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,19 @@ type AdminSettingsController struct {
 	store     kvstore.Store
 	namespace string
 	defaults  map[string]interface{}
+	provider  *runtimeconfig.Provider
+}
+
+func (c *AdminSettingsController) WithRuntimeConfigProvider(provider *runtimeconfig.Provider) *AdminSettingsController {
+	c.provider = provider
+	return c
+}
+
+func (c *AdminSettingsController) runtimeDefaults() map[string]interface{} {
+	if c.provider != nil {
+		return adminSettingsDefaults(c.provider.Current())
+	}
+	return c.defaults
 }
 
 func NewAdminSettingsController(store kvstore.Store, namespace string, cfg ...*proxyconfig.Config) *AdminSettingsController {
@@ -97,14 +111,14 @@ func (c *AdminSettingsController) Get(ctx echo.Context) error {
 		doc, _, err = c.loadCurrent(ctx.Request().Context())
 	}
 	if errors.Is(err, kvstore.ErrNotFound) {
-		doc = adminSettingsDocument{SchemaVersion: 1, Sections: cloneSections(c.defaults)}
+		doc = adminSettingsDocument{SchemaVersion: 1, Sections: cloneSections(c.runtimeDefaults())}
 		return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load admin settings").SetInternal(err)
 	}
 	if ctx.QueryParam("version") == "" {
-		mergeMissing(doc.Sections, c.defaults)
+		mergeMissing(doc.Sections, c.runtimeDefaults())
 	}
 	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
 }
@@ -145,13 +159,13 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 		if requested.BaseVersion != 0 {
 			return echo.NewHTTPError(http.StatusConflict, "admin settings version is stale")
 		}
-		current = adminSettingsDocument{Sections: cloneSections(c.defaults)}
+		current = adminSettingsDocument{Sections: cloneSections(c.runtimeDefaults())}
 	} else if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load admin settings").SetInternal(err)
 	} else if requested.BaseVersion != current.Version {
 		return echo.NewHTTPError(http.StatusConflict, "admin settings version is stale")
 	}
-	mergeMissing(current.Sections, c.defaults)
+	mergeMissing(current.Sections, c.runtimeDefaults())
 
 	preserveOmittedSecrets(current.Sections, requested.Sections)
 	now := time.Now().UTC()
@@ -183,6 +197,11 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update admin settings head").SetInternal(err)
+	}
+	if c.provider != nil {
+		if err := c.provider.Apply(doc.Version, doc.Sections); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "settings were saved but could not be applied").SetInternal(err)
+		}
 	}
 	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
 }

@@ -72,7 +72,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			k8sManager.GetNamespace(),
 		)
 		if server.kvStore != nil {
-			adminSettingsController = controllers.NewAdminSettingsController(server.kvStore, k8sManager.GetNamespace(), server.GetConfig())
+			adminSettingsController = controllers.NewAdminSettingsController(server.kvStore, k8sManager.GetNamespace(), server.GetConfig()).WithRuntimeConfigProvider(server.GetConfigProvider())
 		}
 	}
 

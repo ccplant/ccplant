@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	proxyconfig "github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -73,6 +74,21 @@ func TestAdminSettingsControllerKVValuesOverrideRuntimeDefaults(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "kv-client", clientID)
 	require.True(t, saved.SecretConfigured["github.oauth.client_secret"])
+}
+
+func TestAdminSettingsControllerAppliesSavedVersionToRuntimeProvider(t *testing.T) {
+	store := kvstore.NewKubernetesStore(fake.NewSimpleClientset())
+	base := &proxyconfig.Config{KubernetesSession: proxyconfig.KubernetesSessionConfig{Image: "helm:image"}}
+	provider := runtimeconfig.New(base, store, "default")
+	controller := NewAdminSettingsController(store, "default", base).WithRuntimeConfigProvider(provider)
+	e := echo.New()
+
+	ctx, recorder := adminSettingsRequest(t, e, http.MethodPut, "/admin/system-settings", `{"base_version":0,"sections":{"sessions":{"image":"kv:image"},"agents":{"auth_mode":"bedrock"}}}`)
+	require.NoError(t, controller.Put(ctx))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, int64(1), provider.Version())
+	require.Equal(t, "kv:image", provider.Current().KubernetesSession.Image)
+	require.Equal(t, "bedrock", provider.AgentDefaults().AuthMode)
 }
 
 func adminSettingsRequest(t *testing.T, e *echo.Echo, method, target, body string) (echo.Context, *httptest.ResponseRecorder) {

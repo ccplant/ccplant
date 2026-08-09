@@ -27,9 +27,10 @@ type UserContext struct {
 }
 
 // AuthMiddleware creates authentication middleware using internal auth service
-func AuthMiddleware(cfg *config.Config, authService services.AuthService) echo.MiddlewareFunc {
+func AuthMiddleware(provider config.Provider, authService services.AuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			cfg := provider.Current()
 			// Store config in context for permission checks
 			c.Set("config", cfg)
 

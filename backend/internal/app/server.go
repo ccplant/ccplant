@@ -36,6 +36,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	infrasessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessioncontrol"
+	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -52,6 +53,8 @@ import (
 // Server represents the HTTP server
 type Server struct {
 	config                      *config.Config
+	configProvider              *runtimeconfig.Provider
+	runtimeConfigCancel         context.CancelFunc
 	echo                        *echo.Echo
 	verbose                     bool
 	logger                      *logger.Logger
@@ -198,6 +201,16 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
 		log.Printf("[SERVER] Non-session persistence initialized with configured KV store")
 	}
+	runtimeProvider := runtimeconfig.New(cfg, applicationKVStore, k8sSessionManager.GetNamespace())
+	if err := runtimeProvider.Reload(context.Background()); err != nil {
+		log.Printf("[RUNTIME_CONFIG] Failed to load versioned settings; using startup configuration: %v", err)
+	} else if runtimeProvider.Version() > 0 {
+		cfg = runtimeProvider.Current()
+		log.Printf("[RUNTIME_CONFIG] Loaded system settings version %d", runtimeProvider.Version())
+	}
+	k8sSessionManager.SetConfigProvider(runtimeProvider)
+	runtimeConfigCtx, runtimeConfigCancel := context.WithCancel(context.Background())
+	runtimeProvider.Start(runtimeConfigCtx, 5*time.Second, func(err error) { log.Printf("[RUNTIME_CONFIG] Reload failed: %v", err) })
 	var usageRepo portrepos.UsageRepository
 	if cfg.Usage.Enabled {
 		usageRepo, err = repositories.NewLibSQLUsageRepository(context.Background(), cfg.Usage.DatabaseURL, cfg.Usage.AuthToken)
@@ -401,6 +414,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	s := &Server{
 		config:                      cfg,
+		configProvider:              runtimeProvider,
+		runtimeConfigCancel:         runtimeConfigCancel,
 		echo:                        e,
 		verbose:                     verbose,
 		logger:                      lgr,
@@ -467,7 +482,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Printf("[AUTH_INIT] Bootstrap admin authentication enabled for user %q", bootstrap.UserID)
 		}
 	}
-	e.Use(auth.AuthMiddleware(cfg, container.AuthService))
+	e.Use(auth.AuthMiddleware(runtimeProvider, container.AuthService))
 
 	// Initialize OAuth provider if configured.
 	// Reuses the shared githubAuthProvider so OAuth-authenticated users benefit from
@@ -482,6 +497,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	} else {
 		log.Printf("[OAUTH_INIT] OAuth provider not initialized - configuration missing or incomplete")
 	}
+	runtimeProvider.Subscribe(func(updated *config.Config) {
+		if githubAuthProvider != nil && updated.Auth.GitHub != nil {
+			githubAuthProvider.UpdateConfig(updated.Auth.GitHub)
+		}
+	})
 
 	// Initialize notification service
 	baseDir := notification.GetBaseDir()
@@ -490,6 +510,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("Failed to initialize notification service: %v", err)
 	} else {
 		s.notificationSvc = notificationSvc
+		notificationSvc.SetBaseURLResolver(func() string { return runtimeProvider.String("notifications.base_url") })
 		log.Printf("Notification service initialized successfully")
 
 		// Set up subscription secret syncer if Kubernetes mode is enabled
@@ -1497,6 +1518,9 @@ func buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID strin
 
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (s *Server) Shutdown(timeout time.Duration) error {
+	if s.runtimeConfigCancel != nil {
+		s.runtimeConfigCancel()
+	}
 	managerErr := s.sessionManager.Shutdown(timeout)
 	var usageErr error
 	if s.usageRepo != nil {
@@ -1515,8 +1539,13 @@ func (s *Server) GetEcho() *echo.Echo {
 
 // GetConfig returns the server configuration
 func (s *Server) GetConfig() *config.Config {
+	if s.configProvider != nil {
+		return s.configProvider.Current()
+	}
 	return s.config
 }
+
+func (s *Server) GetConfigProvider() *runtimeconfig.Provider { return s.configProvider }
 
 // GetNotificationService returns the notification service
 func (s *Server) GetNotificationService() *notification.Service {
