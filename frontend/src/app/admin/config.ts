@@ -1,4 +1,4 @@
-export type AdminFieldType = 'text' | 'secret' | 'number' | 'toggle' | 'textarea' | 'select'
+export type AdminFieldType = 'text' | 'secret' | 'number' | 'toggle' | 'textarea' | 'select' | 'team-role-mapping'
 
 export interface AdminField {
   path: string
@@ -55,7 +55,7 @@ export const adminSections: AdminSection[] = [
       { path: 'allow_users_without_team', label: 'Team未所属ユーザーを許可', type: 'toggle' },
       { path: 'default_role', label: '既定Role', type: 'text', placeholder: 'user' },
       { path: 'default_permissions', label: '既定Permissions', type: 'textarea', description: '1行に1つ指定します。' },
-      { path: 'team_role_mapping', label: 'Team Role Mapping (JSON)', type: 'textarea', placeholder: '{"org/admins":{"role":"admin","permissions":["*"]}}' },
+      { path: 'team_role_mapping', label: 'Team Role Mapping', type: 'team-role-mapping', description: 'GitHub TeamごとにRoleとPermissionを設定します。' },
     ],
   },
   {

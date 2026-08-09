@@ -23,9 +23,85 @@ function setValue(section: Record<string, unknown>, path: string, value: unknown
   return copy
 }
 
+interface TeamRoleRule {
+  role: string
+  permissions: string[]
+  env_file?: string
+}
+
+interface TeamRoleRow extends TeamRoleRule {
+  team: string
+}
+
+function parseTeamRoleRows(value: unknown): { rows: TeamRoleRow[]; error?: string } {
+  if (value === undefined || value === null || value === '') return { rows: [] }
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('mapping must be an object')
+    return {
+      rows: Object.entries(parsed as Record<string, unknown>).map(([team, rawRule]) => {
+        const rule = rawRule && typeof rawRule === 'object' ? rawRule as Record<string, unknown> : {}
+        return {
+          team,
+          role: typeof rule.role === 'string' ? rule.role : 'user',
+          permissions: Array.isArray(rule.permissions) ? rule.permissions.filter((item): item is string => typeof item === 'string') : [],
+          env_file: typeof rule.env_file === 'string' ? rule.env_file : '',
+        }
+      }),
+    }
+  } catch {
+    return { rows: [], error: '既存のJSONを読み込めません。JSONを修正してからフォーム編集に切り替えてください。' }
+  }
+}
+
+function serializeTeamRoleRows(rows: TeamRoleRow[]): string {
+  const mapping = Object.fromEntries(rows.filter((row) => row.team.trim()).map(({ team, role, permissions, env_file }) => [
+    team.trim(),
+    { role: role.trim() || 'user', permissions, ...(env_file?.trim() ? { env_file: env_file.trim() } : {}) },
+  ]))
+  return JSON.stringify(mapping, null, 2)
+}
+
+function TeamRoleMappingField({ value, onChange }: { value: unknown; onChange: (value: unknown) => void }) {
+  const parsed = parseTeamRoleRows(value)
+  const inputClass = 'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white'
+
+  if (parsed.error) return <div className="mt-2 space-y-2"><p className="text-xs text-red-600 dark:text-red-400">{parsed.error}</p><textarea rows={6} className={inputClass} value={typeof value === 'string' ? value : JSON.stringify(value, null, 2)} onChange={(event) => onChange(event.target.value)} /></div>
+
+  return <TeamRoleMappingBuilder initialRows={parsed.rows} onChange={onChange} />
+}
+
+function TeamRoleMappingBuilder({ initialRows, onChange }: { initialRows: TeamRoleRow[]; onChange: (value: unknown) => void }) {
+  const [rows, setRows] = useState(initialRows)
+  const inputClass = 'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white'
+  const updateRows = (next: TeamRoleRow[]) => {
+    setRows(next)
+    onChange(serializeTeamRoleRows(next))
+  }
+  const normalizedTeams = rows.map((row) => row.team.trim()).filter(Boolean)
+  const hasDuplicate = new Set(normalizedTeams).size !== normalizedTeams.length
+
+  return <div className="mt-2 space-y-3">
+    {rows.map((row, index) => <div key={index} className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+      <div className="grid gap-3 md:grid-cols-2">
+        <div><label className="text-xs font-medium text-gray-600 dark:text-gray-400">Organization / Team</label><input className={inputClass} value={row.team} placeholder="example-org/platform" onChange={(event) => updateRows(rows.map((item, itemIndex) => itemIndex === index ? { ...item, team: event.target.value } : item))} /></div>
+        <div><label className="text-xs font-medium text-gray-600 dark:text-gray-400">Role</label><input className={inputClass} list="admin-team-role-options" value={row.role} placeholder="user または admin" onChange={(event) => updateRows(rows.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item))} /></div>
+        <div><label className="text-xs font-medium text-gray-600 dark:text-gray-400">Permissions</label><textarea rows={2} className={inputClass} value={row.permissions.join('\n')} placeholder="1行に1つ（例: session:access）" onChange={(event) => updateRows(rows.map((item, itemIndex) => itemIndex === index ? { ...item, permissions: event.target.value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean) } : item))} /></div>
+        <div><label className="text-xs font-medium text-gray-600 dark:text-gray-400">Env File（任意）</label><input className={inputClass} value={row.env_file || ''} placeholder="admin.env" onChange={(event) => updateRows(rows.map((item, itemIndex) => itemIndex === index ? { ...item, env_file: event.target.value } : item))} /></div>
+      </div>
+      <div className="mt-3 text-right"><button type="button" className="text-sm text-red-600 hover:text-red-700 dark:text-red-400" onClick={() => updateRows(rows.filter((_, itemIndex) => itemIndex !== index))}>このTeamを削除</button></div>
+    </div>)}
+    <datalist id="admin-team-role-options"><option value="user" /><option value="admin" /></datalist>
+    <button type="button" className="rounded-md border border-blue-600 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30" onClick={() => updateRows([...rows, { team: '', role: 'user', permissions: [] }])}>＋ Teamを追加</button>
+    {hasDuplicate && <p className="text-xs text-red-600 dark:text-red-400">同じ Organization / Team が複数あります。最後の設定だけが保存されます。</p>}
+    {rows.length === 0 && <p className="text-xs text-gray-500">Team mapping はまだありません。「Teamを追加」から作成できます。</p>}
+  </div>
+}
+
 function Field({ field, value, configured, onChange }: { field: AdminField; value: unknown; configured: boolean; onChange: (value: unknown) => void }) {
   const baseClass = 'mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white'
   if (field.type === 'toggle') return <button type="button" role="switch" aria-checked={Boolean(value)} onClick={() => onChange(!value)} className={`relative mt-2 inline-flex h-6 w-11 rounded-full transition-colors ${value ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}><span className={`inline-block h-5 w-5 translate-y-0.5 rounded-full bg-white shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} /></button>
+  if (field.type === 'team-role-mapping') return <TeamRoleMappingField value={value} onChange={onChange} />
   if (field.type === 'textarea') return <textarea rows={4} className={baseClass} value={typeof value === 'string' ? value : ''} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} />
   if (field.type === 'select') return <select className={baseClass} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)}>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
   return <div><input className={baseClass} type={field.type === 'secret' ? 'password' : field.type} value={typeof value === 'string' || typeof value === 'number' ? value : ''} placeholder={field.type === 'secret' && configured ? '設定済み（変更時のみ入力）' : field.placeholder} onChange={(event) => onChange(field.type === 'number' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)} />{field.type === 'secret' && configured && <p className="mt-1 text-xs text-emerald-600">現在の値が設定されています</p>}</div>
