@@ -3,11 +3,7 @@
  * /api/config エンドポイントから取得される設定
  */
 
-export type AuthMode = 'oauth_only' | 'api_key' | 'both';
-
 export interface AppConfig {
-  /** 認証モード: oauth_only, api_key, both */
-  authMode: AuthMode;
   /** ログインページのタイトル */
   loginTitle: string;
   /** ログインページの説明文 */
@@ -22,10 +18,9 @@ export interface AppConfig {
 
 /** デフォルト設定 */
 export const DEFAULT_CONFIG: AppConfig = {
-  authMode: 'both',
   loginTitle: 'AgentAPI UI',
-  loginDescription: 'Enter your API key or sign in with GitHub to continue.',
-  loginSubDescription: 'API key can be any valid authentication token for your AgentAPI service.',
+  loginDescription: 'Enter an access token or sign in with GitHub to continue.',
+  loginSubDescription: 'Use any valid authentication token for your AgentAPI service.',
   oauthProviders: ['github'],
   faviconUrl: null,
 };

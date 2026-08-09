@@ -31,9 +31,6 @@ COOKIE_ENCRYPTION_SECRET=your_64_character_hex_string_here
 # AgentAPI Proxy Configuration
 AGENTAPI_PROXY_URL=http://localhost:8080
 
-# OAuth Only Mode (optional - hides API key login form)
-NEXT_PUBLIC_OAUTH_ONLY_MODE=false
-
 # Push Notification Configuration (オプション)
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key_here
 ```
@@ -50,8 +47,6 @@ bun run dev
 - **GitHub OAuth認証**: GitHub経由でログイン（agentapi-proxyのOAuth設定が必要）
 
 APIキーは暗号化されてセキュアなCookieに保存されます。
-
-**OAuth専用モード**: `NEXT_PUBLIC_OAUTH_ONLY_MODE=true` を設定すると、APIキー入力フォームを非表示にしてGitHub OAuth認証のみを使用できます。
 
 **重要**: 必ず `COOKIE_ENCRYPTION_SECRET` に安全な暗号化キーを設定してください。
 
