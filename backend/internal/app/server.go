@@ -210,7 +210,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	k8sSessionManager.SetConfigProvider(runtimeProvider)
 	runtimeConfigCtx, runtimeConfigCancel := context.WithCancel(context.Background())
-	runtimeProvider.Start(runtimeConfigCtx, 5*time.Second, func(err error) { log.Printf("[RUNTIME_CONFIG] Reload failed: %v", err) })
+	runtimeProvider.Start(runtimeConfigCtx, 30*time.Second, func(err error) { log.Printf("[RUNTIME_CONFIG] Reload failed: %v", err) })
 	var usageRepo portrepos.UsageRepository
 	if cfg.Usage.Enabled {
 		usageRepo, err = repositories.NewLibSQLUsageRepository(context.Background(), cfg.Usage.DatabaseURL, cfg.Usage.AuthToken)
