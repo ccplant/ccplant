@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	proxyconfig "github.com/takutakahashi/agentapi-proxy/pkg/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -31,10 +33,15 @@ const (
 type AdminSettingsController struct {
 	store     kvstore.Store
 	namespace string
+	defaults  map[string]interface{}
 }
 
-func NewAdminSettingsController(store kvstore.Store, namespace string) *AdminSettingsController {
-	return &AdminSettingsController{store: store, namespace: namespace}
+func NewAdminSettingsController(store kvstore.Store, namespace string, cfg ...*proxyconfig.Config) *AdminSettingsController {
+	controller := &AdminSettingsController{store: store, namespace: namespace, defaults: map[string]interface{}{}}
+	if len(cfg) > 0 && cfg[0] != nil {
+		controller.defaults = adminSettingsDefaults(cfg[0])
+	}
+	return controller
 }
 
 type adminSettingsDocument struct {
@@ -90,10 +97,14 @@ func (c *AdminSettingsController) Get(ctx echo.Context) error {
 		doc, _, err = c.loadCurrent(ctx.Request().Context())
 	}
 	if errors.Is(err, kvstore.ErrNotFound) {
-		return ctx.JSON(http.StatusOK, adminSettingsResponse{SchemaVersion: 1, Sections: map[string]interface{}{}, SecretConfigured: map[string]bool{}})
+		doc = adminSettingsDocument{SchemaVersion: 1, Sections: cloneSections(c.defaults)}
+		return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load admin settings").SetInternal(err)
+	}
+	if ctx.QueryParam("version") == "" {
+		mergeMissing(doc.Sections, c.defaults)
 	}
 	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
 }
@@ -134,12 +145,13 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 		if requested.BaseVersion != 0 {
 			return echo.NewHTTPError(http.StatusConflict, "admin settings version is stale")
 		}
-		current = adminSettingsDocument{Sections: map[string]interface{}{}}
+		current = adminSettingsDocument{Sections: cloneSections(c.defaults)}
 	} else if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load admin settings").SetInternal(err)
 	} else if requested.BaseVersion != current.Version {
 		return echo.NewHTTPError(http.StatusConflict, "admin settings version is stale")
 	}
+	mergeMissing(current.Sections, c.defaults)
 
 	preserveOmittedSecrets(current.Sections, requested.Sections)
 	now := time.Now().UTC()
@@ -173,6 +185,127 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update admin settings head").SetInternal(err)
 	}
 	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
+}
+
+func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
+	sections := map[string]interface{}{}
+	put := func(path string, value interface{}) { setNestedValue(sections, path, value) }
+
+	if cfg.Auth.GitHub != nil {
+		put("github.oauth.enabled", cfg.Auth.GitHub.Enabled)
+		put("github.enterprise.base_url", cfg.Auth.GitHub.BaseURL)
+		put("authentication.allow_users_without_team", cfg.Auth.GitHub.UserMapping.AllowUsersWithoutTeam)
+		put("authentication.default_role", cfg.Auth.GitHub.UserMapping.DefaultRole)
+		put("authentication.default_permissions", strings.Join(cfg.Auth.GitHub.UserMapping.DefaultPermissions, "\n"))
+		if encoded, err := json.Marshal(cfg.Auth.GitHub.UserMapping.TeamRoleMapping); err == nil {
+			put("authentication.team_role_mapping", string(encoded))
+		}
+		if cfg.Auth.GitHub.OAuth != nil {
+			put("github.oauth.client_id", cfg.Auth.GitHub.OAuth.ClientID)
+			put("github.oauth.client_secret", cfg.Auth.GitHub.OAuth.ClientSecret)
+			put("github.oauth.scope", cfg.Auth.GitHub.OAuth.Scope)
+		}
+	}
+	if cfg.Auth.Static != nil {
+		put("authentication.static.enabled", cfg.Auth.Static.Enabled)
+		put("authentication.static.header_name", cfg.Auth.Static.HeaderName)
+	}
+	put("slack.cleanup_enabled", cfg.SlackbotCleanupWorker.Enabled)
+	put("slack.session_ttl", cfg.SlackbotCleanupWorker.SessionTTL)
+	put("slack.cleanup_check_interval", cfg.SlackbotCleanupWorker.CheckInterval)
+	put("slack.cleanup_dry_run", cfg.SlackbotCleanupWorker.DryRun)
+	put("notifications.webhook_base_url", cfg.Webhook.BaseURL)
+	put("notifications.github_enterprise_host", cfg.Webhook.GitHubEnterpriseHost)
+	put("workers.schedule.enabled", cfg.ScheduleWorker.Enabled)
+	put("workers.schedule.check_interval", cfg.ScheduleWorker.CheckInterval)
+	put("workers.stock.enabled", cfg.StockInventoryWorker.Enabled)
+	put("workers.stock.check_interval", cfg.StockInventoryWorker.CheckInterval)
+	put("workers.stock.target_count", cfg.StockInventoryWorker.TargetCount)
+	put("workers.stock.docker_enabled", cfg.StockInventoryWorker.DockerEnabled)
+	put("sessions.image", cfg.KubernetesSession.Image)
+	put("sessions.cpu_request", cfg.KubernetesSession.CPURequest)
+	put("sessions.cpu_limit", cfg.KubernetesSession.CPULimit)
+	put("sessions.memory_request", cfg.KubernetesSession.MemoryRequest)
+	put("sessions.memory_limit", cfg.KubernetesSession.MemoryLimit)
+	if cfg.KubernetesSession.PVCEnabled != nil {
+		put("sessions.pvc_enabled", *cfg.KubernetesSession.PVCEnabled)
+	}
+	put("sessions.pvc_storage_class", cfg.KubernetesSession.PVCStorageClass)
+	put("sessions.pvc_size", cfg.KubernetesSession.PVCStorageSize)
+	put("sessions.pod_start_timeout", cfg.KubernetesSession.PodStartTimeout)
+	put("sessions.pod_stop_timeout", cfg.KubernetesSession.PodStopTimeout)
+	put("sessions.otel_enabled", cfg.KubernetesSession.OtelCollectorEnabled)
+	put("security.network_filter_image", cfg.KubernetesSession.NetworkFilterImage)
+	put("storage.backend", cfg.KVStore.Backend)
+	put("storage.database_url", cfg.KVStore.DatabaseURL)
+	put("storage.database_auth_token", cfg.KVStore.AuthToken)
+	put("storage.usage_enabled", cfg.Usage.Enabled)
+	put("storage.redis_enabled", cfg.Redis.Addr != "")
+	put("storage.redis_address", cfg.Redis.Addr)
+	put("storage.redis_password", cfg.Redis.Password)
+	put("storage.redis_tls_enabled", cfg.Redis.TLSEnabled)
+	put("storage.session_persistence_backend", cfg.SessionPersistence.Backend)
+	if cfg.SessionPersistence.S3 != nil {
+		put("storage.session_persistence_bucket", cfg.SessionPersistence.S3.Bucket)
+	}
+	put("integrations.scia_enabled", cfg.Scia.Enabled)
+	put("integrations.todoist_enabled", cfg.Scia.TodoistCredential != "")
+
+	for path, envName := range map[string]string{
+		"notifications.base_url": "NOTIFICATION_BASE_URL", "notifications.vapid_public_key": "VAPID_PUBLIC_KEY",
+		"notifications.vapid_private_key": "VAPID_PRIVATE_KEY", "notifications.vapid_contact_email": "VAPID_CONTACT_EMAIL",
+		"sessions.claude_args": "CLAUDE_ARGS", "github.oauth.allowed_redirect_uris": "OAUTH_ALLOWED_REDIRECT_URIS",
+		"github.app.id": "GITHUB_APP_ID", "github.app.installation_id": "GITHUB_INSTALLATION_ID",
+		"github.app.private_key": "GITHUB_APP_PEM", "slack.bot_token": "SLACK_BOT_TOKEN",
+		"slack.app_token": "SLACK_APP_TOKEN", "slack.signing_secret": "SLACK_SIGNING_SECRET",
+	} {
+		if value, ok := os.LookupEnv(envName); ok {
+			put(path, value)
+		}
+	}
+	if value, ok := os.LookupEnv("SESSION_CONTROL_LONG_POLL_ENABLED"); ok {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			put("security.session_control_enabled", enabled)
+		}
+	}
+	return sections
+}
+
+func cloneSections(source map[string]interface{}) map[string]interface{} {
+	data, _ := json.Marshal(source)
+	cloned := map[string]interface{}{}
+	_ = json.Unmarshal(data, &cloned)
+	return cloned
+}
+
+func mergeMissing(target, defaults map[string]interface{}) {
+	for key, value := range defaults {
+		defaultMap, nested := value.(map[string]interface{})
+		if nested {
+			targetMap, ok := target[key].(map[string]interface{})
+			if !ok {
+				targetMap = map[string]interface{}{}
+				target[key] = targetMap
+			}
+			mergeMissing(targetMap, defaultMap)
+		} else if _, exists := target[key]; !exists {
+			target[key] = value
+		}
+	}
+}
+
+func setNestedValue(root map[string]interface{}, path string, value interface{}) {
+	parts := strings.Split(path, ".")
+	current := root
+	for _, part := range parts[:len(parts)-1] {
+		next, ok := current[part].(map[string]interface{})
+		if !ok {
+			next = map[string]interface{}{}
+			current[part] = next
+		}
+		current = next
+	}
+	current[parts[len(parts)-1]] = value
 }
 
 func (c *AdminSettingsController) loadCurrent(ctx context.Context) (adminSettingsDocument, kvstore.Record, error) {

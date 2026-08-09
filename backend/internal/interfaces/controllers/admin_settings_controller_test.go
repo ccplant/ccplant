@@ -12,12 +12,63 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	proxyconfig "github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 func newAdminSettingsTestController() (*AdminSettingsController, kvstore.Store) {
 	store := kvstore.NewKubernetesStore(fake.NewSimpleClientset())
 	return NewAdminSettingsController(store, "default"), store
+}
+
+func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
+	t.Setenv("NOTIFICATION_BASE_URL", "https://helm.example")
+	t.Setenv("SESSION_CONTROL_LONG_POLL_ENABLED", "false")
+	store := kvstore.NewKubernetesStore(fake.NewSimpleClientset())
+	pvcEnabled := true
+	cfg := &proxyconfig.Config{
+		Auth: proxyconfig.AuthConfig{
+			Static: &proxyconfig.StaticAuthConfig{Enabled: true, HeaderName: "X-Admin-Key"},
+			GitHub: &proxyconfig.GitHubAuthConfig{Enabled: true, OAuth: &proxyconfig.GitHubOAuthConfig{ClientID: "helm-client", ClientSecret: "helm-secret", Scope: "read:user"}},
+		},
+		KubernetesSession: proxyconfig.KubernetesSessionConfig{Image: "session:helm", CPURequest: "500m", PVCEnabled: &pvcEnabled},
+		KVStore:           proxyconfig.KVStoreConfig{Backend: "libsql", DatabaseURL: "libsql://helm", AuthToken: "db-secret"},
+		Redis:             proxyconfig.RedisConfig{Addr: "redis:6379"},
+	}
+	controller := NewAdminSettingsController(store, "default", cfg)
+	e := echo.New()
+	ctx, recorder := adminSettingsRequest(t, e, http.MethodGet, "/admin/system-settings", "")
+	require.NoError(t, controller.Get(ctx))
+
+	var response adminSettingsResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, int64(0), response.Version)
+	clientID, ok := getNestedString(response.Sections, "github.oauth.client_id")
+	require.True(t, ok)
+	require.Equal(t, "helm-client", clientID)
+	require.Equal(t, "session:helm", response.Sections["sessions"].(map[string]interface{})["image"])
+	require.Equal(t, "https://helm.example", response.Sections["notifications"].(map[string]interface{})["base_url"])
+	require.Equal(t, false, response.Sections["security"].(map[string]interface{})["session_control_enabled"])
+	require.True(t, response.SecretConfigured["github.oauth.client_secret"])
+	require.True(t, response.SecretConfigured["storage.database_auth_token"])
+	_, exposed := getNestedString(response.Sections, "github.oauth.client_secret")
+	require.False(t, exposed)
+}
+
+func TestAdminSettingsControllerKVValuesOverrideRuntimeDefaults(t *testing.T) {
+	store := kvstore.NewKubernetesStore(fake.NewSimpleClientset())
+	cfg := &proxyconfig.Config{Auth: proxyconfig.AuthConfig{GitHub: &proxyconfig.GitHubAuthConfig{OAuth: &proxyconfig.GitHubOAuthConfig{ClientID: "helm-client", ClientSecret: "helm-secret"}}}}
+	controller := NewAdminSettingsController(store, "default", cfg)
+	e := echo.New()
+
+	ctx, recorder := adminSettingsRequest(t, e, http.MethodPut, "/admin/system-settings", `{"base_version":0,"sections":{"github":{"oauth":{"client_id":"kv-client"}}}}`)
+	require.NoError(t, controller.Put(ctx))
+	var saved adminSettingsResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &saved))
+	clientID, ok := getNestedString(saved.Sections, "github.oauth.client_id")
+	require.True(t, ok)
+	require.Equal(t, "kv-client", clientID)
+	require.True(t, saved.SecretConfigured["github.oauth.client_secret"])
 }
 
 func adminSettingsRequest(t *testing.T, e *echo.Echo, method, target, body string) (echo.Context, *httptest.ResponseRecorder) {
