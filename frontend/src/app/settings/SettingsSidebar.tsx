@@ -21,7 +21,7 @@ const baseNavItems = [
   },
   {
     label: 'Admin',
-    href: '/settings/admin',
+    href: '/admin',
     icon: ShieldCheck,
     adminOnly: true,
   },
