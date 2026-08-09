@@ -28,6 +28,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -82,6 +83,21 @@ func runProxy(cmd *cobra.Command, args []string) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(quit)
+
+	shutdownTelemetry, err := telemetry.Setup(context.Background())
+	if err != nil {
+		log.Printf("[OTEL] OpenTelemetry initialization failed; continuing without export: %v", err)
+		shutdownTelemetry = func(context.Context) error { return nil }
+	} else if telemetry.Enabled() {
+		log.Printf("[OTEL] OpenTelemetry OTLP trace and metric export enabled")
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(ctx); err != nil {
+			log.Printf("[OTEL] OpenTelemetry shutdown failed: %v", err)
+		}
+	}()
 
 	if verbose {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)

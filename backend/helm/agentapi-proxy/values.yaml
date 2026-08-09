@@ -438,6 +438,13 @@ config:
 
 # Environment variables
 env: []
+# Grafana Cloud APM / OpenTelemetry example:
+# - name: OTEL_SERVICE_NAME
+#   value: "agentapi-proxy"
+# - name: OTEL_EXPORTER_OTLP_PROTOCOL
+#   value: "http/protobuf"
+# - name: OTEL_RESOURCE_ATTRIBUTES
+#   value: "deployment.environment=production,service.namespace=ccplant"
 # - name: GITHUB_TOKEN
 #   value: "your-token"
 # - name: CLAUDE_ARGS
@@ -454,6 +461,8 @@ envFrom: []
 #     name: agentapi-config
 # - secretRef:
 #     name: agentapi-secrets
+# Store OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS in a Secret,
+# then reference it here. See docs/grafana-cloud-apm.md.
 
 # Liveness and readiness probes
 livenessProbe:
