@@ -30,7 +30,7 @@ proxyがKubernetes APIで作成する以下のresourceはHelm release manifest�
 通常の`helm uninstall`では削除されない。
 
 - `agentapi-session-*` Service、Pod/Deployment、PVC、settings Secret
-- task、task group、memory、schedule、webhook、SlackBot
+- memory、schedule、webhook、SlackBot
 - settings、credentials、API token、personal API key
 - session profile、sandbox policy、team config、user/team mapping
 - `agentapi-agent-files-*`、`agentapi-user-files-*`
@@ -104,7 +104,7 @@ Secretを次の4種類に分類する。
 | 種類 | 例 | 処理 |
 |---|---|---|
 | session専用 | `agentapi-session-*-settings`、webhook payload | 保持 |
-| application data | task、schedule、credentials、API token | 保持 |
+| application data | schedule、credentials、API token | 保持 |
 | 外部参照 | OAuth、GitHub PEM、Slack、cookie暗号鍵 | 同じname/keyを再利用 |
 | Helm生成 | GitHub session/config、SCIA credential | 同じ入力から再生成 |
 
@@ -213,7 +213,7 @@ workerのLease名はRelease名に依存しない次の固定名を使う。旧�
 - golden: values変換、shadow resource名、共有RBAC、Ingress無効化
 - kind: 新旧backendの並行稼働と既存sessionの列挙・操作
 - kind: routing切り替え中の連続HTTP probeとSSE再接続
-- kind: settings/credentials/API token/task/schedule等の再読込
+- kind: settings/credentials/API token/schedule等の再読込
 - kind: session Pod再起動後のprovision成功
 - kind: workerの旧→新handoverで二重実行されないこと
 - kind: legacy session drain後に旧backendを削除できること

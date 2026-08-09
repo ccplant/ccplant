@@ -17,7 +17,7 @@ func TestCollectApplicationKVRecordsExcludesOperationalResources(t *testing.T) {
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "test", Labels: map[string]string{"agentapi.proxy/settings": "true"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "subscriptions", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/component": "notification-subscription", "agentapi.proxy/user-id": "user"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "helm-release", Namespace: "test", Labels: map[string]string{"owner": "helm"}}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "task"}}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-shares", Namespace: "test"}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "server-config", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/name": "agentapi-proxy"}}},
 	)
@@ -32,7 +32,7 @@ func TestCollectApplicationKVRecordsExcludesOperationalResources(t *testing.T) {
 	if records[0].Kind != kvstore.KindConfigMap || records[0].Key != "agentapi-session-shares" {
 		t.Fatalf("unexpected first record: %#v", records[0])
 	}
-	if records[1].Kind != kvstore.KindConfigMap || records[1].Key != "task" {
+	if records[1].Kind != kvstore.KindConfigMap || records[1].Key != "memory" {
 		t.Fatalf("unexpected second record: %#v", records[1])
 	}
 	if records[2].Kind != kvstore.KindSecret || records[2].Key != "settings" {
@@ -65,10 +65,10 @@ func TestMigrateKubernetesKVIsIdempotent(t *testing.T) {
 
 func TestMigrateKubernetesKVConflictAndOverwrite(t *testing.T) {
 	client := fake.NewSimpleClientset(
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "task"}}, Data: map[string]string{"task.json": "source"}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}, Data: map[string]string{"memory.json": "source"}},
 	)
 	store := newMemoryKVStore()
-	_, err := store.Create(context.Background(), kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "task", Value: []byte("destination")})
+	_, err := store.Create(context.Background(), kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: []byte("destination")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "test", Labels: map[string]string{"agentapi.proxy/settings": "true"}}, Data: map[string][]byte{"settings.json": []byte(`{"name":"local-e2e"}`)}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "task"}}, Data: map[string]string{"task.json": `{"title":"migrate me"}`}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}, Data: map[string]string{"memory.json": `{"title":"migrate me"}`}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "notification-subscriptions-user", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/component": "notification-subscription"}}},
 	)
 	databaseURL := "file://" + filepath.Join(t.TempDir(), "migration.db")
@@ -127,7 +127,7 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	for _, identity := range []struct {
 		kind kvstore.Kind
 		key  string
-	}{{kvstore.KindSecret, "settings"}, {kvstore.KindConfigMap, "task"}} {
+	}{{kvstore.KindSecret, "settings"}, {kvstore.KindConfigMap, "memory"}} {
 		if _, err := store.Get(ctx, identity.kind, "test", identity.key); err != nil {
 			t.Fatalf("read migrated %s/%s: %v", identity.kind, identity.key, err)
 		}
@@ -148,8 +148,8 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 func TestMigrateConfiguredStorePair(t *testing.T) {
 	ctx := context.Background()
 	source, destination := newMemoryKVStore(), newMemoryKVStore()
-	value := []byte(`{"metadata":{"name":"task","namespace":"test","labels":{"agentapi.proxy/type":"task"}},"data":{"task.json":"source"}}`)
-	if _, err := source.Create(ctx, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "task", Value: value}); err != nil {
+	value := []byte(`{"metadata":{"name":"memory","namespace":"test","labels":{"agentapi.proxy/type":"memory"}},"data":{"memory.json":"source"}}`)
+	if _, err := source.Create(ctx, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: value}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := migrateKVStores(ctx, source, destination, kvStoreMigrateOptions{namespace: "test"})
@@ -159,7 +159,7 @@ func TestMigrateConfiguredStorePair(t *testing.T) {
 	if result.Copied != 1 {
 		t.Fatalf("result = %#v", result)
 	}
-	got, err := destination.Get(ctx, kvstore.KindConfigMap, "test", "task")
+	got, err := destination.Get(ctx, kvstore.KindConfigMap, "test", "memory")
 	if err != nil || string(got.Value) != string(value) {
 		t.Fatalf("destination record = %#v, err=%v", got, err)
 	}

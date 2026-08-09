@@ -70,8 +70,6 @@ type Server struct {
 	memoryRepo                  portrepos.MemoryRepository                      // Memory repository
 	sandboxPolicyRepo           portrepos.SandboxPolicyRepository               // Sandbox policy repository
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
-	taskRepo                    portrepos.TaskRepository                        // Task repository
-	taskGroupRepo               portrepos.TaskGroupRepository                   // Task group repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
@@ -137,7 +135,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "assets" && firstSegment != "tasks" && firstSegment != "task-groups" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "assets" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
 			}
 			return false
 		},
@@ -344,20 +342,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	)
 	log.Printf("[SERVER] Sandbox domain repository initialized")
 
-	// Initialize task repository (Kubernetes ConfigMap-backed)
-	taskRepo := repositories.NewKubernetesTaskRepository(
-		persistenceClient,
-		k8sSessionManager.GetNamespace(),
-	)
-	log.Printf("[SERVER] Task repository initialized")
-
-	// Initialize task group repository (Kubernetes ConfigMap-backed)
-	taskGroupRepo := repositories.NewKubernetesTaskGroupRepository(
-		persistenceClient,
-		k8sSessionManager.GetNamespace(),
-	)
-	log.Printf("[SERVER] Task group repository initialized")
-
 	// Initialize session route repository (Kubernetes Secret-backed)
 	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(
 		persistenceClient,
@@ -432,8 +416,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		memoryRepo:                  memoryRepo,
 		sandboxPolicyRepo:           sandboxPolicyRepo,
 		sandboxDomainRepo:           sandboxDomainRepo,
-		taskRepo:                    taskRepo,
-		taskGroupRepo:               taskGroupRepo,
 		sessionRouteRepo:            sessionRouteRepo,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
@@ -1347,24 +1329,6 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 		_ = s.shareRepo.Delete(sessionID)
 	}
 
-	// Delete associated tasks for this session (cascade delete)
-	if s.taskRepo != nil {
-		ctx := context.Background()
-		tasks, err := s.taskRepo.List(ctx, portrepos.TaskFilter{SessionID: sessionID})
-		if err != nil {
-			log.Printf("[SESSION] Warning: failed to list tasks for session %s: %v", sessionID, err)
-		} else {
-			for _, task := range tasks {
-				if err := s.taskRepo.Delete(ctx, task.ID()); err != nil {
-					log.Printf("[SESSION] Warning: failed to delete task %s for session %s: %v", task.ID(), sessionID, err)
-				}
-			}
-			if len(tasks) > 0 {
-				log.Printf("[SESSION] Deleted %d tasks associated with session %s", len(tasks), sessionID)
-			}
-		}
-	}
-
 	return s.sessionManager.DeleteSession(sessionID)
 }
 
@@ -1564,16 +1528,6 @@ func (s *Server) GetMemoryRepository() portrepos.MemoryRepository {
 // SetMemoryRepository allows configuration of a custom memory repository (for testing)
 func (s *Server) SetMemoryRepository(repo portrepos.MemoryRepository) {
 	s.memoryRepo = repo
-}
-
-// GetTaskRepository returns the task repository
-func (s *Server) GetTaskRepository() portrepos.TaskRepository {
-	return s.taskRepo
-}
-
-// GetTaskGroupRepository returns the task group repository
-func (s *Server) GetTaskGroupRepository() portrepos.TaskGroupRepository {
-	return s.taskGroupRepo
 }
 
 // GetSessionProfileRepository returns the session profile repository

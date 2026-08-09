@@ -13,8 +13,8 @@ import (
 func TestVerifyKVStoresMatch(t *testing.T) {
 	ctx := context.Background()
 	primary, secondary := newMemoryKVStore(), newMemoryKVStore()
-	value := []byte(`{"metadata":{"name":"task","namespace":"test","labels":{"agentapi.proxy/type":"task"}}}`)
-	record := kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "task", Value: value}
+	value := []byte(`{"metadata":{"name":"memory","namespace":"test","labels":{"agentapi.proxy/type":"memory"}}}`)
+	record := kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: value}
 	_, _ = primary.Create(ctx, record)
 	_, _ = secondary.Create(ctx, record)
 	result, err := verifyKVStores(ctx, primary, secondary, "test")
@@ -27,7 +27,7 @@ func TestVerifyKVStoresReportsAllMismatchTypes(t *testing.T) {
 	ctx := context.Background()
 	primary, secondary := newMemoryKVStore(), newMemoryKVStore()
 	configMap := func(key, value string) kvstore.Record {
-		return kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: key, Value: []byte(`{"metadata":{"name":"` + key + `","namespace":"test","labels":{"agentapi.proxy/type":"task"}},"data":{"task.json":"` + value + `"}}`)}
+		return kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: key, Value: []byte(`{"metadata":{"name":"` + key + `","namespace":"test","labels":{"agentapi.proxy/type":"memory"}},"data":{"memory.json":"` + value + `"}}`)}
 	}
 	_, _ = primary.Create(ctx, configMap("primary-only", "value"))
 	_, _ = secondary.Create(ctx, configMap("secondary-only", "value"))
