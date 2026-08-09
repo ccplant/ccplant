@@ -77,6 +77,7 @@ import {
 } from '../types/share';
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
+import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 // CredentialsMetadata represents the metadata returned by the credentials API
@@ -2908,6 +2909,22 @@ export class AgentAPIProxyClient {
     });
 
     return { configOptions: response.result?.configOptions ?? response.configOptions ?? [] };
+  }
+
+  async getAdminSettings(version?: number): Promise<AdminSettingsDocument> {
+    const query = version ? `?version=${version}` : '';
+    return this.makeRequest<AdminSettingsDocument>(`/admin/system-settings${query}`);
+  }
+
+  async updateAdminSettings(request: UpdateAdminSettingsRequest): Promise<AdminSettingsDocument> {
+    return this.makeRequest<AdminSettingsDocument>('/admin/system-settings', {
+      method: 'PUT',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async listAdminSettingsVersions(): Promise<AdminSettingsVersionsResponse> {
+    return this.makeRequest<AdminSettingsVersionsResponse>('/admin/system-settings/versions');
   }
 }
 

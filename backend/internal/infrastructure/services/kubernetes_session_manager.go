@@ -102,8 +102,12 @@ type SessionMessageEvent struct {
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
-	config                *config.Config
-	k8sConfig             *config.KubernetesSessionConfig
+	config         *config.Config
+	k8sConfig      *config.KubernetesSessionConfig
+	configProvider interface {
+		Current() *config.Config
+		AgentDefaults() settingspatch.SettingsPatch
+	}
 	client                kubernetes.Interface
 	verbose               bool
 	logger                *logger.Logger
@@ -157,6 +161,23 @@ type KubernetesSessionManager struct {
 
 	sessionAllocationNotifier coreallocation.Notifier
 	sessionControlStore       coresessioncontrol.Store
+}
+
+func (m *KubernetesSessionManager) SetConfigProvider(provider interface {
+	Current() *config.Config
+	AgentDefaults() settingspatch.SettingsPatch
+}) {
+	m.configProvider = provider
+	m.refreshConfig()
+}
+
+func (m *KubernetesSessionManager) refreshConfig() {
+	if m.configProvider == nil {
+		return
+	}
+	current := m.configProvider.Current()
+	m.config = current
+	m.k8sConfig = &current.KubernetesSession
 }
 
 func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontrol.Store) {
@@ -466,6 +487,7 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	m.refreshConfig()
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
 	applySandboxDefaults(req)
@@ -635,6 +657,7 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 // waits for adoption, at which point adoptStockSession creates the request.
 // Note: Sandbox (network filter) and scia sidecar are always enabled.
 func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind bool) error {
+	m.refreshConfig()
 	id := uuid.New().String()
 	deploymentName := fmt.Sprintf("agentapi-session-%s", id)
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
@@ -6263,7 +6286,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 	session *KubernetesSession,
 	req *entities.RunServerRequest,
 ) settingspatch.MaterializedSettings {
+	m.refreshConfig()
 	var layers []settingspatch.SettingsPatch
+	if m.configProvider != nil {
+		layers = append(layers, m.configProvider.AgentDefaults())
+	}
 
 	appendIfExists := func(secretName string) {
 		if p := m.readSettingsPatch(ctx, secretName); p != nil {

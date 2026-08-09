@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -100,6 +101,10 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	proxyServer := app.NewServer(configData, verbose)
+	// From this point onward every subsystem is initialized from the effective
+	// runtime snapshot (startup config overlaid with the latest versioned KV
+	// settings), rather than from the raw Helm/environment layer.
+	configData = proxyServer.GetConfig()
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 
 	// Run the idempotent legacy→multi API token migration and load all named
@@ -121,21 +126,40 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
 
-	// Start schedule worker if enabled
+	// Workers are lifecycle-managed from the runtime provider so changing an
+	// enabled flag, interval, TTL, or stock target takes effect without a Pod
+	// restart.
+	var workerMu sync.Mutex
 	var scheduleWorker *schedule.LeaderWorker
-	if configData.ScheduleWorker.Enabled {
-		scheduleWorker = startScheduleWorker(configData, proxyServer)
+	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
+	var stockWorker *stock_inventory.LeaderWorker
+	reconcileWorkers := func(current *config.Config) {
+		workerMu.Lock()
+		defer workerMu.Unlock()
+		if scheduleWorker != nil {
+			scheduleWorker.Stop()
+			scheduleWorker = nil
+		}
+		if cleanupWorker != nil {
+			cleanupWorker.Stop()
+			cleanupWorker = nil
+		}
+		if stockWorker != nil {
+			stockWorker.Stop()
+			stockWorker = nil
+		}
+		if current.ScheduleWorker.Enabled {
+			scheduleWorker = startScheduleWorker(current, proxyServer)
+		}
+		if current.SlackbotCleanupWorker.Enabled {
+			cleanupWorker = startSlackbotCleanupWorker(current, proxyServer)
+		}
+		if current.StockInventoryWorker.Enabled {
+			stockWorker = startStockInventoryWorker(current, proxyServer)
+		}
 	}
-
-	// Start Slackbot cleanup worker if enabled
-	if configData.SlackbotCleanupWorker.Enabled {
-		startSlackbotCleanupWorker(configData, proxyServer)
-	}
-
-	// Start stock inventory worker if enabled
-	if configData.StockInventoryWorker.Enabled {
-		startStockInventoryWorker(configData, proxyServer)
-	}
+	reconcileWorkers(configData)
+	proxyServer.GetConfigProvider().Subscribe(reconcileWorkers)
 
 	// Start the leader-elected session allocator when Kubernetes sessions are active.
 	startSessionAllocator(configData, proxyServer)
@@ -176,10 +200,20 @@ func runProxy(cmd *cobra.Command, args []string) {
 	cancelWorkers()
 
 	// Stop schedule worker if running
+	workerMu.Lock()
 	if scheduleWorker != nil {
 		log.Printf("Stopping schedule worker...")
 		scheduleWorker.Stop()
 	}
+	if cleanupWorker != nil {
+		log.Printf("Stopping Slackbot cleanup worker...")
+		cleanupWorker.Stop()
+	}
+	if stockWorker != nil {
+		log.Printf("Stopping stock inventory worker...")
+		stockWorker.Stop()
+	}
+	workerMu.Unlock()
 
 	// Create a context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

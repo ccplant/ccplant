@@ -3191,6 +3191,61 @@
         }
       }
     },
+    "/admin/system-settings": {
+      "get": {
+        "summary": "Get the current or a historical admin settings snapshot",
+        "description": "Returns the complete versioned system settings document. Secret values are omitted and represented in secret_configured. Requires admin permission.",
+        "operationId": "getAdminSystemSettings",
+        "tags": ["Admin Settings"],
+        "parameters": [{
+          "name": "version",
+          "in": "query",
+          "required": false,
+          "schema": {"type": "integer", "minimum": 1}
+        }],
+        "responses": {
+          "200": {
+            "description": "Admin settings snapshot",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminSettingsDocument"}}}
+          },
+          "403": {"description": "Admin permission required"}
+        }
+      },
+      "put": {
+        "summary": "Create a new admin settings version",
+        "description": "Stores one immutable, complete settings.json snapshot and atomically advances the current head. base_version provides optimistic concurrency control. Omitted secret fields retain their current values.",
+        "operationId": "updateAdminSystemSettings",
+        "tags": ["Admin Settings"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminSettingsUpdate"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "New settings version",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminSettingsDocument"}}}
+          },
+          "400": {"description": "Invalid settings document"},
+          "403": {"description": "Admin permission required"},
+          "409": {"description": "base_version is stale"}
+        }
+      }
+    },
+    "/admin/system-settings/versions": {
+      "get": {
+        "summary": "List admin settings versions",
+        "description": "Lists immutable settings snapshots newest first. Requires admin permission.",
+        "operationId": "listAdminSystemSettingsVersions",
+        "tags": ["Admin Settings"],
+        "responses": {
+          "200": {
+            "description": "Settings version metadata",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"versions": {"type": "array", "items": {"$ref": "#/components/schemas/AdminSettingsVersion"}}}}}}
+          },
+          "403": {"description": "Admin permission required"}
+        }
+      }
+    },
     "/settings/{name}": {
       "get": {
         "summary": "Get settings",
@@ -5195,6 +5250,34 @@
   },
   "components": {
     "schemas": {
+      "AdminSettingsDocument": {
+        "type": "object",
+        "required": ["schema_version", "version", "sections", "secret_configured"],
+        "properties": {
+          "schema_version": {"type": "integer", "example": 1},
+          "version": {"type": "integer", "format": "int64", "description": "Immutable snapshot revision"},
+          "sections": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": true}, "description": "Complete system settings structure"},
+          "secret_configured": {"type": "object", "additionalProperties": {"type": "boolean"}, "description": "Secret field paths with stored values"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "AdminSettingsUpdate": {
+        "type": "object",
+        "required": ["base_version", "sections"],
+        "properties": {
+          "base_version": {"type": "integer", "format": "int64", "minimum": 0, "description": "Current version observed by the editor; zero creates the first version"},
+          "sections": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": true, "description": "Complete system settings structure"}}
+        },
+        "additionalProperties": false
+      },
+      "AdminSettingsVersion": {
+        "type": "object",
+        "required": ["version", "updated_at"],
+        "properties": {
+          "version": {"type": "integer", "format": "int64"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
       "Memory": {
         "type": "object",
         "description": "A memory entry belonging to a user or team",
@@ -8302,6 +8385,10 @@
     {
       "name": "Settings",
       "description": "User and team settings management including Bedrock, MCP servers, and Claude Code plugin marketplaces"
+    },
+    {
+      "name": "Admin Settings",
+      "description": "Admin-only, versioned deployment-wide settings stored as complete KV snapshots"
     },
     {
       "name": "User",

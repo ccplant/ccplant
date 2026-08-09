@@ -246,6 +246,24 @@ spec:
                   key: {{ dig "usage" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
             {{- end }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_ENABLED
+              value: {{ .Values.config.auth.bootstrapAdmin.enabled | quote }}
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_USER_ID
+              value: {{ .Values.config.auth.bootstrapAdmin.userId | quote }}
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.config.auth.bootstrapAdmin.username | quote }}
+            {{- if .Values.config.auth.bootstrapAdmin.enabled }}
+            - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_TOKEN
+              {{- $bootstrapTokenSecretName := dig "tokenSecretRef" "name" "" .Values.config.auth.bootstrapAdmin }}
+              {{- if $bootstrapTokenSecretName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $bootstrapTokenSecretName | quote }}
+                  key: {{ dig "tokenSecretRef" "key" "token" .Values.config.auth.bootstrapAdmin | quote }}
+              {{- else }}
+              value: {{ required "config.auth.bootstrapAdmin.token or tokenSecretRef.name is required when bootstrapAdmin is enabled" .Values.config.auth.bootstrapAdmin.token | quote }}
+              {{- end }}
+            {{- end }}
             - name: AGENTAPI_AUTH_STATIC_ENABLED
               value: {{ .Values.config.auth.static.enabled | quote }}
             - name: AGENTAPI_AUTH_STATIC_HEADER_NAME

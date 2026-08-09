@@ -82,6 +82,24 @@ func NewGitHubAuthProvider(cfg *config.GitHubAuthConfig) *GitHubAuthProvider {
 	}
 }
 
+// UpdateConfig refreshes authentication and authorization rules without
+// recreating the provider or losing its team-mapping repository.
+func (p *GitHubAuthProvider) UpdateConfig(cfg *config.GitHubAuthConfig) {
+	if cfg == nil {
+		return
+	}
+	if p.config == nil {
+		p.config = cfg
+		return
+	}
+	existingOAuth := p.config.OAuth
+	*p.config = *cfg
+	if existingOAuth != nil && cfg.OAuth != nil {
+		*existingOAuth = *cfg.OAuth
+		p.config.OAuth = existingOAuth
+	}
+}
+
 // SetTeamMappingRepo injects a persistent ConfigMap-backed team mapping repository.
 // When set, team memberships will be read from and written to the ConfigMap as a
 // secondary cache layer (behind the 30-second in-memory teamCache).

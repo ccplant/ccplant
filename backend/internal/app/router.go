@@ -30,6 +30,7 @@ type HandlerRegistry struct {
 	sessionController          *controllers.SessionController
 	acpController              *controllers.ACPController
 	settingsController         *controllers.SettingsController
+	adminSettingsController    *controllers.AdminSettingsController
 	googleOAuthController      *controllers.GoogleOAuthController
 	credentialsController      *controllers.CredentialsController
 	codexDeviceAuthController  *controllers.CodexDeviceAuthController
@@ -64,11 +65,15 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	settingsController.SetESMControlTunnel(server.esmControlTunnel)
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
+	var adminSettingsController *controllers.AdminSettingsController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
 			server.GetPersistenceClient(),
 			k8sManager.GetNamespace(),
 		)
+		if server.kvStore != nil {
+			adminSettingsController = controllers.NewAdminSettingsController(server.kvStore, k8sManager.GetNamespace(), server.GetConfig()).WithRuntimeConfigProvider(server.GetConfigProvider())
+		}
 	}
 
 	var googleOAuthController *controllers.GoogleOAuthController
@@ -235,6 +240,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionController:          sessionController,
 			acpController:              acpController,
 			settingsController:         settingsController,
+			adminSettingsController:    adminSettingsController,
 			googleOAuthController:      googleOAuthController,
 			credentialsController:      credentialsController,
 			codexDeviceAuthController:  codexDeviceAuthController,
@@ -485,6 +491,13 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Settings endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Settings repository not available, skipping settings routes")
+	}
+
+	if r.handlers.adminSettingsController != nil {
+		log.Printf("[ROUTES] Registering admin system settings endpoints...")
+		r.echo.GET("/admin/system-settings", r.handlers.adminSettingsController.Get, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
+		r.echo.GET("/admin/system-settings/versions", r.handlers.adminSettingsController.ListVersions, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
+		r.echo.PUT("/admin/system-settings", r.handlers.adminSettingsController.Put, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 	}
 
 	if r.handlers.googleOAuthController != nil {
