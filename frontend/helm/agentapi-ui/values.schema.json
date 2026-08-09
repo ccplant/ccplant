@@ -13,21 +13,11 @@
         "secretKey": { "type": "string", "minLength": 1 }
       }
     },
-    "oauthOnlyMode": {
-      "type": "object",
-      "required": ["enabled"],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "proxyUrl": { "type": "string" }
-      },
-      "additionalProperties": false
-    },
     "config": {
       "type": "object",
       "properties": {
         "publicUrl": { "type": "string" },
-        "proxyUrl": { "type": "string" },
-        "authMode": { "enum": ["oauth_only", "api_key", "both"] }
+        "proxyUrl": { "type": "string" }
       }
     }
   }

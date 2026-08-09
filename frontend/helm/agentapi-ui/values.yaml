@@ -152,14 +152,6 @@ cookieEncryptionSecret:
   # Key within the secret that contains the cookie encryption secret
   secretKey: "cookie-encryption-secret"
 
-# OAuth Only Mode configuration
-# When enabled, sets AUTH_MODE to oauth_only and configures proxy URLs
-oauthOnlyMode:
-  # Enable OAuth only mode
-  enabled: false
-  # AgentAPI Proxy URL for OAuth mode (leave empty for auto-detection)
-  proxyUrl: ""
-
 # Application configuration (runtime settings via /api/config)
 config:
   # Public URL used for OAuth callbacks and CORS. When empty, it is derived
@@ -167,15 +159,12 @@ config:
   publicUrl: ""
   # Internal AgentAPI proxy URL. When empty, the umbrella release service is used.
   proxyUrl: ""
-  # Authentication mode: 'oauth_only' | 'api_key' | 'both'
-  # Note: If oauthOnlyMode.enabled is true, this will be overridden to 'oauth_only'
-  authMode: "both"
   # Login page title
   loginTitle: "AgentAPI UI"
   # Login page description
-  loginDescription: "Enter your API key or sign in with GitHub to continue."
-  # Login page sub-description (shown only when API key form is visible)
-  loginSubDescription: "API key can be any valid authentication token for your AgentAPI service."
+  loginDescription: "Enter an access token or sign in with GitHub to continue."
+  # Login page sub-description
+  loginSubDescription: "Use any valid authentication token for your AgentAPI service."
   # Custom favicon URL (optional, leave empty to use default favicon)
   # Example: "https://example.com/favicon.ico"
   faviconUrl: ""

@@ -55,33 +55,31 @@ helm install agentapi-ui ./helm/agentapi-ui \
   --set cookieEncryptionSecret.secretKey=my-cookie-key
 ```
 
-### OAuth Only Mode の設定
+### 認証とProxy URLの設定
 
-OAuth Only Modeを有効にすると、APIキーログインが無効になり、GitHub OAuth認証のみが表示されます。
+ログイン画面ではtoken/APIキー認証とGitHub OAuth認証の両方が常に表示されます。
 
 公開URLは通常hostnameとIngress TLS設定から自動生成されます。リバースプロキシなどで
 外部URLが異なる場合は `config.publicUrl` に完全なURLを指定してください。
 
-#### 1. OAuth Only Mode の有効化
+#### 1. Proxy URLの指定
 
 ```yaml
-oauthOnlyMode:
-  enabled: true  # OAuth Only Mode を有効化
-  proxyUrl: "http://agentapi-proxy:8080"  # AgentAPI Proxy の URL
+config:
+  proxyUrl: "http://agentapi-proxy:8080"
 ```
 
 #### 2. カスタム設定でのインストール
 
 ```bash
 helm install agentapi-ui ./helm/agentapi-ui \
-  --set oauthOnlyMode.enabled=true \
-  --set oauthOnlyMode.proxyUrl=http://my-proxy:8080 \
+  --set config.proxyUrl=http://my-proxy:8080 \
   --set config.publicUrl=https://agentapi.example.com
 ```
 
-#### 3. OAuth Only Mode で必要なシークレット
+#### 3. 認証に必要なシークレット
 
-OAuth Only Mode を使用する場合は、Cookie暗号化シークレットが必要です：
+認証tokenを保存するため、Cookie暗号化シークレットが必要です：
 
 ```bash
 # Cookie暗号化用の32バイト（64文字の16進数）キーを生成
@@ -94,7 +92,8 @@ kubectl create secret generic agentapi-ui-encryption \
 
 #### 4. 注意事項
 
-- OAuth Only Mode を使用するには、agentapi-proxy側でGitHub OAuthが設定されている必要があります。
+- GitHub OAuthを使用するには、agentapi-proxy側でGitHub OAuthが設定されている必要があります。
+- GitHub OAuthが未設定でも、token/APIキー認証は使用できます。
 
 ### その他の設定
 
