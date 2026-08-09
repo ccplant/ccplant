@@ -6,6 +6,8 @@ import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-clien
 import { AdminSettingsDocument, AdminSettingsSections } from '@/types/admin-settings'
 import { getAdminSection, AdminField } from '../config'
 import { useToast } from '@/contexts/ToastContext'
+import { BedrockSettings, EnvVarsSettings, MarketplaceSettings, MCPServerSettings, PluginSettings, SettingsAccordion } from '@/components/settings'
+import { APIMCPServerConfig, BedrockConfig, MarketplaceConfig } from '@/types/settings'
 
 function getValue(section: Record<string, unknown>, path: string): unknown {
   return path.split('.').reduce<unknown>((value, key) => value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined, section)
@@ -21,6 +23,60 @@ function setValue(section: Record<string, unknown>, path: string, value: unknown
   })
   current[parts[parts.length - 1]] = value
   return copy
+}
+
+function recordValue<T>(value: unknown): Record<string, T> {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, T> : {}
+  } catch { return {} }
+}
+
+function stringArrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string')
+  if (typeof value === 'string') return value.split('\n').map((item) => item.trim()).filter(Boolean)
+  return []
+}
+
+function AgentsSettingsFields({ section, onChange }: { section: Record<string, unknown>; onChange: (section: Record<string, unknown>) => void }) {
+  const marketplaces = recordValue<MarketplaceConfig>(section.marketplaces)
+  const mcpServers = recordValue<APIMCPServerConfig>(section.mcp_servers)
+  const envVars = recordValue<string>(section.env_vars ?? section.environment_variables)
+  const enabledPlugins = stringArrayValue(section.enabled_plugins)
+  const bedrockValue = recordValue<unknown>(section.bedrock)
+  const bedrock: BedrockConfig = {
+    enabled: typeof bedrockValue.enabled === 'boolean' ? bedrockValue.enabled : Boolean(section.bedrock_enabled),
+    model: typeof bedrockValue.model === 'string' ? bedrockValue.model : typeof section.bedrock_model === 'string' ? section.bedrock_model : '',
+  }
+  const update = (key: string, value: unknown) => onChange({ ...section, [key]: value })
+  const updateBedrock = (value: BedrockConfig) => {
+    const legacyRoleArn = typeof bedrockValue.role_arn === 'string' ? bedrockValue.role_arn : section.bedrock_role_arn
+    const next: Record<string, unknown> = { ...section, bedrock: { ...value, ...(typeof legacyRoleArn === 'string' && legacyRoleArn ? { role_arn: legacyRoleArn } : {}) } }
+    delete next.bedrock_enabled; delete next.bedrock_model; delete next.bedrock_role_arn
+    onChange(next)
+  }
+  const updateEnvVars = (updates: Record<string, string>) => {
+    const next = { ...envVars }
+    Object.entries(updates).forEach(([key, value]) => value === '' ? delete next[key] : next[key] = value)
+    const updated: Record<string, unknown> = { ...section, env_vars: next }
+    delete updated.environment_variables
+    onChange(updated)
+  }
+
+  return <div className="space-y-4">
+    <SettingsAccordion title="AI Settings" description="Configure the default AI provider and Bedrock model" defaultOpen>
+      <div className="space-y-6">
+        <div><label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">既定の認証モード</label><div className="grid gap-3 sm:grid-cols-2">
+          {[['oauth', 'OAuth'], ['bedrock', 'AWS Bedrock']].map(([value, label]) => <label key={value} className={`cursor-pointer rounded-lg border p-4 ${section.auth_mode === value ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}><input type="radio" name="admin-agent-auth-mode" value={value} checked={section.auth_mode === value} onChange={() => update('auth_mode', value)} className="mr-2" />{label}</label>)}
+        </div></div>
+        <div className="border-t border-gray-200 pt-6 dark:border-gray-700"><BedrockSettings config={bedrock} onChange={updateBedrock} /></div>
+      </div>
+    </SettingsAccordion>
+    <SettingsAccordion title="Marketplace" description="Configure default plugin marketplaces" defaultOpen><MarketplaceSettings marketplaces={marketplaces} onChange={(value) => update('marketplaces', value)} /></SettingsAccordion>
+    <SettingsAccordion title="Plugins" description="Enable default plugins from official and registered marketplaces" defaultOpen><PluginSettings enabledPlugins={enabledPlugins} availableMarketplaces={Object.keys(marketplaces)} onChange={(value) => update('enabled_plugins', value)} /></SettingsAccordion>
+    <SettingsAccordion title="MCP Servers" description="Configure default Model Context Protocol servers" defaultOpen><MCPServerSettings servers={mcpServers} onChange={(value) => update('mcp_servers', value)} /></SettingsAccordion>
+    <SettingsAccordion title="Environment Variables" description="Configure default environment variables for sessions" defaultOpen><EnvVarsSettings envVarKeys={Object.keys(envVars)} onChange={updateEnvVars} /></SettingsAccordion>
+  </div>
 }
 
 interface TeamRoleRule {
@@ -139,7 +195,9 @@ export default function AdminSectionPage({ params }: { params: Promise<{ section
   return <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
     <div className="mb-6 flex items-start justify-between gap-4"><div><h2 className="text-2xl font-bold text-gray-900 dark:text-white">{definition.title}</h2><p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{definition.description}</p></div><span className="whitespace-nowrap rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">version {document?.version || 0}</span></div>
     {error && <div className="mb-5 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</div>}
-    <div className="space-y-6">{definition.fields.map((field) => <div key={field.path}><label className="block text-sm font-medium text-gray-800 dark:text-gray-200">{field.label}</label>{field.description && <p className="mt-0.5 text-xs text-gray-500">{field.description}</p>}<Field field={field} value={getValue(section, field.path)} configured={Boolean(document?.secret_configured[`${sectionID}.${field.path}`])} onChange={(value) => setSections((previous) => ({ ...previous, [sectionID]: setValue(previous[sectionID] || {}, field.path, value) }))} /></div>)}</div>
+    {sectionID === 'agents'
+      ? <AgentsSettingsFields section={section} onChange={(value) => setSections((previous) => ({ ...previous, agents: value }))} />
+      : <div className="space-y-6">{definition.fields.map((field) => <div key={field.path}><label className="block text-sm font-medium text-gray-800 dark:text-gray-200">{field.label}</label>{field.description && <p className="mt-0.5 text-xs text-gray-500">{field.description}</p>}<Field field={field} value={getValue(section, field.path)} configured={Boolean(document?.secret_configured[`${sectionID}.${field.path}`])} onChange={(value) => setSections((previous) => ({ ...previous, [sectionID]: setValue(previous[sectionID] || {}, field.path, value) }))} /></div>)}</div>}
     <div className="mt-8 flex items-center justify-between border-t border-gray-200 pt-5 dark:border-gray-700"><span className="text-sm text-amber-600">{changed ? '未保存の変更があります' : ''}</span><button onClick={save} disabled={!changed || saving} className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">{saving ? '保存中…' : '新しいversionとして保存'}</button></div>
   </div>
 }
