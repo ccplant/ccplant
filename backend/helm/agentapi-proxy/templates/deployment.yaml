@@ -138,6 +138,32 @@ spec:
           env:
             - name: HOME
               value: "/home/agentapi"
+            {{- if .Values.observability.openTelemetry.enabled }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.observability.openTelemetry.serviceName | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "observability.openTelemetry.secretRef.name is required when OpenTelemetry is enabled" .Values.observability.openTelemetry.secretRef.name | quote }}
+                  key: {{ .Values.observability.openTelemetry.secretRef.endpointKey | quote }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.observability.openTelemetry.secretRef.name | quote }}
+                  key: {{ .Values.observability.openTelemetry.secretRef.headersKey | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" .Values.observability.openTelemetry.deploymentEnvironment) .Values.observability.openTelemetry.serviceNamespace (.Values.image.tag | default .Chart.AppVersion) | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.observability.openTelemetry.tracesSampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.observability.openTelemetry.tracesSamplerArg | quote }}
+            {{- end }}
             {{- $kvPrimaryBackend := dig "kvStore" "primary" "backend" "" .Values.config }}
             {{- if $kvPrimaryBackend }}
             - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND

@@ -61,6 +61,19 @@ assert_contains 'key: cookie-encryption-secret' "$TMP_DIR/frontend-default.yaml"
 assert_contains 'name: "backend-runtime"' "$TMP_DIR/backend-secrets.yaml"
 assert_contains 'key: "oauth-client-secret"' "$TMP_DIR/backend-secrets.yaml"
 
+# OpenTelemetry metadata comes from values while endpoint and auth headers are
+# loaded from an existing Secret. Pod and release identity are added automatically.
+"$HELM_BIN" template backend-otel "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set observability.openTelemetry.enabled=true \
+  --set observability.openTelemetry.deploymentEnvironment=development \
+  --set observability.openTelemetry.secretRef.name=grafana-cloud-otlp \
+  --set image.tag=dev-test >"$TMP_DIR/backend-otel.yaml"
+assert_contains 'name: OTEL_EXPORTER_OTLP_ENDPOINT' "$TMP_DIR/backend-otel.yaml"
+assert_contains 'name: "grafana-cloud-otlp"' "$TMP_DIR/backend-otel.yaml"
+assert_contains 'key: "OTEL_EXPORTER_OTLP_HEADERS"' "$TMP_DIR/backend-otel.yaml"
+assert_contains 'fieldPath: metadata.name' "$TMP_DIR/backend-otel.yaml"
+assert_contains 'deployment.environment=development,service.namespace=ccplant,service.version=dev-test,service.instance.id=\$\(POD_NAME\)' "$TMP_DIR/backend-otel.yaml"
+
 "$HELM_BIN" template frontend-secrets "$REPO_ROOT/frontend/helm/agentapi-ui" \
   --set envFrom[0].secretRef.name=frontend-runtime >"$TMP_DIR/frontend-secrets.yaml"
 assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"

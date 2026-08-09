@@ -3,6 +3,32 @@
   "type": "object",
   "properties": {
     "replicaCount": { "type": "integer", "minimum": 1 },
+    "observability": {
+      "type": "object",
+      "properties": {
+        "openTelemetry": {
+          "type": "object",
+          "required": ["enabled", "serviceName", "serviceNamespace", "deploymentEnvironment", "tracesSampler", "tracesSamplerArg", "secretRef"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "serviceName": { "type": "string", "minLength": 1 },
+            "serviceNamespace": { "type": "string", "minLength": 1 },
+            "deploymentEnvironment": { "type": "string" },
+            "tracesSampler": { "type": "string", "minLength": 1 },
+            "tracesSamplerArg": { "type": "string", "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$" },
+            "secretRef": {
+              "type": "object",
+              "required": ["name", "endpointKey", "headersKey"],
+              "properties": {
+                "name": { "type": "string" },
+                "endpointKey": { "type": "string", "minLength": 1 },
+                "headersKey": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
     "controlPlaneService": {
       "type": "object",
       "required": ["enabled", "create", "name", "port", "retainOnDelete"],

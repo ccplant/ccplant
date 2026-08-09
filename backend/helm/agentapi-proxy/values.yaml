@@ -436,15 +436,24 @@ config:
     # 設定しない場合は暗号化なし (Noop) になります
     key: ""
 
-# Environment variables
+# OpenTelemetry / Grafana Cloud Application Observability
+observability:
+  openTelemetry:
+    enabled: false
+    serviceName: agentapi-proxy
+    serviceNamespace: ccplant
+    deploymentEnvironment: ""
+    tracesSampler: parentbased_traceidratio
+    tracesSamplerArg: "1.0"
+    # Existing Secret containing the OTLP base endpoint and authentication
+    # headers. Create it separately; credentials are never stored in values.
+    secretRef:
+      name: ""
+      endpointKey: OTEL_EXPORTER_OTLP_ENDPOINT
+      headersKey: OTEL_EXPORTER_OTLP_HEADERS
+
+# Additional environment variables
 env: []
-# Grafana Cloud APM / OpenTelemetry example:
-# - name: OTEL_SERVICE_NAME
-#   value: "agentapi-proxy"
-# - name: OTEL_EXPORTER_OTLP_PROTOCOL
-#   value: "http/protobuf"
-# - name: OTEL_RESOURCE_ATTRIBUTES
-#   value: "deployment.environment=production,service.namespace=ccplant"
 # - name: GITHUB_TOKEN
 #   value: "your-token"
 # - name: CLAUDE_ARGS
@@ -461,8 +470,6 @@ envFrom: []
 #     name: agentapi-config
 # - secretRef:
 #     name: agentapi-secrets
-# Store OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS in a Secret,
-# then reference it here. See docs/grafana-cloud-apm.md.
 
 # Liveness and readiness probes
 livenessProbe:

@@ -32,25 +32,27 @@ kubectl -n agentapi create secret generic grafana-cloud-otlp \
   --from-literal=OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic%20REDACTED'
 ```
 
-values ファイルに以下を追加します。
+values ファイルに以下を追加します。環境名などの非機密情報だけを values に置き、
+endpoint と認証ヘッダーは上で作成した Secret から読み込みます。
 
 ```yaml
-env:
-  - name: OTEL_SERVICE_NAME
-    value: agentapi-proxy
-  - name: OTEL_EXPORTER_OTLP_PROTOCOL
-    value: http/protobuf
-  - name: OTEL_RESOURCE_ATTRIBUTES
-    value: deployment.environment=production,service.namespace=ccplant,service.version=1.173.0
-  # 本番では必要に応じて送信量を抑える（例: 10% sampling）
-  - name: OTEL_TRACES_SAMPLER
-    value: parentbased_traceidratio
-  - name: OTEL_TRACES_SAMPLER_ARG
-    value: "0.1"
-envFrom:
-  - secretRef:
+observability:
+  openTelemetry:
+    enabled: true
+    serviceName: agentapi-proxy
+    serviceNamespace: ccplant
+    deploymentEnvironment: production
+    # 本番では必要に応じて送信量を抑える（例: 10% sampling）
+    tracesSampler: parentbased_traceidratio
+    tracesSamplerArg: "0.1"
+    secretRef:
       name: grafana-cloud-otlp
+      endpointKey: OTEL_EXPORTER_OTLP_ENDPOINT
+      headersKey: OTEL_EXPORTER_OTLP_HEADERS
 ```
+
+`service.instance.id` には Pod 名、`service.version` には image tag（未指定時は
+chart appVersion）が自動で入ります。
 
 反映します。
 
