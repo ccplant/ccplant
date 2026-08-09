@@ -459,6 +459,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 
 	// Add authentication middleware using internal auth service
+	if bootstrap := cfg.Auth.BootstrapAdmin; bootstrap != nil && bootstrap.Enabled {
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			if err := simpleAuth.LoadBootstrapAdmin(bootstrap.UserID, bootstrap.Username, bootstrap.Token); err != nil {
+				log.Fatalf("[AUTH_INIT] Invalid bootstrap admin configuration: %v", err)
+			}
+			log.Printf("[AUTH_INIT] Bootstrap admin authentication enabled for user %q", bootstrap.UserID)
+		}
+	}
 	e.Use(auth.AuthMiddleware(cfg, container.AuthService))
 
 	// Initialize OAuth provider if configured.

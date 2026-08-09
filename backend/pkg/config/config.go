@@ -49,9 +49,19 @@ import (
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
-	Static *StaticAuthConfig `json:"static,omitempty" mapstructure:"static"`
-	GitHub *GitHubAuthConfig `json:"github,omitempty" mapstructure:"github"`
-	AWS    *AWSAuthConfig    `json:"aws,omitempty" mapstructure:"aws"`
+	Static         *StaticAuthConfig         `json:"static,omitempty" mapstructure:"static"`
+	BootstrapAdmin *BootstrapAdminAuthConfig `json:"bootstrap_admin,omitempty" mapstructure:"bootstrap_admin"`
+	GitHub         *GitHubAuthConfig         `json:"github,omitempty" mapstructure:"github"`
+	AWS            *AWSAuthConfig            `json:"aws,omitempty" mapstructure:"aws"`
+}
+
+// BootstrapAdminAuthConfig provides a break-glass administrator identity that
+// is available before any external authentication provider is configured.
+type BootstrapAdminAuthConfig struct {
+	Enabled  bool   `json:"enabled" mapstructure:"enabled"`
+	UserID   string `json:"user_id" mapstructure:"user_id"`
+	Username string `json:"username" mapstructure:"username"`
+	Token    string `json:"token" mapstructure:"token"`
 }
 
 // StaticAuthConfig represents static API key authentication
@@ -792,6 +802,14 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		}
 		log.Printf("[CONFIG] Initialized Static auth config from environment variables")
 	}
+	if config.Auth.BootstrapAdmin == nil && (v.GetBool("auth.bootstrap_admin.enabled") || v.GetString("auth.bootstrap_admin.token") != "") {
+		config.Auth.BootstrapAdmin = &BootstrapAdminAuthConfig{
+			Enabled:  v.GetBool("auth.bootstrap_admin.enabled"),
+			UserID:   v.GetString("auth.bootstrap_admin.user_id"),
+			Username: v.GetString("auth.bootstrap_admin.username"),
+			Token:    v.GetString("auth.bootstrap_admin.token"),
+		}
+	}
 
 	// Initialize Auth.GitHub if environment variables are set
 	if config.Auth.GitHub == nil && (v.GetBool("auth.github.enabled") || v.GetString("auth.github.base_url") != "" || v.GetString("auth.github.token_header") != "") {
@@ -1017,6 +1035,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.static.enabled")
 	_ = v.BindEnv("auth.static.header_name")
 	_ = v.BindEnv("auth.static.keys_file")
+	_ = v.BindEnv("auth.bootstrap_admin.enabled")
+	_ = v.BindEnv("auth.bootstrap_admin.user_id")
+	_ = v.BindEnv("auth.bootstrap_admin.username")
+	_ = v.BindEnv("auth.bootstrap_admin.token")
 
 	// GitHub auth configuration
 	_ = v.BindEnv("auth.github.enabled")
@@ -1228,6 +1250,10 @@ func bindEnvVars(v *viper.Viper) {
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
 	// Auth defaults
+	v.SetDefault("auth.bootstrap_admin.enabled", false)
+	v.SetDefault("auth.bootstrap_admin.user_id", "bootstrap-admin")
+	v.SetDefault("auth.bootstrap_admin.username", "admin")
+	v.SetDefault("auth.bootstrap_admin.token", "")
 	v.SetDefault("auth.static.enabled", false)
 	v.SetDefault("auth.static.header_name", "X-API-Key")
 	v.SetDefault("auth.github.enabled", false)
@@ -1382,6 +1408,14 @@ func applyConfigDefaults(config *Config) {
 	// Apply auth defaults
 	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
 		config.Auth.Static.HeaderName = "X-API-Key"
+	}
+	if config.Auth.BootstrapAdmin != nil {
+		if config.Auth.BootstrapAdmin.UserID == "" {
+			config.Auth.BootstrapAdmin.UserID = "bootstrap-admin"
+		}
+		if config.Auth.BootstrapAdmin.Username == "" {
+			config.Auth.BootstrapAdmin.Username = "admin"
+		}
 	}
 	if config.Auth.GitHub != nil {
 		if config.Auth.GitHub.BaseURL == "" {
@@ -1551,6 +1585,11 @@ func DefaultConfig() *Config {
 				Enabled:    false,
 				HeaderName: "X-API-Key",
 				APIKeys:    []APIKey{},
+			},
+			BootstrapAdmin: &BootstrapAdminAuthConfig{
+				Enabled:  false,
+				UserID:   "bootstrap-admin",
+				Username: "admin",
 			},
 		},
 		StockInventoryWorker: StockInventoryWorkerConfig{

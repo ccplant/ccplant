@@ -379,6 +379,17 @@ config:
 
   # 認証設定
   auth:
+    # Break-glass administrator authentication. This works even when static,
+    # GitHub, and AWS authentication are disabled. Prefer tokenSecretRef over
+    # token so the credential is not stored in Helm release values.
+    bootstrapAdmin:
+      enabled: false
+      userId: "bootstrap-admin"
+      username: "admin"
+      token: ""
+      tokenSecretRef:
+        name: ""
+        key: "token"
     static:
       enabled: false
       headerName: "X-API-Key"
