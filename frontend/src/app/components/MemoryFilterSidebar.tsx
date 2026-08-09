@@ -1,11 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { MemoryScope } from '../../types/memory'
 import NavigationTabs from './NavigationTabs'
-import TaskListPanel from './TaskListPanel'
-
-const SIDEBAR_ACTIVE_TAB_KEY = 'memory_sidebar_active_tab'
 
 interface MemoryFilterSidebarProps {
   scopeFilter: MemoryScope | null
@@ -30,22 +27,8 @@ export default function MemoryFilterSidebar({
   isVisible = true,
   onToggleVisibility,
 }: MemoryFilterSidebarProps) {
-  const [activeTab, setActiveTab] = useState<'filter' | 'tasks'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(SIDEBAR_ACTIVE_TAB_KEY)
-      if (saved === 'filter' || saved === 'tasks') return saved
-    }
-    return 'filter'
-  })
-
   const [tagKeyInput, setTagKeyInput] = useState('')
   const [tagValueInput, setTagValueInput] = useState('')
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(SIDEBAR_ACTIVE_TAB_KEY, activeTab)
-    }
-  }, [activeTab])
 
   const hasFilter = scopeFilter !== null || Object.keys(tagFilter).length > 0
 
@@ -85,30 +68,6 @@ export default function MemoryFilterSidebar({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 pt-4 pb-4">
-          {/* Tab Switcher */}
-          <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
-            <button
-              onClick={() => setActiveTab('filter')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'filter'
-                  ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              フィルター
-            </button>
-            <button
-              onClick={() => setActiveTab('tasks')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'tasks'
-                  ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              タスク
-            </button>
-          </div>
-
           {/* Close button for mobile */}
           {onToggleVisibility && (
             <div className="flex justify-end mb-2">
@@ -123,8 +82,7 @@ export default function MemoryFilterSidebar({
             </div>
           )}
 
-          {activeTab === 'filter' ? (
-            <>
+          <>
               {/* Header */}
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                 フィルタ
@@ -232,10 +190,7 @@ export default function MemoryFilterSidebar({
                   フィルタをクリア
                 </button>
               )}
-            </>
-          ) : (
-            <TaskListPanel />
-          )}
+          </>
         </div>
       </div>
 

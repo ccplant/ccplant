@@ -39,8 +39,6 @@ type HandlerRegistry struct {
 	apiTokenController         *controllers.APITokenController
 	memoryController           *controllers.MemoryController
 	sandboxPolicyController    *controllers.SandboxPolicyController
-	taskController             *controllers.TaskController
-	taskGroupController        *controllers.TaskGroupController
 	resourceTransferController *controllers.ResourceTransferController
 	fileController             *controllers.FileController
 	assetController            *controllers.AssetController
@@ -167,24 +165,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Sandbox policy controller initialized")
 	}
 
-	// Create task controller if task repository is available
-	var taskController *controllers.TaskController
-	if server.taskRepo != nil {
-		taskController = controllers.NewTaskController(server.taskRepo)
-		log.Printf("[ROUTER] Task controller initialized")
-	}
-
-	// Create task group controller if task group repository is available
-	var taskGroupController *controllers.TaskGroupController
-	if server.taskGroupRepo != nil {
-		taskGroupController = controllers.NewTaskGroupController(server.taskGroupRepo)
-		log.Printf("[ROUTER] Task group controller initialized")
-	}
-
 	resourceTransferOptions := []resource_transfer.Option{
 		resource_transfer.WithMemoryRepository(server.memoryRepo),
-		resource_transfer.WithTaskRepository(server.taskRepo),
-		resource_transfer.WithTaskGroupRepository(server.taskGroupRepo),
 		resource_transfer.WithSessionProfileRepository(server.sessionProfileRepo),
 		resource_transfer.WithSandboxPolicyRepository(server.sandboxPolicyRepo),
 	}
@@ -262,8 +244,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			apiTokenController:         apiTokenController,
 			memoryController:           memoryController,
 			sandboxPolicyController:    sandboxPolicyController,
-			taskController:             taskController,
-			taskGroupController:        taskGroupController,
 			resourceTransferController: resourceTransferController,
 			fileController:             fileController,
 			assetController:            assetController,
@@ -585,32 +565,6 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Sandbox policy endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Sandbox policy repository not available, skipping sandbox policy routes")
-	}
-
-	// Add task routes if task repository is available (Kubernetes mode only)
-	if r.server.taskRepo != nil && r.handlers.taskController != nil {
-		log.Printf("[ROUTES] Registering task endpoints...")
-		r.echo.POST("/tasks", r.handlers.taskController.CreateTask, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		r.echo.GET("/tasks", r.handlers.taskController.ListTasks, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.GET("/tasks/:taskId", r.handlers.taskController.GetTask, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.PUT("/tasks/:taskId", r.handlers.taskController.UpdateTask, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		r.echo.DELETE("/tasks/:taskId", r.handlers.taskController.DeleteTask, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		log.Printf("[ROUTES] Task endpoints registered")
-	} else {
-		log.Printf("[ROUTES] Task repository not available, skipping task routes")
-	}
-
-	// Add task group routes if task group repository is available (Kubernetes mode only)
-	if r.server.taskGroupRepo != nil && r.handlers.taskGroupController != nil {
-		log.Printf("[ROUTES] Registering task group endpoints...")
-		r.echo.POST("/task-groups", r.handlers.taskGroupController.CreateTaskGroup, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		r.echo.GET("/task-groups", r.handlers.taskGroupController.ListTaskGroups, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.GET("/task-groups/:groupId", r.handlers.taskGroupController.GetTaskGroup, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.PUT("/task-groups/:groupId", r.handlers.taskGroupController.UpdateTaskGroup, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		r.echo.DELETE("/task-groups/:groupId", r.handlers.taskGroupController.DeleteTaskGroup, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		log.Printf("[ROUTES] Task group endpoints registered")
-	} else {
-		log.Printf("[ROUTES] Task group repository not available, skipping task group routes")
 	}
 
 	// Add file routes if user file repository is available (Kubernetes mode only)

@@ -20,15 +20,48 @@
         "summary": "Get usage totals",
         "description": "Returns token usage totals for the authenticated user, or for an accessible team when team_id is supplied.",
         "operationId": "getUsage",
-        "tags": ["Usage"],
+        "tags": [
+          "Usage"
+        ],
         "parameters": [
-          { "name": "team_id", "in": "query", "schema": { "type": "string" } },
-          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
-          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+          {
+            "name": "team_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Aggregated usage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageSummary" } } } },
-          "403": { "description": "Not authorized for the requested team" }
+          "200": {
+            "description": "Aggregated usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not authorized for the requested team"
+          }
         }
       }
     },
@@ -37,21 +70,90 @@
         "summary": "Export filtered usage events as Parquet",
         "description": "Returns authorized raw usage events for local analytics with DuckDB-Wasm. Defaults to 30 days; the maximum range is 90 days and the maximum result is 100000 events.",
         "operationId": "exportUsageParquet",
-        "tags": ["Usage"],
+        "tags": [
+          "Usage"
+        ],
         "parameters": [
-          { "name": "team_id", "in": "query", "schema": { "type": "string" } },
-          { "name": "session_id", "in": "query", "schema": { "type": "string" } },
-          { "name": "agent_type", "in": "query", "schema": { "type": "string" } },
-          { "name": "provider", "in": "query", "schema": { "type": "string" } },
-          { "name": "model", "in": "query", "schema": { "type": "string" } },
-          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
-          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+          {
+            "name": "team_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Parquet usage export", "headers": { "X-Usage-Event-Count": { "schema": { "type": "integer" } } }, "content": { "application/vnd.apache.parquet": { "schema": { "type": "string", "format": "binary" } } } },
-          "400": { "description": "Invalid or excessive date range" },
-          "403": { "description": "Not authorized for the requested scope" },
-          "413": { "description": "More than 100000 events matched" }
+          "200": {
+            "description": "Parquet usage export",
+            "headers": {
+              "X-Usage-Event-Count": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/vnd.apache.parquet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or excessive date range"
+          },
+          "403": {
+            "description": "Not authorized for the requested scope"
+          },
+          "413": {
+            "description": "More than 100000 events matched"
+          }
         }
       }
     },
@@ -59,16 +161,52 @@
       "get": {
         "summary": "Get session usage totals",
         "operationId": "getSessionUsage",
-        "tags": ["Usage"],
+        "tags": [
+          "Usage"
+        ],
         "parameters": [
-          { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
-          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } }
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Aggregated session usage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageSummary" } } } },
-          "403": { "description": "Not authorized for the session" },
-          "404": { "description": "Session not found" }
+          "200": {
+            "description": "Aggregated session usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not authorized for the session"
+          },
+          "404": {
+            "description": "Session not found"
+          }
         }
       }
     },
@@ -77,12 +215,16 @@
         "summary": "Record session usage events",
         "description": "Stores idempotent response-level token usage events reported by a session Stop hook. Session ownership is resolved by the server.",
         "operationId": "createUsageEvents",
-        "tags": ["Usage"],
+        "tags": [
+          "Usage"
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UsageEventBatch" }
+              "schema": {
+                "$ref": "#/components/schemas/UsageEventBatch"
+              }
             }
           }
         },
@@ -91,13 +233,21 @@
             "description": "Events stored or identified as duplicates",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/UsageInsertResult" }
+                "schema": {
+                  "$ref": "#/components/schemas/UsageInsertResult"
+                }
               }
             }
           },
-          "400": { "description": "Invalid usage event batch" },
-          "403": { "description": "Not authorized for the session" },
-          "404": { "description": "Session not found" }
+          "400": {
+            "description": "Invalid usage event batch"
+          },
+          "403": {
+            "description": "Not authorized for the session"
+          },
+          "404": {
+            "description": "Session not found"
+          }
         }
       }
     },
@@ -621,17 +771,23 @@
                   "properties": {
                     "allowed": {
                       "type": "array",
-                      "items": { "type": "string" },
+                      "items": {
+                        "type": "string"
+                      },
                       "description": "Domains allowed through the filter"
                     },
                     "denied": {
                       "type": "array",
-                      "items": { "type": "string" },
+                      "items": {
+                        "type": "string"
+                      },
                       "description": "Domains blocked by the filter"
                     },
                     "ignored": {
                       "type": "array",
-                      "items": { "type": "string" },
+                      "items": {
+                        "type": "string"
+                      },
                       "description": "Domains the user has chosen to ignore (not shown as suggestions)"
                     },
                     "updated_at": {
@@ -640,19 +796,35 @@
                       "description": "When the data was last collected"
                     }
                   },
-                  "required": ["allowed", "denied", "ignored"]
+                  "required": [
+                    "allowed",
+                    "denied",
+                    "ignored"
+                  ]
                 }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "404": { "description": "Sandbox policy not found" },
-          "501": { "description": "Domain collection not available" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Sandbox policy not found"
+          },
+          "501": {
+            "description": "Domain collection not available"
+          }
         },
         "security": [
-          { "ApiKeyAuth": [] },
-          { "BearerAuth": [] }
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ]
       }
     },
@@ -684,11 +856,15 @@
                 "properties": {
                   "ignored": {
                     "type": "array",
-                    "items": { "type": "string" },
+                    "items": {
+                      "type": "string"
+                    },
                     "description": "Full list of domains to ignore"
                   }
                 },
-                "required": ["ignored"]
+                "required": [
+                  "ignored"
+                ]
               }
             }
           }
@@ -703,35 +879,59 @@
                   "properties": {
                     "allowed": {
                       "type": "array",
-                      "items": { "type": "string" }
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "denied": {
                       "type": "array",
-                      "items": { "type": "string" }
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "ignored": {
                       "type": "array",
-                      "items": { "type": "string" }
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "updated_at": {
                       "type": "string",
                       "format": "date-time"
                     }
                   },
-                  "required": ["allowed", "denied", "ignored"]
+                  "required": [
+                    "allowed",
+                    "denied",
+                    "ignored"
+                  ]
                 }
               }
             }
           },
-          "400": { "description": "Invalid request body" },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" },
-          "404": { "description": "Sandbox policy not found" },
-          "501": { "description": "Domain collection not available" }
+          "400": {
+            "description": "Invalid request body"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Sandbox policy not found"
+          },
+          "501": {
+            "description": "Domain collection not available"
+          }
         },
         "security": [
-          { "ApiKeyAuth": [] },
-          { "BearerAuth": [] }
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ]
       }
     },
@@ -778,7 +978,10 @@
                       "description": "Domains that were blocked by the filter"
                     }
                   },
-                  "required": ["allowed", "denied"]
+                  "required": [
+                    "allowed",
+                    "denied"
+                  ]
                 }
               }
             }
@@ -2492,12 +2695,16 @@
         "summary": "Create a sandbox policy",
         "description": "Creates a named, reusable set of network filter rules. Sessions can reference this policy by ID at creation time.",
         "operationId": "createSandboxPolicy",
-        "tags": ["SandboxPolicy"],
+        "tags": [
+          "SandboxPolicy"
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateSandboxPolicyRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxPolicyRequest"
+              }
             }
           }
         },
@@ -2506,34 +2713,64 @@
             "description": "Sandbox policy created",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SandboxPolicy"}
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxPolicy"
+                }
               }
             }
           },
-          "400": {"description": "Bad request"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"}
+          "400": {
+            "description": "Bad request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       },
       "get": {
         "summary": "List sandbox policies",
         "description": "Returns sandbox policies visible to the authenticated user.",
         "operationId": "listSandboxPolicies",
-        "tags": ["SandboxPolicy"],
+        "tags": [
+          "SandboxPolicy"
+        ],
         "parameters": [
-          {"name": "scope", "in": "query", "schema": {"type": "string", "enum": ["user", "team"]}},
-          {"name": "team_id", "in": "query", "schema": {"type": "string"}}
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "List of sandbox policies",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SandboxPolicyListResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxPolicyListResponse"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"}
+          "401": {
+            "description": "Unauthorized"
+          }
         }
       }
     },
@@ -2541,36 +2778,64 @@
       "get": {
         "summary": "Get a sandbox policy",
         "operationId": "getSandboxPolicy",
-        "tags": ["SandboxPolicy"],
+        "tags": [
+          "SandboxPolicy"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "Sandbox policy",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SandboxPolicy"}
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxPolicy"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Sandbox policy not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Sandbox policy not found"
+          }
         }
       },
       "put": {
         "summary": "Update a sandbox policy",
         "operationId": "updateSandboxPolicy",
-        "tags": ["SandboxPolicy"],
+        "tags": [
+          "SandboxPolicy"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/UpdateSandboxPolicyRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSandboxPolicyRequest"
+              }
             }
           }
         },
@@ -2579,27 +2844,52 @@
             "description": "Updated sandbox policy",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SandboxPolicy"}
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxPolicy"
+                }
               }
             }
           },
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Sandbox policy not found"}
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Sandbox policy not found"
+          }
         }
       },
       "delete": {
         "summary": "Delete a sandbox policy",
         "operationId": "deleteSandboxPolicy",
-        "tags": ["SandboxPolicy"],
+        "tags": [
+          "SandboxPolicy"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": {"description": "Deleted successfully"},
-          "401": {"description": "Unauthorized"},
-          "403": {"description": "Forbidden"},
-          "404": {"description": "Sandbox policy not found"}
+          "200": {
+            "description": "Deleted successfully"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Sandbox policy not found"
+          }
         }
       }
     },
@@ -2708,42 +2998,198 @@
       "get": {
         "summary": "List External Session Managers",
         "operationId": "listExternalSessionManagers",
-        "tags": ["External Session Managers"],
-        "parameters": [
-          {"name": "scope", "in": "query", "schema": {"type": "string", "enum": ["user", "team"]}},
-          {"name": "team_id", "in": "query", "schema": {"type": "string"}}
+        "tags": [
+          "External Session Managers"
         ],
-        "responses": {"200": {"description": "Registered managers"}}
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registered managers"
+          }
+        }
       }
     },
     "/external-session-managers/registration-tokens": {
       "post": {
         "summary": "Issue a short-lived one-time External Session Manager registration token",
         "operationId": "issueExternalSessionManagerRegistrationToken",
-        "tags": ["External Session Managers"],
-        "responses": {"201": {"description": "Registration token issued; registration_token is returned once"}}
+        "tags": [
+          "External Session Managers"
+        ],
+        "responses": {
+          "201": {
+            "description": "Registration token issued; registration_token is returned once"
+          }
+        }
       }
     },
     "/external-session-managers/enroll": {
       "post": {
         "summary": "Enroll an External Session Manager with a one-time registration token",
         "operationId": "enrollExternalSessionManager",
-        "tags": ["External Session Managers"],
+        "tags": [
+          "External Session Managers"
+        ],
         "security": [],
-        "responses": {"200": {"description": "Manager enrolled; connection_token is returned once"}, "401": {"description": "Invalid, expired, or already-used registration token"}}
+        "responses": {
+          "200": {
+            "description": "Manager enrolled; connection_token is returned once"
+          },
+          "401": {
+            "description": "Invalid, expired, or already-used registration token"
+          }
+        }
       }
     },
     "/external-session-managers/{id}": {
-      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
-      "get": {"summary": "Get an External Session Manager", "operationId": "getExternalSessionManager", "tags": ["External Session Managers"], "responses": {"200": {"description": "Manager", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManager"}}}}}},
-      "patch": {"summary": "Update an External Session Manager", "operationId": "updateExternalSessionManager", "tags": ["External Session Managers"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerUpdateRequest"}}}}, "responses": {"200": {"description": "Updated manager"}}},
-      "delete": {"summary": "Delete an External Session Manager", "operationId": "deleteExternalSessionManager", "tags": ["External Session Managers"], "responses": {"204": {"description": "Deleted"}}}
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Get an External Session Manager",
+        "operationId": "getExternalSessionManager",
+        "tags": [
+          "External Session Managers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Manager",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalSessionManager"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update an External Session Manager",
+        "operationId": "updateExternalSessionManager",
+        "tags": [
+          "External Session Managers"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalSessionManagerUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated manager"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete an External Session Manager",
+        "operationId": "deleteExternalSessionManager",
+        "tags": [
+          "External Session Managers"
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
     },
     "/external-session-managers/{id}/rotate-token": {
-      "post": {"summary": "Rotate an External Session Manager connection token", "operationId": "rotateExternalSessionManagerToken", "tags": ["External Session Managers"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Token rotated; connection_token is returned once"}}}
+      "post": {
+        "summary": "Rotate an External Session Manager connection token",
+        "operationId": "rotateExternalSessionManagerToken",
+        "tags": [
+          "External Session Managers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token rotated; connection_token is returned once"
+          }
+        }
+      }
     },
     "/external-session-managers/{id}/heartbeat": {
-      "post": {"summary": "Report native daemon health", "description": "Authenticated with the External Session Manager connection token. The parent verifies that public_url/healthz is reachable before accepting the heartbeat.", "operationId": "heartbeatExternalSessionManager", "tags": ["External Session Managers"], "security": [], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExternalSessionManagerHeartbeat"}}}}, "responses": {"200": {"description": "Heartbeat accepted"}, "401": {"description": "Invalid connection token"}, "424": {"description": "public_url is unreachable"}}}
+      "post": {
+        "summary": "Report native daemon health",
+        "description": "Authenticated with the External Session Manager connection token. The parent verifies that public_url/healthz is reachable before accepting the heartbeat.",
+        "operationId": "heartbeatExternalSessionManager",
+        "tags": [
+          "External Session Managers"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalSessionManagerHeartbeat"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Heartbeat accepted"
+          },
+          "401": {
+            "description": "Invalid connection token"
+          },
+          "424": {
+            "description": "public_url is unreachable"
+          }
+        }
+      }
     },
     "/settings/{name}": {
       "get": {
@@ -3649,583 +4095,6 @@
         }
       }
     },
-    "/tasks": {
-      "post": {
-        "summary": "Create a task",
-        "description": "Creates a new task for a user or team. User-scoped tasks are private to the owner. Team-scoped tasks are accessible to all team members.",
-        "operationId": "createTask",
-        "tags": [
-          "Tasks"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTaskRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Task created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Task"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          }
-        }
-      },
-      "get": {
-        "summary": "List tasks",
-        "description": "Lists tasks accessible to the authenticated user. Supports filtering by scope, team, group, status, and task type.",
-        "operationId": "listTasks",
-        "tags": [
-          "Tasks"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "scope",
-            "in": "query",
-            "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "user",
-                "team"
-              ]
-            }
-          },
-          {
-            "name": "team_id",
-            "in": "query",
-            "description": "Filter by team ID (required when scope=team)",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "group_id",
-            "in": "query",
-            "description": "Filter by task group ID",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "description": "Filter by status: 'todo' or 'done'",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "todo",
-                "done"
-              ]
-            }
-          },
-          {
-            "name": "task_type",
-            "in": "query",
-            "description": "Filter by task type: 'user' or 'agent'",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "user",
-                "agent"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of tasks",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          }
-        }
-      }
-    },
-    "/tasks/{taskId}": {
-      "get": {
-        "summary": "Get a task",
-        "description": "Retrieves a specific task by ID.",
-        "operationId": "getTask",
-        "tags": [
-          "Tasks"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the task",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Task",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Task"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Task not found"
-          }
-        }
-      },
-      "put": {
-        "summary": "Update a task",
-        "description": "Updates a task. Only the owner (user-scoped) or team members (team-scoped) can update. Omitted fields are not changed.",
-        "operationId": "updateTask",
-        "tags": [
-          "Tasks"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the task",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateTaskRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated task",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Task"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Task not found"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete a task",
-        "description": "Deletes a task. Only the owner (user-scoped) or team members (team-scoped) can delete.",
-        "operationId": "deleteTask",
-        "tags": [
-          "Tasks"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the task",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Deletion result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Task not found"
-          }
-        }
-      }
-    },
-    "/task-groups": {
-      "post": {
-        "summary": "Create a task group",
-        "description": "Creates a new task group for organizing tasks. Groups support user and team scopes.",
-        "operationId": "createTaskGroup",
-        "tags": [
-          "TaskGroups"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTaskGroupRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Task group created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskGroup"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          }
-        }
-      },
-      "get": {
-        "summary": "List task groups",
-        "description": "Lists task groups accessible to the authenticated user.",
-        "operationId": "listTaskGroups",
-        "tags": [
-          "TaskGroups"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "scope",
-            "in": "query",
-            "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "user",
-                "team"
-              ]
-            }
-          },
-          {
-            "name": "team_id",
-            "in": "query",
-            "description": "Filter by team ID (required when scope=team)",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of task groups",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskGroupListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          }
-        }
-      }
-    },
-    "/task-groups/{groupId}": {
-      "get": {
-        "summary": "Get a task group",
-        "description": "Retrieves a specific task group by ID.",
-        "operationId": "getTaskGroup",
-        "tags": [
-          "TaskGroups"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "groupId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the task group",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Task group",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskGroup"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Task group not found"
-          }
-        }
-      },
-      "put": {
-        "summary": "Update a task group",
-        "description": "Updates a task group. Omitted fields are not changed.",
-        "operationId": "updateTaskGroup",
-        "tags": [
-          "TaskGroups"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "groupId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the task group",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateTaskGroupRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated task group",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskGroup"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Task group not found"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete a task group",
-        "description": "Deletes a task group.",
-        "operationId": "deleteTaskGroup",
-        "tags": [
-          "TaskGroups"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "groupId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the task group",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Deletion result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Task group not found"
-          }
-        }
-      }
-    },
     "/resources/transfer": {
       "post": {
         "summary": "Transfer a resource",
@@ -4676,42 +4545,82 @@
         "summary": "List API tokens",
         "description": "Lists named API tokens accessible to the authenticated user. Personal (user-scoped) tokens are strictly owner-only. Team-scoped tokens are visible to team members. The plaintext secret is never returned; each item only exposes a short token_prefix.",
         "operationId": "listAPITokens",
-        "tags": ["API Tokens"],
+        "tags": [
+          "API Tokens"
+        ],
         "security": [
-          { "ApiKeyAuth": [] },
-          { "BearerAuth": [] }
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ],
         "parameters": [
-          { "name": "scope", "in": "query", "required": false, "description": "Filter by scope: 'personal' or 'team'. Omit to return both the caller's personal tokens and tokens for teams the caller belongs to.", "schema": { "type": "string", "enum": ["personal", "team"] } },
-          { "name": "team_id", "in": "query", "required": false, "description": "Filter by team ID (required when scope=team)", "schema": { "type": "string" } }
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "Filter by scope: 'personal' or 'team'. Omit to return both the caller's personal tokens and tokens for teams the caller belongs to.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": false,
+            "description": "Filter by team ID (required when scope=team)",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "List of API tokens",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/APITokenListResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/APITokenListResponse"
+                }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       },
       "post": {
         "summary": "Create an API token",
         "description": "Creates a new named, revocable API token. Personal tokens authenticate as the owner; team tokens authenticate as a team-scoped service account. The plaintext secret is returned exactly once in the response. The response carries Cache-Control: no-store. Requested permissions cannot be broader than the caller's permissions; when omitted they default to the caller's own session permissions (never granting a permission the caller lacks). Team tokens require team membership (admins qualify). Name is required (1..64 characters after trimming). Scope uses the public vocabulary 'personal' (default) or 'team'.",
         "operationId": "createAPIToken",
-        "tags": ["API Tokens"],
+        "tags": [
+          "API Tokens"
+        ],
         "security": [
-          { "ApiKeyAuth": [] },
-          { "BearerAuth": [] }
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateAPITokenRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/CreateAPITokenRequest"
+              }
             }
           }
         },
@@ -4721,18 +4630,29 @@
             "headers": {
               "Cache-Control": {
                 "description": "Always 'no-store' to prevent caching the secret.",
-                "schema": { "type": "string", "example": "no-store" }
+                "schema": {
+                  "type": "string",
+                  "example": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/APITokenWithSecret" }
+                "schema": {
+                  "$ref": "#/components/schemas/APITokenWithSecret"
+                }
               }
             }
           },
-          "400": { "description": "Invalid request" },
-          "401": { "description": "Unauthorized" },
-          "403": { "description": "Forbidden" }
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
         }
       }
     },
@@ -4741,43 +4661,83 @@
         "summary": "Get an API token",
         "description": "Returns metadata for a single API token. The plaintext secret is never returned. A 404 is returned both when the token does not exist and when the caller is not authorized to view it, so existence across scopes is not leaked.",
         "operationId": "getAPIToken",
-        "tags": ["API Tokens"],
+        "tags": [
+          "API Tokens"
+        ],
         "security": [
-          { "ApiKeyAuth": [] },
-          { "BearerAuth": [] }
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ],
         "parameters": [
-          { "name": "tokenId", "in": "path", "required": true, "description": "Opaque token ID", "schema": { "type": "string" } }
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "description": "Opaque token ID",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "API token metadata",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/APITokenMetadata" }
+                "schema": {
+                  "$ref": "#/components/schemas/APITokenMetadata"
+                }
               }
             }
           },
-          "401": { "description": "Unauthorized" },
-          "404": { "description": "Not found (or not authorized)" }
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Not found (or not authorized)"
+          }
         }
       },
       "delete": {
         "summary": "Delete an API token",
         "description": "Deletes (revokes) an API token. Personal tokens can only be deleted by the owner. Team tokens can be deleted by the creator or an admin. The operation is idempotent: a 204 is returned for nonexistent or not-authorized token IDs without leaking whether the token exists in another scope. Revocation takes effect immediately on the replica handling the delete (in-memory auth map); across other replicas it is eventually consistent via periodic reconciliation with the token store. Global immediate cross-replica revocation is not guaranteed.",
         "operationId": "deleteAPIToken",
-        "tags": ["API Tokens"],
+        "tags": [
+          "API Tokens"
+        ],
         "security": [
-          { "ApiKeyAuth": [] },
-          { "BearerAuth": [] }
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
         ],
         "parameters": [
-          { "name": "tokenId", "in": "path", "required": true, "description": "Opaque token ID", "schema": { "type": "string" } }
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "description": "Opaque token ID",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "204": { "description": "Token deleted (or did not exist / not authorized; idempotent, no content)" },
-          "401": { "description": "Unauthorized" },
-          "500": { "description": "Internal error" }
+          "204": {
+            "description": "Token deleted (or did not exist / not authorized; idempotent, no content)"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal error"
+          }
         }
       }
     },
@@ -4786,12 +4746,39 @@
         "summary": "Long-poll the next External Session Manager allocation",
         "description": "Internal manager-token-authenticated allocation endpoint. Kubernetes allocations include the parent-owned runtime_profile that the ESM must apply before creating the session.",
         "operationId": "getNextExternalSessionManagerAllocation",
-        "tags": ["External Session Managers"],
-        "security": [{"BearerAuth": []}],
+        "tags": [
+          "External Session Managers"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
-          {"name": "wait", "in": "query", "schema": {"type": "string", "default": "30s"}},
-          {"name": "metadata_only", "in": "query", "schema": {"type": "boolean", "default": false}},
-          {"name": "profile_revision", "in": "query", "description": "Last runtime profile revision applied by the ESM. A mismatch ends the long-poll immediately and returns the current revision header.", "schema": {"type": "string"}}
+          {
+            "name": "wait",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "30s"
+            }
+          },
+          {
+            "name": "metadata_only",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "profile_revision",
+            "in": "query",
+            "description": "Last runtime profile revision applied by the ESM. A mismatch ends the long-poll immediately and returns the current revision header.",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -4801,66 +4788,170 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "session_id": {"type": "string"},
-                    "manager_id": {"type": "string"},
-                    "request": {"type": "object"},
-                    "provision_settings": {"type": "object"},
-                    "runtime": {"type": "object"},
-                    "status": {"type": "string", "enum": ["pending", "allocating", "assigned", "error"]},
-                    "requirements": {"type": "object"},
-                    "updated_at": {"type": "string", "format": "date-time"},
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "manager_id": {
+                      "type": "string"
+                    },
+                    "request": {
+                      "type": "object"
+                    },
+                    "provision_settings": {
+                      "type": "object"
+                    },
+                    "runtime": {
+                      "type": "object"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "allocating",
+                        "assigned",
+                        "error"
+                      ]
+                    },
+                    "requirements": {
+                      "type": "object"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
                     "runtime_profile": {
                       "type": "object",
                       "description": "Versioned NFA, SCIA, and session identity configuration inherited from the parent proxy. ESM-local overrides are not supported.",
-                      "required": ["version", "kubernetes", "scia"],
+                      "required": [
+                        "version",
+                        "kubernetes",
+                        "scia"
+                      ],
                       "properties": {
-                        "version": {"type": "integer", "enum": [1]},
+                        "version": {
+                          "type": "integer",
+                          "enum": [
+                            1
+                          ]
+                        },
                         "kubernetes": {
                           "type": "object",
                           "properties": {
-                            "service_account": {"type": "string"},
-                            "network_filter_image": {"type": "string"},
-                            "network_filter_cpu_request": {"type": "string"},
-                            "network_filter_cpu_limit": {"type": "string"},
-                            "network_filter_memory_request": {"type": "string"},
-                            "network_filter_memory_limit": {"type": "string"},
-                            "network_filter_init_cpu_request": {"type": "string"},
-                            "network_filter_init_cpu_limit": {"type": "string"},
-                            "network_filter_init_memory_request": {"type": "string"},
-                            "network_filter_init_memory_limit": {"type": "string"}
+                            "service_account": {
+                              "type": "string"
+                            },
+                            "network_filter_image": {
+                              "type": "string"
+                            },
+                            "network_filter_cpu_request": {
+                              "type": "string"
+                            },
+                            "network_filter_cpu_limit": {
+                              "type": "string"
+                            },
+                            "network_filter_memory_request": {
+                              "type": "string"
+                            },
+                            "network_filter_memory_limit": {
+                              "type": "string"
+                            },
+                            "network_filter_init_cpu_request": {
+                              "type": "string"
+                            },
+                            "network_filter_init_cpu_limit": {
+                              "type": "string"
+                            },
+                            "network_filter_init_memory_request": {
+                              "type": "string"
+                            },
+                            "network_filter_init_memory_limit": {
+                              "type": "string"
+                            }
                           }
                         },
                         "scia": {
                           "type": "object",
                           "properties": {
-                            "enabled": {"type": "boolean"},
-                            "session_sidecar_enabled": {"type": "boolean"},
-                            "session_sidecar_image": {"type": "string"},
-                            "session_sidecar_config_image": {"type": "string"},
-                            "session_sidecar_port": {"type": "integer"},
-                            "credential": {"type": "string"},
-                            "user_namespace": {"type": "string"},
-                            "no_proxy": {"type": "string"},
-                            "google_hosts": {"type": "array", "items": {"type": "string"}},
-                            "google_paths": {"type": "array", "items": {"type": "string"}},
-                            "todoist_credential": {"type": "string"},
-                            "todoist_hosts": {"type": "array", "items": {"type": "string"}},
-                            "todoist_paths": {"type": "array", "items": {"type": "string"}}
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "session_sidecar_enabled": {
+                              "type": "boolean"
+                            },
+                            "session_sidecar_image": {
+                              "type": "string"
+                            },
+                            "session_sidecar_config_image": {
+                              "type": "string"
+                            },
+                            "session_sidecar_port": {
+                              "type": "integer"
+                            },
+                            "credential": {
+                              "type": "string"
+                            },
+                            "user_namespace": {
+                              "type": "string"
+                            },
+                            "no_proxy": {
+                              "type": "string"
+                            },
+                            "google_hosts": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "google_paths": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "todoist_credential": {
+                              "type": "string"
+                            },
+                            "todoist_hosts": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "todoist_paths": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
                           }
                         }
                       }
                     }
                   },
-                  "required": ["session_id", "request", "status", "requirements", "updated_at"]
+                  "required": [
+                    "session_id",
+                    "request",
+                    "status",
+                    "requirements",
+                    "updated_at"
+                  ]
                 }
               }
             }
           },
           "204": {
             "description": "Long-poll timeout or runtime profile revision mismatch",
-            "headers": {"X-AgentAPI-Runtime-Profile-Revision": {"schema": {"type": "string"}}}
+            "headers": {
+              "X-AgentAPI-Runtime-Profile-Revision": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
-          "401": {"description": "Invalid manager connection token"}
+          "401": {
+            "description": "Invalid manager connection token"
+          }
         }
       }
     },
@@ -4869,15 +4960,43 @@
         "summary": "Get the parent runtime profile snapshot",
         "description": "Returns the current content-addressed runtime profile after the allocation long-poll reports a new revision.",
         "operationId": "getExternalSessionManagerRuntimeProfile",
-        "tags": ["External Session Managers"],
-        "security": [{"BearerAuth": []}],
+        "tags": [
+          "External Session Managers"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Current runtime profile snapshot",
-            "content": {"application/json": {"schema": {"type": "object", "required": ["revision", "profile"], "properties": {"revision": {"type": "string"}, "profile": {"type": "object"}}}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "revision",
+                    "profile"
+                  ],
+                  "properties": {
+                    "revision": {
+                      "type": "string"
+                    },
+                    "profile": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
           },
-          "401": {"description": "Invalid manager connection token"},
-          "503": {"description": "Runtime profile unavailable"}
+          "401": {
+            "description": "Invalid manager connection token"
+          },
+          "503": {
+            "description": "Runtime profile unavailable"
+          }
         }
       }
     },
@@ -4886,25 +5005,105 @@
         "summary": "Long-poll direct runtime requests for a Session Pod",
         "description": "Internal outbound-only reverse-RPC endpoint. A Session Pod authenticates with its per-generation runtime bearer token and waits for requests from the parent proxy.",
         "operationId": "waitSessionRuntimeRequests",
-        "tags": ["Sessions"],
-        "security": [{"BearerAuth": []}],
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
-          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "generation", "in": "query", "required": true, "schema": {"type": "integer", "format": "int64", "minimum": 1}},
-          {"name": "after", "in": "query", "schema": {"type": "string", "default": "0-0"}},
-          {"name": "wait", "in": "query", "schema": {"type": "string", "default": "30s"}},
-          {"name": "count", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100}},
-          {"name": "instance_id", "in": "query", "schema": {"type": "string"}}
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "0-0"
+            }
+          },
+          {
+            "name": "wait",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "30s"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          {
+            "name": "instance_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
             "description": "One or more reverse-RPC requests",
-            "content": {"application/json": {"schema": {"type": "object", "properties": {"requests": {"type": "array", "items": {"type": "object"}}, "next_cursor": {"type": "string"}}, "required": ["requests", "next_cursor"]}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requests": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "requests",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
           },
-          "204": {"description": "Long-poll timeout"},
-          "401": {"description": "Invalid runtime credential"},
-          "409": {"description": "Stale runtime generation"},
-          "503": {"description": "Runtime stream unavailable"}
+          "204": {
+            "description": "Long-poll timeout"
+          },
+          "401": {
+            "description": "Invalid runtime credential"
+          },
+          "409": {
+            "description": "Stale runtime generation"
+          },
+          "503": {
+            "description": "Runtime stream unavailable"
+          }
         }
       }
     },
@@ -4913,24 +5112,83 @@
         "summary": "Append direct runtime response frames",
         "description": "Internal endpoint used by a Session Pod to return headers, body chunks, completion, or errors for one parent reverse-RPC request.",
         "operationId": "appendSessionRuntimeFrames",
-        "tags": ["Sessions"],
-        "security": [{"BearerAuth": []}],
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
-          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "generation", "in": "query", "required": true, "schema": {"type": "integer", "format": "int64", "minimum": 1}},
-          {"name": "instance_id", "in": "query", "schema": {"type": "string"}}
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "generation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "instance_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"type": "object", "properties": {"frames": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object"}}}, "required": ["frames"]}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "frames": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "frames"
+                ]
+              }
+            }
+          }
         },
         "responses": {
-          "202": {"description": "Frames accepted"},
-          "400": {"description": "Invalid frame batch"},
-          "401": {"description": "Invalid runtime credential"},
-          "403": {"description": "Request does not belong to this session"},
-          "409": {"description": "Stale runtime generation"},
-          "503": {"description": "Runtime stream unavailable"}
+          "202": {
+            "description": "Frames accepted"
+          },
+          "400": {
+            "description": "Invalid frame batch"
+          },
+          "401": {
+            "description": "Invalid runtime credential"
+          },
+          "403": {
+            "description": "Request does not belong to this session"
+          },
+          "409": {
+            "description": "Stale runtime generation"
+          },
+          "503": {
+            "description": "Runtime stream unavailable"
+          }
         }
       }
     }
@@ -5077,432 +5335,194 @@
           "total"
         ]
       },
-      "TaskLink": {
-        "type": "object",
-        "description": "A URL link associated with a task",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Unique identifier (UUID)"
-          },
-          "url": {
-            "type": "string",
-            "format": "uri",
-            "description": "URL of the link"
-          },
-          "title": {
-            "type": "string",
-            "description": "Optional label for the link"
-          }
-        },
-        "required": [
-          "id",
-          "url"
-        ]
-      },
-      "TaskLinkRequest": {
-        "type": "object",
-        "description": "A URL link to associate with a task",
-        "properties": {
-          "url": {
-            "type": "string",
-            "format": "uri",
-            "description": "URL of the link"
-          },
-          "title": {
-            "type": "string",
-            "description": "Optional label for the link"
-          }
-        },
-        "required": [
-          "url"
-        ]
-      },
-      "Task": {
-        "type": "object",
-        "description": "A task belonging to a user or team",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Unique identifier (UUID)"
-          },
-          "title": {
-            "type": "string",
-            "description": "Title of the task"
-          },
-          "description": {
-            "type": "string",
-            "description": "Detailed description of the task"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "todo",
-              "done"
-            ],
-            "description": "Current status of the task"
-          },
-          "task_type": {
-            "type": "string",
-            "enum": [
-              "user",
-              "agent"
-            ],
-            "description": "Who manages the task: 'user' for human-managed, 'agent' for AI agent-managed"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "team"
-            ],
-            "description": "Scope of the task"
-          },
-          "owner_id": {
-            "type": "string",
-            "description": "User ID of the task creator/owner"
-          },
-          "team_id": {
-            "type": "string",
-            "description": "Team ID (populated only when scope is 'team')"
-          },
-          "group_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "ID of the task group this task belongs to (optional)"
-          },
-          "session_id": {
-            "type": "string",
-            "description": "Session ID for agent tasks (optional)"
-          },
-          "links": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskLink"
-            },
-            "description": "List of associated links"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Creation timestamp (ISO 8601)"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Last update timestamp (ISO 8601)"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "status",
-          "task_type",
-          "scope",
-          "owner_id",
-          "links",
-          "created_at",
-          "updated_at"
-        ]
-      },
-      "CreateTaskRequest": {
-        "type": "object",
-        "description": "Request body for creating a task",
-        "properties": {
-          "title": {
-            "type": "string",
-            "description": "Title of the task"
-          },
-          "description": {
-            "type": "string",
-            "description": "Detailed description of the task"
-          },
-          "task_type": {
-            "type": "string",
-            "enum": [
-              "user",
-              "agent"
-            ],
-            "description": "Who manages the task"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "team"
-            ],
-            "description": "Scope of the task"
-          },
-          "team_id": {
-            "type": "string",
-            "description": "Team ID (required when scope is 'team')"
-          },
-          "group_id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "ID of the task group (optional)"
-          },
-          "session_id": {
-            "type": "string",
-            "description": "Session ID for agent tasks (optional)"
-          },
-          "links": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskLinkRequest"
-            },
-            "description": "Associated links"
-          }
-        },
-        "required": [
-          "title",
-          "task_type",
-          "scope"
-        ]
-      },
-      "UpdateTaskRequest": {
-        "type": "object",
-        "description": "Request body for updating a task. All fields are optional.",
-        "properties": {
-          "title": {
-            "type": "string",
-            "description": "New title"
-          },
-          "description": {
-            "type": "string",
-            "description": "New description"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "todo",
-              "done"
-            ],
-            "description": "New status"
-          },
-          "group_id": {
-            "type": "string",
-            "description": "New group ID (set to empty string to remove from group)"
-          },
-          "session_id": {
-            "type": "string",
-            "description": "New session ID"
-          },
-          "links": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskLinkRequest"
-            },
-            "description": "Replaces all existing links when present"
-          }
-        }
-      },
-      "TaskListResponse": {
-        "type": "object",
-        "description": "Response containing a list of tasks",
-        "properties": {
-          "tasks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Task"
-            },
-            "description": "List of tasks"
-          },
-          "total": {
-            "type": "integer",
-            "description": "Total number of tasks in the response"
-          }
-        },
-        "required": [
-          "tasks",
-          "total"
-        ]
-      },
-      "TaskGroup": {
-        "type": "object",
-        "description": "A group for organizing tasks",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Unique identifier (UUID)"
-          },
-          "name": {
-            "type": "string",
-            "description": "Name of the task group"
-          },
-          "description": {
-            "type": "string",
-            "description": "Description of the task group"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "team"
-            ],
-            "description": "Scope of the task group"
-          },
-          "owner_id": {
-            "type": "string",
-            "description": "User ID of the group creator/owner"
-          },
-          "team_id": {
-            "type": "string",
-            "description": "Team ID (populated only when scope is 'team')"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Creation timestamp (ISO 8601)"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Last update timestamp (ISO 8601)"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "scope",
-          "owner_id",
-          "created_at",
-          "updated_at"
-        ]
-      },
-      "CreateTaskGroupRequest": {
-        "type": "object",
-        "description": "Request body for creating a task group",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Name of the task group"
-          },
-          "description": {
-            "type": "string",
-            "description": "Description of the task group"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "team"
-            ],
-            "description": "Scope of the task group"
-          },
-          "team_id": {
-            "type": "string",
-            "description": "Team ID (required when scope is 'team')"
-          }
-        },
-        "required": [
-          "name",
-          "scope"
-        ]
-      },
-      "UpdateTaskGroupRequest": {
-        "type": "object",
-        "description": "Request body for updating a task group. All fields are optional.",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "New name"
-          },
-          "description": {
-            "type": "string",
-            "description": "New description"
-          }
-        }
-      },
-      "TaskGroupListResponse": {
-        "type": "object",
-        "description": "Response containing a list of task groups",
-        "properties": {
-          "task_groups": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskGroup"
-            },
-            "description": "List of task groups"
-          },
-          "total": {
-            "type": "integer",
-            "description": "Total number of task groups in the response"
-          }
-        },
-        "required": [
-          "task_groups",
-          "total"
-        ]
-      },
       "UsageEventBatch": {
         "type": "object",
-        "required": ["session_id", "events"],
+        "required": [
+          "session_id",
+          "events"
+        ],
         "properties": {
-          "session_id": { "type": "string" },
+          "session_id": {
+            "type": "string"
+          },
           "events": {
             "type": "array",
             "minItems": 1,
             "maxItems": 1000,
-            "items": { "$ref": "#/components/schemas/UsageEvent" }
+            "items": {
+              "$ref": "#/components/schemas/UsageEvent"
+            }
           }
         }
       },
       "UsageEvent": {
         "type": "object",
-        "required": ["event_id", "agent_type", "model", "input_tokens", "output_tokens", "occurred_at"],
+        "required": [
+          "event_id",
+          "agent_type",
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "occurred_at"
+        ],
         "properties": {
-          "event_id": { "type": "string" },
-          "agent_session_id": { "type": "string" },
-          "turn_id": { "type": "string" },
-          "response_id": { "type": "string" },
-          "agent_type": { "type": "string" },
-          "provider": { "type": "string" },
-          "model": { "type": "string" },
-          "input_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
-          "output_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
-          "cached_input_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
-          "cache_creation_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
-          "reasoning_tokens": { "type": "integer", "format": "int64", "minimum": 0 },
-          "occurred_at": { "type": "string", "format": "date-time" }
+          "event_id": {
+            "type": "string"
+          },
+          "agent_session_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "response_id": {
+            "type": "string"
+          },
+          "agent_type": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cache_creation_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reasoning_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "UsageInsertResult": {
         "type": "object",
-        "required": ["accepted", "duplicates"],
+        "required": [
+          "accepted",
+          "duplicates"
+        ],
         "properties": {
-          "accepted": { "type": "integer" },
-          "duplicates": { "type": "integer" }
+          "accepted": {
+            "type": "integer"
+          },
+          "duplicates": {
+            "type": "integer"
+          }
         }
       },
       "UsageSummary": {
         "type": "object",
-        "required": ["events", "input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_tokens", "reasoning_tokens", "by_model", "by_session"],
+        "required": [
+          "events",
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens",
+          "cache_creation_tokens",
+          "reasoning_tokens",
+          "by_model",
+          "by_session"
+        ],
         "properties": {
-          "events": { "type": "integer", "format": "int64" },
-          "input_tokens": { "type": "integer", "format": "int64" },
-          "output_tokens": { "type": "integer", "format": "int64" },
-          "cached_input_tokens": { "type": "integer", "format": "int64" },
-          "cache_creation_tokens": { "type": "integer", "format": "int64" },
-          "reasoning_tokens": { "type": "integer", "format": "int64" },
-          "by_model": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } },
-          "by_session": { "type": "array", "items": { "$ref": "#/components/schemas/UsageBreakdown" } }
+          "events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_creation_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasoning_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "by_model": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageBreakdown"
+            }
+          },
+          "by_session": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageBreakdown"
+            }
+          }
         }
       },
       "UsageBreakdown": {
         "type": "object",
-        "required": ["key", "events", "input_tokens", "output_tokens", "cached_input_tokens", "cache_creation_tokens", "reasoning_tokens"],
+        "required": [
+          "key",
+          "events",
+          "input_tokens",
+          "output_tokens",
+          "cached_input_tokens",
+          "cache_creation_tokens",
+          "reasoning_tokens"
+        ],
         "properties": {
-          "key": { "type": "string" },
-          "events": { "type": "integer", "format": "int64" },
-          "input_tokens": { "type": "integer", "format": "int64" },
-          "output_tokens": { "type": "integer", "format": "int64" },
-          "cached_input_tokens": { "type": "integer", "format": "int64" },
-          "cache_creation_tokens": { "type": "integer", "format": "int64" },
-          "reasoning_tokens": { "type": "integer", "format": "int64" }
+          "key": {
+            "type": "string"
+          },
+          "events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cache_creation_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasoning_tokens": {
+            "type": "integer",
+            "format": "int64"
+          }
         }
       },
       "StartRequest": {
@@ -5720,7 +5740,14 @@
       "SandboxPolicy": {
         "type": "object",
         "description": "A named, reusable set of network filter rules. Sessions reference a policy by ID; the policy's domain lists are merged with session-level overrides at creation time.",
-        "required": ["id", "name", "scope", "owner_id", "created_at", "updated_at"],
+        "required": [
+          "id",
+          "name",
+          "scope",
+          "owner_id",
+          "created_at",
+          "updated_at"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -5739,15 +5766,25 @@
           },
           "allowed_domains": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "description": "Allowlist: only these domains are permitted. Supports wildcard prefixes.",
-            "example": ["github.com", "*.github.com", "registry.npmjs.org"]
+            "example": [
+              "github.com",
+              "*.github.com",
+              "registry.npmjs.org"
+            ]
           },
           "denied_domains": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "description": "Denylist: these domains are blocked. Used only when allowed_domains is empty.",
-            "example": ["raw.githubusercontent.com"]
+            "example": [
+              "raw.githubusercontent.com"
+            ]
           },
           "count_mode": {
             "type": "boolean",
@@ -5756,7 +5793,10 @@
           },
           "scope": {
             "type": "string",
-            "enum": ["user", "team"],
+            "enum": [
+              "user",
+              "team"
+            ],
             "description": "Resource scope"
           },
           "owner_id": {
@@ -5779,40 +5819,71 @@
       },
       "CreateSandboxPolicyRequest": {
         "type": "object",
-        "required": ["name", "scope"],
+        "required": [
+          "name",
+          "scope"
+        ],
         "properties": {
-          "name": {"type": "string", "example": "github-access"},
-          "description": {"type": "string"},
+          "name": {
+            "type": "string",
+            "example": "github-access"
+          },
+          "description": {
+            "type": "string"
+          },
           "allowed_domains": {
             "type": "array",
-            "items": {"type": "string"},
-            "example": ["github.com", "*.github.com"]
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "github.com",
+              "*.github.com"
+            ]
           },
           "denied_domains": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
           "count_mode": {
             "type": "boolean",
             "description": "When true, enables count mode: policy rules are evaluated and blocked domains are recorded, but traffic is not actually blocked.",
             "default": false
           },
-          "scope": {"type": "string", "enum": ["user", "team"]},
-          "team_id": {"type": "string"}
+          "scope": {
+            "type": "string",
+            "enum": [
+              "user",
+              "team"
+            ]
+          },
+          "team_id": {
+            "type": "string"
+          }
         }
       },
       "UpdateSandboxPolicyRequest": {
         "type": "object",
         "properties": {
-          "name": {"type": "string"},
-          "description": {"type": "string"},
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
           "allowed_domains": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
           "denied_domains": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
           "count_mode": {
             "type": "boolean",
@@ -5826,9 +5897,13 @@
         "properties": {
           "sandbox_policies": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/SandboxPolicy"}
+            "items": {
+              "$ref": "#/components/schemas/SandboxPolicy"
+            }
           },
-          "total": {"type": "integer"}
+          "total": {
+            "type": "integer"
+          }
         }
       },
       "SlackParams": {
@@ -7332,86 +7407,225 @@
         }
       },
       "ExternalSessionManagerUpdateRequest": {
-		"type": "object",
-		"properties": {
-		  "instance_id": {"type": "string"},
-		  "name": {"type": "string"},
-		  "labels": {"type": "object", "additionalProperties": {"type": "string"}},
-		  "default": {"type": "boolean"},
-		  "public_url": {"type": "string", "format": "uri"},
-		  "version": {"type": "string"}
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "public_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version": {
+            "type": "string"
+          }
         }
       },
       "ExternalSessionManager": {
         "type": "object",
         "properties": {
-          "id": {"type": "string"},
-          "instance_id": {"type": "string"},
-          "name": {"type": "string"},
-          "has_connection_token": {"type": "boolean"},
-          "connection_token": {"type": "string", "description": "Returned only on creation or rotation"},
-          "labels": {"type": "object", "additionalProperties": {"type": "string"}},
-          "default": {"type": "boolean"},
-          "public_url": {"type": "string", "format": "uri"},
-          "version": {"type": "string"},
-          "active_sessions": {"type": "integer"},
-          "last_heartbeat_at": {"type": "string", "format": "date-time"},
-          "created": {"type": "boolean"}
+          "id": {
+            "type": "string"
+          },
+          "instance_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "has_connection_token": {
+            "type": "boolean"
+          },
+          "connection_token": {
+            "type": "string",
+            "description": "Returned only on creation or rotation"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "public_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version": {
+            "type": "string"
+          },
+          "active_sessions": {
+            "type": "integer"
+          },
+          "last_heartbeat_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created": {
+            "type": "boolean"
+          }
         }
       },
       "ExternalSessionManagerHeartbeat": {
         "type": "object",
         "properties": {
-          "public_url": {"type": "string", "format": "uri"},
-          "version": {"type": "string"},
-          "active_sessions": {"type": "integer"}
+          "public_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "version": {
+            "type": "string"
+          },
+          "active_sessions": {
+            "type": "integer"
+          }
         }
       },
       "APITokenMetadata": {
         "type": "object",
         "description": "Metadata for a named API token. Never contains the plaintext secret.",
         "properties": {
-          "id": { "type": "string", "description": "Opaque, public token ID used in URLs" },
-          "name": { "type": "string", "description": "Human-readable name" },
-          "scope": { "type": "string", "enum": ["personal", "team"], "description": "Scope of the token (public vocabulary)" },
-          "user_id": { "type": "string", "description": "Identity the token authenticates as (owner for personal, service account id for team)" },
-          "team_id": { "type": "string", "description": "Team ID (populated when scope is 'team')" },
+          "id": {
+            "type": "string",
+            "description": "Opaque, public token ID used in URLs"
+          },
+          "name": {
+            "type": "string",
+            "description": "Human-readable name"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team"
+            ],
+            "description": "Scope of the token (public vocabulary)"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Identity the token authenticates as (owner for personal, service account id for team)"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (populated when scope is 'team')"
+          },
           "permissions": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Granted permissions, bounded by the creator's permissions"
           },
-          "token_prefix": { "type": "string", "description": "Short, safe prefix of the secret for display" },
-          "expires_at": { "type": "string", "format": "date-time", "description": "Optional expiration timestamp" },
-          "created_by": { "type": "string", "description": "User ID of the token creator" },
-          "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time" }
+          "token_prefix": {
+            "type": "string",
+            "description": "Short, safe prefix of the secret for display"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional expiration timestamp"
+          },
+          "created_by": {
+            "type": "string",
+            "description": "User ID of the token creator"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         },
-        "required": ["id", "name", "scope", "user_id", "permissions", "token_prefix", "created_by", "created_at", "updated_at"]
+        "required": [
+          "id",
+          "name",
+          "scope",
+          "user_id",
+          "permissions",
+          "token_prefix",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ]
       },
       "APITokenWithSecret": {
         "type": "object",
         "description": "Create response: a nested `token` object with the token metadata plus the plaintext token, returned exactly once.",
         "properties": {
-          "token": { "$ref": "#/components/schemas/APITokenMetadata", "description": "Token metadata (no secret)" },
-          "plaintext_token": { "type": "string", "description": "Plaintext token secret. Returned exactly once on creation; never exposed again. Store it securely." }
+          "token": {
+            "$ref": "#/components/schemas/APITokenMetadata",
+            "description": "Token metadata (no secret)"
+          },
+          "plaintext_token": {
+            "type": "string",
+            "description": "Plaintext token secret. Returned exactly once on creation; never exposed again. Store it securely."
+          }
         },
-        "required": ["token", "plaintext_token"]
+        "required": [
+          "token",
+          "plaintext_token"
+        ]
       },
       "CreateAPITokenRequest": {
         "type": "object",
         "description": "Request body for creating an API token.",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Human-readable name. Required, 1..64 characters after trimming." },
-          "scope": { "type": "string", "enum": ["personal", "team"], "description": "Scope (public vocabulary). Defaults to 'personal'." },
-          "team_id": { "type": "string", "description": "Team ID (required when scope is 'team')" },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Human-readable name. Required, 1..64 characters after trimming."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team"
+            ],
+            "description": "Scope (public vocabulary). Defaults to 'personal'."
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID (required when scope is 'team')"
+          },
           "permissions": {
             "type": "array",
-            "items": { "type": "string", "enum": ["session:create", "session:read", "session:update", "session:delete", "admin"] },
+            "items": {
+              "type": "string",
+              "enum": [
+                "session:create",
+                "session:read",
+                "session:update",
+                "session:delete",
+                "admin"
+              ]
+            },
             "description": "Granted permissions; each must be granted to the caller (no broader than caller). When omitted, defaults to the caller's own session permissions (never granting a permission the caller lacks)."
           },
-          "expires_at": { "type": "string", "format": "date-time", "description": "Optional RFC3339 expiration timestamp" }
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional RFC3339 expiration timestamp"
+          }
         }
       },
       "APITokenListResponse": {
@@ -7420,11 +7634,15 @@
         "properties": {
           "items": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/APITokenMetadata" },
+            "items": {
+              "$ref": "#/components/schemas/APITokenMetadata"
+            },
             "description": "API token metadata (no secrets)"
           }
         },
-        "required": ["items"]
+        "required": [
+          "items"
+        ]
       }
     },
     "SlackBotStatus": {
@@ -7450,7 +7668,12 @@
         },
         "credential_source": {
           "type": "string",
-          "enum": ["session_user", "triggered_user", "team", "none"],
+          "enum": [
+            "session_user",
+            "triggered_user",
+            "team",
+            "none"
+          ],
           "description": "Managed credential files to inject. triggered_user uses the rendered username tag and falls back to team credentials."
         },
         "repo_full_name": {
@@ -7944,8 +8167,6 @@
           "type": "string",
           "enum": [
             "memory",
-            "task",
-            "task_group",
             "webhook",
             "slackbot",
             "session_profile",
@@ -8093,14 +8314,6 @@
     {
       "name": "Memory",
       "description": "User and team memory management. Supports tagging, full-text search, and fine-grained access control. User-scoped memories are completely private (admin cannot bypass)."
-    },
-    {
-      "name": "Tasks",
-      "description": "Task management for users and AI agents. Supports user-scoped (private) and team-scoped tasks with CRUD operations, status tracking, links, and grouping."
-    },
-    {
-      "name": "TaskGroups",
-      "description": "Task group management for organizing tasks into logical collections. Groups support user and team scopes."
     },
     {
       "name": "Files",

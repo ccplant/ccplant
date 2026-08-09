@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { agentAPI } from '../../lib/api'
 import NavigationTabs from './NavigationTabs'
-import TaskListPanel from './TaskListPanel'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 
 interface Tag {
@@ -28,21 +27,7 @@ export default function TagFilterSidebar({
   isVisible = true,
   onToggleVisibility
 }: TagFilterSidebarProps) {
-  const SIDEBAR_ACTIVE_TAB_KEY = 'sidebar_active_tab'
   const { selectedTeam } = useTeamScope()
-  const [activeTab, setActiveTab] = useState<'filter' | 'tasks'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(SIDEBAR_ACTIVE_TAB_KEY)
-      if (saved === 'filter' || saved === 'tasks') return saved
-    }
-    return 'filter'
-  })
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(SIDEBAR_ACTIVE_TAB_KEY, activeTab)
-    }
-  }, [activeTab])
   const [tags, setTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set())
@@ -192,48 +177,6 @@ export default function TagFilterSidebar({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 pt-4 pb-4">
-          {/* Tab Switcher */}
-          <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
-            <button
-              onClick={() => setActiveTab('filter')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'filter'
-                  ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              フィルター
-            </button>
-            <button
-              onClick={() => setActiveTab('tasks')}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'tasks'
-                  ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              タスク
-            </button>
-          </div>
-
-          {activeTab === 'tasks' ? (
-            <>
-              {/* Close button for mobile (tasks tab) */}
-              {onToggleVisibility && (
-                <div className="flex justify-end mb-2">
-                  <button
-                    onClick={onToggleVisibility}
-                    className="md:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              )}
-              <TaskListPanel />
-            </>
-          ) : (
             <>
               {/* Filter header with close button and actions */}
               <div className="flex items-center justify-between mb-4">
@@ -332,7 +275,6 @@ export default function TagFilterSidebar({
               </>
               )}
             </>
-          )}
         </div>
       </div>
 

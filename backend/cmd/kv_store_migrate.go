@@ -286,8 +286,6 @@ var applicationConfigMapTypes = map[string]struct{}{
 	"sandbox-domains":     {},
 	"sandbox-policy":      {},
 	"slack-channel-cache": {},
-	"task":                {},
-	"task-group":          {},
 	"user-team-mapping":   {},
 }
 
