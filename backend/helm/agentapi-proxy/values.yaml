@@ -380,7 +380,7 @@ config:
   # 認証設定
   auth:
     # Break-glass administrator authentication. This works even when static,
-    # GitHub, and AWS authentication are disabled. Prefer tokenSecretRef over
+    # GitHub and other authentication providers are disabled. Prefer tokenSecretRef over
     # token so the credential is not stored in Helm release values.
     bootstrapAdmin:
       enabled: false
@@ -752,26 +752,17 @@ kubernetesSession:
   # claude-posts runs as a subprocess inside the agentapi container (not as a sidecar).
   # ACP agent types produce the history file used for Slack forwarding.
   slackIntegration:
-    # Kubernetes Secret containing the Slack credentials (bot token + signing secret).
-    # The bot token and signing secret are a pair belonging to the same Slack App,
-    # so both are stored in the same Secret.
+    # Kubernetes Secret containing the Slack bot token.
     # The Secret must exist in the same namespace as the session pods.
     # Create it with:
     #   kubectl create secret generic slack-credentials \
-    #     --from-literal=bot-token=xoxb-... \
-    #     --from-literal=signing-secret=xxxxxxxxxxxx
+    #     --from-literal=bot-token=xoxb-...
     botToken:
       # Secret name (required to enable Slack integration)
       secretName: ""
       # Key within the Secret that contains the bot token
       # Defaults to "bot-token"
       key: "bot-token"
-
-    signingSecret:
-      # Key within the Secret (same Secret as botToken.secretName) that contains the signing secret.
-      # Used to set AGENTAPI_SLACK_SIGNING_SECRET on the agentapi-proxy server.
-      # Defaults to "signing-secret"
-      key: "signing-secret"
 
   # OpenTelemetry Collector Configuration
   # Enables Prometheus metrics collection from Claude Code in session pods.
@@ -781,9 +772,6 @@ kubernetesSession:
   otelCollector:
     enabled: false
 
-    # Container image for otelcol (used to pull the binary into the agentapi image)
-    image: "otel/opentelemetry-collector-contrib:0.143.1"
-
     # Scrape interval for Claude Code metrics
     scrapeInterval: "15s"
 
@@ -792,16 +780,6 @@ kubernetesSession:
 
     # Exporter port (where otelcol exposes labeled metrics)
     exporterPort: 9090
-
-    # Resource limits are not applicable in in-process mode (otelcol shares the
-    # agentapi container resources). Kept for reference only.
-    resources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
-      limits:
-        cpu: "200m"
-        memory: "256Mi"
 
 # Schedule Worker Configuration
 # Enables delayed start and recurring (cron-based) session scheduling

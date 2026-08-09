@@ -52,7 +52,6 @@ type AuthConfig struct {
 	Static         *StaticAuthConfig         `json:"static,omitempty" mapstructure:"static"`
 	BootstrapAdmin *BootstrapAdminAuthConfig `json:"bootstrap_admin,omitempty" mapstructure:"bootstrap_admin"`
 	GitHub         *GitHubAuthConfig         `json:"github,omitempty" mapstructure:"github"`
-	AWS            *AWSAuthConfig            `json:"aws,omitempty" mapstructure:"aws"`
 }
 
 // BootstrapAdminAuthConfig provides a break-glass administrator identity that
@@ -102,25 +101,6 @@ type TeamRoleRule struct {
 	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
 	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
 	EnvFile     string   `json:"env_file,omitempty" mapstructure:"env_file" yaml:"env_file"`
-}
-
-// AWSAuthConfig represents AWS IAM authentication configuration
-type AWSAuthConfig struct {
-	Enabled           bool           `json:"enabled" mapstructure:"enabled"`
-	Region            string         `json:"region" mapstructure:"region"`
-	AllowedAccountIDs []string       `json:"allowed_account_ids" mapstructure:"allowed_account_ids"` // Required: list of allowed AWS account IDs (empty = deny all)
-	TeamTagKey        string         `json:"team_tag_key" mapstructure:"team_tag_key"`
-	RequiredTagKey    string         `json:"required_tag_key" mapstructure:"required_tag_key"`     // Tag key that must exist (e.g., "agentapi-proxy")
-	RequiredTagVal    string         `json:"required_tag_value" mapstructure:"required_tag_value"` // Expected tag value (e.g., "enabled")
-	CacheTTL          string         `json:"cache_ttl" mapstructure:"cache_ttl"`
-	UserMapping       AWSUserMapping `json:"user_mapping" mapstructure:"user_mapping"`
-}
-
-// AWSUserMapping represents AWS user role mapping configuration
-type AWSUserMapping struct {
-	DefaultRole        string                  `json:"default_role" mapstructure:"default_role" yaml:"default_role"`
-	DefaultPermissions []string                `json:"default_permissions" mapstructure:"default_permissions" yaml:"default_permissions"`
-	TeamRoleMapping    map[string]TeamRoleRule `json:"team_role_mapping" mapstructure:"team_role_mapping" yaml:"team_role_mapping"`
 }
 
 // RoleEnvFilesConfig represents role-based environment files configuration
@@ -315,12 +295,6 @@ type KubernetesSessionConfig struct {
 	ProvisionerToken string `json:"provisioner_token" mapstructure:"provisioner_token"`
 	// ProvisionerProxyURL is the base URL session Pods use to reach this proxy.
 	ProvisionerProxyURL string `json:"provisioner_proxy_url" mapstructure:"provisioner_proxy_url"`
-	// ClaudeConfigUserConfigMapPrefix is the prefix for user-specific ConfigMap names
-	// Full name will be: {prefix}-{username} (e.g., claude-config-johndoe)
-	ClaudeConfigUserConfigMapPrefix string `json:"claude_config_user_configmap_prefix" mapstructure:"claude_config_user_configmap_prefix"`
-	// InitContainerImage is the image used for the init container that sets up Claude configuration
-	// Defaults to the same image as the session container (Image field) if not specified
-	InitContainerImage string `json:"init_container_image" mapstructure:"init_container_image"`
 	// GitHubSecretName is the name of the Kubernetes Secret containing GitHub authentication credentials
 	// This Secret is used by the clone-repo init container for repository cloning
 	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID
@@ -352,22 +326,12 @@ type KubernetesSessionConfig struct {
 	// OpenTelemetry Collector configuration
 	// OtelCollectorEnabled enables OpenTelemetry Collector sidecar for metrics collection
 	OtelCollectorEnabled bool `json:"otel_collector_enabled" mapstructure:"otel_collector_enabled"`
-	// OtelCollectorImage is the container image for otelcol sidecar
-	OtelCollectorImage string `json:"otel_collector_image" mapstructure:"otel_collector_image"`
 	// OtelCollectorScrapeInterval is the scrape interval for Claude Code metrics
 	OtelCollectorScrapeInterval string `json:"otel_collector_scrape_interval" mapstructure:"otel_collector_scrape_interval"`
 	// OtelCollectorClaudeCodePort is the port where Claude Code exposes metrics
 	OtelCollectorClaudeCodePort int `json:"otel_collector_claude_code_port" mapstructure:"otel_collector_claude_code_port"`
 	// OtelCollectorExporterPort is the port where otelcol exposes labeled metrics
 	OtelCollectorExporterPort int `json:"otel_collector_exporter_port" mapstructure:"otel_collector_exporter_port"`
-	// OtelCollectorCPURequest is the CPU request for otelcol sidecar
-	OtelCollectorCPURequest string `json:"otel_collector_cpu_request" mapstructure:"otel_collector_cpu_request"`
-	// OtelCollectorCPULimit is the CPU limit for otelcol sidecar
-	OtelCollectorCPULimit string `json:"otel_collector_cpu_limit" mapstructure:"otel_collector_cpu_limit"`
-	// OtelCollectorMemoryRequest is the memory request for otelcol sidecar
-	OtelCollectorMemoryRequest string `json:"otel_collector_memory_request" mapstructure:"otel_collector_memory_request"`
-	// OtelCollectorMemoryLimit is the memory limit for otelcol sidecar
-	OtelCollectorMemoryLimit string `json:"otel_collector_memory_limit" mapstructure:"otel_collector_memory_limit"`
 
 	// Slack Integration configuration
 	// SlackBotTokenSecretName is the Kubernetes Secret name containing the Slack bot token
@@ -376,14 +340,6 @@ type KubernetesSessionConfig struct {
 	// SlackBotTokenSecretKey is the key within the Secret that holds the Slack bot token
 	// Defaults to "bot-token"
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
-
-	// SandboxInitImage is deprecated. The network filter image is also used to
-	// restore rules so initial setup and runtime updates use the same iptables backend.
-	SandboxInitImage string `json:"sandbox_init_image" mapstructure:"sandbox_init_image"`
-
-	// SandboxIptablesConfigMapName is deprecated. Sandbox iptables rules are now
-	// generated by nfa into an EmptyDir and restored by SandboxInitImage.
-	SandboxIptablesConfigMapName string `json:"sandbox_iptables_configmap_name" mapstructure:"sandbox_iptables_configmap_name"`
 
 	// NetworkFilterImage is the container image for the iptables rule generation init
 	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.3.
@@ -589,10 +545,6 @@ type Config struct {
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
 type SlackConfig struct {
-	// SigningSecret is the default Slack App signing secret (kept for backward compatibility,
-	// no longer required for Socket Mode operation).
-	// Set via AGENTAPI_SLACK_SIGNING_SECRET environment variable.
-	SigningSecret string `json:"signing_secret" mapstructure:"signing_secret"`
 	// AppTokenSecretName is the K8s Secret name containing the default App-level token (xapp-...).
 	// Used for the default Socket Mode connection.
 	// If empty, falls back to KubernetesSession.SlackBotTokenSecretName.
@@ -674,12 +626,6 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] GitHub auth enabled: %v", config.Auth.GitHub != nil && config.Auth.GitHub.Enabled)
 	if config.Auth.GitHub != nil {
 		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
-	}
-	log.Printf("[CONFIG] AWS auth enabled: %v", config.Auth.AWS != nil && config.Auth.AWS.Enabled)
-	if config.Auth.AWS != nil && config.Auth.AWS.Enabled {
-		log.Printf("[CONFIG] AWS region: %s", config.Auth.AWS.Region)
-		log.Printf("[CONFIG] AWS allowed account IDs: %v", config.Auth.AWS.AllowedAccountIDs)
-		log.Printf("[CONFIG] AWS team tag key: %s", config.Auth.AWS.TeamTagKey)
 	}
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
@@ -843,22 +789,6 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			log.Printf("[CONFIG] OAuth ClientID from env: %v", clientID != "")
 			log.Printf("[CONFIG] OAuth ClientSecret from env: %v", clientSecret != "")
 		}
-	}
-
-	// Initialize Auth.AWS if environment variables are set
-	if config.Auth.AWS == nil && (v.GetBool("auth.aws.enabled") || v.GetString("auth.aws.region") != "" || len(v.GetStringSlice("auth.aws.allowed_account_ids")) > 0) {
-		config.Auth.AWS = &AWSAuthConfig{
-			Enabled:           v.GetBool("auth.aws.enabled"),
-			Region:            v.GetString("auth.aws.region"),
-			AllowedAccountIDs: v.GetStringSlice("auth.aws.allowed_account_ids"),
-			TeamTagKey:        v.GetString("auth.aws.team_tag_key"),
-			CacheTTL:          v.GetString("auth.aws.cache_ttl"),
-			UserMapping: AWSUserMapping{
-				DefaultRole:        v.GetString("auth.aws.user_mapping.default_role"),
-				DefaultPermissions: v.GetStringSlice("auth.aws.user_mapping.default_permissions"),
-			},
-		}
-		log.Printf("[CONFIG] Initialized AWS auth config from environment variables")
 	}
 
 	if namespace := os.Getenv("AGENTAPI_K8S_SESSION_NAMESPACE"); namespace != "" {
@@ -1054,15 +984,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth.github.oauth.scope")
 	_ = v.BindEnv("auth.github.oauth.base_url")
 
-	// AWS auth configuration
-	_ = v.BindEnv("auth.aws.enabled")
-	_ = v.BindEnv("auth.aws.region")
-	_ = v.BindEnv("auth.aws.allowed_account_ids")
-	_ = v.BindEnv("auth.aws.team_tag_key")
-	_ = v.BindEnv("auth.aws.cache_ttl")
-	_ = v.BindEnv("auth.aws.user_mapping.default_role")
-	_ = v.BindEnv("auth.aws.user_mapping.default_permissions")
-
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
@@ -1118,10 +1039,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.provisioner_proxy_url", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
-	_ = v.BindEnv("kubernetes_session.claude_config_user_configmap_prefix", "AGENTAPI_K8S_SESSION_CLAUDE_CONFIG_USER_CONFIGMAP_PREFIX")
-	_ = v.BindEnv("kubernetes_session.init_container_image", "AGENTAPI_K8S_SESSION_INIT_CONTAINER_IMAGE")
-	_ = v.BindEnv("kubernetes_session.sandbox_init_image", "AGENTAPI_K8S_SESSION_SANDBOX_INIT_IMAGE")
-	_ = v.BindEnv("kubernetes_session.sandbox_iptables_configmap_name", "AGENTAPI_K8S_SESSION_SANDBOX_IPTABLES_CONFIGMAP_NAME")
 	_ = v.BindEnv("kubernetes_session.network_filter_image", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT")
@@ -1142,17 +1059,11 @@ func bindEnvVars(v *viper.Viper) {
 
 	// OpenTelemetry Collector configuration
 	_ = v.BindEnv("kubernetes_session.otel_collector_enabled", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_ENABLED")
-	_ = v.BindEnv("kubernetes_session.otel_collector_image", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_IMAGE")
 	_ = v.BindEnv("kubernetes_session.otel_collector_scrape_interval", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_SCRAPE_INTERVAL")
 	_ = v.BindEnv("kubernetes_session.otel_collector_claude_code_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CLAUDE_CODE_PORT")
 	_ = v.BindEnv("kubernetes_session.otel_collector_exporter_port", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_EXPORTER_PORT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_REQUEST")
-	_ = v.BindEnv("kubernetes_session.otel_collector_cpu_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_CPU_LIMIT")
-	_ = v.BindEnv("kubernetes_session.otel_collector_memory_request", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_REQUEST")
-	_ = v.BindEnv("kubernetes_session.otel_collector_memory_limit", "AGENTAPI_KUBERNETES_SESSION_OTEL_COLLECTOR_MEMORY_LIMIT")
 
 	// Slack Integration configuration
-	_ = v.BindEnv("kubernetes_session.slack_integration_image", "AGENTAPI_KUBERNETES_SESSION_SLACK_INTEGRATION_IMAGE")
 	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_name", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.slack_bot_token_secret_key", "AGENTAPI_KUBERNETES_SESSION_SLACK_BOT_TOKEN_SECRET_KEY")
 
@@ -1185,19 +1096,11 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("stock_inventory_worker.renew_deadline", "AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("stock_inventory_worker.retry_period", "AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD")
 
-	// Memory summarizer worker configuration
-	_ = v.BindEnv("memory_summarizer_worker.enabled", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_ENABLED")
-	_ = v.BindEnv("memory_summarizer_worker.check_interval", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_CHECK_INTERVAL")
-	_ = v.BindEnv("memory_summarizer_worker.lease_duration", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_LEASE_DURATION")
-	_ = v.BindEnv("memory_summarizer_worker.renew_deadline", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_RENEW_DEADLINE")
-	_ = v.BindEnv("memory_summarizer_worker.retry_period", "AGENTAPI_MEMORY_SUMMARIZER_WORKER_RETRY_PERIOD")
-
 	// Webhook configuration
 	_ = v.BindEnv("webhook.base_url", "AGENTAPI_WEBHOOK_BASE_URL")
 	_ = v.BindEnv("webhook.github_enterprise_host", "AGENTAPI_WEBHOOK_GITHUB_ENTERPRISE_HOST")
 
 	// Slack configuration
-	_ = v.BindEnv("slack.signing_secret", "AGENTAPI_SLACK_SIGNING_SECRET")
 	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
 	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
@@ -1293,10 +1196,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pod_start_timeout", 120)
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 	v.SetDefault("kubernetes_session.provisioner_proxy_url", "")
-	v.SetDefault("kubernetes_session.claude_config_user_configmap_prefix", "claude-config")
-	v.SetDefault("kubernetes_session.init_container_image", "")
-	v.SetDefault("kubernetes_session.sandbox_init_image", "gcr.io/istio-release/iptables@sha256:88626c33372697bd006bbfc61d1e0d7b60ae9a988d1a7cac07cc834b13e5c21a")
-	v.SetDefault("kubernetes_session.sandbox_iptables_configmap_name", "")
 	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.3")
 	v.SetDefault("kubernetes_session.network_filter_cpu_request", "250m")
 	v.SetDefault("kubernetes_session.network_filter_cpu_limit", "1000m")
@@ -1339,13 +1238,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
 	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
 	v.SetDefault("stock_inventory_worker.retry_period", "2s")
-
-	// Memory summarizer worker defaults
-	v.SetDefault("memory_summarizer_worker.enabled", false)
-	v.SetDefault("memory_summarizer_worker.check_interval", "5m")
-	v.SetDefault("memory_summarizer_worker.lease_duration", "15s")
-	v.SetDefault("memory_summarizer_worker.renew_deadline", "10s")
-	v.SetDefault("memory_summarizer_worker.retry_period", "2s")
 
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
@@ -1426,17 +1318,6 @@ func applyConfigDefaults(config *Config) {
 		}
 		if config.Auth.GitHub.OAuth != nil && config.Auth.GitHub.OAuth.Scope == "" {
 			config.Auth.GitHub.OAuth.Scope = "read:user read:org project"
-		}
-	}
-	if config.Auth.AWS != nil {
-		if config.Auth.AWS.Region == "" {
-			config.Auth.AWS.Region = "ap-northeast-1"
-		}
-		if config.Auth.AWS.TeamTagKey == "" {
-			config.Auth.AWS.TeamTagKey = "Team"
-		}
-		if config.Auth.AWS.CacheTTL == "" {
-			config.Auth.AWS.CacheTTL = "1h"
 		}
 	}
 	if config.Asset.Backend == "" {
