@@ -644,3 +644,120 @@ func TestBuildPiModelsJSONRequiresProviderModelAndBaseURL(t *testing.T) {
 		t.Fatalf("expected incomplete custom model config to be ignored, got %#v", got)
 	}
 }
+
+// fakeCredentialsRepository is a test CredentialsRepository that returns
+// canned managed files for a given name.
+type fakeCredentialsRepository struct {
+	filesByName map[string][]sessionsettings.ManagedFile
+	errByName   map[string]error
+}
+
+func (f *fakeCredentialsRepository) Save(ctx context.Context, c *entities.Credentials) error {
+	return nil
+}
+func (f *fakeCredentialsRepository) FindByName(ctx context.Context, name string) (*entities.Credentials, error) {
+	if err, ok := f.errByName[name]; ok {
+		return nil, err
+	}
+	files, ok := f.filesByName[name]
+	if !ok {
+		return nil, fmt.Errorf("credentials not found: %s", name)
+	}
+	creds := entities.NewCredentials(name, nil)
+	creds.SetFiles(files)
+	return creds, nil
+}
+func (f *fakeCredentialsRepository) Delete(ctx context.Context, name string) error { return nil }
+func (f *fakeCredentialsRepository) Exists(ctx context.Context, name string) (bool, error) {
+	_, ok := f.filesByName[name]
+	return ok, nil
+}
+func (f *fakeCredentialsRepository) List(ctx context.Context) ([]*entities.Credentials, error) {
+	return nil, nil
+}
+
+// TestBuildSessionSettings_CredentialsRepoMergesKVAndLegacySecret verifies that
+// managed credential files are read from the credentials repository (KV store)
+// and that legacy files only present in the agentapi-agent-files-* Kubernetes
+// Secret are merged in so they are not lost during the KV transition.
+func TestBuildSessionSettings_CredentialsRepoMergesKVAndLegacySecret(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-agent-files-test-user", Namespace: "test-ns"},
+			Data: sessionsettings.FilesToSecretData([]sessionsettings.ManagedFile{{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeClaudeCredentials],
+				Content: `{"legacy":"claude-credentials"}`,
+			}}),
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	manager.SetCredentialsRepository(&fakeCredentialsRepository{
+		filesByName: map[string][]sessionsettings.ManagedFile{
+			"test-user": {{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+				Content: `{"tokens":{"access_token":"codex-token"}}`,
+			}},
+		},
+	})
+
+	session := NewKubernetesSession("test-session", &entities.RunServerRequest{UserID: "test-user"},
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, &entities.RunServerRequest{
+		UserID: "test-user",
+	}, nil)
+
+	byPath := map[string]string{}
+	for _, f := range settings.Files {
+		byPath[f.Path] = f.Content
+	}
+	if got, ok := byPath[sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth]]; !ok || got != `{"tokens":{"access_token":"codex-token"}}` {
+		t.Fatalf("codex auth.json from KV missing or wrong: %#v", byPath)
+	}
+	if got, ok := byPath[sessionsettings.ManagedFileTypes[sessionsettings.FileTypeClaudeCredentials]]; !ok || got != `{"legacy":"claude-credentials"}` {
+		t.Fatalf("legacy claude credentials from K8s Secret missing or wrong: %#v", byPath)
+	}
+}
+
+// TestResolveAutoAgentType_CredentialsRepoCodexAuth verifies that auto agent
+// type resolution reads ~/.codex/auth.json from the credentials repository
+// (KV store) instead of only the Kubernetes Secret.
+func TestResolveAutoAgentType_CredentialsRepoCodexAuth(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		// No agentapi-agent-files Secret exists in K8s; the credential is only in KV.
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	manager.SetCredentialsRepository(&fakeCredentialsRepository{
+		filesByName: map[string][]sessionsettings.ManagedFile{
+			"test-user": {{
+				Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+				Content: `{"tokens":{"access_token":"codex-token"}}`,
+			}},
+		},
+	})
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
+		UserID:     "test-user",
+		AgentType:  "auto",
+	})
+	if got != "codex-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}

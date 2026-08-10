@@ -279,6 +279,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		k8sSessionManager.GetNamespace(),
 	))
 	log.Printf("[SERVER] Credentials repository initialized")
+
+	// Wire the credentials repository into the session manager so that managed
+	// credential files (Codex auth.json, Claude .credentials.json) are read from
+	// the application KV store when embedding files into session pods.
+	k8sSessionManager.SetCredentialsRepository(credentialsRepo)
 	// Initialize share repository
 	shareRepo = repositories.NewKubernetesShareRepository(
 		persistenceClient,

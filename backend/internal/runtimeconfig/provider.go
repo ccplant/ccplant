@@ -3,7 +3,6 @@ package runtimeconfig
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -96,68 +95,31 @@ func (p *Provider) AgentDefaults() settingspatch.SettingsPatch {
 }
 
 func (p *Provider) Reload(ctx context.Context) error {
-	if p.store == nil {
-		return nil
-	}
-	headRecord, err := p.store.Get(ctx, kvstore.KindSecret, p.ns, headKey)
-	if errors.Is(err, kvstore.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var head storedHead
-	if err := decodeSecret(headRecord.Value, headDataKey, &head); err != nil {
-		return err
-	}
-	record, err := p.store.Get(ctx, kvstore.KindSecret, p.ns, fmt.Sprintf(versionKey, head.CurrentVersion))
-	if err != nil {
-		return err
-	}
-	var doc storedDocument
-	if err := decodeSecret(record.Value, dataKey, &doc); err != nil {
-		return err
-	}
-	if doc.Version == p.Version() {
-		return nil
-	}
-	return p.Apply(doc.Version, doc.Sections)
+	// Runtime application of admin-managed system settings is intentionally
+	// disabled. The admin "System Settings" screen can still persist versioned
+	// documents to the KV store, but those settings are no longer overlaid onto
+	// the base (Helm/environment) configuration at runtime. This prevents the
+	// secret-wiping defect where saving from the admin screen overwrites OAuth
+	// client secrets / bot tokens with empty strings and breaks authentication
+	// (see investigation session 73a1e4). The runtime config therefore always
+	// reflects the immutable base config. Re-enable this overlay only after
+	// preserveOmittedSecrets treats empty strings as "unset".
+	return nil
 }
 
 func (p *Provider) Start(ctx context.Context, interval time.Duration, onError func(error)) {
-	if p.store == nil || interval <= 0 {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := p.Reload(ctx); err != nil && onError != nil {
-					onError(err)
-				}
-			}
-		}
-	}()
+	// Runtime application of admin settings is disabled (see Reload), so there
+	// is nothing to periodically refresh.
+	_ = ctx
+	_ = interval
+	_ = onError
+	return
 }
 
 func (p *Provider) Apply(version int64, sections map[string]interface{}) error {
-	next := cloneConfig(p.base)
-	if err := applySections(next, sections); err != nil {
-		return err
-	}
-	p.mu.Lock()
-	p.current = next
-	p.sections = cloneMap(sections)
-	p.version = version
-	listeners := append([]func(*config.Config){}, p.listeners...)
-	p.mu.Unlock()
-	for _, listener := range listeners {
-		listener(cloneConfig(next))
-	}
+	// Runtime application of admin-managed system settings is disabled (see
+	// Reload for the rationale). Accept the call so the admin controller can still
+	// persist settings to the KV store without mutating the running config.
 	return nil
 }
 
