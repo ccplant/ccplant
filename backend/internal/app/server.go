@@ -46,6 +46,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -93,6 +94,17 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Disable Echo's default logger and use custom logging
 	e.Logger.SetOutput(io.Discard)
+
+	// Create server spans and HTTP RED metrics. Health probes are excluded to
+	// avoid high-volume, low-value telemetry.
+	e.Use(otelecho.Middleware("agentapi-proxy", otelecho.WithSkipper(func(c echo.Context) bool {
+		switch c.Path() {
+		case "/health", "/healthz", "/ready", "/readyz":
+			return true
+		default:
+			return false
+		}
+	})))
 
 	// Rewrite %2F in URL paths before route matching so that settings names
 	// containing slashes (e.g. "org/team-slug") are routed correctly.

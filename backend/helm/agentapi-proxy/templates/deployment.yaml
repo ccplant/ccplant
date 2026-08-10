@@ -16,6 +16,9 @@
 {{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceSuspendAfter := $sessionPersistence.suspendAfter | default "1h" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
+{{- $valuesMap := .Values | toJson | fromJson }}
+{{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
+{{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -138,6 +141,32 @@ spec:
           env:
             - name: HOME
               value: "/home/agentapi"
+            {{- if (dig "enabled" false $openTelemetry) }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_SERVICE_NAME
+              value: {{ dig "serviceName" "agentapi-proxy" $openTelemetry | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "observability.openTelemetry.secretRef.name is required when OpenTelemetry is enabled" (dig "name" "" $openTelemetrySecret) | quote }}
+                  key: {{ dig "endpointKey" "OTEL_EXPORTER_OTLP_ENDPOINT" $openTelemetrySecret | quote }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ dig "name" "" $openTelemetrySecret | quote }}
+                  key: {{ dig "headersKey" "OTEL_EXPORTER_OTLP_HEADERS" $openTelemetrySecret | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) (.Values.image.tag | default .Chart.AppVersion) | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ dig "tracesSampler" "parentbased_traceidratio" $openTelemetry | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ dig "tracesSamplerArg" "1.0" $openTelemetry | quote }}
+            {{- end }}
             {{- $kvPrimaryBackend := dig "kvStore" "primary" "backend" "" .Values.config }}
             {{- if $kvPrimaryBackend }}
             - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND

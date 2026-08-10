@@ -447,7 +447,23 @@ config:
     # 設定しない場合は暗号化なし (Noop) になります
     key: ""
 
-# Environment variables
+# OpenTelemetry / Grafana Cloud Application Observability
+observability:
+  openTelemetry:
+    enabled: false
+    serviceName: agentapi-proxy
+    serviceNamespace: ccplant
+    deploymentEnvironment: ""
+    tracesSampler: parentbased_traceidratio
+    tracesSamplerArg: "1.0"
+    # Existing Secret containing the OTLP base endpoint and authentication
+    # headers. Create it separately; credentials are never stored in values.
+    secretRef:
+      name: ""
+      endpointKey: OTEL_EXPORTER_OTLP_ENDPOINT
+      headersKey: OTEL_EXPORTER_OTLP_HEADERS
+
+# Additional environment variables
 env: []
 # - name: GITHUB_TOKEN
 #   value: "your-token"
