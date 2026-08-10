@@ -118,6 +118,10 @@ type KubernetesSessionManager struct {
 	teamConfigRepo        portrepos.TeamConfigRepository
 	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
 	sandboxPolicyRepo     portrepos.SandboxPolicyRepository
+	// credentialsRepo reads managed credential files (e.g. ~/.codex/auth.json,
+	// ~/.claude/.credentials.json) from the application KV store, which is the
+	// canonical store written to by the credentials/Codex device-auth flows.
+	credentialsRepo portrepos.CredentialsRepository
 	personalAPIKeyLoader  PersonalAPIKeyLoader
 	serviceAccountEnsurer ServiceAccountEnsurer
 	// onSessionDeletedHandlers holds callbacks registered via AddSessionDeletedHandler.
@@ -2212,18 +2216,13 @@ func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req
 		if owner == "" {
 			continue
 		}
-		secretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(owner))
-		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
-		if err != nil {
-			continue
-		}
-		files := sessionsettings.SecretDataToFiles(secret.Data)
+		files, _ := m.loadCredentialFiles(ctx, owner)
 		if len(files) == 0 {
 			continue
 		}
 		for _, file := range files {
 			if file.Path == sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth] {
-				log.Printf("[K8S_SESSION] Resolved auto agent type to codex-acp from Secret %s", secretName)
+				log.Printf("[K8S_SESSION] Resolved auto agent type to codex-acp for credential owner %s", owner)
 				return "codex-acp"
 			}
 		}
@@ -4265,6 +4264,47 @@ func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamCo
 	m.teamConfigRepo = repo
 }
 
+// SetCredentialsRepository sets the credentials repository used to load managed
+// credential files (Codex auth.json, Claude .credentials.json) from the
+// application KV store when embedding files into session pods.
+func (m *KubernetesSessionManager) SetCredentialsRepository(repo portrepos.CredentialsRepository) {
+	m.credentialsRepo = repo
+}
+
+// loadCredentialFiles retrieves the managed credential files for a credential
+// owner. It reads from the credentials repository (backed by the application KV
+// store, where the Codex device-auth flow and credentials API persist files) and
+// merges in any legacy files that still exist only in the agentapi-agent-files-*
+// Kubernetes Secret, so that pre-KV credentials are not lost during the
+// transition. Files already present from the KV store take precedence.
+func (m *KubernetesSessionManager) loadCredentialFiles(ctx context.Context, owner string) ([]sessionsettings.ManagedFile, string) {
+	secretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(owner))
+	var files []sessionsettings.ManagedFile
+
+	if m.credentialsRepo != nil {
+		if creds, err := m.credentialsRepo.FindByName(ctx, owner); err == nil {
+			files = append(files, creds.Files()...)
+		}
+	}
+
+	if secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{}); err == nil && len(secret.Data) > 0 {
+		legacy := sessionsettings.SecretDataToFiles(secret.Data)
+		if len(legacy) > 0 {
+			seen := make(map[string]bool, len(files))
+			for _, f := range files {
+				seen[f.Path] = true
+			}
+			for _, f := range legacy {
+				if !seen[f.Path] {
+					files = append(files, f)
+				}
+			}
+		}
+	}
+
+	return files, secretName
+}
+
 // SetSandboxPolicyRepository sets the sandbox policy repository for policy resolution at session creation.
 func (m *KubernetesSessionManager) SetSandboxPolicyRepository(repo portrepos.SandboxPolicyRepository) {
 	m.sandboxPolicyRepo = repo
@@ -5798,22 +5838,15 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		if credentialOwner == "" {
 			continue
 		}
-		filesSecretName := fmt.Sprintf("agentapi-agent-files-%s", sanitizeLabelValue(credentialOwner))
-		filesSecret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, filesSecretName, metav1.GetOptions{})
-		if err == nil && len(filesSecret.Data) > 0 {
-			settings.Files = sessionsettings.SecretDataToFiles(filesSecret.Data)
-			if len(settings.Files) == 0 {
-				// Secret exists and has data but no valid index-based entries were parsed.
-				// This could indicate corrupted or manually edited Secret data.
-				log.Printf("[K8S_SESSION] WARNING: Secret %s has %d data entries but SecretDataToFiles returned empty for session %s",
-					filesSecretName, len(filesSecret.Data), session.id)
-			} else {
-				log.Printf("[K8S_SESSION] Embedded %d managed file(s) from Secret %s for session %s",
-					len(settings.Files), filesSecretName, session.id)
-				break
-			}
+		files, filesSecretName := m.loadCredentialFiles(ctx, credentialOwner)
+		if len(files) == 0 {
+			// Not found or no data is normal. Event-actor sources try the team owner next.
+			continue
 		}
-		// Not found or no data is normal. Event-actor sources try the team owner next.
+		settings.Files = files
+		log.Printf("[K8S_SESSION] Embedded %d managed file(s) for credential owner %s (Secret %s) for session %s",
+			len(settings.Files), credentialOwner, filesSecretName, session.id)
+		break
 	}
 
 	// User-managed files retain their existing user-scope-only behavior; the

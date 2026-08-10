@@ -86,9 +86,16 @@ func TestAdminSettingsControllerAppliesSavedVersionToRuntimeProvider(t *testing.
 	ctx, recorder := adminSettingsRequest(t, e, http.MethodPut, "/admin/system-settings", `{"base_version":0,"sections":{"sessions":{"image":"kv:image"},"agents":{"auth_mode":"bedrock"}}}`)
 	require.NoError(t, controller.Put(ctx))
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, int64(1), provider.Version())
-	require.Equal(t, "kv:image", provider.Current().KubernetesSession.Image)
-	require.Equal(t, "bedrock", provider.AgentDefaults().AuthMode)
+	// The document is persisted to the KV store...
+	saved, _, err := controller.loadVersion(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), saved.Version)
+	// ...but runtime application of admin settings is disabled, so the provider
+	// keeps reflecting the immutable base config and does not expose admin-set
+	// agent defaults. See session 73a1e4 for the rationale.
+	require.Equal(t, int64(0), provider.Version())
+	require.Equal(t, "helm:image", provider.Current().KubernetesSession.Image)
+	require.Empty(t, provider.AgentDefaults().AuthMode)
 }
 
 func adminSettingsRequest(t *testing.T, e *echo.Echo, method, target, body string) (echo.Context, *httptest.ResponseRecorder) {
