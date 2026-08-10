@@ -62,8 +62,12 @@ spec:
                   key: {{ .Values.cookieEncryptionSecret.secretKey }}
           {{- end }}
           {{- $proxyUrl := "" }}
+          {{- $values := .Values | toJson | fromJson }}
+          {{- $legacyProxyUrl := dig "oauthOnlyMode" "proxyUrl" "" $values }}
           {{- if .Values.config.proxyUrl }}
             {{- $proxyUrl = .Values.config.proxyUrl }}
+          {{- else if $legacyProxyUrl }}
+            {{- $proxyUrl = $legacyProxyUrl }}
           {{- else }}
             {{- $proxyUrl = printf "http://%s-backend:8080" .Release.Name }}
           {{- end }}
