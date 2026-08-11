@@ -108,20 +108,20 @@ type KubernetesSessionManager struct {
 		Current() *config.Config
 		AgentDefaults() settingspatch.SettingsPatch
 	}
-	client                kubernetes.Interface
-	verbose               bool
-	logger                *logger.Logger
-	sessions              map[string]*KubernetesSession
-	mutex                 sync.RWMutex
-	namespace             string
-	settingsRepo          portrepos.SettingsRepository
-	teamConfigRepo        portrepos.TeamConfigRepository
-	personalAPIKeyRepo    portrepos.PersonalAPIKeyRepository
-	sandboxPolicyRepo     portrepos.SandboxPolicyRepository
+	client             kubernetes.Interface
+	verbose            bool
+	logger             *logger.Logger
+	sessions           map[string]*KubernetesSession
+	mutex              sync.RWMutex
+	namespace          string
+	settingsRepo       portrepos.SettingsRepository
+	teamConfigRepo     portrepos.TeamConfigRepository
+	personalAPIKeyRepo portrepos.PersonalAPIKeyRepository
+	sandboxPolicyRepo  portrepos.SandboxPolicyRepository
 	// credentialsRepo reads managed credential files (e.g. ~/.codex/auth.json,
 	// ~/.claude/.credentials.json) from the application KV store, which is the
 	// canonical store written to by the credentials/Codex device-auth flows.
-	credentialsRepo portrepos.CredentialsRepository
+	credentialsRepo       portrepos.CredentialsRepository
 	personalAPIKeyLoader  PersonalAPIKeyLoader
 	serviceAccountEnsurer ServiceAccountEnsurer
 	// onSessionDeletedHandlers holds callbacks registered via AddSessionDeletedHandler.
@@ -2209,6 +2209,9 @@ func credentialOwnersForRequest(req *entities.RunServerRequest) []string {
 // resolveAutoAgentType selects Codex only when the credentials that will be
 // mounted into the session contain ~/.codex/auth.json. All other cases use Claude.
 func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req *entities.RunServerRequest) string {
+	if req.AgentType == "" {
+		req.AgentType = m.defaultAgentTypeForRequest(ctx, req)
+	}
 	if req.AgentType != "auto" {
 		return req.AgentType
 	}
@@ -2232,6 +2235,18 @@ func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req
 	}
 	log.Printf("[K8S_SESSION] Resolved auto agent type to claude-acp (Codex auth.json not found)")
 	return "claude-acp"
+}
+
+func (m *KubernetesSessionManager) defaultAgentTypeForRequest(ctx context.Context, req *entities.RunServerRequest) string {
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.settingsRepo != nil {
+		settings, err := m.settingsRepo.FindByName(ctx, req.TeamID)
+		if err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to read default agent type for team %s: %v", req.TeamID, err)
+		} else if agentType := settings.DefaultAgentType(); agentType != "" {
+			return agentType
+		}
+	}
+	return "auto"
 }
 
 func restoreAgentTypeFromService(svc *corev1.Service) string {

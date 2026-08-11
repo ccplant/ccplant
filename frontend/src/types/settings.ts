@@ -120,6 +120,7 @@ export interface SettingsData {
   notification_channels?: string[];  // Active notification channels (e.g. ["web", "slack"])
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers
   default_session_profile_id?: string;  // Default session profile ID for this settings scope
+  default_agent_type?: Exclude<AgentApiType, 'default' | 'claude-legacy'>;  // Team default for sessions without an explicit agent type
 }
 
 // External session manager configuration
@@ -208,7 +209,7 @@ export interface GlobalSettings {
   messageTemplates: MessageTemplate[]
   githubAuth?: GitHubOAuthSettings
   sendGithubTokenOnSessionStart?: boolean  // デフォルト true
-  agentApiType?: AgentApiType  // デフォルト 'default'
+  agentApiType?: AgentApiType  // デフォルト 'auto'
   enterKeyBehavior?: EnterKeyBehavior  // デフォルト 'newline' (Enter で改行、Command/Ctrl+Enter で送信)
   fontSettings?: FontSettings  // デフォルト { fontSize: 14, fontFamily: 'sans-serif' }
   memoryEnabled?: boolean  // デフォルト true（メモリ機能の有効/無効）
@@ -818,7 +819,7 @@ export const getAgentApiType = (): AgentApiType => {
   ) {
     return settings.agentApiType
   }
-  return 'default'
+  return 'auto'
 }
 
 export const setAgentApiType = (type: AgentApiType): void => {

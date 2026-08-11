@@ -57,6 +57,7 @@ type settingsJSON struct {
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
 	DefaultSessionProfileID string                                 `json:"default_session_profile_id,omitempty"`
+	DefaultAgentType        string                                 `json:"default_agent_type,omitempty"`
 	CreatedAt               time.Time                              `json:"created_at"`
 	UpdatedAt               time.Time                              `json:"updated_at"`
 }
@@ -353,6 +354,9 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if id := settings.DefaultSessionProfileID(); id != "" {
 		sj.DefaultSessionProfileID = id
 	}
+	if agentType := settings.DefaultAgentType(); agentType != "" {
+		sj.DefaultAgentType = agentType
+	}
 
 	return json.Marshal(sj)
 }
@@ -512,6 +516,9 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 
 	if sj.DefaultSessionProfileID != "" {
 		settings.SetDefaultSessionProfileID(sj.DefaultSessionProfileID)
+	}
+	if sj.DefaultAgentType != "" {
+		settings.SetDefaultAgentType(sj.DefaultAgentType)
 	}
 
 	return settings, nil
