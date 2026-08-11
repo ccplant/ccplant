@@ -6853,6 +6853,11 @@
           "default_session_profile_id": {
             "type": "string",
             "description": "Default session profile ID for this settings scope. Set to empty string to clear."
+          },
+          "default_agent_type": {
+            "type": "string",
+            "enum": ["", "auto", "claude-acp", "codex-acp", "pi-ollama", "cursor"],
+            "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
           }
         }
       },
@@ -7032,6 +7037,11 @@
           "default_session_profile_id": {
             "type": "string",
             "description": "Default session profile ID for this settings scope."
+          },
+          "default_agent_type": {
+            "type": "string",
+            "enum": ["auto", "claude-acp", "codex-acp", "pi-ollama", "cursor"],
+            "description": "Default agent type for sessions in this settings scope."
           },
           "created_at": {
             "type": "string",

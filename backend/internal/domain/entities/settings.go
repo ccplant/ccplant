@@ -125,6 +125,7 @@ type Settings struct {
 	notificationChannels    []string          // Active notification channels (e.g. "web", "slack")
 	externalSessionManagers []ExternalSessionManagerEntry
 	defaultSessionProfileID string // ID of the default session profile for this tenant
+	defaultAgentType        string // Agent type used when a session does not specify one
 	createdAt               time.Time
 	updatedAt               time.Time
 }
@@ -366,5 +367,14 @@ func (s *Settings) DefaultSessionProfileID() string {
 // SetDefaultSessionProfileID sets the default session profile ID for this tenant
 func (s *Settings) SetDefaultSessionProfileID(id string) {
 	s.defaultSessionProfileID = id
+	s.updatedAt = time.Now()
+}
+
+// DefaultAgentType returns the agent type used for sessions that do not specify one.
+func (s *Settings) DefaultAgentType() string { return s.defaultAgentType }
+
+// SetDefaultAgentType sets the agent type used for sessions that do not specify one.
+func (s *Settings) SetDefaultAgentType(agentType string) {
+	s.defaultAgentType = agentType
 	s.updatedAt = time.Now()
 }

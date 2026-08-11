@@ -754,10 +754,37 @@ func TestResolveAutoAgentType_CredentialsRepoCodexAuth(t *testing.T) {
 	})
 
 	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
-		UserID:     "test-user",
-		AgentType:  "auto",
+		UserID:    "test-user",
+		AgentType: "auto",
 	})
 	if got != "codex-acp" {
 		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}
+
+func TestResolveAutoAgentType_UsesTeamDefaultWhenAgentTypeIsOmitted(t *testing.T) {
+	teamSettings := entities.NewSettings("org/team")
+	teamSettings.SetDefaultAgentType("codex-acp")
+	manager := &KubernetesSessionManager{
+		settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{
+			"org/team": teamSettings,
+		}},
+	}
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
+		Scope:  entities.ScopeTeam,
+		TeamID: "org/team",
+	})
+	if got != "codex-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}
+
+func TestResolveAutoAgentType_DefaultsToAutoWhenAgentTypeIsOmitted(t *testing.T) {
+	manager := &KubernetesSessionManager{}
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{})
+	if got != "claude-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want claude-acp", got)
 	}
 }

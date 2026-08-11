@@ -967,13 +967,13 @@ export default function NewSessionPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                         </svg>
                         <span className="text-xs text-blue-700 dark:text-blue-300">
-                          ACP サーバーモード: <strong>{getAgentTypeLabel(selectedAgentType)}</strong>（{selectedAgentType !== 'default' ? selectedAgentType : 'claude-acp'}）が使用されます
+                          ACP サーバーモード: <strong>{getAgentTypeLabel(selectedAgentType)}</strong>（{selectedAgentType !== 'default' ? selectedAgentType : 'auto'}）が使用されます
                         </span>
                       </div>
                     ) : (
                       <div className="space-y-2">
                       {([
-                        { value: 'default', label: 'デフォルト', description: 'agent_type を送信しない' },
+                        { value: 'default', label: 'チーム設定', description: 'チーム設定（未設定なら自動選択）を使用' },
                         { value: 'auto', label: '自動選択', description: 'Codex auth.json があれば Codex ACP、それ以外は Claude ACP' },
                         { value: 'claude-legacy', label: 'Claude Legacy', description: 'agent_type=claude-legacy を送信' },
                         { value: 'claude-acp', label: 'Claude ACP', description: 'agent_type=claude-acp を送信' },

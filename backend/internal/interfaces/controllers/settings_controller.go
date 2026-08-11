@@ -87,6 +87,7 @@ type UpdateSettingsRequest struct {
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`      // Active notification channels (e.g. ["web", "slack"])
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
 	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
+	DefaultAgentType        *string                          `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
 }
 
 // ExternalSessionManagerRequest represents updates to an already-enrolled manager.
@@ -139,6 +140,7 @@ type SettingsResponse struct {
 	NotificationChannels    []string                         `json:"notification_channels,omitempty"`      // Active notification channels
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
 	DefaultSessionProfileID string                           `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
+	DefaultAgentType        string                           `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
 	CreatedAt               string                           `json:"created_at"`
 	UpdatedAt               string                           `json:"updated_at"`
 }
@@ -498,6 +500,12 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	if req.DefaultSessionProfileID != nil {
 		settings.SetDefaultSessionProfileID(*req.DefaultSessionProfileID)
 	}
+	if req.DefaultAgentType != nil {
+		if !isValidDefaultAgentType(*req.DefaultAgentType) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid default_agent_type")
+		}
+		settings.SetDefaultAgentType(*req.DefaultAgentType)
+	}
 
 	// Determine and set auth_mode
 	authMode := c.determineAuthMode(settings, req.AuthMode)
@@ -753,6 +761,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()
+	resp.DefaultAgentType = settings.DefaultAgentType()
 
 	// External session managers: never return the HMAC secret — indicate only whether one is set.
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {
@@ -777,6 +786,15 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	}
 
 	return resp
+}
+
+func isValidDefaultAgentType(agentType string) bool {
+	switch agentType {
+	case "", "auto", "claude-acp", "codex-acp", "pi-ollama", "cursor":
+		return true
+	default:
+		return false
+	}
 }
 
 // mergeSecrets merges existing and new secret maps.
