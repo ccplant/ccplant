@@ -25,6 +25,7 @@ func init() {
 	rootCmd.AddCommand(cmd.OneshotCmd)
 	rootCmd.AddCommand(cmd.AcpServerCmd)
 	rootCmd.AddCommand(cmd.DoctorCmd)
+	rootCmd.AddCommand(cmd.ControlPlaneCmd)
 	rootCmd.AddCommand(cmd.HelmCmd)
 	rootCmd.AddCommand(cmd.KVStoreCmd)
 }
