@@ -31,6 +31,84 @@
 
 replicaCount: 1
 
+# Background controllers run in a dedicated process. Workload settings and
+# controller settings intentionally live under this key rather than the proxy.
+worker:
+  enabled: false
+  replicaCount: 1
+  podAnnotations: {}
+  podLabels: {}
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: []
+  envFrom: []
+
+  schedule:
+    enabled: false
+    checkInterval: "30s"
+    leaderElection:
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+
+  slackbotCleanup:
+    enabled: false
+    sessionTTL: "72h"
+    checkInterval: "1h"
+    sessionTTLCheckInterval: "1m"
+    dryRun: false
+    leaderElection:
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+
+  stockInventory:
+    enabled: false
+    checkInterval: "30s"
+    targetCount: 2
+    dockerEnabled: false
+    pools: []
+    leaderElection:
+      leaseDuration: "15s"
+      renewDeadline: "10s"
+      retryPeriod: "2s"
+
+# The forwarding session manager is an independent HTTP workload.
+sessionManager:
+  enabled: false
+  replicaCount: 1
+  port: 8080
+  publicUrl: ""
+  upstreamUrl: ""
+  connectionTokenSecretRef:
+    name: ""
+    key: connection-token
+  hmacSecretRef:
+    name: ""
+    key: hmac-secret
+  podAnnotations: {}
+  podLabels: {}
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: []
+  envFrom: []
+
 image:
   repository: ghcr.io/ccplant/ccplant-backend
   pullPolicy: IfNotPresent
@@ -796,90 +874,6 @@ kubernetesSession:
 
     # Exporter port (where otelcol exposes labeled metrics)
     exporterPort: 9090
-
-# Schedule Worker Configuration
-# Enables delayed start and recurring (cron-based) session scheduling
-scheduleWorker:
-  # Enable schedule worker
-  enabled: false
-
-  # How often to check for due schedules
-  checkInterval: "30s"
-
-  # Leader election configuration (for multi-replica deployments)
-  leaderElection:
-    # Lease duration (how long leader holds the lock)
-    leaseDuration: "15s"
-    # Renew deadline (how often leader refreshes the lock)
-    renewDeadline: "10s"
-    # Retry period (how often non-leaders try to acquire lock)
-    retryPeriod: "2s"
-
-# Slackbot Session Cleanup Worker Configuration
-# Periodically deletes Slackbot sessions whose last message is older than sessionTTL.
-# Uses the agentapi.proxy/slack-last-message-at annotation (or created-at as fallback).
-slackbotCleanupWorker:
-  # Enable slackbot session cleanup worker
-  enabled: false
-
-  # Session TTL: duration after last Slack message before a session is deleted
-  # Supports Go duration format: "3h", "30m", "72h", etc.
-  sessionTTL: "72h"
-
-  # How often to scan for stale sessions
-  checkInterval: "1h"
-
-  # How often to scan non-Slack sessions with an explicit session TTL.
-  sessionTTLCheckInterval: "1m"
-
-  # Dry-run mode: log stale sessions without actually deleting them.
-  # Useful for verifying TTL settings before enabling real cleanup.
-  dryRun: false
-
-  # Leader election configuration (prevents duplicate deletions in multi-replica deployments)
-  leaderElection:
-    # Lease duration (how long the leader holds the lock)
-    leaseDuration: "15s"
-    # Renew deadline (how often the leader refreshes the lock)
-    renewDeadline: "10s"
-    # Retry period (how often non-leaders try to acquire the lock)
-    retryPeriod: "2s"
-
-# Stock Inventory Worker Configuration
-# Keeps a pool of pre-warmed session pods for the configured pod capabilities.
-stockInventoryWorker:
-  # Enable stock inventory worker
-  enabled: false
-
-  # How often to check and replenish stock sessions
-  checkInterval: "30s"
-
-  # Desired number of available stock sessions matching the capability template
-  targetCount: 2
-
-  # Capability template for stock sessions. These must match the pod sidecars
-  # expected by sessions the allocator should serve from stock.
-  dockerEnabled: false
-
-  # Optional capability pools. When set, each pool is replenished independently
-  # and the single targetCount/dockerEnabled fields above are
-  # used only as defaults for pool entries with no targetCount.
-  # To keep inventory for both plain and DinD sessions, configure:
-  # pools:
-  #   - targetCount: 2
-  #     dockerEnabled: false
-  #   - targetCount: 2
-  #     dockerEnabled: true
-  pools: []
-
-  # Leader election configuration (prevents duplicate stock creation in multi-replica deployments)
-  leaderElection:
-    # Lease duration (how long the leader holds the lock)
-    leaseDuration: "15s"
-    # Renew deadline (how often the leader refreshes the lock)
-    renewDeadline: "10s"
-    # Retry period (how often non-leaders try to acquire the lock)
-    retryPeriod: "2s"
 
 # =============================================================================
 # Redis – 複数Pod間のセッションステータス同期

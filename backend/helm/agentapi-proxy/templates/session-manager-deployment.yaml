@@ -1,0 +1,69 @@
+{{- if .Values.sessionManager.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-manager
+  labels: {{- include "agentapi-proxy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sessionManager.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: session-manager
+  template:
+    metadata:
+      {{- with .Values.sessionManager.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "agentapi-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: session-manager
+        {{- with .Values.sessionManager.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "agentapi-proxy.serviceAccountName" . }}
+      containers:
+        - name: session-manager
+          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ccplant"]
+          args: ["session-manager", "--port", {{ .Values.sessionManager.port | quote }}]
+          ports:
+            - {name: http, containerPort: {{ .Values.sessionManager.port }}}
+          env:
+            - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
+            - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ .Values.sessionManager.publicUrl | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ .Values.sessionManager.upstreamUrl | quote }}}
+            {{- with .Values.sessionManager.connectionTokenSecretRef.name }}
+            - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.sessionManager.connectionTokenSecretRef.key | quote }}}}
+            {{- end }}
+            {{- with .Values.sessionManager.hmacSecretRef.name }}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.sessionManager.hmacSecretRef.key | quote }}}}
+            {{- end }}
+            {{- with .Values.sessionManager.env }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- with .Values.sessionManager.envFrom }}
+          envFrom: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources: {{- toYaml .Values.sessionManager.resources | nindent 12 }}
+      {{- with .Values.sessionManager.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sessionManager.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sessionManager.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-session-manager
+spec:
+  selector:
+    {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
+  ports:
+    - {name: http, port: {{ .Values.sessionManager.port }}, targetPort: http}
+{{- end }}

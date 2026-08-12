@@ -65,28 +65,14 @@
         }
       }
     },
-    "scheduleWorker": {
+    "worker": {
       "type": "object",
-      "required": ["enabled", "leaderElection"],
+      "required": ["enabled", "schedule", "slackbotCleanup", "stockInventory"],
       "properties": {
         "enabled": { "type": "boolean" },
-        "leaderElection": { "$ref": "#/definitions/leaderElection" }
-      }
-    },
-    "slackbotCleanupWorker": {
-      "type": "object",
-      "required": ["enabled", "leaderElection"],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "leaderElection": { "$ref": "#/definitions/leaderElection" }
-      }
-    },
-    "stockInventoryWorker": {
-      "type": "object",
-      "required": ["enabled", "leaderElection"],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "leaderElection": { "$ref": "#/definitions/leaderElection" }
+        "schedule": { "$ref": "#/definitions/workerConfig" },
+        "slackbotCleanup": { "$ref": "#/definitions/workerConfig" },
+        "stockInventory": { "$ref": "#/definitions/workerConfig" }
       }
     },
     "redis": {
@@ -135,6 +121,14 @@
     }
   ],
   "definitions": {
+    "workerConfig": {
+      "type": "object",
+      "required": ["enabled", "leaderElection"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "leaderElection": { "$ref": "#/definitions/leaderElection" }
+      }
+    },
     "leaderElection": {
       "type": "object",
       "required": ["leaseDuration", "renewDeadline", "retryPeriod"],

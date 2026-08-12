@@ -2,6 +2,33 @@
 
 A Helm chart for deploying AgentAPI Proxy - a reverse proxy and process manager for agentapi server instances on Kubernetes.
 
+## Process separation
+
+The chart uses the same image for three independent workloads: `ccplant
+server` for the API proxy, `ccplant worker` for background controllers, and
+`ccplant session-manager` for the forwarding session-manager API and its
+upstream loops. The server process does not start either of the latter roles.
+
+The chart remains a single chart. Configure the independent workloads under
+`worker` and `sessionManager`; proxy pod settings remain at the chart root.
+
+```yaml
+worker:
+  enabled: true
+  schedule:
+    enabled: true
+  stockInventory:
+    enabled: true
+
+sessionManager:
+  enabled: true
+  upstreamUrl: https://control.example.com
+  connectionTokenSecretRef:
+    name: session-manager-credentials
+  hmacSecretRef:
+    name: session-manager-credentials
+```
+
 ## Prerequisites
 
 - Kubernetes 1.21+

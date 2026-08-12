@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -121,7 +120,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// runtime snapshot (startup config overlaid with the latest versioned KV
 	// settings), rather than from the raw Helm/environment layer.
 	configData = proxyServer.GetConfig()
-	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
 
 	// Run the idempotent legacy→multi API token migration and load all named
 	// tokens into the auth service. Any migration conflict or bootstrap load
@@ -129,7 +129,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// partially loaded auth map would be unsafe. This keeps log.Fatal out of
 	// library code (internal/app) while still making startup fail-safe.
 	if err := proxyServer.InitAPITokens(context.Background()); err != nil {
-		cancelWorkers()
 		log.Fatalf("[SERVER] API token initialization failed, refusing to serve: %v", err)
 	}
 
@@ -137,48 +136,10 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Local revocation is immediate; other replicas drop a deleted token on
 	// the next reconciliation pass. Legacy static/personal API keys are
 	// unaffected.
-	proxyServer.StartAPITokenReconciler(workerCtx, 30*time.Second)
+	proxyServer.StartAPITokenReconciler(serverCtx, 30*time.Second)
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
-
-	// Workers are lifecycle-managed from the runtime provider so changing an
-	// enabled flag, interval, TTL, or stock target takes effect without a Pod
-	// restart.
-	var workerMu sync.Mutex
-	var scheduleWorker *schedule.LeaderWorker
-	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
-	var stockWorker *stock_inventory.LeaderWorker
-	reconcileWorkers := func(current *config.Config) {
-		workerMu.Lock()
-		defer workerMu.Unlock()
-		if scheduleWorker != nil {
-			scheduleWorker.Stop()
-			scheduleWorker = nil
-		}
-		if cleanupWorker != nil {
-			cleanupWorker.Stop()
-			cleanupWorker = nil
-		}
-		if stockWorker != nil {
-			stockWorker.Stop()
-			stockWorker = nil
-		}
-		if current.ScheduleWorker.Enabled {
-			scheduleWorker = startScheduleWorker(current, proxyServer)
-		}
-		if current.SlackbotCleanupWorker.Enabled {
-			cleanupWorker = startSlackbotCleanupWorker(current, proxyServer)
-		}
-		if current.StockInventoryWorker.Enabled {
-			stockWorker = startStockInventoryWorker(current, proxyServer)
-		}
-	}
-	reconcileWorkers(configData)
-	proxyServer.GetConfigProvider().Subscribe(reconcileWorkers)
-
-	// Start the leader-elected session allocator when Kubernetes sessions are active.
-	startSessionAllocator(configData, proxyServer)
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
 	registerScheduleHandlers(configData, proxyServer)
@@ -189,17 +150,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Register SlackBot handlers (requires Kubernetes mode)
 	registerSlackBotHandlers(configData, proxyServer)
 
-	// Start Slack Socket Mode manager (requires Kubernetes mode)
-	startSlackSocketManager(configData, proxyServer)
-
 	// Register MCP handler
 	registerMCPHandler(proxyServer, port)
-
-	// Register session manager handler (small-cluster / forwarding mode)
-	registerSessionManagerHandlers(configData, proxyServer)
-
-	// Start outbound session manager allocator when configured.
-	startSessionManagerAllocator(workerCtx, configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -213,23 +165,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	<-quit
 
 	log.Println("Shutdown signal received, shutting down gracefully...")
-	cancelWorkers()
-
-	// Stop schedule worker if running
-	workerMu.Lock()
-	if scheduleWorker != nil {
-		log.Printf("Stopping schedule worker...")
-		scheduleWorker.Stop()
-	}
-	if cleanupWorker != nil {
-		log.Printf("Stopping Slackbot cleanup worker...")
-		cleanupWorker.Stop()
-	}
-	if stockWorker != nil {
-		log.Printf("Stopping stock inventory worker...")
-		stockWorker.Stop()
-	}
-	workerMu.Unlock()
+	cancelServer()
 
 	// Create a context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

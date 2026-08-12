@@ -38,9 +38,8 @@ assert_contains 'helm.sh/resource-policy: keep' "$TMP_DIR/backend-default.yaml"
 assert_contains 'value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-default.yaml"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
-assert_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
-assert_contains 'name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
-assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: PersistentVolumeClaim$' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: scia' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: asset' "$TMP_DIR/ccplant-default.yaml"
@@ -88,11 +87,14 @@ assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --skip-schema-validation \
   --set kubernetesSession.enabled=false \
-  --set scheduleWorker.enabled=false \
-  --set slackbotCleanupWorker.enabled=false \
-  --set stockInventoryWorker.enabled=true >"$TMP_DIR/backend-stock.yaml"
+  --set worker.enabled=true \
+  --set worker.schedule.enabled=false \
+  --set worker.slackbotCleanup.enabled=false \
+  --set worker.stockInventory.enabled=true >"$TMP_DIR/backend-stock.yaml"
 assert_contains 'resources: \["leases"\]' "$TMP_DIR/backend-stock.yaml"
 assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-stock.yaml"
+assert_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-stock.yaml"
+assert_contains 'args: \["worker"\]' "$TMP_DIR/backend-stock.yaml"
 
 # A shadow release reuses the stable control-plane Service and session RBAC
 # without trying to create duplicate fixed-name resources.

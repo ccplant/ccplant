@@ -1,0 +1,63 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-worker
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      {{- with .Values.worker.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "agentapi-proxy.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+        {{- with .Values.worker.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "agentapi-proxy.serviceAccountName" . }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/ccplant"]
+          args: ["worker"]
+          env:
+            - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ .Values.worker.schedule.enabled | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.schedule.checkInterval | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION, value: {{ .Values.worker.schedule.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE, value: {{ .Values.worker.schedule.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD, value: {{ .Values.worker.schedule.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED, value: {{ .Values.worker.slackbotCleanup.enabled | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL, value: {{ .Values.worker.slackbotCleanup.sessionTTL | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.slackbotCleanup.checkInterval | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL, value: {{ .Values.worker.slackbotCleanup.sessionTTLCheckInterval | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN, value: {{ .Values.worker.slackbotCleanup.dryRun | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED, value: {{ .Values.worker.stockInventory.enabled | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.stockInventory.checkInterval | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT, value: {{ .Values.worker.stockInventory.targetCount | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED, value: {{ .Values.worker.stockInventory.dockerEnabled | quote }}}
+            {{- with .Values.worker.env }}{{ toYaml . | nindent 12 }}{{- end }}
+          {{- with .Values.worker.envFrom }}
+          envFrom: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
