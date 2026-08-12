@@ -4,8 +4,8 @@ use std::process::Command;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 
-/// Environment variable that overrides the agentapi-proxy binary location.
-pub const BINARY_ENV: &str = "AGENTAPI_PROXY_NATIVE_BINARY";
+/// Environment variable that overrides the agentapi-proxy binary name or path.
+pub const BINARY_ENV: &str = "CCPLANT_BINARY_PATH";
 
 /// The executable name looked up on `PATH` when the env override is unset.
 pub const BINARY_NAME: &str = "agentapi-proxy";
@@ -16,7 +16,7 @@ const NATIVE_SUBCOMMAND: &str = "native";
 /// Resolve the agentapi-proxy binary path.
 ///
 /// Order of precedence:
-/// 1. `AGENTAPI_PROXY_NATIVE_BINARY` (absolute path, must exist).
+/// 1. `CCPLANT_BINARY_PATH` (path to an executable file).
 /// 2. The binary managed by `native install` on macOS.
 /// 3. `agentapi-proxy` looked up on `PATH`.
 ///
@@ -28,9 +28,9 @@ pub fn resolve_binary() -> Result<PathBuf, String> {
             return Err(format!("{BINARY_ENV} is set but empty"));
         }
         let path = PathBuf::from(trimmed);
-        if !path.exists() {
+        if !is_executable(&path) {
             return Err(format!(
-                "{BINARY_ENV} points at {:?} which does not exist",
+                "{BINARY_ENV} must point to an executable file; got {:?}",
                 path.display()
             ));
         }
@@ -213,6 +213,38 @@ pub async fn run_native_plain(
     }
 }
 
+/// Run an arbitrary set of arguments against the configured proxy binary.
+/// The bundled sidecar remains the default; setting `CCPLANT_BINARY_PATH`
+/// makes install/update/reset use the same override as dashboard queries.
+pub async fn run_binary_plain(
+    app: &AppHandle,
+    args: Vec<String>,
+) -> Result<(bool, String), String> {
+    if std::env::var_os(BINARY_ENV).is_none() {
+        let output = app
+            .shell()
+            .sidecar(BINARY_NAME)
+            .map_err(|e| format!("bundled {BINARY_NAME} is unavailable: {e}"))?
+            .args(args)
+            .output()
+            .await
+            .map_err(|e| format!("failed to execute bundled binary: {e}"))?;
+        return Ok((
+            output.status.success(),
+            output_message(&output.stdout, &output.stderr),
+        ));
+    }
+
+    let output = Command::new(resolve_binary()?)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to execute configured binary: {e}"))?;
+    Ok((
+        output.status.success(),
+        output_message(&output.stdout, &output.stderr),
+    ))
+}
+
 /// Run `native logs` with a bounded tail and return stdout.
 pub async fn run_native_logs(
     app: &AppHandle,
@@ -254,7 +286,9 @@ pub async fn run_native_logs(
     if let Some(name) = instance.filter(|name| !name.is_empty() && *name != "default") {
         cmd.arg("--instance").arg(name);
     }
-    let output = cmd.output().map_err(|e| format!("failed to execute: {e}"))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to execute: {e}"))?;
     if !output.status.success() {
         return Err(command_error("logs", &output.stdout, &output.stderr));
     }
