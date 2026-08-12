@@ -483,6 +483,27 @@ export default function PersonalSettingsPage() {
           </SettingsAccordion>
 
           <SettingsAccordion
+            title="Default Agent Type"
+            description="Choose the agent used when a personal session does not specify one"
+            defaultOpen={false}
+          >
+            <select
+              value={settings.default_agent_type || 'auto'}
+              onChange={(e) => setSettings((prev) => ({
+                ...prev,
+                default_agent_type: e.target.value as NonNullable<SettingsData['default_agent_type']>,
+              }))}
+              className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            >
+              <option value="auto">自動選択</option>
+              <option value="claude-acp">Claude ACP</option>
+              <option value="codex-acp">Codex ACP</option>
+              <option value="pi-ollama">Pi Ollama</option>
+              <option value="cursor">Cursor ACP</option>
+            </select>
+          </SettingsAccordion>
+
+          <SettingsAccordion
             title="AI Settings"
             description="Configure AI providers and models"
             defaultOpen

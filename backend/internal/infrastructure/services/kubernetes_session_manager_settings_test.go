@@ -780,6 +780,24 @@ func TestResolveAutoAgentType_UsesTeamDefaultWhenAgentTypeIsOmitted(t *testing.T
 	}
 }
 
+func TestResolveAutoAgentType_UsesPersonalDefaultWhenAgentTypeIsOmitted(t *testing.T) {
+	personalSettings := entities.NewSettings("test-user")
+	personalSettings.SetDefaultAgentType("codex-acp")
+	manager := &KubernetesSessionManager{
+		settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{
+			"test-user": personalSettings,
+		}},
+	}
+
+	got := manager.resolveAutoAgentType(context.Background(), &entities.RunServerRequest{
+		Scope:  entities.ScopeUser,
+		UserID: "test-user",
+	})
+	if got != "codex-acp" {
+		t.Fatalf("resolveAutoAgentType = %q, want codex-acp", got)
+	}
+}
+
 func TestResolveAutoAgentType_DefaultsToAutoWhenAgentTypeIsOmitted(t *testing.T) {
 	manager := &KubernetesSessionManager{}
 
