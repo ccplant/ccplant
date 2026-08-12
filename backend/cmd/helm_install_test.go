@@ -47,6 +47,83 @@ func TestControlPlaneCommandIsTopLevelNotHelmSubcommand(t *testing.T) {
 	}
 }
 
+func TestControlPlaneCommandIncludesGenerate(t *testing.T) {
+	command := newControlPlaneCommand()
+	generate, _, err := command.Find([]string{"generate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generate.Name() != "generate" {
+		t.Fatalf("command = %q", generate.Name())
+	}
+}
+
+type helmValuesRunner struct {
+	values string
+	args   []string
+}
+
+func (r *helmValuesRunner) Run(_ context.Context, stdout, _ io.Writer, name string, args ...string) error {
+	r.args = append([]string{name}, args...)
+	_, err := io.WriteString(stdout, r.values)
+	return err
+}
+
+func TestGenerateKubernetesInstallConfigFromHelmValuesAndSecret(t *testing.T) {
+	client := kubernetesfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-cookie", Namespace: "production"},
+		Data:       map[string][]byte{"key": []byte("existing-secret")},
+	})
+	runner := &helmValuesRunner{values: `
+global:
+  hostname: app.example.com
+  apiHostname: api.example.com
+  ingress:
+    className: nginx
+    tls:
+      enabled: true
+backend:
+  image:
+    tag: v1.2.3
+  kubernetesSession:
+    pvc:
+      enabled: true
+      storageClass: fast
+      storageSize: 25Gi
+frontend:
+  cookieEncryptionSecret:
+    secretName: custom-cookie
+    secretKey: key
+`}
+	cfg, err := generateKubernetesInstallConfig(context.Background(), client, runner, "production", "plant", "oci://example/chart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(runner.args, " "); got != "helm get values plant --namespace production --all --output yaml" {
+		t.Fatalf("helm command = %q", got)
+	}
+	if cfg.Metadata.Name != "plant" || cfg.Spec.Version != "1.2.3" || cfg.Spec.Frontend.Hostname != "app.example.com" || cfg.Spec.Backend.Hostname != "api.example.com" {
+		t.Fatalf("unexpected generated config: %#v", cfg)
+	}
+	if !cfg.Spec.TLS || !cfg.Spec.Persistence.Enabled || cfg.Spec.Persistence.Size != "25Gi" {
+		t.Fatalf("unexpected generated spec: %#v", cfg.Spec)
+	}
+	if cfg.Spec.Secrets.CookieEncryptionKey != "existing-secret" {
+		t.Fatalf("cookie key = %q", cfg.Spec.Secrets.CookieEncryptionKey)
+	}
+	if target := cfg.Target.Kubernetes; target.Namespace != "production" || target.IngressClass != "nginx" || target.StorageClass != "fast" || target.Chart != "oci://example/chart" {
+		t.Fatalf("unexpected target: %#v", target)
+	}
+}
+
+func TestGenerateKubernetesInstallConfigRequiresCookieSecret(t *testing.T) {
+	runner := &helmValuesRunner{values: `global: {hostname: app.example.com, apiHostname: api.example.com}`}
+	_, err := generateKubernetesInstallConfig(context.Background(), kubernetesfake.NewSimpleClientset(), runner, "ccplant", "ccplant", defaultCCPlantChart)
+	if err == nil || !strings.Contains(err.Error(), "read cookie Secret") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestDefaultInstallConfigSeparatesPortableSpecFromTarget(t *testing.T) {
 	cfg, err := defaultInstallConfig("kubernetes")
 	if err != nil {
@@ -200,7 +277,7 @@ func installTestClient(objects ...runtime.Object) kubernetes.Interface {
 }
 
 func defaultInstallOptions() *helmInstallOptions {
-	return &helmInstallOptions{release: "ccplant", namespace: "ccplant", chart: "chart", version: "1.2.3", hostname: "app.example.com", apiHostname: "api.example.com", ingressClass: "nginx", cookieSecretName: defaultCookieSecretName, cookieSecretKey: defaultCookieSecretKey, timeout: time.Minute, createNamespace: true, persistence: true}
+	return &helmInstallOptions{release: "ccplant", namespace: "ccplant", chart: "chart", version: "1.2.3", hostname: "app.example.com", apiHostname: "api.example.com", ingressClass: "nginx", cookieSecretName: defaultCookieSecretName, cookieSecretKey: defaultCookieSecretKey, persistenceSize: "10Gi", timeout: time.Minute, createNamespace: true, persistence: true}
 }
 
 func TestRunHelmInstallCreatesNamespaceSecretAndInstalls(t *testing.T) {
@@ -236,7 +313,7 @@ func TestGenerateInstallValuesBuildsCompleteBackendFrontendConfiguration(t *test
 		t.Fatalf("generateInstallValues: %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"backend:", "frontend:", "enabled: true", "storageClass: fast", "publicUrl: https://app.example.com", "ccplant-backend-tls", "ccplant-frontend-tls"} {
+	for _, want := range []string{"backend:", "frontend:", "enabled: true", "storageClass: fast", "storageSize: 10Gi", "publicUrl: https://app.example.com", "ccplant-backend-tls", "ccplant-frontend-tls"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("generated values missing %q:\n%s", want, text)
 		}

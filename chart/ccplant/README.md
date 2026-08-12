@@ -21,6 +21,20 @@ $EDITOR control-plane.yaml
 agentapi-proxy control-plane apply --file control-plane.yaml
 ```
 
+既存の Helm release から設定ファイルを生成する場合は `generate` を使います。Helm の
+実効 values とクラスタ内の Cookie 暗号化 Secret を読み取るため、出力ファイルは
+秘密情報を含み、パーミッション `0600` で新規作成されます。既存ファイルは上書きしません。
+
+```bash
+agentapi-proxy control-plane generate \
+  --namespace ccplant \
+  --release ccplant \
+  --output control-plane.yaml
+```
+
+別の chart registry を利用する場合は、再適用時に使う参照を `--chart` で指定できます。
+`export` は `generate` のエイリアスです。
+
 `spec.version`はccplantリリース全体のversionです。Kubernetesではumbrella chartと
 backend/frontend image、Composeでは両component imageへ同じversionを適用します。
 `control-plane init --version 0.1.0`でも指定できます。`latest`は開発用途向けで、
