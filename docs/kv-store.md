@@ -78,7 +78,7 @@ the server. Stop writes to the source deployment, then preview the application
 records and destination conflicts:
 
 ```bash
-agentapi-proxy kv-store migrate \
+ccplant kv-store migrate \
   --namespace agentapi-ui \
   --dry-run
 ```
@@ -129,7 +129,7 @@ normal idempotent rollouts.
 After migration, verify both directions with the configured store pair:
 
 ```bash
-agentapi-proxy kv-store verify \
+ccplant kv-store verify \
   --namespace agentapi-ui \
   --output text
 ```
@@ -143,7 +143,7 @@ For local development, a server is not required. A local SQLite-compatible
 libSQL file can be used directly:
 
 ```bash
-agentapi-proxy kv-store migrate \
+ccplant kv-store migrate \
   --namespace agentapi-ui-dev \
   --database-url "file:///tmp/agentapi-kv.db" \
   --dry-run

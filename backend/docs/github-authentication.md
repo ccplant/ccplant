@@ -316,7 +316,7 @@ GitHub authentication failed: failed to get user info: GitHub API returned statu
 詳細なログを出力するには、verbose フラグを使用します：
 
 ```bash
-agentapi-proxy server -v --config config.json
+ccplant server -v --config config.json
 ```
 
 ### 設定の検証
@@ -328,7 +328,7 @@ agentapi-proxy server -v --config config.json
 cat config.json | jq .
 
 # 設定ロードテスト
-agentapi-proxy server --config config.json --dry-run
+ccplant server --config config.json --dry-run
 ```
 
 ## セキュリティのベストプラクティス

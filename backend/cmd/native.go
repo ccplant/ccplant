@@ -256,7 +256,7 @@ func nativeInstallPathsFor(goos, instance, configOverride string) (nativeInstall
 	isDefault := instance == nativeDefaultInstance
 	if goos == "linux" {
 		var configDir, credentials, state, logDir string
-		binary := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+		binary := "/usr/local/libexec/agentapi-proxy/ccplant"
 		if isDefault {
 			configDir = "/etc/agentapi-native"
 			credentials = "/etc/agentapi-native/credentials.json"
@@ -292,7 +292,7 @@ func nativeInstallPathsFor(goos, instance, configOverride string) (nativeInstall
 		if configOverride != "" {
 			config = configOverride
 		}
-		return nativeInstallPaths{config: config, credentials: filepath.Join(base, "credentials.json"), state: filepath.Join(base, "state"), binary: filepath.Join(base, "bin", "agentapi-proxy"), service: filepath.Join(home, "Library", "LaunchAgents", nativeServiceNameFor(goos, instance)+".plist"), logDir: logDir}, nil
+		return nativeInstallPaths{config: config, credentials: filepath.Join(base, "credentials.json"), state: filepath.Join(base, "state"), binary: filepath.Join(base, "bin", "ccplant"), service: filepath.Join(home, "Library", "LaunchAgents", nativeServiceNameFor(goos, instance)+".plist"), logDir: logDir}, nil
 	}
 	return nativeInstallPaths{}, fmt.Errorf("unsupported OS: %s", goos)
 }
@@ -400,7 +400,7 @@ func renderNativeSystemdUnit(paths nativeInstallPaths, environment map[string]st
 		value := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%").Replace(environment[key])
 		fmt.Fprintf(&env, "Environment=\"%s=%s\"\n", key, value)
 	}
-	return fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\n%sExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", env.String(), paths.binary, paths.config)
+	return fmt.Sprintf("[Unit]\nDescription=ccplant native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\n%sExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", env.String(), paths.binary, paths.config)
 }
 
 func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]string) string {

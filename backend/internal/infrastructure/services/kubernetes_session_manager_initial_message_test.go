@@ -253,7 +253,7 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 
 	// Verify the main container uses agent-provisioner command.
 	mainContainer := podSpec.Containers[0]
-	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "agentapi-proxy" {
+	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "ccplant" {
 		t.Errorf("Expected main container command [agentapi-proxy], got %v", mainContainer.Command)
 	}
 	if len(mainContainer.Args) == 0 || mainContainer.Args[0] != "agent-provisioner" {

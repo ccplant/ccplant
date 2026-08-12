@@ -5685,7 +5685,7 @@
           },
           "cycle_message": {
             "type": "string",
-            "description": "Message to send to the session after each Claude stop event. When set, a Stop hook is injected into the session's Claude settings that runs `agentapi-proxy client cycle <message>`. The cycle continues until /tmp/check/CYCLE_OK exists or cycle_max_count is reached.",
+            "description": "Message to send to the session after each Claude stop event. When set, a Stop hook is injected into the session's Claude settings that runs `ccplant client cycle <message>`. The cycle continues until /tmp/check/CYCLE_OK exists or cycle_max_count is reached.",
             "example": "Please continue the task"
           },
           "cycle_max_count": {

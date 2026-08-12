@@ -42,13 +42,13 @@ Use --dry-run to preview what would be deleted without making any changes.
 
 Examples:
   # Preview sessions older than 7 days (no changes)
-  agentapi-proxy helpers delete-expired-sessions --namespace agentapi-ui --days 7 --dry-run
+  ccplant helpers delete-expired-sessions --namespace agentapi-ui --days 7 --dry-run
 
   # Delete sessions older than 30 days
-  agentapi-proxy helpers delete-expired-sessions --namespace agentapi-ui --days 30
+  ccplant helpers delete-expired-sessions --namespace agentapi-ui --days 30
 
   # Delete sessions older than 14 days with verbose output
-  agentapi-proxy helpers delete-expired-sessions --namespace agentapi-ui --days 14 --verbose`,
+  ccplant helpers delete-expired-sessions --namespace agentapi-ui --days 14 --verbose`,
 	RunE: runDeleteExpiredSessions,
 }
 

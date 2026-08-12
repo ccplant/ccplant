@@ -79,13 +79,13 @@ agentapi-proxy settings. Use --dry-run to preview before deleting.
 
 Examples:
   # Step 1: Verify settings data is complete (no deletions)
-  agentapi-proxy helpers migrate --namespace agentapi-ui
+  ccplant helpers migrate --namespace agentapi-ui
 
   # Step 2: Preview what would be deleted
-  agentapi-proxy helpers migrate --namespace agentapi-ui --cleanup --dry-run
+  ccplant helpers migrate --namespace agentapi-ui --cleanup --dry-run
 
   # Step 3: Delete derived Secrets after verification
-  agentapi-proxy helpers migrate --namespace agentapi-ui --cleanup`,
+  ccplant helpers migrate --namespace agentapi-ui --cleanup`,
 	RunE: runMigrate,
 }
 

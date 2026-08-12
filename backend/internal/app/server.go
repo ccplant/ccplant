@@ -1514,21 +1514,21 @@ func buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID strin
 ## タスク
 
 1. ドラフトメモリ（ID: %s）の内容を取得する:
-   agentapi-proxy client memory get %s
+   ccplant client memory get %s
 
 2. 既存の永続メモリ一覧を取得する:
-   agentapi-proxy client memory list %s --scope %s --exclude-tag draft=true
+   ccplant client memory list %s --scope %s --exclude-tag draft=true
    （CLAUDE.md にすでに注入済みのメモリも参照してください）
 
 3. ドラフトの内容を分析・要約し、既存メモリとの重複を避けながら統合する。
    統合した内容を /tmp/integrated_memory.md に保存する。
 
 4. 統合した内容でメモリを作成または更新する:
-   agentapi-proxy client memory upsert %s --scope %s --title "統合メモリ" --content-file /tmp/integrated_memory.md
+   ccplant client memory upsert %s --scope %s --title "統合メモリ" --content-file /tmp/integrated_memory.md
    （既存メモリがある場合は更新、ない場合は新規作成）
 
 5. 作業完了後、必ずドラフトメモリ（ID: %s）を削除する:
-   agentapi-proxy client memory delete %s
+   ccplant client memory delete %s
 
 重要: ステップ5のドラフトメモリ削除は必ず実行してください。すべての作業が完了したら、その旨を報告してください。`, draftMemoryID, draftMemoryID, memTagFlags, scope, memKeyFlags, scope, draftMemoryID, draftMemoryID)
 }

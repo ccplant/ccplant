@@ -24,7 +24,7 @@ ls -la bin/ || echo "bin directory not found"
 
 # Check if binary exists in possible locations
 BINARY_PATH=""
-for path in "./bin/agentapi-proxy" "bin/agentapi-proxy" "../bin/agentapi-proxy"; do
+for path in "./bin/ccplant" "bin/ccplant" "../bin/ccplant"; do
     if [ -f "$path" ]; then
         echo "Found binary at: $path"
         BINARY_PATH="$path"
@@ -33,7 +33,7 @@ for path in "./bin/agentapi-proxy" "bin/agentapi-proxy" "../bin/agentapi-proxy";
 done
 
 if [ -z "$BINARY_PATH" ]; then
-    echo "Error: agentapi-proxy binary not found in any of: ./bin/agentapi-proxy, bin/agentapi-proxy, ../bin/agentapi-proxy"
+    echo "Error: ccplant binary not found in any of: ./bin/ccplant, bin/ccplant, ../bin/ccplant"
     echo "Please run 'make build' first."
     exit 1
 fi

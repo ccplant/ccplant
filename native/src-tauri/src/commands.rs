@@ -48,7 +48,7 @@ fn parse_json<T: DeserializeOwned>(stdout: &[u8], sub: &str) -> Result<T, String
         .map_err(|e| format!("failed to parse `native {sub} --json` output: {e}"))
 }
 
-/// `agentapi-proxy native status --json`.
+/// `ccplant native status --json`.
 #[tauri::command]
 pub async fn native_status(
     app: AppHandle,
@@ -58,7 +58,7 @@ pub async fn native_status(
     parse_json::<NativeStatus>(&stdout, "status")
 }
 
-/// `agentapi-proxy native sessions --json`.
+/// `ccplant native sessions --json`.
 #[tauri::command]
 pub async fn native_sessions(
     app: AppHandle,
@@ -94,7 +94,7 @@ pub async fn native_logs(
     run_native_logs(&app, instance.as_deref(), session_id, daemon, tail).await
 }
 
-/// `agentapi-proxy native doctor --json`.
+/// `ccplant native doctor --json`.
 ///
 #[tauri::command]
 pub async fn native_doctor(
@@ -105,7 +105,7 @@ pub async fn native_doctor(
     parse_json::<DoctorResult>(&stdout, "doctor")
 }
 
-/// `agentapi-proxy native restart`.
+/// `ccplant native restart`.
 #[tauri::command]
 pub async fn native_restart(
     app: AppHandle,
@@ -135,8 +135,8 @@ pub async fn native_update(
     let args = update_args(instance.as_deref());
     let output = app
         .shell()
-        .sidecar("agentapi-proxy")
-        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
+        .sidecar("ccplant")
+        .map_err(|e| format!("bundled ccplant is unavailable: {e}"))?
         .args(args)
         .output()
         .await
@@ -236,8 +236,8 @@ pub async fn native_install(
     }
     let output = app
         .shell()
-        .sidecar("agentapi-proxy")
-        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
+        .sidecar("ccplant")
+        .map_err(|e| format!("bundled ccplant is unavailable: {e}"))?
         .args(args)
         .output()
         .await
@@ -416,8 +416,8 @@ pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<Comma
     let args = uninstall_args(request.force, &request.instance);
     let output = app
         .shell()
-        .sidecar("agentapi-proxy")
-        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
+        .sidecar("ccplant")
+        .map_err(|e| format!("bundled ccplant is unavailable: {e}"))?
         .args(args)
         .output()
         .await

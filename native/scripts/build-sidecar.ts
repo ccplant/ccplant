@@ -8,7 +8,7 @@ const outputDir = join(nativeDir, "src-tauri/binaries");
 const requestedTarget = process.argv[2] ?? process.env.TAURI_ENV_TARGET_TRIPLE ?? process.env.TARGET;
 const target = requestedTarget || hostTarget();
 const goTarget = targetToGo(target);
-const output = join(outputDir, `agentapi-proxy-${target}`);
+const output = join(outputDir, `ccplant-${target}`);
 
 await mkdir(outputDir, { recursive: true });
 

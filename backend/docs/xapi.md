@@ -7,7 +7,7 @@ This document describes the extended API (xapi) implementation for agentapi-prox
 ## API Specification
 
 ### Base URL
-The agentapi-proxy server runs on port 8080 by default, providing access to both proxy management and forwarded agentapi endpoints.
+The ccplant server runs on port 8080 by default, providing access to both proxy management and forwarded agentapi endpoints.
 
 ### Authentication
 Currently, no authentication is required for API access.

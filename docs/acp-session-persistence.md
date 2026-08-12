@@ -221,7 +221,7 @@ bucket versioning と server-side encryption を有効化する。
 
 ### Claude
 
-Claude の Stop hook が `agentapi-proxy client backup-session-state` を呼ぶ。CLI は main / subagent
+Claude の Stop hook が `ccplant client backup-session-state` を呼ぶ。CLI は main / subagent
 transcript と `.acp-session-id` だけを archive にし、provisioner token で backend の内部 API
 へ送る。S3 credentials は session Pod に渡さず、backend が Garage へ upload する。
 

@@ -30,16 +30,16 @@ Connection:
 
 Typical workflow:
   # 1. List existing schedules
-  agentapi-proxy client schedule list
+  ccplant client schedule list
 
   # 2. Inspect a specific schedule
-  agentapi-proxy client schedule get <id> > schedule.json
+  ccplant client schedule get <id> > schedule.json
 
   # 3. Edit schedule.json, then apply only the changed fields
-  echo '{"status":"paused"}' | agentapi-proxy client schedule apply <id>
+  echo '{"status":"paused"}' | ccplant client schedule apply <id>
 
   # 4. Delete when no longer needed
-  agentapi-proxy client schedule delete <id>`,
+  ccplant client schedule delete <id>`,
 }
 
 var scheduleListCmd = &cobra.Command{
@@ -53,9 +53,9 @@ Filters (all optional):
   --team-id team identifier (required when --scope=team)
 
 Examples:
-  agentapi-proxy client schedule list
-  agentapi-proxy client schedule list --status active
-  agentapi-proxy client schedule list --scope team --team-id myorg/myteam`,
+  ccplant client schedule list
+  ccplant client schedule list --status active
+  ccplant client schedule list --scope team --team-id myorg/myteam`,
 	Run: runScheduleList,
 }
 
@@ -67,10 +67,10 @@ var scheduleGetCmd = &cobra.Command{
 The output can be redirected to a file, edited, and applied back with 'apply'.
 
 Examples:
-  agentapi-proxy client schedule get abc123
-  agentapi-proxy client schedule get abc123 > schedule.json
+  ccplant client schedule get abc123
+  ccplant client schedule get abc123 > schedule.json
   # Then edit schedule.json and run:
-  agentapi-proxy client schedule apply abc123 --file schedule.json`,
+  ccplant client schedule apply abc123 --file schedule.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runScheduleGet,
 }
@@ -99,14 +99,14 @@ Example JSON for a recurring schedule (cron):
 
 Examples:
   # From a file
-  agentapi-proxy client schedule create --file schedule.json
+  ccplant client schedule create --file schedule.json
 
   # From stdin
-  cat schedule.json | agentapi-proxy client schedule create
+  cat schedule.json | ccplant client schedule create
 
   # Inline one-time schedule
   echo '{"name":"daily-report","scheduled_at":"2026-03-25T09:00:00Z"}' \
-    | agentapi-proxy client schedule create`,
+    | ccplant client schedule create`,
 	Run: runScheduleCreate,
 }
 
@@ -120,19 +120,19 @@ Omitted fields are left unchanged on the server.
 Reads JSON from a file (--file) or from stdin when --file is omitted or set to "-".
 
 Typical workflow:
-  1. agentapi-proxy client schedule get <id> > schedule.json
+  1. ccplant client schedule get <id> > schedule.json
   2. Edit schedule.json (e.g. change status to "paused")
-  3. agentapi-proxy client schedule apply <id> --file schedule.json
+  3. ccplant client schedule apply <id> --file schedule.json
 
 Examples:
   # Pause a schedule (only status is changed)
-  echo '{"status":"paused"}' | agentapi-proxy client schedule apply abc123
+  echo '{"status":"paused"}' | ccplant client schedule apply abc123
 
   # Update cron expression only
-  echo '{"cron_expr":"0 10 * * 1-5"}' | agentapi-proxy client schedule apply abc123
+  echo '{"cron_expr":"0 10 * * 1-5"}' | ccplant client schedule apply abc123
 
   # Apply a full JSON file (unchanged fields are preserved on the server)
-  agentapi-proxy client schedule apply abc123 --file schedule.json`,
+  ccplant client schedule apply abc123 --file schedule.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runScheduleApply,
 }
@@ -143,10 +143,10 @@ var scheduleDeleteCmd = &cobra.Command{
 	Long: `Delete a schedule by ID. This action is irreversible.
 
 To find the ID, run:
-  agentapi-proxy client schedule list
+  ccplant client schedule list
 
 Examples:
-  agentapi-proxy client schedule delete abc123`,
+  ccplant client schedule delete abc123`,
 	Args: cobra.ExactArgs(1),
 	Run:  runScheduleDelete,
 }
@@ -206,7 +206,7 @@ func runScheduleGet(cmd *cobra.Command, args []string) {
 	result, err := c.GetSchedule(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting schedule %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: agentapi-proxy client schedule list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: ccplant client schedule list\n")
 		os.Exit(1)
 	}
 
@@ -218,7 +218,7 @@ func runScheduleCreate(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Hint: provide JSON via stdin or use --file path/to/schedule.json\n")
-		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-schedule\",\"cron_expr\":\"0 9 * * 1-5\"}' | agentapi-proxy client schedule create\n")
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-schedule\",\"cron_expr\":\"0 9 * * 1-5\"}' | ccplant client schedule create\n")
 		os.Exit(1)
 	}
 
@@ -245,7 +245,7 @@ func runScheduleApply(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Hint: provide the patch as JSON via stdin or use --file path/to/patch.json\n")
-		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | agentapi-proxy client schedule apply %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | ccplant client schedule apply %s\n", args[0])
 		os.Exit(1)
 	}
 
@@ -260,7 +260,7 @@ func runScheduleApply(cmd *cobra.Command, args []string) {
 	result, err := c.ApplySchedule(ctx, args[0], data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error applying schedule %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client schedule list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client schedule list\n")
 		os.Exit(1)
 	}
 
@@ -278,7 +278,7 @@ func runScheduleDelete(cmd *cobra.Command, args []string) {
 
 	if err := c.DeleteSchedule(ctx, args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting schedule %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client schedule list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client schedule list\n")
 		os.Exit(1)
 	}
 

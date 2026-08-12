@@ -41,7 +41,7 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  prune-stale-resources - Delete stale Kubernetes resources for sessions missing their settings secret")
 		fmt.Println("  delete-expired-sessions - Delete Kubernetes resources for sessions created more than N days ago")
 		fmt.Println("  prune-orphaned-resources - Delete stale Kubernetes resources left behind after a session workload was deleted")
-		fmt.Println("Use 'agentapi-proxy helpers --help' for more information about available subcommands.")
+		fmt.Println("Use 'ccplant helpers --help' for more information about available subcommands.")
 	},
 }
 
@@ -74,7 +74,7 @@ The generated API key includes:
 - Creation and expiration timestamps
 
 Usage:
-  agentapi-proxy helpers generate-token --output-path /path/to/api_keys.json --user-id alice --role user`,
+  ccplant helpers generate-token --output-path /path/to/api_keys.json --user-id alice --role user`,
 	RunE: runGenerateToken,
 }
 
@@ -114,21 +114,21 @@ Steps:
 - setup-git: Run gh auth setup-git
 
 Usage:
-  agentapi-proxy helpers setup-gh                    # Auto-detect repository from git remote
-  agentapi-proxy helpers setup-gh --repo-fullname owner/repo
-  agentapi-proxy helpers setup-gh --step get-token
-  agentapi-proxy helpers setup-gh --step auth-login
-  agentapi-proxy helpers setup-gh --step setup-git
+  ccplant helpers setup-gh                    # Auto-detect repository from git remote
+  ccplant helpers setup-gh --repo-fullname owner/repo
+  ccplant helpers setup-gh --step get-token
+  ccplant helpers setup-gh --step auth-login
+  ccplant helpers setup-gh --step setup-git
   
 Examples:
   # Using personal access token
   export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
-  agentapi-proxy helpers setup-gh
+  ccplant helpers setup-gh
   
   # Using GitHub App
   export GITHUB_APP_ID=123456
   export GITHUB_APP_PEM_PATH=/path/to/private-key.pem
-  agentapi-proxy helpers setup-gh`,
+  ccplant helpers setup-gh`,
 	RunE: runSetupGH,
 }
 
@@ -450,16 +450,16 @@ The command requires VAPID configuration to be set via environment variables:
 
 Examples:
   # Send to specific user
-  agentapi-proxy helpers send-notification --user-id "user123" --title "Hello" --body "Test message"
+  ccplant helpers send-notification --user-id "user123" --title "Hello" --body "Test message"
   
   # Send to all users in a session
-  agentapi-proxy helpers send-notification --session-id "session456" --title "Session Update" --body "Status changed"
+  ccplant helpers send-notification --session-id "session456" --title "Session Update" --body "Status changed"
   
   # Send to all GitHub users
-  agentapi-proxy helpers send-notification --user-type "github" --title "Announcement" --body "New feature available"
+  ccplant helpers send-notification --user-type "github" --title "Announcement" --body "New feature available"
   
   # Dry run to see who would receive the notification
-  agentapi-proxy helpers send-notification --user-id "user123" --title "Test" --body "Test" --dry-run`,
+  ccplant helpers send-notification --user-id "user123" --title "Test" --body "Test" --dry-run`,
 	RunE: runSendNotification,
 }
 
@@ -587,12 +587,12 @@ ${VAR:-default} syntax when --expand-env is specified.
 
 Examples:
   # Merge base, team, and user configs
-  agentapi-proxy helpers merge-mcp-config \
+  ccplant helpers merge-mcp-config \
     --input-dirs /mcp-config/base,/mcp-config/team,/mcp-config/user \
     --output /mcp-config/merged.json
 
   # With environment variable expansion
-  agentapi-proxy helpers merge-mcp-config \
+  ccplant helpers merge-mcp-config \
     --input-dirs /mcp-config/base,/mcp-config/user \
     --output /mcp-config/merged.json \
     --expand-env`,
@@ -688,10 +688,10 @@ The credentials file should be the mounted credentials.json from the agentapi-ag
 
 Examples:
   # Basic usage with defaults
-  agentapi-proxy helpers sync
+  ccplant helpers sync
 
   # Specify all paths and register marketplaces
-  agentapi-proxy helpers sync \
+  ccplant helpers sync \
     --settings-file /settings-config/settings.json \
     --output-dir /home/agentapi \
     --credentials-file /credentials-config/credentials.json \
@@ -783,12 +783,12 @@ Each directory should contain one or more JSON files with the settings structure
 
 Examples:
   # Merge base, team, and user configs
-  agentapi-proxy helpers merge-settings-config \
+  ccplant helpers merge-settings-config \
     --input-dirs /settings-config/base,/settings-config/team/0,/settings-config/user \
     --output /settings-config/settings.json
 
   # With verbose output
-  agentapi-proxy helpers merge-settings-config \
+  ccplant helpers merge-settings-config \
     --input-dirs /settings-config/base,/settings-config/user \
     --output /settings-config/settings.json \
     --verbose`,
@@ -877,10 +877,10 @@ init containers with a single unified step.
 
 Examples:
   # Use defaults (reads /session-settings/settings.yaml)
-  agentapi-proxy helpers setup
+  ccplant helpers setup
 
   # Custom paths
-  agentapi-proxy helpers setup \
+  ccplant helpers setup \
     --input /session-settings/settings.yaml \
     --credentials-file /credentials-config/credentials.json \
     --notification-subscriptions /notification-subscriptions-source \

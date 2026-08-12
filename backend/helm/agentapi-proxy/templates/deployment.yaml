@@ -68,13 +68,13 @@ spec:
           args:
             - -ec
             - >-
-              /usr/local/bin/agentapi-proxy kv-store migrate
+              /usr/local/bin/ccplant kv-store migrate
               --namespace {{ .Release.Namespace | quote }}
               --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
               {{- if (dig "kvStore" "migration" "dryRun" false .Values.config) }} --dry-run{{- end }}
               {{- if (dig "kvStore" "migration" "overwrite" false .Values.config) }} --overwrite{{- end }}
               {{- if not (dig "kvStore" "migration" "dryRun" false .Values.config) }}
-              && /usr/local/bin/agentapi-proxy kv-store verify
+              && /usr/local/bin/ccplant kv-store verify
               --namespace {{ .Release.Namespace | quote }}
               --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
               {{- end }}

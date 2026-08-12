@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Mirrors `nativeStatusOutput` in `backend/cmd/native.go`.
-/// Produced by `agentapi-proxy native status --json`.
+/// Produced by `ccplant native status --json`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct NativeStatus {
@@ -38,7 +38,7 @@ pub struct NativeInstance {
 }
 
 /// Mirrors `nativeSessionListEntry` in `backend/cmd/native.go`.
-/// Produced by `agentapi-proxy native sessions --json`.
+/// Produced by `ccplant native sessions --json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeSession {
     pub id: String,

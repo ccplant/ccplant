@@ -65,7 +65,7 @@ native/
 Installation requires a short-lived one-time enrollment credential:
 
 ```bash
-agentapi-proxy native install \
+ccplant native install \
   --upstream https://parent.example.com \
   --registration-token '<one-time-token>'
 ```
@@ -100,7 +100,7 @@ the sidecar is unavailable, the fallback lookup order is:
 
 1. The macOS binary managed by `native install` under
    `~/Library/Application Support/agentapi-native/bin/`.
-2. `agentapi-proxy` looked up on `PATH`.
+2. `ccplant` looked up on `PATH`.
 
 The first-run form invokes `native install` with the bundled sidecar. Its
 one-time registration token is passed only to that child process and is not written to GUI settings;

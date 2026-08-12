@@ -620,7 +620,7 @@ func referencedSecretsFingerprint(ctx context.Context, client kubernetes.Interfa
 }
 
 func migrationCommands(o *helmMigratePlanOptions, legacy int) []string {
-	commands := []string{fmt.Sprintf("helm upgrade --install %s %s --namespace %s --version %s --values %s --wait", o.targetRelease, o.chart, o.namespace, o.version, o.valuesOut), fmt.Sprintf("agentapi-proxy helm migrate verify --namespace %s --backend-release %s --target-release %s", o.namespace, o.backendRelease, o.targetRelease), fmt.Sprintf("kubectl -n %s patch service control --type merge -p '{\"spec\":{\"selector\":{\"app.kubernetes.io/name\":\"backend\",\"app.kubernetes.io/instance\":\"%s\",\"app.kubernetes.io/component\":\"proxy\"}}}'", o.namespace, o.targetRelease)}
+	commands := []string{fmt.Sprintf("helm upgrade --install %s %s --namespace %s --version %s --values %s --wait", o.targetRelease, o.chart, o.namespace, o.version, o.valuesOut), fmt.Sprintf("ccplant helm migrate verify --namespace %s --backend-release %s --target-release %s", o.namespace, o.backendRelease, o.targetRelease), fmt.Sprintf("kubectl -n %s patch service control --type merge -p '{\"spec\":{\"selector\":{\"app.kubernetes.io/name\":\"backend\",\"app.kubernetes.io/instance\":\"%s\",\"app.kubernetes.io/component\":\"proxy\"}}}'", o.namespace, o.targetRelease)}
 	if legacy > 0 {
 		commands = append(commands, fmt.Sprintf("# Keep Service/%s until %d legacy session(s) are drained", o.backendRelease, legacy))
 	}

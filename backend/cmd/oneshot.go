@@ -15,6 +15,6 @@ var OneshotCmd = &cobra.Command{
 		fmt.Println("Available oneshot commands:")
 		fmt.Println("  migrate-credentials - Migrate legacy credential Secrets into agentapi-agent-files-* format")
 		fmt.Println("")
-		fmt.Println("Use 'agentapi-proxy oneshot <command> --help' for more information.")
+		fmt.Println("Use 'ccplant oneshot <command> --help' for more information.")
 	},
 }

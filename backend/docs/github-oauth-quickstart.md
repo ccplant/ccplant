@@ -59,7 +59,7 @@ docker run -p 8080:8080 \
   ghcr.io/takutakahashi/agentapi-proxy:latest server
 
 # または、ビルド済みバイナリを使用
-./bin/agentapi-proxy server --config config.json --port 8080
+./bin/ccplant server --config config.json --port 8080
 ```
 
 ## 動作確認
@@ -494,10 +494,10 @@ async function refreshSession() {
 
 ```bash
 # 詳細なログを有効化
-./bin/agentapi-proxy server --config config.json --verbose
+./bin/ccplant server --config config.json --verbose
 
 # または環境変数で
-DEBUG=true ./bin/agentapi-proxy server
+DEBUG=true ./bin/ccplant server
 ```
 
 ### ログの確認

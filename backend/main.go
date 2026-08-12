@@ -10,7 +10,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "agentapi-proxy",
+	Use:   "ccplant",
 	Short: "AgentAPI Proxy Server",
 	Long:  "A reverse proxy server for AgentAPI that routes requests based on configuration",
 }

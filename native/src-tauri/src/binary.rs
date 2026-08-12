@@ -8,7 +8,7 @@ use tauri_plugin_shell::ShellExt;
 pub const BINARY_ENV: &str = "AGENTAPI_PROXY_NATIVE_BINARY";
 
 /// The executable name looked up on `PATH` when the env override is unset.
-pub const BINARY_NAME: &str = "agentapi-proxy";
+pub const BINARY_NAME: &str = "ccplant";
 
 /// The `native` subcommand used by every dashboard query.
 const NATIVE_SUBCOMMAND: &str = "native";
@@ -18,7 +18,7 @@ const NATIVE_SUBCOMMAND: &str = "native";
 /// Order of precedence:
 /// 1. `AGENTAPI_PROXY_NATIVE_BINARY` (absolute path, must exist).
 /// 2. The binary managed by `native install` on macOS.
-/// 3. `agentapi-proxy` looked up on `PATH`.
+/// 3. `ccplant` looked up on `PATH`.
 ///
 /// Returns a descriptive error so the UI can render guidance.
 pub fn resolve_binary() -> Result<PathBuf, String> {

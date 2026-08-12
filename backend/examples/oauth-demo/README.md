@@ -25,7 +25,7 @@ export GITHUB_CLIENT_SECRET=your_client_secret_here
 
 ```bash
 # プロジェクトルートから
-./bin/agentapi-proxy server --config config.oauth.example.json --port 8080
+./bin/ccplant server --config config.oauth.example.json --port 8080
 ```
 
 ### 4. デモアプリケーションを開く

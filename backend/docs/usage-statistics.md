@@ -21,7 +21,7 @@ the database URL or token. When collection is enabled, both Secret references
 are required. They are exposed to the proxy as `AGENTAPI_USAGE_DATABASE_URL`
 and `AGENTAPI_USAGE_AUTH_TOKEN`.
 
-At every supported agent Stop hook, `agentapi-proxy client report-usage` reads
+At every supported agent Stop hook, `ccplant client report-usage` reads
 the local transcript, extracts response usage metadata, and submits it to the
 proxy. Prompt and response bodies are not submitted. Event identifiers are
 stable, so replaying a transcript does not count the same response twice.

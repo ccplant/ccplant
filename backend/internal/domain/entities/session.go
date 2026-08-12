@@ -96,7 +96,7 @@ type SessionParams struct {
 	ManagerID string `json:"manager_id,omitempty"`
 	// CycleMessage is the message to send to the session after each Claude stop event.
 	// When set, a Stop hook is injected into the session's Claude settings that runs
-	// `agentapi-proxy client cycle <message>`. The cycle continues until
+	// `ccplant client cycle <message>`. The cycle continues until
 	// /tmp/check/CYCLE_OK exists or CycleMaxCount is reached.
 	CycleMessage string `json:"cycle_message,omitempty"`
 	// CycleMaxCount is the maximum number of cycles to run. 0 means unlimited.

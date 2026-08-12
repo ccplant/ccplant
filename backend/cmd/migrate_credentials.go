@@ -46,13 +46,13 @@ Phase 2 (--cleanup): Deletes the legacy Secrets after migration.
 
 Examples:
   # Preview migration (no changes)
-  agentapi-proxy helpers migrate-credentials --namespace agentapi-ui
+  ccplant helpers migrate-credentials --namespace agentapi-ui
 
   # Execute migration (write new Secrets)
-  agentapi-proxy helpers migrate-credentials --namespace agentapi-ui --dry-run=false
+  ccplant helpers migrate-credentials --namespace agentapi-ui --dry-run=false
 
   # Execute migration and delete legacy Secrets
-  agentapi-proxy helpers migrate-credentials --namespace agentapi-ui --dry-run=false --cleanup`,
+  ccplant helpers migrate-credentials --namespace agentapi-ui --dry-run=false --cleanup`,
 	RunE: runMigrateCredentials,
 }
 

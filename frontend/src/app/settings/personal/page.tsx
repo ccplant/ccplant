@@ -250,7 +250,7 @@ export default function PersonalSettingsPage() {
       `SESSION_MANAGER_CONNECTION_TOKEN=${token}`,
       `SESSION_MANAGER_HMAC_SECRET=${token}`,
       'AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL=<external-session-manager-url>',
-      'agentapi-proxy server',
+      'ccplant server',
     ].join(' ')
     await navigator.clipboard.writeText(command)
     setCopiedSecretId(`${id}:command`)

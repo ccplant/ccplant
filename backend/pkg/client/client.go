@@ -54,7 +54,7 @@ func (c *Client) ReportUsage(ctx context.Context, batch *entities.UsageEventBatc
 // RequestMiddleware is a function that modifies an HTTP request
 type RequestMiddleware func(*http.Request) error
 
-// Client represents an agentapi-proxy client
+// Client represents an ccplant client
 type Client struct {
 	baseURL     string
 	httpClient  HTTPClient
@@ -64,7 +64,7 @@ type Client struct {
 // ClientOption is a function that configures a Client
 type ClientOption func(*Client)
 
-// NewClient creates a new agentapi-proxy client with options
+// NewClient creates a new ccplant client with options
 func NewClient(baseURL string, opts ...ClientOption) *Client {
 	c := &Client{
 		baseURL:     baseURL,

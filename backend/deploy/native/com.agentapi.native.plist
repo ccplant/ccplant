@@ -6,7 +6,7 @@
   <string>com.agentapi.native</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/agentapi-proxy</string>
+    <string>/usr/local/bin/ccplant</string>
     <string>native-session-manager</string>
     <string>--listen</string><string>:8080</string>
     <string>--upstream-url</string><string>REPLACE_UPSTREAM_URL</string>

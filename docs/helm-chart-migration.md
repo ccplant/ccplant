@@ -134,13 +134,13 @@ runtime生成のsession PVCは残る。一方、Helm manifestに直接含まれ�
 
 ## サポートツール
 
-`agentapi-proxy helm migrate plan`と`agentapi-proxy helm migrate verify`はclusterを変更しない。
+`ccplant helm migrate plan`と`ccplant helm migrate verify`はclusterを変更しない。
 install、Service selector変更、uninstallは実行せず、診断結果と実行候補commandだけを出力する。
 
 実行例:
 
 ```bash
-agentapi-proxy helm migrate plan \
+ccplant helm migrate plan \
   --namespace agentapi-ui \
   --backend-release agentapi-proxy \
   --frontend-release agentapi-ui \
@@ -173,7 +173,7 @@ commandはoperatorが内容を確認して個別に実行する。
 shadow install後とcutover後には次を実行する。
 
 ```bash
-agentapi-proxy helm migrate verify \
+ccplant helm migrate verify \
   --namespace agentapi-ui \
   --backend-release agentapi-proxy \
   --target-release ccplant

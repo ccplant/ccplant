@@ -100,13 +100,13 @@ before it is considered orphaned. Terminal or deleting workloads do not wait.
 
 Examples:
   # Preview orphaned sessions (no changes)
-  agentapi-proxy helpers prune-orphaned-resources --namespace agentapi-ui --dry-run
+  ccplant helpers prune-orphaned-resources --namespace agentapi-ui --dry-run
 
   # Delete orphaned sessions
-  agentapi-proxy helpers prune-orphaned-resources --namespace agentapi-ui
+  ccplant helpers prune-orphaned-resources --namespace agentapi-ui
 
   # Delete with verbose output
-  agentapi-proxy helpers prune-orphaned-resources --namespace agentapi-ui --verbose`,
+  ccplant helpers prune-orphaned-resources --namespace agentapi-ui --verbose`,
 	RunE: runPruneOrphanedResources,
 }
 

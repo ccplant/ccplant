@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## コマンド
 
 ```bash
-make build          # バイナリのビルド (bin/agentapi-proxy)
+make build          # バイナリのビルド (bin/ccplant)
 make test           # テスト実行 (CGO_ENABLED=1, race detector 有効)
 make test-verbose PKG=./internal/app  # 特定パッケージを詳細出力でテスト
 make lint           # golangci-lint 実行 (gofmt も含む)
@@ -102,10 +102,10 @@ spec/             # OpenAPI 仕様 (spec/openapi.json) + 静的ファイル埋�
 1. **`make lint` を実行する** - コードの品質チェック
 2. **`make test` を実行する** - テストの実行
 3. **変更をブランチにプッシュし PR を作成する**
-4. **`agentapi-proxy client send-notification` で通知を送る**
+4. **`ccplant client send-notification` で通知を送る**
    - 例：
      ```bash
-     agentapi-proxy client send-notification \
+     ccplant client send-notification \
        --title "作業が完了しました" \
        --body "作業内容を確認してください" \
        --notify-session-id "$AGENTAPI_SESSION_ID"

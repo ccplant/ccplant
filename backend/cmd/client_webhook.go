@@ -31,16 +31,16 @@ Connection:
 
 Typical workflow:
   # 1. List existing webhooks
-  agentapi-proxy client webhook list
+  ccplant client webhook list
 
   # 2. Inspect a specific webhook
-  agentapi-proxy client webhook get <id> > webhook.json
+  ccplant client webhook get <id> > webhook.json
 
   # 3. Edit webhook.json, then apply only the changed fields
-  echo '{"status":"paused"}' | agentapi-proxy client webhook apply <id>
+  echo '{"status":"paused"}' | ccplant client webhook apply <id>
 
   # 4. Delete when no longer needed
-  agentapi-proxy client webhook delete <id>`,
+  ccplant client webhook delete <id>`,
 }
 
 var webhookListCmd = &cobra.Command{
@@ -55,9 +55,9 @@ Filters (all optional):
   --team-id team identifier (required when --scope=team)
 
 Examples:
-  agentapi-proxy client webhook list
-  agentapi-proxy client webhook list --status active
-  agentapi-proxy client webhook list --type github --scope team --team-id myorg/myteam`,
+  ccplant client webhook list
+  ccplant client webhook list --status active
+  ccplant client webhook list --type github --scope team --team-id myorg/myteam`,
 	Run: runWebhookList,
 }
 
@@ -69,10 +69,10 @@ var webhookGetCmd = &cobra.Command{
 The output can be redirected to a file, edited, and applied back with 'apply'.
 
 Examples:
-  agentapi-proxy client webhook get abc123
-  agentapi-proxy client webhook get abc123 > webhook.json
+  ccplant client webhook get abc123
+  ccplant client webhook get abc123 > webhook.json
   # Then edit webhook.json and run:
-  agentapi-proxy client webhook apply abc123 --file webhook.json`,
+  ccplant client webhook apply abc123 --file webhook.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runWebhookGet,
 }
@@ -95,14 +95,14 @@ Required JSON fields vary by webhook type. Example for a GitHub webhook:
 
 Examples:
   # From a file
-  agentapi-proxy client webhook create --file webhook.json
+  ccplant client webhook create --file webhook.json
 
   # From stdin
-  cat webhook.json | agentapi-proxy client webhook create
+  cat webhook.json | ccplant client webhook create
 
   # Inline JSON
   echo '{"name":"my-webhook","type":"github","triggers":["push"]}' \
-    | agentapi-proxy client webhook create`,
+    | ccplant client webhook create`,
 	Run: runWebhookCreate,
 }
 
@@ -116,16 +116,16 @@ Omitted fields are left unchanged on the server.
 Reads JSON from a file (--file) or from stdin when --file is omitted or set to "-".
 
 Typical workflow:
-  1. agentapi-proxy client webhook get <id> > webhook.json
+  1. ccplant client webhook get <id> > webhook.json
   2. Edit webhook.json (e.g. change status to "paused")
-  3. agentapi-proxy client webhook apply <id> --file webhook.json
+  3. ccplant client webhook apply <id> --file webhook.json
 
 Examples:
   # Pause a webhook (only status is changed)
-  echo '{"status":"paused"}' | agentapi-proxy client webhook apply abc123
+  echo '{"status":"paused"}' | ccplant client webhook apply abc123
 
   # Apply a full JSON file (unchanged fields are preserved on the server)
-  agentapi-proxy client webhook apply abc123 --file webhook.json`,
+  ccplant client webhook apply abc123 --file webhook.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runWebhookApply,
 }
@@ -136,10 +136,10 @@ var webhookDeleteCmd = &cobra.Command{
 	Long: `Delete a webhook by ID. This action is irreversible.
 
 To find the ID, run:
-  agentapi-proxy client webhook list
+  ccplant client webhook list
 
 Examples:
-  agentapi-proxy client webhook delete abc123`,
+  ccplant client webhook delete abc123`,
 	Args: cobra.ExactArgs(1),
 	Run:  runWebhookDelete,
 }
@@ -154,7 +154,7 @@ it cannot be retrieved again after this call.
 Update any external service (e.g. GitHub) that uses the current secret.
 
 Examples:
-  agentapi-proxy client webhook regenerate-secret abc123`,
+  ccplant client webhook regenerate-secret abc123`,
 	Args: cobra.ExactArgs(1),
 	Run:  runWebhookRegenerateSecret,
 }
@@ -217,7 +217,7 @@ func runWebhookGet(cmd *cobra.Command, args []string) {
 	result, err := c.GetWebhook(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting webhook %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: agentapi-proxy client webhook list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: ccplant client webhook list\n")
 		os.Exit(1)
 	}
 
@@ -229,7 +229,7 @@ func runWebhookCreate(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Hint: provide JSON via stdin or use --file path/to/webhook.json\n")
-		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-webhook\",\"type\":\"github\"}' | agentapi-proxy client webhook create\n")
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-webhook\",\"type\":\"github\"}' | ccplant client webhook create\n")
 		os.Exit(1)
 	}
 
@@ -256,7 +256,7 @@ func runWebhookApply(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Hint: provide the patch as JSON via stdin or use --file path/to/patch.json\n")
-		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | agentapi-proxy client webhook apply %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | ccplant client webhook apply %s\n", args[0])
 		os.Exit(1)
 	}
 
@@ -271,7 +271,7 @@ func runWebhookApply(cmd *cobra.Command, args []string) {
 	result, err := c.ApplyWebhook(ctx, args[0], data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error applying webhook %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client webhook list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client webhook list\n")
 		os.Exit(1)
 	}
 
@@ -289,7 +289,7 @@ func runWebhookDelete(cmd *cobra.Command, args []string) {
 
 	if err := c.DeleteWebhook(ctx, args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting webhook %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client webhook list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client webhook list\n")
 		os.Exit(1)
 	}
 
@@ -308,7 +308,7 @@ func runWebhookRegenerateSecret(cmd *cobra.Command, args []string) {
 	result, err := c.RegenerateWebhookSecret(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error regenerating secret for webhook %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client webhook list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client webhook list\n")
 		os.Exit(1)
 	}
 

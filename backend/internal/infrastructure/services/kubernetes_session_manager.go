@@ -2553,7 +2553,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		},
 		VolumeMounts: m.buildMainContainerVolumeMounts(session, req),
 		// Run agent-provisioner instead of the inline shell setup+agentapi script.
-		Command: []string{"agentapi-proxy"},
+		Command: []string{"ccplant"},
 		Args:    []string{"agent-provisioner"},
 		// Probes target /healthz on the provisioner port (always-200) so that
 		// the pod becomes Ready as soon as agent-provisioner is listening.
@@ -3011,7 +3011,7 @@ func (m *KubernetesSessionManager) createOneshotSettingsSecret(
 					"hooks": []map[string]interface{}{
 						{
 							"type":    "command",
-							"command": "agentapi-proxy client delete-session --confirm",
+							"command": "ccplant client delete-session --confirm",
 						},
 					},
 				},
@@ -5587,7 +5587,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// The cycle message is stored in /tmp/check/CYCLE_ENABLED (written by the
 		// provisioner via settings.Files below when CycleMessage is set).
 		// The cycle command reads the message directly from that file.
-		innerCmd := "agentapi-proxy client cycle"
+		innerCmd := "ccplant client cycle"
 		if req.CycleMaxCount > 0 {
 			innerCmd += fmt.Sprintf(" --max-count %d", req.CycleMaxCount)
 		}
@@ -5680,7 +5680,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	case "claude-acp":
 		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
 		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args: []string{
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
@@ -5701,7 +5701,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// https://github.com/agentclientprotocol/codex-acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
 		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args: []string{
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
@@ -5714,7 +5714,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
 		// https://github.com/svkozak/pi-acp
 		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args: []string{
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
@@ -5729,7 +5729,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// https://cursor.com/docs/cli/acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
 		settings.Startup = sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args: []string{
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),

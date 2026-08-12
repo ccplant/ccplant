@@ -108,7 +108,7 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: bun scripts/set-version.ts "$VERSION"
         working-directory: native
-      - name: Build bundled agentapi-proxy
+      - name: Build bundled ccplant
         env:
           TARGET: ${{ matrix.target }}
         run: bun scripts/build-sidecar.ts "$TARGET"

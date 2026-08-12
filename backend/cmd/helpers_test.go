@@ -37,14 +37,14 @@ func TestHelpersInit(t *testing.T) {
 func TestBuildStartupConfigCursor(t *testing.T) {
 	config := buildStartupConfig("cursor")
 
-	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"ccplant"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
 func TestBuildStartupConfigPiOllama(t *testing.T) {
 	config := buildStartupConfig("pi-ollama")
 
-	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
+	assert.Equal(t, []string{"ccplant"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "pi-acp"}, config.Args)
 	assert.NotEmpty(t, config.PreScript)
 	assert.Contains(t, config.PreScript, "node_modules/pi-ollama-cloud")

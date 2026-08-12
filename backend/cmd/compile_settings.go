@@ -33,10 +33,10 @@ This is typically run as an init container in the session Pod.
 
 Examples:
   # Use defaults
-  agentapi-proxy helpers compile-settings
+  ccplant helpers compile-settings
 
   # Custom paths
-  agentapi-proxy helpers compile-settings \
+  ccplant helpers compile-settings \
     --input /session-settings/settings.yaml \
     --output-dir /home/agentapi \
     --env-file /home/agentapi/.session/env`,

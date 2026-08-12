@@ -231,26 +231,26 @@ session settings を組み立て、その過程をログに出しながら最終
 
 使用例:
   # Schedule モード
-  agentapi-proxy helpers generate-setting \
+  ccplant helpers generate-setting \
     --schedule schedule.json \
     --team-setting team-settings.json \
     --user-setting user-settings.json
 
   # 複数チーム設定 (--team-setting は繰り返し可)
-  agentapi-proxy helpers generate-setting \
+  ccplant helpers generate-setting \
     --schedule schedule.json \
     --team-setting base-team.json \
     --team-setting backend-team.json \
     --user-setting alice-settings.json
 
   # SlackBot モード (既存)
-  agentapi-proxy helpers generate-setting \
+  ccplant helpers generate-setting \
     --input slackbot-config.json \
     --team-setting team-settings.json \
     --user-setting user-settings.json
 
   # YAML 形式で出力
-  agentapi-proxy helpers generate-setting --schedule schedule.json --format yaml`,
+  ccplant helpers generate-setting --schedule schedule.json --format yaml`,
 	RunE: runGenerateSetting,
 }
 
@@ -576,7 +576,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// Port is determined at runtime via AGENTAPI_PORT env var.
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- bunx @agentclientprotocol/claude-agent-acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args:    []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
 		}
 	case "codex-acp":
@@ -584,7 +584,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// https://github.com/agentclientprotocol/codex-acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y @agentclientprotocol/codex-acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args:    []string{"acp-server", "--", "npx", "-y", "@agentclientprotocol/codex-acp"},
 		}
 	case "pi-ollama":
@@ -592,7 +592,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// https://github.com/svkozak/pi-acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y pi-acp]")
 		return sessionsettings.StartupConfig{
-			Command:   []string{"agentapi-proxy"},
+			Command:   []string{"ccplant"},
 			Args:      []string{"acp-server", "--", "npx", "-y", "pi-acp"},
 			PreScript: piOllamaInstallPreScript,
 		}
@@ -601,7 +601,7 @@ func buildStartupConfig(agentType string) sessionsettings.StartupConfig {
 		// https://cursor.com/docs/cli/acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server --auto-approve --raw-json-log -- agent acp]")
 		return sessionsettings.StartupConfig{
-			Command: []string{"agentapi-proxy"},
+			Command: []string{"ccplant"},
 			Args:    []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"},
 		}
 	default:

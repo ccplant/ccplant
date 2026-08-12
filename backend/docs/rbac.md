@@ -274,7 +274,7 @@ HTTP/1.1 403 Forbidden
 
 ```bash
 # 詳細ログを有効にしてサーバー起動
-./bin/agentapi-proxy server --verbose
+./bin/ccplant server --verbose
 
 # 認証成功/失敗のログを確認
 # [INFO] Authentication successful for user: alice

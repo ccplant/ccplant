@@ -426,7 +426,7 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	}
 	// Return from the Stop hook before checkpointing: Codex commits its local
 	// thread state only after synchronous Stop hooks finish.
-	command := "nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 agentapi-proxy client backup-session-state && agentapi-proxy client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &"
+	command := "nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 ccplant client backup-session-state && ccplant client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &"
 	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 10}}}
 	appendStop := func(root map[string]interface{}) map[string]interface{} {
 		if root == nil {
@@ -450,7 +450,7 @@ func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {
 		return
 	}
 	agentType := settings.Session.AgentType
-	command := fmt.Sprintf("agentapi-proxy client report-usage --agent-type %s >> /tmp/usage-report.log 2>&1", shellQuote(agentType))
+	command := fmt.Sprintf("ccplant client report-usage --agent-type %s >> /tmp/usage-report.log 2>&1", shellQuote(agentType))
 	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 15}}}
 	appendStop := func(root map[string]interface{}) map[string]interface{} {
 		if root == nil {
@@ -1247,7 +1247,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	agentType := settings.Session.AgentType
 	agentapiProxyBinary := getEnv(envMap, "AGENTAPI_PROXY_BINARY")
 	if agentapiProxyBinary == "" {
-		agentapiProxyBinary = "agentapi-proxy"
+		agentapiProxyBinary = "ccplant"
 	}
 
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
@@ -1997,7 +1997,7 @@ func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
 	log.Printf("[PROVISIONER] Fetching session memory (keys: %s)", memoryKeyFlags)
 	agentapiProxyBinary := getEnv(envMap, "AGENTAPI_PROXY_BINARY")
 	if agentapiProxyBinary == "" {
-		agentapiProxyBinary = "agentapi-proxy"
+		agentapiProxyBinary = "ccplant"
 	}
 	out, err := exec.Command(agentapiProxyBinary, args...).Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {

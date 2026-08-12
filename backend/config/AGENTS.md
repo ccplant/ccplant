@@ -27,7 +27,7 @@ mise コマンドを利用することができます。言語のインタプリ
 git の認証に失敗する場合は、以下のコマンドを実行して GitHub 認証をセットアップしてください：
 
 ```bash
-agentapi-proxy helpers setup-gh
+ccplant helpers setup-gh
 ```
 
 このコマンドは自動的に現在のリポジトリの情報を `git config --get remote.origin.url` から取得し、適切な GitHub 認証を設定します。
@@ -38,11 +38,11 @@ agentapi-proxy helpers setup-gh
 
 **作業完了後は必ずユーザーに通知を送信してください。**
 
-作業の終了を通知するために `agentapi-proxy client send-notification` コマンドが使用できます。
+作業の終了を通知するために `ccplant client send-notification` コマンドが使用できます。
 以下は実行例です。
 
 ```bash
-agentapi-proxy client send-notification \
+ccplant client send-notification \
   --title "作業が完了しました" \
   --body "作業内容を確認してください" \
   --notify-session-id "$AGENTAPI_SESSION_ID" \
@@ -53,7 +53,7 @@ agentapi-proxy client send-notification \
 
 ### セッション情報の更新
 
-作業中は、セッションに紐づく情報を `agentapi-proxy client annotate-session` で更新してください。
+作業中は、セッションに紐づく情報を `ccplant client annotate-session` で更新してください。
 更新できる情報は `pr_url`, `issue_url`, `description`, `running_task` です。
 
 特に以下のタイミングでは、該当する情報を更新してください：
@@ -66,7 +66,7 @@ agentapi-proxy client send-notification \
 例：
 
 ```bash
-agentapi-proxy client annotate-session \
+ccplant client annotate-session \
   --pr-url "https://github.com/owner/repo/pull/123" \
   --issue-url "https://github.com/owner/repo/issues/456" \
   --description "セッションアノテーション機能の実装" \
@@ -76,5 +76,5 @@ agentapi-proxy client annotate-session \
 値を空文字で指定すると、その情報をクリアできます。
 
 ```bash
-agentapi-proxy client annotate-session --running-task ""
+ccplant client annotate-session --running-task ""
 ```

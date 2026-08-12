@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the agentapi-proxy native dashboard window.",
+  "description": "Capabilities for the ccplant native dashboard window.",
   "windows": ["dashboard"],
   "permissions": [
     "core:default",

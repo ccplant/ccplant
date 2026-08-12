@@ -58,7 +58,7 @@ settings reads.
 
 ## External Session Manager: Required Environment
 
-ESM runs the same `agentapi-proxy server`, with session manager mode and
+ESM runs the same `ccplant server`, with session manager mode and
 Kubernetes session provisioning enabled.
 
 ```bash
@@ -144,7 +144,7 @@ spec:
       containers:
         - name: agentapi-proxy
           image: ghcr.io/takutakahashi/agentapi-proxy:dev-7d4f9bf
-          args: ["agentapi-proxy", "server", "--port", "8080"]
+          args: ["ccplant", "server", "--port", "8080"]
           env:
             - name: SESSION_MANAGER_ENABLED
               value: "true"
@@ -213,16 +213,16 @@ Multiple managers can run on one host. Give every additional manager a unique
 instance name and listen address:
 
 ```bash
-agentapi-proxy native install --instance build-a --listen :8081 \
+ccplant native install --instance build-a --listen :8081 \
   --upstream "$PARENT_PROXY_URL" \
   --name build-a --registration-token "<registration-token>"
-agentapi-proxy native install --instance build-b --listen :8082 \
+ccplant native install --instance build-b --listen :8082 \
   --upstream "$PARENT_PROXY_URL" \
   --name build-b --registration-token "<registration-token>"
 
-agentapi-proxy native list
-agentapi-proxy native status --instance build-a
-agentapi-proxy native doctor --instance build-b
+ccplant native list
+ccplant native status --instance build-a
+ccplant native doctor --instance build-b
 ```
 
 Omitting `--instance` selects the backward-compatible `default` instance. The
@@ -234,7 +234,7 @@ does not remove that executable while another instance still uses it.
 For a user-scoped macOS manager with the filesystem sandbox enabled:
 
 ```bash
-agentapi-proxy native install \
+ccplant native install \
   --upstream "https://parent-proxy.example.com" \
   --name "ios-builder" \
   --registration-token "<registration-token>" \
@@ -253,7 +253,7 @@ For example, a macOS manager can expose mise-managed Node.js and the installed
 NODE_BIN="$(dirname "$(mise which node)")"
 NATIVE_BIN="$HOME/Library/Application Support/agentapi-native/bin"
 
-agentapi-proxy native install \
+ccplant native install \
   --upstream "https://parent-proxy.example.com" \
   --manager-env "PATH=$NODE_BIN:$NATIVE_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 ```
@@ -265,7 +265,7 @@ Add `--default` to select this manager when a session does not specify a
 manager. To register it for a team instead of the current user:
 
 ```bash
-agentapi-proxy native install \
+ccplant native install \
   --upstream "https://parent-proxy.example.com" \
   --name "team-ios-builder" \
   --scope team \
@@ -283,7 +283,7 @@ curl -X POST "$PARENT_PROXY_URL/external-session-managers/registration-tokens" \
   -H "Content-Type: application/json" \
   -d '{}'
 
-agentapi-proxy native install \
+ccplant native install \
   --upstream "$PARENT_PROXY_URL" \
   --registration-token "<registration_token>"
 ```
@@ -338,8 +338,8 @@ such as `com.agentapi.native.build-a`.
 Check the installed service and end-to-end parent connectivity:
 
 ```bash
-agentapi-proxy native status
-agentapi-proxy native doctor
+ccplant native status
+ccplant native doctor
 ```
 
 `native status` reports the manager ID, upstream URL, active
@@ -350,10 +350,10 @@ heartbeat.
 List native sessions and inspect their provisioner logs directly from the host:
 
 ```bash
-agentapi-proxy native session-list
-agentapi-proxy native logs <session-id>
-agentapi-proxy native logs --follow --tail 200 <session-id>
-agentapi-proxy native logs --daemon --follow
+ccplant native session-list
+ccplant native logs <session-id>
+ccplant native logs --follow --tail 200 <session-id>
+ccplant native logs --daemon --follow
 ```
 
 Session logs live below `<state-dir>/sessions/<session-id>/runtime/provisioner.log`.
@@ -388,7 +388,7 @@ descendant processes with the built-in Seatbelt `sandbox-exec` utility. Enable
 it when installing the manager:
 
 ```bash
-agentapi-proxy native install \
+ccplant native install \
   --upstream "https://parent-proxy.example.com" \
   --filesystem-sandbox
 ```

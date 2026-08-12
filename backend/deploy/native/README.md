@@ -1,13 +1,13 @@
 # Native External Session Manager
 
-`agentapi-proxy native-session-manager` runs sessions as native process groups on a Linux or macOS host. It does not provide a sandbox; dedicate the host to one user or a mutually trusted team.
+`ccplant native-session-manager` runs sessions as native process groups on a Linux or macOS host. It does not provide a sandbox; dedicate the host to one user or a mutually trusted team.
 
 ## One-command installation
 
 Use the management command to register the machine with the parent proxy, install the daemon, start it, and verify both local health and the parent heartbeat:
 
 ```bash
-sudo agentapi-proxy native install \
+sudo ccplant native install \
   --upstream https://cc-api.example.com \
   --name native-builder-01 \
   --registration-token '<one-time-token>' \
@@ -21,14 +21,14 @@ Each install consumes a newly issued registration token. After installation,
 use these lifecycle commands instead of running install again:
 
 ```bash
-agentapi-proxy native status
-agentapi-proxy native doctor
-agentapi-proxy native restart
-agentapi-proxy native rotate-token
-agentapi-proxy native uninstall
+ccplant native status
+ccplant native doctor
+ccplant native restart
+ccplant native rotate-token
+ccplant native uninstall
 ```
 
-Linux stores non-secret configuration in `/etc/agentapi-native/config.json`, the connection token in `/etc/agentapi-native/credentials.json`, state in `/var/lib/agentapi-native`, and the managed executable in `/usr/local/libexec/agentapi-proxy/`. macOS uses `~/Library/Application Support/agentapi-native/` and `~/Library/LaunchAgents/com.agentapi.native.plist`.
+Linux stores non-secret configuration in `/etc/agentapi-native/config.json`, the connection token in `/etc/agentapi-native/credentials.json`, state in `/var/lib/agentapi-native`, and the managed executable in `/usr/local/libexec/ccplant/`. macOS uses `~/Library/Application Support/agentapi-native/` and `~/Library/LaunchAgents/com.agentapi.native.plist`.
 
 The daemon needs a parent proxy URL, its enrolled connection token, and a
 private state directory. Labels such as

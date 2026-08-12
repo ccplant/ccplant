@@ -34,19 +34,19 @@ the server and will not appear in get/list responses.
 Typical workflow:
   # 1. Create a bot with tokens
   echo '{"name":"my-bot","bot_token":"xoxb-...","app_token":"xapp-..."}' \
-    | agentapi-proxy client slackbot create
+    | ccplant client slackbot create
 
   # 2. List existing bots
-  agentapi-proxy client slackbot list
+  ccplant client slackbot list
 
   # 3. Inspect a specific bot
-  agentapi-proxy client slackbot get <id> > slackbot.json
+  ccplant client slackbot get <id> > slackbot.json
 
   # 4. Edit slackbot.json, then apply only the changed fields
-  echo '{"status":"paused"}' | agentapi-proxy client slackbot apply <id>
+  echo '{"status":"paused"}' | ccplant client slackbot apply <id>
 
   # 5. Delete when no longer needed
-  agentapi-proxy client slackbot delete <id>`,
+  ccplant client slackbot delete <id>`,
 }
 
 var slackbotListCmd = &cobra.Command{
@@ -60,9 +60,9 @@ Filters (all optional):
   --team-id team identifier (required when --scope=team)
 
 Examples:
-  agentapi-proxy client slackbot list
-  agentapi-proxy client slackbot list --status active
-  agentapi-proxy client slackbot list --scope team --team-id myorg/myteam`,
+  ccplant client slackbot list
+  ccplant client slackbot list --status active
+  ccplant client slackbot list --scope team --team-id myorg/myteam`,
 	Run: runSlackBotList,
 }
 
@@ -75,10 +75,10 @@ Note: bot_token and app_token are write-only and will not appear in the output.
 The output can be redirected to a file, edited, and applied back with 'apply'.
 
 Examples:
-  agentapi-proxy client slackbot get abc123
-  agentapi-proxy client slackbot get abc123 > slackbot.json
+  ccplant client slackbot get abc123
+  ccplant client slackbot get abc123 > slackbot.json
   # Then edit slackbot.json and run:
-  agentapi-proxy client slackbot apply abc123 --file slackbot.json`,
+  ccplant client slackbot apply abc123 --file slackbot.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runSlackBotGet,
 }
@@ -108,14 +108,14 @@ Example JSON:
 
 Examples:
   # From a file
-  agentapi-proxy client slackbot create --file slackbot.json
+  ccplant client slackbot create --file slackbot.json
 
   # From stdin
-  cat slackbot.json | agentapi-proxy client slackbot create
+  cat slackbot.json | ccplant client slackbot create
 
   # Inline JSON
   echo '{"name":"my-bot","bot_token":"xoxb-...","app_token":"xapp-..."}' \
-    | agentapi-proxy client slackbot create`,
+    | ccplant client slackbot create`,
 	Run: runSlackBotCreate,
 }
 
@@ -131,23 +131,23 @@ Reads JSON from a file (--file) or from stdin when --file is omitted or set to "
 You can rotate tokens by including bot_token and/or app_token in the patch.
 
 Typical workflow:
-  1. agentapi-proxy client slackbot get <id> > slackbot.json
+  1. ccplant client slackbot get <id> > slackbot.json
   2. Edit slackbot.json (e.g. change status to "paused")
-  3. agentapi-proxy client slackbot apply <id> --file slackbot.json
+  3. ccplant client slackbot apply <id> --file slackbot.json
 
 Examples:
   # Pause a SlackBot (only status is changed)
-  echo '{"status":"paused"}' | agentapi-proxy client slackbot apply abc123
+  echo '{"status":"paused"}' | ccplant client slackbot apply abc123
 
   # Update allowed channels only
   echo '{"allowed_channel_names":["general","dev-alerts"]}' \
-    | agentapi-proxy client slackbot apply abc123
+    | ccplant client slackbot apply abc123
 
   # Rotate the bot token
-  echo '{"bot_token":"xoxb-new-token"}' | agentapi-proxy client slackbot apply abc123
+  echo '{"bot_token":"xoxb-new-token"}' | ccplant client slackbot apply abc123
 
   # Apply a full JSON file (unchanged fields are preserved on the server)
-  agentapi-proxy client slackbot apply abc123 --file slackbot.json`,
+  ccplant client slackbot apply abc123 --file slackbot.json`,
 	Args: cobra.ExactArgs(1),
 	Run:  runSlackBotApply,
 }
@@ -158,10 +158,10 @@ var slackbotDeleteCmd = &cobra.Command{
 	Long: `Delete a SlackBot by ID. This action is irreversible.
 
 To find the ID, run:
-  agentapi-proxy client slackbot list
+  ccplant client slackbot list
 
 Examples:
-  agentapi-proxy client slackbot delete abc123`,
+  ccplant client slackbot delete abc123`,
 	Args: cobra.ExactArgs(1),
 	Run:  runSlackBotDelete,
 }
@@ -221,7 +221,7 @@ func runSlackBotGet(cmd *cobra.Command, args []string) {
 	result, err := c.GetSlackBot(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting SlackBot %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: agentapi-proxy client slackbot list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID is correct with: ccplant client slackbot list\n")
 		os.Exit(1)
 	}
 
@@ -233,7 +233,7 @@ func runSlackBotCreate(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Hint: provide JSON via stdin or use --file path/to/slackbot.json\n")
-		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-bot\",\"bot_token\":\"xoxb-...\",\"app_token\":\"xapp-...\"}' | agentapi-proxy client slackbot create\n")
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"name\":\"my-bot\",\"bot_token\":\"xoxb-...\",\"app_token\":\"xapp-...\"}' | ccplant client slackbot create\n")
 		os.Exit(1)
 	}
 
@@ -260,7 +260,7 @@ func runSlackBotApply(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Hint: provide the patch as JSON via stdin or use --file path/to/patch.json\n")
-		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | agentapi-proxy client slackbot apply %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Example: echo '{\"status\":\"paused\"}' | ccplant client slackbot apply %s\n", args[0])
 		os.Exit(1)
 	}
 
@@ -275,7 +275,7 @@ func runSlackBotApply(cmd *cobra.Command, args []string) {
 	result, err := c.ApplySlackBot(ctx, args[0], data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error applying SlackBot %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client slackbot list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client slackbot list\n")
 		os.Exit(1)
 	}
 
@@ -293,7 +293,7 @@ func runSlackBotDelete(cmd *cobra.Command, args []string) {
 
 	if err := c.DeleteSlackBot(ctx, args[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting SlackBot %q: %v\n", args[0], err)
-		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: agentapi-proxy client slackbot list\n")
+		fmt.Fprintf(os.Stderr, "Hint: confirm the ID exists with: ccplant client slackbot list\n")
 		os.Exit(1)
 	}
 

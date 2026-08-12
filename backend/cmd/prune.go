@@ -40,13 +40,13 @@ Use --dry-run to preview what would be deleted without making any changes.
 
 Examples:
   # Preview stale sessions (no changes)
-  agentapi-proxy helpers prune-stale-resources --namespace agentapi-ui --dry-run
+  ccplant helpers prune-stale-resources --namespace agentapi-ui --dry-run
 
   # Delete stale sessions
-  agentapi-proxy helpers prune-stale-resources --namespace agentapi-ui
+  ccplant helpers prune-stale-resources --namespace agentapi-ui
 
   # Delete with verbose output
-  agentapi-proxy helpers prune-stale-resources --namespace agentapi-ui --verbose`,
+  ccplant helpers prune-stale-resources --namespace agentapi-ui --verbose`,
 	RunE: runPruneStaleResources,
 }
 

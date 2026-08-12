@@ -33,7 +33,7 @@ make build
 
 ```bash
 # AgentAPI Proxy サーバーを起動
-./bin/agentapi-proxy server --port 8080 --verbose
+./bin/ccplant server --port 8080 --verbose
 ```
 
 ### 3. MCP Server の起動
@@ -42,10 +42,10 @@ make build
 
 ```bash
 # MCP Server を起動（デフォルトポート 3000）
-./bin/agentapi-proxy mcp
+./bin/ccplant mcp
 
 # または、カスタムポートとプロキシ URL を指定
-./bin/agentapi-proxy mcp --port 3001 --proxy-url http://localhost:8080 --verbose
+./bin/ccplant mcp --port 3001 --proxy-url http://localhost:8080 --verbose
 ```
 
 ## Claude Desktop での設定
@@ -199,12 +199,12 @@ AgentAPI Proxy MCP Server は以下のツールを提供します：
 2. **ポートの競合確認**
    ```bash
    # 別のポートで起動
-   ./bin/agentapi-proxy mcp --port 3001
+   ./bin/ccplant mcp --port 3001
    ```
 
 3. **詳細ログの確認**
    ```bash
-   ./bin/agentapi-proxy mcp --verbose
+   ./bin/ccplant mcp --verbose
    ```
 
 ### Claude Desktop で認識されない
@@ -218,7 +218,7 @@ AgentAPI Proxy MCP Server は以下のツールを提供します：
 2. **パスの確認**
    ```bash
    # バイナリパスが正しいか確認
-   which agentapi-proxy
+   which ccplant
    ```
 
 3. **Claude Desktop の再起動**
@@ -244,10 +244,10 @@ AgentAPI Proxy MCP Server は以下のツールを提供します：
 
 ```bash
 # すべてのオプション
-./bin/agentapi-proxy mcp --help
+./bin/ccplant mcp --help
 
 # よく使用するオプション
-./bin/agentapi-proxy mcp \
+./bin/ccplant mcp \
   --port 3000 \
   --proxy-url http://localhost:8080 \
   --verbose

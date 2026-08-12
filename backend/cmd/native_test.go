@@ -79,7 +79,7 @@ func TestRenderNativeLaunchAgentEnvironment(t *testing.T) {
 }
 
 func TestRenderNativeSystemdEnvironment(t *testing.T) {
-	paths := nativeInstallPaths{binary: "/usr/local/libexec/agentapi-proxy", config: "/etc/agentapi-native/config.json"}
+	paths := nativeInstallPaths{binary: "/usr/local/libexec/ccplant", config: "/etc/agentapi-native/config.json"}
 	unit := renderNativeSystemdUnit(paths, map[string]string{"PATH": "/opt/mise/bin:/usr/bin", "SPECIAL": `quote"slash\percent%`})
 	require.Contains(t, unit, "Environment=\"PATH=/opt/mise/bin:/usr/bin\"")
 	require.Contains(t, unit, `Environment="SPECIAL=quote\"slash\\percent%%"`)
@@ -172,7 +172,7 @@ func TestNativeInstallPathsDefaultLinuxPreservesHistoricalPaths(t *testing.T) {
 	require.Equal(t, "/etc/agentapi-native/config.json", paths.config)
 	require.Equal(t, "/etc/agentapi-native/credentials.json", paths.credentials)
 	require.Equal(t, "/var/lib/agentapi-native", paths.state)
-	require.Equal(t, "/usr/local/libexec/agentapi-proxy/agentapi-proxy", paths.binary)
+	require.Equal(t, "/usr/local/libexec/agentapi-proxy/ccplant", paths.binary)
 	require.Equal(t, "/etc/systemd/system/agentapi-native.service", paths.service)
 	require.Equal(t, "/var/log/agentapi-native", paths.logDir)
 }
@@ -184,7 +184,7 @@ func TestNativeInstallPathsNonDefaultLinuxIsIsolated(t *testing.T) {
 	require.Equal(t, "/etc/agentapi-native-ci/credentials.json", paths.credentials)
 	require.Equal(t, "/var/lib/agentapi-native-ci", paths.state)
 	// The managed binary is shared across instances on Linux.
-	require.Equal(t, "/usr/local/libexec/agentapi-proxy/agentapi-proxy", paths.binary)
+	require.Equal(t, "/usr/local/libexec/agentapi-proxy/ccplant", paths.binary)
 	require.Equal(t, "/etc/systemd/system/agentapi-native-ci.service", paths.service)
 	require.Equal(t, "/var/log/agentapi-native-ci", paths.logDir)
 }
@@ -209,7 +209,7 @@ func TestNativeInstallPathsDefaultDarwinPreservesHistoricalPaths(t *testing.T) {
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "config.json"), paths.config)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "credentials.json"), paths.credentials)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "state"), paths.state)
-	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "bin", "agentapi-proxy"), paths.binary)
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native", "bin", "ccplant"), paths.binary)
 	require.Equal(t, filepath.Join(home, "Library", "LaunchAgents", "com.agentapi.native.plist"), paths.service)
 	require.Equal(t, filepath.Join(home, "Library", "Logs", "agentapi-native"), paths.logDir)
 }
@@ -223,7 +223,7 @@ func TestNativeInstallPathsNonDefaultDarwinIsIsolated(t *testing.T) {
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "config.json"), paths.config)
 	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "credentials.json"), paths.credentials)
 	// macOS installs a per-instance binary copy, so it is not shared.
-	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "bin", "agentapi-proxy"), paths.binary)
+	require.Equal(t, filepath.Join(home, "Library", "Application Support", "agentapi-native-ios", "bin", "ccplant"), paths.binary)
 	require.Equal(t, filepath.Join(home, "Library", "LaunchAgents", "com.agentapi.native.ios.plist"), paths.service)
 	require.Equal(t, filepath.Join(home, "Library", "Logs", "agentapi-native-ios"), paths.logDir)
 }
@@ -255,12 +255,12 @@ func TestStableNativeInstanceIDDefaultUnchangedByInstanceFlag(t *testing.T) {
 }
 
 func TestRenderNativeLaunchAgentUsesInstanceLabel(t *testing.T) {
-	paths := nativeInstallPaths{binary: "/bin/agentapi-proxy", config: "/tmp/c.json", service: "/Users/u/Library/LaunchAgents/com.agentapi.native.ios.plist", logDir: "/tmp/logs"}
+	paths := nativeInstallPaths{binary: "/bin/ccplant", config: "/tmp/c.json", service: "/Users/u/Library/LaunchAgents/com.agentapi.native.ios.plist", logDir: "/tmp/logs"}
 	plist := renderNativeLaunchAgent(paths, nil)
 	require.Contains(t, plist, "<key>Label</key><string>com.agentapi.native.ios</string>")
 	require.Contains(t, plist, "<string>--config</string><string>/tmp/c.json</string>")
 
-	defaultPaths := nativeInstallPaths{binary: "/bin/agentapi-proxy", config: "/tmp/c.json", service: "/Users/u/Library/LaunchAgents/com.agentapi.native.plist", logDir: "/tmp/logs"}
+	defaultPaths := nativeInstallPaths{binary: "/bin/ccplant", config: "/tmp/c.json", service: "/Users/u/Library/LaunchAgents/com.agentapi.native.plist", logDir: "/tmp/logs"}
 	defaultPlist := renderNativeLaunchAgent(defaultPaths, nil)
 	require.Contains(t, defaultPlist, "<key>Label</key><string>com.agentapi.native</string>")
 }
@@ -272,7 +272,7 @@ func TestDiscoverNativeInstancesListsDefaultAndNamed(t *testing.T) {
 	for _, p := range []string{defaultConfig, namedConfig} {
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
 	}
-	sharedBinary := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+	sharedBinary := "/usr/local/libexec/agentapi-proxy/ccplant"
 	writeConfig := func(path, instance, binary string) {
 		cfg := nativeDaemonConfig{ManagerID: "mgr-" + instance, UpstreamURL: "https://parent", PublicURL: "https://child", StateDir: filepath.Join(filepath.Dir(path), "state"), BinaryPath: binary}
 		data, err := json.Marshal(cfg)
@@ -313,7 +313,7 @@ func TestDiscoverNativeInstancesSkipsUnreadableConfig(t *testing.T) {
 }
 
 func TestBinarySharedWith(t *testing.T) {
-	shared := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+	shared := "/usr/local/libexec/agentapi-proxy/ccplant"
 	entries := []nativeInstanceListEntry{
 		{Instance: "default", BinaryPath: shared},
 		{Instance: "ci", BinaryPath: shared},
@@ -328,10 +328,10 @@ func TestBinarySharedWith(t *testing.T) {
 	require.False(t, binarySharedWith(solo, "default", shared))
 	// macOS-style per-instance binaries are never shared across instances.
 	macEntries := []nativeInstanceListEntry{
-		{Instance: "default", BinaryPath: "/Users/u/Library/Application Support/agentapi-native/bin/agentapi-proxy"},
-		{Instance: "ios", BinaryPath: "/Users/u/Library/Application Support/agentapi-native-ios/bin/agentapi-proxy"},
+		{Instance: "default", BinaryPath: "/Users/u/Library/Application Support/agentapi-native/bin/ccplant"},
+		{Instance: "ios", BinaryPath: "/Users/u/Library/Application Support/agentapi-native-ios/bin/ccplant"},
 	}
-	require.False(t, binarySharedWith(macEntries, "default", "/Users/u/Library/Application Support/agentapi-native/bin/agentapi-proxy"))
+	require.False(t, binarySharedWith(macEntries, "default", "/Users/u/Library/Application Support/agentapi-native/bin/ccplant"))
 	require.False(t, binarySharedWith(nil, "default", ""))
 }
 

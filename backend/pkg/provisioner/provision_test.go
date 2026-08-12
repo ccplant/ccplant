@@ -44,8 +44,8 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 		Session: sessionsettings.SessionMeta{AgentType: "cursor"},
 	}, nil)
 
-	if cmd != "agentapi-proxy" {
-		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
 	}
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}
 	if !reflect.DeepEqual(args, want) {
@@ -72,7 +72,7 @@ func TestInjectSessionPersistenceHookBacksUpThenSchedulesSuspend(t *testing.T) {
 
 func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
-	env := map[string]string{"AGENTAPI_PROXY_BINARY": "/Applications/agentapi-proxy.app/Contents/MacOS/agentapi-proxy"}
+	env := map[string]string{"AGENTAPI_PROXY_BINARY": "/Applications/agentapi-proxy.app/Contents/MacOS/ccplant"}
 
 	cmd, _ := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{AgentType: "codex-acp"},
@@ -94,8 +94,8 @@ func TestBuildAgentCommandPiOllama(t *testing.T) {
 		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
 	}, env)
 
-	if cmd != "agentapi-proxy" {
-		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
 	}
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "npx", "-y", "pi-acp"}
 	if !reflect.DeepEqual(args, want) {
@@ -381,7 +381,7 @@ func TestMergeHooksIntoSettingsFile_ManagedOverwritesCompiled(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client delete-session --confirm",
+							"command": "ccplant client delete-session --confirm",
 						},
 					},
 				},
@@ -450,7 +450,7 @@ func TestMergeHooksIntoSettingsFile_PreservesExistingHooks(t *testing.T) {
 			"Stop": []interface{}{
 				map[string]interface{}{
 					"hooks": []interface{}{
-						map[string]interface{}{"type": "command", "command": "agentapi-proxy client delete-session --confirm"},
+						map[string]interface{}{"type": "command", "command": "ccplant client delete-session --confirm"},
 					},
 				},
 			},
@@ -505,7 +505,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1",
+							"command": "ccplant client memory save-session >> /tmp/memory-save-session.log 2>&1",
 						},
 					},
 				},
@@ -515,7 +515,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client send-notification",
+							"command": "ccplant client send-notification",
 						},
 					},
 				},
@@ -534,7 +534,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 		"[[hooks.Stop]]",
 		"[[hooks.Stop.hooks]]",
 		"type = \"command\"",
-		"command = \"agentapi-proxy client memory save-session >> /tmp/memory-save-session.log 2>&1\"",
+		"command = \"ccplant client memory save-session >> /tmp/memory-save-session.log 2>&1\"",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(got, want) {

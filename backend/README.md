@@ -56,10 +56,10 @@ Grafana Cloud Application Observability 向けの OpenTelemetry 設定は
 
 ```bash
 # Using the built binary
-./bin/agentapi-proxy server
+./bin/ccplant server
 
 # With custom configuration
-./bin/agentapi-proxy server --config config.json --port 8080 --verbose
+./bin/ccplant server --config config.json --port 8080 --verbose
 
 # Using Docker
 docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakahashi/agentapi-proxy:latest server
@@ -105,7 +105,7 @@ Use the read-only migration preflight before moving split backend/frontend
 releases to the `ccplant` chart:
 
 ```bash
-agentapi-proxy helm migrate plan \
+ccplant helm migrate plan \
   --namespace agentapi-ui \
   --version 0.3.2 \
   --values-out ccplant-shadow-values.yaml
@@ -121,7 +121,7 @@ automation.
 After the shadow release is installed, verify it without changing routing:
 
 ```bash
-agentapi-proxy helm migrate verify \
+ccplant helm migrate verify \
   --namespace agentapi-ui \
   --target-release ccplant
 ```

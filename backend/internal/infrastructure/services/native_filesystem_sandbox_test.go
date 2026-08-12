@@ -14,7 +14,7 @@ func TestNativeSandboxDefinitions(t *testing.T) {
 	hostHome := filepath.Join(root, "home")
 	sessionsRoot := filepath.Join(hostHome, "native", "sessions")
 	sessionRoot := filepath.Join(sessionsRoot, "one")
-	binaryPath := filepath.Join(hostHome, "native", "bin", "agentapi-proxy")
+	binaryPath := filepath.Join(hostHome, "native", "bin", "ccplant")
 	for _, path := range []string{hostHome, sessionsRoot, sessionRoot} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
@@ -95,7 +95,7 @@ func TestNativeFilesystemSandboxPolicyOnMacOS(t *testing.T) {
 	sessionsRoot := filepath.Join(hostHome, "native", "sessions")
 	sessionRoot := filepath.Join(sessionsRoot, "one")
 	runtimeDir := filepath.Join(sessionRoot, "runtime")
-	binaryPath := filepath.Join(hostHome, "native", "bin", "agentapi-proxy")
+	binaryPath := filepath.Join(hostHome, "native", "bin", "ccplant")
 	for _, path := range []string{hostHome, sessionsRoot, sessionRoot, runtimeDir} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)

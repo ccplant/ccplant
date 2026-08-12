@@ -166,9 +166,9 @@ Examples:
   echo "Please continue the task" > /tmp/check/CYCLE_ENABLED
 
   # Stop after 10 cycles at most
-  agentapi-proxy client cycle --max-count 10
+  ccplant client cycle --max-count 10
 
-  agentapi-proxy client cycle --session-id my-session`,
+  ccplant client cycle --session-id my-session`,
 	Args: cobra.NoArgs,
 	RunE: runCycle,
 }
@@ -222,10 +222,10 @@ environment variables:
 
 Examples:
   # Delete current session (with confirmation)
-  agentapi-proxy client delete-session
+  ccplant client delete-session
 
   # Delete current session without confirmation
-  agentapi-proxy client delete-session --confirm`,
+  ccplant client delete-session --confirm`,
 	Run: runDeleteSession,
 }
 
@@ -238,7 +238,7 @@ The supported fields are PR URL, issue URL, description, and running task.
 At least one flag must be specified. Use an explicit empty string to clear a field.
 
 Examples:
-  agentapi-proxy client annotate-session \
+  ccplant client annotate-session \
     --endpoint http://proxy:8080 \
     --session-id my-session \
     --pr-url https://github.com/owner/repo/pull/123 \
@@ -247,7 +247,7 @@ Examples:
     --running-task "Implement session annotations"
 
   # Clear the running task
-  agentapi-proxy client annotate-session --running-task ""`,
+  ccplant client annotate-session --running-task ""`,
 	Run: runAnnotateSession,
 }
 
@@ -281,9 +281,9 @@ Formats:
   content  - Raw content only
 
 Examples:
-  agentapi-proxy client memory list --scope user
-  agentapi-proxy client memory list --scope team --team-id myorg/myteam
-  agentapi-proxy client memory list --tag project=myapp --format markdown`,
+  ccplant client memory list --scope user
+  ccplant client memory list --scope team --team-id myorg/myteam
+  ccplant client memory list --tag project=myapp --format markdown`,
 	Run: runMemoryList,
 }
 
@@ -301,12 +301,12 @@ var memoryCreateCmd = &cobra.Command{
 	Long: `Create a new memory entry.
 
 Examples:
-  agentapi-proxy client memory create \
+  ccplant client memory create \
     --title "Project notes" \
     --content "Key decisions..." \
     --scope user
 
-  agentapi-proxy client memory create \
+  ccplant client memory create \
     --title "Team knowledge" \
     --content-file /tmp/notes.md \
     --scope team --team-id myorg/myteam \
@@ -340,7 +340,7 @@ is found, it is updated. If not, a new entry is created with the key tags
 as its tags.
 
 Examples:
-  agentapi-proxy client memory upsert \
+  ccplant client memory upsert \
     --title "Session summary" \
     --content-file /tmp/content.md \
     --key project=myapp --key env=prod \
@@ -371,10 +371,10 @@ accumulate session knowledge into a memory-based knowledge base.
 
 Examples:
   # Save current session using env vars (typical Stop hook usage)
-  agentapi-proxy client memory save-session
+  ccplant client memory save-session
 
   # Save as team-scoped memory
-  agentapi-proxy client memory save-session --scope team --team-id myorg/myteam`,
+  ccplant client memory save-session --scope team --team-id myorg/myteam`,
 	Run: runMemorySaveSession,
 }
 
@@ -391,11 +391,11 @@ This command is typically called automatically by the memory-sync sidecar when a
 session with memory_key configured stops. It can also be invoked manually.
 
 Examples:
-  agentapi-proxy client summarize-drafts \
+  ccplant client summarize-drafts \
     --source-session-id abc123 \
     --scope user
 
-  agentapi-proxy client summarize-drafts \
+  ccplant client summarize-drafts \
     --source-session-id abc123 \
     --scope team --team-id myorg/myteam \
     --key project=myapp --key env=prod`,
@@ -411,13 +411,13 @@ Either --notify-session-id or --notify-user-id must be specified to identify the
 
 Examples:
   # Send to all users subscribed to a session
-  agentapi-proxy client send-notification \
+  ccplant client send-notification \
     --title "作業が完了しました" \
     --body "作業内容を確認してください" \
     --notify-session-id "$AGENTAPI_SESSION_ID"
 
   # Send to a specific user
-  agentapi-proxy client send-notification \
+  ccplant client send-notification \
     --title "Notification" \
     --body "Something happened" \
     --notify-user-id "user123"`,

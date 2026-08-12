@@ -59,10 +59,10 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 
 func TestNativeProvisionerEnvironmentOverridesInheritedProxyBinary(t *testing.T) {
 	env := nativeProvisionerEnvironment(
-		[]string{"PATH=/usr/bin", "AGENTAPI_PROXY_BINARY=/usr/local/bin/agentapi-proxy"},
-		"AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/agentapi-proxy",
+		[]string{"PATH=/usr/bin", "AGENTAPI_PROXY_BINARY=/usr/local/bin/ccplant"},
+		"AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/ccplant",
 	)
-	want := "AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/agentapi-proxy"
+	want := "AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/ccplant"
 	count := 0
 	for _, value := range env {
 		if strings.HasPrefix(value, "AGENTAPI_PROXY_BINARY=") {
