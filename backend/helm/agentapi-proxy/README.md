@@ -60,7 +60,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | `image.repository`  | AgentAPI Proxy image repository   | `ghcr.io/takutakahashi/agentapi-proxy`     |
 | `image.pullPolicy`  | AgentAPI Proxy image pull policy  | `IfNotPresent`                             |
 
-When `image.tag` is empty, the chart uses its `appVersion`.
+The image tag is always the chart's `appVersion`.
 
 ### Deployment parameters
 

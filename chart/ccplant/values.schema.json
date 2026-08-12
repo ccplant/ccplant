@@ -31,10 +31,9 @@
         "enabled": { "type": "boolean" },
         "image": {
           "type": "object",
-          "required": ["repository", "tag"],
+          "required": ["repository"],
           "properties": {
-            "repository": { "type": "string", "minLength": 1 },
-            "tag": { "type": "string", "minLength": 1 }
+            "repository": { "type": "string", "minLength": 1 }
           }
         }
       }
@@ -46,10 +45,9 @@
         "enabled": { "type": "boolean" },
         "image": {
           "type": "object",
-          "required": ["repository", "tag"],
+          "required": ["repository"],
           "properties": {
-            "repository": { "type": "string", "minLength": 1 },
-            "tag": { "type": "string", "minLength": 1 }
+            "repository": { "type": "string", "minLength": 1 }
           }
         }
       }
