@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## コマンド
 
 ```bash
-make build          # バイナリのビルド (bin/agentapi-proxy)
+make build          # バイナリのビルド (bin/ccplant)
 make test           # テスト実行 (CGO_ENABLED=1, race detector 有効)
 make test-verbose PKG=./internal/app  # 特定パッケージを詳細出力でテスト
 make lint           # golangci-lint 実行 (gofmt も含む)

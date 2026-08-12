@@ -1,6 +1,6 @@
 .PHONY: help install-deps build test lint clean docker-build docker-push e2e ci gofmt setup-envtest envtest devbuild devbuild-image devbuild-helm
 
-BINARY_NAME := agentapi-proxy
+BINARY_NAME := ccplant
 GO_FILES := $(shell find . -name "*.go" -type f)
 IMAGE_NAME := agentapi-proxy
 IMAGE_TAG := latest

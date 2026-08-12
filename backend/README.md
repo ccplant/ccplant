@@ -56,10 +56,10 @@ Grafana Cloud Application Observability 向けの OpenTelemetry 設定は
 
 ```bash
 # Using the built binary
-./bin/agentapi-proxy server
+./bin/ccplant server
 
 # With custom configuration
-./bin/agentapi-proxy server --config config.json --port 8080 --verbose
+./bin/ccplant server --config config.json --port 8080 --verbose
 
 # Using Docker
 docker run -p 8080:8080 -v $(pwd)/config.json:/app/config.json ghcr.io/takutakahashi/agentapi-proxy:latest server

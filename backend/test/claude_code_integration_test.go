@@ -228,9 +228,9 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 	if binaryPath == "" {
 		// Try multiple possible binary locations
 		possiblePaths := []string{
-			"./bin/agentapi-proxy",
-			"bin/agentapi-proxy",
-			"../bin/agentapi-proxy",
+			"./bin/ccplant",
+			"bin/ccplant",
+			"../bin/ccplant",
 		}
 
 		for _, path := range possiblePaths {
@@ -244,7 +244,7 @@ func startProxyServer(t *testing.T) (*exec.Cmd, func(), error) {
 	if binaryPath == "" {
 		// Get current working directory for debugging
 		wd, _ := os.Getwd()
-		return nil, nil, fmt.Errorf("agentapi-proxy binary not found. Current working directory: %s", wd)
+		return nil, nil, fmt.Errorf("ccplant binary not found. Current working directory: %s", wd)
 	}
 
 	t.Logf("Using proxy binary at: %s", binaryPath)

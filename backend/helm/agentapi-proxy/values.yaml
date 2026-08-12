@@ -466,7 +466,7 @@ observability:
 # Additional environment variables
 env: []
 # - name: CCPLANT_BINARY_PATH
-#   value: "/usr/local/bin/agentapi-proxy"
+#   value: "/usr/local/bin/ccplant"
 # - name: GITHUB_TOKEN
 #   value: "your-token"
 # - name: CLAUDE_ARGS

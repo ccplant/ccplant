@@ -4012,6 +4012,7 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 // buildEnvVars creates environment variables for the session pod
 func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req *entities.RunServerRequest) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
+		{Name: proxybinary.EnvName, Value: proxybinary.Resolve(m.config.BinaryPath)},
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
@@ -5380,6 +5381,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Build env vars (mirrors buildEnvVars logic from line 2695)
 	env := map[string]string{
+		proxybinary.EnvName:   proxybinary.Resolve(m.config.BinaryPath),
 		"AGENTAPI_PORT":       fmt.Sprintf("%d", m.k8sConfig.BasePort),
 		"AGENTAPI_SESSION_ID": session.id,
 		"AGENTAPI_USER_ID":    req.UserID,

@@ -506,6 +506,8 @@ type UsageConfig struct {
 
 // Config represents the proxy configuration
 type Config struct {
+	// BinaryPath is the ccplant executable used by generated hooks and child processes.
+	BinaryPath string `json:"binary_path" mapstructure:"binary_path"`
 	// Auth represents authentication configuration
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
@@ -960,6 +962,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Bind nested configuration keys to environment variables
 	// Note: BindEnv errors are generally not critical and can be ignored
 	// as they typically occur only when the key is already bound
+	_ = v.BindEnv("binary_path", "CCPLANT_BINARY_PATH")
 
 	// Auth configuration
 	_ = v.BindEnv("auth.static.enabled")
@@ -1152,6 +1155,7 @@ func bindEnvVars(v *viper.Viper) {
 
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("binary_path", "ccplant")
 	// Auth defaults
 	v.SetDefault("auth.bootstrap_admin.enabled", false)
 	v.SetDefault("auth.bootstrap_admin.user_id", "bootstrap-admin")

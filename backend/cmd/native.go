@@ -256,7 +256,7 @@ func nativeInstallPathsFor(goos, instance, configOverride string) (nativeInstall
 	isDefault := instance == nativeDefaultInstance
 	if goos == "linux" {
 		var configDir, credentials, state, logDir string
-		binary := "/usr/local/libexec/agentapi-proxy/agentapi-proxy"
+		binary := "/usr/local/libexec/agentapi-proxy/ccplant"
 		if isDefault {
 			configDir = "/etc/agentapi-native"
 			credentials = "/etc/agentapi-native/credentials.json"
@@ -292,7 +292,7 @@ func nativeInstallPathsFor(goos, instance, configOverride string) (nativeInstall
 		if configOverride != "" {
 			config = configOverride
 		}
-		return nativeInstallPaths{config: config, credentials: filepath.Join(base, "credentials.json"), state: filepath.Join(base, "state"), binary: filepath.Join(base, "bin", "agentapi-proxy"), service: filepath.Join(home, "Library", "LaunchAgents", nativeServiceNameFor(goos, instance)+".plist"), logDir: logDir}, nil
+		return nativeInstallPaths{config: config, credentials: filepath.Join(base, "credentials.json"), state: filepath.Join(base, "state"), binary: filepath.Join(base, "bin", "ccplant"), service: filepath.Join(home, "Library", "LaunchAgents", nativeServiceNameFor(goos, instance)+".plist"), logDir: logDir}, nil
 	}
 	return nativeInstallPaths{}, fmt.Errorf("unsupported OS: %s", goos)
 }
