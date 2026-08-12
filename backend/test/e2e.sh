@@ -39,7 +39,7 @@ if [ -z "$BINARY_PATH" ]; then
 fi
 
 # Export binary path for tests to use
-export AGENTAPI_PROXY_BINARY="$BINARY_PATH"
+export CCPLANT_BINARY_PATH="$BINARY_PATH"
 
 echo "Running e2e tests..."
 

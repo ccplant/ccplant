@@ -1,4 +1,4 @@
-use crate::binary::{run_native_json, run_native_logs, run_native_plain};
+use crate::binary::{run_binary_plain, run_native_json, run_native_logs, run_native_plain};
 use crate::types::{
     CommandCheck, CommandResult, DoctorResult, InstallRequest, ManagerEnvironment, NativeInstance,
     NativeSession, NativeStatus, ResetRequest, UpdateManagerEnvironmentRequest,
@@ -7,7 +7,6 @@ use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
 
 /// Whether this Mac has completed the native daemon installation.
 ///
@@ -132,26 +131,15 @@ pub async fn native_update(
     app: AppHandle,
     instance: Option<String>,
 ) -> Result<CommandResult, String> {
-    let args = update_args(instance.as_deref());
-    let output = app
-        .shell()
-        .sidecar("agentapi-proxy")
-        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| format!("failed to update native manager: {e}"))?;
-    let message = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .trim()
-    .to_string();
+    let args = update_args(instance.as_deref())
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let (ok, message) = run_binary_plain(&app, args).await?;
     Ok(CommandResult {
-        ok: output.status.success(),
+        ok,
         message: if message.is_empty() {
-            if output.status.success() {
+            if ok {
                 "Native manager updated and restarted.".to_string()
             } else {
                 "Native manager update failed.".to_string()
@@ -234,25 +222,9 @@ pub async fn native_install(
         manager_env = format!("PATH={manager_path}");
         args.extend(["--manager-env", manager_env.as_str()]);
     }
-    let output = app
-        .shell()
-        .sidecar("agentapi-proxy")
-        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| format!("failed to run native install: {e}"))?;
-    let message = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .trim()
-    .to_string();
-    Ok(CommandResult {
-        ok: output.status.success(),
-        message,
-    })
+    let (ok, message) =
+        run_binary_plain(&app, args.into_iter().map(str::to_string).collect()).await?;
+    Ok(CommandResult { ok, message })
 }
 
 const REQUIRED_MANAGER_COMMANDS: [&str; 5] = ["node", "npx", "mise", "gh", "git"];
@@ -414,25 +386,8 @@ fn check_manager_command(command: &str, path: &str) -> CommandCheck {
 #[tauri::command]
 pub async fn native_reset(app: AppHandle, request: ResetRequest) -> Result<CommandResult, String> {
     let args = uninstall_args(request.force, &request.instance);
-    let output = app
-        .shell()
-        .sidecar("agentapi-proxy")
-        .map_err(|e| format!("bundled agentapi-proxy is unavailable: {e}"))?
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| format!("failed to reset native setup: {e}"))?;
-    let message = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .trim()
-    .to_string();
-    Ok(CommandResult {
-        ok: output.status.success(),
-        message,
-    })
+    let (ok, message) = run_binary_plain(&app, args).await?;
+    Ok(CommandResult { ok, message })
 }
 
 fn uninstall_args(force: bool, instance: &str) -> Vec<String> {

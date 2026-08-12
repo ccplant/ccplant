@@ -35,14 +35,14 @@ func TestHelpersInit(t *testing.T) {
 }
 
 func TestBuildStartupConfigCursor(t *testing.T) {
-	config := buildStartupConfig("cursor")
+	config := buildStartupConfig("cursor", nil)
 
 	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
 func TestBuildStartupConfigPiOllama(t *testing.T) {
-	config := buildStartupConfig("pi-ollama")
+	config := buildStartupConfig("pi-ollama", nil)
 
 	assert.Equal(t, []string{"agentapi-proxy"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--", "npx", "-y", "pi-acp"}, config.Args)
@@ -50,6 +50,14 @@ func TestBuildStartupConfigPiOllama(t *testing.T) {
 	assert.Contains(t, config.PreScript, "node_modules/pi-ollama-cloud")
 	assert.Contains(t, config.PreScript, "node_modules/pi-mcp-adapter")
 	assert.Contains(t, config.PreScript, "skipping install")
+}
+
+func TestBuildStartupConfigUsesConfiguredProxyBinary(t *testing.T) {
+	config := buildStartupConfig("codex-acp", map[string]string{
+		"CCPLANT_BINARY_PATH": "/opt/ccplant/bin/ccplant",
+	})
+
+	assert.Equal(t, []string{"/opt/ccplant/bin/ccplant"}, config.Command)
 }
 
 func TestGenerateTokenFlags(t *testing.T) {

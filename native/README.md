@@ -95,7 +95,9 @@ keeps running regardless of the dashboard's lifecycle.
 ## How it talks to the proxy
 
 The Rust side executes the bundled `agentapi-proxy` sidecar by default. An
-`AGENTAPI_PROXY_NATIVE_BINARY` override remains available for development. If
+`CCPLANT_BINARY_PATH` override remains available for development and accepts a
+path to an executable file. The override applies to all commands, including
+install, update, and reset. If
 the sidecar is unavailable, the fallback lookup order is:
 
 1. The macOS binary managed by `native install` under
