@@ -2340,10 +2340,16 @@ func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req
 }
 
 func (m *KubernetesSessionManager) defaultAgentTypeForRequest(ctx context.Context, req *entities.RunServerRequest) string {
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.settingsRepo != nil {
-		settings, err := m.settingsRepo.FindByName(ctx, req.TeamID)
+	settingsName := ""
+	if req.Scope == entities.ScopeTeam {
+		settingsName = req.TeamID
+	} else {
+		settingsName = req.UserID
+	}
+	if settingsName != "" && m.settingsRepo != nil {
+		settings, err := m.settingsRepo.FindByName(ctx, settingsName)
 		if err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to read default agent type for team %s: %v", req.TeamID, err)
+			log.Printf("[K8S_SESSION] Warning: failed to read default agent type for %s: %v", settingsName, err)
 		} else if agentType := settings.DefaultAgentType(); agentType != "" {
 			return agentType
 		}
