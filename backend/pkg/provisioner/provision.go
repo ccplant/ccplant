@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
 	corev1 "k8s.io/api/core/v1"
@@ -426,7 +427,8 @@ func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
 	}
 	// Return from the Stop hook before checkpointing: Codex commits its local
 	// thread state only after synchronous Stop hooks finish.
-	command := "nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 agentapi-proxy client backup-session-state && agentapi-proxy client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &"
+	binary := proxybinary.ShellReference()
+	command := fmt.Sprintf("nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 %s client backup-session-state && %s client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &", binary, binary)
 	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 10}}}
 	appendStop := func(root map[string]interface{}) map[string]interface{} {
 		if root == nil {
@@ -450,7 +452,7 @@ func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {
 		return
 	}
 	agentType := settings.Session.AgentType
-	command := fmt.Sprintf("agentapi-proxy client report-usage --agent-type %s >> /tmp/usage-report.log 2>&1", shellQuote(agentType))
+	command := fmt.Sprintf("%s client report-usage --agent-type %s >> /tmp/usage-report.log 2>&1", proxybinary.ShellReference(), shellQuote(agentType))
 	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 15}}}
 	appendStop := func(root map[string]interface{}) map[string]interface{} {
 		if root == nil {
@@ -1245,10 +1247,7 @@ service:
 // process, mirroring the logic in BuildRemoteProvisionSettings().
 func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, envMap map[string]string) (string, []string) {
 	agentType := settings.Session.AgentType
-	agentapiProxyBinary := getEnv(envMap, "AGENTAPI_PROXY_BINARY")
-	if agentapiProxyBinary == "" {
-		agentapiProxyBinary = "agentapi-proxy"
-	}
+	agentapiProxyBinary := proxybinary.FromMap(envMap)
 
 	agentapiPort := os.Getenv("AGENTAPI_PORT")
 	if agentapiPort == "" {
@@ -1995,10 +1994,7 @@ func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
 	}
 
 	log.Printf("[PROVISIONER] Fetching session memory (keys: %s)", memoryKeyFlags)
-	agentapiProxyBinary := getEnv(envMap, "AGENTAPI_PROXY_BINARY")
-	if agentapiProxyBinary == "" {
-		agentapiProxyBinary = "agentapi-proxy"
-	}
+	agentapiProxyBinary := proxybinary.FromMap(envMap)
 	out, err := exec.Command(agentapiProxyBinary, args...).Output()
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		log.Printf("[PROVISIONER] No memory found for this session (non-fatal)")

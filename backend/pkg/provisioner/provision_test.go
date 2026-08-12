@@ -72,14 +72,14 @@ func TestInjectSessionPersistenceHookBacksUpThenSchedulesSuspend(t *testing.T) {
 
 func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
-	env := map[string]string{"AGENTAPI_PROXY_BINARY": "/Applications/agentapi-proxy.app/Contents/MacOS/agentapi-proxy"}
+	env := map[string]string{"CCPLANT_BINARY_PATH": "/Applications/agentapi-proxy.app/Contents/MacOS/agentapi-proxy"}
 
 	cmd, _ := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{AgentType: "codex-acp"},
 	}, env)
 
-	if cmd != env["AGENTAPI_PROXY_BINARY"] {
-		t.Fatalf("command = %q, want bundled binary %q", cmd, env["AGENTAPI_PROXY_BINARY"])
+	if cmd != env["CCPLANT_BINARY_PATH"] {
+		t.Fatalf("command = %q, want bundled binary %q", cmd, env["CCPLANT_BINARY_PATH"])
 	}
 }
 

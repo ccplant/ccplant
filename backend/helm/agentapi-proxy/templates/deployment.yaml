@@ -68,17 +68,22 @@ spec:
           args:
             - -ec
             - >-
-              /usr/local/bin/agentapi-proxy kv-store migrate
+              "${CCPLANT_BINARY_PATH:-/usr/local/bin/agentapi-proxy}" kv-store migrate
               --namespace {{ .Release.Namespace | quote }}
               --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
               {{- if (dig "kvStore" "migration" "dryRun" false .Values.config) }} --dry-run{{- end }}
               {{- if (dig "kvStore" "migration" "overwrite" false .Values.config) }} --overwrite{{- end }}
               {{- if not (dig "kvStore" "migration" "dryRun" false .Values.config) }}
-              && /usr/local/bin/agentapi-proxy kv-store verify
+              && "${CCPLANT_BINARY_PATH:-/usr/local/bin/agentapi-proxy}" kv-store verify
               --namespace {{ .Release.Namespace | quote }}
               --output {{ dig "kvStore" "migration" "output" "text" .Values.config | quote }}
               {{- end }}
           env:
+            {{- range .Values.env }}
+            {{- if eq .name "CCPLANT_BINARY_PATH" }}
+{{ toYaml (list .) | nindent 12 }}
+            {{- end }}
+            {{- end }}
             - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND
               value: {{ dig "kvStore" "primary" "backend" "" .Values.config | quote }}
             {{- $migrationPrimaryDatabaseSecret := dig "kvStore" "primary" "databaseUrlSecretRef" "name" "" .Values.config }}

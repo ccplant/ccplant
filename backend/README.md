@@ -370,6 +370,9 @@ Scripts are embedded in the binary and extracted to temporary files at runtime.
 
 Sessions can receive custom environment variables:
 
+- **CCPLANT_BINARY_PATH**: Path to the proxy executable used by containers,
+  provisioners, ACP startup commands, and generated hooks. Defaults to
+  `agentapi-proxy`.
 - **GITHUB_TOKEN**: GitHub personal access token
 - **WORKSPACE_NAME**: Custom workspace identifier  
 - **DEBUG**: Enable debug mode for agentapi

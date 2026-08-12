@@ -45,7 +45,7 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") || strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") {
 			t.Fatalf("native path override was retained: %q", value)
 		}
-		if value == "AGENTAPI_PROXY_BINARY=/bin/true" {
+		if value == "CCPLANT_BINARY_PATH=/bin/true" {
 			foundProxyBinary = true
 		}
 	}
@@ -59,13 +59,13 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 
 func TestNativeProvisionerEnvironmentOverridesInheritedProxyBinary(t *testing.T) {
 	env := nativeProvisionerEnvironment(
-		[]string{"PATH=/usr/bin", "AGENTAPI_PROXY_BINARY=/usr/local/bin/agentapi-proxy"},
-		"AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/agentapi-proxy",
+		[]string{"PATH=/usr/bin", "CCPLANT_BINARY_PATH=/usr/local/bin/agentapi-proxy"},
+		"CCPLANT_BINARY_PATH=/app/Contents/MacOS/agentapi-proxy",
 	)
-	want := "AGENTAPI_PROXY_BINARY=/app/Contents/MacOS/agentapi-proxy"
+	want := "CCPLANT_BINARY_PATH=/app/Contents/MacOS/agentapi-proxy"
 	count := 0
 	for _, value := range env {
-		if strings.HasPrefix(value, "AGENTAPI_PROXY_BINARY=") {
+		if strings.HasPrefix(value, "CCPLANT_BINARY_PATH=") {
 			count++
 			if value != want {
 				t.Fatalf("proxy binary = %q, want %q", value, want)

@@ -278,4 +278,4 @@ EXPOSE 8080
 
 # Run the application with entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["mise", "exec", "--", "agentapi-proxy", "server"]
+CMD ["sh", "-c", "exec \"${CCPLANT_BINARY_PATH:-agentapi-proxy}\" server"]

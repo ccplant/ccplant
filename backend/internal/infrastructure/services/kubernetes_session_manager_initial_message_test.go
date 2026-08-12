@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -253,11 +254,11 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 
 	// Verify the main container uses agent-provisioner command.
 	mainContainer := podSpec.Containers[0]
-	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "agentapi-proxy" {
-		t.Errorf("Expected main container command [agentapi-proxy], got %v", mainContainer.Command)
+	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "/bin/sh" {
+		t.Errorf("Expected main container command [/bin/sh -c], got %v", mainContainer.Command)
 	}
-	if len(mainContainer.Args) == 0 || mainContainer.Args[0] != "agent-provisioner" {
-		t.Errorf("Expected main container args [agent-provisioner], got %v", mainContainer.Args)
+	if len(mainContainer.Args) == 0 || !strings.Contains(mainContainer.Args[0], "agent-provisioner") {
+		t.Errorf("Expected main container args to run agent-provisioner, got %v", mainContainer.Args)
 	}
 
 	// Verify provisioner port (9001) is exposed.
