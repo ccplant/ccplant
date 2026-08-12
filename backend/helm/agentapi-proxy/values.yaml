@@ -34,8 +34,6 @@ replicaCount: 1
 image:
   repository: ghcr.io/ccplant/ccplant-backend
   pullPolicy: IfNotPresent
-  # Defaults to the component Chart's appVersion when empty.
-  tag: ""
 
 imagePullSecrets: []
 

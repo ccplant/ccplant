@@ -10,7 +10,6 @@ backend:
   enabled: true
   image:
     repository: ghcr.io/ccplant/ccplant-backend
-    tag: v0.1.0
   ingress:
     enabled: false
 
@@ -18,6 +17,5 @@ frontend:
   enabled: true
   image:
     repository: ghcr.io/ccplant/ccplant-frontend
-    tag: v0.1.0
   ingress:
     enabled: false

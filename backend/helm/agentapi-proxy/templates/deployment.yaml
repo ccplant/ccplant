@@ -61,7 +61,7 @@ spec:
         - name: kv-store-migrate
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - /bin/sh
@@ -137,7 +137,7 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -166,7 +166,7 @@ spec:
                   name: {{ dig "name" "" $openTelemetrySecret | quote }}
                   key: {{ dig "headersKey" "OTEL_EXPORTER_OTLP_HEADERS" $openTelemetrySecret | quote }}
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) (.Values.image.tag | default .Chart.AppVersion) | quote }}
+              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) .Chart.AppVersion | quote }}
             - name: OTEL_TRACES_SAMPLER
               value: {{ dig "tracesSampler" "parentbased_traceidratio" $openTelemetry | quote }}
             - name: OTEL_TRACES_SAMPLER_ARG
@@ -554,7 +554,7 @@ spec:
             - name: AGENTAPI_K8S_SESSION_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
-              value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion)) | quote }}
+              value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
               value: {{ .Values.kubernetesSession.networkFilterImage | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST

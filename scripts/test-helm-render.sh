@@ -66,13 +66,12 @@ assert_contains 'key: "oauth-client-secret"' "$TMP_DIR/backend-secrets.yaml"
 "$HELM_BIN" template backend-otel "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --set observability.openTelemetry.enabled=true \
   --set observability.openTelemetry.deploymentEnvironment=development \
-  --set observability.openTelemetry.secretRef.name=grafana-cloud-otlp \
-  --set image.tag=dev-test >"$TMP_DIR/backend-otel.yaml"
+  --set observability.openTelemetry.secretRef.name=grafana-cloud-otlp >"$TMP_DIR/backend-otel.yaml"
 assert_contains 'name: OTEL_EXPORTER_OTLP_ENDPOINT' "$TMP_DIR/backend-otel.yaml"
 assert_contains 'name: "grafana-cloud-otlp"' "$TMP_DIR/backend-otel.yaml"
 assert_contains 'key: "OTEL_EXPORTER_OTLP_HEADERS"' "$TMP_DIR/backend-otel.yaml"
 assert_contains 'fieldPath: metadata.name' "$TMP_DIR/backend-otel.yaml"
-assert_contains 'deployment.environment=development,service.namespace=ccplant,service.version=dev-test,service.instance.id=\$\(POD_NAME\)' "$TMP_DIR/backend-otel.yaml"
+assert_contains 'deployment.environment=development,service.namespace=ccplant,service.version=1.173.0,service.instance.id=\$\(POD_NAME\)' "$TMP_DIR/backend-otel.yaml"
 
 # Upgrades from chart versions that predate observability values may reuse a
 # values object without that key. Rendering must remain backward compatible.
