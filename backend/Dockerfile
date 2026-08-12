@@ -23,7 +23,7 @@ COPY . .
 # Build the application with optimizations
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/agentapi-proxy main.go
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/ccplant main.go
 
 # Download agentapi release binary instead of rebuilding it from source.
 FROM alpine:3.22 AS agentapi-downloader
@@ -253,7 +253,7 @@ ENV CLAUDE_CODE_EXECUTABLE=/home/agentapi/.bun/install/global/node_modules/@anth
 
 # Copy the frequently changing proxy binary after the expensive runtime toolchain
 # setup so ordinary app changes do not invalidate those cached layers.
-COPY --from=builder /app/bin/agentapi-proxy /usr/local/bin/
+COPY --from=builder /app/bin/ccplant /usr/local/bin/
 
 # Copy CLAUDE.md to temporary location for entrypoint script
 COPY config/CLAUDE.md /tmp/config/CLAUDE.md
@@ -278,4 +278,4 @@ EXPOSE 8080
 
 # Run the application with entrypoint
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["sh", "-c", "exec \"${CCPLANT_BINARY_PATH:-agentapi-proxy}\" server"]
+CMD ["sh", "-c", "exec \"${CCPLANT_BINARY_PATH:-ccplant}\" server"]

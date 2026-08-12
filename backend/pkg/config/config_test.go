@@ -45,6 +45,17 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestBinaryPathConfig(t *testing.T) {
+	t.Setenv("CCPLANT_BINARY_PATH", "/opt/ccplant/bin/ccplant")
+	loadedConfig, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if got, want := loadedConfig.BinaryPath, "/opt/ccplant/bin/ccplant"; got != want {
+		t.Fatalf("BinaryPath = %q, want %q", got, want)
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 

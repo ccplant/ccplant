@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "externalBin": ["binaries/agentapi-proxy"],
+    "externalBin": ["binaries/ccplant"],
     "targets": ["app", "dmg"],
     "icon": ["icons/icon.png", "icons/icon.icns"],
     "category": "DeveloperTool",

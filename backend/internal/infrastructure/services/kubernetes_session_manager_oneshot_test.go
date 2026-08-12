@@ -213,7 +213,7 @@ func TestOneshotSecretCreatedWithCorrectFormat(t *testing.T) {
 		t.Fatalf("Expected first inner hook to be map, got %T", innerHooks[0])
 	}
 
-	if hook["command"] != `"${CCPLANT_BINARY_PATH:-agentapi-proxy}" client delete-session --confirm` {
+	if hook["command"] != `"${CCPLANT_BINARY_PATH:-ccplant}" client delete-session --confirm` {
 		t.Errorf("Expected delete-session command, got: %v", hook["command"])
 	}
 }

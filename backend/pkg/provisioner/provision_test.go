@@ -44,8 +44,8 @@ func TestBuildAgentCommandCursor(t *testing.T) {
 		Session: sessionsettings.SessionMeta{AgentType: "cursor"},
 	}, nil)
 
-	if cmd != "agentapi-proxy" {
-		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
 	}
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}
 	if !reflect.DeepEqual(args, want) {
@@ -94,8 +94,8 @@ func TestBuildAgentCommandPiOllama(t *testing.T) {
 		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
 	}, env)
 
-	if cmd != "agentapi-proxy" {
-		t.Fatalf("command = %q, want agentapi-proxy", cmd)
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
 	}
 	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "npx", "-y", "pi-acp"}
 	if !reflect.DeepEqual(args, want) {

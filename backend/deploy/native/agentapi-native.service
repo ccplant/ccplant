@@ -8,7 +8,7 @@ Type=simple
 User=agentapi
 Group=agentapi
 EnvironmentFile=/etc/agentapi-native/environment
-Environment=CCPLANT_BINARY_PATH=/usr/local/bin/agentapi-proxy
+Environment=CCPLANT_BINARY_PATH=/usr/local/bin/ccplant
 ExecStart=/bin/sh -c 'exec "$CCPLANT_BINARY_PATH" native-session-manager --listen "$NATIVE_LISTEN" --upstream-url "$NATIVE_UPSTREAM_URL" --upstream-auth-token "$NATIVE_UPSTREAM_AUTH_TOKEN" --connection-token "$NATIVE_CONNECTION_TOKEN" --state-dir "$NATIVE_STATE_DIR"'
 Restart=always
 RestartSec=3

@@ -21,8 +21,14 @@ func TestFromMap(t *testing.T) {
 	}
 }
 
+func TestResolve(t *testing.T) {
+	if got := Resolve(""); got != "ccplant" {
+		t.Fatalf("Resolve() = %q, want ccplant", got)
+	}
+}
+
 func TestShellReference(t *testing.T) {
-	if got, want := ShellReference(), `"${CCPLANT_BINARY_PATH:-agentapi-proxy}"`; got != want {
+	if got, want := ShellReference(), `"${CCPLANT_BINARY_PATH:-ccplant}"`; got != want {
 		t.Fatalf("ShellReference() = %q, want %q", got, want)
 	}
 }

@@ -13,7 +13,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>CCPLANT_BINARY_PATH</key>
-    <string>/usr/local/bin/agentapi-proxy</string>
+    <string>/usr/local/bin/ccplant</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

@@ -4,7 +4,7 @@ A minimal, production-shaped **macOS menu-bar dashboard** for the
 agentapi-proxy **native External Session Manager** (ESM). Built with
 Tauri 2 + Vite + React + TypeScript.
 
-The app bundles the `agentapi-proxy` Go binary as a Tauri sidecar. It uses that
+The app bundles the `ccplant` Go binary as a Tauri sidecar. It uses that
 binary for first-run registration and installation, then reads status,
 sessions, doctor output, and restarts the daemon. The native daemon is owned by launchd and runs
 independently of this dashboard — closing the window simply hides it.

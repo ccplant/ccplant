@@ -1,4 +1,8 @@
 # Example configuration file for agentapi-proxy
+
+# Executable used by generated hooks and child processes.
+# May also be set with CCPLANT_BINARY_PATH.
+binary_path: ccplant
 # This file demonstrates all available configuration options
 # Values can be overridden by environment variables with AGENTAPI_ prefix
 
