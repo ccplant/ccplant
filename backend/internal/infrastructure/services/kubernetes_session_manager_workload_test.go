@@ -410,3 +410,71 @@ func TestPurgeStockSessionsKeepsAdoptedSessionWithStaleStockWorkloadLabels(t *te
 		t.Fatalf("Expected stale-labeled PVC to remain, got err=%v", err)
 	}
 }
+
+func TestPurgeStaleStockSessionsUsesCurrentPodTemplateHash(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	t.Setenv("HOSTNAME", "proxy-pod")
+
+	_, err := manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "proxy-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"pod-template-hash": "current-hash"},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create current proxy pod: %v", err)
+	}
+
+	for _, tc := range []struct {
+		id   string
+		hash string
+	}{
+		{id: "current-stock", hash: "current-hash"},
+		{id: "stale-stock", hash: "old-hash"},
+		{id: "legacy-stock"},
+	} {
+		name := "agentapi-session-" + tc.id
+		labels := map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy",
+			"agentapi.proxy/stock":         "true",
+			"agentapi.proxy/session-id":    tc.id,
+		}
+		if tc.hash != "" {
+			labels[stockPodTemplateHashLabel] = tc.hash
+		}
+		_, err = manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create stock service %s: %v", tc.id, err)
+		}
+		_, err = manager.client.AppsV1().Deployments("test-ns").Create(ctx, &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create stock deployment %s: %v", tc.id, err)
+		}
+	}
+
+	if err := manager.PurgeStaleStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStaleStockSessions failed: %v", err)
+	}
+
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-current-stock-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected current stock service to remain, got err=%v", err)
+	}
+	if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, "agentapi-session-current-stock", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Expected current stock deployment to remain, got err=%v", err)
+	}
+	for _, id := range []string{"stale-stock", "legacy-stock"} {
+		name := "agentapi-session-" + id
+		if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Fatalf("Expected stale service %s to be deleted, got err=%v", id, err)
+		}
+		if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Fatalf("Expected stale deployment %s to be deleted, got err=%v", id, err)
+		}
+	}
+}

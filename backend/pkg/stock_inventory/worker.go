@@ -14,10 +14,9 @@ import (
 type StockRepository interface {
 	CreateStockSession(ctx context.Context, dind bool) error
 	CountStockSessions(ctx context.Context, dind bool) (int, error)
-	// PurgeStockSessions deletes all pre-warmed stock sessions. Called on
-	// worker startup so that stale sessions (e.g. built from an old image)
-	// are replaced with fresh ones.
-	PurgeStockSessions(ctx context.Context) error
+	// PurgeStaleStockSessions deletes pre-warmed sessions created by a
+	// different proxy Pod template revision.
+	PurgeStaleStockSessions(ctx context.Context) error
 }
 
 // StockRequirements captures the pod capabilities a stock session is prepared for.
@@ -118,13 +117,6 @@ func (w *Worker) run(ctx context.Context) {
 	ticker := time.NewTicker(w.config.CheckInterval)
 	defer ticker.Stop()
 
-	// On startup, purge all existing stock sessions so that stale pods
-	// (built from an old image) are replaced with fresh ones.
-	log.Printf("[STOCK_INVENTORY] Purging existing stock sessions on startup")
-	if err := w.repo.PurgeStockSessions(ctx); err != nil {
-		log.Printf("[STOCK_INVENTORY] Warning: failed to purge stock sessions: %v", err)
-	}
-
 	// Run immediately on start.
 	w.replenishStock(ctx)
 
@@ -144,6 +136,10 @@ func (w *Worker) run(ctx context.Context) {
 
 // replenishStock checks the current stock count and creates sessions to reach TargetCount.
 func (w *Worker) replenishStock(ctx context.Context) {
+	if err := w.repo.PurgeStaleStockSessions(ctx); err != nil {
+		log.Printf("[STOCK_INVENTORY] Warning: failed to purge stale stock sessions: %v", err)
+		return
+	}
 	for _, pool := range w.effectivePools() {
 		w.replenishPool(ctx, pool)
 	}
