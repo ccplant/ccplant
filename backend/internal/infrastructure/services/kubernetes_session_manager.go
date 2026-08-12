@@ -665,7 +665,7 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 // Note: Sandbox (network filter) and scia sidecar are always enabled.
 func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind bool) error {
 	m.refreshConfig()
-	podTemplateHash, err := m.currentPodTemplateHash(ctx)
+	podTemplateHash, err := m.stockPodTemplateHash(ctx, dind)
 	if err != nil {
 		return fmt.Errorf("failed to resolve stock pod template hash: %w", err)
 	}
@@ -739,33 +739,47 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 	return nil
 }
 
-// currentPodTemplateHash returns the Kubernetes Deployment revision of the
-// proxy Pod running this inventory worker. Kubernetes sets pod-template-hash
-// on Pods managed by a Deployment.
-func (m *KubernetesSessionManager) currentPodTemplateHash(ctx context.Context) (string, error) {
-	podName := strings.TrimSpace(os.Getenv("HOSTNAME"))
-	if podName == "" {
-		return "", fmt.Errorf("HOSTNAME is empty")
+// stockPodTemplateHash builds the effective session Pod template for a stable
+// synthetic stock session and hashes it. A stable session ID ensures that
+// per-session labels, environment variables, and resource names do not make
+// identical templates appear different.
+func (m *KubernetesSessionManager) stockPodTemplateHash(ctx context.Context, dind bool) (string, error) {
+	const id = "stock-template-hash"
+	req := &entities.RunServerRequest{Sandbox: stockSandboxParams()}
+	if dind {
+		req.Docker = &entities.DockerParams{Enabled: true}
 	}
-	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, podName, metav1.GetOptions{})
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	session := NewKubernetesSession(
+		id,
+		req,
+		"agentapi-session-"+id,
+		"agentapi-session-"+id+"-svc",
+		"agentapi-session-"+id+"-pvc",
+		m.namespace,
+		m.k8sConfig.BasePort,
+		cancel,
+		nil,
+	)
+	session.SetIsStock(true)
+	deployment, err := m.buildDeployment(ctx, session, req)
 	if err != nil {
-		return "", fmt.Errorf("get current pod %s: %w", podName, err)
+		return "", fmt.Errorf("build stock session pod template: %w", err)
 	}
-	hash := strings.TrimSpace(pod.Labels["pod-template-hash"])
-	if hash == "" {
-		return "", fmt.Errorf("current pod %s has no pod-template-hash label", podName)
+	data, err := json.Marshal(deployment.Spec.Template)
+	if err != nil {
+		return "", fmt.Errorf("marshal stock session pod template: %w", err)
 	}
-	return hash, nil
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:16]), nil
 }
 
 // PurgeStaleStockSessions removes available stock created by a different
-// proxy Pod template revision. Stock without a recorded revision is treated as
+// effective session Pod template. Stock without a recorded hash is treated as
 // stale so it is upgraded once after this behavior is deployed.
 func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) error {
-	currentHash, err := m.currentPodTemplateHash(ctx)
-	if err != nil {
-		return err
-	}
+	m.refreshConfig()
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
 	})
@@ -776,10 +790,20 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 	deletePolicy := metav1.DeletePropagationForeground
 	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
 	var purgeErrs []string
+	desiredHashes := make(map[bool]string, 2)
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
+		dind := svc.Labels["agentapi.proxy/capability-dind"] == "true"
+		desiredHash, ok := desiredHashes[dind]
+		if !ok {
+			desiredHash, err = m.stockPodTemplateHash(ctx, dind)
+			if err != nil {
+				return fmt.Errorf("calculate stock pod template hash (dind=%t): %w", dind, err)
+			}
+			desiredHashes[dind] = desiredHash
+		}
 		stockHash := svc.Labels[stockPodTemplateHashLabel]
-		if stockHash == currentHash {
+		if stockHash == desiredHash {
 			continue
 		}
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
@@ -787,7 +811,7 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s has no session-id", svc.Name))
 			continue
 		}
-		log.Printf("[STOCK_INVENTORY] Recreating stock session %s after pod template hash changed (%q -> %q)", sessionID, stockHash, currentHash)
+		log.Printf("[STOCK_INVENTORY] Recreating stock session %s after pod template hash changed (%q -> %q, dind=%t)", sessionID, stockHash, desiredHash, dind)
 		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
 		}
