@@ -240,11 +240,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			}
 			apiKVClient = client
 		}
-		applicationKVStore, _, err = buildApplicationKVStore(cfg.KVStore, apiKVClient)
+		var wrapPersistence bool
+		applicationKVStore, wrapPersistence, err = buildApplicationKVStore(cfg.KVStore, apiKVClient)
 		if err != nil {
 			log.Fatalf("[SERVER] Failed to initialize API KV store: %v", err)
 		}
-		persistenceClient = kvstore.NewKubernetesAdapter(apiKVClient, applicationKVStore)
+		persistenceClient = apiKVClient
+		if wrapPersistence {
+			persistenceClient = kvstore.NewKubernetesAdapter(apiKVClient, applicationKVStore)
+		}
 		log.Printf("[SERVER] Public API connected to isolated session manager: %s", cfg.SessionManager.APIURL)
 	} else {
 		// Legacy/test composition remains available for local development. The
