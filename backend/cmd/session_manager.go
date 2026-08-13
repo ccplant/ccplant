@@ -52,6 +52,7 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	startSessionAllocator(cfg, runtime)
 	startSessionManagerAllocator(ctx, cfg, runtime)
 	go func() {
 		if err := runtime.GetEcho().Start(":" + sessionManagerPort); err != nil && err != http.ErrServerClosed {

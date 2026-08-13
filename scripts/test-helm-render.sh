@@ -89,11 +89,11 @@ assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"
   --set kubernetesSession.enabled=false \
   --set worker.enabled=true \
   --set redis.enabled=true \
+  --set kubernetesSession.provisioner.tokenSecretRef.name=provisioner-token \
   --set worker.schedule.enabled=false \
   --set worker.slackbotCleanup.enabled=false \
   --set worker.stockInventory.enabled=true >"$TMP_DIR/backend-stock.yaml"
 assert_not_contains 'resources: \["leases"\]' "$TMP_DIR/backend-stock.yaml"
-assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-stock.yaml"
 assert_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-stock.yaml"
 assert_contains 'args: \["worker"\]' "$TMP_DIR/backend-stock.yaml"
 

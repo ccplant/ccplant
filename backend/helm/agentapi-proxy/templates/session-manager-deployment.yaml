@@ -30,6 +30,10 @@ spec:
           ports:
             - {name: http, containerPort: {{ .Values.sessionManager.port }}}
           env:
+            {{- with .Values.kubernetesSession.provisioner.tokenSecretRef.name }}
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.kubernetesSession.provisioner.tokenSecretRef.key | quote }}}}
+            {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
             - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ .Values.sessionManager.publicUrl | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ .Values.sessionManager.upstreamUrl | quote }}}

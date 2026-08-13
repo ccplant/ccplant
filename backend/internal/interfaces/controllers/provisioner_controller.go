@@ -42,6 +42,140 @@ type sessionSuspendScheduler interface {
 	ScheduleSessionSuspend(ctx context.Context, sessionID string) error
 }
 
+type workerSessionManager interface {
+	repositories.SessionManager
+}
+
+type workerStockRepository interface {
+	CreateStockSession(context.Context, bool) error
+	CountStockSessions(context.Context, bool) (int, error)
+	PurgeStaleStockSessions(context.Context) error
+}
+
+type workerSessionInfo struct {
+	ID            string                 `json:"id"`
+	UserID        string                 `json:"user_id"`
+	Scope         entities.ResourceScope `json:"scope"`
+	TeamID        string                 `json:"team_id"`
+	Tags          map[string]string      `json:"tags"`
+	Status        string                 `json:"status"`
+	StartedAt     time.Time              `json:"started_at"`
+	LastMessageAt time.Time              `json:"last_message_at"`
+}
+
+func (pc *ProvisionerController) CreateWorkerSession(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	manager, ok := pc.allocationQueue.(workerSessionManager)
+	if !ok {
+		return c.NoContent(http.StatusNotImplemented)
+	}
+	var req entities.RunServerRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	session, err := manager.CreateSession(c.Request().Context(), c.Param("sessionId"), &req, nil)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusCreated, workerSessionInfoFrom(session))
+}
+
+func (pc *ProvisionerController) ListWorkerSessions(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	manager, ok := pc.allocationQueue.(workerSessionManager)
+	if !ok {
+		return c.NoContent(http.StatusNotImplemented)
+	}
+	sessions := manager.ListSessions(entities.SessionFilter{})
+	result := make([]workerSessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		result = append(result, workerSessionInfoFrom(session))
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (pc *ProvisionerController) DeleteWorkerSession(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	manager, ok := pc.allocationQueue.(workerSessionManager)
+	if !ok {
+		return c.NoContent(http.StatusNotImplemented)
+	}
+	if err := manager.DeleteSession(c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) SendWorkerMessage(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	manager, ok := pc.allocationQueue.(workerSessionManager)
+	if !ok {
+		return c.NoContent(http.StatusNotImplemented)
+	}
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if err := manager.SendMessage(c.Request().Context(), c.Param("sessionId"), req.Message); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) WorkerStock(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	repo, ok := pc.allocationQueue.(workerStockRepository)
+	if !ok {
+		return c.NoContent(http.StatusNotImplemented)
+	}
+	dind := c.QueryParam("dind") == "true"
+	switch c.Request().Method {
+	case http.MethodGet:
+		count, err := repo.CountStockSessions(c.Request().Context(), dind)
+		if err != nil {
+			return err
+		}
+		return c.JSON(http.StatusOK, map[string]int{"count": count})
+	case http.MethodPost:
+		if err := repo.CreateStockSession(c.Request().Context(), dind); err != nil {
+			return err
+		}
+		return c.NoContent(http.StatusCreated)
+	case http.MethodDelete:
+		if err := repo.PurgeStaleStockSessions(c.Request().Context()); err != nil {
+			return err
+		}
+		return c.NoContent(http.StatusNoContent)
+	default:
+		return c.NoContent(http.StatusMethodNotAllowed)
+	}
+}
+
+func workerSessionInfoFrom(session entities.Session) workerSessionInfo {
+	tags := make(map[string]string, len(session.Tags())+1)
+	for key, value := range session.Tags() {
+		tags[key] = value
+	}
+	if provider, ok := session.(interface {
+		Request() *entities.RunServerRequest
+	}); ok && provider.Request() != nil && provider.Request().SessionTTL != "" {
+		tags["session_ttl"] = provider.Request().SessionTTL
+	}
+	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), LastMessageAt: session.LastMessageAt()}
+}
+
 type externalRuntimeProfileProvider interface {
 	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
 }

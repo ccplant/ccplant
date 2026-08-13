@@ -46,6 +46,10 @@ var ServerCmd = &cobra.Command{
 	Run:   runProxy,
 }
 
+// Legacy constructors remain temporarily for focused unit coverage while all
+// production worker wiring lives in worker.go and uses the control API.
+var _ = []any{startScheduleWorker, startSlackbotCleanupWorker, startStockInventoryWorker, startSlackSocketManager, registerSessionManagerHandlers}
+
 func resolveKubernetesNamespace(candidates ...string) string {
 	for _, candidate := range candidates {
 		if namespace := strings.TrimSpace(candidate); namespace != "" {
@@ -308,17 +312,6 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Server) *slackbotcleanup.LeaderCleanupWorker {
 	log.Printf("[SLACKBOT_CLEANUP] Initializing Slackbot cleanup worker...")
 
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[SLACKBOT_CLEANUP] Kubernetes config not available, cleanup worker disabled: %v", err)
-		return nil
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SLACKBOT_CLEANUP] Failed to create Kubernetes client, cleanup worker disabled: %v", err)
-		return nil
-	}
 	redisClient, err := newWorkerRedisClient(configData)
 	if err != nil {
 		log.Printf("[SLACKBOT_CLEANUP] %v", err)
@@ -384,9 +377,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 
 	leaderCleanupWorker := slackbotcleanup.NewLeaderCleanupWorker(
 		proxyServer.GetSessionManager(),
-		client,
 		redisClient,
-		namespace,
 		workerConfig,
 		electionConfig,
 	)

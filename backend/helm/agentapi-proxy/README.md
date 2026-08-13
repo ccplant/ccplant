@@ -13,7 +13,10 @@ The chart remains a single chart. Configure the independent workloads under
 `worker` and `sessionManager`; proxy pod settings remain at the chart root.
 Workers persist application records through the configured `kvStore` backend
 and use Redis leases for leader election; they never create Kubernetes Lease
-objects. Enabling `worker` therefore requires bundled or external Redis.
+objects. Session creation, listing, messaging, deletion, and stock operations
+are delegated to the backend control API. The worker Pod does not mount a
+Kubernetes service-account token. Enabling `worker` therefore requires libSQL,
+bundled or external Redis, and a shared provisioner-token Secret.
 
 ```yaml
 worker:
@@ -22,6 +25,19 @@ worker:
     enabled: true
   stockInventory:
     enabled: true
+
+kubernetesSession:
+  provisioner:
+    tokenSecretRef:
+      name: agentapi-provisioner-token
+
+config:
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: agentapi-libsql
+    authTokenSecretRef:
+      name: agentapi-libsql
 
 sessionManager:
   enabled: true

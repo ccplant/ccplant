@@ -22,7 +22,7 @@ spec:
         app.kubernetes.io/component: worker
         {{- with .Values.worker.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
     spec:
-      serviceAccountName: {{ include "agentapi-proxy.serviceAccountName" . }}
+      automountServiceAccountToken: false
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
@@ -30,6 +30,13 @@ spec:
           command: ["/usr/local/bin/ccplant"]
           args: ["worker"]
           env:
+            {{- $workerControlURL := .Values.kubernetesSession.provisioner.proxyUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (.Values.controlPlaneService.name | default "control") .Release.Namespace (.Values.controlPlaneService.port | default 8080)) }}
+            - {name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL, value: {{ $workerControlURL | quote }}}
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "kubernetesSession.provisioner.tokenSecretRef.name is required when worker is enabled" .Values.kubernetesSession.provisioner.tokenSecretRef.name | quote }}
+                  key: {{ .Values.kubernetesSession.provisioner.tokenSecretRef.key | quote }}
             {{- if .Values.redis.enabled }}
             - {name: AGENTAPI_REDIS_ADDR, value: {{ printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) | quote }}}
             {{- if .Values.redis.auth.enabled }}
