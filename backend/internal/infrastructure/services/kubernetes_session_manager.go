@@ -83,19 +83,12 @@ type PersonalAPIKeyLoader interface {
 // SessionStatusEvent represents a proxy-level status change event for any session.
 // It is emitted by KubernetesSessionManager whenever a session's status changes,
 // and is delivered to all active SSE/long-poll subscribers.
-type SessionStatusEvent struct {
-	SessionID string    `json:"session_id"`
-	Status    string    `json:"status"`
-	Timestamp time.Time `json:"timestamp"`
-}
+type SessionStatusEvent = portrepos.SessionStatusEvent
 
 // SessionMessageEvent represents a message_update event for a specific session.
 // It is emitted by KubernetesSessionManager whenever the agentapi backend for a session
 // sends a message_update SSE event, and is delivered to per-session long-poll subscribers.
-type SessionMessageEvent struct {
-	SessionID string    `json:"session_id"`
-	Timestamp time.Time `json:"timestamp"`
-}
+type SessionMessageEvent = portrepos.SessionMessageEvent
 
 // SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
 // are removed. At this point the session's Service endpoint is still reachable, so handlers

@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
-	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
 )
 
 var (
@@ -39,23 +38,14 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	runtime := app.NewServer(cfg, sessionManagerVerbose)
-	cfg = runtime.GetConfig()
-	manager := runtime.GetSessionManager()
-	if manager == nil {
-		return nil
-	}
-
-	// Register directly on Echo so this process owns the session-manager endpoint.
-	if err := sessionmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(runtime.GetEcho()); err != nil {
-		return err
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	startSessionAllocator(cfg, runtime)
-	startSessionManagerAllocator(ctx, cfg, runtime)
+	runtime, err := app.NewSessionManagerRuntime(ctx, cfg, sessionManagerVerbose)
+	if err != nil {
+		return err
+	}
 	go func() {
-		if err := runtime.GetEcho().Start(":" + sessionManagerPort); err != nil && err != http.ErrServerClosed {
+		if err := runtime.Echo().Start(":" + sessionManagerPort); err != nil && err != http.ErrServerClosed {
 			log.Printf("Session manager failed: %v", err)
 			cancel()
 		}
@@ -63,7 +53,7 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	if err := runtime.GetEcho().Shutdown(shutdownCtx); err != nil {
+	if err := runtime.Echo().Shutdown(shutdownCtx); err != nil {
 		return err
 	}
 	return runtime.Shutdown(25 * time.Second)

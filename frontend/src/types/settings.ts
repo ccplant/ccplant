@@ -178,7 +178,6 @@ export interface AgentApiProxySettings {
   enabled: boolean
   timeout: number
   apiKey: string
-  useAsGithubToken?: boolean
 }
 
 // Enter キーの動作設定
@@ -207,8 +206,6 @@ export interface GlobalSettings {
   mcpServers: MCPServerConfig[]
   repositoryHistory: RepositoryHistoryItem[]
   messageTemplates: MessageTemplate[]
-  githubAuth?: GitHubOAuthSettings
-  sendGithubTokenOnSessionStart?: boolean  // デフォルト true
   agentApiType?: AgentApiType  // デフォルト 'auto'
   enterKeyBehavior?: EnterKeyBehavior  // デフォルト 'newline' (Enter で改行、Command/Ctrl+Enter で送信)
   fontSettings?: FontSettings  // デフォルト { fontSize: 14, fontFamily: 'sans-serif' }
@@ -221,16 +218,6 @@ export interface GlobalSettings {
 
 export interface SettingsFormData {
   mcpServers: MCPServerConfig[]
-}
-
-// GitHub OAuth settings
-export interface GitHubOAuthSettings {
-  clientId: string
-  proxyEndpoint: string
-  sessionId?: string
-  accessToken?: string
-  created_at: string
-  updated_at: string
 }
 
 // 保存前に空の値を除外した設定データを作成
@@ -643,7 +630,6 @@ export const getDefaultFullGlobalSettings = (): GlobalSettings => {
     mcpServers: [],
     repositoryHistory: [],
     messageTemplates: [],
-    sendGithubTokenOnSessionStart: true,  // デフォルトで有効
     created_at: now,
     updated_at: now
   }
@@ -743,31 +729,6 @@ export const getMessageTemplates = (): MessageTemplate[] => {
 export const saveMessageTemplates = (templates: MessageTemplate[]): void => {
   const settings = loadFullGlobalSettings()
   settings.messageTemplates = templates
-  saveFullGlobalSettings(settings)
-}
-
-// GitHub Auth utilities
-export const getGitHubAuthSettings = (): GitHubOAuthSettings | undefined => {
-  const settings = loadFullGlobalSettings()
-  return settings.githubAuth
-}
-
-export const saveGitHubAuthSettings = (auth: GitHubOAuthSettings): void => {
-  const settings = loadFullGlobalSettings()
-  settings.githubAuth = auth
-  saveFullGlobalSettings(settings)
-}
-
-// GitHub Token on Session Start utilities
-export const getSendGithubTokenOnSessionStart = (): boolean => {
-  const settings = loadFullGlobalSettings()
-  // デフォルトは true
-  return settings.sendGithubTokenOnSessionStart ?? true
-}
-
-export const setSendGithubTokenOnSessionStart = (enabled: boolean): void => {
-  const settings = loadFullGlobalSettings()
-  settings.sendGithubTokenOnSessionStart = enabled
   saveFullGlobalSettings(settings)
 }
 

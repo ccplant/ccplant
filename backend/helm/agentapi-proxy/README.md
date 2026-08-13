@@ -4,48 +4,85 @@ A Helm chart for deploying AgentAPI Proxy - a reverse proxy and process manager 
 
 ## Process separation
 
-The chart uses the same image for three independent workloads: `ccplant
-server` for the API proxy, `ccplant worker` for background controllers, and
-`ccplant session-manager` for the forwarding session-manager API and its
-upstream loops. The server process does not start either of the latter roles.
+The chart keeps three independent workloads in one chart: `ccplant server` for
+the API proxy, `ccplant worker` for background controllers, and `ccplant
+session-manager` for allocation and Kubernetes session lifecycle. Each role has
+its own image, ServiceAccount, credentials, persistence and Redis client values.
+The API and worker ServiceAccounts never mount Kubernetes credentials; only the
+session-manager receives workload RBAC.
 
 The chart remains a single chart. Configure the independent workloads under
-`worker` and `sessionManager`; proxy pod settings remain at the chart root.
+`api`, `worker` and `sessionManager`. Deprecated root proxy values are retained
+only for upgrade compatibility.
 Workers persist application records through the configured `kvStore` backend
 and use Redis leases for leader election; they never create Kubernetes Lease
 objects. Session creation, listing, messaging, deletion, and stock operations
 are delegated to the backend control API. The worker Pod does not mount a
 Kubernetes service-account token. Enabling `worker` therefore requires libSQL,
-bundled or external Redis, and a shared provisioner-token Secret.
+bundled or external Redis, and a worker-control Secret shared only with the API.
 
 ```yaml
 worker:
   enabled: true
+  controlApi:
+    tokenSecretRef:
+      name: worker-control
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: worker-libsql
+  redis:
+    addr: redis.example:6379
   schedule:
     enabled: true
   stockInventory:
     enabled: true
 
-kubernetesSession:
-  provisioner:
-    tokenSecretRef:
-      name: agentapi-provisioner-token
-
-config:
+api:
   kvStore:
     backend: libsql
     databaseUrlSecretRef:
-      name: agentapi-libsql
-    authTokenSecretRef:
-      name: agentapi-libsql
+      name: api-libsql
+  redis:
+    addr: redis.example:6379
+  encryption:
+    keySecretRef:
+      name: application-encryption
+  workerControl:
+    tokenSecretRef:
+      name: worker-control
+  sessionManager:
+    url: http://agentapi-proxy-session-manager:8080
+    tokenSecretRef:
+      name: manager-internal
 
 sessionManager:
   enabled: true
-  upstreamUrl: https://control.example.com
-  connectionTokenSecretRef:
-    name: session-manager-credentials
-  hmacSecretRef:
-    name: session-manager-credentials
+  internalApi:
+    tokenSecretRef:
+      name: manager-internal
+  encryption:
+    keySecretRef:
+      name: application-encryption
+  kvStore:
+    backend: libsql
+    databaseUrlSecretRef:
+      name: manager-libsql
+  redis:
+    addr: redis.example:6379
+  kubernetesSession:
+    provisioner:
+      tokenSecretRef:
+        name: agentapi-provisioner-token
+
+  # Optional: register this manager with an external parent.
+  externalRegistration:
+    enabled: true
+    upstreamUrl: https://control.example.com
+    connectionTokenSecretRef:
+      name: session-manager-credentials
+    hmacSecretRef:
+      name: session-manager-credentials
 ```
 
 ## Prerequisites
@@ -63,10 +100,10 @@ To install the chart with the release name `my-agentapi-proxy`:
 helm install my-agentapi-proxy ./helm/agentapi-proxy
 ```
 
-The default `values.yaml` is a minimal single-replica direct-session
-installation. SCIA, asset serving, persistent session workspaces, background workers,
-OpenTelemetry collection, and Redis are opt-in. More than one proxy replica
-requires the bundled Redis or `externalRedis.addr`.
+The default `values.yaml` is a minimal single-replica API-only installation.
+Session allocation, SCIA, asset serving, persistent session workspaces,
+background workers, OpenTelemetry collection, and Redis are opt-in. More than
+one API replica requires the bundled Redis or `api.redis.addr`.
 
 ### From OCI Registry (Recommended)
 
@@ -103,10 +140,11 @@ The command removes all the Kubernetes components associated with the chart and 
 
 | Name                | Description                       | Value                                      |
 | ------------------- | --------------------------------- | ------------------------------------------ |
-| `image.repository`  | AgentAPI Proxy image repository   | `ghcr.io/takutakahashi/agentapi-proxy`     |
-| `image.pullPolicy`  | AgentAPI Proxy image pull policy  | `IfNotPresent`                             |
+| `api.image.repository` | API image repository | `ghcr.io/ccplant/ccplant-backend` |
+| `worker.image.repository` | Worker image repository | `ghcr.io/ccplant/ccplant-backend` |
+| `sessionManager.image.repository` | Session-manager image repository | `ghcr.io/ccplant/ccplant-backend` |
 
-The image tag is always the chart's `appVersion`.
+An empty role image tag uses the chart's `appVersion`.
 
 ### Deployment parameters
 
@@ -440,7 +478,8 @@ kubectl create secret generic agentapi-s3-credentials \
 
 ## Health Checks
 
-The chart includes liveness and readiness probes that check the `/health` endpoint. These can be customized in values.yaml:
+The API probes default to `/health`; session-manager probes use `/livez` and
+`/readyz`. They can be customized in values.yaml.
 
 ```yaml
 livenessProbe:
@@ -461,18 +500,19 @@ readinessProbe:
 ## Scaling
 
 The chart uses a Deployment. Single-replica operation does not require Redis.
-For multiple replicas, enable the bundled Redis or configure `externalRedis.addr`:
+For multiple API replicas, enable the bundled Redis or configure
+`api.redis.addr`:
 
 ```bash
 # Scale to 3 replicas (local chart)
 helm upgrade agentapi-proxy ./helm/agentapi-proxy \
-  --set replicaCount=3 \
+  --set api.replicaCount=3 \
   --set redis.enabled=true
 
 # Scale to 3 replicas (OCI registry)
 helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --version 0.1.0 \
-  --set replicaCount=3 \
+  --set api.replicaCount=3 \
   --set redis.enabled=true
 ```
 
@@ -482,7 +522,7 @@ session HTTPS long polling, enable session control together with Redis:
 ```bash
 helm upgrade agentapi-proxy ./helm/agentapi-proxy \
   --set redis.enabled=true \
-  --set sessionControl.enabled=true
+  --set sessionManager.sessionControl.enabled=true
 ```
 
 Only backend pods connect to Redis. Session pods receive the backend control-plane
@@ -491,8 +531,8 @@ URL and provisioner token, but no Redis address or credentials. See
 the transport and retention model.
 
 For ESM sessions, enable the direct Session Pod-to-parent runtime transport with
-`--set sessionControl.directRuntimeEnabled=true`. This requires
-`sessionControl.enabled=true` and Redis. See
+`--set sessionManager.sessionControl.directRuntimeEnabled=true`. This requires
+`sessionManager.sessionControl.enabled=true` and Redis. See
 [`docs/direct-session-runtime.md`](../../docs/direct-session-runtime.md).
 
 ## Troubleshooting
@@ -541,8 +581,10 @@ helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --
 
 ## Stable control-plane Service
 
-The chart creates `control` as a release-independent endpoint
-for session provisioners. The Service is retained when its creating release is
+The chart creates `control` as a release-independent endpoint for session
+provisioners. It selects the API only in deprecated direct-session mode and
+selects the dedicated session-manager whenever that role is enabled. The
+Service is retained when its creating release is
 uninstalled, allowing a blue/green deployment to move its selector to the new
 proxy without recreating existing session workloads.
 

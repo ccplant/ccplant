@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getBackendUrl } from '@/lib/server-backend-url'
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,14 +13,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // agentapi-proxyのOAuth認証エンドポイントを使用
-    // デフォルトでローカルの /api/proxy を使用（サーバーサイドでは絶対URLが必要）
-    const baseUrl = process.env.AGENTAPI_PROXY_ENDPOINT || 
-      (process.env.NODE_ENV === 'production' 
-        ? `https://${request.headers.get('host')}` 
-        : 'http://localhost:3000')
-    const proxyEndpoint = baseUrl.endsWith('/api/proxy') ? baseUrl : `${baseUrl}/api/proxy`
-    const response = await fetch(`${proxyEndpoint}/oauth/authorize`, {
+    const response = await fetch(getBackendUrl('/oauth/authorize'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -30,8 +24,7 @@ export async function POST(request: NextRequest) {
     })
 
     if (!response.ok) {
-      const errorData = await response.text()
-      console.error('OAuth authorize error:', errorData)
+      console.error(`OAuth authorize request failed with status ${response.status}`)
       return NextResponse.json(
         { error: 'Failed to start OAuth flow' },
         { status: response.status }
@@ -40,16 +33,20 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json()
     
-    // stateを一時的にセッションストレージに保存するためのCookieを設定
-    const headers = new Headers()
-    headers.append('Set-Cookie', `oauth_state=${data.state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`)
-
-    return NextResponse.json({
+    const result = NextResponse.json({
       auth_url: data.auth_url,
       state: data.state
-    }, { headers })
-  } catch (error) {
-    console.error('OAuth authorize error:', error)
+    })
+    result.cookies.set('oauth_state', data.state, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 900,
+      path: '/',
+    })
+    return result
+  } catch {
+    console.error('OAuth authorize request failed')
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

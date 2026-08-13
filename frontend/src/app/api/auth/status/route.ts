@@ -1,21 +1,21 @@
 import { NextResponse } from 'next/server';
-import { getApiKeyFromCookie } from '@/lib/cookie-auth';
+import { getAuthSessionFromCookie } from '@/lib/cookie-auth';
 
 export async function GET() {
   try {
-    // Check if API key exists in cookie
-    const apiKey = await getApiKeyFromCookie();
-    const authenticated = !!apiKey;
+    const authSession = await getAuthSessionFromCookie();
+    const authenticated = !!authSession;
 
     return NextResponse.json(
       {
         authenticated,
-        message: authenticated ? 'Authenticated' : 'Not authenticated'
+        message: authenticated ? 'Authenticated' : 'Not authenticated',
+        auth_type: authSession?.type,
       },
       { status: 200 }
     );
-  } catch (error) {
-    console.error('Auth status error:', error);
+  } catch {
+    console.error('Authentication status check failed');
     return NextResponse.json(
       {
         authenticated: false,

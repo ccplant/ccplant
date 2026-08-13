@@ -6,6 +6,11 @@
 import { SessionMessageListResponse } from '../types/agentapi';
 import { loadFullGlobalSettings, getDefaultProxySettings } from '../types/settings';
 
+function defaultDebugEnabled(): boolean {
+  return process.env.NODE_ENV !== 'production'
+    && (process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true' || process.env.DEBUG_LOGS === 'true');
+}
+
 export class SharedSessionClientError extends Error {
   constructor(
     public status: number,
@@ -19,7 +24,6 @@ export class SharedSessionClientError extends Error {
 
 export interface SharedSessionClientConfig {
   baseURL: string;
-  apiKey?: string;
   timeout?: number;
   debug?: boolean;
 }
@@ -29,15 +33,13 @@ export interface SharedSessionClientConfig {
  */
 export class SharedSessionClient {
   private baseURL: string;
-  private apiKey?: string;
   private timeout: number;
   private debug: boolean;
 
   constructor(config: SharedSessionClientConfig) {
     this.baseURL = config.baseURL.replace(/\/$/, '');
-    this.apiKey = config.apiKey;
     this.timeout = config.timeout || 10000;
-    this.debug = config.debug || false;
+    this.debug = process.env.NODE_ENV !== 'production' && config.debug === true;
   }
 
   private async makeRequest<T>(
@@ -51,10 +53,6 @@ export class SharedSessionClient {
       'Accept': 'application/json',
     };
 
-    if (this.apiKey) {
-      (headers as Record<string, string>)['Authorization'] = `Bearer ${this.apiKey}`;
-    }
-
     const requestOptions: RequestInit = {
       ...options,
       headers: {
@@ -64,7 +62,7 @@ export class SharedSessionClient {
     };
 
     if (this.debug) {
-      console.log(`[SharedSessionClient] ${options.method || 'GET'} ${url}`);
+      console.log(`[SharedSessionClient] Starting public share request (${options.method || 'GET'})`);
     }
 
     try {
@@ -94,7 +92,7 @@ export class SharedSessionClient {
       const data = await response.json();
 
       if (this.debug) {
-        console.log(`[SharedSessionClient] Response:`, data);
+        console.log(`[SharedSessionClient] Public share request completed (${options.method || 'GET'})`);
       }
 
       return data;
@@ -141,7 +139,7 @@ export class SharedSessionClient {
    * デバッグモードを設定
    */
   setDebug(debug: boolean): void {
-    this.debug = debug;
+    this.debug = process.env.NODE_ENV !== 'production' && debug;
   }
 }
 
@@ -152,9 +150,8 @@ export function createSharedSessionClientFromStorage(): SharedSessionClient {
   if (typeof window === 'undefined') {
     return new SharedSessionClient({
       baseURL: process.env.AGENTAPI_PROXY_URL || 'http://localhost:8080',
-      apiKey: process.env.AGENTAPI_API_KEY,
       timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
-      debug: true,
+      debug: defaultDebugEnabled(),
     });
   }
 
@@ -168,16 +165,17 @@ export function createSharedSessionClientFromStorage(): SharedSessionClient {
 
     return new SharedSessionClient({
       baseURL,
-      apiKey: proxySettings.apiKey,
       timeout: proxySettings.timeout,
-      debug: true,
+      debug: defaultDebugEnabled(),
     });
-  } catch (error) {
-    console.warn('Failed to load settings for SharedSessionClient:', error);
+  } catch {
+    if (defaultDebugEnabled()) {
+      console.warn('Failed to load settings for SharedSessionClient');
+    }
     return new SharedSessionClient({
       baseURL: `${window.location.protocol}//${window.location.host}/api/proxy`,
       timeout: 10000,
-      debug: true,
+      debug: defaultDebugEnabled(),
     });
   }
 }

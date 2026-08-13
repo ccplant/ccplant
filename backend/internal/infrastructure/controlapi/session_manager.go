@@ -55,9 +55,13 @@ func (m *SessionManager) GetSession(id string) entities.Session {
 	return nil
 }
 func (m *SessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
+	result, _ := m.ListSessionsContext(context.Background(), filter)
+	return result
+}
+func (m *SessionManager) ListSessionsContext(ctx context.Context, filter entities.SessionFilter) ([]entities.Session, error) {
 	var infos []sessionInfo
-	if err := m.do(context.Background(), http.MethodGet, "/internal/worker/sessions", nil, &infos); err != nil {
-		return nil
+	if err := m.do(ctx, http.MethodGet, "/internal/worker/sessions", nil, &infos); err != nil {
+		return nil, err
 	}
 	result := make([]entities.Session, 0, len(infos))
 	for _, info := range infos {
@@ -66,7 +70,7 @@ func (m *SessionManager) ListSessions(filter entities.SessionFilter) []entities.
 			result = append(result, session)
 		}
 	}
-	return result
+	return result, nil
 }
 func (m *SessionManager) DeleteSession(id string) error {
 	return m.do(context.Background(), http.MethodDelete, "/internal/worker/sessions/"+url.PathEscape(id), nil, nil)
@@ -74,8 +78,8 @@ func (m *SessionManager) DeleteSession(id string) error {
 func (m *SessionManager) SendMessage(ctx context.Context, id, message string) error {
 	return m.do(ctx, http.MethodPost, "/internal/worker/sessions/"+url.PathEscape(id)+"/messages", map[string]string{"message": message}, nil)
 }
-func (m *SessionManager) StopAgent(context.Context, string) error {
-	return fmt.Errorf("stop agent is not supported by worker control API")
+func (m *SessionManager) StopAgent(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodPost, "/internal/worker/sessions/"+url.PathEscape(id)+"/stop", nil, nil)
 }
 func (m *SessionManager) GetMessages(context.Context, string) ([]portrepos.Message, error) {
 	return nil, fmt.Errorf("messages are not supported by worker control API")

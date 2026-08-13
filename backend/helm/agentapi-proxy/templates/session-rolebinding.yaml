@@ -1,19 +1,21 @@
-{{- $rbac := .Values.kubernetesSession.rbac | default dict }}
+{{- $manager := .Values.sessionManager | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- $rbac := $k8s.rbac | default dict }}
 {{- $rbacCreate := true }}
 {{- if hasKey $rbac "create" }}{{- $rbacCreate = $rbac.create }}{{- end }}
-{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled $rbacCreate }}
+{{- if and ($manager.enabled | default false) ($k8s.enabled | default false) $rbacCreate }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" }}
+  name: {{ $k8s.serviceAccountName | default "agentapi-proxy-session" }}
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" }}
+    name: {{ $k8s.serviceAccountName | default "agentapi-proxy-session" }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: Role
-  name: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" }}
+  name: {{ $k8s.serviceAccountName | default "agentapi-proxy-session" }}
   apiGroup: rbac.authorization.k8s.io
 {{- end }}

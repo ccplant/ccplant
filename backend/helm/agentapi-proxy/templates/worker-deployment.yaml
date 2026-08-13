@@ -1,4 +1,15 @@
-{{- if (dig "enabled" false (.Values.worker | default dict)) }}
+{{- $worker := .Values.worker | default dict }}
+{{- if (dig "enabled" false $worker) }}
+{{- $control := $worker.controlApi | default dict }}
+{{- $controlToken := $control.tokenSecretRef | default dict }}
+{{- $kv := $worker.kvStore | default dict }}
+{{- $redisClient := $worker.redis | default dict }}
+{{- $workerImage := $worker.image | default dict }}
+{{- $controlURL := $control.url | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port) }}
+{{- $redisAddr := $redisClient.addr | default "" }}
+{{- if and (not $redisAddr) .Values.redis.enabled }}
+{{- $redisAddr = printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,87 +18,137 @@ metadata:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
-  replicas: {{ .Values.worker.replicaCount }}
+  replicas: {{ $worker.replicaCount | default 1 }}
   selector:
     matchLabels:
       {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: worker
   template:
     metadata:
-      {{- with .Values.worker.podAnnotations }}
-      annotations: {{- toYaml . | nindent 8 }}
+      {{- with $worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
         {{- include "agentapi-proxy.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
-        {{- with .Values.worker.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+        {{- with $worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "agentapi-proxy.workerServiceAccountName" . }}
       automountServiceAccountToken: false
+      {{- with $worker.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $worker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: worker
-          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "agentapi-proxy.workerImage" . | quote }}
+          imagePullPolicy: {{ $workerImage.pullPolicy | default "IfNotPresent" }}
           command: ["/usr/local/bin/ccplant"]
           args: ["worker"]
+          {{- with $worker.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
-            {{- $controlPlane := .Values.controlPlaneService | default dict }}
-            {{- $workerControlURL := .Values.kubernetesSession.provisioner.proxyUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (dig "name" "control" $controlPlane) .Release.Namespace (dig "port" 8080 $controlPlane)) }}
-            - {name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL, value: {{ $workerControlURL | quote }}}
-            - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
+            - name: AGENTAPI_WORKER_CONTROL_API_URL
+              value: {{ $controlURL | quote }}
+            # Compatibility for binaries that predate the role-specific key.
+            - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
+              value: {{ $controlURL | quote }}
+            - name: AGENTAPI_WORKER_CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "kubernetesSession.provisioner.tokenSecretRef.name is required when worker is enabled" .Values.kubernetesSession.provisioner.tokenSecretRef.name | quote }}
-                  key: {{ .Values.kubernetesSession.provisioner.tokenSecretRef.key | quote }}
-            {{- if .Values.redis.enabled }}
-            - {name: AGENTAPI_REDIS_ADDR, value: {{ printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) | quote }}}
-            {{- if .Values.redis.auth.enabled }}
-            - name: AGENTAPI_REDIS_PASSWORD
-              valueFrom: {secretKeyRef: {name: {{ printf "%s-redis" (include "agentapi-proxy.fullname" .) | quote }}, key: redis-password}}
-            {{- end }}
-            {{- else }}
-            - {name: AGENTAPI_REDIS_ADDR, value: {{ required "Redis is required when worker.enabled=true" .Values.externalRedis.addr | quote }}}
-            {{- with .Values.externalRedis.existingSecret }}
-            - name: AGENTAPI_REDIS_PASSWORD
-              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.externalRedis.existingSecretPasswordKey | quote }}}}
-            {{- end }}
-            {{- end }}
-            - {name: AGENTAPI_KV_STORE_BACKEND, value: {{ dig "kvStore" "backend" "kubernetes" .Values.config | quote }}}
-            {{- with (dig "kvStore" "databaseUrlSecretRef" "name" "" .Values.config) }}
+                  name: {{ required "worker.controlApi.tokenSecretRef.name is required when worker is enabled" $controlToken.name | quote }}
+                  key: {{ $controlToken.key | default "token" | quote }}
+            - name: AGENTAPI_KV_STORE_BACKEND
+              value: {{ required "worker.kvStore.backend is required when worker is enabled" $kv.backend | quote }}
+            {{- if $kv.databaseUrlSecretRef.name }}
             - name: AGENTAPI_KV_STORE_DATABASE_URL
-              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ dig "kvStore" "databaseUrlSecretRef" "key" "database-url" $.Values.config | quote }}}}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kv.databaseUrlSecretRef.name | quote }}
+                  key: {{ $kv.databaseUrlSecretRef.key | default "database-url" | quote }}
+            {{- else }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              value: {{ required "worker.kvStore.databaseUrl or databaseUrlSecretRef.name is required" $kv.databaseUrl | quote }}
             {{- end }}
-            {{- with (dig "kvStore" "authTokenSecretRef" "name" "" .Values.config) }}
+            {{- if $kv.authTokenSecretRef.name }}
             - name: AGENTAPI_KV_STORE_AUTH_TOKEN
-              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ dig "kvStore" "authTokenSecretRef" "key" "auth-token" $.Values.config | quote }}}}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kv.authTokenSecretRef.name | quote }}
+                  key: {{ $kv.authTokenSecretRef.key | default "auth-token" | quote }}
+            {{- else if $kv.authToken }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              value: {{ $kv.authToken | quote }}
             {{- end }}
-            - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ .Values.worker.schedule.enabled | quote }}}
-            - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.schedule.checkInterval | quote }}}
+            - name: AGENTAPI_REDIS_ADDR
+              value: {{ required "worker.redis.addr or redis.enabled=true is required when worker is enabled" $redisAddr | quote }}
+            {{- $redisSecret := $redisClient.existingSecret | default "" }}
+            {{- if and (not $redisSecret) .Values.redis.enabled .Values.redis.auth.enabled }}
+            {{- $redisSecret = printf "%s-redis" (include "agentapi-proxy.fullname" .) }}
+            {{- end }}
+            {{- with $redisSecret }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $redisClient.existingSecretPasswordKey | default "redis-password" | quote }}
+            {{- end }}
+            - {name: AGENTAPI_REDIS_DB, value: {{ $redisClient.db | default 0 | quote }}}
+            - {name: AGENTAPI_REDIS_TLS_ENABLED, value: {{ $redisClient.tlsEnabled | default false | quote }}}
+            - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
+            - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ $worker.schedule.enabled | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ $worker.schedule.checkInterval | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
-            - {name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION, value: {{ .Values.worker.schedule.leaderElection.leaseDuration | quote }}}
-            - {name: AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE, value: {{ .Values.worker.schedule.leaderElection.renewDeadline | quote }}}
-            - {name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD, value: {{ .Values.worker.schedule.leaderElection.retryPeriod | quote }}}
-            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED, value: {{ .Values.worker.slackbotCleanup.enabled | quote }}}
-            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL, value: {{ .Values.worker.slackbotCleanup.sessionTTL | quote }}}
-            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.slackbotCleanup.checkInterval | quote }}}
-            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL, value: {{ .Values.worker.slackbotCleanup.sessionTTLCheckInterval | quote }}}
-            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN, value: {{ .Values.worker.slackbotCleanup.dryRun | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED, value: {{ .Values.worker.stockInventory.enabled | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.stockInventory.checkInterval | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_LEASE_DURATION, value: {{ $worker.schedule.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_RENEW_DEADLINE, value: {{ $worker.schedule.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_SCHEDULE_WORKER_RETRY_PERIOD, value: {{ $worker.schedule.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED, value: {{ $worker.slackbotCleanup.enabled | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL, value: {{ $worker.slackbotCleanup.sessionTTL | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_CHECK_INTERVAL, value: {{ $worker.slackbotCleanup.checkInterval | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_SESSION_TTL_CHECK_INTERVAL, value: {{ $worker.slackbotCleanup.sessionTTLCheckInterval | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_DRY_RUN, value: {{ $worker.slackbotCleanup.dryRun | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION, value: {{ $worker.slackbotCleanup.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE, value: {{ $worker.slackbotCleanup.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD, value: {{ $worker.slackbotCleanup.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED, value: {{ $worker.stockInventory.enabled | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL, value: {{ $worker.stockInventory.checkInterval | quote }}}
             - {name: AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT, value: {{ .Values.worker.stockInventory.targetCount | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED, value: {{ .Values.worker.stockInventory.dockerEnabled | quote }}}
-            {{- with .Values.worker.env }}{{ toYaml . | nindent 12 }}{{- end }}
-          {{- with .Values.worker.envFrom }}
-          envFrom: {{- toYaml . | nindent 12 }}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT, value: {{ $worker.stockInventory.targetCount | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED, value: {{ $worker.stockInventory.dockerEnabled | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS, value: {{ $worker.stockInventory.pools | toJson | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION, value: {{ $worker.stockInventory.leaderElection.leaseDuration | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE, value: {{ $worker.stockInventory.leaderElection.renewDeadline | quote }}}
+            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD, value: {{ $worker.stockInventory.leaderElection.retryPeriod | quote }}}
+            {{- with $worker.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $worker.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
-          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
-      {{- with .Values.worker.nodeSelector }}
-      nodeSelector: {{- toYaml . | nindent 8 }}
+          resources:
+            {{- toYaml $worker.resources | nindent 12 }}
+      {{- with $worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.worker.affinity }}
-      affinity: {{- toYaml . | nindent 8 }}
+      {{- with $worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.worker.tolerations }}
-      tolerations: {{- toYaml . | nindent 8 }}
+      {{- with $worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}

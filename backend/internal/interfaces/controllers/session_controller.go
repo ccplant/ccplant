@@ -53,6 +53,10 @@ type sessionAnnotationsProvider interface {
 	Annotations() entities.SessionAnnotations
 }
 
+type sessionSandboxPolicyProvider interface {
+	SandboxPolicyID() string
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -311,11 +315,9 @@ func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.Star
 	if startReq.Params.GithubToken != "" {
 		return
 	}
-	cfg := auth.GetConfigFromContext(ctx)
-	if cfg == nil || cfg.Auth.GitHub == nil || !cfg.Auth.GitHub.Enabled {
-		return
+	if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
+		startReq.Params.GithubToken = token
 	}
-	startReq.Params.GithubToken = auth.ExtractTokenFromHeader(ctx.Request().Header.Get(cfg.Auth.GitHub.TokenHeader))
 }
 
 func containsAllocatorSelector(tags map[string]string) bool {
@@ -473,7 +475,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				"description": description,
 			},
 		}
-		if ks, ok := session.(*services.KubernetesSession); ok {
+		if provider, ok := session.(sessionSandboxPolicyProvider); ok {
+			if policyID := provider.SandboxPolicyID(); policyID != "" {
+				sessionData["sandbox_policy_id"] = policyID
+			}
+		} else if ks, ok := session.(*services.KubernetesSession); ok {
 			if req := ks.Request(); req != nil && req.Sandbox != nil {
 				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
 			}
@@ -1270,29 +1276,18 @@ func (c *SessionController) captureFirstMessage(ctx echo.Context, session entiti
 // updateSessionTimestamp updates the session's updated_at and last_message_at timestamps.
 // Called on every POST /message request routed through the proxy.
 func (c *SessionController) updateSessionTimestamp(ctx echo.Context, session entities.Session) {
-	// Update in-memory timestamps
-	if ks, ok := session.(*services.KubernetesSession); ok {
-		now := time.Now()
-		ks.TouchUpdatedAt()
-		ks.SetLastMessageAt(now)
-
-		// Update Service annotations asynchronously to avoid blocking the request
-		go func() {
-			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			if manager, ok := c.getSessionManager().(*services.KubernetesSessionManager); ok {
-				updatedAt := ks.UpdatedAt().Format(time.RFC3339)
-				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/updated-at", updatedAt); err != nil {
-					log.Printf("[SESSION] Failed to update updated-at annotation for session %s: %v", session.ID(), err)
-				}
-				lastMessageAt := now.UTC().Format(time.RFC3339)
-				if err := manager.UpdateServiceAnnotation(updateCtx, session.ID(), "agentapi.proxy/last-message-at", lastMessageAt); err != nil {
-					log.Printf("[SESSION] Failed to update last-message-at annotation for session %s: %v", session.ID(), err)
-				}
-			}
-		}()
+	toucher, ok := c.getSessionManager().(repositories.SessionToucher)
+	if !ok {
+		return
 	}
+	now := time.Now()
+	go func() {
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := toucher.TouchSession(updateCtx, session.ID(), now); err != nil {
+			log.Printf("[SESSION] Failed to update activity timestamp for session %s: %v", session.ID(), err)
+		}
+	}()
 }
 
 // filterHiddenSessions removes sessions tagged with hidden=true from the list.
@@ -1414,36 +1409,16 @@ func (c *SessionController) GetSessionSandboxDomains(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
 	}
 
-	ks, ok := session.(*services.KubernetesSession)
+	reader, ok := c.getSessionManager().(repositories.SessionSandboxDomainReader)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotImplemented, "Sandbox domains not available for this session type")
 	}
-
-	provisionerURL := fmt.Sprintf("http://%s:%d/sandbox-domains", ks.ServiceDNS(), services.ProvisionerPort)
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(provisionerURL)
+	domains, err := reader.GetSessionSandboxDomains(ctx.Request().Context(), sessionID)
 	if err != nil {
 		log.Printf("[SESSION] Failed to fetch sandbox domains for %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Network filter not available")
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "Network filter not available for this session")
-	}
-
-	var domainsResp SandboxDomainsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&domainsResp); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to parse domain response")
-	}
-	if domainsResp.Allowed == nil {
-		domainsResp.Allowed = []string{}
-	}
-	if domainsResp.Denied == nil {
-		domainsResp.Denied = []string{}
-	}
-
-	return ctx.JSON(http.StatusOK, domainsResp)
+	return ctx.JSON(http.StatusOK, domains)
 }
 
 // resolveSessionProfile returns the session profile to apply for a session creation request.

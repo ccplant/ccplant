@@ -43,8 +43,15 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if workerVerbose {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
-	if cfg.KubernetesSession.ProvisionerProxyURL == "" || cfg.KubernetesSession.ProvisionerToken == "" {
-		return errors.New("worker control API URL and provisioner token are required")
+	controlURL := cfg.Worker.ControlAPIURL
+	if controlURL == "" {
+		// Keep config-file compatibility while charts migrate to worker.controlApi.
+		// The credential is intentionally not inherited: a provisioner credential
+		// must never grant worker-control access.
+		controlURL = cfg.KubernetesSession.ProvisionerProxyURL
+	}
+	if controlURL == "" || cfg.Worker.ControlAPIToken == "" {
+		return errors.New("worker control API URL and worker control token are required")
 	}
 	store, err := newWorkerKVStore(cfg.KVStore)
 	if err != nil {
@@ -53,7 +60,7 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	defer func() { _ = store.Close() }()
 	persistence := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
 	namespace := resolveKubernetesNamespace(cfg.ScheduleWorker.Namespace, cfg.KubernetesSession.Namespace)
-	remote := controlapi.NewSessionManager(cfg.KubernetesSession.ProvisionerProxyURL, cfg.KubernetesSession.ProvisionerToken)
+	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken)
 	scheduleManager := schedule.NewKubernetesManager(persistence, namespace)
 	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, namespace)
 	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, namespace)

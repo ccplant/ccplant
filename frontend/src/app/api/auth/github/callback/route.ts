@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { encryptApiKey } from '@/lib/cookie-auth'
+import {
+  AUTH_COOKIE_NAME,
+  AUTH_COOKIE_OPTIONS,
+  encryptOAuthSession,
+} from '@/lib/cookie-auth'
 import { getPublicBaseUrl, getPublicUrl } from '@/lib/public-url'
+import { getBackendUrl } from '@/lib/server-backend-url'
 
 function redirectToError(request: NextRequest, error: string) {
   const url = getPublicUrl(request, '/login/github/error')
@@ -26,15 +31,12 @@ export async function GET(request: NextRequest) {
       return redirectToError(request, 'invalid_state')
     }
 
-    // agentapi-proxyのOAuthコールバックエンドポイントを使用
-    // デフォルトでローカルの /api/proxy を使用（サーバーサイドでは絶対URLが必要）
-    const baseUrl = process.env.AGENTAPI_PROXY_ENDPOINT || 
-      (process.env.NODE_ENV === 'production' 
-        ? `https://${request.headers.get('host')}` 
-        : 'http://localhost:3000')
-    const proxyEndpoint = baseUrl.endsWith('/api/proxy') ? baseUrl : `${baseUrl}/api/proxy`
-    const response = await fetch(`${proxyEndpoint}/oauth/callback?code=${code}&state=${state}`, {
+    const callbackUrl = new URL(getBackendUrl('/oauth/callback'))
+    callbackUrl.searchParams.set('code', code)
+    callbackUrl.searchParams.set('state', state)
+    const response = await fetch(callbackUrl, {
       method: 'GET',
+      cache: 'no-store',
     })
 
     if (!response.ok) {
@@ -43,29 +45,35 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json()
-    
-    // APIキーを暗号化してCookieに保存
-    const encryptedApiKey = encryptApiKey(data.access_token)
-    
-    const headers = new Headers()
-    headers.append(
-      'Set-Cookie',
-      `agentapi_token=${encryptedApiKey}; HttpOnly; Secure; SameSite=strict; Path=/; Max-Age=2592000`
-    )
-    
-    // oauth_state Cookieを削除
-    headers.append('Set-Cookie', 'oauth_state=; Path=/; Max-Age=0')
+    if (
+      typeof data.session_id !== 'string'
+      || data.session_id.length === 0
+      || typeof data.access_token !== 'string'
+      || data.access_token.length === 0
+    ) {
+      console.error('OAuth callback returned an invalid session response')
+      return redirectToError(request, 'auth_failed')
+    }
 
     // ホームページにリダイレクト - 適切なホスト名を使用
     const redirectUrl = getPublicBaseUrl(request)
     const redirectResponse = NextResponse.redirect(new URL('/chats', redirectUrl))
-    headers.forEach((value, key) => {
-      redirectResponse.headers.append(key, value)
+    redirectResponse.cookies.set(
+      AUTH_COOKIE_NAME,
+      encryptOAuthSession(data.session_id, data.access_token),
+      AUTH_COOKIE_OPTIONS,
+    )
+    redirectResponse.cookies.set('oauth_state', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 0,
+      path: '/',
     })
 
     return redirectResponse
-  } catch (error) {
-    console.error('OAuth callback error:', error)
+  } catch {
+    console.error('OAuth callback request failed')
     return redirectToError(request, 'server_error')
   }
 }

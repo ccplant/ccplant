@@ -452,6 +452,28 @@ type SessionManagerConfig struct {
 	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
 	// to this manager when the outbound control lease is unavailable.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
+	// APIURL is the private session-manager API used by the public API process.
+	// It is intentionally distinct from UpstreamURL, which is only used when
+	// this manager is registered as an external manager of another control plane.
+	APIURL string `json:"api_url" mapstructure:"api_url"`
+	// APIToken authenticates outbound API -> session-manager requests.
+	APIToken string `json:"api_token" mapstructure:"api_token"`
+	// InternalAPIToken authenticates inbound requests to the private manager API.
+	InternalAPIToken string                         `json:"internal_api_token" mapstructure:"internal_api_token"`
+	Allocation       SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+}
+
+type SessionManagerAllocationConfig struct {
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// WorkerConfig contains the only control-plane dependency of the worker.
+// Worker persistence and leader election use KVStore and Redis respectively.
+type WorkerConfig struct {
+	ControlAPIURL   string `json:"control_api_url" mapstructure:"control_api_url"`
+	ControlAPIToken string `json:"control_api_token" mapstructure:"control_api_token"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -535,6 +557,9 @@ type Config struct {
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
 	// SessionManager is the configuration for the session manager forwarding endpoint.
 	SessionManager SessionManagerConfig `json:"session_manager" mapstructure:"session_manager"`
+	// Worker is deliberately separate from KubernetesSession. A worker has no
+	// Kubernetes workload credentials and talks to the API over this endpoint.
+	Worker WorkerConfig `json:"worker" mapstructure:"worker"`
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
 	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
@@ -1110,11 +1135,22 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
 
 	// Session manager configuration
-	_ = v.BindEnv("session_manager.enabled", "SESSION_MANAGER_ENABLED")
-	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
-	_ = v.BindEnv("session_manager.upstream_url", "SESSION_MANAGER_UPSTREAM_URL")
-	_ = v.BindEnv("session_manager.connection_token", "SESSION_MANAGER_CONNECTION_TOKEN")
-	_ = v.BindEnv("session_manager.public_url", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.enabled", "AGENTAPI_SESSION_MANAGER_ENABLED", "SESSION_MANAGER_ENABLED")
+	_ = v.BindEnv("session_manager.hmac_secret", "AGENTAPI_SESSION_MANAGER_HMAC_SECRET", "SESSION_MANAGER_HMAC_SECRET")
+	_ = v.BindEnv("session_manager.upstream_url", "AGENTAPI_SESSION_MANAGER_UPSTREAM_URL", "SESSION_MANAGER_UPSTREAM_URL")
+	_ = v.BindEnv("session_manager.connection_token", "AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.public_url", "AGENTAPI_SESSION_MANAGER_PUBLIC_URL", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
+	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
+	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
+	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
+	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
+	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")
+
+	// Background-worker control plane. These values are deliberately not part
+	// of kubernetes_session: the worker must never receive a provisioner token.
+	_ = v.BindEnv("worker.control_api_url", "AGENTAPI_WORKER_CONTROL_API_URL", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
+	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
@@ -1211,6 +1247,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.network_filter_init_memory_request", "32Mi")
 	v.SetDefault("kubernetes_session.network_filter_init_memory_limit", "64Mi")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
+	v.SetDefault("worker.control_api_url", "")
+	v.SetDefault("worker.control_api_token", "")
+	v.SetDefault("session_manager.api_url", "")
+	v.SetDefault("session_manager.api_token", "")
+	v.SetDefault("session_manager.internal_api_token", "")
+	v.SetDefault("session_manager.allocation.lease_duration", "15s")
+	v.SetDefault("session_manager.allocation.renew_deadline", "10s")
+	v.SetDefault("session_manager.allocation.retry_period", "2s")
 
 	// Settings base secret default (single base Secret shared by all sessions,
 	// merged with team/user settings at session settings generation time)

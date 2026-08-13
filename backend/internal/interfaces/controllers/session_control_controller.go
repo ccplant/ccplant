@@ -18,6 +18,15 @@ type SessionControlController struct {
 	connected sync.Map
 }
 
+type SessionControlReaderController struct {
+	store   core.Store
+	manager sessionControlSessionReader
+}
+
+func NewSessionControlReaderController(store core.Store, manager sessionControlSessionReader) *SessionControlReaderController {
+	return &SessionControlReaderController{store: store, manager: manager}
+}
+
 type sessionControlSessionReader interface {
 	GetSession(string) entities.Session
 }
@@ -93,6 +102,14 @@ func (sc *SessionControlController) WaitEvents(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotImplemented, "session control events are unavailable")
 	}
+	return waitSessionControlEvents(c, sc.store, reader)
+}
+
+func (sc *SessionControlReaderController) WaitEvents(c echo.Context) error {
+	return waitSessionControlEvents(c, sc.store, sc.manager)
+}
+
+func waitSessionControlEvents(c echo.Context, store core.Store, reader sessionControlSessionReader) error {
 	session := reader.GetSession(c.Param("sessionId"))
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
@@ -101,7 +118,7 @@ func (sc *SessionControlController) WaitEvents(c echo.Context) error {
 	if !authz.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
 	}
-	events, err := sc.store.ReadEvents(c.Request().Context(), c.Param("sessionId"), c.QueryParam("after"), parseWait(c.QueryParam("wait")), parseControlCount(c.QueryParam("count")))
+	events, err := store.ReadEvents(c.Request().Context(), c.Param("sessionId"), c.QueryParam("after"), parseWait(c.QueryParam("wait")), parseControlCount(c.QueryParam("count")))
 	if err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 	}

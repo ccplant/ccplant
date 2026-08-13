@@ -1,12 +1,14 @@
-{{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
+{{- $manager := .Values.sessionManager | default dict }}
+{{- $k8s := $manager.kubernetesSession | default dict }}
+{{- if and ($manager.enabled | default false) ($k8s.enabled | default false) }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "agentapi-proxy.fullname" . }}-session-manager
   labels:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-manager
 rules:
-  {{- if and .Values.kubernetesSession .Values.kubernetesSession.enabled }}
   - apiGroups: [""]
     resources: ["pods"]
     # update: required for adoptStockSession when stock sessions run as Pods.
@@ -30,7 +32,6 @@ rules:
     resources: ["deployments"]
     # update/patch: required for adoptStockSession (removing agentapi.proxy/stock label)
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  {{- end }}
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "delete", "patch"]

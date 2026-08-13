@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, AuthMode, ExternalSessionManagerConfig, prepareSettingsForSave, getSendGithubTokenOnSessionStart, setSendGithubTokenOnSessionStart, EnterKeyBehavior, getEnterKeyBehavior, setEnterKeyBehavior, FontSettings as FontSettingsType, getFontSettings, setFontSettings } from '@/types/settings'
-import { BedrockSettings, SettingsAccordion, GithubTokenSettings, MCPServerSettings, MarketplaceSettings, PluginSettings, KeyBindingSettings, ClaudeOAuthSettings, FontSettings, EnvVarsSettings, SlackSettings, FileSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
+import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, AuthMode, ExternalSessionManagerConfig, prepareSettingsForSave, EnterKeyBehavior, getEnterKeyBehavior, setEnterKeyBehavior, FontSettings as FontSettingsType, getFontSettings, setFontSettings } from '@/types/settings'
+import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, KeyBindingSettings, ClaudeOAuthSettings, FontSettings, EnvVarsSettings, SlackSettings, FileSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import { useToast } from '@/contexts/ToastContext'
@@ -19,7 +19,6 @@ export default function PersonalSettingsPage() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isAuthError, setIsAuthError] = useState(false)
-  const [sendGithubToken, setSendGithubToken] = useState(false)
   const [enterKeyBehavior, setEnterKeyBehaviorState] = useState<EnterKeyBehavior>('newline')
   const [fontSettings, setFontSettingsState] = useState<FontSettingsType>({ fontSize: 14, fontFamily: 'sans-serif' })
   const [slackUserId, setSlackUserId] = useState<string>('')
@@ -60,10 +59,8 @@ export default function PersonalSettingsPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [])
 
-  // GitHub Token 設定、Claude AgentAPI 設定、Enter キー設定、Font 設定の読み込み
+  // Enter キー設定と Font 設定の読み込み
   useEffect(() => {
-    // GitHub Token 設定を読み込み
-    setSendGithubToken(getSendGithubTokenOnSessionStart())
     // Enter キー設定を読み込み
     setEnterKeyBehaviorState(getEnterKeyBehavior())
     // Font 設定を読み込み
@@ -172,11 +169,6 @@ export default function PersonalSettingsPage() {
 
   const handlePreferredTeamChange = (teamId: string) => {
     setSettings((prev) => ({ ...prev, preferred_team_id: teamId }))
-  }
-
-  const handleGithubTokenChange = (enabled: boolean) => {
-    setSendGithubToken(enabled)
-    setSendGithubTokenOnSessionStart(enabled)
   }
 
   const handleEnterKeyBehaviorChange = (behavior: EnterKeyBehavior) => {
@@ -688,9 +680,6 @@ export default function PersonalSettingsPage() {
               <KeyBindingSettings enterKeyBehavior={enterKeyBehavior} onChange={handleEnterKeyBehaviorChange} />
               <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
                 <FontSettings fontSettings={fontSettings} onChange={handleFontSettingsChange} />
-              </div>
-              <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                <GithubTokenSettings enabled={sendGithubToken} onChange={handleGithubTokenChange} />
               </div>
             </div>
           </SettingsAccordion>
