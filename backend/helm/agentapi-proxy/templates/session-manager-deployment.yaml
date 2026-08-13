@@ -96,11 +96,13 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ dig "allocation" "retryPeriod" "2s" $manager | quote }}}
+            {{- if (dig "name" "" $encryptionToken) }}
             - name: AGENTAPI_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "sessionManager.encryption.keySecretRef.name is required" (dig "name" "" $encryptionToken) | quote }}
+                  name: {{ dig "name" "" $encryptionToken | quote }}
                   key: {{ dig "key" "encryption-key" $encryptionToken | quote }}
+            {{- end }}
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ required "sessionManager.kvStore.backend is required" $kv.backend | quote }}
             {{- if $kv.databaseUrlSecretRef.name }}
