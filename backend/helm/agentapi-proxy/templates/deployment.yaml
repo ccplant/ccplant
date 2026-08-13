@@ -272,6 +272,7 @@ spec:
             {{- else }}
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ dig "backend" "kubernetes" $apiKV | quote }}
+            {{- if ne (dig "backend" "kubernetes" $apiKV) "kubernetes" }}
             {{- $kvDatabaseURLSecretRefName := dig "databaseUrlSecretRef" "name" "" $apiKV }}
             {{- if $kvDatabaseURLSecretRefName }}
             - name: AGENTAPI_KV_STORE_DATABASE_URL
@@ -296,6 +297,7 @@ spec:
             {{- with (dig "authToken" "" $apiKV) }}
             - name: AGENTAPI_KV_STORE_AUTH_TOKEN
               value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- end }}

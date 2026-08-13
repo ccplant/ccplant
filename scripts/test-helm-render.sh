@@ -218,6 +218,8 @@ assert_contains 'value: "kubernetes"' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-kvstore' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-worker' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_AUTH_TOKEN' "$TMP_DIR/backend-kubernetes-kv.yaml"
 
 assert_contains '^  name: backend-agentapi-proxy-session-manager$' "$TMP_DIR/backend-manager-rolebinding.yaml"
 assert_contains '^    name: backend-agentapi-proxy-session-manager$' "$TMP_DIR/backend-manager-rolebinding.yaml"
