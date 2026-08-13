@@ -1,4 +1,4 @@
-{{- if .Values.worker.enabled }}
+{{- if (dig "enabled" false (.Values.worker | default dict)) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +30,8 @@ spec:
           command: ["/usr/local/bin/ccplant"]
           args: ["worker"]
           env:
-            {{- $workerControlURL := .Values.kubernetesSession.provisioner.proxyUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (.Values.controlPlaneService.name | default "control") .Release.Namespace (.Values.controlPlaneService.port | default 8080)) }}
+            {{- $controlPlane := .Values.controlPlaneService | default dict }}
+            {{- $workerControlURL := .Values.kubernetesSession.provisioner.proxyUrl | default (printf "http://%s.%s.svc.cluster.local:%v" (dig "name" "control" $controlPlane) .Release.Namespace (dig "port" 8080 $controlPlane)) }}
             - {name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL, value: {{ $workerControlURL | quote }}}
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN
               valueFrom:

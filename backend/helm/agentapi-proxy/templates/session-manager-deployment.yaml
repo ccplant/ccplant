@@ -1,4 +1,4 @@
-{{- if .Values.sessionManager.enabled }}
+{{- if (dig "enabled" false (.Values.sessionManager | default dict)) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
