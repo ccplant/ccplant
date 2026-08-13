@@ -370,3 +370,11 @@ func volumeMountNames(mounts []corev1.VolumeMount) []string {
 	}
 	return names
 }
+
+func TestStatusCanRecoverFromWorkloadReadiness(t *testing.T) {
+	assert.True(t, statusCanRecoverFromWorkloadReadiness("unhealthy"))
+	assert.True(t, statusCanRecoverFromWorkloadReadiness("stopped"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("error"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("timeout"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("running"))
+}

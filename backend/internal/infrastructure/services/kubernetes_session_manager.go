@@ -3963,15 +3963,20 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			if !ready {
 				session.SetStatus("unhealthy")
 			} else {
-				// Only recover to "active" from a bad state.
-				// Do not overwrite "running" (agentapi is processing a message).
+				// Kubernetes readiness can recover an infrastructure-health failure,
+				// but it must not erase terminal application/provisioning failures.
+				// In particular, a Pod remains Ready after clone/provisioning errors.
 				current := session.Status()
-				if current == "unhealthy" || current == "stopped" || current == "error" || current == "timeout" {
+				if statusCanRecoverFromWorkloadReadiness(current) {
 					session.SetStatus("active")
 				}
 			}
 		}
 	}
+}
+
+func statusCanRecoverFromWorkloadReadiness(status string) bool {
+	return status == "unhealthy" || status == "stopped"
 }
 
 // deleteSessionResources deletes all Kubernetes resources for a session
