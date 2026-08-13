@@ -45,7 +45,7 @@ describe('API proxy route transport', () => {
     expect(headers.get('last-event-id')).toBe('9')
     expect(response.status).toBe(202)
     expect(response.headers.get('etag')).toBe('"stream"')
-    expect(await response.text()).toBe('data: {"ok":true}\n\n')
+    expect(await response.text()).toBe(': connected\n\ndata: {"ok":true}\n\n')
   })
 
   it('aborts the upstream stream when the downstream reader cancels', async () => {

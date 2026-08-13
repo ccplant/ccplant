@@ -86,7 +86,7 @@ function createLinkedAbort(requestSignal: AbortSignal, timeoutMs?: number): Link
   }
 }
 
-function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort): NextResponse {
+function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse = false): NextResponse {
   const headers = buildDownstreamResponseHeaders(response.headers)
   const responseInit = {
     status: response.status,
@@ -105,6 +105,53 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort): Ne
     if (finished) return
     finished = true
     linkedAbort.cleanup()
+  }
+
+  if (sse) {
+    const encoder = new TextEncoder()
+    let keepalive: ReturnType<typeof setInterval> | undefined
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Commit the downstream response immediately. Without an initial byte,
+        // EventSource can remain CONNECTING while an otherwise healthy agent is idle.
+        controller.enqueue(encoder.encode(': connected\n\n'))
+        keepalive = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(': keepalive\n\n'))
+          } catch {
+            // Cancellation races with the interval callback.
+          }
+        }, 15000)
+      },
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read()
+          if (done) {
+            if (keepalive) clearInterval(keepalive)
+            finish()
+            controller.close()
+            return
+          }
+          controller.enqueue(value)
+        } catch (error) {
+          if (keepalive) clearInterval(keepalive)
+          finish()
+          controller.error(error)
+        }
+      },
+      async cancel(reason) {
+        if (keepalive) clearInterval(keepalive)
+        if (!linkedAbort.controller.signal.aborted) linkedAbort.controller.abort(reason)
+        try {
+          await reader.cancel(reason)
+        } catch {
+          // The abort may already have closed the upstream reader.
+        } finally {
+          finish()
+        }
+      },
+    })
+    return new NextResponse(stream, responseInit)
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -205,7 +252,7 @@ async function handleProxyRequest(
       contentType: response.headers.get('content-type'),
     })
 
-    const result = proxyUpstreamResponse(response, linkedAbort)
+    const result = proxyUpstreamResponse(response, linkedAbort, isSSE)
     linkedAbort = undefined
     return result
   } catch (error) {
