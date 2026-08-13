@@ -66,7 +66,11 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		persistence = kvstore.NewKubernetesAdapter(persistence, applicationStore)
 	}
 
-	runtimeProvider := runtimeconfig.New(cfg, applicationStore, manager.GetNamespace())
+	applicationNamespace := cfg.KVStore.Namespace
+	if applicationNamespace == "" {
+		applicationNamespace = "default"
+	}
+	runtimeProvider := runtimeconfig.New(cfg, applicationStore, applicationNamespace)
 	if err := runtimeProvider.Reload(parent); err != nil {
 		log.Printf("[SESSION_MANAGER] Runtime settings reload failed; using startup configuration: %v", err)
 	} else if runtimeProvider.Version() > 0 {
@@ -87,17 +91,17 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		_ = manager.Shutdown(5 * time.Second)
 		return nil, err
 	}
-	settingsRepo := repositories.NewKubernetesSettingsRepository(persistence, manager.GetNamespace(), registry)
-	credentialsRepo := repositories.NewKubernetesCredentialsRepository(persistence, manager.GetNamespace())
-	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(persistence, manager.GetNamespace())
-	personalKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(persistence, manager.GetNamespace())
-	sandboxPolicyRepo := repositories.NewKubernetesSandboxPolicyRepository(persistence, manager.GetNamespace())
+	settingsRepo := repositories.NewKubernetesSettingsRepository(persistence, applicationNamespace, registry)
+	credentialsRepo := repositories.NewKubernetesCredentialsRepository(persistence, applicationNamespace)
+	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace)
+	personalKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace)
+	sandboxPolicyRepo := repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace)
 	manager.SetSettingsRepository(settingsRepo)
 	manager.SetCredentialsRepository(credentialsRepo)
 	manager.SetTeamConfigRepository(teamConfigRepo)
 	manager.SetPersonalAPIKeyRepository(personalKeyRepo)
 	manager.SetSandboxPolicyRepository(sandboxPolicyRepo)
-	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(persistence, manager.GetNamespace())
+	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(persistence, applicationNamespace)
 	manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
 		cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())
 	})
