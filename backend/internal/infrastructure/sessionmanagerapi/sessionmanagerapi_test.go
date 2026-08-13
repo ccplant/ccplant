@@ -230,6 +230,28 @@ func newTestClient(t *testing.T, manager *fakeManager) (*Client, *httptest.Serve
 	return client, server
 }
 
+func TestClientSubscribeStatusEventsEmitsInitialSnapshot(t *testing.T) {
+	manager := newFakeManager()
+	now := time.Now().UTC()
+	manager.sessions["session-error"] = &fakeSession{
+		id: "session-error", userID: "user-1", scope: entities.ScopeUser,
+		status: "error", startedAt: now, updatedAt: now, lastMessageAt: now,
+	}
+	client, _ := newTestClient(t, manager)
+
+	events, cancel := client.SubscribeStatusEvents()
+	defer cancel()
+
+	select {
+	case event := <-events:
+		if event.SessionID != "session-error" || event.Status != "error" {
+			t.Fatalf("unexpected initial status event: %#v", event)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for initial status snapshot")
+	}
+}
+
 func TestHandlerAuthenticatesEveryPrivateRoute(t *testing.T) {
 	manager := newFakeManager()
 	_, server := newTestClient(t, manager)

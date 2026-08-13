@@ -588,25 +588,20 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		notificationSvc.SetBaseURLResolver(func() string { return runtimeProvider.String("notifications.base_url") })
 		log.Printf("Notification service initialized successfully")
 
-		// Set up subscription secret syncer if Kubernetes mode is enabled
-		if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok {
-			syncer := services.NewKubernetesSubscriptionSecretSyncer(
-				k8sSessionManager.GetClient(),
-				k8sManager.GetNamespace(),
-				notificationSvc.GetStorage(),
-				"", // Use default prefix
-			)
-			notificationSvc.SetSecretSyncer(syncer)
-			// Also use the syncer as the subscription reader so that push notifications
-			// read subscriptions from Kubernetes Secrets rather than local file storage.
-			// This is required in session pods where local storage is empty.
-			notificationSvc.SetSubscriptionReader(syncer)
-			// Use the syncer as the subscription writer so that all subscription mutations
-			// go directly to the Kubernetes Secret, bypassing local file storage entirely.
-			// This prevents subscription loss after pod restarts.
-			notificationSvc.SetSubscriptionWriter(syncer)
-			log.Printf("Subscription secret syncer configured for Kubernetes mode (read+write)")
-		}
+		// Notification subscriptions are application data owned by the API role.
+		// persistenceClient is either the legacy Kubernetes client or the libSQL-backed
+		// compatibility adapter, so this wiring remains independent of the concrete
+		// session-manager implementation and requires no API ServiceAccount token.
+		syncer := services.NewKubernetesSubscriptionSecretSyncer(
+			persistenceClient,
+			namespace,
+			notificationSvc.GetStorage(),
+			"", // Use default prefix
+		)
+		notificationSvc.SetSecretSyncer(syncer)
+		notificationSvc.SetSubscriptionReader(syncer)
+		notificationSvc.SetSubscriptionWriter(syncer)
+		log.Printf("Notification subscription persistence configured (read+write)")
 	}
 
 	// Start cleanup goroutine for defunct processes

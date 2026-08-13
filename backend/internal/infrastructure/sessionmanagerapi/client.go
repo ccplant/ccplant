@@ -119,7 +119,10 @@ func (c *Client) SubscribeStatusEvents() (<-chan portrepos.SessionStatusEvent, f
 				next := make(map[string]string, len(sessions))
 				for _, session := range sessions {
 					next[session.ID()] = session.Status()
-					if initialized && known[session.ID()] != session.Status() {
+					// Emit the initial authoritative snapshot as well as later changes.
+					// Browser tabs intentionally disconnect while hidden; without this
+					// snapshot a transition that happened during that gap is lost forever.
+					if !initialized || known[session.ID()] != session.Status() {
 						select {
 						case events <- portrepos.SessionStatusEvent{SessionID: session.ID(), Status: session.Status(), Timestamp: time.Now()}:
 						case <-ctx.Done():
