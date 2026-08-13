@@ -227,7 +227,7 @@ func (s *Service) DeleteSlackSubscription(userID string) error {
 
 // GetSubscriptions returns all active subscriptions for a user
 func (s *Service) GetSubscriptions(userID string) ([]Subscription, error) {
-	return s.storage.GetSubscriptions(userID)
+	return s.readCurrentSubscriptions(userID)
 }
 
 // DeleteSubscription removes a subscription by endpoint
