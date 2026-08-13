@@ -52,6 +52,7 @@ type secretAdapter struct {
 }
 
 func (a *secretAdapter) Create(ctx context.Context, object *corev1.Secret, opts metav1.CreateOptions) (*corev1.Secret, error) {
+	object = materializeSecretStringData(object)
 	value, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
@@ -67,6 +68,7 @@ func (a *secretAdapter) Create(ctx context.Context, object *corev1.Secret, opts 
 }
 
 func (a *secretAdapter) Update(ctx context.Context, object *corev1.Secret, opts metav1.UpdateOptions) (*corev1.Secret, error) {
+	object = materializeSecretStringData(object)
 	version, _ := strconv.ParseInt(object.ResourceVersion, 10, 64)
 	value, err := json.Marshal(object)
 	if err != nil {
@@ -90,6 +92,7 @@ func (a *secretAdapter) Get(ctx context.Context, name string, opts metav1.GetOpt
 	if err := json.Unmarshal(record.Value, &object); err != nil {
 		return nil, err
 	}
+	object = *materializeSecretStringData(&object)
 	object.Namespace = a.namespace
 	object.ResourceVersion = strconv.FormatInt(record.Version, 10)
 	return &object, nil
@@ -121,12 +124,31 @@ func (a *secretAdapter) List(ctx context.Context, opts metav1.ListOptions) (*cor
 		if err := json.Unmarshal(record.Value, &object); err != nil {
 			return nil, err
 		}
+		object = *materializeSecretStringData(&object)
 		object.ResourceVersion = strconv.FormatInt(record.Version, 10)
 		if selector.Matches(labels.Set(object.Labels)) {
 			result.Items = append(result.Items, object)
 		}
 	}
 	return result, nil
+}
+
+// The Kubernetes apiserver converts write-only stringData into Data before a
+// Secret is persisted. The KV adapter must provide the same contract, both for
+// new writes and for records written by older adapter versions.
+func materializeSecretStringData(object *corev1.Secret) *corev1.Secret {
+	if object == nil || len(object.StringData) == 0 {
+		return object
+	}
+	copy := object.DeepCopy()
+	if copy.Data == nil {
+		copy.Data = make(map[string][]byte, len(copy.StringData))
+	}
+	for key, value := range copy.StringData {
+		copy.Data[key] = []byte(value)
+	}
+	copy.StringData = nil
+	return copy
 }
 
 type configMapAdapter struct {
