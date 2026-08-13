@@ -110,8 +110,9 @@
         "redis": { "$ref": "#/definitions/redisClient" },
         "slack": {
           "type": "object",
-          "required": ["tokenSecretRef", "dryRun"],
+          "required": ["baseUrl", "tokenSecretRef", "dryRun"],
           "properties": {
+            "baseUrl": { "type": "string" },
             "tokenSecretRef": {
               "type": "object",
               "required": ["name", "appTokenKey", "botTokenKey"],

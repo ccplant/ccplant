@@ -4643,6 +4643,10 @@ func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, sess
 	url := fmt.Sprintf("http://%s/events", session.Addr())
 
 	for {
+		if statusWatcherTerminal(session.Status()) {
+			log.Printf("[AGENT_STATUS] Session %s status is %s; stopping /events watcher", session.id, session.Status())
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -4665,6 +4669,15 @@ func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, sess
 				backoff = maxBackoff
 			}
 		}
+	}
+}
+
+func statusWatcherTerminal(status string) bool {
+	switch status {
+	case "stopped", "suspended", "error", "timeout":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -180,6 +180,8 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		e.GET("/internal/session-control/:sessionId/commands", control.WaitCommands)
 		e.POST("/internal/session-control/:sessionId/events", control.AppendEvents)
 	}
+	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
+	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
 	if cfg.SessionManager.HMACSecret != "" {
 		legacy := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret)
 		if err := legacy.RegisterRoutes(e); err != nil {

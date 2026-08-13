@@ -142,6 +142,7 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            - {name: LOG_DIR, value: "/var/log/agentapi/sessions"}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_PATH, value: {{ $sessionPersistencePath | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER, value: {{ $sessionPersistence.suspendAfter | default "1h" | quote }}}
@@ -230,8 +231,9 @@ spec:
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate (eq $sessionPersistenceBackend "volume") }}
           volumeMounts:
+            - name: session-logs
+              mountPath: /var/log/agentapi/sessions
             {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate }}
             - name: k8s-session-config
               mountPath: /etc/k8s-session-config
@@ -241,7 +243,6 @@ spec:
             - name: session-state
               mountPath: {{ $sessionPersistencePath | quote }}
             {{- end }}
-          {{- end }}
           {{- with $manager.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -252,8 +253,9 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $manager.resources | nindent 12 }}
-      {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate (eq $sessionPersistenceBackend "volume") }}
       volumes:
+        - name: session-logs
+          emptyDir: {}
         {{- if or $k8s.nodeSelector $k8s.affinity $k8s.tolerations $k8s.podTemplate }}
         - name: k8s-session-config
           configMap:
@@ -264,7 +266,6 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
         {{- end }}
-      {{- end }}
       {{- with $manager.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

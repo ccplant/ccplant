@@ -124,6 +124,7 @@ spec:
                   key: {{ $slackToken.botTokenKey | default "bot-token" | quote }}
             {{- end }}
             - {name: AGENTAPI_SLACK_DRY_RUN, value: {{ $slack.dryRun | default false | quote }}}
+            - {name: AGENTAPI_WEBHOOK_BASE_URL, value: {{ $slack.baseUrl | default "" | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ $worker.schedule.enabled | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ $worker.schedule.checkInterval | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}

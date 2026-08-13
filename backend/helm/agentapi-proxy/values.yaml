@@ -219,6 +219,7 @@ worker:
   # Default Slack Socket Mode connection. Tokens are injected by kubelet from
   # this Secret; the worker does not require Kubernetes API access.
   slack:
+    baseUrl: ""
     tokenSecretRef:
       name: ""
       appTokenKey: app-token
