@@ -168,7 +168,7 @@ func TestMigrateConfiguredStorePair(t *testing.T) {
 func TestMigrateConfiguredStorePairRewritesDestinationNamespace(t *testing.T) {
 	ctx := context.Background()
 	source, destination := newMemoryKVStore(), newMemoryKVStore()
-	value := []byte(`{"metadata":{"name":"memory","namespace":"logical"},"data":{"memory.json":"source"}}`)
+	value := []byte(`{"metadata":{"name":"memory","namespace":"logical","labels":{"agentapi.proxy/type":"memory"}},"data":{"memory.json":"source"}}`)
 	if _, err := source.Create(ctx, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "logical", Key: "memory", Value: value}); err != nil {
 		t.Fatal(err)
 	}
