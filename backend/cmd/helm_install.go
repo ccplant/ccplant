@@ -34,7 +34,7 @@ type helmInstallOptions struct {
 	hostname, apiHostname, ingressClass                    string
 	cookieSecretName, cookieSecretKey                      string
 	cookieSecretValue                                      string
-	storageClass, valuesOut                                string
+	storageClass, persistenceSize, valuesOut               string
 	values, sets                                           []string
 	tls, persistence, createNamespace, dryRun, printValues bool
 	timeout                                                time.Duration
@@ -138,11 +138,128 @@ var ControlPlaneCmd = newControlPlaneCommand()
 
 func newControlPlaneCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use: "control-plane", Short: "Initialize and apply a ccplant control plane configuration",
+		Use: "control-plane", Short: "Initialize, generate, and apply a ccplant control plane configuration",
 		Args: cobra.NoArgs,
 	}
-	command.AddCommand(newControlPlaneInitCommand(), newControlPlaneEncryptCommand(), newControlPlaneEditCommand(), newControlPlaneApplyCommand())
+	command.AddCommand(newControlPlaneInitCommand(), newControlPlaneGenerateCommand(), newControlPlaneEncryptCommand(), newControlPlaneEditCommand(), newControlPlaneApplyCommand())
 	return command
+}
+
+func newControlPlaneGenerateCommand() *cobra.Command {
+	var output, namespace, release, chart string
+	command := &cobra.Command{Use: "generate", Aliases: []string{"export"}, Short: "Generate a control plane configuration from an existing Kubernetes release", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		restConfig, err := ctrl.GetConfig()
+		if err != nil {
+			return fmt.Errorf("get Kubernetes config: %w", err)
+		}
+		client, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			return fmt.Errorf("create Kubernetes client: %w", err)
+		}
+		cfg, err := generateKubernetesInstallConfig(cmd.Context(), client, execInstallCommandRunner{}, namespace, release, chart)
+		if err != nil {
+			return err
+		}
+		data, err := yaml.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("encode control plane configuration: %w", err)
+		}
+		if output == "-" {
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
+		}
+		if _, err := os.Stat(output); err == nil {
+			return fmt.Errorf("configuration %q already exists", output)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("check output configuration: %w", err)
+		}
+		if err := writeNewFileAtomically(output, data, 0o600); err != nil {
+			return fmt.Errorf("write control plane configuration: %w", err)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Generated %s from Kubernetes release %s/%s.\n", output, namespace, release)
+		return err
+	}}
+	command.Flags().StringVarP(&output, "output", "o", "control-plane.yaml", "configuration output path, or - for stdout")
+	command.Flags().StringVarP(&namespace, "namespace", "n", "ccplant", "Kubernetes namespace containing the Helm release")
+	command.Flags().StringVar(&release, "release", "ccplant", "Helm release name")
+	command.Flags().StringVar(&chart, "chart", defaultCCPlantChart, "chart reference to record in the configuration")
+	return command
+}
+
+func generateKubernetesInstallConfig(ctx context.Context, client kubernetes.Interface, runner installCommandRunner, namespace, release, chart string) (*installConfig, error) {
+	for label, value := range map[string]string{"namespace": namespace, "release": release, "chart": chart} {
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("--%s must not be empty", label)
+		}
+	}
+	var output strings.Builder
+	if err := runner.Run(ctx, &output, io.Discard, "helm", "get", "values", release, "--namespace", namespace, "--all", "--output", "yaml"); err != nil {
+		return nil, fmt.Errorf("read Helm values for %s/%s: %w", namespace, release, err)
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal([]byte(output.String()), &values); err != nil {
+		return nil, fmt.Errorf("decode Helm values for %s/%s: %w", namespace, release, err)
+	}
+	stringValue := func(path ...string) string {
+		var current any = values
+		for _, key := range path {
+			object, ok := current.(map[string]any)
+			if !ok {
+				return ""
+			}
+			current = object[key]
+		}
+		value, _ := current.(string)
+		return value
+	}
+	boolValue := func(path ...string) bool {
+		var current any = values
+		for _, key := range path {
+			object, ok := current.(map[string]any)
+			if !ok {
+				return false
+			}
+			current = object[key]
+		}
+		value, _ := current.(bool)
+		return value
+	}
+	hostname, apiHostname := stringValue("global", "hostname"), stringValue("global", "apiHostname")
+	if hostname == "" || apiHostname == "" {
+		return nil, fmt.Errorf("helm release %s/%s does not contain global.hostname and global.apiHostname", namespace, release)
+	}
+	secretName, secretKey := stringValue("frontend", "cookieEncryptionSecret", "secretName"), stringValue("frontend", "cookieEncryptionSecret", "secretKey")
+	if secretName == "" {
+		secretName = defaultCookieSecretName
+	}
+	if secretKey == "" {
+		secretKey = defaultCookieSecretKey
+	}
+	secret, err := client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("read cookie Secret %s/%s: %w", namespace, secretName, err)
+	}
+	cookieKey := string(secret.Data[secretKey])
+	if cookieKey == "" {
+		return nil, fmt.Errorf("cookie Secret %s/%s does not contain non-empty key %q", namespace, secretName, secretKey)
+	}
+	version := strings.TrimPrefix(stringValue("backend", "image", "tag"), "v")
+	if version == "" {
+		version = strings.TrimPrefix(stringValue("frontend", "image", "tag"), "v")
+	}
+	if version == "" {
+		version = "latest"
+	}
+	persistence := boolValue("backend", "kubernetesSession", "pvc", "enabled")
+	size := stringValue("backend", "kubernetesSession", "pvc", "storageSize")
+	if size == "" {
+		size = "10Gi"
+	}
+	return &installConfig{
+		APIVersion: installConfigAPIVersion, Kind: "ControlPlane", Metadata: installConfigMetadata{Name: release},
+		Spec:   installConfigSpec{Version: version, Frontend: installEndpoint{Hostname: hostname}, Backend: installEndpoint{Hostname: apiHostname}, TLS: boolValue("global", "ingress", "tls", "enabled"), Persistence: installPersistence{Enabled: persistence, Size: size}, Secrets: installSecrets{CookieEncryptionKey: cookieKey}},
+		Target: installTarget{Type: "kubernetes", Kubernetes: &installKubernetesTarget{Namespace: namespace, IngressClass: stringValue("global", "ingress", "className"), StorageClass: stringValue("backend", "kubernetesSession", "pvc", "storageClass"), Chart: chart}},
+	}, nil
 }
 
 func newControlPlaneInitCommand() *cobra.Command {
@@ -475,6 +592,7 @@ func (kubernetesInstallAdapter) Apply(ctx context.Context, out, errOut io.Writer
 		release: cfg.Metadata.Name, namespace: target.Namespace, chart: target.Chart, version: chartVersion(cfg.Spec.Version, target.Version),
 		hostname: cfg.Spec.Frontend.Hostname, apiHostname: cfg.Spec.Backend.Hostname,
 		ingressClass: target.IngressClass, storageClass: target.StorageClass,
+		persistenceSize:  cfg.Spec.Persistence.Size,
 		cookieSecretName: defaultCookieSecretName, cookieSecretKey: defaultCookieSecretKey,
 		cookieSecretValue: cfg.Spec.Secrets.CookieEncryptionKey,
 		tls:               cfg.Spec.TLS, persistence: cfg.Spec.Persistence.Enabled, createNamespace: true,
@@ -742,7 +860,7 @@ func generateInstallValues(o *helmInstallOptions) ([]byte, error) {
 		"backend": map[string]any{
 			"enabled":           true,
 			"ingress":           map[string]any{"enabled": true, "className": o.ingressClass},
-			"kubernetesSession": map[string]any{"enabled": true, "pvc": map[string]any{"enabled": o.persistence, "storageClass": o.storageClass}},
+			"kubernetesSession": map[string]any{"enabled": true, "pvc": map[string]any{"enabled": o.persistence, "storageClass": o.storageClass, "storageSize": o.persistenceSize}},
 		},
 		"frontend": map[string]any{
 			"enabled":                true,
