@@ -2543,10 +2543,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
 		initContainers = append(initContainers, *sciaInitContainer)
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
-		// Route provisioner traffic through SCIA from startup. The actual agent gets
-		// the same route from SessionSettings after provisioning. Keep cluster
-		// services out of NO_PROXY so provisioner management calls are observed by
-		// SCIA before SCIA chains them through nfa.
+		// Route external provisioner traffic through SCIA from startup. Internal
+		// control-plane callbacks must bypass SCIA: proxying Kubernetes service
+		// addresses can send them to the public API instead of session-manager.
 		sandboxEnvVars = provisionerSciaEnvVars(sciaEnvVars)
 	}
 
@@ -2837,7 +2836,7 @@ func provisionerSciaEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
 	for i := range result {
 		switch result[i].Name {
 		case "NO_PROXY", "no_proxy":
-			result[i].Value = "127.0.0.1,localhost"
+			result[i].Value = sciaNoProxyBase
 		case "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO":
 			// The combined bundle is created later by the provisioner. Use SCIA's
 			// generated CA directly during the initial pull phase.
