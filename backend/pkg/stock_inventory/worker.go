@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
-	"k8s.io/client-go/kubernetes"
 )
 
 // StockRepository manages the creation and counting of stock sessions.
@@ -188,12 +188,12 @@ type LeaderWorker struct {
 // leader election configuration.
 func NewLeaderWorker(
 	repo StockRepository,
-	k8sClient kubernetes.Interface,
+	redisClient redis.UniversalClient,
 	workerConfig WorkerConfig,
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderWorker {
 	worker := NewWorker(repo, workerConfig)
-	elector := schedule.NewLeaderElector(k8sClient, electionConfig)
+	elector := schedule.NewLeaderElector(redisClient, electionConfig)
 	return &LeaderWorker{
 		worker:  worker,
 		elector: elector,

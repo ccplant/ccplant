@@ -94,6 +94,15 @@
   },
   "allOf": [
     {
+      "if": { "properties": { "worker": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+      "then": {
+        "anyOf": [
+          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+          { "properties": { "externalRedis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } }
+        ]
+      }
+    },
+    {
       "if": {
         "properties": { "replicaCount": { "minimum": 2 } },
         "required": ["replicaCount"]

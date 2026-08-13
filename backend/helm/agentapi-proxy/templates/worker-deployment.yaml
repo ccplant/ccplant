@@ -30,6 +30,28 @@ spec:
           command: ["/usr/local/bin/ccplant"]
           args: ["worker"]
           env:
+            {{- if .Values.redis.enabled }}
+            - {name: AGENTAPI_REDIS_ADDR, value: {{ printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) | quote }}}
+            {{- if .Values.redis.auth.enabled }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ printf "%s-redis" (include "agentapi-proxy.fullname" .) | quote }}, key: redis-password}}
+            {{- end }}
+            {{- else }}
+            - {name: AGENTAPI_REDIS_ADDR, value: {{ required "Redis is required when worker.enabled=true" .Values.externalRedis.addr | quote }}}
+            {{- with .Values.externalRedis.existingSecret }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.externalRedis.existingSecretPasswordKey | quote }}}}
+            {{- end }}
+            {{- end }}
+            - {name: AGENTAPI_KV_STORE_BACKEND, value: {{ dig "kvStore" "backend" "kubernetes" .Values.config | quote }}}
+            {{- with (dig "kvStore" "databaseUrlSecretRef" "name" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ dig "kvStore" "databaseUrlSecretRef" "key" "database-url" $.Values.config | quote }}}}
+            {{- end }}
+            {{- with (dig "kvStore" "authTokenSecretRef" "name" "" .Values.config) }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ dig "kvStore" "authTokenSecretRef" "key" "auth-token" $.Values.config | quote }}}}
+            {{- end }}
             - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ .Values.worker.schedule.enabled | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ .Values.worker.schedule.checkInterval | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}

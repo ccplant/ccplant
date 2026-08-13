@@ -234,16 +234,9 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server
 func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *schedule.LeaderWorker {
 	log.Printf("[SCHEDULE_WORKER] Initializing schedule worker...")
 
-	// Create Kubernetes client
-	restConfig, err := ctrl.GetConfig()
+	redisClient, err := newWorkerRedisClient(configData)
 	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Kubernetes config not available, schedule worker disabled: %v", err)
-		return nil
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Failed to create Kubernetes client, schedule worker disabled: %v", err)
+		log.Printf("[SCHEDULE_WORKER] %v", err)
 		return nil
 	}
 
@@ -296,7 +289,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	leaderWorker := schedule.NewLeaderWorker(
 		scheduleManager,
 		proxyServer.GetSessionManager(),
-		client,
+		redisClient,
 		workerConfig,
 		electionConfig,
 		proxyServer.GetMemoryRepository(),
@@ -324,6 +317,11 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		log.Printf("[SLACKBOT_CLEANUP] Failed to create Kubernetes client, cleanup worker disabled: %v", err)
+		return nil
+	}
+	redisClient, err := newWorkerRedisClient(configData)
+	if err != nil {
+		log.Printf("[SLACKBOT_CLEANUP] %v", err)
 		return nil
 	}
 
@@ -387,6 +385,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 	leaderCleanupWorker := slackbotcleanup.NewLeaderCleanupWorker(
 		proxyServer.GetSessionManager(),
 		client,
+		redisClient,
 		namespace,
 		workerConfig,
 		electionConfig,
@@ -407,15 +406,9 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 func startStockInventoryWorker(configData *config.Config, proxyServer *app.Server) *stock_inventory.LeaderWorker {
 	log.Printf("[STOCK_INVENTORY] Initializing stock inventory worker...")
 
-	restConfig, err := ctrl.GetConfig()
+	redisClient, err := newWorkerRedisClient(configData)
 	if err != nil {
-		log.Printf("[STOCK_INVENTORY] Kubernetes config not available, stock inventory worker disabled: %v", err)
-		return nil
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[STOCK_INVENTORY] Failed to create Kubernetes client, stock inventory worker disabled: %v", err)
+		log.Printf("[STOCK_INVENTORY] %v", err)
 		return nil
 	}
 
@@ -472,7 +465,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 		Namespace:     namespace,
 	}
 
-	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, client, workerConfig, electionConfig)
+	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, redisClient, workerConfig, electionConfig)
 
 	go leaderWorker.Run(context.Background())
 
@@ -541,17 +534,6 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *sessionallocationworker.Worker {
 	log.Printf("[SESSION_ALLOCATOR] Initializing session allocator...")
 
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[SESSION_ALLOCATOR] Kubernetes config not available, session allocator disabled: %v", err)
-		return nil
-	}
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SESSION_ALLOCATOR] Failed to create Kubernetes client, session allocator disabled: %v", err)
-		return nil
-	}
-
 	manager, ok := proxyServer.GetSessionManager().(*services.KubernetesSessionManager)
 	if !ok {
 		log.Printf("[SESSION_ALLOCATOR] Session manager is not KubernetesSessionManager, session allocator disabled")
@@ -584,7 +566,12 @@ func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *
 		Namespace:     namespace,
 		LeaseName:     schedule.SessionAllocatorLeaseName,
 	}
-	elector := schedule.NewLeaderElector(client, electorConfig)
+	redisClient, err := newWorkerRedisClient(configData)
+	if err != nil {
+		log.Printf("[SESSION_ALLOCATOR] %v", err)
+		return nil
+	}
+	elector := schedule.NewLeaderElector(redisClient, electorConfig)
 	go elector.Run(context.Background(),
 		func(leaderCtx context.Context) {
 			log.Printf("[SESSION_ALLOCATOR] Became leader")
@@ -633,6 +620,33 @@ func buildSessionAllocationNotifier(configData *config.Config) sessionallocation
 	}
 	log.Printf("[SESSION_ALLOCATOR] Redis allocation notifier connected: addr=%s", configData.Redis.Addr)
 	return infrasessionallocation.NewRedisNotifier(client)
+}
+
+func newWorkerRedisClient(configData *config.Config) (redis.UniversalClient, error) {
+	if strings.TrimSpace(configData.Redis.Addr) == "" {
+		return nil, schedule.ErrRedisRequired
+	}
+	opts := &redis.Options{Addr: configData.Redis.Addr, Password: configData.Redis.Password, DB: configData.Redis.DB}
+	if d, err := time.ParseDuration(configData.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(configData.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
+	}
+	if d, err := time.ParseDuration(configData.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if configData.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
 }
 
 // registerSlackBotHandlers registers SlackBot management REST API handlers
@@ -729,6 +743,12 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		DefaultBotTokenSecretKey:  configData.KubernetesSession.SlackBotTokenSecretKey,
 		LeaderElectionConfig:      electionConfig,
 	}
+	redisClient, err := newWorkerRedisClient(configData)
+	if err != nil {
+		log.Printf("[SOCKET_MANAGER] %v", err)
+		return
+	}
+	managerConfig.RedisClient = redisClient
 
 	manager := slackbot.NewSlackSocketManager(
 		client,

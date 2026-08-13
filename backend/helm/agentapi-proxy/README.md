@@ -11,6 +11,9 @@ upstream loops. The server process does not start either of the latter roles.
 
 The chart remains a single chart. Configure the independent workloads under
 `worker` and `sessionManager`; proxy pod settings remain at the chart root.
+Workers persist application records through the configured `kvStore` backend
+and use Redis leases for leader election; they never create Kubernetes Lease
+objects. Enabling `worker` therefore requires bundled or external Redis.
 
 ```yaml
 worker:
