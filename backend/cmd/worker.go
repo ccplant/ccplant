@@ -17,9 +17,11 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stockinventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -79,6 +81,7 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 		stockWorker = newRemoteStockWorker(cfg, remote, redisClient, namespace)
 		go stockWorker.Run(ctx)
 	}
+	startRemoteSlackSocketManager(ctx, cfg, persistence, namespace, remote, memoryRepo, profileRepo, redisClient)
 	<-ctx.Done()
 	mu.Lock()
 	defer mu.Unlock()
@@ -92,6 +95,23 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 		stockWorker.Stop()
 	}
 	return nil
+}
+
+func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, persistence kubernetes.Interface, namespace string, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, redisClient redis.UniversalClient) {
+	repo := repositories.NewKubernetesSlackBotRepository(persistence, namespace)
+	resolver := slackbot.NewSlackChannelResolver(persistence, namespace).WithSecretClient(persistence)
+	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, resolver, cfg.Webhook.BaseURL, cfg.Slack.DryRun, memory, profiles)
+	appSecret := cfg.Slack.AppTokenSecretName
+	if appSecret == "" {
+		appSecret = cfg.KubernetesSession.SlackBotTokenSecretName
+	}
+	appKey := cfg.Slack.AppTokenSecretKey
+	if appKey == "" {
+		appKey = "app-token"
+	}
+	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, "", namespace)
+	manager := slackbot.NewSlackSocketManager(persistence, namespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, RedisClient: redisClient})
+	go manager.Run(ctx)
 }
 
 func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
