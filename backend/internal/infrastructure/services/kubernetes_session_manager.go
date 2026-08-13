@@ -1904,7 +1904,11 @@ func (m *KubernetesSessionManager) getOrRestoreSessionWithWorkload(svc *corev1.S
 	}
 
 	// Restore session from Service with pre-fetched workload
-	return m.restoreSessionFromServiceWithWorkload(svc, deployment, pod)
+	restored := m.restoreSessionFromServiceWithWorkload(svc, deployment, pod)
+	if restored != nil && m.statusEventRepo != nil {
+		runtimeStatusOverrideFromRedis(m.statusEventRepo, restored)
+	}
+	return restored
 }
 
 // DeleteSession stops and removes a session
