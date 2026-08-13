@@ -71,6 +71,8 @@ spec:
                   key: {{ $controlToken.key | default "token" | quote }}
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ required "worker.kvStore.backend is required when worker is enabled" $kv.backend | quote }}
+            - name: AGENTAPI_KV_STORE_NAMESPACE
+              value: {{ $kv.namespace | default "default" | quote }}
             {{- if $kv.databaseUrlSecretRef.name }}
             - name: AGENTAPI_KV_STORE_DATABASE_URL
               valueFrom:

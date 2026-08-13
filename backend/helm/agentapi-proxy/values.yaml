@@ -72,6 +72,7 @@ api:
   # session-manager stores even when all three roles use the same libSQL
   # service and credentials.
   kvStore:
+    namespace: default
     backend: libsql
     # Ephemeral single-replica default. Production deployments should use an
     # external libSQL URL through databaseUrlSecretRef.
@@ -192,6 +193,7 @@ worker:
 
   # Worker persistence is deliberately independent from API values.
   kvStore:
+    namespace: default
     backend: libsql
     databaseUrl: ""
     authToken: ""
@@ -297,6 +299,7 @@ sessionManager:
     renewDeadline: "10s"
     retryPeriod: "2s"
   kvStore:
+    namespace: default
     backend: libsql
     databaseUrl: ""
     authToken: ""

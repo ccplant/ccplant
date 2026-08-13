@@ -204,6 +204,8 @@ spec:
             - name: OTEL_TRACES_SAMPLER_ARG
               value: {{ dig "tracesSamplerArg" "1.0" $openTelemetry | quote }}
             {{- end }}
+            - name: AGENTAPI_KV_STORE_NAMESPACE
+              value: {{ dig "namespace" "default" $apiKV | quote }}
             {{- $kvPrimaryBackend := dig "primary" "backend" "" $apiKV }}
             {{- if $kvPrimaryBackend }}
             - name: AGENTAPI_KV_STORE_PRIMARY_BACKEND

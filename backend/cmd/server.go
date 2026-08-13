@@ -210,8 +210,12 @@ func runProxy(cmd *cobra.Command, args []string) {
 func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
-	// Determine namespace
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
+	// KV resources use a stable logical namespace independent of the Pod's
+	// Kubernetes/leader-election namespace.
+	namespace := configData.KVStore.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
 
 	// Create schedule manager
 	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)

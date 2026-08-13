@@ -311,8 +311,9 @@
     },
     "kvStore": {
       "type": "object",
-      "required": ["backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef"],
+      "required": ["namespace", "backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef"],
       "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
         "backend": { "type": "string" },
         "databaseUrl": { "type": "string" },
         "authToken": { "type": "string" },

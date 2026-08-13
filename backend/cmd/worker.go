@@ -62,14 +62,18 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = store.Close() }()
 	persistence := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
-	namespace := resolveKubernetesNamespace(cfg.ScheduleWorker.Namespace, cfg.KubernetesSession.Namespace)
-	if err := configureWorkerSlackCredential(context.Background(), cfg, persistence, namespace); err != nil {
+	runtimeNamespace := resolveKubernetesNamespace(cfg.ScheduleWorker.Namespace, cfg.KubernetesSession.Namespace)
+	persistenceNamespace := cfg.KVStore.Namespace
+	if persistenceNamespace == "" {
+		persistenceNamespace = "default"
+	}
+	if err := configureWorkerSlackCredential(context.Background(), cfg, persistence, persistenceNamespace); err != nil {
 		return err
 	}
 	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken)
-	scheduleManager := schedule.NewKubernetesManager(persistence, namespace)
-	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, namespace)
-	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, namespace)
+	scheduleManager := schedule.NewKubernetesManager(persistence, persistenceNamespace)
+	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, persistenceNamespace)
+	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, persistenceNamespace)
 	redisClient, err := newWorkerRedisClient(cfg)
 	if err != nil {
 		return err
@@ -83,18 +87,18 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
 	var stockWorker *stockinventory.LeaderWorker
 	if cfg.ScheduleWorker.Enabled {
-		scheduleWorker = newRemoteScheduleWorker(cfg, scheduleManager, remote, memoryRepo, profileRepo, redisClient, namespace)
+		scheduleWorker = newRemoteScheduleWorker(cfg, scheduleManager, remote, memoryRepo, profileRepo, redisClient, runtimeNamespace)
 		go scheduleWorker.Run(ctx)
 	}
 	if cfg.SlackbotCleanupWorker.Enabled {
-		cleanupWorker = newRemoteCleanupWorker(cfg, remote, redisClient, namespace)
+		cleanupWorker = newRemoteCleanupWorker(cfg, remote, redisClient, runtimeNamespace)
 		go cleanupWorker.Run(ctx)
 	}
 	if cfg.StockInventoryWorker.Enabled {
-		stockWorker = newRemoteStockWorker(cfg, remote, redisClient, namespace)
+		stockWorker = newRemoteStockWorker(cfg, remote, redisClient, runtimeNamespace)
 		go stockWorker.Run(ctx)
 	}
-	startRemoteSlackSocketManager(ctx, cfg, persistence, namespace, remote, memoryRepo, profileRepo, redisClient)
+	startRemoteSlackSocketManager(ctx, cfg, persistence, persistenceNamespace, runtimeNamespace, remote, memoryRepo, profileRepo, redisClient)
 	<-ctx.Done()
 	mu.Lock()
 	defer mu.Unlock()
@@ -149,9 +153,9 @@ func configureWorkerSlackCredential(ctx context.Context, cfg *config.Config, per
 	return nil
 }
 
-func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, persistence kubernetes.Interface, namespace string, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, redisClient redis.UniversalClient) {
-	repo := repositories.NewKubernetesSlackBotRepository(persistence, namespace)
-	resolver := slackbot.NewSlackChannelResolver(persistence, namespace).WithSecretClient(persistence)
+func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, persistence kubernetes.Interface, persistenceNamespace, runtimeNamespace string, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, redisClient redis.UniversalClient) {
+	repo := repositories.NewKubernetesSlackBotRepository(persistence, persistenceNamespace)
+	resolver := slackbot.NewSlackChannelResolver(persistence, persistenceNamespace).WithSecretClient(persistence)
 	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, resolver, cfg.Webhook.BaseURL, cfg.Slack.DryRun, memory, profiles)
 	appSecret := cfg.Slack.AppTokenSecretName
 	if appSecret == "" {
@@ -161,8 +165,8 @@ func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, pers
 	if appKey == "" {
 		appKey = "app-token"
 	}
-	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, "", namespace)
-	manager := slackbot.NewSlackSocketManager(persistence, namespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, RedisClient: redisClient})
+	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, "", runtimeNamespace)
+	manager := slackbot.NewSlackSocketManager(persistence, persistenceNamespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, RedisClient: redisClient})
 	go manager.Run(ctx)
 }
 

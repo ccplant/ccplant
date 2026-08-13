@@ -510,6 +510,7 @@ type KVStoreReplicationConfig struct {
 
 type KVStoreConfig struct {
 	// Legacy single-backend fields. They remain supported as primary-only configuration.
+	Namespace   string                   `json:"namespace" mapstructure:"namespace"`
 	Backend     string                   `json:"backend" mapstructure:"backend"`
 	DatabaseURL string                   `json:"database_url" mapstructure:"database_url"`
 	AuthToken   string                   `json:"auth_token" mapstructure:"auth_token"`
@@ -1019,6 +1020,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
+	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
 	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
 	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
