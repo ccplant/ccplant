@@ -210,12 +210,22 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		if clientErr != nil {
 			log.Fatalf("[SERVER] Failed to initialize session-manager client: %v", clientErr)
 		}
-		healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if healthErr := remoteManager.Health(healthCtx); healthErr != nil {
-			healthCancel()
-			log.Fatalf("[SERVER] Session manager is unavailable: %v", healthErr)
+		healthCtx, healthCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var healthErr error
+		for healthCtx.Err() == nil {
+			healthErr = remoteManager.Health(healthCtx)
+			if healthErr == nil {
+				break
+			}
+			select {
+			case <-healthCtx.Done():
+			case <-time.After(time.Second):
+			}
 		}
 		healthCancel()
+		if healthErr != nil {
+			log.Fatalf("[SERVER] Session manager is unavailable after startup grace period: %v", healthErr)
+		}
 		sessionManager = remoteManager
 		fakeClient := fake.NewSimpleClientset()
 		applicationKVStore, _, err = buildApplicationKVStore(cfg.KVStore, fakeClient)

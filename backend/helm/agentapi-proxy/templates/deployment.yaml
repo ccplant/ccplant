@@ -103,6 +103,12 @@ spec:
               --output {{ dig "migration" "output" "text" $apiKV | quote }}
               {{- end }}
           env:
+            # API repositories use this logical namespace even though the API
+            # deliberately has no mounted Kubernetes ServiceAccount token.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- range $apiEnv }}
             {{- if eq .name "CCPLANT_BINARY_PATH" }}
 {{ toYaml (list .) | nindent 12 }}
