@@ -121,6 +121,7 @@ api:
     dialTimeout: "5s"
     readTimeout: "3s"
     writeTimeout: "3s"
+
   encryption:
     keySecretRef:
       name: ""
@@ -212,6 +213,15 @@ worker:
     dialTimeout: "5s"
     readTimeout: "3s"
     writeTimeout: "3s"
+
+  # Default Slack Socket Mode connection. Tokens are injected by kubelet from
+  # this Secret; the worker does not require Kubernetes API access.
+  slack:
+    tokenSecretRef:
+      name: ""
+      appTokenKey: app-token
+      botTokenKey: bot-token
+    dryRun: false
 
   schedule:
     enabled: false

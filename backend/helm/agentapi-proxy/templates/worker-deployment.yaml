@@ -5,6 +5,8 @@
 {{- $kv := $worker.kvStore | default dict }}
 {{- $redisClient := $worker.redis | default dict }}
 {{- $workerImage := $worker.image | default dict }}
+{{- $slack := $worker.slack | default dict }}
+{{- $slackToken := $slack.tokenSecretRef | default dict }}
 {{- $controlURL := $control.url | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port) }}
 {{- $redisAddr := $redisClient.addr | default "" }}
 {{- if and (not $redisAddr) .Values.redis.enabled }}
@@ -107,6 +109,19 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            {{- with $slackToken.name }}
+            - name: AGENTAPI_SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $slackToken.appTokenKey | default "app-token" | quote }}
+            - name: AGENTAPI_SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ $slackToken.botTokenKey | default "bot-token" | quote }}
+            {{- end }}
+            - {name: AGENTAPI_SLACK_DRY_RUN, value: {{ $slack.dryRun | default false | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ $worker.schedule.enabled | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ $worker.schedule.checkInterval | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}

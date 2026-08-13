@@ -86,7 +86,7 @@
     },
     "worker": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "image", "serviceAccount", "controlApi", "kvStore", "redis", "schedule", "slackbotCleanup", "stockInventory"],
+      "required": ["enabled", "replicaCount", "image", "serviceAccount", "controlApi", "kvStore", "redis", "slack", "schedule", "slackbotCleanup", "stockInventory"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 1 },
@@ -108,6 +108,22 @@
         },
         "kvStore": { "$ref": "#/definitions/kvStore" },
         "redis": { "$ref": "#/definitions/redisClient" },
+        "slack": {
+          "type": "object",
+          "required": ["tokenSecretRef", "dryRun"],
+          "properties": {
+            "tokenSecretRef": {
+              "type": "object",
+              "required": ["name", "appTokenKey", "botTokenKey"],
+              "properties": {
+                "name": { "type": "string" },
+                "appTokenKey": { "type": "string", "minLength": 1 },
+                "botTokenKey": { "type": "string", "minLength": 1 }
+              }
+            },
+            "dryRun": { "type": "boolean" }
+          }
+        },
         "schedule": { "$ref": "#/definitions/workerConfig" },
         "slackbotCleanup": { "$ref": "#/definitions/workerConfig" },
         "stockInventory": { "$ref": "#/definitions/workerConfig" }

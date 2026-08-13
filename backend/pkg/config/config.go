@@ -572,6 +572,10 @@ type Config struct {
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
 type SlackConfig struct {
+	// AppToken and BotToken are write-only runtime inputs used by the dedicated
+	// worker to materialize its default Socket Mode credential in the KV store.
+	AppToken string `json:"app_token" mapstructure:"app_token"`
+	BotToken string `json:"bot_token" mapstructure:"bot_token"`
 	// AppTokenSecretName is the K8s Secret name containing the default App-level token (xapp-...).
 	// Used for the default Socket Mode connection.
 	// If empty, falls back to KubernetesSession.SlackBotTokenSecretName.
@@ -1132,6 +1136,8 @@ func bindEnvVars(v *viper.Viper) {
 	// Slack configuration
 	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
+	_ = v.BindEnv("slack.app_token", "AGENTAPI_SLACK_APP_TOKEN")
+	_ = v.BindEnv("slack.bot_token", "AGENTAPI_SLACK_BOT_TOKEN")
 	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
 
 	// Session manager configuration
