@@ -65,12 +65,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 
 			// Skip user auth for session Pod provisioner calls. These endpoints
 			// perform their own internal token check in the provisioner controller.
-			if strings.HasPrefix(path, "/internal/session-provisioners") ||
-				strings.HasPrefix(path, "/internal/session-control") ||
-				strings.HasPrefix(path, "/internal/session-runtime") ||
-				strings.HasPrefix(path, "/internal/session-allocations") ||
-				strings.HasPrefix(path, "/internal/session-state") ||
-				strings.HasPrefix(path, "/internal/external-session-manager") {
+			if isInternalTokenEndpoint(path) {
 				return next(c)
 			}
 			if strings.HasPrefix(path, "/external-session-managers/") && strings.HasSuffix(path, "/heartbeat") {
@@ -145,6 +140,16 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}
+}
+
+func isInternalTokenEndpoint(path string) bool {
+	return strings.HasPrefix(path, "/internal/session-provisioners") ||
+		strings.HasPrefix(path, "/internal/session-control") ||
+		strings.HasPrefix(path, "/internal/session-runtime") ||
+		strings.HasPrefix(path, "/internal/session-allocations") ||
+		strings.HasPrefix(path, "/internal/session-state") ||
+		strings.HasPrefix(path, "/internal/worker/") ||
+		strings.HasPrefix(path, "/internal/external-session-manager")
 }
 
 // RequirePermission creates permission-checking middleware using internal auth service
