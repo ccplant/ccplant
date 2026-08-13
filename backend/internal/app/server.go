@@ -197,7 +197,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// libSQL through the compatibility adapter.
 	var settingsRepo portrepos.SettingsRepository
 	var shareRepo portrepos.ShareRepository
-	namespace := resolveApplicationNamespace(cfg.KubernetesSession.Namespace)
+	namespace := resolveApplicationNamespace(cfg.KVStore.Namespace)
 	var k8sSessionManager *services.KubernetesSessionManager
 	var sessionManager portrepos.SessionManager
 	var persistenceClient kubernetes.Interface
