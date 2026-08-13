@@ -183,6 +183,12 @@ func (m *KubernetesSessionManager) refreshConfig() {
 		return
 	}
 	current := m.configProvider.Current()
+	// The provisioner token is startup-only secret material. Runtime settings
+	// snapshots may intentionally omit secrets, so never replace a token that
+	// was loaded from the environment or Kubernetes Secret with an empty value.
+	if current.KubernetesSession.ProvisionerToken == "" && m.k8sConfig != nil {
+		current.KubernetesSession.ProvisionerToken = m.k8sConfig.ProvisionerToken
+	}
 	m.config = current
 	m.k8sConfig = &current.KubernetesSession
 }
