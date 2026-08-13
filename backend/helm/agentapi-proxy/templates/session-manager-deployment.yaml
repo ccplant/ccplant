@@ -107,6 +107,7 @@ spec:
               value: {{ required "sessionManager.kvStore.backend is required" $kv.backend | quote }}
             - name: AGENTAPI_KV_STORE_NAMESPACE
               value: {{ $kv.namespace | default "default" | quote }}
+            {{- if ne ($kv.backend | default "") "kubernetes" }}
             {{- if $kv.databaseUrlSecretRef.name }}
             - name: AGENTAPI_KV_STORE_DATABASE_URL
               valueFrom:
@@ -125,6 +126,7 @@ spec:
                   key: {{ $kv.authTokenSecretRef.key | default "auth-token" | quote }}
             {{- else if $kv.authToken }}
             - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
+            {{- end }}
             {{- end }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}

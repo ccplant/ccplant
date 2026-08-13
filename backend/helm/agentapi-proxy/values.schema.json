@@ -356,6 +356,12 @@
           "oneOf": [
             {
               "properties": {
+                "backend": { "const": "kubernetes" },
+                "primary": { "properties": { "backend": { "maxLength": 0 } } }
+              }
+            },
+            {
+              "properties": {
                 "backend": { "const": "libsql" },
                 "primary": { "properties": { "backend": { "maxLength": 0 } } }
               },
@@ -401,10 +407,15 @@
       "allOf": [
         { "$ref": "#/definitions/kvStore" },
         {
-          "properties": { "backend": { "const": "libsql" } },
-          "anyOf": [
-            { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
-            { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+          "oneOf": [
+            { "properties": { "backend": { "const": "kubernetes" } } },
+            {
+              "properties": { "backend": { "const": "libsql" } },
+              "anyOf": [
+                { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+              ]
+            }
           ]
         }
       ]

@@ -51,6 +51,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 // Server represents the HTTP server
@@ -204,7 +205,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var err error
 	if cfg.SessionManager.APIURL != "" {
 		if err := validateAPIKVStore(cfg.KVStore); err != nil {
-			log.Fatalf("[SERVER] API role requires non-Kubernetes KV persistence: %v", err)
+			log.Fatalf("[SERVER] Invalid API KV persistence: %v", err)
 		}
 		remoteManager, clientErr := sessionmanagerapi.NewClient(cfg.SessionManager.APIURL, cfg.SessionManager.APIToken)
 		if clientErr != nil {
@@ -227,12 +228,23 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("[SERVER] Session manager is unavailable after startup grace period: %v", healthErr)
 		}
 		sessionManager = remoteManager
-		fakeClient := fake.NewSimpleClientset()
-		applicationKVStore, _, err = buildApplicationKVStore(cfg.KVStore, fakeClient)
+		var apiKVClient kubernetes.Interface = fake.NewSimpleClientset()
+		if configuredKVBackend(cfg.KVStore) == "kubernetes" {
+			restConfig, configErr := ctrlconfig.GetConfig()
+			if configErr != nil {
+				log.Fatalf("[SERVER] Failed to get Kubernetes config for API KV store: %v", configErr)
+			}
+			client, clientErr := kubernetes.NewForConfig(restConfig)
+			if clientErr != nil {
+				log.Fatalf("[SERVER] Failed to create Kubernetes client for API KV store: %v", clientErr)
+			}
+			apiKVClient = client
+		}
+		applicationKVStore, _, err = buildApplicationKVStore(cfg.KVStore, apiKVClient)
 		if err != nil {
 			log.Fatalf("[SERVER] Failed to initialize API KV store: %v", err)
 		}
-		persistenceClient = kvstore.NewKubernetesAdapter(fakeClient, applicationKVStore)
+		persistenceClient = kvstore.NewKubernetesAdapter(apiKVClient, applicationKVStore)
 		log.Printf("[SERVER] Public API connected to isolated session manager: %s", cfg.SessionManager.APIURL)
 	} else {
 		// Legacy/test composition remains available for local development. The
@@ -807,17 +819,25 @@ func resolveApplicationNamespace(configured string) string {
 }
 
 func validateAPIKVStore(cfg config.KVStoreConfig) error {
+	backend := configuredKVBackend(cfg)
+	if backend != "libsql" && backend != "kubernetes" {
+		return fmt.Errorf("primary backend must be libsql or kubernetes, got %q", backend)
+	}
+	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" && cfg.Secondary.Backend != "kubernetes" {
+		return fmt.Errorf("secondary backend must be libsql or kubernetes in the API role, got %q", cfg.Secondary.Backend)
+	}
+	return nil
+}
+
+func configuredKVBackend(cfg config.KVStoreConfig) string {
 	backend := cfg.Backend
 	if cfg.Primary != nil {
 		backend = cfg.Primary.Backend
 	}
-	if backend != "libsql" {
-		return fmt.Errorf("primary backend must be libsql, got %q", backend)
+	if backend == "" {
+		return "kubernetes"
 	}
-	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" {
-		return fmt.Errorf("secondary backend must be libsql in the API role, got %q", cfg.Secondary.Backend)
-	}
-	return nil
+	return backend
 }
 
 func buildKVBackend(cfg config.KVStoreBackendConfig, kubeClient kubernetes.Interface) (kvstore.Store, error) {

@@ -201,6 +201,24 @@ assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-session-manager
 assert_not_contains 'AGENTAPI_SCHEDULE_WORKER_' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'name: "worker-control"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 
+# Kubernetes-only application persistence is a supported customer mode. API
+# and worker receive only the shared KV Role; workload mutation remains bound
+# exclusively to the session-manager Role.
+"$HELM_BIN" template backend-kubernetes-kv "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  "${all_role_args[@]}" \
+  --set api.kvStore.backend=kubernetes \
+  --set api.kvStore.databaseUrlSecretRef.name= \
+  --set worker.kvStore.backend=kubernetes \
+  --set worker.kvStore.databaseUrlSecretRef.name= \
+  --set sessionManager.kvStore.backend=kubernetes \
+  --set sessionManager.kvStore.databaseUrlSecretRef.name= \
+  >"$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'value: "kubernetes"' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-kvstore' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-worker' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-kubernetes-kv.yaml"
+
 assert_contains '^  name: backend-agentapi-proxy-session-manager$' "$TMP_DIR/backend-manager-rolebinding.yaml"
 assert_contains '^    name: backend-agentapi-proxy-session-manager$' "$TMP_DIR/backend-manager-rolebinding.yaml"
 assert_not_contains '^    name: backend-agentapi-proxy$' "$TMP_DIR/backend-manager-rolebinding.yaml"

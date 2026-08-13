@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 var workerConfigPath string
@@ -179,8 +180,19 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 		databaseURL = cfg.Primary.DatabaseURL
 		authToken = cfg.Primary.AuthToken
 	}
+	if backend == "" || backend == "kubernetes" {
+		restConfig, err := ctrlconfig.GetConfig()
+		if err != nil {
+			return nil, fmt.Errorf("get Kubernetes config for worker KV store: %w", err)
+		}
+		client, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			return nil, fmt.Errorf("create Kubernetes client for worker KV store: %w", err)
+		}
+		return kvstore.NewKubernetesStore(client), nil
+	}
 	if backend != "libsql" {
-		return nil, fmt.Errorf("worker kv_store backend must be libsql, got %q", backend)
+		return nil, fmt.Errorf("unsupported worker kv_store backend %q", backend)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
