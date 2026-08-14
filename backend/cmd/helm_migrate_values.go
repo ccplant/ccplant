@@ -148,7 +148,13 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 		}
 	}
 	fmt.Fprintf(stderr, "Migrated legacy values: worker.enabled=%t sessionManager.enabled=%t\n", workerEnabled, managerEnabled)
-	fmt.Fprintf(stderr, "Ensure Secrets %q, %q, %q and %q exist before upgrade.\n", o.workerControlSecret, o.managerInternalSecret, o.encryptionSecret, o.provisionerSecret)
+	secretNames := nonEmptyStrings(o.workerControlSecret, o.managerInternalSecret, o.encryptionSecret, o.provisionerSecret)
+	if len(secretNames) > 0 {
+		fmt.Fprintf(stderr, "Ensure Secrets %q exist before upgrade.\n", strings.Join(secretNames, `", "`))
+	}
+	if workerEnabled || managerEnabled {
+		fmt.Fprintf(stderr, "Verify image %q contains the worker and session-manager subcommands before upgrade.\n", imageReference(image))
+	}
 	return nil
 }
 
@@ -284,3 +290,21 @@ func valueOr(value, fallback any) any {
 }
 func stringValue(value any) string { result, _ := value.(string); return result }
 func boolValue(value any) bool     { result, _ := value.(bool); return result }
+
+func nonEmptyStrings(values ...string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func imageReference(image map[string]any) string {
+	repository, tag := stringValue(image["repository"]), stringValue(image["tag"])
+	if tag == "" {
+		return repository
+	}
+	return repository + ":" + tag
+}
