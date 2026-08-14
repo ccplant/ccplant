@@ -27,7 +27,9 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "create", "delete"]
+    # update/patch: required when a stock session is adopted and its PVC
+    # owner reference is transferred to the allocated workload.
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     # update/patch: required for adoptStockSession (removing agentapi.proxy/stock label)

@@ -230,6 +230,7 @@ assert_contains 'name: backend-agentapi-proxy-worker' "$TMP_DIR/backend-all-role
 assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-all-roles.yaml"
 assert_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/backend-all-roles.yaml"
 assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-all-roles.yaml"
+assert_contains 'verbs: \["get", "list", "create", "update", "patch", "delete"\]' "$TMP_DIR/backend-all-roles.yaml"
 assert_not_contains 'resources: \["leases"\]' "$TMP_DIR/backend-all-roles.yaml"
 
 # A shadow API release can reuse the stable control-plane Service without
