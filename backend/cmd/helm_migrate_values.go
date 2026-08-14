@@ -111,6 +111,7 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 		"stockInventory":  migratedWorkerSection(values, "stockInventoryWorker", "stockInventory"),
 		"slack":           migratedSlack(values),
 	}
+	copyKeys(worker, values, "imagePullSecrets", "podAnnotations", "podLabels", "podSecurityContext", "securityContext", "resources", "nodeSelector", "tolerations", "affinity", "env", "envFrom")
 
 	managerEnabled := boolValue(nestedValue(values, "kubernetesSession", "enabled"))
 	manager := map[string]any{
@@ -128,6 +129,7 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 		"scia":               migratedManagerSCIA(values),
 		"github":             cloneMap(nestedMap(values, "github")),
 	}
+	copyKeys(manager, values, "imagePullSecrets", "podAnnotations", "podLabels", "podSecurityContext", "securityContext", "resources", "nodeSelector", "tolerations", "affinity", "env", "envFrom")
 	provisioner := ensureMap(nestedMap(manager, "kubernetesSession"), "provisioner")
 	if stringValue(nestedValue(provisioner, "tokenSecretRef", "name")) == "" {
 		provisioner["tokenSecretRef"] = secretRef(o.provisionerSecret, "provisioner-token")

@@ -135,6 +135,8 @@ the four referenced Secrets must exist before the upgrade. Existing separated
 role sections are rejected unless `--force` is explicitly supplied. Verify
 that the migrated root image contains the `worker` and `session-manager`
 subcommands; older monolithic images cannot run the separated Deployments.
+Legacy `env` and `envFrom` entries are copied to every role for compatibility;
+remove API-only or worker-only entries after confirming the migration.
 
 ### From OCI Registry (Recommended)
 
