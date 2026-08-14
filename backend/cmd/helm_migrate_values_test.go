@@ -35,6 +35,8 @@ stockInventoryWorker: {enabled: false}
 sessionPersistence: {backend: s3, s3: {bucket: sessions}}
 github: {tokenRef: {name: github, key: token}}
 ingress: {enabled: true}
+envFrom: [{secretRef: {name: runtime-env}}]
+env: [{name: AWS_REGION, value: test-region}]
 `
 	var stdout, stderr bytes.Buffer
 	options := &helmMigrateValuesOptions{
@@ -72,6 +74,12 @@ ingress: {enabled: true}
 	}
 	if !boolValue(nestedValue(values, "ingress", "enabled")) {
 		t.Fatal("legacy ingress values were not preserved")
+	}
+	for _, role := range []string{"api", "worker", "sessionManager"} {
+		roleValues := nestedMap(values, role)
+		if len(roleValues["env"].([]any)) != 1 || len(roleValues["envFrom"].([]any)) != 1 {
+			t.Fatalf("%s did not inherit legacy env/envFrom: %#v", role, roleValues)
+		}
 	}
 	if !strings.Contains(stderr.String(), "Ensure Secrets") {
 		t.Fatalf("missing credential warning: %s", stderr.String())
