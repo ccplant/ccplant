@@ -8,8 +8,9 @@ The chart keeps three independent workloads in one chart: `ccplant server` for
 the API proxy, `ccplant worker` for background controllers, and `ccplant
 session-manager` for allocation and Kubernetes session lifecycle. Each role has
 its own image, ServiceAccount, credentials, persistence and Redis client values.
-The API and worker ServiceAccounts never mount Kubernetes credentials; only the
-session-manager receives workload RBAC.
+With libSQL persistence, API and worker do not mount Kubernetes credentials.
+With Kubernetes KV persistence they receive a Secret/ConfigMap-only Role;
+session workload RBAC remains exclusive to the session-manager.
 
 The chart remains a single chart. Configure the independent workloads under
 `api`, `worker` and `sessionManager`. Deprecated root proxy values are retained
@@ -17,9 +18,9 @@ only for upgrade compatibility.
 Workers persist application records through the configured `kvStore` backend
 and use Redis leases for leader election; they never create Kubernetes Lease
 objects. Session creation, listing, messaging, deletion, and stock operations
-are delegated to the backend control API. The worker Pod does not mount a
-Kubernetes service-account token. Enabling `worker` therefore requires libSQL,
-bundled or external Redis, and a worker-control Secret shared only with the API.
+are delegated to the backend control API. Enabling `worker` requires either
+libSQL or Kubernetes KV persistence, bundled or external Redis, and a
+worker-control Secret shared only with the API.
 
 ```yaml
 worker:
@@ -104,6 +105,34 @@ The default `values.yaml` is a minimal single-replica API-only installation.
 Session allocation, SCIA, asset serving, persistent session workspaces,
 background workers, OpenTelemetry collection, and Redis are opt-in. More than
 one API replica requires the bundled Redis or `api.redis.addr`.
+
+### Migrating legacy values
+
+Charts that ran the API, workers, and Kubernetes session lifecycle in one
+process used root-level values. Convert those values before enabling the
+separated workloads:
+
+```bash
+helm get values agentapi-proxy -n agentapi -o yaml > legacy-values.yaml
+
+ccplant helm migrate-values \
+  --input legacy-values.yaml \
+  --output separated-values.yaml \
+  --namespace agentapi \
+  --release agentapi-proxy \
+  --worker-control-secret agentapi-worker-control \
+  --manager-internal-secret agentapi-session-manager-internal \
+  --encryption-secret agentapi-application-encryption \
+  --provisioner-secret agentapi-provisioner-token
+
+helm upgrade agentapi-proxy oci://ghcr.io/ccplant/charts/agentapi-proxy \
+  -n agentapi -f separated-values.yaml
+```
+
+The converter preserves all legacy keys and adds the independent `api`,
+`worker`, and `sessionManager` sections. It does not create or copy Secrets;
+the four referenced Secrets must exist before the upgrade. Existing separated
+role sections are rejected unless `--force` is explicitly supplied.
 
 ### From OCI Registry (Recommended)
 
