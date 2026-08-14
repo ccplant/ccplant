@@ -21,7 +21,9 @@ type testStore struct {
 
 func newTestStore() *testStore { return &testStore{records: map[string]kvstore.Record{}} }
 
-func keyOf(kind kvstore.Kind, namespace, key string) string { return string(kind) + "/" + namespace + "/" + key }
+func keyOf(kind kvstore.Kind, namespace, key string) string {
+	return string(kind) + "/" + namespace + "/" + key
+}
 
 func (s *testStore) Create(_ context.Context, r kvstore.Record) (kvstore.Record, error) {
 	k := keyOf(r.Kind, r.Namespace, r.Key)

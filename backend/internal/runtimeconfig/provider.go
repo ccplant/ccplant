@@ -113,8 +113,9 @@ func (p *Provider) Start(ctx context.Context, interval time.Duration, onError fu
 	_ = ctx
 	_ = interval
 	_ = onError
-	return
 }
+
+var _ = []any{applySections, stringList, splitLines, decodeSecret}
 
 func (p *Provider) Apply(version int64, sections map[string]interface{}) error {
 	// Runtime application of admin-managed system settings is disabled (see

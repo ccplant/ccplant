@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -16,14 +15,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
-	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
-	infrasessionallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
-	sessionallocationworker "github.com/takutakahashi/agentapi-proxy/internal/modules/sessionallocation"
-	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/webhook"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -46,6 +40,10 @@ var ServerCmd = &cobra.Command{
 	Long:  "Start the reverse proxy server for AgentAPI that routes requests based on configuration",
 	Run:   runProxy,
 }
+
+// Legacy constructors remain temporarily for focused unit coverage while all
+// production worker wiring lives in worker.go and uses the control API.
+var _ = []any{startScheduleWorker, startSlackbotCleanupWorker, startStockInventoryWorker, startSlackSocketManager}
 
 func resolveKubernetesNamespace(candidates ...string) string {
 	for _, candidate := range candidates {
@@ -121,7 +119,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// runtime snapshot (startup config overlaid with the latest versioned KV
 	// settings), rather than from the raw Helm/environment layer.
 	configData = proxyServer.GetConfig()
-	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
 
 	// Run the idempotent legacy→multi API token migration and load all named
 	// tokens into the auth service. Any migration conflict or bootstrap load
@@ -129,7 +128,6 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// partially loaded auth map would be unsafe. This keeps log.Fatal out of
 	// library code (internal/app) while still making startup fail-safe.
 	if err := proxyServer.InitAPITokens(context.Background()); err != nil {
-		cancelWorkers()
 		log.Fatalf("[SERVER] API token initialization failed, refusing to serve: %v", err)
 	}
 
@@ -137,48 +135,10 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Local revocation is immediate; other replicas drop a deleted token on
 	// the next reconciliation pass. Legacy static/personal API keys are
 	// unaffected.
-	proxyServer.StartAPITokenReconciler(workerCtx, 30*time.Second)
+	proxyServer.StartAPITokenReconciler(serverCtx, 30*time.Second)
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()
-
-	// Workers are lifecycle-managed from the runtime provider so changing an
-	// enabled flag, interval, TTL, or stock target takes effect without a Pod
-	// restart.
-	var workerMu sync.Mutex
-	var scheduleWorker *schedule.LeaderWorker
-	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
-	var stockWorker *stock_inventory.LeaderWorker
-	reconcileWorkers := func(current *config.Config) {
-		workerMu.Lock()
-		defer workerMu.Unlock()
-		if scheduleWorker != nil {
-			scheduleWorker.Stop()
-			scheduleWorker = nil
-		}
-		if cleanupWorker != nil {
-			cleanupWorker.Stop()
-			cleanupWorker = nil
-		}
-		if stockWorker != nil {
-			stockWorker.Stop()
-			stockWorker = nil
-		}
-		if current.ScheduleWorker.Enabled {
-			scheduleWorker = startScheduleWorker(current, proxyServer)
-		}
-		if current.SlackbotCleanupWorker.Enabled {
-			cleanupWorker = startSlackbotCleanupWorker(current, proxyServer)
-		}
-		if current.StockInventoryWorker.Enabled {
-			stockWorker = startStockInventoryWorker(current, proxyServer)
-		}
-	}
-	reconcileWorkers(configData)
-	proxyServer.GetConfigProvider().Subscribe(reconcileWorkers)
-
-	// Start the leader-elected session allocator when Kubernetes sessions are active.
-	startSessionAllocator(configData, proxyServer)
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
 	registerScheduleHandlers(configData, proxyServer)
@@ -189,17 +149,8 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// Register SlackBot handlers (requires Kubernetes mode)
 	registerSlackBotHandlers(configData, proxyServer)
 
-	// Start Slack Socket Mode manager (requires Kubernetes mode)
-	startSlackSocketManager(configData, proxyServer)
-
 	// Register MCP handler
 	registerMCPHandler(proxyServer, port)
-
-	// Register session manager handler (small-cluster / forwarding mode)
-	registerSessionManagerHandlers(configData, proxyServer)
-
-	// Start outbound session manager allocator when configured.
-	startSessionManagerAllocator(workerCtx, configData, proxyServer)
 
 	// Start server in a goroutine
 	go func() {
@@ -213,23 +164,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	<-quit
 
 	log.Println("Shutdown signal received, shutting down gracefully...")
-	cancelWorkers()
-
-	// Stop schedule worker if running
-	workerMu.Lock()
-	if scheduleWorker != nil {
-		log.Printf("Stopping schedule worker...")
-		scheduleWorker.Stop()
-	}
-	if cleanupWorker != nil {
-		log.Printf("Stopping Slackbot cleanup worker...")
-		cleanupWorker.Stop()
-	}
-	if stockWorker != nil {
-		log.Printf("Stopping stock inventory worker...")
-		stockWorker.Stop()
-	}
-	workerMu.Unlock()
+	cancelServer()
 
 	// Create a context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -275,8 +210,12 @@ func runProxy(cmd *cobra.Command, args []string) {
 func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
-	// Determine namespace
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
+	// KV resources use a stable logical namespace independent of the Pod's
+	// Kubernetes/leader-election namespace.
+	namespace := configData.KVStore.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
 
 	// Create schedule manager
 	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
@@ -298,16 +237,9 @@ func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server
 func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *schedule.LeaderWorker {
 	log.Printf("[SCHEDULE_WORKER] Initializing schedule worker...")
 
-	// Create Kubernetes client
-	restConfig, err := ctrl.GetConfig()
+	redisClient, err := newWorkerRedisClient(configData)
 	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Kubernetes config not available, schedule worker disabled: %v", err)
-		return nil
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Failed to create Kubernetes client, schedule worker disabled: %v", err)
+		log.Printf("[SCHEDULE_WORKER] %v", err)
 		return nil
 	}
 
@@ -360,7 +292,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	leaderWorker := schedule.NewLeaderWorker(
 		scheduleManager,
 		proxyServer.GetSessionManager(),
-		client,
+		redisClient,
 		workerConfig,
 		electionConfig,
 		proxyServer.GetMemoryRepository(),
@@ -379,15 +311,9 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Server) *slackbotcleanup.LeaderCleanupWorker {
 	log.Printf("[SLACKBOT_CLEANUP] Initializing Slackbot cleanup worker...")
 
-	restConfig, err := ctrl.GetConfig()
+	redisClient, err := newWorkerRedisClient(configData)
 	if err != nil {
-		log.Printf("[SLACKBOT_CLEANUP] Kubernetes config not available, cleanup worker disabled: %v", err)
-		return nil
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SLACKBOT_CLEANUP] Failed to create Kubernetes client, cleanup worker disabled: %v", err)
+		log.Printf("[SLACKBOT_CLEANUP] %v", err)
 		return nil
 	}
 
@@ -450,8 +376,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 
 	leaderCleanupWorker := slackbotcleanup.NewLeaderCleanupWorker(
 		proxyServer.GetSessionManager(),
-		client,
-		namespace,
+		redisClient,
 		workerConfig,
 		electionConfig,
 	)
@@ -471,15 +396,9 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 func startStockInventoryWorker(configData *config.Config, proxyServer *app.Server) *stock_inventory.LeaderWorker {
 	log.Printf("[STOCK_INVENTORY] Initializing stock inventory worker...")
 
-	restConfig, err := ctrl.GetConfig()
+	redisClient, err := newWorkerRedisClient(configData)
 	if err != nil {
-		log.Printf("[STOCK_INVENTORY] Kubernetes config not available, stock inventory worker disabled: %v", err)
-		return nil
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[STOCK_INVENTORY] Failed to create Kubernetes client, stock inventory worker disabled: %v", err)
+		log.Printf("[STOCK_INVENTORY] %v", err)
 		return nil
 	}
 
@@ -536,7 +455,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 		Namespace:     namespace,
 	}
 
-	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, client, workerConfig, electionConfig)
+	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, redisClient, workerConfig, electionConfig)
 
 	go leaderWorker.Run(context.Background())
 
@@ -599,82 +518,11 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	log.Printf("[WEBHOOK_HANDLERS] Webhook handlers registered successfully")
 }
 
-// startSessionAllocator starts the leader-elected SessionAllocator. API requests
-// can land on any proxy replica, but only the elected leader consumes allocation
-// requests and creates/adopts session Pods.
-func startSessionAllocator(configData *config.Config, proxyServer *app.Server) *sessionallocationworker.Worker {
-	log.Printf("[SESSION_ALLOCATOR] Initializing session allocator...")
-
-	restConfig, err := ctrl.GetConfig()
-	if err != nil {
-		log.Printf("[SESSION_ALLOCATOR] Kubernetes config not available, session allocator disabled: %v", err)
-		return nil
+func newWorkerRedisClient(configData *config.Config) (redis.UniversalClient, error) {
+	if strings.TrimSpace(configData.Redis.Addr) == "" {
+		return nil, schedule.ErrRedisRequired
 	}
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		log.Printf("[SESSION_ALLOCATOR] Failed to create Kubernetes client, session allocator disabled: %v", err)
-		return nil
-	}
-
-	manager, ok := proxyServer.GetSessionManager().(*services.KubernetesSessionManager)
-	if !ok {
-		log.Printf("[SESSION_ALLOCATOR] Session manager is not KubernetesSessionManager, session allocator disabled")
-		return nil
-	}
-	manager.SetSessionAllocationNotifier(buildSessionAllocationNotifier(configData))
-
-	namespace := resolveKubernetesNamespace(configData.StockInventoryWorker.Namespace, configData.KubernetesSession.Namespace)
-
-	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)
-	if err != nil {
-		leaseDuration = 15 * time.Second
-	}
-	renewDeadline, err := time.ParseDuration(configData.StockInventoryWorker.RenewDeadline)
-	if err != nil {
-		renewDeadline = 10 * time.Second
-	}
-	retryPeriod, err := time.ParseDuration(configData.StockInventoryWorker.RetryPeriod)
-	if err != nil {
-		retryPeriod = 2 * time.Second
-	}
-
-	manager.SetSessionAllocatorEnabled(true)
-	allocationClient := infrasessionallocation.NewClient(manager.AllocationProxyURL(), configData.KubernetesSession.ProvisionerToken)
-	allocator := sessionallocationworker.NewWorker(manager, allocationClient)
-	electorConfig := schedule.LeaderElectionConfig{
-		LeaseDuration: leaseDuration,
-		RenewDeadline: renewDeadline,
-		RetryPeriod:   retryPeriod,
-		Namespace:     namespace,
-		LeaseName:     schedule.SessionAllocatorLeaseName,
-	}
-	elector := schedule.NewLeaderElector(client, electorConfig)
-	go elector.Run(context.Background(),
-		func(leaderCtx context.Context) {
-			log.Printf("[SESSION_ALLOCATOR] Became leader")
-			if err := allocator.Start(leaderCtx); err != nil {
-				log.Printf("[SESSION_ALLOCATOR] Failed to start: %v", err)
-			}
-		},
-		func() {
-			log.Printf("[SESSION_ALLOCATOR] Lost leadership")
-			allocator.Stop()
-		},
-	)
-	log.Printf("[SESSION_ALLOCATOR] Session allocator started in namespace: %s", namespace)
-	return allocator
-}
-
-func buildSessionAllocationNotifier(configData *config.Config) sessionallocation.Notifier {
-	if configData.Redis.Addr == "" {
-		log.Printf("[SESSION_ALLOCATOR] Redis not configured; using local allocation notifier")
-		return infrasessionallocation.NewLocalNotifier()
-	}
-	opts := &redis.Options{
-		Addr:     configData.Redis.Addr,
-		Password: configData.Redis.Password,
-		DB:       configData.Redis.DB,
-	}
+	opts := &redis.Options{Addr: configData.Redis.Addr, Password: configData.Redis.Password, DB: configData.Redis.DB}
 	if d, err := time.ParseDuration(configData.Redis.DialTimeout); err == nil && d > 0 {
 		opts.DialTimeout = d
 	}
@@ -691,12 +539,10 @@ func buildSessionAllocationNotifier(configData *config.Config) sessionallocation
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		log.Printf("[SESSION_ALLOCATOR] Warning: Redis ping failed (%s); using local allocation notifier: %v", configData.Redis.Addr, err)
 		_ = client.Close()
-		return infrasessionallocation.NewLocalNotifier()
+		return nil, err
 	}
-	log.Printf("[SESSION_ALLOCATOR] Redis allocation notifier connected: addr=%s", configData.Redis.Addr)
-	return infrasessionallocation.NewRedisNotifier(client)
+	return client, nil
 }
 
 // registerSlackBotHandlers registers SlackBot management REST API handlers
@@ -793,6 +639,12 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		DefaultBotTokenSecretKey:  configData.KubernetesSession.SlackBotTokenSecretKey,
 		LeaderElectionConfig:      electionConfig,
 	}
+	redisClient, err := newWorkerRedisClient(configData)
+	if err != nil {
+		log.Printf("[SOCKET_MANAGER] %v", err)
+		return
+	}
+	managerConfig.RedisClient = redisClient
 
 	manager := slackbot.NewSlackSocketManager(
 		client,
@@ -806,49 +658,6 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 	go manager.Run(context.Background())
 
 	log.Printf("[SOCKET_MANAGER] Slack Socket Mode manager started in namespace: %s", namespace)
-}
-
-// registerSessionManagerHandlers registers the session manager forwarding endpoint.
-// This enables "small-cluster mode": External Session Manager accepts pre-built SessionSettings from
-// an upstream 親プロキシ and creates sessions without any local secrets.
-func registerSessionManagerHandlers(configData *config.Config, proxyServer *app.Server) {
-	if !configData.SessionManager.Enabled {
-		log.Printf("[SESSION_MANAGER] Session manager endpoint is disabled")
-		return
-	}
-
-	sessionManager := proxyServer.GetSessionManager()
-	if sessionManager == nil {
-		log.Printf("[SESSION_MANAGER] Warning: session manager is not available, skipping handler registration")
-		return
-	}
-
-	handlers := sessionmanager.NewHandlers(sessionManager, configData.SessionManager.HMACSecret)
-	proxyServer.AddCustomHandler(handlers)
-	log.Printf("[SESSION_MANAGER] Session manager handler registered")
-}
-
-func startSessionManagerAllocator(ctx context.Context, configData *config.Config, proxyServer *app.Server) {
-	upstreamURL := configData.SessionManager.UpstreamURL
-	token := configData.SessionManager.ConnectionToken
-	if upstreamURL == "" || token == "" {
-		log.Printf("[SESSION_MANAGER_ALLOCATOR] Upstream URL or connection token is empty; allocator disabled")
-		return
-	}
-
-	sessionManager := proxyServer.GetSessionManager()
-	if sessionManager == nil {
-		log.Printf("[SESSION_MANAGER_ALLOCATOR] Warning: session manager is not available, allocator disabled")
-		return
-	}
-
-	worker := sessionmanager.NewAllocatorWorker(sessionManager, upstreamURL, token, configData.SessionManager.PublicURL)
-	go worker.Start(ctx)
-	instanceID, _ := os.Hostname()
-	controlWorker := sessionmanager.NewControlWorker(upstreamURL, token, "", "", instanceID, configData.SessionManager.HMACSecret)
-	go controlWorker.Start(ctx)
-	log.Printf("[SESSION_MANAGER_ALLOCATOR] Started outbound allocator polling upstream: %s", upstreamURL)
-	log.Printf("[ESM_CONTROL] Started outbound session control polling upstream: %s", upstreamURL)
 }
 
 // registerMCPHandler registers MCP HTTP handler

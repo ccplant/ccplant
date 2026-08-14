@@ -29,18 +29,23 @@ assert_not_contains() {
   fi
 }
 
-# A default install must include the ServiceAccount and RBAC required to launch
-# direct Kubernetes sessions, while keeping the proxy at one replica.
-assert_contains '^  name: agentapi-proxy-session$' "$TMP_DIR/backend-default.yaml"
+# A default install is API-only. It must not receive workload RBAC or any
+# worker/session-manager configuration.
 assert_contains '^  replicas: 1$' "$TMP_DIR/backend-default.yaml"
 assert_contains '^  name: "?control"?$' "$TMP_DIR/backend-default.yaml"
 assert_contains 'helm.sh/resource-policy: keep' "$TMP_DIR/backend-default.yaml"
-assert_contains 'value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-default.yaml"
+assert_contains 'serviceAccountName: backend-agentapi-proxy' "$TMP_DIR/backend-default.yaml"
+assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-default.yaml"
+assert_contains 'args: \["server"\]' "$TMP_DIR/backend-default.yaml"
+assert_not_contains '^kind: Role$' "$TMP_DIR/backend-default.yaml"
+assert_not_contains '^kind: RoleBinding$' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
-assert_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
-assert_contains 'name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
-assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: PersistentVolumeClaim$' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: scia' "$TMP_DIR/ccplant-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: asset' "$TMP_DIR/ccplant-default.yaml"
@@ -83,26 +88,201 @@ assert_not_contains 'name: OTEL_EXPORTER_OTLP_ENDPOINT' "$TMP_DIR/backend-legacy
   --set envFrom[0].secretRef.name=frontend-runtime >"$TMP_DIR/frontend-secrets.yaml"
 assert_contains 'name: frontend-runtime' "$TMP_DIR/frontend-secrets.yaml"
 
-# Stock inventory must receive leader-election RBAC even when other workers and
-# Kubernetes session creation are disabled explicitly.
+# Render all three process roles from independent values. Each role gets a
+# unique image, command, ServiceAccount, credential audience, and env allowlist.
+all_role_args=(
+  --namespace separation-test
+  --set api.image.repository=example/api
+  --set api.kvStore.databaseUrlSecretRef.name=api-libsql
+  --set api.redis.addr=redis-api.example:6380
+  --set api.redis.db=4
+  --set api.redis.tlsEnabled=true
+  --set api.encryption.keySecretRef.name=shared-encryption
+  --set api.workerControl.tokenSecretRef.name=worker-control
+  --set api.sessionManager.url=http://backend-session-manager.separation-test.svc.cluster.local:8080
+  --set api.sessionManager.tokenSecretRef.name=manager-internal
+  --set worker.enabled=true
+  --set worker.image.repository=example/worker
+  --set worker.controlApi.tokenSecretRef.name=worker-control
+  --set worker.kvStore.databaseUrlSecretRef.name=worker-libsql
+  --set worker.redis.addr=redis.example:6380
+  --set worker.redis.db=5
+  --set worker.redis.tlsEnabled=true
+  --set worker.redis.dialTimeout=9s
+  --set worker.redis.readTimeout=8s
+  --set worker.redis.writeTimeout=7s
+  --set worker.stockInventory.enabled=true
+  --set worker.stockInventory.pools[0].targetCount=3
+  --set worker.stockInventory.pools[0].dockerEnabled=true
+  --set sessionManager.enabled=true
+  --set sessionManager.image.repository=example/session-manager
+  --set sessionManager.internalApi.tokenSecretRef.name=manager-internal
+  --set sessionManager.encryption.keySecretRef.name=shared-encryption
+  --set sessionManager.kvStore.databaseUrlSecretRef.name=manager-libsql
+  --set sessionManager.redis.addr=redis.example:6380
+  --set sessionManager.sessionPersistence.backend=s3
+  --set sessionManager.sessionPersistence.s3.bucket=manager-sessions
+  --set sessionManager.sessionControl.enabled=true
+  --set sessionManager.scia.enabled=true
+  --set sessionManager.scia.publicBaseUrl=https://api.example
+  --set sessionManager.github.tokenRef.name=manager-github
+  --set sessionManager.kubernetesSession.provisioner.tokenSecretRef.name=provisioner
+)
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --skip-schema-validation \
-  --set kubernetesSession.enabled=false \
-  --set scheduleWorker.enabled=false \
-  --set slackbotCleanupWorker.enabled=false \
-  --set stockInventoryWorker.enabled=true >"$TMP_DIR/backend-stock.yaml"
-assert_contains 'resources: \["leases"\]' "$TMP_DIR/backend-stock.yaml"
-assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-stock.yaml"
+  "${all_role_args[@]}" >"$TMP_DIR/backend-all-roles.yaml"
+for template in deployment worker-deployment session-manager-deployment; do
+  "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+    --show-only "templates/${template}.yaml" "${all_role_args[@]}" \
+    >"$TMP_DIR/backend-${template}.yaml"
+done
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/rolebinding.yaml "${all_role_args[@]}" \
+  >"$TMP_DIR/backend-manager-rolebinding.yaml"
 
-# A shadow release reuses the stable control-plane Service and session RBAC
-# without trying to create duplicate fixed-name resources.
+assert_contains 'image: "example/api:1.173.0"' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'serviceAccountName: backend-agentapi-proxy' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'args: \["server"\]' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_URL' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_TOKEN' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: "worker-control"' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: "manager-internal"' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: "api-libsql"' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_REDIS_DB, value: "4"' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_REDIS_TLS_ENABLED, value: "true"' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-deployment.yaml"
+assert_not_contains 'AGENTAPI_SESSION_PERSISTENCE_' "$TMP_DIR/backend-deployment.yaml"
+assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-deployment.yaml"
+assert_not_contains 'AGENTAPI_SCHEDULE_WORKER_' "$TMP_DIR/backend-deployment.yaml"
+assert_not_contains 'AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN' "$TMP_DIR/backend-deployment.yaml"
+assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-deployment.yaml"
+
+assert_contains 'image: "example/worker:1.173.0"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'serviceAccountName: backend-agentapi-proxy-worker' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'args: \["worker"\]' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_WORKER_CONTROL_API_URL' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: "worker-control"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_REDIS_DB, value: "5"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_REDIS_TLS_ENABLED, value: "true"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: "9s"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains '\\"targetCount\\":3' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'name: "manager-internal"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-worker-deployment.yaml"
+
+assert_contains 'image: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'args: \["session-manager", "--port", "8080"\]' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: SESSION_CONTROL_LONG_POLL_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SCIA_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'livenessProbe:' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'readinessProbe:' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'path: /livez' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'path: /readyz' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'AGENTAPI_SESSION_MANAGER_UPSTREAM_URL' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'AGENTAPI_SCHEDULE_WORKER_' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'name: "worker-control"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+
+# Kubernetes-only application persistence is a supported customer mode. API
+# and worker receive only the shared KV Role; workload mutation remains bound
+# exclusively to the session-manager Role.
+"$HELM_BIN" template backend-kubernetes-kv "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  "${all_role_args[@]}" \
+  --set api.kvStore.backend=kubernetes \
+  --set api.kvStore.databaseUrlSecretRef.name= \
+  --set worker.kvStore.backend=kubernetes \
+  --set worker.kvStore.databaseUrlSecretRef.name= \
+  --set sessionManager.kvStore.backend=kubernetes \
+  --set sessionManager.kvStore.databaseUrlSecretRef.name= \
+  >"$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'value: "kubernetes"' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-kvstore' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-worker' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-kubernetes-kv.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_AUTH_TOKEN' "$TMP_DIR/backend-kubernetes-kv.yaml"
+
+assert_contains '^  name: backend-agentapi-proxy-session-manager$' "$TMP_DIR/backend-manager-rolebinding.yaml"
+assert_contains '^    name: backend-agentapi-proxy-session-manager$' "$TMP_DIR/backend-manager-rolebinding.yaml"
+assert_not_contains '^    name: backend-agentapi-proxy$' "$TMP_DIR/backend-manager-rolebinding.yaml"
+assert_not_contains '^    name: backend-agentapi-proxy-worker$' "$TMP_DIR/backend-manager-rolebinding.yaml"
+
+assert_contains 'name: backend-agentapi-proxy-worker' "$TMP_DIR/backend-all-roles.yaml"
+assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-all-roles.yaml"
+assert_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/backend-all-roles.yaml"
+assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-all-roles.yaml"
+assert_not_contains 'resources: \["leases"\]' "$TMP_DIR/backend-all-roles.yaml"
+
+# A shadow API release can reuse the stable control-plane Service without
+# creating it. Role-local values remain nil-safe for legacy --reuse-values.
 "$HELM_BIN" template ccplant-shadow "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --namespace default \
-  --set controlPlaneService.create=false \
-  --set kubernetesSession.rbac.create=false >"$TMP_DIR/backend-shadow.yaml"
+  --set controlPlaneService.create=false >"$TMP_DIR/backend-shadow.yaml"
 assert_not_contains '^  name: "?control"?$' "$TMP_DIR/backend-shadow.yaml"
 assert_not_contains '^  name: agentapi-proxy-session$' "$TMP_DIR/backend-shadow.yaml"
-assert_contains 'value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-shadow.yaml"
+
+"$HELM_BIN" template backend-legacy "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --skip-schema-validation \
+  --set-json 'api=null' \
+  --set-json 'worker=null' \
+  --set-json 'sessionManager=null' >"$TMP_DIR/backend-legacy-roles.yaml"
+assert_contains 'args: \["server"\]' "$TMP_DIR/backend-legacy-roles.yaml"
+assert_not_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-legacy-roles.yaml"
+assert_not_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/backend-legacy-roles.yaml"
+
+# Enabling a role without its independent credentials/storage is rejected at
+# schema validation rather than failing later in a Pod.
+if "$HELM_BIN" template invalid-worker "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set worker.enabled=true >"$TMP_DIR/backend-invalid-worker.yaml" 2>/dev/null; then
+  echo "worker.enabled=true without role credentials unexpectedly passed" >&2
+  exit 1
+fi
+if "$HELM_BIN" template invalid-manager "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set sessionManager.enabled=true >"$TMP_DIR/backend-invalid-manager.yaml" 2>/dev/null; then
+  echo "sessionManager.enabled=true without role credentials unexpectedly passed" >&2
+  exit 1
+fi
+
+# External registration is an optional manager mode. Local managers do not
+# need parent credentials, while enabling registration requires its three
+# independent inputs.
+if "$HELM_BIN" template invalid-manager-registration "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  "${all_role_args[@]}" \
+  --set sessionManager.externalRegistration.enabled=true \
+  >"$TMP_DIR/backend-invalid-manager-registration.yaml" 2>/dev/null; then
+  echo "external manager registration without credentials unexpectedly passed" >&2
+  exit 1
+fi
+"$HELM_BIN" template manager-registration "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/session-manager-deployment.yaml \
+  "${all_role_args[@]}" \
+  --set sessionManager.externalRegistration.enabled=true \
+  --set sessionManager.externalRegistration.upstreamUrl=https://upstream.example \
+  --set sessionManager.externalRegistration.connectionTokenSecretRef.name=manager-connection \
+  --set sessionManager.externalRegistration.hmacSecretRef.name=manager-hmac \
+  >"$TMP_DIR/backend-manager-registration.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL' "$TMP_DIR/backend-manager-registration.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN' "$TMP_DIR/backend-manager-registration.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET' "$TMP_DIR/backend-manager-registration.yaml"
 
 # TLS-enabled frontend URLs must use https.
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" \
@@ -114,12 +294,12 @@ assert_contains 'value: "https://agentapi.example.com"' "$TMP_DIR/frontend-tls.y
 
 # Multiple proxy replicas require shared Redis state.
 if "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set replicaCount=2 >"$TMP_DIR/backend-invalid-replicas.yaml" 2>/dev/null; then
-  echo "replicaCount=2 without Redis unexpectedly passed schema validation" >&2
+  --set api.replicaCount=2 >"$TMP_DIR/backend-invalid-replicas.yaml" 2>/dev/null; then
+  echo "api.replicaCount=2 without Redis unexpectedly passed schema validation" >&2
   exit 1
 fi
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set replicaCount=2 \
+  --set api.replicaCount=2 \
   --set redis.enabled=true >"$TMP_DIR/backend-replicas.yaml"
 
 echo "Helm render assertions passed"

@@ -438,15 +438,11 @@ func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	}
 	h := c.Request().Header.Get("Authorization")
 	token := strings.TrimPrefix(h, "Bearer ")
-	if pc.manager.ValidateProvisionerToken(token) {
-		return true
-	}
-	_, _, ok := pc.authorizedExternalManager(c)
-	return ok
+	return pc.manager.ValidateProvisionerToken(token)
 }
 
 func (pc *ProvisionerController) authorizedExternalManager(c echo.Context) (string, string, bool) {
-	if pc.manager == nil || pc.settingsRepo == nil {
+	if pc.settingsRepo == nil {
 		return "", "", false
 	}
 	token := c.Request().Header.Get("X-Session-Manager-Token")

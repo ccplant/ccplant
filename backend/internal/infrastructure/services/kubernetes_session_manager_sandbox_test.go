@@ -216,7 +216,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	main := podSpec.Containers[0]
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTP_PROXY", Value: "http://127.0.0.1:18081"})
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "HTTPS_PROXY", Value: "http://127.0.0.1:18081"})
-	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: "127.0.0.1,localhost"})
+	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NO_PROXY", Value: sciaNoProxyBase})
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: sciaCAPath})
 	assert.Contains(t, main.Env, corev1.EnvVar{Name: "NODE_EXTRA_CA_CERTS", Value: sciaCAPath})
 	assert.Contains(t, main.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm", ReadOnly: true})
@@ -369,4 +369,12 @@ func volumeMountNames(mounts []corev1.VolumeMount) []string {
 		names = append(names, mount.Name)
 	}
 	return names
+}
+
+func TestStatusCanRecoverFromWorkloadReadiness(t *testing.T) {
+	assert.True(t, statusCanRecoverFromWorkloadReadiness("unhealthy"))
+	assert.True(t, statusCanRecoverFromWorkloadReadiness("stopped"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("error"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("timeout"))
+	assert.False(t, statusCanRecoverFromWorkloadReadiness("running"))
 }

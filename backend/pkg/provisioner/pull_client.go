@@ -84,7 +84,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 
 		srv.SetStatusReporter(func(st Status, msg string) {
 			go func() {
-				if err := reportProvisionRequestStatus(context.Background(), client, cfg, provisionReq.RequestID, st, msg); err != nil {
+				if err := reportProvisionRequestStatusWithRetry(ctx, client, cfg, provisionReq.RequestID, st, msg); err != nil {
 					log.Printf("[PROVISIONER] Failed to report status %s for provision request %s: %v", st, provisionReq.RequestID, err)
 				}
 			}()
@@ -98,6 +98,23 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		<-ctx.Done()
 		return ctx.Err()
 	}
+}
+
+func reportProvisionRequestStatusWithRetry(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
+	var lastErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		if err := reportProvisionRequestStatus(ctx, client, cfg, requestID, st, msg); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
+	}
+	return lastErr
 }
 
 func newPullHTTPClient(ctx context.Context, caFile string) (*http.Client, error) {

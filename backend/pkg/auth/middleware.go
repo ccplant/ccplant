@@ -26,6 +26,23 @@ type UserContext struct {
 	EnvFile     string          // Path to team-specific environment file
 }
 
+// CredentialKind records which authenticator accepted the request. Keeping it
+// separate from the HTTP header prevents an API key from being reused as a
+// GitHub credential by session-creation code.
+type CredentialKind string
+
+const (
+	CredentialKindAPIKey CredentialKind = "api_key"
+	CredentialKindGitHub CredentialKind = "github"
+)
+
+type CredentialContext struct {
+	Kind  CredentialKind
+	Token string
+}
+
+const credentialContextKey = "authenticated_credential"
+
 // AuthMiddleware creates authentication middleware using internal auth service
 func AuthMiddleware(provider config.Provider, authService services.AuthService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -63,14 +80,15 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 				return next(c)
 			}
 
+			// Shared-session read routes authenticate with the unguessable share
+			// token in the path and enforce read-only access in ShareController.
+			if strings.HasPrefix(path, "/s/") {
+				return next(c)
+			}
+
 			// Skip user auth for session Pod provisioner calls. These endpoints
 			// perform their own internal token check in the provisioner controller.
-			if strings.HasPrefix(path, "/internal/session-provisioners") ||
-				strings.HasPrefix(path, "/internal/session-control") ||
-				strings.HasPrefix(path, "/internal/session-runtime") ||
-				strings.HasPrefix(path, "/internal/session-allocations") ||
-				strings.HasPrefix(path, "/internal/session-state") ||
-				strings.HasPrefix(path, "/internal/external-session-manager") {
+			if isInternalTokenEndpoint(path) {
 				return next(c)
 			}
 			if strings.HasPrefix(path, "/external-session-managers/") && strings.HasSuffix(path, "/heartbeat") {
@@ -118,6 +136,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			// This allows personal API keys (loaded via bootstrap) to work
 			if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
 				c.Set("internal_user", user)
+				SetCredentialContext(c, &CredentialContext{Kind: CredentialKindAPIKey})
 				log.Printf("API key authentication successful: user %s (type: %s)", user.ID(), user.UserType())
 				// Build and store authorization context
 				authzCtx := buildAuthorizationContext(user)
@@ -133,6 +152,8 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 				if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
+					token := ExtractTokenFromHeader(c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader))
+					SetCredentialContext(c, &CredentialContext{Kind: CredentialKindGitHub, Token: token})
 					// Build and store authorization context
 					authzCtx := buildAuthorizationContext(user)
 					c.Set("authz_context", authzCtx)
@@ -145,6 +166,16 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}
+}
+
+func isInternalTokenEndpoint(path string) bool {
+	return strings.HasPrefix(path, "/internal/session-provisioners") ||
+		strings.HasPrefix(path, "/internal/session-control") ||
+		strings.HasPrefix(path, "/internal/session-runtime") ||
+		strings.HasPrefix(path, "/internal/session-allocations") ||
+		strings.HasPrefix(path, "/internal/session-state") ||
+		strings.HasPrefix(path, "/internal/worker/") ||
+		strings.HasPrefix(path, "/internal/external-session-manager")
 }
 
 // RequirePermission creates permission-checking middleware using internal auth service
@@ -192,6 +223,23 @@ func GetAuthorizationContext(c echo.Context) *AuthorizationContext {
 		}
 	}
 	return nil
+}
+
+// GetGitHubTokenFromContext returns a token only when GitHub authentication,
+// rather than API-key authentication, succeeded for this request.
+func GetGitHubTokenFromContext(c echo.Context) (string, bool) {
+	credential, ok := c.Get(credentialContextKey).(*CredentialContext)
+	if !ok || credential == nil || credential.Kind != CredentialKindGitHub || credential.Token == "" {
+		return "", false
+	}
+	return credential.Token, true
+}
+
+// SetCredentialContext records the credential accepted by an authentication
+// adapter. Callers should never set a raw API key because downstream code only
+// needs the GitHub token for user-scoped session enrichment.
+func SetCredentialContext(c echo.Context, credential *CredentialContext) {
+	c.Set(credentialContextKey, credential)
 }
 
 // buildAuthorizationContext builds authorization context from user entity

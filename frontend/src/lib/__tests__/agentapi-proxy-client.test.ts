@@ -5,6 +5,7 @@ import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-clien
 describe('AgentAPIProxyClient ACP message history', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('resumes a session only through the explicit resume endpoint', async () => {
@@ -156,5 +157,72 @@ describe('AgentAPIProxyClient ACP message history', () => {
     expect(toolResult?.images).toEqual([
       { mimeType: 'image/png', data: 'generated-image-data' },
     ]);
+  });
+
+  it('does not ask the BFF to inject the login token into a session body', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ session_id: 'session-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({
+      baseURL: 'http://proxy.example.test',
+      apiKey: 'login-api-key',
+    });
+
+    await client.start({ params: { message: 'hello' } });
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(new Headers(request.headers).get('x-inject-github-token')).toBeNull();
+    expect(String(request.body)).not.toContain('login-api-key');
+  });
+
+  it('never enables debug logging in production even when requested', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ name: 'alice', has_data: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({
+      baseURL: 'http://proxy.example.test',
+      apiKey: 'login-api-key',
+      debug: true,
+    });
+
+    await client.uploadCredentials('alice', { token: 'credential-secret' });
+
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it('omits request and response secrets from opt-in development logs', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 'slackbot-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({
+      baseURL: 'http://proxy.example.test?token=url-secret',
+      apiKey: 'login-api-key',
+      debug: true,
+    });
+
+    await client.createSlackBot({
+      name: 'bot',
+      bot_token: 'xoxb-super-secret',
+      app_token: 'xapp-super-secret',
+    });
+
+    const serializedLogs = JSON.stringify(logSpy.mock.calls);
+    expect(serializedLogs).not.toContain('xoxb-super-secret');
+    expect(serializedLogs).not.toContain('xapp-super-secret');
+    expect(serializedLogs).not.toContain('login-api-key');
+    expect(serializedLogs).not.toContain('url-secret');
   });
 });

@@ -1,34 +1,26 @@
-import { NextResponse, NextRequest } from 'next/server';
-import { deleteApiKeyCookie } from '@/lib/cookie-auth';
-import { decryptCookie } from '@/lib/cookie-encryption';
+import { NextResponse } from 'next/server';
+import { deleteApiKeyCookie, getAuthSessionFromCookie } from '@/lib/cookie-auth';
+import { getBackendUrl } from '@/lib/server-backend-url';
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
-    // Check if this is a GitHub OAuth session
-    const authToken = request.cookies.get('agentapi_token')?.value;
-    if (authToken) {
+    const authSession = await getAuthSessionFromCookie();
+    if (authSession?.type === 'github_oauth') {
       try {
-        const decryptedData = decryptCookie(authToken);
-        const sessionData = JSON.parse(decryptedData);
-        
-        // If it's a GitHub OAuth session, revoke it on the proxy
-        if (sessionData.sessionId) {
-          // デフォルトでローカルの /api/proxy を使用（サーバーサイドでは絶対URLが必要）
-          const baseUrl = process.env.AGENTAPI_PROXY_ENDPOINT || 
-            (process.env.NODE_ENV === 'production' 
-              ? `https://${request.headers.get('host')}` 
-              : 'http://localhost:3000')
-          const proxyEndpoint = baseUrl.endsWith('/api/proxy') ? baseUrl : `${baseUrl}/api/proxy`;
-          await fetch(`${proxyEndpoint}/oauth/logout`, {
-            method: 'POST',
-            headers: {
-              'X-Session-ID': sessionData.sessionId,
-            },
-          });
+        const response = await fetch(getBackendUrl('/oauth/logout'), {
+          method: 'POST',
+          headers: {
+            'X-Session-ID': authSession.session_id,
+          },
+          cache: 'no-store',
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) {
+          console.warn(`OAuth session revocation failed with status ${response.status}`);
         }
-      } catch (err) {
-        // If decryption fails, it might be an old API key cookie
-        console.error('Failed to decrypt session data:', err);
+      } catch {
+        // Local logout must still complete when the backend is unavailable.
+        console.warn('OAuth session revocation could not reach the backend');
       }
     }
 
@@ -39,8 +31,8 @@ export async function POST(request: NextRequest) {
       { message: 'Successfully logged out' },
       { status: 200 }
     );
-  } catch (error) {
-    console.error('Logout error:', error);
+  } catch {
+    console.error('Logout request failed');
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

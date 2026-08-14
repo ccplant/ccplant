@@ -2,55 +2,39 @@ package schedule
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/leaderelection"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
-func TestLeaderElectorRunRetriesAfterLeadershipLoss(t *testing.T) {
+func TestLeaderElectorAcquiresAndReleasesRedisLease(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	config := DefaultLeaderElectionConfig("test")
-	config.RetryPeriod = time.Millisecond
-	elector := NewLeaderElector(fake.NewSimpleClientset(), config)
-
+	config.LeaseDuration = time.Second
+	config.RenewDeadline = 20 * time.Millisecond
+	elector := NewLeaderElector(client, config)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var runs atomic.Int32
-	retried := make(chan struct{})
-	elector.run = func(ctx context.Context, config leaderelection.LeaderElectionConfig) {
-		switch runs.Add(1) {
-		case 1:
-			config.Callbacks.OnStartedLeading(ctx)
-			config.Callbacks.OnStoppedLeading()
-		case 2:
-			close(retried)
-			<-ctx.Done()
-		}
-	}
-
+	started := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		elector.Run(ctx, func(context.Context) {}, func() {})
+		elector.Run(ctx, func(leaderCtx context.Context) { close(started); <-leaderCtx.Done() }, nil)
 	}()
-
 	select {
-	case <-retried:
+	case <-started:
 	case <-time.After(time.Second):
-		t.Fatal("leader election did not restart after leadership loss")
+		t.Fatal("lease was not acquired")
 	}
-
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("leader election did not stop after context cancellation")
+		t.Fatal("elector did not stop")
 	}
-
-	if got := runs.Load(); got != 2 {
-		t.Fatalf("election runs = %d, want 2", got)
+	if server.Exists("agentapi:leader:test:" + ScheduleWorkerLeaseName) {
+		t.Fatal("lease was not released")
 	}
 }

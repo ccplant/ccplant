@@ -20,6 +20,7 @@ import (
 
 type kvStoreMigrateOptions struct {
 	namespace            string
+	destinationNamespace string
 	primaryBackend       string
 	primaryDatabaseURL   string
 	primaryAuthToken     string
@@ -90,6 +91,7 @@ without writing anything.`,
 	}
 	flags := command.Flags()
 	flags.StringVarP(&o.namespace, "namespace", "n", resolveKubernetesNamespace(), "Kubernetes namespace containing application KV data")
+	flags.StringVar(&o.destinationNamespace, "destination-namespace", "", "rewrite copied records into this destination namespace")
 	flags.StringVar(&o.primaryBackend, "primary-backend", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_BACKEND"), "primary backend (kubernetes or libsql)")
 	flags.StringVar(&o.primaryDatabaseURL, "primary-database-url", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL"), "primary libSQL database URL")
 	flags.StringVar(&o.primaryAuthToken, "primary-auth-token", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN"), "primary libSQL authentication token")
@@ -165,6 +167,9 @@ func migrateKVStores(ctx context.Context, source, destination kvstore.Store, opt
 	result.Selected = len(records)
 
 	for _, source := range records {
+		if options.destinationNamespace != "" {
+			source.Namespace = options.destinationNamespace
+		}
 		entry := kvStoreMigrationEntry{Kind: source.Kind, Namespace: source.Namespace, Key: source.Key}
 		existing, getErr := destination.Get(ctx, source.Kind, source.Namespace, source.Key)
 		switch {

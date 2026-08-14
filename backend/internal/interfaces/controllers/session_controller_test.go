@@ -9,7 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
 
 func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
@@ -17,11 +17,13 @@ func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 		name          string
 		scope         entities.ResourceScope
 		existingToken string
+		credential    *auth.CredentialContext
 		wantToken     string
 	}{
-		{name: "user scope receives header token", scope: entities.ScopeUser, wantToken: "oauth-token"},
-		{name: "explicit token is preserved", scope: entities.ScopeUser, existingToken: "explicit-token", wantToken: "explicit-token"},
-		{name: "team scope excludes user token", scope: entities.ScopeTeam, wantToken: ""},
+		{name: "user scope receives authenticated GitHub token", scope: entities.ScopeUser, credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "oauth-token"}, wantToken: "oauth-token"},
+		{name: "API key is never treated as GitHub token", scope: entities.ScopeUser, credential: &auth.CredentialContext{Kind: auth.CredentialKindAPIKey, Token: "api-key"}, wantToken: ""},
+		{name: "explicit token is preserved", scope: entities.ScopeUser, existingToken: "explicit-token", credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "oauth-token"}, wantToken: "explicit-token"},
+		{name: "team scope excludes user token", scope: entities.ScopeTeam, credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "oauth-token"}, wantToken: ""},
 	}
 
 	for _, tt := range tests {
@@ -30,10 +32,7 @@ func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/start", nil)
 			req.Header.Set("Authorization", "Bearer oauth-token")
 			ctx := e.NewContext(req, httptest.NewRecorder())
-			ctx.Set("config", &config.Config{Auth: config.AuthConfig{GitHub: &config.GitHubAuthConfig{
-				Enabled:     true,
-				TokenHeader: "Authorization",
-			}}})
+			auth.SetCredentialContext(ctx, tt.credential)
 			startReq := entities.StartRequest{Scope: tt.scope, Params: &entities.SessionParams{GithubToken: tt.existingToken}}
 
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)

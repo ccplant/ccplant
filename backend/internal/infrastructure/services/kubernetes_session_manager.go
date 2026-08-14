@@ -83,19 +83,12 @@ type PersonalAPIKeyLoader interface {
 // SessionStatusEvent represents a proxy-level status change event for any session.
 // It is emitted by KubernetesSessionManager whenever a session's status changes,
 // and is delivered to all active SSE/long-poll subscribers.
-type SessionStatusEvent struct {
-	SessionID string    `json:"session_id"`
-	Status    string    `json:"status"`
-	Timestamp time.Time `json:"timestamp"`
-}
+type SessionStatusEvent = portrepos.SessionStatusEvent
 
 // SessionMessageEvent represents a message_update event for a specific session.
 // It is emitted by KubernetesSessionManager whenever the agentapi backend for a session
 // sends a message_update SSE event, and is delivered to per-session long-poll subscribers.
-type SessionMessageEvent struct {
-	SessionID string    `json:"session_id"`
-	Timestamp time.Time `json:"timestamp"`
-}
+type SessionMessageEvent = portrepos.SessionMessageEvent
 
 // SessionDeletedHandler is a callback invoked just before a session's Kubernetes resources
 // are removed. At this point the session's Service endpoint is still reachable, so handlers
@@ -183,6 +176,12 @@ func (m *KubernetesSessionManager) refreshConfig() {
 		return
 	}
 	current := m.configProvider.Current()
+	// The provisioner token is startup-only secret material. Runtime settings
+	// snapshots may intentionally omit secrets, so never replace a token that
+	// was loaded from the environment or Kubernetes Secret with an empty value.
+	if current.KubernetesSession.ProvisionerToken == "" && m.k8sConfig != nil {
+		current.KubernetesSession.ProvisionerToken = m.k8sConfig.ProvisionerToken
+	}
 	m.config = current
 	m.k8sConfig = &current.KubernetesSession
 }
@@ -1905,7 +1904,11 @@ func (m *KubernetesSessionManager) getOrRestoreSessionWithWorkload(svc *corev1.S
 	}
 
 	// Restore session from Service with pre-fetched workload
-	return m.restoreSessionFromServiceWithWorkload(svc, deployment, pod)
+	restored := m.restoreSessionFromServiceWithWorkload(svc, deployment, pod)
+	if restored != nil && m.statusEventRepo != nil {
+		runtimeStatusOverrideFromRedis(m.statusEventRepo, restored)
+	}
+	return restored
 }
 
 // DeleteSession stops and removes a session
@@ -2540,10 +2543,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		sciaInitContainer, sciaSidecar, sciaEnvVars = m.buildSciaSidecarContainers(req, sandboxEnabled, sciaUserToken)
 		initContainers = append(initContainers, *sciaInitContainer)
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED", Value: "true"})
-		// Route provisioner traffic through SCIA from startup. The actual agent gets
-		// the same route from SessionSettings after provisioning. Keep cluster
-		// services out of NO_PROXY so provisioner management calls are observed by
-		// SCIA before SCIA chains them through nfa.
+		// Route external provisioner traffic through SCIA from startup. Internal
+		// control-plane callbacks must bypass SCIA: proxying Kubernetes service
+		// addresses can send them to the public API instead of session-manager.
 		sandboxEnvVars = provisionerSciaEnvVars(sciaEnvVars)
 	}
 
@@ -2834,7 +2836,7 @@ func provisionerSciaEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
 	for i := range result {
 		switch result[i].Name {
 		case "NO_PROXY", "no_proxy":
-			result[i].Value = "127.0.0.1,localhost"
+			result[i].Value = sciaNoProxyBase
 		case "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO":
 			// The combined bundle is created later by the provisioner. Use SCIA's
 			// generated CA directly during the initial pull phase.
@@ -3961,15 +3963,20 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 			if !ready {
 				session.SetStatus("unhealthy")
 			} else {
-				// Only recover to "active" from a bad state.
-				// Do not overwrite "running" (agentapi is processing a message).
+				// Kubernetes readiness can recover an infrastructure-health failure,
+				// but it must not erase terminal application/provisioning failures.
+				// In particular, a Pod remains Ready after clone/provisioning errors.
 				current := session.Status()
-				if current == "unhealthy" || current == "stopped" || current == "error" || current == "timeout" {
+				if statusCanRecoverFromWorkloadReadiness(current) {
 					session.SetStatus("active")
 				}
 			}
 		}
 	}
+}
+
+func statusCanRecoverFromWorkloadReadiness(status string) bool {
+	return status == "unhealthy" || status == "stopped"
 }
 
 // deleteSessionResources deletes all Kubernetes resources for a session
@@ -4636,6 +4643,10 @@ func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, sess
 	url := fmt.Sprintf("http://%s/events", session.Addr())
 
 	for {
+		if statusWatcherTerminal(session.Status()) {
+			log.Printf("[AGENT_STATUS] Session %s status is %s; stopping /events watcher", session.id, session.Status())
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -4658,6 +4669,15 @@ func (m *KubernetesSessionManager) watchAgentAPIStatus(ctx context.Context, sess
 				backoff = maxBackoff
 			}
 		}
+	}
+}
+
+func statusWatcherTerminal(status string) bool {
+	switch status {
+	case "stopped", "suspended", "error", "timeout":
+		return true
+	default:
+		return false
 	}
 }
 

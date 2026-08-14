@@ -10,4 +10,5 @@ var HelmCmd = &cobra.Command{
 
 func init() {
 	HelmCmd.AddCommand(newHelmMigrateCommand())
+	HelmCmd.AddCommand(newHelmMigrateValuesCommand())
 }

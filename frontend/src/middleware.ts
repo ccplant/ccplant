@@ -7,6 +7,8 @@ export async function middleware(request: NextRequest) {
   // Allow access to login page, API routes and static assets
   if (
     pathname.startsWith('/login') ||
+    pathname === '/s' ||
+    pathname.startsWith('/s/') ||
     pathname.startsWith('/api/') ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/static/') ||
@@ -42,7 +44,7 @@ export const config = {
      * - manifest.webmanifest (PWA manifest - dynamic)
      * - icons/ (icon files)
      *
-     * Note: /s/* (shared session pages) requires authentication
+     * Shared session pages (/s/*) are public and are allowed above.
      */
     '/((?!api|_next/static|_next/image|favicon.ico|manifest.json|manifest.webmanifest|icons/).*)',
   ],

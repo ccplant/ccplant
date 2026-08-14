@@ -173,6 +173,9 @@ func (s *KubernetesSession) SetStatus(status string) {
 	s.mutex.Lock()
 	changed := s.status != status
 	s.status = status
+	if changed {
+		s.updatedAt = time.Now()
+	}
 	cb := s.statusChangeCallback
 	s.mutex.Unlock()
 

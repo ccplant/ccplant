@@ -33,6 +33,10 @@ spec:
     {{- toYaml $control.selector | nindent 4 }}
     {{- else }}
     {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
+    {{- if (dig "enabled" false (.Values.sessionManager | default dict)) }}
+    app.kubernetes.io/component: session-manager
+    {{- else }}
     app.kubernetes.io/component: proxy
+    {{- end }}
     {{- end }}
 {{- end }}

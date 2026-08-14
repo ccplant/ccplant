@@ -1,4 +1,8 @@
+{{- $manager := .Values.sessionManager | default dict -}}
 {{- $cfg := .Values.sessionPersistence | default dict -}}
+{{- if (dig "enabled" false $manager) -}}
+{{- $cfg = $manager.sessionPersistence | default dict -}}
+{{- end -}}
 {{- $p := $cfg.persistence | default dict -}}
 {{- if and (eq ($cfg.backend | default "") "volume") ($p.enabled | default true) -}}
 apiVersion: v1

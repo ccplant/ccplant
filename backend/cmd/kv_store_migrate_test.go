@@ -165,6 +165,28 @@ func TestMigrateConfiguredStorePair(t *testing.T) {
 	}
 }
 
+func TestMigrateConfiguredStorePairRewritesDestinationNamespace(t *testing.T) {
+	ctx := context.Background()
+	source, destination := newMemoryKVStore(), newMemoryKVStore()
+	value := []byte(`{"metadata":{"name":"memory","namespace":"logical","labels":{"agentapi.proxy/type":"memory"}},"data":{"memory.json":"source"}}`)
+	if _, err := source.Create(ctx, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "logical", Key: "memory", Value: value}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := migrateKVStores(ctx, source, destination, kvStoreMigrateOptions{namespace: "logical", destinationNamespace: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Copied != 1 || result.Entries[0].Namespace != "runtime" {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := destination.Get(ctx, kvstore.KindConfigMap, "runtime", "memory"); err != nil {
+		t.Fatalf("destination record: %v", err)
+	}
+	if _, err := destination.Get(ctx, kvstore.KindConfigMap, "logical", "memory"); !errors.Is(err, kvstore.ErrNotFound) {
+		t.Fatalf("logical namespace record err=%v, want not found", err)
+	}
+}
+
 func TestMigrationStoreConfigsUseReplicatedEnvironment(t *testing.T) {
 	options := kvStoreMigrateOptions{
 		primaryBackend:       "kubernetes",

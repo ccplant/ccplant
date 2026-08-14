@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
@@ -25,31 +26,34 @@ type Router struct {
 
 // HandlerRegistry contains all handlers
 type HandlerRegistry struct {
-	notificationHandlers       *controllers.NotificationHandlers
-	healthController           *controllers.HealthController
-	sessionController          *controllers.SessionController
-	acpController              *controllers.ACPController
-	settingsController         *controllers.SettingsController
-	adminSettingsController    *controllers.AdminSettingsController
-	googleOAuthController      *controllers.GoogleOAuthController
-	credentialsController      *controllers.CredentialsController
-	codexDeviceAuthController  *controllers.CodexDeviceAuthController
-	userController             *controllers.UserController
-	shareController            *controllers.ShareController
-	personalAPIKeyController   *controllers.PersonalAPIKeyController
-	apiTokenController         *controllers.APITokenController
-	memoryController           *controllers.MemoryController
-	sandboxPolicyController    *controllers.SandboxPolicyController
-	resourceTransferController *controllers.ResourceTransferController
-	fileController             *controllers.FileController
-	assetController            *controllers.AssetController
-	sessionProfileController   *controllers.SessionProfileController
-	provisionerController      *controllers.ProvisionerController
-	sessionControlController   *controllers.SessionControlController
-	esmControlController       *controllers.ESMControlController
-	sessionRuntimeController   *controllers.SessionRuntimeController
-	usageController            *controllers.UsageController
-	customHandlers             []CustomHandler
+	notificationHandlers           *controllers.NotificationHandlers
+	healthController               *controllers.HealthController
+	sessionController              *controllers.SessionController
+	acpController                  *controllers.ACPController
+	settingsController             *controllers.SettingsController
+	adminSettingsController        *controllers.AdminSettingsController
+	googleOAuthController          *controllers.GoogleOAuthController
+	credentialsController          *controllers.CredentialsController
+	codexDeviceAuthController      *controllers.CodexDeviceAuthController
+	userController                 *controllers.UserController
+	shareController                *controllers.ShareController
+	personalAPIKeyController       *controllers.PersonalAPIKeyController
+	apiTokenController             *controllers.APITokenController
+	memoryController               *controllers.MemoryController
+	sandboxPolicyController        *controllers.SandboxPolicyController
+	resourceTransferController     *controllers.ResourceTransferController
+	fileController                 *controllers.FileController
+	assetController                *controllers.AssetController
+	sessionProfileController       *controllers.SessionProfileController
+	provisionerController          *controllers.ProvisionerController
+	externalAllocationController   *controllers.ProvisionerController
+	workerControlController        *controllers.WorkerControlController
+	sessionControlController       *controllers.SessionControlController
+	sessionControlReaderController *controllers.SessionControlReaderController
+	esmControlController           *controllers.ESMControlController
+	sessionRuntimeController       *controllers.SessionRuntimeController
+	usageController                *controllers.UsageController
+	customHandlers                 []CustomHandler
 }
 
 // CustomHandler interface for adding custom routes
@@ -66,23 +70,19 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
-	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+	if server.persistenceClient != nil {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
 			server.GetPersistenceClient(),
-			k8sManager.GetNamespace(),
+			server.namespace,
 		)
 		if server.kvStore != nil {
-			adminSettingsController = controllers.NewAdminSettingsController(server.kvStore, k8sManager.GetNamespace(), server.GetConfig()).WithRuntimeConfigProvider(server.GetConfigProvider())
+			adminSettingsController = controllers.NewAdminSettingsController(server.kvStore, server.namespace, server.GetConfig()).WithRuntimeConfigProvider(server.GetConfigProvider())
 		}
 	}
 
 	var googleOAuthController *controllers.GoogleOAuthController
 	if cfg := server.GetConfig(); cfg != nil {
-		if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
-			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, server.GetPersistenceClient(), k8sManager.GetNamespace())
-		} else {
-			googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, nil, "")
-		}
+		googleOAuthController = controllers.NewGoogleOAuthController(cfg.Scia, server.GetPersistenceClient(), server.namespace)
 		if apiKeyRepo != nil {
 			googleOAuthController.WithPersonalAPIKeyRepository(apiKeyRepo)
 		}
@@ -175,9 +175,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		resource_transfer.WithSessionProfileRepository(server.sessionProfileRepo),
 		resource_transfer.WithSandboxPolicyRepository(server.sandboxPolicyRepo),
 	}
-	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
+	if server.persistenceClient != nil {
 		client := server.GetPersistenceClient()
-		namespace := k8sManager.GetNamespace()
+		namespace := server.namespace
 		resourceTransferOptions = append(resourceTransferOptions,
 			resource_transfer.WithWebhookRepository(repositories.NewKubernetesWebhookRepository(client, namespace)),
 			resource_transfer.WithSlackBotRepository(repositories.NewKubernetesSlackBotRepository(client, namespace)),
@@ -207,7 +207,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	}
 
 	var provisionerController *controllers.ProvisionerController
+	var externalAllocationController *controllers.ProvisionerController
+	var workerControlController *controllers.WorkerControlController
 	var sessionControlController *controllers.SessionControlController
+	var sessionControlReaderController *controllers.SessionControlReaderController
 	var esmControlController *controllers.ESMControlController
 	var sessionRuntimeController *controllers.SessionRuntimeController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
@@ -223,6 +226,26 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
+	if queue, ok := server.sessionManager.(sessionallocation.Queue); ok {
+		if provisionerController != nil {
+			externalAllocationController = provisionerController
+		} else {
+			externalAllocationController = controllers.NewProvisionerController(nil, queue, server.settingsRepo, server.sessionRouteRepo)
+		}
+		if server.esmControlStore != nil {
+			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController)
+			if server.sessionRouteRepo != nil {
+				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo)
+			}
+		}
+	}
+	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
+		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo)
+		log.Printf("[ROUTER] Worker control controller initialized")
+	}
+	if server.sessionControlStore != nil {
+		sessionControlReaderController = controllers.NewSessionControlReaderController(server.sessionControlStore, server.sessionManager)
+	}
 
 	acpController := controllers.NewACPController(server, server, server.GetSessionRouteRepository())
 	acpController.SetESMControlTunnel(server.esmControlTunnel)
@@ -235,31 +258,34 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		echo:   e,
 		server: server,
 		handlers: &HandlerRegistry{
-			notificationHandlers:       controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
-			healthController:           controllers.NewHealthController(),
-			sessionController:          sessionController,
-			acpController:              acpController,
-			settingsController:         settingsController,
-			adminSettingsController:    adminSettingsController,
-			googleOAuthController:      googleOAuthController,
-			credentialsController:      credentialsController,
-			codexDeviceAuthController:  codexDeviceAuthController,
-			userController:             controllers.NewUserController(),
-			shareController:            shareController,
-			personalAPIKeyController:   personalAPIKeyController,
-			apiTokenController:         apiTokenController,
-			memoryController:           memoryController,
-			sandboxPolicyController:    sandboxPolicyController,
-			resourceTransferController: resourceTransferController,
-			fileController:             fileController,
-			assetController:            assetController,
-			sessionProfileController:   sessionProfileController,
-			provisionerController:      provisionerController,
-			sessionControlController:   sessionControlController,
-			esmControlController:       esmControlController,
-			sessionRuntimeController:   sessionRuntimeController,
-			usageController:            usageController,
-			customHandlers:             make([]CustomHandler, 0),
+			notificationHandlers:           controllers.NewNotificationHandlers(server.notificationSvc, server.sessionManager),
+			healthController:               controllers.NewHealthController(),
+			sessionController:              sessionController,
+			acpController:                  acpController,
+			settingsController:             settingsController,
+			adminSettingsController:        adminSettingsController,
+			googleOAuthController:          googleOAuthController,
+			credentialsController:          credentialsController,
+			codexDeviceAuthController:      codexDeviceAuthController,
+			userController:                 controllers.NewUserController(),
+			shareController:                shareController,
+			personalAPIKeyController:       personalAPIKeyController,
+			apiTokenController:             apiTokenController,
+			memoryController:               memoryController,
+			sandboxPolicyController:        sandboxPolicyController,
+			resourceTransferController:     resourceTransferController,
+			fileController:                 fileController,
+			assetController:                assetController,
+			sessionProfileController:       sessionProfileController,
+			provisionerController:          provisionerController,
+			externalAllocationController:   externalAllocationController,
+			workerControlController:        workerControlController,
+			sessionControlController:       sessionControlController,
+			sessionControlReaderController: sessionControlReaderController,
+			esmControlController:           esmControlController,
+			sessionRuntimeController:       sessionRuntimeController,
+			usageController:                usageController,
+			customHandlers:                 make([]CustomHandler, 0),
 		},
 	}
 }
@@ -369,17 +395,33 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/session-state/:sessionId/uploads/:uploadId/complete", r.handlers.provisionerController.CompleteSessionStateUpload)
 		r.echo.DELETE("/internal/session-state/:sessionId/uploads/:uploadId", r.handlers.provisionerController.AbortSessionStateUpload)
 		r.echo.GET("/internal/session-state/:sessionId/download-url", r.handlers.provisionerController.PresignSessionStateDownload)
-		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.provisionerController.GetNextExternalSessionAllocation)
-		r.echo.GET("/internal/external-session-manager/runtime-profile", r.handlers.provisionerController.GetExternalSessionManagerRuntimeProfile)
-		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.provisionerController.CompleteExternalSessionAllocation)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
+	}
+	if r.handlers.externalAllocationController != nil {
+		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.externalAllocationController.GetNextExternalSessionAllocation)
+		r.echo.GET("/internal/external-session-manager/runtime-profile", r.handlers.externalAllocationController.GetExternalSessionManagerRuntimeProfile)
+		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.externalAllocationController.CompleteExternalSessionAllocation)
+		log.Printf("[ROUTES] External manager allocation endpoints registered")
+	}
+	if r.handlers.workerControlController != nil {
+		r.echo.POST("/internal/worker/sessions/:sessionId", r.handlers.workerControlController.CreateSession)
+		r.echo.GET("/internal/worker/sessions", r.handlers.workerControlController.ListSessions)
+		r.echo.DELETE("/internal/worker/sessions/:sessionId", r.handlers.workerControlController.DeleteSession)
+		r.echo.POST("/internal/worker/sessions/:sessionId/messages", r.handlers.workerControlController.SendMessage)
+		r.echo.POST("/internal/worker/sessions/:sessionId/stop", r.handlers.workerControlController.StopAgent)
+		r.echo.GET("/internal/worker/stock", r.handlers.workerControlController.Stock)
+		r.echo.POST("/internal/worker/stock", r.handlers.workerControlController.Stock)
+		r.echo.DELETE("/internal/worker/stock", r.handlers.workerControlController.Stock)
+		log.Printf("[ROUTES] Isolated worker-control endpoints registered")
 	}
 	if r.handlers.sessionControlController != nil {
 		r.echo.GET("/internal/session-control/:sessionId/commands", r.handlers.sessionControlController.WaitCommands)
 		r.echo.POST("/internal/session-control/:sessionId/events", r.handlers.sessionControlController.AppendEvents)
-		r.echo.GET("/sessions/:sessionId/control/events/wait", r.handlers.sessionControlController.WaitEvents,
-			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		log.Printf("[ROUTES] Internal session control long-poll endpoints registered")
+	}
+	if r.handlers.sessionControlReaderController != nil {
+		r.echo.GET("/sessions/:sessionId/control/events/wait", r.handlers.sessionControlReaderController.WaitEvents,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	}
 	if r.handlers.esmControlController != nil {
 		r.echo.GET("/internal/external-session-manager/control/commands", r.handlers.esmControlController.WaitCommands)

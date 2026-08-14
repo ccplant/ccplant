@@ -24,11 +24,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
-	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 const (
@@ -406,7 +401,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	// ── Step 12: start files sync goroutine ───────────────────────────────────
-	// Syncs managedFilePaths → Kubernetes Secret agentapi-agent-files-{userID}.
+	// Syncs managedFilePaths through the authenticated session control API.
 	// Runs in-process instead of as a sidecar so that UserID is always set
 	// (stock pool pods have empty UserID at pod creation time).
 	go s.runFilesSync(ctx, settings.Session.UserID, settings.UnsyncedFilePaths)
@@ -958,9 +953,8 @@ func writeCredentials(credentialsJSON string) error {
 	return nil
 }
 
-// runFilesSync watches the paths listed in managedFilePaths for changes and syncs
-// all of them to the Kubernetes Secret agentapi-agent-files-{userID} using the
-// in-cluster k8s client.
+// runFilesSync watches managed files and sends snapshots through the
+// session-scoped control API. Session Pods never receive Kubernetes write access.
 // The goroutine is tied to ctx: when ctx is cancelled the loop exits.
 func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePaths []string) {
 	const syncInterval = 10 * time.Second
@@ -970,15 +964,13 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 		return
 	}
 
-	secretName := "agentapi-agent-files-" + sanitizeCredentialSecretName(userID)
-
-	// Read namespace from the in-cluster service-account namespace file.
-	nsBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		log.Printf("[FILES_SYNC] Not running in a k8s cluster (namespace file not found): %v, skipping", err)
+	proxyURL := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	token := os.Getenv("SESSION_CONTROL_TOKEN")
+	if proxyURL == "" || sessionID == "" || token == "" {
+		log.Printf("[FILES_SYNC] Session control URL, session ID, or token missing; skipping")
 		return
 	}
-	namespace := strings.TrimSpace(string(nsBytes))
 
 	watchedPaths := syncedManagedFilePaths(unsyncedFilePaths)
 	if len(watchedPaths) == 0 {
@@ -986,18 +978,8 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 		return
 	}
 
-	log.Printf("[FILES_SYNC] Starting: watching %v -> Secret %s/%s (interval: %s)", watchedPaths, namespace, secretName, syncInterval)
-
-	k8sCfg, err := rest.InClusterConfig()
-	if err != nil {
-		log.Printf("[FILES_SYNC] Failed to get in-cluster config: %v, skipping", err)
-		return
-	}
-	clientset, err := kubernetes.NewForConfig(k8sCfg)
-	if err != nil {
-		log.Printf("[FILES_SYNC] Failed to create k8s client: %v, skipping", err)
-		return
-	}
+	log.Printf("[FILES_SYNC] Starting: watching %v -> session control API (interval: %s)", watchedPaths, syncInterval)
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	// Track last hash per file path to detect changes.
 	lastHashes := make(map[string]string, len(watchedPaths))
@@ -1054,13 +1036,12 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 				})
 			}
 
-			secretData := sessionsettings.FilesToSecretData(files)
-			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) to Secret %s", len(files), secretName)
-			if err := upsertFilesSecret(ctx, clientset, namespace, secretName, secretData); err != nil {
-				log.Printf("[FILES_SYNC] ERROR: failed to upsert Secret: %v", err)
+			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) through control API", len(files))
+			if err := saveManagedFiles(ctx, client, proxyURL, sessionID, token, files); err != nil {
+				log.Printf("[FILES_SYNC] ERROR: control API sync failed: %v", err)
 				// Do not update lastHashes so the next tick retries the sync.
 			} else {
-				log.Printf("[FILES_SYNC] Successfully synced to Secret %s", secretName)
+				log.Printf("[FILES_SYNC] Successfully synced through control API")
 				// Update hashes only after a successful sync so failed upserts are retried.
 				for _, path := range watchedPaths {
 					if snap, ok := snapshots[path]; ok {
@@ -1102,31 +1083,28 @@ func readFileWithHash(path string) ([]byte, string, error) {
 	return data, fmt.Sprintf("%x", sum), nil
 }
 
-// upsertFilesSecret creates or updates the agentapi-agent-files-{userID} Kubernetes
-// Secret with the provided index-based file data produced by FilesToSecretData.
-func upsertFilesSecret(ctx context.Context, clientset kubernetes.Interface, namespace, name string, data map[string][]byte) error {
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agentapi-agent-files",
-				"app.kubernetes.io/managed-by": "agentapi-proxy",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
-	}
-
-	_, err := clientset.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err == nil {
-		return nil
-	}
-	if k8serrors.IsAlreadyExists(err) {
-		_, err = clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{})
+func saveManagedFiles(ctx context.Context, client *http.Client, proxyURL, sessionID, token string, files []sessionsettings.ManagedFile) error {
+	body, err := json.Marshal(map[string]any{"files": files})
+	if err != nil {
 		return err
 	}
-	return err
+	endpoint := proxyURL + "/internal/session-control/" + url.PathEscape(sessionID) + "/managed-files"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("control API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	return nil
 }
 
 // sanitizeCredentialSecretName converts a userID into a valid Kubernetes Secret

@@ -452,6 +452,28 @@ type SessionManagerConfig struct {
 	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
 	// to this manager when the outbound control lease is unavailable.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
+	// APIURL is the private session-manager API used by the public API process.
+	// It is intentionally distinct from UpstreamURL, which is only used when
+	// this manager is registered as an external manager of another control plane.
+	APIURL string `json:"api_url" mapstructure:"api_url"`
+	// APIToken authenticates outbound API -> session-manager requests.
+	APIToken string `json:"api_token" mapstructure:"api_token"`
+	// InternalAPIToken authenticates inbound requests to the private manager API.
+	InternalAPIToken string                         `json:"internal_api_token" mapstructure:"internal_api_token"`
+	Allocation       SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+}
+
+type SessionManagerAllocationConfig struct {
+	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
+	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
+	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+// WorkerConfig contains the only control-plane dependency of the worker.
+// Worker persistence and leader election use KVStore and Redis respectively.
+type WorkerConfig struct {
+	ControlAPIURL   string `json:"control_api_url" mapstructure:"control_api_url"`
+	ControlAPIToken string `json:"control_api_token" mapstructure:"control_api_token"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -488,6 +510,7 @@ type KVStoreReplicationConfig struct {
 
 type KVStoreConfig struct {
 	// Legacy single-backend fields. They remain supported as primary-only configuration.
+	Namespace   string                   `json:"namespace" mapstructure:"namespace"`
 	Backend     string                   `json:"backend" mapstructure:"backend"`
 	DatabaseURL string                   `json:"database_url" mapstructure:"database_url"`
 	AuthToken   string                   `json:"auth_token" mapstructure:"auth_token"`
@@ -535,6 +558,9 @@ type Config struct {
 	Slack SlackConfig `json:"slack" mapstructure:"slack"`
 	// SessionManager is the configuration for the session manager forwarding endpoint.
 	SessionManager SessionManagerConfig `json:"session_manager" mapstructure:"session_manager"`
+	// Worker is deliberately separate from KubernetesSession. A worker has no
+	// Kubernetes workload credentials and talks to the API over this endpoint.
+	Worker WorkerConfig `json:"worker" mapstructure:"worker"`
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
 	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
@@ -547,6 +573,10 @@ type Config struct {
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
 type SlackConfig struct {
+	// AppToken and BotToken are write-only runtime inputs used by the dedicated
+	// worker to materialize its default Socket Mode credential in the KV store.
+	AppToken string `json:"app_token" mapstructure:"app_token"`
+	BotToken string `json:"bot_token" mapstructure:"bot_token"`
 	// AppTokenSecretName is the K8s Secret name containing the default App-level token (xapp-...).
 	// Used for the default Socket Mode connection.
 	// If empty, falls back to KubernetesSession.SlackBotTokenSecretName.
@@ -990,6 +1020,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
+	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
 	_ = v.BindEnv("kv_store.auth_token", "AGENTAPI_KV_STORE_AUTH_TOKEN")
 	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
@@ -1042,6 +1073,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.pod_start_timeout", "AGENTAPI_K8S_SESSION_POD_START_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.pod_stop_timeout", "AGENTAPI_K8S_SESSION_POD_STOP_TIMEOUT")
 	_ = v.BindEnv("kubernetes_session.provisioner_proxy_url", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
+	_ = v.BindEnv("kubernetes_session.provisioner_token", "AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN")
 	_ = v.BindEnv("kubernetes_session.network_filter_image", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_request", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_REQUEST")
 	_ = v.BindEnv("kubernetes_session.network_filter_cpu_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_CPU_LIMIT")
@@ -1106,14 +1138,27 @@ func bindEnvVars(v *viper.Viper) {
 	// Slack configuration
 	_ = v.BindEnv("slack.app_token_secret_name", "AGENTAPI_SLACK_APP_TOKEN_SECRET_NAME")
 	_ = v.BindEnv("slack.app_token_secret_key", "AGENTAPI_SLACK_APP_TOKEN_SECRET_KEY")
+	_ = v.BindEnv("slack.app_token", "AGENTAPI_SLACK_APP_TOKEN")
+	_ = v.BindEnv("slack.bot_token", "AGENTAPI_SLACK_BOT_TOKEN")
 	_ = v.BindEnv("slack.dry_run", "AGENTAPI_SLACK_DRY_RUN")
 
 	// Session manager configuration
-	_ = v.BindEnv("session_manager.enabled", "SESSION_MANAGER_ENABLED")
-	_ = v.BindEnv("session_manager.hmac_secret", "SESSION_MANAGER_HMAC_SECRET")
-	_ = v.BindEnv("session_manager.upstream_url", "SESSION_MANAGER_UPSTREAM_URL")
-	_ = v.BindEnv("session_manager.connection_token", "SESSION_MANAGER_CONNECTION_TOKEN")
-	_ = v.BindEnv("session_manager.public_url", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.enabled", "AGENTAPI_SESSION_MANAGER_ENABLED", "SESSION_MANAGER_ENABLED")
+	_ = v.BindEnv("session_manager.hmac_secret", "AGENTAPI_SESSION_MANAGER_HMAC_SECRET", "SESSION_MANAGER_HMAC_SECRET")
+	_ = v.BindEnv("session_manager.upstream_url", "AGENTAPI_SESSION_MANAGER_UPSTREAM_URL", "SESSION_MANAGER_UPSTREAM_URL")
+	_ = v.BindEnv("session_manager.connection_token", "AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.public_url", "AGENTAPI_SESSION_MANAGER_PUBLIC_URL", "SESSION_MANAGER_PUBLIC_URL")
+	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
+	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
+	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
+	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
+	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
+	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")
+
+	// Background-worker control plane. These values are deliberately not part
+	// of kubernetes_session: the worker must never receive a provisioner token.
+	_ = v.BindEnv("worker.control_api_url", "AGENTAPI_WORKER_CONTROL_API_URL", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
+	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
@@ -1210,6 +1255,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.network_filter_init_memory_request", "32Mi")
 	v.SetDefault("kubernetes_session.network_filter_init_memory_limit", "64Mi")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
+	v.SetDefault("worker.control_api_url", "")
+	v.SetDefault("worker.control_api_token", "")
+	v.SetDefault("session_manager.api_url", "")
+	v.SetDefault("session_manager.api_token", "")
+	v.SetDefault("session_manager.internal_api_token", "")
+	v.SetDefault("session_manager.allocation.lease_duration", "15s")
+	v.SetDefault("session_manager.allocation.renew_deadline", "10s")
+	v.SetDefault("session_manager.allocation.retry_period", "2s")
 
 	// Settings base secret default (single base Secret shared by all sessions,
 	// merged with team/user settings at session settings generation time)

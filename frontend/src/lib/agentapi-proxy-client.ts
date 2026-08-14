@@ -75,10 +75,28 @@ import {
   ShareStatus,
   RevokeShareResponse
 } from '../types/share';
-import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getSendGithubTokenOnSessionStart, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
+import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
+
+function defaultClientDebugEnabled(): boolean {
+  return process.env.NODE_ENV !== 'production'
+    && (process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true' || process.env.DEBUG_LOGS === 'true');
+}
+
+function debugAllowed(requested: boolean): boolean {
+  return process.env.NODE_ENV !== 'production' && requested;
+}
+
+function requestUrlForLog(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return rawUrl.split('?')[0];
+  }
+}
 
 // CredentialsMetadata represents the metadata returned by the credentials API
 export interface CredentialsMetadata {
@@ -631,11 +649,11 @@ export class AgentAPIProxyClient {
     this.timeout = config.timeout || 10000;
     this.maxSessions = config.maxSessions || 10;
     this.sessionTimeout = config.sessionTimeout || 300000; // 5 minutes
-    this.debug = config.debug || false;
+    this.debug = debugAllowed(config.debug === true);
 
     if (this.debug) {
       console.log('[AgentAPIProxy] Initialized with config:', {
-        baseURL: this.baseURL,
+        baseURL: requestUrlForLog(this.baseURL),
         maxSessions: this.maxSessions,
         sessionTimeout: this.sessionTimeout
       });
@@ -756,10 +774,7 @@ export class AgentAPIProxyClient {
       };
 
       if (this.debug) {
-        console.log(`[AgentAPIProxy] ${options.method || 'GET'} ${url} (Bearer token)`, {
-          body: options.body,
-          attempt,
-        });
+        console.log(`[AgentAPIProxy] ${options.method || 'GET'} ${requestUrlForLog(url)} (authenticated)`, { attempt });
       }
 
       try {
@@ -778,10 +793,7 @@ export class AgentAPIProxyClient {
             };
 
             if (this.debug) {
-              console.log(`[AgentAPIProxy] ${options.method || 'GET'} ${url} (X-API-Key fallback)`, {
-                body: options.body,
-                attempt,
-              });
+              console.log(`[AgentAPIProxy] ${options.method || 'GET'} ${requestUrlForLog(url)} (authentication fallback)`, { attempt });
             }
 
             const fallbackResponse = await fetch(url, fallbackRequestOptions);
@@ -815,10 +827,6 @@ export class AgentAPIProxyClient {
             }
             const fallbackData = await fallbackResponse.json();
 
-            if (this.debug) {
-              console.log(`[AgentAPIProxy] Response (fallback):`, { data: fallbackData });
-            }
-
             return fallbackData;
           }
 
@@ -845,10 +853,6 @@ export class AgentAPIProxyClient {
         }
         const data = await response.json();
 
-        if (this.debug) {
-          console.log(`[AgentAPIProxy] Response:`, { data });
-        }
-
         return data;
       } catch (error) {
         if (error instanceof AgentAPIProxyError) {
@@ -873,10 +877,7 @@ export class AgentAPIProxyClient {
     };
 
     if (this.debug) {
-      console.log(`[AgentAPIProxy] ${options.method || 'GET'} ${url} (no auth)`, {
-        body: options.body,
-        attempt,
-      });
+      console.log(`[AgentAPIProxy] ${options.method || 'GET'} ${requestUrlForLog(url)} (cookie/public auth)`, { attempt });
     }
 
     try {
@@ -910,10 +911,6 @@ export class AgentAPIProxyClient {
         return undefined as T;
       }
       const data = await response.json();
-
-      if (this.debug) {
-        console.log(`[AgentAPIProxy] Response:`, { data });
-      }
 
       return data;
     } catch (error) {
@@ -974,20 +971,10 @@ export class AgentAPIProxyClient {
       }
     }
 
-    // Check if GitHub token injection is enabled
-    const injectGithubToken = typeof window !== 'undefined' ? getSendGithubTokenOnSessionStart() : false;
-
-    console.log('[AgentAPIProxy] Starting session with data:', JSON.stringify(data, null, 2));
-
     const session = await this.makeRequest<Session>('/start', {
       method: 'POST',
       body: JSON.stringify(data),
-      headers: {
-        'X-Inject-Github-Token': injectGithubToken ? 'true' : 'false'
-      }
     });
-
-    console.log('[AgentAPIProxy] Session created:', JSON.stringify(session, null, 2));
 
     if (this.debug) {
       console.log(`[AgentAPIProxy] Started session: ${session.session_id}`);
@@ -1084,7 +1071,7 @@ export class AgentAPIProxyClient {
     
     try {
       if (this.debug) {
-        console.log(`[AgentAPIProxy] Sending message to session ${sessionId} (attempt ${retryCount + 1}):`, data.content);
+        console.log(`[AgentAPIProxy] Sending message to session ${sessionId} (attempt ${retryCount + 1})`);
       }
 
       const result = await this.makeRequest<SessionMessage>(`/${sessionId}/message`, {
@@ -1449,7 +1436,7 @@ export class AgentAPIProxyClient {
    */
   async sendAction(sessionId: string, action: ActionRequest): Promise<void> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Sending action to session ${sessionId}:`, action);
+      console.log(`[AgentAPIProxy] Sending action to session ${sessionId}`);
     }
 
     await this.makeRequest<void>(`/${sessionId}/action`, {
@@ -1469,7 +1456,7 @@ export class AgentAPIProxyClient {
    */
   async createSchedule(data: CreateScheduleRequest): Promise<Schedule> {
     if (this.debug) {
-      console.log('[AgentAPIProxy] Creating schedule:', data);
+      console.log('[AgentAPIProxy] Creating schedule');
     }
 
     const schedule = await this.makeRequest<Schedule>('/schedules', {
@@ -1517,7 +1504,7 @@ export class AgentAPIProxyClient {
    */
   async updateSchedule(scheduleId: string, data: UpdateScheduleRequest): Promise<Schedule> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Updating schedule ${scheduleId}:`, data);
+      console.log(`[AgentAPIProxy] Updating schedule ${scheduleId}`);
     }
 
     const schedule = await this.makeRequest<Schedule>(`/schedules/${scheduleId}`, {
@@ -1607,14 +1594,14 @@ export class AgentAPIProxyClient {
   async saveSettings(name: string, data: SettingsData): Promise<SettingsData> {
     const normalizedName = this.normalizeSettingsName(name);
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Saving settings for: ${name} (normalized: ${normalizedName})`, data);
+      console.log(`[AgentAPIProxy] Saving settings for: ${name} (normalized: ${normalizedName})`);
     }
     const result = await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(normalizedName)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Successfully saved settings for: ${name}`, result);
+      console.log(`[AgentAPIProxy] Successfully saved settings for: ${name}`);
     }
     return result;
   }
@@ -1716,7 +1703,7 @@ export class AgentAPIProxyClient {
    * Set debug mode
    */
   setDebug(debug: boolean): void {
-    this.debug = debug;
+    this.debug = debugAllowed(debug);
   }
 
   // Credentials operations
@@ -1813,7 +1800,7 @@ export class AgentAPIProxyClient {
     });
 
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Created share for session ${sessionId}:`, result);
+      console.log(`[AgentAPIProxy] Created share for session ${sessionId}`);
     }
 
     return result;
@@ -1832,7 +1819,7 @@ export class AgentAPIProxyClient {
       const result = await this.makeRequest<ShareStatus>(`/sessions/${sessionId}/share`);
 
       if (this.debug) {
-        console.log(`[AgentAPIProxy] Share status for session ${sessionId}:`, result);
+        console.log(`[AgentAPIProxy] Share status loaded for session ${sessionId}`);
       }
 
       return result;
@@ -1880,7 +1867,7 @@ export class AgentAPIProxyClient {
     });
 
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Revoked share for session ${sessionId}:`, result);
+      console.log(`[AgentAPIProxy] Revoked share for session ${sessionId}`);
     }
 
     return result;
@@ -1893,7 +1880,7 @@ export class AgentAPIProxyClient {
    */
   async createWebhook(data: CreateWebhookRequest): Promise<Webhook> {
     if (this.debug) {
-      console.log('[AgentAPIProxy] Creating webhook:', data);
+      console.log('[AgentAPIProxy] Creating webhook');
     }
 
     const webhook = await this.makeRequest<Webhook>('/webhooks', {
@@ -1942,7 +1929,7 @@ export class AgentAPIProxyClient {
    */
   async updateWebhook(webhookId: string, data: UpdateWebhookRequest): Promise<Webhook> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Updating webhook ${webhookId}:`, data);
+      console.log(`[AgentAPIProxy] Updating webhook ${webhookId}`);
     }
 
     const webhook = await this.makeRequest<Webhook>(`/webhooks/${webhookId}`, {
@@ -1998,7 +1985,7 @@ export class AgentAPIProxyClient {
    */
   async triggerWebhook(webhookId: string, data: TriggerWebhookRequest): Promise<TriggerWebhookResponse> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Triggering webhook ${webhookId} with payload:`, data);
+      console.log(`[AgentAPIProxy] Triggering webhook ${webhookId}`);
     }
 
     const result = await this.makeRequest<TriggerWebhookResponse>(`/webhooks/${webhookId}/trigger`, {
@@ -2007,7 +1994,7 @@ export class AgentAPIProxyClient {
     });
 
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Webhook ${webhookId} trigger result:`, result);
+      console.log(`[AgentAPIProxy] Webhook ${webhookId} trigger completed`);
     }
 
     return result;
@@ -2020,7 +2007,7 @@ export class AgentAPIProxyClient {
    */
   async createSlackBot(data: CreateSlackBotRequest): Promise<SlackBot> {
     if (this.debug) {
-      console.log('[AgentAPIProxy] Creating slackbot:', data);
+      console.log('[AgentAPIProxy] Creating slackbot');
     }
 
     const slackbot = await this.makeRequest<SlackBot>('/slackbots', {
@@ -2073,7 +2060,7 @@ export class AgentAPIProxyClient {
    */
   async updateSlackBot(slackbotId: string, data: UpdateSlackBotRequest): Promise<SlackBot> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Updating slackbot ${slackbotId}:`, data);
+      console.log(`[AgentAPIProxy] Updating slackbot ${slackbotId}`);
     }
 
     const slackbot = await this.makeRequest<SlackBot>(`/slackbots/${slackbotId}`, {
@@ -2112,7 +2099,7 @@ export class AgentAPIProxyClient {
    */
   async createSessionProfile(data: CreateSessionProfileRequest): Promise<SessionProfile> {
     if (this.debug) {
-      console.log('[AgentAPIProxy] Creating session profile:', data);
+      console.log('[AgentAPIProxy] Creating session profile');
     }
 
     const profile = await this.makeRequest<SessionProfile>('/session-profiles', {
@@ -2162,7 +2149,7 @@ export class AgentAPIProxyClient {
    */
   async updateSessionProfile(profileId: string, data: UpdateSessionProfileRequest): Promise<SessionProfile> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Updating session profile ${profileId}:`, data);
+      console.log(`[AgentAPIProxy] Updating session profile ${profileId}`);
     }
 
     const profile = await this.makeRequest<SessionProfile>(`/session-profiles/${profileId}`, {
@@ -2344,7 +2331,7 @@ export class AgentAPIProxyClient {
    */
   async createMemory(data: CreateMemoryRequest): Promise<Memory> {
     if (this.debug) {
-      console.log('[AgentAPIProxy] Creating memory:', data);
+      console.log('[AgentAPIProxy] Creating memory');
     }
     const memory = await this.makeRequest<Memory>('/memories', {
       method: 'POST',
@@ -2368,7 +2355,7 @@ export class AgentAPIProxyClient {
    */
   async updateMemory(memoryId: string, data: UpdateMemoryRequest): Promise<Memory> {
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Updating memory ${memoryId}:`, data);
+      console.log(`[AgentAPIProxy] Updating memory ${memoryId}`);
     }
     const memory = await this.makeRequest<Memory>(`/memories/${memoryId}`, {
       method: 'PUT',
@@ -2477,13 +2464,19 @@ export class AgentAPIProxyClient {
    */
   async getACPSessionInfo(sessionId: string): Promise<ACPSessionInfo | null> {
     try {
-      console.log(`[ACP] getACPSessionInfo called (proxySessionId=${sessionId})`);
+      if (this.debug) {
+        console.log(`[ACP] getACPSessionInfo called (proxySessionId=${sessionId})`);
+      }
       const info = await this.makeRequest<ACPSessionInfo>(`/${sessionId}/session`);
-      console.log(`[ACP] getACPSessionInfo result:`, info);
+      if (this.debug) {
+        console.log(`[ACP] getACPSessionInfo completed (proxySessionId=${sessionId})`);
+      }
       if (info?.sessionId) return info;
       return null;
-    } catch (err) {
-      console.warn(`[ACP] getACPSessionInfo failed (proxySessionId=${sessionId}):`, err);
+    } catch {
+      if (this.debug) {
+        console.warn(`[ACP] getACPSessionInfo failed (proxySessionId=${sessionId})`);
+      }
       return null;
     }
   }
@@ -2506,7 +2499,9 @@ export class AgentAPIProxyClient {
     }>(`/${sessionId}/messages${query}`);
 
     const messages = parseACPJSONRPCMessages(resp?.messages ?? []);
-    console.log(`[ACP] getACPMessageHistory: ${messages.length} messages restored (userPromptIndex=${userPromptIndex ?? 'latest'})`);
+    if (this.debug) {
+      console.log(`[ACP] getACPMessageHistory: ${messages.length} messages restored (userPromptIndex=${userPromptIndex ?? 'latest'})`);
+    }
 
     return {
       messages,
@@ -2545,13 +2540,17 @@ export class AgentAPIProxyClient {
     let streamingMsgId: number | null = null;
     let streamingUserMsgId: number | null = null;
 
-    console.log(`[ACP] EventSource subscription created (url=${sseUrl}, acpSessionId=${acpSessionId})`);
+    if (this.debug) {
+      console.log(`[ACP] EventSource subscription created (url=${sseUrl}, acpSessionId=${acpSessionId})`);
+    }
 
     return this.subscribeWithEventSource(
       sseUrl,
       {
         onOpen: () => {
-          console.log(`[ACP] SSE connection opened (url=${sseUrl}, acpSessionId=${acpSessionId})`);
+          if (this.debug) {
+            console.log(`[ACP] SSE connection opened (url=${sseUrl}, acpSessionId=${acpSessionId})`);
+          }
           callbacks.onConnectionOpen?.();
         },
         onMessage: (event: MessageEvent) => {
@@ -2803,15 +2802,21 @@ export class AgentAPIProxyClient {
       }
         },
         onTransientError: (event, state) => {
-          console.warn(`[ACP] SSE transient error; browser is reconnecting (url=${sseUrl}, acpSessionId=${acpSessionId}, readyState=${state})`, event);
+          if (this.debug) {
+            console.warn(`[ACP] SSE transient error; browser is reconnecting (url=${sseUrl}, acpSessionId=${acpSessionId}, readyState=${state})`);
+          }
           callbacks.onConnectionConnecting?.();
         },
         onReconnect: (attempt, delayMs) => {
-          console.warn(`[ACP] SSE closed; recreating EventSource in ${delayMs}ms (url=${sseUrl}, acpSessionId=${acpSessionId}, attempt=${attempt})`);
+          if (this.debug) {
+            console.warn(`[ACP] SSE closed; recreating EventSource in ${delayMs}ms (url=${sseUrl}, acpSessionId=${acpSessionId}, attempt=${attempt})`);
+          }
           callbacks.onConnectionConnecting?.(attempt, delayMs);
         },
         onClosed: (event, state) => {
-          console.error(`[ACP] SSE connection permanently closed (url=${sseUrl}, acpSessionId=${acpSessionId}, readyState=${state})`, event);
+          if (this.debug) {
+            console.error(`[ACP] SSE connection permanently closed (url=${sseUrl}, acpSessionId=${acpSessionId}, readyState=${state})`);
+          }
           callbacks.onConnectionClosed?.();
           callbacks.onError(new Error(`ACP SSE connection closed (readyState=${state})`));
         },
@@ -2940,7 +2945,7 @@ export function getAgentAPIProxyConfigFromStorage(repoFullname?: string): AgentA
       timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
       maxSessions: parseInt(process.env.AGENTAPI_PROXY_MAX_SESSIONS || '10'),
       sessionTimeout: parseInt(process.env.AGENTAPI_PROXY_SESSION_TIMEOUT || '300000'),
-      debug: true, // Enable debug logging to diagnose proxy issues
+      debug: defaultClientDebugEnabled(),
     };
   }
 
@@ -2969,10 +2974,12 @@ export function getAgentAPIProxyConfigFromStorage(repoFullname?: string): AgentA
       timeout,
       maxSessions: 10,
       sessionTimeout: 300000, // 5 minutes
-      debug: true, // Enable debug logging to diagnose proxy issues
+      debug: defaultClientDebugEnabled(),
     };
-  } catch (error) {
-    console.warn('Failed to load proxy settings from storage, using fallback:', error);
+  } catch {
+    if (defaultClientDebugEnabled()) {
+      console.warn('Failed to load proxy settings from storage, using fallback');
+    }
     // Fallback if storage access fails
     return {
       baseURL: `${window.location.protocol}//${window.location.host}/api/proxy`,
@@ -2980,7 +2987,7 @@ export function getAgentAPIProxyConfigFromStorage(repoFullname?: string): AgentA
       timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
       maxSessions: parseInt(process.env.AGENTAPI_PROXY_MAX_SESSIONS || '10'),
       sessionTimeout: parseInt(process.env.AGENTAPI_PROXY_SESSION_TIMEOUT || '300000'),
-      debug: true, // Enable debug logging to diagnose proxy issues
+      debug: defaultClientDebugEnabled(),
     };
   }
 }
@@ -3007,7 +3014,7 @@ export function createDefaultAgentAPIProxyClient(): AgentAPIProxyClient {
       timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
       maxSessions: parseInt(process.env.AGENTAPI_PROXY_MAX_SESSIONS || '10'),
       sessionTimeout: parseInt(process.env.AGENTAPI_PROXY_SESSION_TIMEOUT || '300000'),
-      debug: true,
+      debug: defaultClientDebugEnabled(),
     };
     return new AgentAPIProxyClient(config);
   }
@@ -3020,7 +3027,7 @@ export function createDefaultAgentAPIProxyClient(): AgentAPIProxyClient {
     timeout: defaultProxySettings.timeout,
     maxSessions: parseInt(process.env.AGENTAPI_PROXY_MAX_SESSIONS || '10'),
     sessionTimeout: parseInt(process.env.AGENTAPI_PROXY_SESSION_TIMEOUT || '300000'),
-    debug: true,
+    debug: defaultClientDebugEnabled(),
   };
   return new AgentAPIProxyClient(config);
 }

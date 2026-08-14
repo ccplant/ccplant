@@ -36,7 +36,9 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	infrasessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessioncontrol"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionmanagerapi"
 	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
+	personalapikeyuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -49,6 +51,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 // Server represents the HTTP server
@@ -85,6 +88,8 @@ type Server struct {
 	esmControlStore             esmcontrol.Store
 	esmControlTunnel            *infraesmcontrol.Tunnel
 	directSessionRuntimeEnabled bool
+	namespace                   string
+	personalAPIKeyRepo          portrepos.PersonalAPIKeyRepository
 	router                      *Router // Router for custom handler registration
 }
 
@@ -186,41 +191,99 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Initialize logger
 	lgr := logger.NewLogger()
 
-	// Initialize Kubernetes session manager
+	// Compose the public API against the private session-manager API whenever it
+	// is configured. In this mode the API receives no Kubernetes client or
+	// ServiceAccount token; its Kubernetes-shaped repositories are backed only by
+	// libSQL through the compatibility adapter.
 	var settingsRepo portrepos.SettingsRepository
 	var shareRepo portrepos.ShareRepository
-	log.Printf("[SERVER] Initializing Kubernetes session manager")
-	k8sSessionManager, err := services.NewKubernetesSessionManager(cfg, verbose, lgr)
-	if err != nil {
-		// If Kubernetes is not available, use a fake client for testing/development
-		log.Printf("[SERVER] Kubernetes config not available, using fake client: %v", err)
-		k8sSessionManager, err = services.NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, fake.NewSimpleClientset())
+	namespace := resolveApplicationNamespace(cfg.KVStore.Namespace)
+	var k8sSessionManager *services.KubernetesSessionManager
+	var sessionManager portrepos.SessionManager
+	var persistenceClient kubernetes.Interface
+	var applicationKVStore kvstore.Store
+	var err error
+	if cfg.SessionManager.APIURL != "" {
+		if err := validateAPIKVStore(cfg.KVStore); err != nil {
+			log.Fatalf("[SERVER] Invalid API KV persistence: %v", err)
+		}
+		remoteManager, clientErr := sessionmanagerapi.NewClient(cfg.SessionManager.APIURL, cfg.SessionManager.APIToken)
+		if clientErr != nil {
+			log.Fatalf("[SERVER] Failed to initialize session-manager client: %v", clientErr)
+		}
+		healthCtx, healthCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var healthErr error
+		for healthCtx.Err() == nil {
+			healthErr = remoteManager.Health(healthCtx)
+			if healthErr == nil {
+				break
+			}
+			select {
+			case <-healthCtx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+		healthCancel()
+		if healthErr != nil {
+			log.Fatalf("[SERVER] Session manager is unavailable after startup grace period: %v", healthErr)
+		}
+		sessionManager = remoteManager
+		var apiKVClient kubernetes.Interface = fake.NewSimpleClientset()
+		if configuredKVBackend(cfg.KVStore) == "kubernetes" {
+			restConfig, configErr := ctrlconfig.GetConfig()
+			if configErr != nil {
+				log.Fatalf("[SERVER] Failed to get Kubernetes config for API KV store: %v", configErr)
+			}
+			client, clientErr := kubernetes.NewForConfig(restConfig)
+			if clientErr != nil {
+				log.Fatalf("[SERVER] Failed to create Kubernetes client for API KV store: %v", clientErr)
+			}
+			apiKVClient = client
+		}
+		var wrapPersistence bool
+		applicationKVStore, wrapPersistence, err = buildApplicationKVStore(cfg.KVStore, apiKVClient)
 		if err != nil {
-			log.Fatalf("[SERVER] Failed to initialize session manager with fake client: %v", err)
+			log.Fatalf("[SERVER] Failed to initialize API KV store: %v", err)
+		}
+		persistenceClient = apiKVClient
+		if wrapPersistence {
+			persistenceClient = kvstore.NewKubernetesAdapter(apiKVClient, applicationKVStore)
+		}
+		log.Printf("[SERVER] Public API connected to isolated session manager: %s", cfg.SessionManager.APIURL)
+	} else {
+		// Legacy/test composition remains available for local development. The
+		// production chart always supplies session_manager.api_url.
+		log.Printf("[SERVER] Initializing legacy in-process Kubernetes session manager")
+		k8sSessionManager, err = services.NewKubernetesSessionManager(cfg, verbose, lgr)
+		if err != nil {
+			log.Printf("[SERVER] Kubernetes config not available, using fake client: %v", err)
+			k8sSessionManager, err = services.NewKubernetesSessionManagerWithClient(cfg, verbose, lgr, fake.NewSimpleClientset())
+			if err != nil {
+				log.Fatalf("[SERVER] Failed to initialize session manager with fake client: %v", err)
+			}
+		}
+		sessionManager = k8sSessionManager
+		namespace = k8sSessionManager.GetNamespace()
+		persistenceClient = k8sSessionManager.GetClient()
+		var wrapPersistence bool
+		applicationKVStore, wrapPersistence, err = buildApplicationKVStore(cfg.KVStore, persistenceClient)
+		if err != nil {
+			log.Fatalf("Failed to initialize application KV store: %v", err)
+		}
+		if wrapPersistence {
+			persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
 		}
 	}
-	sessionManager := portrepos.SessionManager(k8sSessionManager)
-	log.Printf("[SERVER] Kubernetes session manager initialized successfully")
-
-	// Build a separate persistence client. The session manager always retains
-	// the raw Kubernetes client; only non-session repositories use this client.
-	persistenceClient := k8sSessionManager.GetClient()
-	applicationKVStore, wrapPersistence, err := buildApplicationKVStore(cfg.KVStore, persistenceClient)
-	if err != nil {
-		log.Fatalf("Failed to initialize application KV store: %v", err)
-	}
-	if wrapPersistence {
-		persistenceClient = kvstore.NewKubernetesAdapter(persistenceClient, applicationKVStore)
-		log.Printf("[SERVER] Non-session persistence initialized with configured KV store")
-	}
-	runtimeProvider := runtimeconfig.New(cfg, applicationKVStore, k8sSessionManager.GetNamespace())
+	runtimeProvider := runtimeconfig.New(cfg, applicationKVStore, namespace)
 	if err := runtimeProvider.Reload(context.Background()); err != nil {
 		log.Printf("[RUNTIME_CONFIG] Failed to load versioned settings; using startup configuration: %v", err)
 	} else if runtimeProvider.Version() > 0 {
 		cfg = runtimeProvider.Current()
 		log.Printf("[RUNTIME_CONFIG] Loaded system settings version %d", runtimeProvider.Version())
 	}
-	k8sSessionManager.SetConfigProvider(runtimeProvider)
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetConfigProvider(runtimeProvider)
+	}
 	runtimeConfigCtx, runtimeConfigCancel := context.WithCancel(context.Background())
 	runtimeProvider.Start(runtimeConfigCtx, 30*time.Second, func(err error) { log.Printf("[RUNTIME_CONFIG] Reload failed: %v", err) })
 	var usageRepo portrepos.UsageRepository
@@ -234,13 +297,12 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 
 	// Initialize cross-pod status synchronisation via Redis (optional).
 	// When Redis is not configured a no-op fallback is used transparently.
-	statusEventRepo := buildStatusEventRepository(cfg)
-	k8sSessionManager.SetStatusEventRepository(statusEventRepo)
-
-	// Wire session-list cache if the status-event repository also implements
-	// SessionListCacheRepository (both Redis and Noop variants do).
-	if listCacheRepo, ok := statusEventRepo.(portrepos.SessionListCacheRepository); ok {
-		k8sSessionManager.SetSessionListCacheRepository(listCacheRepo)
+	if k8sSessionManager != nil {
+		statusEventRepo := buildStatusEventRepository(cfg)
+		k8sSessionManager.SetStatusEventRepository(statusEventRepo)
+		if listCacheRepo, ok := statusEventRepo.(portrepos.SessionListCacheRepository); ok {
+			k8sSessionManager.SetSessionListCacheRepository(listCacheRepo)
+		}
 	}
 
 	// Initialize encryption service registry
@@ -278,54 +340,62 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Initialize settings repository
 	settingsRepo = repositories.NewKubernetesSettingsRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 		encryptionRegistry,
 	)
 	// Set settings repository in session manager for Bedrock integration
-	k8sSessionManager.SetSettingsRepository(settingsRepo)
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetSettingsRepository(settingsRepo)
+	}
 	log.Printf("[SERVER] Settings repository initialized")
 
 	// Initialize credentials repository
 	credentialsRepo := portrepos.CredentialsRepository(repositories.NewKubernetesCredentialsRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	))
 	log.Printf("[SERVER] Credentials repository initialized")
 
 	// Wire the credentials repository into the session manager so that managed
 	// credential files (Codex auth.json, Claude .credentials.json) are read from
 	// the application KV store when embedding files into session pods.
-	k8sSessionManager.SetCredentialsRepository(credentialsRepo)
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetCredentialsRepository(credentialsRepo)
+	}
 	// Initialize share repository
 	shareRepo = repositories.NewKubernetesShareRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	)
 	log.Printf("[SERVER] Share repository initialized")
 
 	// Initialize team config repository
 	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	)
 	// Set team config repository in session manager for service account integration
-	k8sSessionManager.SetTeamConfigRepository(teamConfigRepo)
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetTeamConfigRepository(teamConfigRepo)
+	}
 	log.Printf("[SERVER] Team config repository initialized")
 
 	// Initialize personal API key repository
 	personalAPIKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	)
 	// Set personal API key repository in session manager
-	k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
+	}
 	log.Printf("[SERVER] Personal API key repository initialized")
 
 	// Initialize the named API token repository (multi-token CRUD). It is
 	// backed by one Kubernetes Secret per token.
 	apiTokenRepo := repositories.NewKubernetesAPITokenRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	)
 	log.Printf("[SERVER] API token repository initialized")
 
@@ -352,7 +422,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	default:
 		memoryRepo = repositories.NewKubernetesMemoryRepository(
 			persistenceClient,
-			k8sSessionManager.GetNamespace(),
+			namespace,
 		)
 		log.Printf("[SERVER] Memory repository initialized (backend: kubernetes)")
 	}
@@ -360,36 +430,38 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Initialize sandbox policy repository (Kubernetes ConfigMap-backed)
 	sandboxPolicyRepo := portrepos.SandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	))
-	k8sSessionManager.SetSandboxPolicyRepository(sandboxPolicyRepo)
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetSandboxPolicyRepository(sandboxPolicyRepo)
+	}
 	log.Printf("[SERVER] Sandbox policy repository initialized")
 
 	// Initialize sandbox domain repository (Kubernetes ConfigMap-backed)
 	sandboxDomainRepo := repositories.NewKubernetesSandboxDomainRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	)
 	log.Printf("[SERVER] Sandbox domain repository initialized")
 
 	// Initialize session route repository (Kubernetes Secret-backed)
 	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	)
 	log.Printf("[SERVER] Session route repository initialized")
 
 	// Initialize user file repository (Kubernetes Secret-backed)
 	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	))
 	log.Printf("[SERVER] User file repository initialized")
 
 	// Initialize session profile repository (Kubernetes Secret-backed)
 	sessionProfileRepo := portrepos.SessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(
 		persistenceClient,
-		k8sSessionManager.GetNamespace(),
+		namespace,
 	))
 	log.Printf("[SERVER] Session profile repository initialized")
 
@@ -412,7 +484,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var esmControlTunnel *infraesmcontrol.Tunnel
 	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
 		sessionControlStore = buildSessionControlStore(cfg)
-		if sessionControlStore != nil {
+		if sessionControlStore != nil && k8sSessionManager != nil {
 			k8sSessionManager.SetSessionControlStore(sessionControlStore)
 		}
 		if sessionControlStore != nil {
@@ -452,6 +524,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
 		apiTokenRepo:                apiTokenRepo,
+		namespace:                   namespace,
+		personalAPIKeyRepo:          personalAPIKeyRepo,
 		assetStore:                  assetStore,
 		sessionStateStore:           sessionStateStore,
 		sessionControlStore:         sessionControlStore,
@@ -477,7 +551,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		// Inject ConfigMap-backed team mapping cache (1 user = 1 key in the ConfigMap)
 		teamMappingRepo := repositories.NewKubernetesUserTeamMappingRepository(
 			persistenceClient,
-			k8sSessionManager.GetNamespace(),
+			namespace,
 		)
 		githubAuthProvider.SetTeamMappingRepo(teamMappingRepo)
 		log.Printf("[AUTH_INIT] GitHub auth provider initialized with ConfigMap team mapping cache")
@@ -530,25 +604,20 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		notificationSvc.SetBaseURLResolver(func() string { return runtimeProvider.String("notifications.base_url") })
 		log.Printf("Notification service initialized successfully")
 
-		// Set up subscription secret syncer if Kubernetes mode is enabled
-		if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok {
-			syncer := services.NewKubernetesSubscriptionSecretSyncer(
-				k8sSessionManager.GetClient(),
-				k8sManager.GetNamespace(),
-				notificationSvc.GetStorage(),
-				"", // Use default prefix
-			)
-			notificationSvc.SetSecretSyncer(syncer)
-			// Also use the syncer as the subscription reader so that push notifications
-			// read subscriptions from Kubernetes Secrets rather than local file storage.
-			// This is required in session pods where local storage is empty.
-			notificationSvc.SetSubscriptionReader(syncer)
-			// Use the syncer as the subscription writer so that all subscription mutations
-			// go directly to the Kubernetes Secret, bypassing local file storage entirely.
-			// This prevents subscription loss after pod restarts.
-			notificationSvc.SetSubscriptionWriter(syncer)
-			log.Printf("Subscription secret syncer configured for Kubernetes mode (read+write)")
-		}
+		// Notification subscriptions are application data owned by the API role.
+		// persistenceClient is either the legacy Kubernetes client or the libSQL-backed
+		// compatibility adapter, so this wiring remains independent of the concrete
+		// session-manager implementation and requires no API ServiceAccount token.
+		syncer := services.NewKubernetesSubscriptionSecretSyncer(
+			persistenceClient,
+			namespace,
+			notificationSvc.GetStorage(),
+			"", // Use default prefix
+		)
+		notificationSvc.SetSecretSyncer(syncer)
+		notificationSvc.SetSubscriptionReader(syncer)
+		notificationSvc.SetSubscriptionWriter(syncer)
+		log.Printf("Notification subscription persistence configured (read+write)")
 	}
 
 	// Start cleanup goroutine for defunct processes
@@ -743,6 +812,38 @@ func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Int
 	return replicated, true, nil
 }
 
+func resolveApplicationNamespace(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
+		return namespace
+	}
+	return "default"
+}
+
+func validateAPIKVStore(cfg config.KVStoreConfig) error {
+	backend := configuredKVBackend(cfg)
+	if backend != "libsql" && backend != "kubernetes" {
+		return fmt.Errorf("primary backend must be libsql or kubernetes, got %q", backend)
+	}
+	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" && cfg.Secondary.Backend != "kubernetes" {
+		return fmt.Errorf("secondary backend must be libsql or kubernetes in the API role, got %q", cfg.Secondary.Backend)
+	}
+	return nil
+}
+
+func configuredKVBackend(cfg config.KVStoreConfig) string {
+	backend := cfg.Backend
+	if cfg.Primary != nil {
+		backend = cfg.Primary.Backend
+	}
+	if backend == "" {
+		return "kubernetes"
+	}
+	return backend
+}
+
 func buildKVBackend(cfg config.KVStoreBackendConfig, kubeClient kubernetes.Interface) (kvstore.Store, error) {
 	switch cfg.Backend {
 	case "", "kubernetes":
@@ -826,10 +927,7 @@ func (s *Server) initAPITokenWiring() {
 	if s.apiTokenRepo == nil {
 		return
 	}
-	var personalRepo portrepos.PersonalAPIKeyRepository
-	if k8sMgr, ok := s.sessionManager.(*services.KubernetesSessionManager); ok {
-		personalRepo = k8sMgr.GetPersonalAPIKeyRepository()
-	}
+	personalRepo := s.personalAPIKeyRepo
 	var annotator services.APITokenAnnotator
 	if kr, ok := s.apiTokenRepo.(*repositories.KubernetesAPITokenRepository); ok {
 		annotator = kr
@@ -952,6 +1050,22 @@ func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
 
 // CreateSession creates a new agent session
 func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+	// Identity and TeamConfig mutation belong to the API. The execution-plane
+	// manager receives an already-authorized request and never initializes the
+	// public authentication service.
+	if startReq.Scope == entities.ScopeTeam && startReq.TeamID != "" && s.teamConfigRepo != nil {
+		if simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService); ok {
+			ensurer := serviceaccountuc.NewGetOrCreateServiceAccountUseCase(s.teamConfigRepo, simpleAuth)
+			if err := ensurer.EnsureServiceAccount(context.Background(), startReq.TeamID); err != nil {
+				return nil, fmt.Errorf("ensure team service account: %w", err)
+			}
+		}
+	}
+	if startReq.Scope != entities.ScopeTeam {
+		if err := s.EnsurePersonalAPIKey(context.Background(), userID); err != nil {
+			return nil, fmt.Errorf("ensure personal API key: %w", err)
+		}
+	}
 	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
@@ -1119,6 +1233,31 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return nil, err
 	}
 	return result.Session, nil
+}
+
+func (s *Server) EnsureTeamServiceAccount(ctx context.Context, teamID string) error {
+	if teamID == "" || s.teamConfigRepo == nil {
+		return nil
+	}
+	simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService)
+	if !ok {
+		return errors.New("team service-account auth service is unavailable")
+	}
+	return serviceaccountuc.NewGetOrCreateServiceAccountUseCase(s.teamConfigRepo, simpleAuth).EnsureServiceAccount(ctx, teamID)
+}
+
+func (s *Server) EnsurePersonalAPIKey(ctx context.Context, userID string) error {
+	if userID == "" || s.personalAPIKeyRepo == nil {
+		return nil
+	}
+	key, err := personalapikeyuc.NewGetOrCreatePersonalAPIKeyUseCase(s.personalAPIKeyRepo).Execute(ctx, entities.UserID(userID))
+	if err != nil {
+		return err
+	}
+	if simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService); ok {
+		return simpleAuth.LoadPersonalAPIKey(ctx, key)
+	}
+	return errors.New("personal API-key auth service is unavailable")
 }
 
 // createRemoteSession forwards session creation to an external session manager (External Session Manager).
@@ -1538,7 +1677,10 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.runtimeConfigCancel != nil {
 		s.runtimeConfigCancel()
 	}
-	managerErr := s.sessionManager.Shutdown(timeout)
+	var managerErr error
+	if s.sessionManager != nil {
+		managerErr = s.sessionManager.Shutdown(timeout)
+	}
 	var usageErr error
 	if s.usageRepo != nil {
 		usageErr = s.usageRepo.Close()
