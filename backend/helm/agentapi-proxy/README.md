@@ -137,6 +137,9 @@ that the migrated root image contains the `worker` and `session-manager`
 subcommands; older monolithic images cannot run the separated Deployments.
 Legacy `env` and `envFrom` entries are copied to every role for compatibility;
 remove API-only or worker-only entries after confirming the migration.
+For legacy libSQL configurations without an explicit KV namespace, the
+converter preserves `kubernetesSession.namespace` as the logical namespace so
+existing schedules, profiles, memories, and other resources remain visible.
 
 ### From OCI Registry (Recommended)
 
