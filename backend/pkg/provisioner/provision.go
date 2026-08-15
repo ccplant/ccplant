@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1105,19 +1104,6 @@ func saveManagedFiles(ctx context.Context, client *http.Client, proxyURL, sessio
 		return fmt.Errorf("control API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 	return nil
-}
-
-// sanitizeCredentialSecretName converts a userID into a valid Kubernetes Secret
-// name component (lowercase alphanumeric and dashes only, max 50 chars).
-func sanitizeCredentialSecretName(s string) string {
-	s = strings.ToLower(s)
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	s = re.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) > 50 {
-		s = s[:50]
-	}
-	return s
 }
 
 // runOtelcol starts the OpenTelemetry Collector binary as a subprocess.
