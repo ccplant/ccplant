@@ -514,6 +514,9 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 			return true, nil
 		}
 		_ = directResp.Body.Close()
+		if directResp.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
 		if directResp.StatusCode == http.StatusServiceUnavailable {
 			return false, errSessionStateBackendUnavailable
 		}

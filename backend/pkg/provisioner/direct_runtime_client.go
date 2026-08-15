@@ -54,7 +54,7 @@ func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cf
 }
 
 func (w *directRuntimeWorker) run(ctx context.Context) {
-	cursorPath := "/workspace/.agentapi-direct-runtime-cursor"
+	cursorPath := filepath.Join(os.TempDir(), "agentapi-direct-runtime-cursor")
 	data, _ := os.ReadFile(cursorPath)
 	cursor := strings.TrimSpace(string(data))
 	if cursor == "" {
