@@ -30,8 +30,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM alpine:3.22 AS api
 
 RUN apk add --no-cache ca-certificates tzdata && \
-    addgroup -S -g 999 agentapi && \
-    adduser -S -D -H -u 999 -G agentapi -h /home/agentapi agentapi && \
+    runtime_group="$(awk -F: '$3 == 999 { print $1; exit }' /etc/group)" && \
+    if [ -z "$runtime_group" ]; then addgroup -S -g 999 agentapi; runtime_group=agentapi; fi && \
+    adduser -S -D -H -u 999 -G "$runtime_group" -h /home/agentapi agentapi && \
     mkdir -p /home/agentapi /home/agentapi/workdir && \
     chown -R agentapi:agentapi /home/agentapi
 
