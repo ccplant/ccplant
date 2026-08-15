@@ -34,9 +34,9 @@
 api:
   replicaCount: 1
   image:
-    # Set to ghcr.io/ccplant/ccplant-api for control-plane-only deployments.
-    # Keep the full backend image for direct/local session execution.
-    repository: ghcr.io/ccplant/ccplant-backend
+    # The public API does not need agent CLIs or session tooling.
+    # Use the full backend image only for legacy direct/local execution.
+    repository: ghcr.io/ccplant/ccplant-api
     tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
@@ -999,7 +999,8 @@ kubernetesSession:
     create: true
 
   # Container image for session pods
-  # If empty, uses the same image as the proxy
+  # If empty, uses the full root image (image.repository), not api.image.
+  # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
   image: ""
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)

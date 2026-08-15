@@ -80,8 +80,12 @@ binary, so `backend/public` and source configuration examples are not copied.
 
 The published multi-architecture image is
 `ghcr.io/ccplant/ccplant-api:<release-tag>`. The existing
-`ccplant-backend` image remains the default and is required by worker,
-session-manager, provisioner, and direct/local session modes.
+`ccplant-backend` image remains the session/runtime default and is required by
+worker, session-manager, provisioner, and direct/local session modes. The Helm
+chart uses `ccplant-api` for the backend API Deployment by default. Session Pod
+images can be overridden with the Helm `kubernetesSession.image` value (or
+`sessionManager.kubernetesSession.image` for the dedicated manager), and with
+`AGENTAPI_K8S_SESSION_IMAGE` when running without Helm.
 
 ## Usage
 

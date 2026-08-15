@@ -8,13 +8,13 @@ global:
 
 backend:
   enabled: true
+  # Full runtime image used by session pods and compatibility workloads.
   image:
     repository: ghcr.io/ccplant/ccplant-backend
-  # Opt in to the lightweight control-plane image when session execution runs
-  # in dedicated session-manager/worker deployments:
-  # api:
-  #   image:
-  #     repository: ghcr.io/ccplant/ccplant-api
+  # Lightweight image used only by the backend API Deployment.
+  api:
+    image:
+      repository: ghcr.io/ccplant/ccplant-api
   ingress:
     enabled: false
 

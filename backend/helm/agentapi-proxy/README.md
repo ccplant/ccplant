@@ -176,15 +176,16 @@ The command removes all the Kubernetes components associated with the chart and 
 
 | Name                | Description                       | Value                                      |
 | ------------------- | --------------------------------- | ------------------------------------------ |
-| `api.image.repository` | API image repository | `ghcr.io/ccplant/ccplant-backend` |
+| `api.image.repository` | API image repository | `ghcr.io/ccplant/ccplant-api` |
 | `worker.image.repository` | Worker image repository | `ghcr.io/ccplant/ccplant-backend` |
 | `sessionManager.image.repository` | Session-manager image repository | `ghcr.io/ccplant/ccplant-backend` |
+| `kubernetesSession.image` | Legacy in-process session Pod image; empty uses the full root image | `""` |
+| `sessionManager.kubernetesSession.image` | Dedicated manager session Pod image; empty uses the full session-manager image | `""` |
 
 An empty role image tag uses the chart's `appVersion`.
 
-For deployments where agent execution and session management run in dedicated
-worker/session-manager pods or externally, select the lightweight API image
-without changing the compatibility-sensitive worker images:
+The default separates the lightweight API image from the compatibility-sensitive
+worker, session-manager, and session runtime images:
 
 ```yaml
 api:
@@ -202,6 +203,20 @@ sessionManager:
 The API-only image does not contain agent CLIs, Docker/GitHub tooling, or the
 session runtime. Do not select it for worker, session-manager, provisioner, or
 direct/local session execution roles.
+
+Override these independently from CI/CD environment variables by passing them
+to Helm, for example:
+
+```bash
+helm upgrade --install backend ./backend/helm/agentapi-proxy \
+  --set-string api.image.repository="${BACKEND_API_IMAGE_REPOSITORY}" \
+  --set-string kubernetesSession.image="${SESSION_IMAGE}"
+```
+
+When running `ccplant` without Helm, `AGENTAPI_K8S_SESSION_IMAGE` selects the
+session Pod image directly. A container cannot change its own Kubernetes image
+from an environment variable; use `api.image.repository`/`api.image.tag` to
+select the backend API Deployment image.
 
 ### Deployment parameters
 

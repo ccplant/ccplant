@@ -36,12 +36,17 @@ assert_contains '^  name: "?control"?$' "$TMP_DIR/backend-default.yaml"
 assert_contains 'helm.sh/resource-policy: keep' "$TMP_DIR/backend-default.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy' "$TMP_DIR/backend-default.yaml"
 assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-default.yaml"
+assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/backend-default.yaml"
 assert_contains 'args: \["server"\]' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: Role$' "$TMP_DIR/backend-default.yaml"
 assert_not_contains '^kind: RoleBinding$' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
+
+# The umbrella chart keeps the full image as the session/runtime fallback while
+# selecting the lightweight image only for the API Deployment.
+assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant-default.yaml"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
@@ -180,6 +185,8 @@ assert_not_contains 'name: "manager-internal"' "$TMP_DIR/backend-worker-deployme
 assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-worker-deployment.yaml"
 
 assert_contains 'image: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'value: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'args: \["session-manager", "--port", "8080"\]' "$TMP_DIR/backend-session-manager-deployment.yaml"
