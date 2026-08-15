@@ -132,14 +132,23 @@ export class PushNotificationManager {
   }
 
   async unsubscribe(): Promise<boolean> {
-    if (!this.subscription) {
-      console.warn('アクティブなサブスクリプションがありません');
-      return false;
-    }
-
     try {
-      await this.subscription.unsubscribe();
-      await this.removeSubscriptionFromServer(this.subscription);
+      // The in-memory subscription is lost after a reload even when the browser
+      // still has one. Recover it before deciding that there is nothing to remove.
+      if (!this.subscription && this.registration) {
+        this.subscription = await this.registration.pushManager.getSubscription();
+      }
+
+      // A stale local "enabled" flag must not prevent the user from resetting
+      // notification settings when both browser and server subscriptions are gone.
+      if (!this.subscription) {
+        console.warn('アクティブなサブスクリプションがないため、ローカル設定のみリセットします');
+        return true;
+      }
+
+      const subscription = this.subscription;
+      await subscription.unsubscribe();
+      await this.removeSubscriptionFromServer(subscription);
       this.subscription = null;
       console.log('プッシュサブスクリプション削除成功');
       return true;
@@ -188,7 +197,9 @@ export class PushNotificationManager {
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     });
 
-    if (!response.ok) {
+    // Deleting an already-missing server record is an idempotent success. This
+    // commonly happens after server-side subscription storage is reset.
+    if (!response.ok && response.status !== 404) {
       throw new Error('サブスクリプション削除に失敗しました');
     }
   }
