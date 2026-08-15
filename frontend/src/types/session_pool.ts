@@ -6,9 +6,17 @@ export interface ClusterSessionManager {
   last_heartbeat_at?: string
 }
 
-export interface SessionPool {
+export interface LogicalSessionPool {
   name: string
+  labels?: Record<string, string>
+  default?: boolean
+  enabled: boolean
+}
+
+export interface SessionPoolSupplier {
+  pool: string
   manager_id: string
+  labels?: Record<string, string>
   min_idle?: number
   max_runners?: number
   enabled: boolean

@@ -78,7 +78,7 @@ import {
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
-import { ClusterSessionManager, SessionPool, SessionPoolBinding } from '../types/session_pool';
+import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 function defaultClientDebugEnabled(): boolean {
@@ -2942,12 +2942,21 @@ export class AgentAPIProxyClient {
     return this.makeRequest('/admin/session-managers', { method: 'POST', body: JSON.stringify({ name }) });
   }
 
-  async listSessionPools(): Promise<SessionPool[]> {
-    const result = await this.makeRequest<{ session_pools: SessionPool[] }>('/admin/session-pools');
+  async listSessionPools(): Promise<LogicalSessionPool[]> {
+    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/admin/session-pools');
     return result.session_pools;
   }
 
-  async createSessionPool(managerID: string, input: Pick<SessionPool, 'name' | 'min_idle' | 'max_runners'>): Promise<SessionPool> {
+  async createSessionPool(input: Pick<LogicalSessionPool, 'name'> & Partial<Pick<LogicalSessionPool, 'labels' | 'default'>>): Promise<LogicalSessionPool> {
+    return this.makeRequest('/admin/session-pools', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async listSessionPoolSuppliers(managerID: string): Promise<SessionPoolSupplier[]> {
+    const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`);
+    return result.pool_suppliers;
+  }
+
+  async createSessionPoolSupplier(managerID: string, input: Pick<SessionPoolSupplier, 'pool' | 'min_idle' | 'max_runners'>): Promise<SessionPoolSupplier> {
     return this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`, { method: 'POST', body: JSON.stringify(input) });
   }
 
