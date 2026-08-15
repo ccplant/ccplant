@@ -34,6 +34,13 @@ type StockManager interface {
 	PurgeStaleStockSessions(context.Context) error
 }
 
+// PoolStockManager is implemented by managers that maintain independent idle
+// runner inventories for named logical pools.
+type PoolStockManager interface {
+	CreateStockSessionForPool(context.Context, string, bool) error
+	CountStockSessionsForPool(context.Context, string, bool) (int, error)
+}
+
 // PendingAllocationDeleter removes a local allocation that has not been claimed.
 type PendingAllocationDeleter interface {
 	DeletePendingSessionAllocation(context.Context, string) (bool, error)
@@ -313,15 +320,36 @@ func (h *Handler) stock(c echo.Context) error {
 		return unsupported(c, "stock sessions are not supported")
 	}
 	dind, _ := strconv.ParseBool(c.QueryParam("dind"))
+	pool := strings.TrimSpace(c.QueryParam("pool"))
 	switch c.Request().Method {
 	case http.MethodGet:
-		count, err := manager.CountStockSessions(c.Request().Context(), dind)
+		var count int
+		var err error
+		if pool != "" {
+			named, supported := h.manager.(PoolStockManager)
+			if !supported {
+				return unsupported(c, "named stock pools are not supported")
+			}
+			count, err = named.CountStockSessionsForPool(c.Request().Context(), pool, dind)
+		} else {
+			count, err = manager.CountStockSessions(c.Request().Context(), dind)
+		}
 		if err != nil {
 			return internalError(c, err)
 		}
 		return c.JSON(http.StatusOK, stockCountResponse{Count: count})
 	case http.MethodPost:
-		if err := manager.CreateStockSession(c.Request().Context(), dind); err != nil {
+		var err error
+		if pool != "" {
+			named, supported := h.manager.(PoolStockManager)
+			if !supported {
+				return unsupported(c, "named stock pools are not supported")
+			}
+			err = named.CreateStockSessionForPool(c.Request().Context(), pool, dind)
+		} else {
+			err = manager.CreateStockSession(c.Request().Context(), dind)
+		}
+		if err != nil {
 			return internalError(c, err)
 		}
 		return c.NoContent(http.StatusCreated)

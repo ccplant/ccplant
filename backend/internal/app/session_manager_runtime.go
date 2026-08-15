@@ -3,11 +3,14 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
@@ -54,6 +58,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	manager, err := services.NewKubernetesSessionManager(cfg, verbose, logger.NewLogger())
 	if err != nil {
 		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
+	}
+	if cfg.SessionManager.RunnerPool != "" {
+		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
 	}
 
 	persistence := manager.GetClient()
@@ -205,15 +212,74 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		}
 	}, allocator.Stop)
 
-	if cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != "" {
+	if cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != "" && cfg.SessionManager.RunnerPool == "" {
 		upstream := externalmanager.NewAllocatorWorker(manager, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, cfg.SessionManager.PublicURL)
 		go upstream.Start(runtimeCtx)
 		instanceID, _ := os.Hostname()
 		control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", "", instanceID, cfg.SessionManager.HMACSecret)
 		go control.Start(runtimeCtx)
 	}
+	if cfg.SessionManager.RunnerPool != "" && cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ID != "" && cfg.SessionManager.ConnectionToken != "" {
+		go runSessionRunnerManagerHeartbeat(runtimeCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
+	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, token string, manager *services.KubernetesSessionManager) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+token)
+			if resp, doErr := client.Do(req); doErr != nil {
+				log.Printf("[SESSION_MANAGER] Runner pool heartbeat failed: %v", doErr)
+			} else {
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					log.Printf("[SESSION_MANAGER] Runner pool heartbeat returned HTTP %d", resp.StatusCode)
+					_ = resp.Body.Close()
+				} else {
+					var result struct {
+						Pools []*sessionrunnercore.Pool `json:"pools"`
+					}
+					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
+						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
+					}
+					_ = resp.Body.Close()
+					reconcileSessionRunnerPools(ctx, manager, result.Pools)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func reconcileSessionRunnerPools(ctx context.Context, manager *services.KubernetesSessionManager, pools []*sessionrunnercore.Pool) {
+	for _, pool := range pools {
+		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
+			continue
+		}
+		idle := pool.IdleRunners
+		total, err := manager.CountRunnerSessionsForPool(ctx, pool.Name)
+		if err != nil {
+			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Name, err)
+			continue
+		}
+		for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
+			if err := manager.CreateStockSessionForPool(ctx, pool.Name, false); err != nil {
+				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Name, err)
+				break
+			}
+			idle++
+			total++
+		}
+	}
 }
 
 func newSessionManagerEncryptionRegistry() (*services.EncryptionServiceRegistry, error) {

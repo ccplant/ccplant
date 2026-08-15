@@ -78,6 +78,7 @@ import {
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
+import { ClusterSessionManager, SessionPool, SessionPoolBinding } from '../types/session_pool';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 function defaultClientDebugEnabled(): boolean {
@@ -2930,6 +2931,37 @@ export class AgentAPIProxyClient {
 
   async listAdminSettingsVersions(): Promise<AdminSettingsVersionsResponse> {
     return this.makeRequest<AdminSettingsVersionsResponse>('/admin/system-settings/versions');
+  }
+
+  async listClusterSessionManagers(): Promise<ClusterSessionManager[]> {
+    const result = await this.makeRequest<{ session_managers: ClusterSessionManager[] }>('/admin/session-managers');
+    return result.session_managers;
+  }
+
+  async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; connection_token: string }> {
+    return this.makeRequest('/admin/session-managers', { method: 'POST', body: JSON.stringify({ name }) });
+  }
+
+  async listSessionPools(): Promise<SessionPool[]> {
+    const result = await this.makeRequest<{ session_pools: SessionPool[] }>('/admin/session-pools');
+    return result.session_pools;
+  }
+
+  async createSessionPool(managerID: string, input: Pick<SessionPool, 'name' | 'min_idle' | 'max_runners'>): Promise<SessionPool> {
+    return this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async listSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
+    const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`);
+    return result.pool_bindings;
+  }
+
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team', subjectID: string): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID }) });
+  }
+
+  async deleteSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
+    await this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
   }
 }
 

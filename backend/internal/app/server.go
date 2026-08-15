@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ import (
 	corerepo "github.com/takutakahashi/agentapi-proxy/internal/core/repository"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	infraesmcontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/esmcontrol"
@@ -37,6 +39,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	infrasessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionmanagerapi"
+	infrasessionrunner "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	personalapikeyuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -78,6 +81,7 @@ type Server struct {
 	sandboxPolicyRepo           portrepos.SandboxPolicyRepository               // Sandbox policy repository
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
+	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
 	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
 	apiTokenRepo                portrepos.APITokenRepository                    // Named API token repository
@@ -450,6 +454,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		namespace,
 	)
 	log.Printf("[SERVER] Session route repository initialized")
+	sessionRunnerStore := infrasessionrunner.NewKubernetesStore(persistenceClient, namespace)
+	log.Printf("[SERVER] Session runner pool repository initialized")
 
 	// Initialize user file repository (Kubernetes Secret-backed)
 	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(
@@ -521,6 +527,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sandboxPolicyRepo:           sandboxPolicyRepo,
 		sandboxDomainRepo:           sandboxDomainRepo,
 		sessionRouteRepo:            sessionRouteRepo,
+		sessionRunnerStore:          sessionRunnerStore,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
 		apiTokenRepo:                apiTokenRepo,
@@ -1047,6 +1054,15 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
+	if s.sessionRunnerStore != nil {
+		pool, err := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second).Resolve(context.Background(), userID, teams, startReq.Tags)
+		if err != nil {
+			return nil, fmt.Errorf("select session pool: %w", err)
+		}
+		if pool != nil {
+			return s.createPoolSession(context.Background(), pool.Name, sessionID, startReq, userID, teams)
+		}
+	}
 
 	// If no ManagerID is specified, check for a default external session manager.
 	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
@@ -1210,6 +1226,70 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return nil, err
 	}
 	return result.Session, nil
+}
+
+func (s *Server) createPoolSession(ctx context.Context, pool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
+	var initialMessage, agentType, credentialSource string
+	var oneshot bool
+	var authProxy *bool
+	var unsyncedFilePaths []string
+	if startReq.Params != nil {
+		initialMessage = startReq.Params.Message
+		agentType = startReq.Params.AgentType
+		oneshot = startReq.Params.Oneshot
+		authProxy = startReq.Params.AuthProxy
+		credentialSource = startReq.Params.CredentialSource
+		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
+	}
+	runReq := &entities.RunServerRequest{
+		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
+		AgentType: agentType, Oneshot: oneshot, Environment: startReq.Environment,
+		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
+		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
+		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
+		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
+		ProfileMCPServers: startReq.ProfileMCPServers,
+	}
+	var settings *sessionsettings.SessionSettings
+	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
+		settings, _ = builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq)
+	}
+	if settings == nil {
+		settings = &sessionsettings.SessionSettings{
+			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Oneshot: oneshot, Teams: teams, MemoryKey: startReq.MemoryKey},
+			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: unsyncedFilePaths,
+		}
+	}
+	settingsRaw, err := json.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("marshal pool provision settings: %w", err)
+	}
+	token, tokenHash, err := newDirectRuntimeToken()
+	if err != nil {
+		return nil, fmt.Errorf("create pool runtime credential: %w", err)
+	}
+	allocation := &sessionrunnercore.Allocation{
+		SessionID: sessionID, Pool: pool, Generation: 1,
+		Requirements: map[string]string{"agent_type": agentType}, RuntimeToken: token,
+		RuntimeTokenHash: tokenHash, ProvisionSettings: settingsRaw,
+	}
+	if err := s.sessionRunnerStore.Enqueue(ctx, allocation); err != nil {
+		return nil, fmt.Errorf("enqueue session pool allocation: %w", err)
+	}
+	startedAt := time.Now().UTC()
+	tags := startReq.Tags
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	tags["allocator.pool"] = pool
+	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
+		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
+		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
+		TeamID: startReq.TeamID, Tags: tags, StartedAt: startedAt, InitialMessage: initialMessage,
+	}); err != nil {
+		return nil, fmt.Errorf("save pending pool session route: %w", err)
+	}
+	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, tags, startedAt, "creating"), nil
 }
 
 func (s *Server) EnsureTeamServiceAccount(ctx context.Context, teamID string) error {

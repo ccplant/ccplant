@@ -286,6 +286,16 @@ sessionManager:
     hmacSecretRef:
       name: ""
       key: hmac-secret
+  # Cluster-wide runner mode. The manager owns idle runner inventory for this
+  # logical pool; each runner claims work directly from the parent API.
+  runner:
+    enabled: false
+    managerId: ""
+    pool: ""
+    upstreamUrl: ""
+    connectionTokenSecretRef:
+      name: ""
+      key: connection-token
   # Credential accepted only by the session-manager internal API. The API
   # client references the same Secret independently under api.sessionManager.
   internalApi:

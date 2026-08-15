@@ -41,6 +41,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 const active = pathname === href
                 return <Link key={section.id} href={href} className={`block rounded-md px-3 py-2 text-sm font-medium ${active ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700'}`}>{section.title}</Link>
               })}
+              <Link href="/admin/pools" className={`block rounded-md px-3 py-2 text-sm font-medium ${pathname === '/admin/pools' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700'}`}>Session Pools</Link>
               <Link href="/admin/history" className={`block rounded-md px-3 py-2 text-sm font-medium ${pathname === '/admin/history' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700'}`}>変更履歴</Link>
             </nav>
           </aside>

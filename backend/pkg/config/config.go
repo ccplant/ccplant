@@ -205,6 +205,8 @@ type StockInventoryWorkerConfig struct {
 // Note: Sandbox (network filter) and scia sidecar are now always enabled.
 // Only DockerEnabled remains configurable.
 type StockInventoryPoolConfig struct {
+	// Name is the logical session pool claimed directly by idle runners.
+	Name string `json:"name" mapstructure:"name"`
 	// TargetCount is the desired number of stock sessions for this capability pool.
 	TargetCount int `json:"target_count" mapstructure:"target_count"`
 	// DockerEnabled controls whether stock sessions include the Docker-in-Docker sidecar.
@@ -449,6 +451,10 @@ type SessionManagerConfig struct {
 	// ConnectionToken authenticates this manager to 親プロキシ's allocator endpoint.
 	// Can also be set via SESSION_MANAGER_CONNECTION_TOKEN.
 	ConnectionToken string `json:"connection_token" mapstructure:"connection_token"`
+	// ID identifies this manager in the cluster-wide registry.
+	ID string `json:"id" mapstructure:"id"`
+	// RunnerPool enables GitHub Actions-style runner claim mode for stock pods.
+	RunnerPool string `json:"runner_pool" mapstructure:"runner_pool"`
 	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
 	// to this manager when the outbound control lease is unavailable.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
@@ -688,6 +694,7 @@ func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig,
 
 	pools := make([]StockInventoryPoolConfig, 0, len(rawPools))
 	for _, rawPool := range rawPools {
+		name, _ := rawPool["name"].(string)
 		targetCount, err := jsonInt(rawPool, "target_count", "targetCount")
 		if err != nil {
 			return nil, err
@@ -698,6 +705,7 @@ func parseStockInventoryPoolsJSON(poolsJSON string) ([]StockInventoryPoolConfig,
 		}
 
 		pools = append(pools, StockInventoryPoolConfig{
+			Name:          name,
 			TargetCount:   targetCount,
 			DockerEnabled: dockerEnabled,
 		})
@@ -1147,6 +1155,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.hmac_secret", "AGENTAPI_SESSION_MANAGER_HMAC_SECRET", "SESSION_MANAGER_HMAC_SECRET")
 	_ = v.BindEnv("session_manager.upstream_url", "AGENTAPI_SESSION_MANAGER_UPSTREAM_URL", "SESSION_MANAGER_UPSTREAM_URL")
 	_ = v.BindEnv("session_manager.connection_token", "AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN", "SESSION_MANAGER_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.id", "AGENTAPI_SESSION_MANAGER_ID", "SESSION_MANAGER_ID")
+	_ = v.BindEnv("session_manager.runner_pool", "AGENTAPI_SESSION_MANAGER_RUNNER_POOL", "SESSION_MANAGER_RUNNER_POOL")
 	_ = v.BindEnv("session_manager.public_url", "AGENTAPI_SESSION_MANAGER_PUBLIC_URL", "SESSION_MANAGER_PUBLIC_URL")
 	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
 	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")

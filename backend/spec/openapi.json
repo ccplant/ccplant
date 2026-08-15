@@ -5246,10 +5246,99 @@
           }
         }
       }
+    },
+    "/available-session-pools": {
+      "get": {
+        "summary": "List session pools available to the authenticated user",
+        "operationId": "listAvailableSessionPools",
+        "tags": ["Session Pools"],
+        "responses": {"200": {"description": "Authorized and healthy logical pools", "content": {"application/json": {"schema": {"type": "object", "properties": {"session_pools": {"type": "array", "items": {"$ref": "#/components/schemas/SessionPool"}}}}}}}}
+      }
+    },
+    "/session-pool-preference": {
+      "put": {
+        "summary": "Set the default session pool for a user or team",
+        "operationId": "putSessionPoolPreference",
+        "tags": ["Session Pools"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPoolPreference"}}}},
+        "responses": {"200": {"description": "Preference saved"}, "403": {"description": "Pool is not bound to the subject"}}
+      }
+    },
+    "/admin/session-managers": {
+      "get": {"summary": "List cluster-wide session managers", "operationId": "listSessionManagers", "tags": ["Session Pools"], "responses": {"200": {"description": "Manager registry"}}},
+      "post": {
+        "summary": "Register a cluster-wide session manager",
+        "description": "Returns the manager connection token once. Store it in the manager's Secret.",
+        "operationId": "createSessionManager", "tags": ["Session Pools"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionManagerCreate"}}}},
+        "responses": {"201": {"description": "Manager and one-time connection token"}}
+      }
+    },
+    "/admin/session-managers/{id}": {
+      "patch": {
+        "summary": "Enable, disable, or drain a session manager", "operationId": "patchSessionManager", "tags": ["Session Pools"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}},
+        "responses": {"200": {"description": "Updated manager"}}
+      }
+    },
+    "/admin/session-managers/{id}/pools": {
+      "post": {
+        "summary": "Declare a logical pool supplied by a manager", "operationId": "createSessionPool", "tags": ["Session Pools"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPool"}}}},
+        "responses": {"201": {"description": "Pool created"}}
+      }
+    },
+    "/admin/session-managers/{id}/pools/{pool}": {
+      "patch": {
+        "summary": "Update pool inventory or drain settings", "operationId": "patchSessionPool", "tags": ["Session Pools"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}},
+        "responses": {"200": {"description": "Pool updated"}}
+      }
+    },
+    "/admin/session-pools": {
+      "get": {"summary": "List pool suppliers", "operationId": "listSessionPools", "tags": ["Session Pools"], "responses": {"200": {"description": "Pools grouped by logical name"}}}
+    },
+    "/admin/session-pools/{pool}/bindings": {
+      "get": {
+        "summary": "List user/team bindings for a logical pool", "operationId": "listSessionPoolBindings", "tags": ["Session Pools"],
+        "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Pool bindings"}}
+      },
+      "post": {
+        "summary": "Bind a logical pool to a user or team", "operationId": "createSessionPoolBinding", "tags": ["Session Pools"],
+        "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPoolBinding"}}}},
+        "responses": {"201": {"description": "Binding created"}}
+      }
+    },
+    "/admin/session-pools/{pool}/bindings/{bindingId}": {
+      "delete": {
+        "summary": "Remove a pool binding", "operationId": "deleteSessionPoolBinding", "tags": ["Session Pools"],
+        "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "bindingId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"204": {"description": "Binding removed"}}
+      }
     }
   },
   "components": {
     "schemas": {
+      "SessionManagerCreate": {
+        "type": "object", "required": ["name"],
+        "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "capabilities": {"type": "array", "items": {"type": "string"}}, "enabled": {"type": "boolean", "default": true}}
+      },
+      "SessionPool": {
+        "type": "object", "required": ["name"],
+        "properties": {"name": {"type": "string", "description": "Logical pool name shared by one or more managers"}, "manager_id": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "min_idle": {"type": "integer", "minimum": 0}, "max_runners": {"type": "integer", "minimum": 0}, "enabled": {"type": "boolean", "default": true}, "draining": {"type": "boolean"}, "default": {"type": "boolean"}}
+      },
+      "SessionPoolBinding": {
+        "type": "object", "required": ["subject_type", "subject_id"],
+        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team"]}, "subject_id": {"type": "string"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}}
+      },
+      "SessionPoolPreference": {
+        "type": "object",
+        "properties": {"subject_type": {"type": "string", "enum": ["user", "team"], "default": "user"}, "subject_id": {"type": "string"}, "enabled": {"type": "boolean", "default": true}, "default_pool": {"type": "string"}, "fallback": {"type": "string"}}
+      },
       "AdminSettingsDocument": {
         "type": "object",
         "required": ["schema_version", "version", "sections", "secret_configured"],
@@ -8423,6 +8512,10 @@
     {
       "name": "API Tokens",
       "description": "Named, revocable API tokens for personal users and teams. Plaintext secrets are returned only once on creation; list/get responses expose only metadata and a short token_prefix. Scope uses the public vocabulary 'personal'/'team'. Legacy GET/POST /users/me/api-key is preserved for backward compatibility."
+    },
+    {
+      "name": "Session Pools",
+      "description": "Cluster-wide session manager registry, logical runner pools, and user/team PoolBindings."
     }
   ]
 }

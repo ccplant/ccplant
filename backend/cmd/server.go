@@ -475,6 +475,7 @@ func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, de
 		}
 		// Note: Sandbox (network filter) is always enabled - SandboxEnabled is ignored.
 		pools = append(pools, stock_inventory.StockPool{
+			Name:        poolConfig.Name,
 			TargetCount: targetCount,
 			Requirements: stock_inventory.StockRequirements{
 				DinD: poolConfig.DockerEnabled,
