@@ -47,6 +47,46 @@ make build
 docker pull ghcr.io/takutakahashi/agentapi-proxy:latest
 ```
 
+### API-only container
+
+Use the API-only image when agent execution and session tooling are hosted by
+separate workers/session managers. The image contains only the statically linked
+`ccplant` binary, CA certificates, and timezone data; it runs as UID/GID 999 and
+does not include Claude, Codex, Cursor, Docker, mise, uv, GitHub MCP, otelcol,
+Git, or shell-based session tooling.
+
+```bash
+# Build locally (linux/amd64 or linux/arm64)
+docker build --target api -t ccplant-api:local backend
+
+# Run with the default file-backed store
+docker run --rm -p 8080:8080 \
+  -e AGENTAPI_KV_STORE_BACKEND=libsql \
+  -e AGENTAPI_KV_STORE_DATABASE_URL=file:///tmp/agentapi-api.db \
+  ccplant-api:local
+
+curl --fail http://localhost:8080/health
+```
+
+Production deployments should set `AGENTAPI_KV_STORE_BACKEND` and
+`AGENTAPI_KV_STORE_DATABASE_URL` (plus `AGENTAPI_KV_STORE_AUTH_TOKEN` when the
+database requires one). Set `AGENTAPI_SESSION_MANAGER_API_URL` and
+`AGENTAPI_SESSION_MANAGER_API_TOKEN` when session execution is remote.
+Authentication, Redis, encryption, asset storage, and provider-specific environment variables remain
+feature-dependent; the Helm chart renders these from `api.*` values. Mount a
+JSON/YAML config and add `server --config /path/to/config` only when file-based
+configuration is preferred. Static API/OpenAPI content is embedded in the Go
+binary, so `backend/public` and source configuration examples are not copied.
+
+The published multi-architecture image is
+`ghcr.io/ccplant/ccplant-api:<release-tag>`. The existing
+`ccplant-backend` image remains the session/runtime default and is required by
+session-manager, provisioner, and direct/local session modes. The Helm chart
+uses `ccplant-api` for the backend API and worker Deployments by default.
+Session Pod images can be overridden with the Helm `kubernetesSession.image`
+value (or `sessionManager.kubernetesSession.image` for the dedicated manager),
+and with `AGENTAPI_K8S_SESSION_IMAGE` when running without Helm.
+
 ## Usage
 
 Grafana Cloud Application Observability 向けの OpenTelemetry 設定は

@@ -22,6 +22,55 @@ jobs:
       - run: go build ./...
         working-directory: backend
 
+  api-image:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API-only image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          platforms: ${{ matrix.platform }}
+          push: false
+          cache-from: type=gha,scope=api-image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=api-image-${{ matrix.arch }}
+      - name: Smoke-test API-only image
+        if: matrix.arch == 'amd64'
+        run: |
+          docker build --target api --tag ccplant-api:test ./backend
+          container_id=$(docker run --detach --publish 127.0.0.1::8080 ccplant-api:test)
+          trap 'docker rm --force "$container_id" >/dev/null' EXIT
+          host_port=$(docker port "$container_id" 8080/tcp | sed 's/.*://')
+          for attempt in {1..30}; do
+            if curl --fail --silent "http://127.0.0.1:${host_port}/health" >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 1
+          done
+          docker run --rm ccplant-api:test worker --help >/dev/null
+          test "$(docker exec "$container_id" id -u)" = 999
+          for command in claude codex cursor-agent docker git mise uv github-mcp-server otelcol; do
+            if docker exec "$container_id" sh -c "command -v $command"; then
+              echo "unexpected runtime tool: $command"
+              exit 1
+            fi
+          done
+
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -125,6 +174,16 @@ jobs:
           tags: ghcr.io/${{ matrix.image }}:dev.ccplant.${{ github.event.pull_request.head.sha }}
           cache-from: type=gha,scope=dev-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=dev-${{ matrix.component }}
+      - name: Build and push development API image
+        if: matrix.component == 'backend'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          push: true
+          tags: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha,scope=dev-api
+          cache-to: type=gha,mode=max,scope=dev-api
       - uses: azure/setup-helm@v4
         with:
           version: v3.18.4
