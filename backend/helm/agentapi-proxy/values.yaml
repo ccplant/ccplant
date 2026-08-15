@@ -34,6 +34,8 @@
 api:
   replicaCount: 1
   image:
+    # Set to ghcr.io/ccplant/ccplant-api for control-plane-only deployments.
+    # Keep the full backend image for direct/local session execution.
     repository: ghcr.io/ccplant/ccplant-backend
     tag: ""
     pullPolicy: IfNotPresent
@@ -149,6 +151,7 @@ worker:
   enabled: false
   replicaCount: 1
   image:
+    # Workers require the full backend image; the API-only image is unsupported.
     repository: ghcr.io/ccplant/ccplant-backend
     tag: ""
     pullPolicy: IfNotPresent

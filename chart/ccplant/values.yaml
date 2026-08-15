@@ -10,6 +10,11 @@ backend:
   enabled: true
   image:
     repository: ghcr.io/ccplant/ccplant-backend
+  # Opt in to the lightweight control-plane image when session execution runs
+  # in dedicated session-manager/worker deployments:
+  # api:
+  #   image:
+  #     repository: ghcr.io/ccplant/ccplant-api
   ingress:
     enabled: false
 

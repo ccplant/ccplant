@@ -182,6 +182,27 @@ The command removes all the Kubernetes components associated with the chart and 
 
 An empty role image tag uses the chart's `appVersion`.
 
+For deployments where agent execution and session management run in dedicated
+worker/session-manager pods or externally, select the lightweight API image
+without changing the compatibility-sensitive worker images:
+
+```yaml
+api:
+  image:
+    repository: ghcr.io/ccplant/ccplant-api
+
+worker:
+  image:
+    repository: ghcr.io/ccplant/ccplant-backend
+sessionManager:
+  image:
+    repository: ghcr.io/ccplant/ccplant-backend
+```
+
+The API-only image does not contain agent CLIs, Docker/GitHub tooling, or the
+session runtime. Do not select it for worker, session-manager, provisioner, or
+direct/local session execution roles.
+
 ### Deployment parameters
 
 | Name                    | Description                                      | Value |
