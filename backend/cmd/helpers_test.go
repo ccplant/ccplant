@@ -28,7 +28,6 @@ func TestHelpersInit(t *testing.T) {
 	}
 
 	assert.Contains(t, commandNames, "setup-claude-code")
-	assert.Contains(t, commandNames, "init")
 	assert.Contains(t, commandNames, "generate-token")
 	assert.Contains(t, commandNames, "setup-gh")
 	assert.Contains(t, commandNames, "compile-settings")
@@ -285,22 +284,11 @@ func TestSetupClaudeCodeCmdStructure(t *testing.T) {
 	assert.NotNil(t, setupClaudeCodeCmd.Run)
 }
 
-func TestInitCmdStructure(t *testing.T) {
-	assert.Equal(t, "init", initCmd.Use)
-	assert.Equal(t, "Initialize Claude configuration (alias for setup-claude-code)", initCmd.Short)
-	assert.NotNil(t, initCmd.Run)
-
-	// Verify both commands have run functions (cannot directly compare functions)
-	assert.NotNil(t, setupClaudeCodeCmd.Run)
-	assert.NotNil(t, initCmd.Run)
-}
-
 func TestRunSetupClaudeCodeHomeDir(t *testing.T) {
 	// Test that the function can get the home directory
 	// We can't easily test the full function since it creates files,
 	// but we can verify the function exists and has the right structure
 	assert.NotNil(t, setupClaudeCodeCmd.Run)
-	assert.NotNil(t, initCmd.Run)
 }
 
 func TestHelpersRun(t *testing.T) {

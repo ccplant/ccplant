@@ -81,7 +81,7 @@ type Server struct {
 	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
 	apiTokenRepo                portrepos.APITokenRepository                    // Named API token repository
-	apiTokenDeps                *apiTokenInitDeps                               // Wiring for migration/bootstrap/reconcile
+	apiTokenDeps                *apiTokenInitDeps                               // Wiring for bootstrap/reconcile
 	assetStore                  services.AssetStore                             // Static asset storage backend
 	sessionStateStore           services.SessionStateStore
 	sessionControlStore         sessioncontrol.Store
@@ -909,10 +909,7 @@ func (s *Server) setupRoutes() {
 // InitAPITokens) without re-deriving them. Keeping them on the Server also
 // lets tests drive initialization explicitly.
 type apiTokenInitDeps struct {
-	authService    *services.SimpleAuthService
-	personalRepo   portrepos.PersonalAPIKeyRepository
-	teamConfigRepo portrepos.TeamConfigRepository
-	annotator      services.APITokenAnnotator
+	authService *services.SimpleAuthService
 }
 
 // initAPITokenWiring records the auth service and derives the repositories
@@ -927,16 +924,8 @@ func (s *Server) initAPITokenWiring() {
 	if s.apiTokenRepo == nil {
 		return
 	}
-	personalRepo := s.personalAPIKeyRepo
-	var annotator services.APITokenAnnotator
-	if kr, ok := s.apiTokenRepo.(*repositories.KubernetesAPITokenRepository); ok {
-		annotator = kr
-	}
 	s.apiTokenDeps = &apiTokenInitDeps{
-		authService:    simpleAuth,
-		personalRepo:   personalRepo,
-		teamConfigRepo: s.teamConfigRepo,
-		annotator:      annotator,
+		authService: simpleAuth,
 	}
 	// Wire the repository into the auth service so the background reconciler
 	// can keep named tokens consistent across replicas. Legacy static and
@@ -944,16 +933,7 @@ func (s *Server) initAPITokenWiring() {
 	simpleAuth.SetAPITokenRepository(s.apiTokenRepo)
 }
 
-// InitAPITokens runs the idempotent legacy→multi-token migration and loads all
-// named API tokens into the in-memory auth service. It is the fail-safe
-// startup step for the API token subsystem: any migration conflict (e.g. a
-// deterministic migration ID already in use with a different secret),
-// annotation error, or bootstrap load error is returned so the caller can
-// refuse to serve traffic instead of running with a partially migrated or
-// partially loaded auth map. It is safe to call multiple times thanks to the
-// migration's idempotent AlreadyExists handling and the bootstrap's
-// overwrite-on-load semantics. Not calling it (e.g. in tests) simply leaves
-// the named-token subsystem un-bootstrapped; legacy auth paths still work.
+// InitAPITokens loads named API tokens into the in-memory auth service.
 func (s *Server) InitAPITokens(ctx context.Context) error {
 	if s.apiTokenRepo == nil || s.apiTokenDeps == nil {
 		return nil
@@ -961,9 +941,6 @@ func (s *Server) InitAPITokens(ctx context.Context) error {
 	deps := s.apiTokenDeps
 	if deps.authService == nil {
 		return nil
-	}
-	if err := services.MigrateAPITokens(ctx, deps.authService, s.apiTokenRepo, deps.personalRepo, deps.teamConfigRepo, deps.annotator); err != nil {
-		return fmt.Errorf("api token migration: %w", err)
 	}
 	if err := services.BootstrapAPITokens(ctx, deps.authService, s.apiTokenRepo); err != nil {
 		return fmt.Errorf("api token bootstrap: %w", err)
