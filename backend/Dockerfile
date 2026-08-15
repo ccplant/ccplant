@@ -34,7 +34,7 @@ RUN apk add --no-cache ca-certificates tzdata && \
     if [ -z "$runtime_group" ]; then addgroup -S -g 999 agentapi; runtime_group=agentapi; fi && \
     adduser -S -D -H -u 999 -G "$runtime_group" -h /home/agentapi agentapi && \
     mkdir -p /home/agentapi /home/agentapi/workdir && \
-    chown -R agentapi:agentapi /home/agentapi
+    chown -R 999:999 /home/agentapi
 
 COPY --from=builder /app/bin/ccplant /usr/local/bin/ccplant
 
