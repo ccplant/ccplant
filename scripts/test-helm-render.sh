@@ -48,6 +48,14 @@ assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
 # selecting the lightweight image only for the API Deployment.
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant-default.yaml"
 
+"$HELM_BIN" template backend-worker-default "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set worker.enabled=true \
+  --set api.workerControl.tokenSecretRef.name=worker-control \
+  --set worker.controlApi.tokenSecretRef.name=worker-control \
+  --set worker.kvStore.databaseUrl=file:///tmp/worker.db \
+  --set worker.redis.addr=redis:6379 >"$TMP_DIR/backend-worker-default.yaml"
+assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/backend-worker-default.yaml"
+
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-default.yaml"

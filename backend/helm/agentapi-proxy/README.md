@@ -177,15 +177,16 @@ The command removes all the Kubernetes components associated with the chart and 
 | Name                | Description                       | Value                                      |
 | ------------------- | --------------------------------- | ------------------------------------------ |
 | `api.image.repository` | API image repository | `ghcr.io/ccplant/ccplant-api` |
-| `worker.image.repository` | Worker image repository | `ghcr.io/ccplant/ccplant-backend` |
+| `worker.image.repository` | Worker image repository | `ghcr.io/ccplant/ccplant-api` |
 | `sessionManager.image.repository` | Session-manager image repository | `ghcr.io/ccplant/ccplant-backend` |
 | `kubernetesSession.image` | Legacy in-process session Pod image; empty uses the full root image | `""` |
 | `sessionManager.kubernetesSession.image` | Dedicated manager session Pod image; empty uses the full session-manager image | `""` |
 
 An empty role image tag uses the chart's `appVersion`.
 
-The default separates the lightweight API image from the compatibility-sensitive
-worker, session-manager, and session runtime images:
+The default uses the lightweight image for the API and background worker while
+keeping the compatibility-sensitive session-manager and session runtime on the
+full image:
 
 ```yaml
 api:
@@ -194,15 +195,15 @@ api:
 
 worker:
   image:
-    repository: ghcr.io/ccplant/ccplant-backend
+    repository: ghcr.io/ccplant/ccplant-api
 sessionManager:
   image:
     repository: ghcr.io/ccplant/ccplant-backend
 ```
 
 The API-only image does not contain agent CLIs, Docker/GitHub tooling, or the
-session runtime. Do not select it for worker, session-manager, provisioner, or
-direct/local session execution roles.
+session runtime. It supports the API and worker commands, but must not be used
+for session-manager, provisioner, or direct/local session execution roles.
 
 Override these independently from CI/CD environment variables by passing them
 to Helm, for example:

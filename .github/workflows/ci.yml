@@ -62,6 +62,7 @@ jobs:
             fi
             sleep 1
           done
+          docker run --rm ccplant-api:test worker --help >/dev/null
           test "$(docker exec "$container_id" id -u)" = 999
           for command in claude codex cursor-agent docker git mise uv github-mcp-server otelcol; do
             if docker exec "$container_id" sh -c "command -v $command"; then

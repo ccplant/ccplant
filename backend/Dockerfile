@@ -25,8 +25,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/ccplant main.go
 
-# Lightweight runtime for control-plane API deployments. Session execution,
-# worker, and session-manager processes must continue to use the full image.
+# Lightweight runtime for control-plane API and background worker deployments.
+# Session execution and session-manager processes continue to use the full image.
 FROM alpine:3.22 AS api
 
 RUN apk add --no-cache ca-certificates tzdata && \

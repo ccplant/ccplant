@@ -151,8 +151,8 @@ worker:
   enabled: false
   replicaCount: 1
   image:
-    # Workers require the full backend image; the API-only image is unsupported.
-    repository: ghcr.io/ccplant/ccplant-backend
+    # Workers only need the ccplant binary and share the lightweight API image.
+    repository: ghcr.io/ccplant/ccplant-api
     tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
