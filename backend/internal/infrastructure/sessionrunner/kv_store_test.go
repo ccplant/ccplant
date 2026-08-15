@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestKubernetesStorePoolBindings(t *testing.T) {
+func TestKVStorePoolBindings(t *testing.T) {
 	ctx := context.Background()
 	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	require.NoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "manager-a", Enabled: true}))
@@ -35,9 +35,9 @@ func TestKubernetesStorePoolBindings(t *testing.T) {
 	require.Equal(t, "linux", preference.DefaultPool)
 }
 
-func TestKubernetesStoreClaimIsAtomicAndFenced(t *testing.T) {
+func TestKVStoreClaimIsAtomicAndFenced(t *testing.T) {
 	ctx := context.Background()
-	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	store := newVersionedTestStore(t)
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux"}))
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-b", ManagerID: "manager-b", Pool: "linux"}))
 	require.NoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}))
@@ -71,9 +71,9 @@ func TestKubernetesStoreClaimIsAtomicAndFenced(t *testing.T) {
 	require.Equal(t, core.AllocationClaimed, acked.Status)
 }
 
-func TestKubernetesStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
+func TestKVStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
 	ctx := context.Background()
-	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	store := newVersionedTestStore(t)
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux"}))
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-b", ManagerID: "manager-b", Pool: "linux"}))
 	now := time.Now().UTC()
@@ -92,3 +92,86 @@ func TestKubernetesStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
 	_, err = store.Acknowledge(ctx, first.SessionID, first.RunnerID, first.LeaseID)
 	require.True(t, errors.Is(err, core.ErrConflict))
 }
+
+func newVersionedTestStore(t *testing.T) *Store {
+	t.Helper()
+	return NewStore(&versionedMemoryStore{records: make(map[string]kvstore.Record)}, "test")
+}
+
+type versionedMemoryStore struct {
+	mu      sync.Mutex
+	records map[string]kvstore.Record
+}
+
+func recordKey(kind kvstore.Kind, namespace, key string) string {
+	return string(kind) + "\x00" + namespace + "\x00" + key
+}
+
+func cloneRecord(record kvstore.Record) kvstore.Record {
+	record.Value = append([]byte(nil), record.Value...)
+	return record
+}
+
+func (s *versionedMemoryStore) Create(_ context.Context, record kvstore.Record) (kvstore.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := recordKey(record.Kind, record.Namespace, record.Key)
+	if _, exists := s.records[key]; exists {
+		return kvstore.Record{}, kvstore.ErrConflict
+	}
+	record.Version = 1
+	s.records[key] = cloneRecord(record)
+	return cloneRecord(record), nil
+}
+
+func (s *versionedMemoryStore) Update(_ context.Context, record kvstore.Record) (kvstore.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := recordKey(record.Kind, record.Namespace, record.Key)
+	current, exists := s.records[key]
+	if !exists || current.Version != record.Version {
+		return kvstore.Record{}, kvstore.ErrConflict
+	}
+	record.Version++
+	s.records[key] = cloneRecord(record)
+	return cloneRecord(record), nil
+}
+
+func (s *versionedMemoryStore) Get(_ context.Context, kind kvstore.Kind, namespace, key string) (kvstore.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, exists := s.records[recordKey(kind, namespace, key)]
+	if !exists {
+		return kvstore.Record{}, kvstore.ErrNotFound
+	}
+	return cloneRecord(record), nil
+}
+
+func (s *versionedMemoryStore) Delete(_ context.Context, kind kvstore.Kind, namespace, key string, version int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mapKey := recordKey(kind, namespace, key)
+	record, exists := s.records[mapKey]
+	if !exists {
+		return kvstore.ErrNotFound
+	}
+	if record.Version != version {
+		return kvstore.ErrConflict
+	}
+	delete(s.records, mapKey)
+	return nil
+}
+
+func (s *versionedMemoryStore) List(_ context.Context, query kvstore.Query) ([]kvstore.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]kvstore.Record, 0)
+	for _, record := range s.records {
+		if record.Kind == query.Kind && record.Namespace == query.Namespace {
+			result = append(result, cloneRecord(record))
+		}
+	}
+	return result, nil
+}
+
+func (s *versionedMemoryStore) Close() error { return nil }
