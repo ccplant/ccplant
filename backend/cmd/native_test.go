@@ -274,7 +274,7 @@ func TestDiscoverNativeInstancesListsDefaultAndNamed(t *testing.T) {
 	}
 	sharedBinary := "/usr/local/libexec/agentapi-proxy/ccplant"
 	writeConfig := func(path, instance, binary string) {
-		cfg := nativeDaemonConfig{ManagerID: "mgr-" + instance, UpstreamURL: "https://parent", PublicURL: "https://child", StateDir: filepath.Join(filepath.Dir(path), "state"), BinaryPath: binary}
+		cfg := nativeDaemonConfig{ManagerID: "mgr-" + instance, UpstreamURL: "https://parent", StateDir: filepath.Join(filepath.Dir(path), "state"), BinaryPath: binary}
 		data, err := json.Marshal(cfg)
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(path, data, 0o600))

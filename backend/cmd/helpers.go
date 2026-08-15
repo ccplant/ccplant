@@ -31,7 +31,6 @@ var HelpersCmd = &cobra.Command{
 		fmt.Println("  setup-claude-code - Setup Claude Code configuration")
 		fmt.Println("  generate-token - Generate API keys for agentapi-proxy authentication")
 		fmt.Println("  generate-setting - SlackBot 設定から session settings JSON を組み立てて出力する")
-		fmt.Println("  init - Initialize Claude configuration (alias for setup-claude-code)")
 		fmt.Println("  setup-gh - Setup GitHub authentication using gh CLI")
 		fmt.Println("  send-notification - Send push notifications to registered subscriptions")
 		fmt.Println("  merge-mcp-config - Merge multiple MCP server configuration directories")
@@ -49,13 +48,6 @@ var setupClaudeCodeCmd = &cobra.Command{
 	Use:   "setup-claude-code",
 	Short: "Setup Claude Code configuration",
 	Long:  "Creates Claude Code configuration directory and settings file at ~/.claude/settings.json",
-	Run:   runSetupClaudeCode,
-}
-
-var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize Claude configuration (alias for setup-claude-code)",
-	Long:  "Creates Claude Code configuration directory and settings file at ~/.claude/settings.json, and merges config/claude.json into ~/.claude.json",
 	Run:   runSetupClaudeCode,
 }
 
@@ -200,7 +192,6 @@ func init() {
 	}
 
 	HelpersCmd.AddCommand(setupClaudeCodeCmd)
-	HelpersCmd.AddCommand(initCmd)
 	HelpersCmd.AddCommand(generateTokenCmd)
 	HelpersCmd.AddCommand(setupGHCmd)
 	HelpersCmd.AddCommand(sendNotificationCmd)

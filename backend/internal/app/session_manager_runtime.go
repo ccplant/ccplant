@@ -186,19 +186,6 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
 	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
-	if cfg.SessionManager.HMACSecret != "" {
-		legacy := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret)
-		if err := legacy.RegisterRoutes(e); err != nil {
-			runtimeCancel()
-			_ = redisClient.Close()
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("register legacy manager routes: %w", err)
-		}
-	}
-
 	localClient := newLocalAllocationClient(manager, sessionRouteRepo)
 	allocator := allocationworker.NewWorker(manager, localClient)
 	lease := durationOr(cfg.SessionManager.Allocation.LeaseDuration, 15*time.Second)

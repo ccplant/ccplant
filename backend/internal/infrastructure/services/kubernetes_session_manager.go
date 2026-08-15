@@ -4934,14 +4934,11 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		}
 	}
 
-	// Parse last-message-at from annotations (fallback to slack-last-message-at for backward compat)
+	// Parse last-message-at from annotations.
 	lastMessageAt := createdAt // Default to createdAt if not set
-	for _, key := range []string{"agentapi.proxy/last-message-at", "agentapi.proxy/slack-last-message-at"} {
-		if v, ok := svc.Annotations[key]; ok && v != "" {
-			if parsed, err := time.Parse(time.RFC3339, v); err == nil {
-				lastMessageAt = parsed
-				break
-			}
+	if v, ok := svc.Annotations["agentapi.proxy/last-message-at"]; ok && v != "" {
+		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+			lastMessageAt = parsed
 		}
 	}
 
@@ -5065,14 +5062,11 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 		}
 	}
 
-	// Parse last-message-at from annotations (fallback to slack-last-message-at for backward compat)
+	// Parse last-message-at from annotations.
 	lastMessageAt := createdAt // Default to createdAt if not set
-	for _, key := range []string{"agentapi.proxy/last-message-at", "agentapi.proxy/slack-last-message-at"} {
-		if v, ok := svc.Annotations[key]; ok && v != "" {
-			if parsed, err := time.Parse(time.RFC3339, v); err == nil {
-				lastMessageAt = parsed
-				break
-			}
+	if v, ok := svc.Annotations["agentapi.proxy/last-message-at"]; ok && v != "" {
+		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+			lastMessageAt = parsed
 		}
 	}
 

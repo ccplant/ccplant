@@ -48,7 +48,6 @@ type nativeDaemonConfig struct {
 	ConnectionToken       string                        `json:"connection_token"`
 	CredentialsPath       string                        `json:"credentials_path,omitempty"`
 	UpstreamAuthToken     string                        `json:"upstream_auth_token,omitempty"`
-	PublicURL             string                        `json:"public_url,omitempty"` // legacy config input; outbound control does not use it
 	StateDir              string                        `json:"state_dir"`
 	BinaryPath            string                        `json:"binary_path,omitempty"`
 	ManagerID             string                        `json:"manager_id,omitempty"`

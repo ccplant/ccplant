@@ -45,9 +45,8 @@ func DefaultCleanupWorkerConfig() CleanupWorkerConfig {
 }
 
 // CleanupWorker periodically deletes Slackbot sessions whose last message is older
-// than SessionTTL. It uses the agentapi.proxy/last-message-at annotation
-// (with fallback to the legacy agentapi.proxy/slack-last-message-at annotation)
-// to determine when the last message occurred.
+// than SessionTTL. It uses the agentapi.proxy/last-message-at annotation to
+// determine when the last message occurred.
 type CleanupWorker struct {
 	sessionManager portrepos.SessionManager
 	config         CleanupWorkerConfig
@@ -284,11 +283,6 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	}
 }
 
-// resolveReferenceTime returns the reference time for TTL calculation.
-// It prefers the unified last-message-at annotation and falls back to the
-// legacy slack-last-message-at annotation for sessions created before the
-// unified annotation was introduced.  Sessions without either annotation
-// are skipped to avoid inadvertently deleting unrelated sessions.
 // LeaderCleanupWorker combines leader election with the Slackbot cleanup worker.
 // Only the elected leader runs the cleanup loop, preventing duplicate deletions
 // in multi-replica deployments.
