@@ -173,6 +173,16 @@ jobs:
           tags: ghcr.io/${{ matrix.image }}:dev.ccplant.${{ github.event.pull_request.head.sha }}
           cache-from: type=gha,scope=dev-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=dev-${{ matrix.component }}
+      - name: Build and push development API image
+        if: matrix.component == 'backend'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          push: true
+          tags: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha,scope=dev-api
+          cache-to: type=gha,mode=max,scope=dev-api
       - uses: azure/setup-helm@v4
         with:
           version: v3.18.4
