@@ -109,12 +109,34 @@ func (c *SessionPoolController) PatchManager(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, redactManager(manager))
 }
 
-func (c *SessionPoolController) CreatePool(ctx echo.Context) error {
+func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	var pool core.Pool
+	var supplier core.PoolSupplier
+	supplier.Enabled = true
+	if err := ctx.Bind(&supplier); err != nil || strings.TrimSpace(supplier.Pool) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "pool name is required")
+	}
+	if problems := validation.IsValidLabelValue(supplier.Pool); len(problems) > 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
+	}
+	if _, err := c.store.GetLogicalPool(ctx.Request().Context(), supplier.Pool); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	if supplier.MinIdle < 0 || supplier.MaxRunners < 0 || (supplier.MaxRunners > 0 && supplier.MinIdle > supplier.MaxRunners) {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid runner limits")
+	}
+	supplier.ManagerID = manager.ID
+	if err := c.store.CreatePoolSupplier(ctx.Request().Context(), &supplier); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.JSON(http.StatusCreated, &supplier)
+}
+
+func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
+	var pool core.LogicalPool
 	pool.Enabled = true
 	if err := ctx.Bind(&pool); err != nil || strings.TrimSpace(pool.Name) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name is required")
@@ -122,26 +144,65 @@ func (c *SessionPoolController) CreatePool(ctx echo.Context) error {
 	if problems := validation.IsValidLabelValue(pool.Name); len(problems) > 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
 	}
-	if pool.MinIdle < 0 || pool.MaxRunners < 0 || (pool.MaxRunners > 0 && pool.MinIdle > pool.MaxRunners) {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid runner limits")
-	}
-	pool.ManagerID = manager.ID
-	if err := c.store.CreatePool(ctx.Request().Context(), &pool); err != nil {
+	if err := c.store.CreateLogicalPool(ctx.Request().Context(), &pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusCreated, &pool)
 }
 
+func (c *SessionPoolController) ListPoolSuppliers(ctx echo.Context) error {
+	suppliers, err := c.store.ListPoolSuppliers(ctx.Request().Context())
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	managerID := ctx.Param("id")
+	result := make([]*core.PoolSupplier, 0)
+	for _, supplier := range suppliers {
+		if managerID == "" || supplier.ManagerID == managerID {
+			result = append(result, supplier)
+		}
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"pool_suppliers": result})
+}
+
 func (c *SessionPoolController) ListPools(ctx echo.Context) error {
-	pools, err := c.store.ListPools(ctx.Request().Context())
+	pools, err := c.store.ListLogicalPools(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"session_pools": pools})
 }
 
-func (c *SessionPoolController) PatchPool(ctx echo.Context) error {
-	pool, err := c.store.GetPool(ctx.Request().Context(), ctx.Param("id"), ctx.Param("pool"))
+func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
+	pool, err := c.store.GetLogicalPool(ctx.Request().Context(), ctx.Param("pool"))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	var patch struct {
+		Labels    map[string]string `json:"labels,omitempty"`
+		Enabled   *bool             `json:"enabled,omitempty"`
+		IsDefault *bool             `json:"default,omitempty"`
+	}
+	if err := ctx.Bind(&patch); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	if patch.Labels != nil {
+		pool.Labels = patch.Labels
+	}
+	if patch.Enabled != nil {
+		pool.Enabled = *patch.Enabled
+	}
+	if patch.IsDefault != nil {
+		pool.IsDefault = *patch.IsDefault
+	}
+	if err := c.store.UpdateLogicalPool(ctx.Request().Context(), pool); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.JSON(http.StatusOK, pool)
+}
+
+func (c *SessionPoolController) PatchPoolSupplier(ctx echo.Context) error {
+	pool, err := c.store.GetPoolSupplier(ctx.Request().Context(), ctx.Param("id"), ctx.Param("pool"))
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -151,7 +212,6 @@ func (c *SessionPoolController) PatchPool(ctx echo.Context) error {
 		MaxRunners *int              `json:"max_runners,omitempty"`
 		Enabled    *bool             `json:"enabled,omitempty"`
 		Draining   *bool             `json:"draining,omitempty"`
-		IsDefault  *bool             `json:"default,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -171,13 +231,10 @@ func (c *SessionPoolController) PatchPool(ctx echo.Context) error {
 	if patch.Draining != nil {
 		pool.Draining = *patch.Draining
 	}
-	if patch.IsDefault != nil {
-		pool.IsDefault = *patch.IsDefault
-	}
 	if pool.MinIdle < 0 || pool.MaxRunners < 0 || (pool.MaxRunners > 0 && pool.MinIdle > pool.MaxRunners) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid runner limits")
 	}
-	if err := c.store.UpdatePool(ctx.Request().Context(), pool); err != nil {
+	if err := c.store.UpdatePoolSupplier(ctx.Request().Context(), pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, pool)
@@ -296,7 +353,7 @@ func (c *SessionPoolController) RegisterRunner(ctx echo.Context) error {
 	if err := ctx.Bind(&input); err != nil || input.Pool == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool is required")
 	}
-	pool, err := c.store.GetPool(ctx.Request().Context(), manager.ID, input.Pool)
+	pool, err := c.store.GetPoolSupplier(ctx.Request().Context(), manager.ID, input.Pool)
 	if err != nil || !pool.Enabled || pool.Draining {
 		return echo.NewHTTPError(http.StatusForbidden, "pool is unavailable")
 	}
@@ -304,7 +361,7 @@ func (c *SessionPoolController) RegisterRunner(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create runner token")
 	}
-	runner := &core.Runner{ID: input.RunnerID, ManagerID: manager.ID, Pool: pool.Name, TokenHash: tokenHash, Status: core.RunnerIdle, PodName: input.PodName, Namespace: input.Namespace}
+	runner := &core.Runner{ID: input.RunnerID, ManagerID: manager.ID, Pool: pool.Pool, TokenHash: tokenHash, Status: core.RunnerIdle, PodName: input.PodName, Namespace: input.Namespace}
 	if err := c.store.CreateRunner(ctx.Request().Context(), runner); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -393,11 +450,11 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	pools, err := c.store.ListPools(ctx.Request().Context())
+	pools, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	owned := make([]*core.Pool, 0)
+	owned := make([]*core.PoolSupplier, 0)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -406,7 +463,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		if pool.ManagerID == manager.ID {
 			copy := *pool
 			for _, runner := range runners {
-				if runner.ManagerID != manager.ID || runner.Pool != pool.Name {
+				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
 				}
 				copy.TotalRunners++
@@ -439,16 +496,8 @@ func (c *SessionPoolController) authenticateRunner(ctx echo.Context) (*core.Runn
 }
 
 func (c *SessionPoolController) ensureLogicalPoolExists(ctx context.Context, name string) error {
-	pools, err := c.store.ListPools(ctx)
-	if err != nil {
-		return err
-	}
-	for _, pool := range pools {
-		if pool.Name == name {
-			return nil
-		}
-	}
-	return core.ErrNotFound
+	_, err := c.store.GetLogicalPool(ctx, name)
+	return err
 }
 
 func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocation *core.Allocation, runner *core.Runner) error {

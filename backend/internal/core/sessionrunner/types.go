@@ -27,15 +27,24 @@ type Manager struct {
 	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
-type Pool struct {
-	Name         string            `json:"name"`
+type LogicalPool struct {
+	Name      string            `json:"name"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	Enabled   bool              `json:"enabled"`
+	IsDefault bool              `json:"default,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// PoolSupplier describes a manager's capacity for a logical pool.
+type PoolSupplier struct {
+	Pool         string            `json:"pool"`
 	ManagerID    string            `json:"manager_id"`
 	Labels       map[string]string `json:"labels,omitempty"`
 	MinIdle      int               `json:"min_idle,omitempty"`
 	MaxRunners   int               `json:"max_runners,omitempty"`
 	Enabled      bool              `json:"enabled"`
 	Draining     bool              `json:"draining,omitempty"`
-	IsDefault    bool              `json:"default,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 	IdleRunners  int               `json:"idle_runners,omitempty"`

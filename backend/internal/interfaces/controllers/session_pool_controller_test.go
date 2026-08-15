@@ -10,12 +10,13 @@ import (
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	infra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
-	store := infra.NewKubernetesStore(fake.NewSimpleClientset(), "test")
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
 
 	managerResult := callSessionPoolHandler(t, controller.CreateManager, http.MethodPost, "/admin/session-managers",
@@ -34,12 +35,17 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 		t.Fatalf("created manager not persisted: %v, body=%s", err, managerResult.Body.String())
 	}
 
-	poolResult := callSessionPoolHandler(t, controller.CreatePool, http.MethodPost, "/admin/session-managers/manager-a/pools",
-		map[string]any{"name": "linux", "min_idle": 1, "max_runners": 2}, map[string]string{"id": "manager-a"}, nil)
+	logicalPoolResult := callSessionPoolHandler(t, controller.CreateLogicalPool, http.MethodPost, "/admin/session-pools",
+		map[string]any{"name": "linux"}, nil, nil)
+	if logicalPoolResult.Code != http.StatusCreated {
+		t.Fatalf("create logical pool status=%d body=%s", logicalPoolResult.Code, logicalPoolResult.Body.String())
+	}
+	poolResult := callSessionPoolHandler(t, controller.CreatePoolSupplier, http.MethodPost, "/admin/session-managers/manager-a/pools",
+		map[string]any{"pool": "linux", "min_idle": 1, "max_runners": 2}, map[string]string{"id": "manager-a"}, nil)
 	if poolResult.Code != http.StatusCreated {
 		t.Fatalf("create pool status=%d body=%s", poolResult.Code, poolResult.Body.String())
 	}
-	pool, err := store.GetPool(context.Background(), "manager-a", "linux")
+	pool, err := store.GetPoolSupplier(context.Background(), "manager-a", "linux")
 	if err != nil || !pool.Enabled {
 		t.Fatalf("pool should default enabled: pool=%+v err=%v", pool, err)
 	}

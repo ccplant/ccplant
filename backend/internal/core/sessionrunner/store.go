@@ -19,11 +19,17 @@ type Store interface {
 	UpdateManager(context.Context, *Manager) error
 	DeleteManager(context.Context, string) error
 
-	CreatePool(context.Context, *Pool) error
-	GetPool(context.Context, string, string) (*Pool, error)
-	ListPools(context.Context) ([]*Pool, error)
-	UpdatePool(context.Context, *Pool) error
-	DeletePool(context.Context, string, string) error
+	CreateLogicalPool(context.Context, *LogicalPool) error
+	GetLogicalPool(context.Context, string) (*LogicalPool, error)
+	ListLogicalPools(context.Context) ([]*LogicalPool, error)
+	UpdateLogicalPool(context.Context, *LogicalPool) error
+	DeleteLogicalPool(context.Context, string) error
+
+	CreatePoolSupplier(context.Context, *PoolSupplier) error
+	GetPoolSupplier(context.Context, string, string) (*PoolSupplier, error)
+	ListPoolSuppliers(context.Context) ([]*PoolSupplier, error)
+	UpdatePoolSupplier(context.Context, *PoolSupplier) error
+	DeletePoolSupplier(context.Context, string, string) error
 
 	CreateBinding(context.Context, *Binding) error
 	ListBindings(context.Context, string) ([]*Binding, error)

@@ -242,7 +242,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
-						Pools []*sessionrunnercore.Pool `json:"pools"`
+						Pools []*sessionrunnercore.PoolSupplier `json:"pools"`
 					}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
@@ -260,20 +260,20 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 	}
 }
 
-func reconcileSessionRunnerPools(ctx context.Context, manager *services.KubernetesSessionManager, pools []*sessionrunnercore.Pool) {
+func reconcileSessionRunnerPools(ctx context.Context, manager *services.KubernetesSessionManager, pools []*sessionrunnercore.PoolSupplier) {
 	for _, pool := range pools {
 		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
 			continue
 		}
 		idle := pool.IdleRunners
-		total, err := manager.CountRunnerSessionsForPool(ctx, pool.Name)
+		total, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
 		if err != nil {
-			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Name, err)
+			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
 			continue
 		}
 		for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
-			if err := manager.CreateStockSessionForPool(ctx, pool.Name, false); err != nil {
-				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Name, err)
+			if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
+				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)
 				break
 			}
 			idle++

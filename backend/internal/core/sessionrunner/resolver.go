@@ -18,8 +18,8 @@ func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func (r *Resolver) AvailablePools(ctx context.Context, userID string, teams []string) ([]*Pool, error) {
-	pools, err := r.store.ListPools(ctx)
+func (r *Resolver) AvailablePools(ctx context.Context, userID string, teams []string) ([]*LogicalPool, error) {
+	pools, err := r.store.ListLogicalPools(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -31,15 +31,24 @@ func (r *Resolver) AvailablePools(ctx context.Context, userID string, teams []st
 	if err != nil {
 		return nil, err
 	}
+	suppliers, err := r.store.ListPoolSuppliers(ctx)
+	if err != nil {
+		return nil, err
+	}
 	managerByID := make(map[string]*Manager, len(managers))
 	for _, manager := range managers {
 		managerByID[manager.ID] = manager
 	}
 	allowed := allowedPoolNames(bindings, userID, teams)
-	result := make([]*Pool, 0, len(pools))
+	healthy := make(map[string]bool)
+	for _, supplier := range suppliers {
+		if supplier.Enabled && !supplier.Draining && r.managerAvailable(managerByID[supplier.ManagerID]) {
+			healthy[supplier.Pool] = true
+		}
+	}
+	result := make([]*LogicalPool, 0, len(pools))
 	for _, pool := range pools {
-		manager := managerByID[pool.ManagerID]
-		if !allowed[pool.Name] || !pool.Enabled || pool.Draining || !r.managerAvailable(manager) {
+		if !allowed[pool.Name] || !pool.Enabled || !healthy[pool.Name] {
 			continue
 		}
 		result = append(result, pool)
@@ -47,7 +56,7 @@ func (r *Resolver) AvailablePools(ctx context.Context, userID string, teams []st
 	return result, nil
 }
 
-func (r *Resolver) Resolve(ctx context.Context, userID string, teams []string, tags map[string]string) (*Pool, error) {
+func (r *Resolver) Resolve(ctx context.Context, userID string, teams []string, tags map[string]string) (*LogicalPool, error) {
 	available, err := r.AvailablePools(ctx, userID, teams)
 	if err != nil {
 		return nil, err
@@ -66,7 +75,7 @@ func (r *Resolver) Resolve(ctx context.Context, userID string, teams []string, t
 			}
 		}
 	}
-	var candidates []*Pool
+	var candidates []*LogicalPool
 	for _, pool := range available {
 		if requested != "" && pool.Name != requested {
 			continue
@@ -85,9 +94,7 @@ func (r *Resolver) Resolve(ctx context.Context, userID string, teams []string, t
 		}
 		return nil, nil
 	}
-	// Stable ordering makes placement deterministic until load-aware scoring is
-	// added. Multiple managers may provide the same logical pool.
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ManagerID < candidates[j].ManagerID })
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
 	return candidates[0], nil
 }
 
@@ -121,7 +128,7 @@ func allowedPoolNames(bindings []*Binding, userID string, teams []string) map[st
 	return allowed
 }
 
-func poolMatchesTags(pool *Pool, tags map[string]string) bool {
+func poolMatchesTags(pool *LogicalPool, tags map[string]string) bool {
 	for key, value := range tags {
 		if !strings.HasPrefix(key, "allocator.") || key == "allocator.pool" {
 			continue

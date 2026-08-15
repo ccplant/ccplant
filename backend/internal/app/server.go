@@ -454,7 +454,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		namespace,
 	)
 	log.Printf("[SERVER] Session route repository initialized")
-	sessionRunnerStore := infrasessionrunner.NewKubernetesStore(persistenceClient, namespace)
+	sessionRunnerKVStore := applicationKVStore
+	if sessionRunnerKVStore == nil {
+		sessionRunnerKVStore = kvstore.NewKubernetesStore(persistenceClient)
+	}
+	sessionRunnerStore := infrasessionrunner.NewStore(sessionRunnerKVStore, namespace)
 	log.Printf("[SERVER] Session runner pool repository initialized")
 
 	// Initialize user file repository (Kubernetes Secret-backed)

@@ -9,17 +9,19 @@ import (
 
 	"github.com/stretchr/testify/require"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestKubernetesStorePoolBindings(t *testing.T) {
 	ctx := context.Background()
-	store := NewKubernetesStore(fake.NewSimpleClientset(), "test")
+	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	require.NoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "manager-a", Enabled: true}))
-	require.NoError(t, store.CreatePool(ctx, &core.Pool{Name: "linux", ManagerID: "manager-a", Enabled: true}))
+	require.NoError(t, store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}))
+	require.NoError(t, store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: "manager-a", Enabled: true}))
 	require.NoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true, Priority: 10}))
 
-	pools, err := store.ListPools(ctx)
+	pools, err := store.ListLogicalPools(ctx)
 	require.NoError(t, err)
 	require.Len(t, pools, 1)
 	bindings, err := store.ListBindings(ctx, "linux")
@@ -35,7 +37,7 @@ func TestKubernetesStorePoolBindings(t *testing.T) {
 
 func TestKubernetesStoreClaimIsAtomicAndFenced(t *testing.T) {
 	ctx := context.Background()
-	store := NewKubernetesStore(fake.NewSimpleClientset(), "test")
+	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux"}))
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-b", ManagerID: "manager-b", Pool: "linux"}))
 	require.NoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}))
@@ -71,7 +73,7 @@ func TestKubernetesStoreClaimIsAtomicAndFenced(t *testing.T) {
 
 func TestKubernetesStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
 	ctx := context.Background()
-	store := NewKubernetesStore(fake.NewSimpleClientset(), "test")
+	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux"}))
 	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-b", ManagerID: "manager-b", Pool: "linux"}))
 	now := time.Now().UTC()
