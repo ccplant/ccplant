@@ -23,7 +23,16 @@ jobs:
         working-directory: backend
 
   api-image:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -32,11 +41,12 @@ jobs:
         with:
           context: ./backend
           target: api
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: false
-          cache-from: type=gha,scope=api-image
-          cache-to: type=gha,mode=max,scope=api-image
+          cache-from: type=gha,scope=api-image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=api-image-${{ matrix.arch }}
       - name: Smoke-test API-only image
+        if: matrix.arch == 'amd64'
         run: |
           docker build --target api --tag ccplant-api:test ./backend
           container_id=$(docker run --detach --publish 127.0.0.1::8080 ccplant-api:test)
