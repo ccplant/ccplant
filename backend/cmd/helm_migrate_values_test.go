@@ -106,6 +106,26 @@ kubernetesSession: {enabled: false}
 	}
 }
 
+func TestRunHelmMigrateValuesPreservesLegacyLibSQLLogicalNamespace(t *testing.T) {
+	input := `config: {kvStore: {backend: libsql, databaseUrlSecretRef: {name: db, key: url}}}
+kubernetesSession: {enabled: true, namespace: existing-resources}
+`
+	var stdout bytes.Buffer
+	o := &helmMigrateValuesOptions{input: "-", output: "-", namespace: "release-namespace", release: "backend", workerControlSecret: "w", managerInternalSecret: "m", encryptionSecret: "e", provisionerSecret: "p"}
+	if err := runHelmMigrateValues(strings.NewReader(input), &stdout, &bytes.Buffer{}, o); err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := yaml.Unmarshal(stdout.Bytes(), &values); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"api", "worker", "sessionManager"} {
+		if got := stringValue(nestedValue(values, role, "kvStore", "namespace")); got != "existing-resources" {
+			t.Fatalf("%s namespace=%q", role, got)
+		}
+	}
+}
+
 func TestRunHelmMigrateValuesRefusesExistingRoleValues(t *testing.T) {
 	o := &helmMigrateValuesOptions{input: "-", output: "-", namespace: "target", release: "backend"}
 	err := runHelmMigrateValues(strings.NewReader("api: {replicaCount: 3}\n"), &bytes.Buffer{}, &bytes.Buffer{}, o)

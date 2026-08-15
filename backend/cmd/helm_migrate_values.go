@@ -73,6 +73,16 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 	}
 	if stringValue(legacyKV["backend"]) == "kubernetes" {
 		legacyKV["namespace"] = o.namespace
+	} else if stringValue(legacyKV["namespace"]) == "" {
+		// Before role separation, libSQL-backed API repositories used the
+		// Kubernetes session namespace as their logical KV namespace. Preserve
+		// that lookup boundary or existing resources appear to disappear after
+		// migration even though they remain in the same database.
+		legacyNamespace := stringValue(nestedValue(values, "kubernetesSession", "namespace"))
+		if legacyNamespace == "" {
+			legacyNamespace = o.namespace
+		}
+		legacyKV["namespace"] = legacyNamespace
 	}
 	legacyRedis := migratedRedis(values)
 	image := cloneMap(nestedMap(values, "image"))
