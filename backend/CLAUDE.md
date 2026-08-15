@@ -102,10 +102,10 @@ spec/             # OpenAPI 仕様 (spec/openapi.json) + 静的ファイル埋�
 1. **`make lint` を実行する** - コードの品質チェック
 2. **`make test` を実行する** - テストの実行
 3. **変更をブランチにプッシュし PR を作成する**
-4. **`agentapi-proxy client send-notification` で通知を送る**
+4. **`ccplant client send-notification` で通知を送る**
    - 例：
      ```bash
-     agentapi-proxy client send-notification \
+     ccplant client send-notification \
        --title "作業が完了しました" \
        --body "作業内容を確認してください" \
        --notify-session-id "$AGENTAPI_SESSION_ID"

@@ -515,7 +515,7 @@ func TestBuildCodexRequirementsTOML(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": "agentapi-proxy client send-notification",
+							"command": "ccplant client send-notification",
 						},
 					},
 				},

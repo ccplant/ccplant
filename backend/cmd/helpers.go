@@ -450,16 +450,16 @@ The command requires VAPID configuration to be set via environment variables:
 
 Examples:
   # Send to specific user
-  agentapi-proxy helpers send-notification --user-id "user123" --title "Hello" --body "Test message"
+  ccplant helpers send-notification --user-id "user123" --title "Hello" --body "Test message"
   
   # Send to all users in a session
-  agentapi-proxy helpers send-notification --session-id "session456" --title "Session Update" --body "Status changed"
+  ccplant helpers send-notification --session-id "session456" --title "Session Update" --body "Status changed"
   
   # Send to all GitHub users
-  agentapi-proxy helpers send-notification --user-type "github" --title "Announcement" --body "New feature available"
+  ccplant helpers send-notification --user-type "github" --title "Announcement" --body "New feature available"
   
   # Dry run to see who would receive the notification
-  agentapi-proxy helpers send-notification --user-id "user123" --title "Test" --body "Test" --dry-run`,
+  ccplant helpers send-notification --user-id "user123" --title "Test" --body "Test" --dry-run`,
 	RunE: runSendNotification,
 }
 

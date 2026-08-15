@@ -411,13 +411,13 @@ Either --notify-session-id or --notify-user-id must be specified to identify the
 
 Examples:
   # Send to all users subscribed to a session
-  agentapi-proxy client send-notification \
+  ccplant client send-notification \
     --title "作業が完了しました" \
     --body "作業内容を確認してください" \
     --notify-session-id "$AGENTAPI_SESSION_ID"
 
   # Send to a specific user
-  agentapi-proxy client send-notification \
+  ccplant client send-notification \
     --title "Notification" \
     --body "Something happened" \
     --notify-user-id "user123"`,
