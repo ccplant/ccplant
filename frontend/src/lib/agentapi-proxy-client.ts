@@ -2935,7 +2935,7 @@ export class AgentAPIProxyClient {
 
   async listClusterSessionManagers(): Promise<ClusterSessionManager[]> {
     const result = await this.makeRequest<{ session_managers: ClusterSessionManager[] }>('/admin/session-managers');
-    return result.session_managers;
+    return result.session_managers ?? [];
   }
 
   async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; connection_token: string }> {
@@ -2944,7 +2944,7 @@ export class AgentAPIProxyClient {
 
   async listSessionPools(): Promise<LogicalSessionPool[]> {
     const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/admin/session-pools');
-    return result.session_pools;
+    return result.session_pools ?? [];
   }
 
   async createSessionPool(input: Pick<LogicalSessionPool, 'name'> & Partial<Pick<LogicalSessionPool, 'labels' | 'default'>>): Promise<LogicalSessionPool> {
@@ -2953,7 +2953,7 @@ export class AgentAPIProxyClient {
 
   async listSessionPoolSuppliers(managerID: string): Promise<SessionPoolSupplier[]> {
     const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`);
-    return result.pool_suppliers;
+    return result.pool_suppliers ?? [];
   }
 
   async createSessionPoolSupplier(managerID: string, input: Pick<SessionPoolSupplier, 'pool' | 'min_idle' | 'max_runners'>): Promise<SessionPoolSupplier> {
@@ -2962,7 +2962,7 @@ export class AgentAPIProxyClient {
 
   async listSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
     const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`);
-    return result.pool_bindings;
+    return result.pool_bindings ?? [];
   }
 
   async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team', subjectID: string): Promise<SessionPoolBinding> {
