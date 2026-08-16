@@ -25,6 +25,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/ccplant main.go
 
+# Extract the standalone Codex binary from the official npm package. Keeping
+# Node.js and npm in this throwaway stage lets the API image contain Codex only.
+FROM node:22-alpine AS codex
+
+ARG CODEX_VERSION=latest
+
+RUN npm install --global "@openai/codex@${CODEX_VERSION}" && \
+    codex_binary="$(find /usr/local/lib/node_modules/@openai/codex/node_modules/@openai \
+      -type f -path '*/vendor/*/bin/codex' -print -quit)" && \
+    test -n "$codex_binary" && \
+    cp "$codex_binary" /codex && \
+    chmod +x /codex
+
 # Lightweight runtime for control-plane API and background worker deployments.
 # Session execution and session-manager processes continue to use the full image.
 FROM alpine:3.22 AS api
@@ -37,6 +50,7 @@ RUN apk add --no-cache ca-certificates tzdata && \
     chown -R 999:999 /home/agentapi
 
 COPY --from=builder /app/bin/ccplant /usr/local/bin/ccplant
+COPY --from=codex /codex /usr/local/bin/codex
 
 USER 999:999
 WORKDIR /home/agentapi/workdir
