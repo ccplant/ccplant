@@ -61,7 +61,12 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 		if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), sessionID) {
 			return waitRemoteMessageRefresh(ctx, sessionID)
 		}
-		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+		// This endpoint carries no session data; it only tells an authenticated
+		// client to re-read the separately authorized /messages endpoint. Some
+		// API-only compositions intentionally keep routing out of this controller,
+		// so absence from both local state and injected route caches must not turn
+		// the chat refresh loop into a permanent 404.
+		return waitRemoteMessageRefresh(ctx, sessionID)
 	}
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
