@@ -130,6 +130,7 @@ export interface ExternalSessionManagerConfig {
   has_connection_token?: boolean; // Response flag for allocator connection token
   connection_token?: string; // Returned only immediately after token generation
   default?: boolean;    // Use as default when no manager_id specified
+  pool?: string;        // Automatically managed logical pool
 }
 
 // Available manager entry from GET /settings/managers
@@ -143,6 +144,7 @@ export interface AvailableManager {
 
 export interface ExternalSessionManagerRegistrationToken {
   manager_id: string;
+  pool: string;
   registration_token: string;
   expires_at: string;
 }

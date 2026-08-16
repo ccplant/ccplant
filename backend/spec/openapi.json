@@ -6054,6 +6054,10 @@
           "name": {
             "type": "string"
           },
+          "pool": {
+            "type": "string",
+            "description": "Automatically managed logical pool for this manager"
+          },
           "description": {
             "type": "string"
           },

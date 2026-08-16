@@ -68,6 +68,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
 	settingsController.SetESMControlTunnel(server.esmControlTunnel)
+	settingsController.SetSessionRunnerStore(server.sessionRunnerStore)
 	sessionPoolController := controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository

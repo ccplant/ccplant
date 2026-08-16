@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
@@ -42,6 +44,7 @@ type ESMEnrollmentTokenRequest struct {
 
 type esmEnrollmentTokenResponse struct {
 	ManagerID         string    `json:"manager_id"`
+	Pool              string    `json:"pool"`
 	RegistrationToken string    `json:"registration_token"`
 	ExpiresAt         time.Time `json:"expires_at"`
 }
@@ -66,6 +69,9 @@ func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo
 		req.Scope = "team"
 		req.TeamID = user.TeamID()
 	}
+	if req.Scope == "" {
+		req.Scope = "user"
+	}
 	name, err := c.esmSettingsName(ctx, req.Scope, req.TeamID, true)
 	if err != nil {
 		return err
@@ -75,6 +81,7 @@ func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate registration token")
 	}
 	managerID := uuid.NewString()
+	pool := "esm-" + managerID
 	expiresAt := time.Now().UTC().Add(15 * time.Minute)
 	hash := sha256.Sum256([]byte(token))
 
@@ -93,13 +100,14 @@ func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo
 	}
 	managers = append(managers, entities.ExternalSessionManagerEntry{
 		ID: managerID, Name: "pending registration", EnrollmentTokenHash: hex.EncodeToString(hash[:]), EnrollmentExpiresAt: expiresAt,
+		Pool: pool, BindingSubjectType: req.Scope, BindingSubjectID: name,
 	})
 	settings.SetExternalSessionManagers(managers)
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save registration token")
 	}
 	return ctx.JSON(http.StatusCreated, esmEnrollmentTokenResponse{
-		ManagerID: managerID, RegistrationToken: token, ExpiresAt: expiresAt,
+		ManagerID: managerID, Pool: pool, RegistrationToken: token, ExpiresAt: expiresAt,
 	})
 }
 
@@ -147,8 +155,12 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 			manager.Version = req.Version
 			manager.EnrollmentTokenHash = ""
 			manager.EnrollmentExpiresAt = time.Time{}
+			if err := c.provisionExternalManagerPool(ctx.Request().Context(), manager, connectionToken); err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to provision manager pool").SetInternal(err)
+			}
 			settings.SetExternalSessionManagers(managers)
 			if saveErr := c.repo.Save(ctx.Request().Context(), settings); saveErr != nil {
+				_ = c.deleteExternalManagerPool(ctx.Request().Context(), *manager)
 				return echo.NewHTTPError(http.StatusInternalServerError, "failed to enroll external session manager")
 			}
 			return ctx.JSON(http.StatusOK, esmRegistrationResponse{
@@ -230,6 +242,9 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update external session manager")
 	}
+	if err := c.syncExternalManagerPool(ctx.Request().Context(), *manager); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update manager pool").SetInternal(err)
+	}
 	return ctx.JSON(http.StatusOK, esmResponse(*manager, ""))
 }
 
@@ -239,6 +254,9 @@ func (c *SettingsController) DeleteExternalSessionManager(ctx echo.Context) erro
 	manager, settings, err := c.findAuthorizedESM(ctx, true)
 	if err != nil {
 		return err
+	}
+	if err := c.deleteExternalManagerPool(ctx.Request().Context(), *manager); err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "failed to delete manager pool resources").SetInternal(err)
 	}
 	managers := settings.ExternalSessionManagers()
 	updated := make([]entities.ExternalSessionManagerEntry, 0, len(managers)-1)
@@ -252,6 +270,118 @@ func (c *SettingsController) DeleteExternalSessionManager(ctx echo.Context) erro
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete external session manager")
 	}
 	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, manager *entities.ExternalSessionManagerEntry, token string) error {
+	if c.sessionRunnerStore == nil {
+		return nil
+	}
+	if manager.Pool == "" {
+		manager.Pool = "esm-" + manager.ID
+	}
+	hash := sha256.Sum256([]byte(token))
+	registryManager := &sessionrunnercore.Manager{ID: manager.ID, Name: manager.Name, Labels: manager.Labels,
+		Capabilities: []string{sessionrunnercore.CapabilityLegacyAllocatorV1, sessionrunnercore.CapabilityDirectRuntimeV1},
+		Enabled:      true, ConnectionTokenHash: hex.EncodeToString(hash[:])}
+	if err := c.sessionRunnerStore.CreateManager(ctx, registryManager); err != nil {
+		return err
+	}
+	pool := &sessionrunnercore.LogicalPool{Name: manager.Pool, Labels: manager.Labels, Enabled: true}
+	if err := c.sessionRunnerStore.CreateLogicalPool(ctx, pool); err != nil {
+		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
+		return err
+	}
+	supplier := &sessionrunnercore.PoolSupplier{Pool: manager.Pool, ManagerID: manager.ID, MinIdle: 1, MaxRunners: 10, Enabled: true}
+	if err := c.sessionRunnerStore.CreatePoolSupplier(ctx, supplier); err != nil {
+		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
+		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
+		return err
+	}
+	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
+	binding := &sessionrunnercore.Binding{Pool: manager.Pool, SubjectType: subjectType, SubjectID: manager.BindingSubjectID,
+		Role: sessionrunnercore.BindingRoleManage, Enabled: true}
+	if err := c.sessionRunnerStore.CreateBinding(ctx, binding); err != nil {
+		_ = c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool)
+		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
+		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
+		return err
+	}
+	if manager.Default {
+		if err := c.sessionRunnerStore.PutPreference(ctx, &sessionrunnercore.Preference{SubjectType: subjectType,
+			SubjectID: manager.BindingSubjectID, Enabled: true, DefaultPool: manager.Pool}); err != nil {
+			_ = c.deleteExternalManagerPool(ctx, *manager)
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manager entities.ExternalSessionManagerEntry) error {
+	if c.sessionRunnerStore == nil || manager.Pool == "" {
+		return nil
+	}
+	registered, err := c.sessionRunnerStore.GetManager(ctx, manager.ID)
+	if err != nil {
+		return err
+	}
+	registered.Name, registered.Labels = manager.Name, manager.Labels
+	if err := c.sessionRunnerStore.UpdateManager(ctx, registered); err != nil {
+		return err
+	}
+	pool, err := c.sessionRunnerStore.GetLogicalPool(ctx, manager.Pool)
+	if err != nil {
+		return err
+	}
+	pool.Labels = manager.Labels
+	if err := c.sessionRunnerStore.UpdateLogicalPool(ctx, pool); err != nil {
+		return err
+	}
+	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
+	if manager.Default {
+		return c.sessionRunnerStore.PutPreference(ctx, &sessionrunnercore.Preference{SubjectType: subjectType,
+			SubjectID: manager.BindingSubjectID, Enabled: true, DefaultPool: manager.Pool})
+	}
+	preference, err := c.sessionRunnerStore.GetPreference(ctx, subjectType, manager.BindingSubjectID)
+	if err == nil && preference.DefaultPool == manager.Pool {
+		return c.sessionRunnerStore.DeletePreference(ctx, subjectType, manager.BindingSubjectID)
+	}
+	return nil
+}
+
+func (c *SettingsController) deleteExternalManagerPool(ctx context.Context, manager entities.ExternalSessionManagerEntry) error {
+	if c.sessionRunnerStore == nil || manager.Pool == "" {
+		return nil
+	}
+	bindings, err := c.sessionRunnerStore.ListBindings(ctx, manager.Pool)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if err := c.sessionRunnerStore.DeleteBinding(ctx, binding.ID); err != nil {
+			return err
+		}
+	}
+	preferences, err := c.sessionRunnerStore.ListPreferences(ctx)
+	if err != nil {
+		return err
+	}
+	for _, preference := range preferences {
+		if preference.DefaultPool == manager.Pool {
+			if err := c.sessionRunnerStore.DeletePreference(ctx, preference.SubjectType, preference.SubjectID); err != nil {
+				return err
+			}
+		}
+	}
+	if err := c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
+		return err
+	}
+	if err := c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
+		return err
+	}
+	if err := c.sessionRunnerStore.DeleteManager(ctx, manager.ID); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func (c *SettingsController) RotateExternalSessionManagerToken(ctx echo.Context) error {
@@ -275,6 +405,16 @@ func (c *SettingsController) RotateExternalSessionManagerToken(ctx echo.Context)
 	settings.SetExternalSessionManagers(managers)
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save rotated token")
+	}
+	if c.sessionRunnerStore != nil {
+		registered, getErr := c.sessionRunnerStore.GetManager(ctx.Request().Context(), manager.ID)
+		if getErr == nil {
+			hash := sha256.Sum256([]byte(token))
+			registered.ConnectionTokenHash = hex.EncodeToString(hash[:])
+			if updateErr := c.sessionRunnerStore.UpdateManager(ctx.Request().Context(), registered); updateErr != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to rotate manager pool token").SetInternal(updateErr)
+			}
+		}
 	}
 	return ctx.JSON(http.StatusOK, esmResponse(*manager, token))
 }
@@ -323,6 +463,13 @@ func (c *SettingsController) HeartbeatExternalSessionManager(ctx echo.Context) e
 				settings.SetExternalSessionManagers(managers)
 				if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 					return echo.NewHTTPError(http.StatusInternalServerError, "failed to save heartbeat")
+				}
+				if c.sessionRunnerStore != nil {
+					if registered, getErr := c.sessionRunnerStore.GetManager(ctx.Request().Context(), managers[i].ID); getErr == nil {
+						registered.LastHeartbeatAt = managers[i].LastHeartbeatAt
+						registered.Labels = managers[i].Labels
+						_ = c.sessionRunnerStore.UpdateManager(ctx.Request().Context(), registered)
+					}
 				}
 				transport := "public_url"
 				if outboundConnected {
@@ -401,7 +548,7 @@ func esmResponse(manager entities.ExternalSessionManagerEntry, token string) Ext
 		HasConnectionToken: manager.HMACSecret != "", ConnectionToken: token, Default: manager.Default,
 		Labels: manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
 		ActiveSessions:  manager.ActiveSessions,
-		LastHeartbeatAt: timePtrUnlessZero(manager.LastHeartbeatAt)}
+		LastHeartbeatAt: timePtrUnlessZero(manager.LastHeartbeatAt), Pool: manager.Pool}
 }
 
 func timePtrUnlessZero(value time.Time) *time.Time {

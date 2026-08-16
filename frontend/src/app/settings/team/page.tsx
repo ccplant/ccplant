@@ -380,6 +380,7 @@ export default function TeamSettingsPage() {
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{manager.name}</span>
                         {manager.default && <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">デフォルト</span>}
+                        {manager.pool && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">Pool: {manager.pool}</span>}
                         {manager.has_connection_token && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">token 設定済み</span>}
                       </div>
                     </div>

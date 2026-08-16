@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -24,10 +25,15 @@ const BaseSettingsName = "base"
 
 // SettingsController handles settings-related HTTP requests
 type SettingsController struct {
-	repo             repositories.SettingsRepository
-	notificationSvc  *notification.Service // Optional
-	esmMu            sync.Mutex
-	esmControlTunnel ESMControlTunnel
+	repo               repositories.SettingsRepository
+	notificationSvc    *notification.Service // Optional
+	esmMu              sync.Mutex
+	esmControlTunnel   ESMControlTunnel
+	sessionRunnerStore sessionrunnercore.Store
+}
+
+func (c *SettingsController) SetSessionRunnerStore(store sessionrunnercore.Store) {
+	c.sessionRunnerStore = store
 }
 
 func (c *SettingsController) SetESMControlTunnel(tunnel ESMControlTunnel) {
@@ -158,6 +164,7 @@ type ExternalSessionManagerResponse struct {
 	Version            string            `json:"version,omitempty"`
 	ActiveSessions     int               `json:"active_sessions,omitempty"`
 	LastHeartbeatAt    *time.Time        `json:"last_heartbeat_at,omitempty"`
+	Pool               string            `json:"pool,omitempty"`
 }
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
@@ -443,6 +450,8 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 	}
 
+	var removedExternalManagers []entities.ExternalSessionManagerEntry
+	var updatedExternalManagers []entities.ExternalSessionManagerEntry
 	// Update already-enrolled external session managers. New registrations are
 	// accepted only through the one-time enrollment-token API.
 	if req.ExternalSessionManagers != nil {
@@ -463,6 +472,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 
 		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
+		retained := make(map[string]bool, len(*req.ExternalSessionManagers))
 		for _, m := range *req.ExternalSessionManagers {
 			if m.ID == "" {
 				return echo.NewHTTPError(http.StatusBadRequest, "external session managers must be enrolled with a registration token")
@@ -478,7 +488,9 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				HMACSecret: prev.HMACSecret,
 				Default:    m.Default,
 				Labels:     m.Labels,
+				Pool:       prev.Pool, BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
 			}
+			retained[m.ID] = true
 			// These fields are owned by the daemon registration/heartbeat API and
 			// must survive a legacy settings update.
 			entry.PublicURL = prev.PublicURL
@@ -486,12 +498,16 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			entry.ActiveSessions = prev.ActiveSessions
 			entry.LastHeartbeatAt = prev.LastHeartbeatAt
 			updated = append(updated, entry)
+			updatedExternalManagers = append(updatedExternalManagers, entry)
 		}
 		// Pending one-time enrollments are not returned by settings responses and
 		// must survive unrelated settings saves.
 		for _, prev := range existing {
 			if prev.HMACSecret == "" && prev.EnrollmentTokenHash != "" {
 				updated = append(updated, prev)
+			}
+			if prev.HMACSecret != "" && !retained[prev.ID] {
+				removedExternalManagers = append(removedExternalManagers, prev)
 			}
 		}
 		settings.SetExternalSessionManagers(updated)
@@ -520,6 +536,16 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
+	for _, manager := range removedExternalManagers {
+		if err := c.deleteExternalManagerPool(ctx.Request().Context(), manager); err != nil {
+			return echo.NewHTTPError(http.StatusConflict, "settings saved but manager pool cleanup failed").SetInternal(err)
+		}
+	}
+	for _, manager := range updatedExternalManagers {
+		if err := c.syncExternalManagerPool(ctx.Request().Context(), manager); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "settings saved but manager pool sync failed").SetInternal(err)
+		}
+	}
 
 	return ctx.JSON(http.StatusOK, c.toResponse(settings))
 }
@@ -541,12 +567,22 @@ func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
 	}
 
+	settings, _ := c.repo.FindByName(ctx.Request().Context(), name)
 	err := c.repo.Delete(ctx.Request().Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return echo.NewHTTPError(http.StatusNotFound, "Settings not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete settings")
+	}
+	if settings != nil {
+		for _, manager := range settings.ExternalSessionManagers() {
+			if manager.HMACSecret != "" {
+				if cleanupErr := c.deleteExternalManagerPool(ctx.Request().Context(), manager); cleanupErr != nil {
+					return echo.NewHTTPError(http.StatusConflict, "settings deleted but manager pool cleanup failed").SetInternal(cleanupErr)
+				}
+			}
+		}
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]bool{
@@ -781,6 +817,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				Version:            m.Version,
 				ActiveSessions:     m.ActiveSessions,
 				LastHeartbeatAt:    timePtrUnlessZero(m.LastHeartbeatAt),
+				Pool:               m.Pool,
 			})
 		}
 	}

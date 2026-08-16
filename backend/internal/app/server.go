@@ -1064,6 +1064,15 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if pool != nil {
+			if managerID, legacyErr := s.legacyAllocatorManagerForPool(context.Background(), pool.Name); legacyErr != nil {
+				return nil, fmt.Errorf("select legacy pool supplier: %w", legacyErr)
+			} else if managerID != "" {
+				if startReq.Params == nil {
+					startReq.Params = &entities.SessionParams{}
+				}
+				startReq.Params.ManagerID = managerID
+				return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+			}
 			return s.createPoolSession(context.Background(), pool.Name, sessionID, startReq, userID, teams)
 		}
 	}
@@ -1230,6 +1239,40 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return nil, err
 	}
 	return result.Session, nil
+}
+
+func (s *Server) legacyAllocatorManagerForPool(ctx context.Context, pool string) (string, error) {
+	if s.sessionRunnerStore == nil {
+		return "", nil
+	}
+	suppliers, err := s.sessionRunnerStore.ListPoolSuppliers(ctx)
+	if err != nil {
+		return "", err
+	}
+	selected := ""
+	for _, supplier := range suppliers {
+		if supplier.Pool != pool || !supplier.Enabled || supplier.Draining {
+			continue
+		}
+		manager, getErr := s.sessionRunnerStore.GetManager(ctx, supplier.ManagerID)
+		if getErr != nil || !manager.Enabled || manager.Draining || !managerHasCapability(manager, sessionrunnercore.CapabilityLegacyAllocatorV1) {
+			continue
+		}
+		if selected != "" && selected != manager.ID {
+			return "", fmt.Errorf("pool %s has multiple legacy allocator suppliers", pool)
+		}
+		selected = manager.ID
+	}
+	return selected, nil
+}
+
+func managerHasCapability(manager *sessionrunnercore.Manager, capability string) bool {
+	for _, candidate := range manager.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) createPoolSession(ctx context.Context, pool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {

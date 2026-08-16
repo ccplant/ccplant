@@ -10,7 +10,11 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	sessionrunnerinfra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type connectedESMTunnel struct{}
@@ -69,6 +73,61 @@ func TestExternalSessionManagerEnrollmentAndHeartbeatUsesToken(t *testing.T) {
 	require.False(t, manager.LastHeartbeatAt.IsZero())
 	require.Equal(t, "test-version", manager.Version)
 	require.Equal(t, 2, manager.ActiveSessions)
+}
+
+func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
+	repo := newMockSettingsRepository()
+	store := sessionrunnerinfra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSettingsController(repo, nil)
+	controller.SetSessionRunnerStore(store)
+	e := echo.New()
+	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
+	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
+	var issued esmEnrollmentTokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
+	require.Equal(t, "esm-"+issued.ManagerID, issued.Pool)
+
+	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", ESMEnrollmentRequest{
+		RegistrationToken: issued.RegistrationToken, InstanceID: "machine-pool", Name: "native-pool", Default: true,
+	}, "")
+	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
+	var created esmRegistrationResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	manager, err := store.GetManager(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Contains(t, manager.Capabilities, core.CapabilityLegacyAllocatorV1)
+	_, err = store.GetLogicalPool(context.Background(), issued.Pool)
+	require.NoError(t, err)
+	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
+	require.NoError(t, err)
+	require.True(t, supplier.Enabled)
+	bindings, err := store.ListBindings(context.Background(), issued.Pool)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	require.Equal(t, core.BindingRoleManage, bindings[0].Role)
+	preference, err := store.GetPreference(context.Background(), core.SubjectUser, "user1")
+	require.NoError(t, err)
+	require.Equal(t, issued.Pool, preference.DefaultPool)
+	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues(created.ID)
+	ctx.Request().Header.Set("Authorization", "Bearer "+created.ConnectionToken)
+	require.NoError(t, controller.HeartbeatExternalSessionManager(ctx))
+	manager, err = store.GetManager(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.False(t, manager.LastHeartbeatAt.IsZero())
+
+	ctx, rec = esmTestContext(e, http.MethodPut, "/settings/:name", map[string]any{"external_session_managers": []any{}}, "user1")
+	ctx.SetParamNames("name")
+	ctx.SetParamValues("user1")
+	require.NoError(t, controller.UpdateSettings(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	_, err = store.GetManager(context.Background(), created.ID)
+	require.ErrorIs(t, err, core.ErrNotFound)
+	_, err = store.GetLogicalPool(context.Background(), issued.Pool)
+	require.ErrorIs(t, err, core.ErrNotFound)
+	_, err = store.GetPreference(context.Background(), core.SubjectUser, "user1")
+	require.ErrorIs(t, err, core.ErrNotFound)
 }
 
 func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T) {

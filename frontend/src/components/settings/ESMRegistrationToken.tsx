@@ -45,7 +45,7 @@ export function ESMRegistrationToken({ scope, teamId }: Props) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium text-gray-900 dark:text-white">新しい manager を接続</p>
-          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">15分間有効・1回限りの登録トークンを発行します。</p>
+          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">15分間有効・1回限りの登録トークンを発行します。接続完了時にPool、Supplier、Bindingが自動作成されます。</p>
         </div>
         <button type="button" onClick={() => void issue()} disabled={issuing || (scope === 'team' && !teamId)} className="rounded-md bg-violet-600 px-3 py-2 text-xs text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">
           {issuing ? '発行中…' : issued ? '再発行' : '登録トークンを発行'}
