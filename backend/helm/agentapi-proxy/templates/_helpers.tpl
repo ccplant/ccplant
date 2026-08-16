@@ -10,24 +10,21 @@ Expand the name of the chart.
 {{- $api := .Values.api | default dict -}}
 {{- $image := $api.image | default dict -}}
 {{- $repository := $image.repository | default .Values.image.repository -}}
-{{- $tag := $image.tag | default .Chart.AppVersion -}}
-{{- printf "%s:%s" $repository $tag -}}
+{{- printf "%s:%s" $repository .Chart.AppVersion -}}
 {{- end }}
 
 {{- define "agentapi-proxy.workerImage" -}}
 {{- $worker := .Values.worker | default dict -}}
 {{- $image := $worker.image | default dict -}}
 {{- $repository := $image.repository | default .Values.image.repository -}}
-{{- $tag := $image.tag | default .Chart.AppVersion -}}
-{{- printf "%s:%s" $repository $tag -}}
+{{- printf "%s:%s" $repository .Chart.AppVersion -}}
 {{- end }}
 
 {{- define "agentapi-proxy.sessionManagerImage" -}}
 {{- $manager := .Values.sessionManager | default dict -}}
 {{- $image := $manager.image | default dict -}}
 {{- $repository := $image.repository | default .Values.image.repository -}}
-{{- $tag := $image.tag | default .Chart.AppVersion -}}
-{{- printf "%s:%s" $repository $tag -}}
+{{- printf "%s:%s" $repository .Chart.AppVersion -}}
 {{- end }}
 
 {{- define "agentapi-proxy.apiServiceAccountName" -}}

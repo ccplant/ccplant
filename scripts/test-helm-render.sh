@@ -56,6 +56,15 @@ assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant
   --set worker.redis.addr=redis:6379 >"$TMP_DIR/backend-worker-default.yaml"
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/backend-worker-default.yaml"
 
+# Role image tags are release-controlled by Chart.appVersion and are not valid
+# Helm values.
+if "$HELM_BIN" template backend-image-tag-override "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set api.image.tag=untrusted >"$TMP_DIR/backend-image-tag-override.yaml" 2>"$TMP_DIR/backend-image-tag-override.err"; then
+  echo "api.image.tag unexpectedly accepted" >&2
+  exit 1
+fi
+assert_contains 'Additional property tag is not allowed' "$TMP_DIR/backend-image-tag-override.err"
+
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'app.kubernetes.io/component: worker' "$TMP_DIR/backend-default.yaml"

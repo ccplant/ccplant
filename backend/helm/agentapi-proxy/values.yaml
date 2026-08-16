@@ -37,7 +37,6 @@ api:
     # The public API does not need agent CLIs or session tooling.
     # Use the full backend image only for legacy direct/local execution.
     repository: ghcr.io/ccplant/ccplant-api
-    tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
   serviceAccount:
@@ -153,7 +152,6 @@ worker:
   image:
     # Workers only need the ccplant binary and share the lightweight API image.
     repository: ghcr.io/ccplant/ccplant-api
-    tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
   serviceAccount:
@@ -266,7 +264,6 @@ sessionManager:
   port: 8080
   image:
     repository: ghcr.io/ccplant/ccplant-backend
-    tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []
   serviceAccount:
