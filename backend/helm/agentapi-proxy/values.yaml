@@ -349,8 +349,9 @@ sessionManager:
   sessionControl:
     enabled: false
     directRuntimeEnabled: false
-  # Only the session runtime inputs used while constructing Session Pods live
-  # here. Deployment settings for the standalone scia service remain at root.
+  # Deprecated compatibility copy. Session runtime SCIA settings are read from
+  # the release-wide `scia` section below so API and session-manager cannot
+  # disagree about whether the per-session sidecar is enabled.
   scia:
     enabled: false
     publicBaseUrl: ""

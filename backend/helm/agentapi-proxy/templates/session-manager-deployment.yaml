@@ -12,7 +12,10 @@
 {{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 {{- $sessionControl := $manager.sessionControl | default dict }}
-{{- $scia := $manager.scia | default dict }}
+{{- /* SCIA is a release-wide session runtime. Keep the API, the standalone
+      broker and the session manager on one source of truth so externally
+      allocated sessions inherit the same sidecar configuration. */}}
+{{- $scia := .Values.scia | default dict }}
 {{- $github := $manager.github | default dict }}
 {{- $k8s := $manager.kubernetesSession | default dict }}
 {{- $provisioner := $k8s.provisioner | default dict }}
