@@ -588,6 +588,10 @@ spec:
               value: {{ $scia.todoistHosts | default (list "api.todoist.com") | join "," | quote }}
             - name: AGENTAPI_SCIA_TODOIST_PATHS
               value: {{ $scia.todoistPaths | default (list "/api/v1/*") | join "," | quote }}
+            - name: SESSION_CONTROL_LONG_POLL_ENABLED
+              value: {{ dig "enabled" false (.Values.sessionControl | default dict) | quote }}
+            - name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED
+              value: {{ dig "directRuntimeEnabled" false (.Values.sessionControl | default dict) | quote }}
             {{- if and (not (dig "enabled" false (.Values.sessionManager | default dict))) (dig "enabled" false (.Values.kubernetesSession | default dict)) }}
             # Deprecated in-process Kubernetes Session Management configuration.
             # This compatibility path is omitted as soon as the dedicated
@@ -620,10 +624,6 @@ spec:
               value: {{ .Values.kubernetesSession.serviceAccountName | default "agentapi-proxy-session" | quote }}
             - name: AGENTAPI_K8S_SESSION_BASE_PORT
               value: {{ .Values.kubernetesSession.basePort | quote }}
-            - name: SESSION_CONTROL_LONG_POLL_ENABLED
-              value: {{ dig "enabled" false (.Values.sessionControl | default dict) | quote }}
-            - name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED
-              value: {{ dig "directRuntimeEnabled" false (.Values.sessionControl | default dict) | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_REQUEST
               value: {{ .Values.kubernetesSession.resources.requests.cpu | quote }}
             - name: AGENTAPI_K8S_SESSION_CPU_LIMIT

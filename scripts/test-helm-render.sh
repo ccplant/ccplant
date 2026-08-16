@@ -136,6 +136,9 @@ all_role_args=(
   --set sessionManager.sessionPersistence.backend=s3
   --set sessionManager.sessionPersistence.s3.bucket=manager-sessions
   --set sessionManager.sessionControl.enabled=true
+  --set sessionManager.sessionControl.directRuntimeEnabled=true
+  --set sessionControl.enabled=true
+  --set sessionControl.directRuntimeEnabled=true
   --set sessionManager.scia.enabled=true
   --set sessionManager.scia.publicBaseUrl=https://api.example
   --set sessionManager.github.tokenRef.name=manager-github
@@ -159,6 +162,9 @@ assert_contains 'args: \["server"\]' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_URL' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_TOKEN' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: SESSION_CONTROL_LONG_POLL_ENABLED' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'value: "true"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: "worker-control"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: "manager-internal"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-deployment.yaml"
@@ -204,6 +210,7 @@ assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manage
 assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: SESSION_CONTROL_LONG_POLL_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SCIA_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
