@@ -117,6 +117,11 @@ func TestCreateClusterWidePoolBinding(t *testing.T) {
 	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectAll || bindings[0].SubjectID != "" {
 		t.Fatalf("unexpected cluster-wide binding: bindings=%+v err=%v", bindings, err)
 	}
+	duplicate := callSessionPoolHandler(t, controller.CreateBinding, http.MethodPost, "/admin/session-pools/linux/bindings",
+		map[string]any{"subject_type": "all"}, map[string]string{"pool": "linux"}, nil)
+	if duplicate.Code != http.StatusConflict {
+		t.Fatalf("duplicate cluster-wide binding status=%d body=%s", duplicate.Code, duplicate.Body.String())
+	}
 
 	invalid := callSessionPoolHandler(t, controller.CreateBinding, http.MethodPost, "/admin/session-pools/linux/bindings",
 		map[string]any{"subject_type": "all", "subject_id": "unexpected"}, map[string]string{"pool": "linux"}, nil)

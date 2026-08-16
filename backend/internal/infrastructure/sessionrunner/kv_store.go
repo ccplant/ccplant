@@ -301,9 +301,16 @@ func (s *Store) DeletePoolSupplier(ctx context.Context, managerID, pool string) 
 }
 
 func (s *Store) CreateBinding(ctx context.Context, binding *core.Binding) error {
-	if binding.ID == "" {
-		binding.ID = uuid.NewString()
+	existing, err := s.ListBindings(ctx, binding.Pool)
+	if err != nil {
+		return err
 	}
+	for _, candidate := range existing {
+		if candidate.SubjectType == binding.SubjectType && candidate.SubjectID == binding.SubjectID {
+			return core.ErrConflict
+		}
+	}
+	binding.ID = "binding-" + hashName(binding.Pool+"\x00"+string(binding.SubjectType)+"\x00"+binding.SubjectID)
 	now := s.now()
 	binding.CreatedAt, binding.UpdatedAt = now, now
 	return s.create(ctx, bindingName(binding.ID), "binding", binding.Pool, binding)

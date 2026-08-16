@@ -35,6 +35,19 @@ func TestKVStorePoolBindings(t *testing.T) {
 	require.Equal(t, "linux", preference.DefaultPool)
 }
 
+func TestKVStorePoolBindingIsUniqueByPoolAndSubject(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	first := &core.Binding{Pool: "linux", SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true}
+	require.NoError(t, store.CreateBinding(ctx, first))
+	require.NotEmpty(t, first.ID)
+
+	duplicate := &core.Binding{Pool: "linux", SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true}
+	require.ErrorIs(t, store.CreateBinding(ctx, duplicate), core.ErrConflict)
+	require.NoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "gpu", SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true}))
+	require.NoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "org/team", Enabled: true}))
+}
+
 func TestKVStoreClaimIsAtomicAndFenced(t *testing.T) {
 	ctx := context.Background()
 	store := newVersionedTestStore(t)
