@@ -36,6 +36,34 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 	manager := c.getSessionManager()
 	session := manager.GetSession(sessionID)
 	if session == nil {
+		// Remote sessions are represented by a durable route in the parent, not
+		// by an in-process Session. Their runtime event stream is transported by
+		// the ESM tunnel, so the local message watcher cannot subscribe to it.
+		// Return a paced update hint instead of 404: the UI then refreshes the
+		// canonical /<sessionId>/messages endpoint through that tunnel. This is a
+		// bounded compatibility poll until message events are carried by the
+		// direct runtime protocol.
+		if c.sessionRouteRepo != nil {
+			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to look up session route")
+			}
+			if route != nil && route.RemoteSessionID != "" {
+				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+					return echo.NewHTTPError(http.StatusForbidden, "access denied")
+				}
+				timer := time.NewTimer(time.Second)
+				defer timer.Stop()
+				select {
+				case <-ctx.Request().Context().Done():
+					return nil
+				case timestamp := <-timer.C:
+					return ctx.JSON(http.StatusOK, map[string]interface{}{
+						"updated": true, "session_id": sessionID, "timestamp": timestamp,
+					})
+				}
+			}
+		}
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
