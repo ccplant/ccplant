@@ -45,11 +45,12 @@ func TestResolverRequiresBindingAndSelectsPool(t *testing.T) {
 	}
 	resolver := NewResolver(store, time.Minute)
 	resolver.now = func() time.Time { return now }
-	pool, err := resolver.Resolve(context.Background(), "alice", []string{"org/team"}, map[string]string{"allocator.pool": "linux", "allocator.arch": "amd64"})
+	pool, err := resolver.Resolve(context.Background(), Subject{Type: SubjectTeam, ID: "org/team"}, map[string]string{"allocator.pool": "linux", "allocator.arch": "amd64"})
 	require.NoError(t, err)
-	require.Equal(t, "linux", pool.Name)
+	require.Equal(t, "linux", pool.Pool.Name)
+	require.Equal(t, SubjectTeam, pool.Binding.SubjectType)
 
-	_, err = resolver.Resolve(context.Background(), "bob", nil, map[string]string{"allocator.pool": "linux"})
+	_, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "bob"}, map[string]string{"allocator.pool": "linux"})
 	require.Error(t, err)
 }
 
@@ -61,9 +62,9 @@ func TestResolverUsesUserPreference(t *testing.T) {
 		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
 		preferences: map[string]*Preference{"user:alice": {SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "linux"}},
 	}
-	pool, err := NewResolver(store, 0).Resolve(context.Background(), "alice", nil, nil)
+	pool, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
 	require.NoError(t, err)
-	require.Equal(t, "linux", pool.Name)
+	require.Equal(t, "linux", pool.Pool.Name)
 }
 
 func TestResolverAllowsClusterWideBinding(t *testing.T) {
@@ -75,11 +76,11 @@ func TestResolverAllowsClusterWideBinding(t *testing.T) {
 		preferences: map[string]*Preference{},
 	}
 
-	pool, err := NewResolver(store, 0).Resolve(context.Background(), "any-user", nil, map[string]string{"allocator.pool": "linux"})
+	pool, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "any-user"}, map[string]string{"allocator.pool": "linux"})
 	require.NoError(t, err)
-	require.Equal(t, "linux", pool.Name)
+	require.Equal(t, "linux", pool.Pool.Name)
 
-	available, err := NewResolver(store, 0).AvailablePools(context.Background(), "another-user", []string{"any/team"})
+	available, err := NewResolver(store, 0).AvailablePools(context.Background(), Subject{Type: SubjectTeam, ID: "any/team"})
 	require.NoError(t, err)
 	require.Len(t, available, 1)
 }
@@ -95,8 +96,49 @@ func TestResolverReturnsLogicalPoolOnceForMultipleSuppliers(t *testing.T) {
 		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
 		preferences: map[string]*Preference{},
 	}
-	pools, err := NewResolver(store, 0).AvailablePools(context.Background(), "alice", nil)
+	pools, err := NewResolver(store, 0).AvailablePools(context.Background(), Subject{Type: SubjectUser, ID: "alice"})
 	require.NoError(t, err)
 	require.Len(t, pools, 1)
 	require.Equal(t, "linux", pools[0].Name)
+}
+
+func TestResolverPrefersExactBindingOverAll(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings: []*Binding{
+			{ID: "binding-all", Pool: "linux", SubjectType: SubjectAll, Enabled: true, MaxConcurrent: 100},
+			{ID: "binding-alice", Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, MaxConcurrent: 2},
+		},
+		preferences: map[string]*Preference{},
+	}
+
+	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "binding-alice", resolved.Binding.ID)
+	require.Equal(t, 2, resolved.Binding.MaxConcurrent)
+
+	resolved, err = NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "bob"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "binding-all", resolved.Binding.ID)
+}
+
+func TestResolverDoesNotUseBindingsFromAnotherScope(t *testing.T) {
+	store := &resolverStore{
+		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:       []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
+		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings:    []*Binding{{ID: "binding-team", Pool: "linux", SubjectType: SubjectTeam, SubjectID: "org/team", Enabled: true}},
+		preferences: map[string]*Preference{},
+	}
+
+	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved)
+
+	store.bindings = []*Binding{{ID: "binding-user", Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}}
+	resolved, err = NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectTeam, ID: "org/team"}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved)
 }

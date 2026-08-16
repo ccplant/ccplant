@@ -476,6 +476,9 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	if binding.MaxConcurrent < 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "max_concurrent must be non-negative")
+	}
 	if err := c.ensureLogicalPoolExists(ctx.Request().Context(), binding.Pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -541,8 +544,9 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
 	var patch struct {
-		Role    *core.BindingRole `json:"role,omitempty"`
-		Enabled *bool             `json:"enabled,omitempty"`
+		Role          *core.BindingRole `json:"role,omitempty"`
+		Enabled       *bool             `json:"enabled,omitempty"`
+		MaxConcurrent *int              `json:"max_concurrent,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -552,6 +556,12 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	}
 	if patch.Enabled != nil {
 		binding.Enabled = *patch.Enabled
+	}
+	if patch.MaxConcurrent != nil {
+		if *patch.MaxConcurrent < 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "max_concurrent must be non-negative")
+		}
+		binding.MaxConcurrent = *patch.MaxConcurrent
 	}
 	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -567,7 +577,7 @@ func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	pools, err := c.resolver.AvailablePools(ctx.Request().Context(), string(user.ID()), userTeamIDsForPools(user))
+	pools, err := c.resolver.AvailablePools(ctx.Request().Context(), poolSubjectForUser(user))
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -600,7 +610,7 @@ func (c *SessionPoolController) PutPreference(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if preference.DefaultPool != "" {
-		available, err := c.resolver.AvailablePools(ctx.Request().Context(), string(user.ID()), userTeamIDsForPools(user))
+		available, err := c.resolver.AvailablePools(ctx.Request().Context(), core.Subject{Type: preference.SubjectType, ID: preference.SubjectID})
 		if err != nil {
 			return sessionRunnerStoreError(err)
 		}
@@ -914,22 +924,11 @@ func (c *SessionPoolController) canManagePool(ctx context.Context, user *entitie
 	return false, nil
 }
 
-func userTeamIDsForPools(user *entities.User) []string {
-	if user == nil {
-		return nil
-	}
+func poolSubjectForUser(user *entities.User) core.Subject {
 	if user.UserType() == entities.UserTypeServiceAccount && user.TeamID() != "" {
-		return []string{user.TeamID()}
+		return core.Subject{Type: core.SubjectTeam, ID: user.TeamID()}
 	}
-	if user.GitHubInfo() == nil {
-		return nil
-	}
-	teams := user.GitHubInfo().Teams()
-	result := make([]string, 0, len(teams))
-	for _, team := range teams {
-		result = append(result, team.Organization+"/"+team.TeamSlug)
-	}
-	return result
+	return core.Subject{Type: core.SubjectUser, ID: string(user.ID())}
 }
 
 func parseRunnerWait(raw string) time.Duration {

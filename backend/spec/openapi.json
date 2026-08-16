@@ -357,6 +357,24 @@
           "401": {
             "description": "Unauthorized"
           },
+          "429": {
+            "description": "Session pool binding quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {"type": "string"},
+                    "pool": {"type": "string"},
+                    "binding_id": {"type": "string"},
+                    "max_concurrent": {"type": "integer", "minimum": 1},
+                    "active": {"type": "integer", "minimum": 0}
+                  },
+                  "required": ["error", "pool", "binding_id", "max_concurrent", "active"]
+                }
+              }
+            }
+          },
           "500": {
             "description": "Failed to create session",
             "content": {
@@ -5345,7 +5363,7 @@
       },
       "SessionPoolBinding": {
         "type": "object", "required": ["subject_type"],
-        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}}
+        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}, "max_concurrent": {"type": "integer", "minimum": 0, "default": 0, "description": "Best-effort maximum active allocations attributed to this binding; zero is unlimited."}}
       },
       "SessionPoolPreference": {
         "type": "object",

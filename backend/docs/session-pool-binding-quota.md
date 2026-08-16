@@ -167,7 +167,8 @@ enqueue allocation with binding_id = binding.id
 ```
 
 quota 専用の counter、reservation、CAS、release、reconciliation は実装しない。Allocation が
-terminal status になるか削除されると、次回の集計から自然に外れる。
+terminal status になるか削除されると、次回の集計から自然に外れる。Session API で
+セッションを削除した場合は、対応する Allocation も同時に削除して枠を解放する。
 
 集計と enqueue は atomic ではない。同時リクエストが同じ active 数を読んだ場合、上限を
 一時的に超える可能性がある。この quota は課金やセキュリティ境界ではなく、インフラ利用量の

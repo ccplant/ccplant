@@ -1,16 +1,59 @@
 package controllers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
+
+type quotaErrorSessionCreator struct{}
+
+func (quotaErrorSessionCreator) CreateSession(string, entities.StartRequest, string, string, []string) (entities.Session, error) {
+	return nil, &sessionrunnercore.QuotaExceededError{
+		Pool: "linux", BindingID: "binding-alice", MaxConcurrent: 2, Active: 2,
+	}
+}
+
+func (quotaErrorSessionCreator) DeleteSessionByID(string) error { return nil }
+
+func TestStartSessionReturnsQuotaExceeded(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start", strings.NewReader(`{"scope":"user"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User: user,
+		PersonalScope: auth.PersonalScopeAuth{
+			UserID: "alice", CanCreate: true, CanRead: true,
+		},
+	})
+
+	controller := NewSessionController(nil, quotaErrorSessionCreator{})
+	if err := controller.StartSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["binding_id"] != "binding-alice" || body["max_concurrent"] != float64(2) || body["active"] != float64(2) {
+		t.Fatalf("unexpected response: %#v", body)
+	}
+}
 
 func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 	tests := []struct {

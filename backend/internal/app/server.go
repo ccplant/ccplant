@@ -1059,12 +1059,16 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 	}
 	if s.sessionRunnerStore != nil {
-		pool, err := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second).Resolve(context.Background(), userID, teams, startReq.Tags)
+		subject := sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: userID}
+		if startReq.Scope == entities.ScopeTeam {
+			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
+		}
+		resolved, err := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second).Resolve(context.Background(), subject, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
-		if pool != nil {
-			if managerID, legacyErr := s.legacyAllocatorManagerForPool(context.Background(), pool.Name); legacyErr != nil {
+		if resolved != nil {
+			if managerID, legacyErr := s.legacyAllocatorManagerForPool(context.Background(), resolved.Pool.Name); legacyErr != nil {
 				return nil, fmt.Errorf("select legacy pool supplier: %w", legacyErr)
 			} else if managerID != "" {
 				if startReq.Params == nil {
@@ -1073,7 +1077,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 				startReq.Params.ManagerID = managerID
 				return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
 			}
-			return s.createPoolSession(context.Background(), pool.Name, sessionID, startReq, userID, teams)
+			return s.createPoolSession(context.Background(), resolved, sessionID, startReq, userID, teams)
 		}
 	}
 
@@ -1275,7 +1279,11 @@ func managerHasCapability(manager *sessionrunnercore.Manager, capability string)
 	return false
 }
 
-func (s *Server) createPoolSession(ctx context.Context, pool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
+func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnercore.ResolvedPool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
+	pool := resolved.Pool.Name
+	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
+		return nil, err
+	}
 	var initialMessage, agentType, credentialSource string
 	var oneshot bool
 	var authProxy *bool
@@ -1316,7 +1324,7 @@ func (s *Server) createPoolSession(ctx context.Context, pool, sessionID string, 
 		return nil, fmt.Errorf("create pool runtime credential: %w", err)
 	}
 	allocation := &sessionrunnercore.Allocation{
-		SessionID: sessionID, Pool: pool, Generation: 1,
+		SessionID: sessionID, Pool: pool, BindingID: resolved.Binding.ID, Generation: 1,
 		Requirements: map[string]string{"agent_type": agentType}, RuntimeToken: token,
 		RuntimeTokenHash: tokenHash, ProvisionSettings: settingsRaw,
 	}
@@ -1337,6 +1345,41 @@ func (s *Server) createPoolSession(ctx context.Context, pool, sessionID string, 
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
 	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, tags, startedAt, "creating"), nil
+}
+
+func (s *Server) checkSessionPoolQuota(ctx context.Context, binding *sessionrunnercore.Binding) error {
+	if binding == nil || binding.MaxConcurrent <= 0 {
+		return nil
+	}
+	allocations, err := s.sessionRunnerStore.ListAllocations(ctx, binding.Pool)
+	if err != nil {
+		return fmt.Errorf("list session pool allocations: %w", err)
+	}
+	active := 0
+	for _, allocation := range allocations {
+		if allocation.BindingID == binding.ID && allocationCountsTowardQuota(allocation.Status) {
+			active++
+		}
+	}
+	if active >= binding.MaxConcurrent {
+		return &sessionrunnercore.QuotaExceededError{
+			Pool: binding.Pool, BindingID: binding.ID,
+			MaxConcurrent: binding.MaxConcurrent, Active: active,
+		}
+	}
+	return nil
+}
+
+func allocationCountsTowardQuota(status sessionrunnercore.AllocationStatus) bool {
+	switch status {
+	case sessionrunnercore.AllocationPending,
+		sessionrunnercore.AllocationLeased,
+		sessionrunnercore.AllocationClaimed,
+		sessionrunnercore.AllocationRunning:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) EnsureTeamServiceAccount(ctx context.Context, teamID string) error {
@@ -1640,6 +1683,13 @@ func (s *Server) DeleteProvisionRequest(ctx context.Context, sessionID string) e
 		return manager.DeleteProvisionRequest(ctx, sessionID)
 	}
 	return nil
+}
+
+func (s *Server) DeleteSessionPoolAllocation(ctx context.Context, sessionID string) error {
+	if s.sessionRunnerStore == nil {
+		return nil
+	}
+	return s.sessionRunnerStore.DeleteAllocation(ctx, sessionID)
 }
 
 // dumpSessionToMemory fetches messages from the session, stores them as a draft memory,

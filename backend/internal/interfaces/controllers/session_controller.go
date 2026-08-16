@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -296,6 +298,16 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 
 	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
 	if err != nil {
+		var quotaErr *sessionrunnercore.QuotaExceededError
+		if errors.As(err, &quotaErr) {
+			return ctx.JSON(http.StatusTooManyRequests, map[string]any{
+				"error":          quotaErr.Error(),
+				"pool":           quotaErr.Pool,
+				"binding_id":     quotaErr.BindingID,
+				"max_concurrent": quotaErr.MaxConcurrent,
+				"active":         quotaErr.Active,
+			})
+		}
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
 	}
@@ -1239,14 +1251,19 @@ func streamTunnelResponse(ctx echo.Context, resp *http.Response) error {
 }
 
 func (c *SessionController) cleanupRemoteProvisionRequest(ctx context.Context, sessionID string) {
-	cleaner, ok := c.sessionCreator.(interface {
+	if cleaner, ok := c.sessionCreator.(interface {
 		DeleteProvisionRequest(context.Context, string) error
-	})
-	if !ok {
-		return
+	}); ok {
+		if err := cleaner.DeleteProvisionRequest(ctx, sessionID); err != nil {
+			log.Printf("[REMOTE_DELETE] Warning: failed to delete provision request for %s: %v", sessionID, err)
+		}
 	}
-	if err := cleaner.DeleteProvisionRequest(ctx, sessionID); err != nil {
-		log.Printf("[REMOTE_DELETE] Warning: failed to delete provision request for %s: %v", sessionID, err)
+	if cleaner, ok := c.sessionCreator.(interface {
+		DeleteSessionPoolAllocation(context.Context, string) error
+	}); ok {
+		if err := cleaner.DeleteSessionPoolAllocation(ctx, sessionID); err != nil {
+			log.Printf("[REMOTE_DELETE] Warning: failed to delete session pool allocation for %s: %v", sessionID, err)
+		}
 	}
 }
 
