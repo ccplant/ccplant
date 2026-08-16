@@ -800,6 +800,15 @@ spec:
                 secretKeyRef:
                   name: {{ required "api.sessionManager.tokenSecretRef.name is required when sessionManager is enabled" (dig "name" "" $managerClientTokenRef) | quote }}
                   key: {{ dig "key" "token" $managerClientTokenRef | quote }}
+            {{- $externalRegistration := dig "externalRegistration" (dict) (.Values.sessionManager | default dict) }}
+            {{- if (dig "enabled" false $externalRegistration) }}
+            {{- $externalHMACRef := dig "hmacSecretRef" (dict) $externalRegistration }}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.externalRegistration.hmacSecretRef.name is required when external registration is enabled" (dig "name" "" $externalHMACRef) | quote }}
+                  key: {{ dig "key" "hmac-secret" $externalHMACRef | quote }}
+            {{- end }}
             {{- end }}
             {{- range $apiEnv }}
             - name: {{ .name }}
