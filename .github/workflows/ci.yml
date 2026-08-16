@@ -64,7 +64,8 @@ jobs:
           done
           docker run --rm ccplant-api:test worker --help >/dev/null
           test "$(docker exec "$container_id" id -u)" = 999
-          for command in claude codex cursor-agent docker git mise uv github-mcp-server otelcol; do
+          docker exec "$container_id" codex --version
+          for command in claude cursor-agent docker git mise uv github-mcp-server otelcol node npm; do
             if docker exec "$container_id" sh -c "command -v $command"; then
               echo "unexpected runtime tool: $command"
               exit 1
