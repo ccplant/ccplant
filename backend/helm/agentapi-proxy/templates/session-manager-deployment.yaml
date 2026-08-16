@@ -5,6 +5,7 @@
 {{- $encryptionToken := dig "encryption" "keySecretRef" (dict) $manager }}
 {{- $registration := $manager.externalRegistration | default dict }}
 {{- $runner := $manager.runner | default dict }}
+{{- $remoteMode := or (dig "enabled" false $registration) (dig "enabled" false $runner) }}
 {{- $kv := $manager.kvStore | default dict }}
 {{- $redisClient := $manager.redis | default dict }}
 {{- $sessionPersistence := $manager.sessionPersistence | default dict }}
@@ -145,6 +146,7 @@ spec:
             - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
             {{- end }}
             {{- end }}
+            {{- if not $remoteMode }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}
             {{- $redisSecret := $redisClient.existingSecret | default "" }}
@@ -163,6 +165,7 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            {{- end }}
             - {name: LOG_DIR, value: "/var/log/agentapi/sessions"}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_PATH, value: {{ $sessionPersistencePath | quote }}}

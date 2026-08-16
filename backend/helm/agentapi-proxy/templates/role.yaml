@@ -52,4 +52,8 @@ rules:
     # Keep the inherited session service account permissions synchronized with
     # the runtime profile advertised by the parent API.
     verbs: ["get", "create", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    # Remote replicas elect exactly one upstream allocation/control worker.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 {{- end }}

@@ -236,10 +236,22 @@
             }
           }
         },
-        "anyOf": [
-          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
-          { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
-        ]
+        "if": {
+          "properties": {
+            "sessionManager": {
+              "properties": {
+                "externalRegistration": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] },
+                "runner": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] }
+              }
+            }
+          }
+        },
+        "then": {
+          "anyOf": [
+            { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+            { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+          ]
+        }
       }
     },
     {
