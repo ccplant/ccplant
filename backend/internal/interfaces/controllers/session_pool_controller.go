@@ -404,7 +404,7 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}
 	binding.Pool = ctx.Param("pool")
-	if err := validatePoolSubject(binding.SubjectType, binding.SubjectID); err != nil {
+	if err := validatePoolBindingSubject(binding.SubjectType, binding.SubjectID); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if err := c.ensureLogicalPoolExists(ctx.Request().Context(), binding.Pool); err != nil {
@@ -722,6 +722,16 @@ func validatePoolSubject(kind core.SubjectType, id string) error {
 		return errors.New("subject_type must be user or team and subject_id is required")
 	}
 	return nil
+}
+
+func validatePoolBindingSubject(kind core.SubjectType, id string) error {
+	if kind == core.SubjectAll {
+		if strings.TrimSpace(id) != "" {
+			return errors.New("subject_id must be empty when subject_type is all")
+		}
+		return nil
+	}
+	return validatePoolSubject(kind, id)
 }
 
 func userTeamIDsForPools(user *entities.User) []string {

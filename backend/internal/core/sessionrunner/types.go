@@ -12,6 +12,7 @@ type SubjectType string
 const (
 	SubjectUser SubjectType = "user"
 	SubjectTeam SubjectType = "team"
+	SubjectAll  SubjectType = "all"
 )
 
 type Manager struct {

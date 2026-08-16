@@ -5332,8 +5332,8 @@
         "properties": {"name": {"type": "string", "description": "Logical pool name shared by one or more managers"}, "manager_id": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "min_idle": {"type": "integer", "minimum": 0}, "max_runners": {"type": "integer", "minimum": 0}, "enabled": {"type": "boolean", "default": true}, "draining": {"type": "boolean"}, "default": {"type": "boolean"}}
       },
       "SessionPoolBinding": {
-        "type": "object", "required": ["subject_type", "subject_id"],
-        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team"]}, "subject_id": {"type": "string"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}}
+        "type": "object", "required": ["subject_type"],
+        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}}
       },
       "SessionPoolPreference": {
         "type": "object",

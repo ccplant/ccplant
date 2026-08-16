@@ -21,7 +21,7 @@ export default function SessionPoolsAdminPage() {
   const [supplierPool, setSupplierPool] = useState('')
   const [minIdle, setMinIdle] = useState(1)
   const [maxRunners, setMaxRunners] = useState(10)
-  const [subjectType, setSubjectType] = useState<'user' | 'team'>('team')
+  const [subjectType, setSubjectType] = useState<'user' | 'team' | 'all'>('team')
   const [subjectID, setSubjectID] = useState('')
   const [bindingPool, setBindingPool] = useState('')
   const [connectionToken, setConnectionToken] = useState('')
@@ -200,16 +200,21 @@ export default function SessionPoolsAdminPage() {
 
         <form onSubmit={addBinding} className={card}>
           <h3 className="font-semibold">4. Pool Binding</h3>
-          <p className="text-xs text-gray-500">Logical Poolを利用できるuserまたはteamを指定します。</p>
+          <p className="text-xs text-gray-500">Logical Poolを利用できるuser、team、またはクラスタ内の全員を指定します。</p>
           <select required className={input} value={bindingPool} onChange={(event) => setBindingPool(event.target.value)}>
             <option value="" disabled>Logical Poolを選択</option>
             {pools.map((pool) => <option key={pool.name} value={pool.name}>{pool.name}</option>)}
           </select>
-          <select className={input} value={subjectType} onChange={(event) => setSubjectType(event.target.value as 'user' | 'team')}>
+          <select className={input} value={subjectType} onChange={(event) => {
+            const nextType = event.target.value as 'user' | 'team' | 'all'
+            setSubjectType(nextType)
+            if (nextType === 'all') setSubjectID('')
+          }}>
             <option value="team">Team</option>
             <option value="user">User</option>
+            <option value="all">All users and teams</option>
           </select>
-          <input required className={input} value={subjectID} onChange={(event) => setSubjectID(event.target.value)} placeholder={subjectType === 'team' ? 'org/team' : 'user-id'} />
+          <input required={subjectType !== 'all'} disabled={subjectType === 'all'} className={input} value={subjectID} onChange={(event) => setSubjectID(event.target.value)} placeholder={subjectType === 'all' ? 'Subject IDは不要です' : subjectType === 'team' ? 'org/team' : 'user-id'} />
           <button disabled={!bindingPool} className="w-fit rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Bindingを追加</button>
         </form>
       </div>

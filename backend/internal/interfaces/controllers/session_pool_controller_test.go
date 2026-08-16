@@ -101,6 +101,30 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateClusterWidePoolBinding(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	if err := store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := callSessionPoolHandler(t, controller.CreateBinding, http.MethodPost, "/admin/session-pools/linux/bindings",
+		map[string]any{"subject_type": "all"}, map[string]string{"pool": "linux"}, nil)
+	if result.Code != http.StatusCreated {
+		t.Fatalf("create cluster-wide binding status=%d body=%s", result.Code, result.Body.String())
+	}
+	bindings, err := store.ListBindings(context.Background(), "linux")
+	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectAll || bindings[0].SubjectID != "" {
+		t.Fatalf("unexpected cluster-wide binding: bindings=%+v err=%v", bindings, err)
+	}
+
+	invalid := callSessionPoolHandler(t, controller.CreateBinding, http.MethodPost, "/admin/session-pools/linux/bindings",
+		map[string]any{"subject_type": "all", "subject_id": "unexpected"}, map[string]string{"pool": "linux"}, nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("cluster-wide binding with subject ID status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func TestDeleteLogicalPoolCascadesRelatedResources(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")

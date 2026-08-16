@@ -2977,7 +2977,7 @@ export class AgentAPIProxyClient {
     return result.pool_bindings ?? [];
   }
 
-  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team', subjectID: string): Promise<SessionPoolBinding> {
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string): Promise<SessionPoolBinding> {
     return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID }) });
   }
 

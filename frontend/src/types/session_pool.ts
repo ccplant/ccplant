@@ -28,7 +28,7 @@ export interface SessionPoolSupplier {
 export interface SessionPoolBinding {
   id: string
   pool: string
-  subject_type: 'user' | 'team'
+  subject_type: 'user' | 'team' | 'all'
   subject_id: string
   enabled: boolean
 }

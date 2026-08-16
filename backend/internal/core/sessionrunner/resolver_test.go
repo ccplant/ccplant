@@ -66,6 +66,24 @@ func TestResolverUsesUserPreference(t *testing.T) {
 	require.Equal(t, "linux", pool.Name)
 }
 
+func TestResolverAllowsClusterWideBinding(t *testing.T) {
+	store := &resolverStore{
+		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:       []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectAll, Enabled: true}},
+		preferences: map[string]*Preference{},
+	}
+
+	pool, err := NewResolver(store, 0).Resolve(context.Background(), "any-user", nil, map[string]string{"allocator.pool": "linux"})
+	require.NoError(t, err)
+	require.Equal(t, "linux", pool.Name)
+
+	available, err := NewResolver(store, 0).AvailablePools(context.Background(), "another-user", []string{"any/team"})
+	require.NoError(t, err)
+	require.Len(t, available, 1)
+}
+
 func TestResolverReturnsLogicalPoolOnceForMultipleSuppliers(t *testing.T) {
 	store := &resolverStore{
 		managers: []*Manager{{ID: "manager-a", Enabled: true}, {ID: "manager-b", Enabled: true}},

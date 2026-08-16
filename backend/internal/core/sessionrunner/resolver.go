@@ -118,6 +118,9 @@ func allowedPoolNames(bindings []*Binding, userID string, teams []string) map[st
 		if !binding.Enabled {
 			continue
 		}
+		if binding.SubjectType == SubjectAll {
+			allowed[binding.Pool] = true
+		}
 		if binding.SubjectType == SubjectUser && binding.SubjectID == userID {
 			allowed[binding.Pool] = true
 		}
