@@ -17,6 +17,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -64,7 +66,56 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.GET("/:sessionId", h.GetSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
 
+	// Runtime traffic is addressed by the parent as
+	// /<remote-id>/<agent-path>, rather than through the management API prefix.
+	// Keep this signed catch-all in the execution plane so the standalone chart
+	// does not need a second API Deployment merely to proxy chat/status/SSE.
+	runtime := e.Group("")
+	runtime.Use(h.hmacMiddleware())
+	runtime.Any("/:sessionId/*", h.ProxySession)
+
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
+	return nil
+}
+
+// ProxySession forwards an authenticated parent request to the concrete
+// session runtime while preserving streaming responses such as SSE.
+func (h *Handlers) ProxySession(c echo.Context) error {
+	sessionID := c.Param("sessionId")
+	session := h.sessionManager.GetSession(sessionID)
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
+	addr := strings.TrimSpace(session.Addr())
+	if addr == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime is not ready")
+	}
+	target, err := url.Parse(addr)
+	if err != nil || target.Host == "" {
+		if parsed, parseErr := url.Parse("http://" + addr); parseErr == nil {
+			target = parsed
+			err = parseErr
+		}
+	}
+	if err != nil || target == nil || target.Host == "" {
+		return echo.NewHTTPError(http.StatusInternalServerError, "invalid session runtime address")
+	}
+
+	suffix := c.Param("*")
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = "/" + strings.TrimPrefix(suffix, "/")
+		req.URL.RawPath = ""
+		req.Host = target.Host
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
+		log.Printf("[SESSION_MANAGER] Proxy session %s failed: %v", sessionID, proxyErr)
+		http.Error(w, "session runtime unavailable", http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(c.Response(), c.Request())
 	return nil
 }
 
