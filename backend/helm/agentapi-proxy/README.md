@@ -182,7 +182,9 @@ The command removes all the Kubernetes components associated with the chart and 
 | `kubernetesSession.image` | Legacy in-process session Pod image; empty uses the full root image | `""` |
 | `sessionManager.kubernetesSession.image` | Dedicated manager session Pod image; empty uses the full session-manager image | `""` |
 
-An empty role image tag uses the chart's `appVersion`.
+The API, worker, and session-manager image tags always use the chart's
+`appVersion`. Helm values can select each image repository, but cannot override
+these image tags.
 
 The default uses the lightweight image for the API and background worker while
 keeping the compatibility-sensitive session-manager and session runtime on the
@@ -216,8 +218,8 @@ helm upgrade --install backend ./backend/helm/agentapi-proxy \
 
 When running `ccplant` without Helm, `AGENTAPI_K8S_SESSION_IMAGE` selects the
 session Pod image directly. A container cannot change its own Kubernetes image
-from an environment variable; use `api.image.repository`/`api.image.tag` to
-select the backend API Deployment image.
+from an environment variable; use `api.image.repository` to select the backend
+API Deployment image.
 
 ### Deployment parameters
 
