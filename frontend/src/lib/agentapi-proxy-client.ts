@@ -3044,6 +3044,23 @@ export function createAgentAPIProxyClientFromStorage(repoFullname?: string): Age
   return new AgentAPIProxyClient(config);
 }
 
+// Cluster administration always targets the proxy paired with this UI
+// deployment. User-configured endpoints may point at a session-specific or
+// external proxy and must not receive cluster-wide admin operations.
+export function createCurrentDeploymentAgentAPIProxyClient(): AgentAPIProxyClient {
+  const browser = typeof window !== 'undefined'
+  return new AgentAPIProxyClient({
+    baseURL: browser
+      ? `${window.location.protocol}//${window.location.host}/api/proxy`
+      : process.env.AGENTAPI_PROXY_URL || 'http://localhost:8080',
+    apiKey: browser ? undefined : process.env.AGENTAPI_API_KEY,
+    timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
+    maxSessions: 10,
+    sessionTimeout: 300000,
+    debug: defaultClientDebugEnabled(),
+  });
+}
+
 // Default proxy client instance for convenience (uses global settings from storage)
 // Synchronous version for backward compatibility
 export function createDefaultAgentAPIProxyClient(): AgentAPIProxyClient {

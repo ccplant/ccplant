@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import {
   ClusterSessionManager,
   LogicalSessionPool,
@@ -10,7 +10,7 @@ import {
 } from '@/types/session_pool'
 
 export default function SessionPoolsAdminPage() {
-  const client = useMemo(() => createAgentAPIProxyClientFromStorage(), [])
+  const client = useMemo(() => createCurrentDeploymentAgentAPIProxyClient(), [])
   const [managers, setManagers] = useState<ClusterSessionManager[]>([])
   const [pools, setPools] = useState<LogicalSessionPool[]>([])
   const [suppliers, setSuppliers] = useState<SessionPoolSupplier[]>([])

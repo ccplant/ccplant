@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import { adminSections } from './config'
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -12,7 +12,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [allowed, setAllowed] = useState<boolean | null>(null)
 
   useEffect(() => {
-    createAgentAPIProxyClientFromStorage().getUserInfo()
+    createCurrentDeploymentAgentAPIProxyClient().getUserInfo()
       .then((user) => setAllowed(user?.is_admin === true))
       .catch(() => setAllowed(false))
   }, [])

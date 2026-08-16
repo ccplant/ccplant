@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import { AdminSettingsDocument, AdminSettingsVersion } from '@/types/admin-settings'
 import { useToast } from '@/contexts/ToastContext'
 
@@ -11,7 +11,7 @@ export default function AdminHistoryPage() {
   const [busy, setBusy] = useState<number | null>(null)
   const { showToast } = useToast()
   const load = useCallback(async () => {
-    const client = createAgentAPIProxyClientFromStorage()
+    const client = createCurrentDeploymentAgentAPIProxyClient()
     const [document, history] = await Promise.all([client.getAdminSettings(), client.listAdminSettingsVersions()])
     setCurrent(document); setVersions(history.versions)
   }, [])
@@ -20,7 +20,7 @@ export default function AdminHistoryPage() {
     if (!current || !window.confirm(`version ${version} の内容を新しいversionとして復元しますか？`)) return
     setBusy(version)
     try {
-      const client = createAgentAPIProxyClientFromStorage()
+      const client = createCurrentDeploymentAgentAPIProxyClient()
       const old = await client.getAdminSettings(version)
       await client.updateAdminSettings({ base_version: current.version, sections: old.sections })
       await load(); showToast(`version ${version} の内容を復元しました`, 'success')
