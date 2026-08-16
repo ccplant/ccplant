@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -97,6 +98,56 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	runner, err := store.GetRunner(context.Background(), "runner-a")
 	if err != nil || runner.Status != core.RunnerRunning {
 		t.Fatalf("runner should be running: runner=%+v err=%v", runner, err)
+	}
+}
+
+func TestDeleteLogicalPoolCascadesRelatedResources(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	if err := store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{ManagerID: "manager-a", Pool: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "alice", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutPreference(ctx, &core.Preference{SubjectType: core.SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := callSessionPoolHandler(t, controller.DeleteLogicalPool, http.MethodDelete, "/admin/session-pools/linux", nil, map[string]string{"pool": "linux"}, nil)
+	if result.Code != http.StatusNoContent {
+		t.Fatalf("delete logical pool status=%d body=%s", result.Code, result.Body.String())
+	}
+	if _, err := store.GetLogicalPool(ctx, "linux"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("logical pool still exists: %v", err)
+	}
+	if suppliers, _ := store.ListPoolSuppliers(ctx); len(suppliers) != 0 {
+		t.Fatalf("suppliers remain: %+v", suppliers)
+	}
+	if runners, _ := store.ListRunners(ctx, "linux"); len(runners) != 0 {
+		t.Fatalf("runners remain: %+v", runners)
+	}
+	if bindings, _ := store.ListBindings(ctx, "linux"); len(bindings) != 0 {
+		t.Fatalf("bindings remain: %+v", bindings)
+	}
+	if _, err := store.GetPreference(ctx, core.SubjectUser, "alice"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("preference still exists: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("allocation still exists: %v", err)
 	}
 }
 

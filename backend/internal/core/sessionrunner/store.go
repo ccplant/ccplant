@@ -36,14 +36,19 @@ type Store interface {
 	DeleteBinding(context.Context, string) error
 	PutPreference(context.Context, *Preference) error
 	GetPreference(context.Context, SubjectType, string) (*Preference, error)
+	ListPreferences(context.Context) ([]*Preference, error)
+	DeletePreference(context.Context, SubjectType, string) error
 
 	CreateRunner(context.Context, *Runner) error
 	GetRunner(context.Context, string) (*Runner, error)
 	UpdateRunner(context.Context, *Runner) error
 	ListRunners(context.Context, string) ([]*Runner, error)
+	DeleteRunner(context.Context, string) error
 
 	Enqueue(context.Context, *Allocation) error
 	GetAllocation(context.Context, string) (*Allocation, error)
+	ListAllocations(context.Context, string) ([]*Allocation, error)
+	DeleteAllocation(context.Context, string) error
 	ClaimNext(context.Context, string, string, time.Duration) (*Allocation, bool, error)
 	Acknowledge(context.Context, string, string, string) (*Allocation, error)
 	Fail(context.Context, string, string, string) (*Allocation, error)

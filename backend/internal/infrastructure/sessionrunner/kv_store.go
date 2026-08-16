@@ -352,6 +352,23 @@ func (s *Store) GetPreference(ctx context.Context, kind core.SubjectType, id str
 	return &value, err
 }
 
+func (s *Store) ListPreferences(ctx context.Context) ([]*core.Preference, error) {
+	var result []*core.Preference
+	err := s.list(ctx, "preference", func(raw []byte) error {
+		var value core.Preference
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		result = append(result, &value)
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) DeletePreference(ctx context.Context, kind core.SubjectType, id string) error {
+	return s.delete(ctx, preferenceName(kind, id))
+}
+
 func (s *Store) CreateRunner(ctx context.Context, runner *core.Runner) error {
 	if runner.ID == "" {
 		runner.ID = uuid.NewString()
@@ -394,6 +411,10 @@ func (s *Store) ListRunners(ctx context.Context, pool string) ([]*core.Runner, e
 	return result, err
 }
 
+func (s *Store) DeleteRunner(ctx context.Context, id string) error {
+	return s.delete(ctx, runnerName(id))
+}
+
 func (s *Store) Enqueue(ctx context.Context, allocation *core.Allocation) error {
 	now := s.now()
 	allocation.Status = core.AllocationPending
@@ -408,6 +429,25 @@ func (s *Store) GetAllocation(ctx context.Context, id string) (*core.Allocation,
 	var value core.Allocation
 	_, err := s.get(ctx, allocationName(id), &value)
 	return &value, err
+}
+
+func (s *Store) ListAllocations(ctx context.Context, pool string) ([]*core.Allocation, error) {
+	var result []*core.Allocation
+	err := s.list(ctx, "allocation", func(raw []byte) error {
+		var value core.Allocation
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if pool == "" || value.Pool == pool {
+			result = append(result, &value)
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) DeleteAllocation(ctx context.Context, sessionID string) error {
+	return s.delete(ctx, allocationName(sessionID))
 }
 
 func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time.Duration) (*core.Allocation, bool, error) {

@@ -114,6 +114,37 @@ export default function SessionPoolsAdminPage() {
     }
   }
 
+  const removeManager = async (manager: ClusterSessionManager) => {
+    if (!window.confirm(`Session Manager「${manager.name}」を削除しますか？関連するSupplierと待機Runnerも削除されます。`)) return
+    try {
+      await client.deleteClusterSessionManager(manager.id)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Session Manager削除に失敗しました')
+    }
+  }
+
+  const removePool = async (pool: LogicalSessionPool) => {
+    if (!window.confirm(`Logical Pool「${pool.name}」を削除しますか？Supplier、Binding、Preferenceなどの関連リソースも削除されます。`)) return
+    try {
+      await client.deleteSessionPool(pool.name)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Logical Pool削除に失敗しました')
+    }
+  }
+
+  const removeSupplier = async (supplier: SessionPoolSupplier) => {
+    const manager = managers.find((item) => item.id === supplier.manager_id)
+    if (!window.confirm(`${manager?.name || supplier.manager_id} の「${supplier.pool}」Supplierを削除しますか？待機Runnerも削除されます。`)) return
+    try {
+      await client.deleteSessionPoolSupplier(supplier.manager_id, supplier.pool)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Pool Supplier削除に失敗しました')
+    }
+  }
+
   const input = 'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900'
   const card = 'space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800'
 
@@ -183,18 +214,36 @@ export default function SessionPoolsAdminPage() {
         </form>
       </div>
 
+      <div className={card}>
+        <h3 className="font-semibold">Session Managers</h3>
+        <div className="flex flex-wrap gap-2">
+          {managers.map((manager) => (
+            <span key={manager.id} className="inline-flex items-center rounded bg-gray-100 px-3 py-2 text-sm dark:bg-gray-700">
+              {manager.name}
+              <button aria-label={`${manager.name}を削除`} className="ml-3 text-red-600" onClick={() => void removeManager(manager)}>削除</button>
+            </span>
+          ))}
+          {!managers.length && <span className="text-sm text-gray-400">Managerはまだありません。</span>}
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b"><th className="p-3">Logical Pool</th><th className="p-3">Suppliers</th><th className="p-3">Bindings</th></tr></thead>
           <tbody>
             {pools.map((pool) => (
               <tr key={pool.name} className="border-b align-top last:border-0">
-                <td className="p-3"><span className="font-medium">{pool.name}</span>{pool.default && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">default</span>}</td>
+                <td className="p-3">
+                  <span className="font-medium">{pool.name}</span>
+                  {pool.default && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">default</span>}
+                  <button aria-label={`${pool.name}を削除`} className="ml-3 text-xs text-red-600" onClick={() => void removePool(pool)}>削除</button>
+                </td>
                 <td className="p-3">
                   {(suppliers.filter((supplier) => supplier.pool === pool.name)).map((supplier) => (
                     <div key={supplier.manager_id} className="mb-1">
                       {managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}
                       <span className="ml-2 text-xs text-gray-500">idle {supplier.idle_runners || 0} / max {supplier.max_runners || '∞'}</span>
+                      <button aria-label={`${supplier.pool}のSupplierを削除`} className="ml-2 text-xs text-red-600" onClick={() => void removeSupplier(supplier)}>削除</button>
                     </div>
                   ))}
                   {!suppliers.some((supplier) => supplier.pool === pool.name) && <span className="text-gray-400">未設定</span>}

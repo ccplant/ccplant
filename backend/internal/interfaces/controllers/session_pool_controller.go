@@ -109,6 +109,54 @@ func (c *SessionPoolController) PatchManager(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, redactManager(manager))
 }
 
+func (c *SessionPoolController) DeleteManager(ctx echo.Context) error {
+	requestCtx := ctx.Request().Context()
+	managerID := ctx.Param("id")
+	if _, err := c.store.GetManager(requestCtx, managerID); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	runners, err := c.store.ListRunners(requestCtx, "")
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	allocations, err := c.store.ListAllocations(requestCtx, "")
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	for _, runner := range runners {
+		if runner.ManagerID == managerID && runnerIsActive(runner) {
+			return echo.NewHTTPError(http.StatusConflict, "manager has active runners")
+		}
+	}
+	for _, allocation := range allocations {
+		if allocation.ManagerID == managerID && allocationIsActive(allocation) {
+			return echo.NewHTTPError(http.StatusConflict, "manager has active allocations")
+		}
+	}
+	suppliers, err := c.store.ListPoolSuppliers(requestCtx)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	for _, runner := range runners {
+		if runner.ManagerID == managerID {
+			if err := c.store.DeleteRunner(requestCtx, runner.ID); err != nil {
+				return sessionRunnerStoreError(err)
+			}
+		}
+	}
+	for _, supplier := range suppliers {
+		if supplier.ManagerID == managerID {
+			if err := c.store.DeletePoolSupplier(requestCtx, managerID, supplier.Pool); err != nil {
+				return sessionRunnerStoreError(err)
+			}
+		}
+	}
+	if err := c.store.DeleteManager(requestCtx, managerID); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
 func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
 	if err != nil {
@@ -201,6 +249,77 @@ func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, pool)
 }
 
+func (c *SessionPoolController) DeleteLogicalPool(ctx echo.Context) error {
+	requestCtx := ctx.Request().Context()
+	poolName := ctx.Param("pool")
+	if _, err := c.store.GetLogicalPool(requestCtx, poolName); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	runners, err := c.store.ListRunners(requestCtx, poolName)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	allocations, err := c.store.ListAllocations(requestCtx, poolName)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	for _, runner := range runners {
+		if runnerIsActive(runner) {
+			return echo.NewHTTPError(http.StatusConflict, "pool has active runners")
+		}
+	}
+	for _, allocation := range allocations {
+		if allocationIsActive(allocation) {
+			return echo.NewHTTPError(http.StatusConflict, "pool has active allocations")
+		}
+	}
+	suppliers, err := c.store.ListPoolSuppliers(requestCtx)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	bindings, err := c.store.ListBindings(requestCtx, poolName)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	preferences, err := c.store.ListPreferences(requestCtx)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	for _, allocation := range allocations {
+		if err := c.store.DeleteAllocation(requestCtx, allocation.SessionID); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
+	for _, runner := range runners {
+		if err := c.store.DeleteRunner(requestCtx, runner.ID); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
+	for _, supplier := range suppliers {
+		if supplier.Pool == poolName {
+			if err := c.store.DeletePoolSupplier(requestCtx, supplier.ManagerID, poolName); err != nil {
+				return sessionRunnerStoreError(err)
+			}
+		}
+	}
+	for _, binding := range bindings {
+		if err := c.store.DeleteBinding(requestCtx, binding.ID); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
+	for _, preference := range preferences {
+		if preference.DefaultPool == poolName {
+			if err := c.store.DeletePreference(requestCtx, preference.SubjectType, preference.SubjectID); err != nil {
+				return sessionRunnerStoreError(err)
+			}
+		}
+	}
+	if err := c.store.DeleteLogicalPool(requestCtx, poolName); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
 func (c *SessionPoolController) PatchPoolSupplier(ctx echo.Context) error {
 	pool, err := c.store.GetPoolSupplier(ctx.Request().Context(), ctx.Param("id"), ctx.Param("pool"))
 	if err != nil {
@@ -238,6 +357,44 @@ func (c *SessionPoolController) PatchPoolSupplier(ctx echo.Context) error {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, pool)
+}
+
+func (c *SessionPoolController) DeletePoolSupplier(ctx echo.Context) error {
+	requestCtx := ctx.Request().Context()
+	managerID, poolName := ctx.Param("id"), ctx.Param("pool")
+	if _, err := c.store.GetPoolSupplier(requestCtx, managerID, poolName); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	runners, err := c.store.ListRunners(requestCtx, poolName)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	for _, runner := range runners {
+		if runner.ManagerID == managerID && runnerIsActive(runner) {
+			return echo.NewHTTPError(http.StatusConflict, "pool supplier has active runners")
+		}
+	}
+	for _, runner := range runners {
+		if runner.ManagerID == managerID {
+			if err := c.store.DeleteRunner(requestCtx, runner.ID); err != nil {
+				return sessionRunnerStoreError(err)
+			}
+		}
+	}
+	if err := c.store.DeletePoolSupplier(requestCtx, managerID, poolName); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
+func runnerIsActive(runner *core.Runner) bool {
+	return runner.Status == core.RunnerRunning || runner.Status == core.RunnerClaiming
+}
+
+func allocationIsActive(allocation *core.Allocation) bool {
+	return allocation.Status == core.AllocationLeased ||
+		allocation.Status == core.AllocationClaimed ||
+		allocation.Status == core.AllocationRunning
 }
 
 func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
