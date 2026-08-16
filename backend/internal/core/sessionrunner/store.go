@@ -33,6 +33,7 @@ type Store interface {
 
 	CreateBinding(context.Context, *Binding) error
 	ListBindings(context.Context, string) ([]*Binding, error)
+	UpdateBinding(context.Context, *Binding) error
 	DeleteBinding(context.Context, string) error
 	PutPreference(context.Context, *Preference) error
 	GetPreference(context.Context, SubjectType, string) (*Preference, error)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	infra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	"k8s.io/client-go/kubernetes/fake"
@@ -130,6 +131,56 @@ func TestCreateClusterWidePoolBinding(t *testing.T) {
 	}
 }
 
+func TestPoolCreatorReceivesManageBinding(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	bob := entities.NewUser(entities.UserID("bob"), entities.UserTypeAPIKey, "bob")
+
+	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
+		map[string]any{"name": "linux"}, nil, nil, alice)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
+	}
+	bindings, err := store.ListBindings(context.Background(), "linux")
+	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectUser || bindings[0].SubjectID != "alice" || bindings[0].Role != core.BindingRoleManage {
+		t.Fatalf("creator manage binding missing: bindings=%+v err=%v", bindings, err)
+	}
+
+	denied := callSessionPoolHandlerAs(t, controller.PatchLogicalPool, http.MethodPatch, "/session-pools/linux",
+		map[string]any{"enabled": false}, map[string]string{"pool": "linux"}, nil, bob)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("non-manager patch status=%d body=%s", denied.Code, denied.Body.String())
+	}
+
+	granted := callSessionPoolHandlerAs(t, controller.CreateBinding, http.MethodPost, "/session-pools/linux/bindings",
+		map[string]any{"subject_type": "user", "subject_id": "bob", "role": "manage"}, map[string]string{"pool": "linux"}, nil, alice)
+	if granted.Code != http.StatusCreated {
+		t.Fatalf("grant manage status=%d body=%s", granted.Code, granted.Body.String())
+	}
+	allowed := callSessionPoolHandlerAs(t, controller.PatchLogicalPool, http.MethodPatch, "/session-pools/linux",
+		map[string]any{"enabled": false}, map[string]string{"pool": "linux"}, nil, bob)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("manager patch status=%d body=%s", allowed.Code, allowed.Body.String())
+	}
+}
+
+func TestAllBindingCannotManagePool(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
+		map[string]any{"name": "linux"}, nil, nil, alice)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
+	}
+	result := callSessionPoolHandlerAs(t, controller.CreateBinding, http.MethodPost, "/session-pools/linux/bindings",
+		map[string]any{"subject_type": "all", "role": "manage"}, map[string]string{"pool": "linux"}, nil, alice)
+	if result.Code != http.StatusBadRequest {
+		t.Fatalf("all manage binding status=%d body=%s", result.Code, result.Body.String())
+	}
+}
+
 func TestDeleteLogicalPoolCascadesRelatedResources(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
@@ -181,6 +232,10 @@ func TestDeleteLogicalPoolCascadesRelatedResources(t *testing.T) {
 }
 
 func callSessionPoolHandler(t *testing.T, handler echo.HandlerFunc, method, target string, body any, params, headers map[string]string) *httptest.ResponseRecorder {
+	return callSessionPoolHandlerAs(t, handler, method, target, body, params, headers, nil)
+}
+
+func callSessionPoolHandlerAs(t *testing.T, handler echo.HandlerFunc, method, target string, body any, params, headers map[string]string, user *entities.User) *httptest.ResponseRecorder {
 	t.Helper()
 	var raw []byte
 	if body != nil {
@@ -193,6 +248,9 @@ func callSessionPoolHandler(t *testing.T, handler echo.HandlerFunc, method, targ
 	}
 	recorder := httptest.NewRecorder()
 	ctx := echo.New().NewContext(req, recorder)
+	if user != nil {
+		ctx.Set("internal_user", user)
+	}
 	names := make([]string, 0, len(params))
 	values := make([]string, 0, len(params))
 	for key, value := range params {

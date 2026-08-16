@@ -557,6 +557,20 @@ func (r *Router) registerConditionalRoutes() error {
 	}
 	if r.handlers.sessionPoolController != nil {
 		adminOnly := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
+		poolRead := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
+		poolWrite := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
+		r.echo.POST("/session-pools", r.handlers.sessionPoolController.CreateLogicalPool, poolWrite)
+		r.echo.GET("/session-pools", r.handlers.sessionPoolController.ListPools, poolRead)
+		r.echo.PATCH("/session-pools/:pool", r.handlers.sessionPoolController.PatchLogicalPool, poolWrite)
+		r.echo.DELETE("/session-pools/:pool", r.handlers.sessionPoolController.DeleteLogicalPool, poolWrite)
+		r.echo.POST("/session-pools/:pool/bindings", r.handlers.sessionPoolController.CreateBinding, poolWrite)
+		r.echo.GET("/session-pools/:pool/bindings", r.handlers.sessionPoolController.ListBindings, poolRead)
+		r.echo.PATCH("/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.PatchBinding, poolWrite)
+		r.echo.DELETE("/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.DeleteBinding, poolWrite)
+		r.echo.POST("/session-pools/:pool/suppliers/:id", r.handlers.sessionPoolController.CreatePoolSupplier, poolWrite)
+		r.echo.GET("/session-pools/:pool/suppliers", r.handlers.sessionPoolController.ListPoolSuppliers, poolRead)
+		r.echo.PATCH("/session-pools/:pool/suppliers/:id", r.handlers.sessionPoolController.PatchPoolSupplier, poolWrite)
+		r.echo.DELETE("/session-pools/:pool/suppliers/:id", r.handlers.sessionPoolController.DeletePoolSupplier, poolWrite)
 		r.echo.POST("/admin/session-managers", r.handlers.sessionPoolController.CreateManager, adminOnly)
 		r.echo.GET("/admin/session-managers", r.handlers.sessionPoolController.ListManagers, adminOnly)
 		r.echo.PATCH("/admin/session-managers/:id", r.handlers.sessionPoolController.PatchManager, adminOnly)
@@ -571,6 +585,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.DELETE("/admin/session-pools/:pool", r.handlers.sessionPoolController.DeleteLogicalPool, adminOnly)
 		r.echo.POST("/admin/session-pools/:pool/bindings", r.handlers.sessionPoolController.CreateBinding, adminOnly)
 		r.echo.GET("/admin/session-pools/:pool/bindings", r.handlers.sessionPoolController.ListBindings, adminOnly)
+		r.echo.PATCH("/admin/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.PatchBinding, adminOnly)
 		r.echo.DELETE("/admin/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.DeleteBinding, adminOnly)
 	}
 

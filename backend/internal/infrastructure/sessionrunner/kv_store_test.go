@@ -28,6 +28,12 @@ func TestKVStorePoolBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
 	require.Equal(t, "org/team", bindings[0].SubjectID)
+	require.Equal(t, core.BindingRoleUse, bindings[0].Role)
+	bindings[0].Role = core.BindingRoleManage
+	require.NoError(t, store.UpdateBinding(ctx, bindings[0]))
+	updatedBindings, err := store.ListBindings(ctx, "linux")
+	require.NoError(t, err)
+	require.Equal(t, core.BindingRoleManage, updatedBindings[0].Role)
 
 	require.NoError(t, store.PutPreference(ctx, &core.Preference{SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true, DefaultPool: "linux"}))
 	preference, err := store.GetPreference(ctx, core.SubjectTeam, "org/team")

@@ -8,11 +8,14 @@ const (
 )
 
 type SubjectType string
+type BindingRole string
 
 const (
-	SubjectUser SubjectType = "user"
-	SubjectTeam SubjectType = "team"
-	SubjectAll  SubjectType = "all"
+	SubjectUser       SubjectType = "user"
+	SubjectTeam       SubjectType = "team"
+	SubjectAll        SubjectType = "all"
+	BindingRoleUse    BindingRole = "use"
+	BindingRoleManage BindingRole = "manage"
 )
 
 type Manager struct {
@@ -57,6 +60,7 @@ type Binding struct {
 	Pool        string      `json:"pool"`
 	SubjectType SubjectType `json:"subject_type"`
 	SubjectID   string      `json:"subject_id"`
+	Role        BindingRole `json:"role"`
 	Enabled     bool        `json:"enabled"`
 	Priority    int         `json:"priority,omitempty"`
 	CreatedAt   time.Time   `json:"created_at"`

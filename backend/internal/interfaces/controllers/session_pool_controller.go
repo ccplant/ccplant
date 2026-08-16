@@ -164,7 +164,13 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 	}
 	var supplier core.PoolSupplier
 	supplier.Enabled = true
-	if err := ctx.Bind(&supplier); err != nil || strings.TrimSpace(supplier.Pool) == "" {
+	if err := ctx.Bind(&supplier); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	if supplier.Pool == "" {
+		supplier.Pool = ctx.Param("pool")
+	}
+	if strings.TrimSpace(supplier.Pool) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name is required")
 	}
 	if problems := validation.IsValidLabelValue(supplier.Pool); len(problems) > 0 {
@@ -172,6 +178,9 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 	}
 	if _, err := c.store.GetLogicalPool(ctx.Request().Context(), supplier.Pool); err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	if err := c.requirePoolManage(ctx, supplier.Pool); err != nil {
+		return err
 	}
 	if supplier.MinIdle < 0 || supplier.MaxRunners < 0 || (supplier.MaxRunners > 0 && supplier.MinIdle > supplier.MaxRunners) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid runner limits")
@@ -184,29 +193,59 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 }
 
 func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
-	var pool core.LogicalPool
-	pool.Enabled = true
-	if err := ctx.Bind(&pool); err != nil || strings.TrimSpace(pool.Name) == "" {
+	var input struct {
+		Name      string            `json:"name"`
+		Labels    map[string]string `json:"labels,omitempty"`
+		Enabled   *bool             `json:"enabled,omitempty"`
+		IsDefault bool              `json:"default,omitempty"`
+		TeamID    string            `json:"team_id,omitempty"`
+	}
+	if err := ctx.Bind(&input); err != nil || strings.TrimSpace(input.Name) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name is required")
 	}
-	if problems := validation.IsValidLabelValue(pool.Name); len(problems) > 0 {
+	if problems := validation.IsValidLabelValue(input.Name); len(problems) > 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
 	}
+	user := auth.GetUserFromContext(ctx)
+	if input.TeamID != "" && user != nil && !user.IsAdmin() && !user.IsMemberOfTeam(input.TeamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "access denied")
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	pool := core.LogicalPool{Name: input.Name, Labels: input.Labels, Enabled: enabled, IsDefault: input.IsDefault}
 	if err := c.store.CreateLogicalPool(ctx.Request().Context(), &pool); err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	if user != nil {
+		binding := &core.Binding{Pool: pool.Name, SubjectType: core.SubjectUser, SubjectID: string(user.ID()), Role: core.BindingRoleManage, Enabled: true}
+		if input.TeamID != "" {
+			binding.SubjectType, binding.SubjectID = core.SubjectTeam, input.TeamID
+		}
+		if err := c.store.CreateBinding(ctx.Request().Context(), binding); err != nil {
+			_ = c.store.DeleteLogicalPool(ctx.Request().Context(), pool.Name)
+			return sessionRunnerStoreError(err)
+		}
 	}
 	return ctx.JSON(http.StatusCreated, &pool)
 }
 
 func (c *SessionPoolController) ListPoolSuppliers(ctx echo.Context) error {
+	if poolName := ctx.Param("pool"); poolName != "" {
+		if err := c.requirePoolManage(ctx, poolName); err != nil {
+			return err
+		}
+	}
 	suppliers, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	managerID := ctx.Param("id")
+	poolName := ctx.Param("pool")
 	result := make([]*core.PoolSupplier, 0)
 	for _, supplier := range suppliers {
-		if managerID == "" || supplier.ManagerID == managerID {
+		if (managerID == "" || supplier.ManagerID == managerID) && (poolName == "" || supplier.Pool == poolName) {
 			result = append(result, supplier)
 		}
 	}
@@ -218,13 +257,28 @@ func (c *SessionPoolController) ListPools(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"session_pools": pools})
+	user := auth.GetUserFromContext(ctx)
+	if user == nil || user.IsAdmin() {
+		return ctx.JSON(http.StatusOK, map[string]any{"session_pools": pools})
+	}
+	result := make([]*core.LogicalPool, 0, len(pools))
+	for _, pool := range pools {
+		if ok, checkErr := c.canManagePool(ctx.Request().Context(), user, pool.Name); checkErr != nil {
+			return sessionRunnerStoreError(checkErr)
+		} else if ok {
+			result = append(result, pool)
+		}
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"session_pools": result})
 }
 
 func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
 	pool, err := c.store.GetLogicalPool(ctx.Request().Context(), ctx.Param("pool"))
 	if err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	if err := c.requirePoolManage(ctx, pool.Name); err != nil {
+		return err
 	}
 	var patch struct {
 		Labels    map[string]string `json:"labels,omitempty"`
@@ -254,6 +308,9 @@ func (c *SessionPoolController) DeleteLogicalPool(ctx echo.Context) error {
 	poolName := ctx.Param("pool")
 	if _, err := c.store.GetLogicalPool(requestCtx, poolName); err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	if err := c.requirePoolManage(ctx, poolName); err != nil {
+		return err
 	}
 	runners, err := c.store.ListRunners(requestCtx, poolName)
 	if err != nil {
@@ -325,6 +382,9 @@ func (c *SessionPoolController) PatchPoolSupplier(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	if err := c.requirePoolManage(ctx, pool.Pool); err != nil {
+		return err
+	}
 	var patch struct {
 		Labels     map[string]string `json:"labels,omitempty"`
 		MinIdle    *int              `json:"min_idle,omitempty"`
@@ -365,6 +425,9 @@ func (c *SessionPoolController) DeletePoolSupplier(ctx echo.Context) error {
 	if _, err := c.store.GetPoolSupplier(requestCtx, managerID, poolName); err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	if err := c.requirePoolManage(ctx, poolName); err != nil {
+		return err
+	}
 	runners, err := c.store.ListRunners(requestCtx, poolName)
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -404,11 +467,20 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}
 	binding.Pool = ctx.Param("pool")
+	if binding.Role == "" {
+		binding.Role = core.BindingRoleUse
+	}
 	if err := validatePoolBindingSubject(binding.SubjectType, binding.SubjectID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if err := c.ensureLogicalPoolExists(ctx.Request().Context(), binding.Pool); err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	if err := c.requirePoolManage(ctx, binding.Pool); err != nil {
+		return err
 	}
 	if err := c.store.CreateBinding(ctx.Request().Context(), &binding); err != nil {
 		return sessionRunnerStoreError(err)
@@ -417,6 +489,21 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 }
 
 func (c *SessionPoolController) DeleteBinding(ctx echo.Context) error {
+	pool := ctx.Param("pool")
+	if err := c.requirePoolManage(ctx, pool); err != nil {
+		return err
+	}
+	bindings, err := c.store.ListBindings(ctx.Request().Context(), pool)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	found := false
+	for _, binding := range bindings {
+		found = found || binding.ID == ctx.Param("bindingId")
+	}
+	if !found {
+		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
+	}
 	if err := c.store.DeleteBinding(ctx.Request().Context(), ctx.Param("bindingId")); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -424,11 +511,55 @@ func (c *SessionPoolController) DeleteBinding(ctx echo.Context) error {
 }
 
 func (c *SessionPoolController) ListBindings(ctx echo.Context) error {
+	if err := c.requirePoolManage(ctx, ctx.Param("pool")); err != nil {
+		return err
+	}
 	bindings, err := c.store.ListBindings(ctx.Request().Context(), ctx.Param("pool"))
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"pool_bindings": bindings})
+}
+
+func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
+	pool := ctx.Param("pool")
+	if err := c.requirePoolManage(ctx, pool); err != nil {
+		return err
+	}
+	bindings, err := c.store.ListBindings(ctx.Request().Context(), pool)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	var binding *core.Binding
+	for _, candidate := range bindings {
+		if candidate.ID == ctx.Param("bindingId") {
+			binding = candidate
+			break
+		}
+	}
+	if binding == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
+	}
+	var patch struct {
+		Role    *core.BindingRole `json:"role,omitempty"`
+		Enabled *bool             `json:"enabled,omitempty"`
+	}
+	if err := ctx.Bind(&patch); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	if patch.Role != nil {
+		binding.Role = *patch.Role
+	}
+	if patch.Enabled != nil {
+		binding.Enabled = *patch.Enabled
+	}
+	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := c.store.UpdateBinding(ctx.Request().Context(), binding); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.JSON(http.StatusOK, binding)
 }
 
 func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {
@@ -732,6 +863,55 @@ func validatePoolBindingSubject(kind core.SubjectType, id string) error {
 		return nil
 	}
 	return validatePoolSubject(kind, id)
+}
+
+func validatePoolBindingRole(kind core.SubjectType, role core.BindingRole) error {
+	if role != core.BindingRoleUse && role != core.BindingRoleManage {
+		return errors.New("role must be use or manage")
+	}
+	if kind == core.SubjectAll && role == core.BindingRoleManage {
+		return errors.New("all binding cannot have manage role")
+	}
+	return nil
+}
+
+func (c *SessionPoolController) requirePoolManage(ctx echo.Context, pool string) error {
+	user := auth.GetUserFromContext(ctx)
+	// Admin routes already enforce authentication in middleware. Keeping nil
+	// permissive also supports internal controller calls without an HTTP identity.
+	if user == nil || user.IsAdmin() {
+		return nil
+	}
+	ok, err := c.canManagePool(ctx.Request().Context(), user, pool)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	if !ok {
+		return echo.NewHTTPError(http.StatusForbidden, "pool manage binding required")
+	}
+	return nil
+}
+
+func (c *SessionPoolController) canManagePool(ctx context.Context, user *entities.User, pool string) (bool, error) {
+	if user == nil || user.IsAdmin() {
+		return true, nil
+	}
+	bindings, err := c.store.ListBindings(ctx, pool)
+	if err != nil {
+		return false, err
+	}
+	for _, binding := range bindings {
+		if !binding.Enabled || binding.Role != core.BindingRoleManage {
+			continue
+		}
+		if binding.SubjectType == core.SubjectUser && binding.SubjectID == string(user.ID()) {
+			return true, nil
+		}
+		if binding.SubjectType == core.SubjectTeam && user.IsMemberOfTeam(binding.SubjectID) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func userTeamIDsForPools(user *entities.User) []string {

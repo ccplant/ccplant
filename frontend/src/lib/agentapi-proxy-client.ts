@@ -2977,8 +2977,38 @@ export class AgentAPIProxyClient {
     return result.pool_bindings ?? [];
   }
 
-  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string): Promise<SessionPoolBinding> {
-    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID }) });
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' = 'use'): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role }) });
+  }
+
+  async listManagedSessionPools(): Promise<LogicalSessionPool[]> {
+    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/session-pools');
+    return result.session_pools ?? [];
+  }
+
+  async createManagedSessionPool(input: { name: string; team_id?: string }): Promise<LogicalSessionPool> {
+    return this.makeRequest('/session-pools', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async deleteManagedSessionPool(pool: string): Promise<void> {
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
+  }
+
+  async listManagedSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
+    const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/session-pools/${encodeURIComponent(pool)}/bindings`);
+    return result.pool_bindings ?? [];
+  }
+
+  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage'): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role }) });
+  }
+
+  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage'; enabled?: boolean }): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
+  async deleteManagedSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
   }
 
   async deleteSessionPoolBinding(pool: string, bindingID: string): Promise<void> {

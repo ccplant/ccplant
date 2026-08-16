@@ -5264,6 +5264,18 @@
         "responses": {"200": {"description": "Preference saved"}, "403": {"description": "Pool is not bound to the subject"}}
       }
     },
+    "/session-pools": {
+      "get": {"summary": "List logical pools manageable by the authenticated subject", "operationId": "listManagedSessionPools", "tags": ["Session Pools"], "responses": {"200": {"description": "Manageable pools"}}},
+      "post": {"summary": "Create a logical pool and grant its creator manage access", "operationId": "createManagedSessionPool", "tags": ["Session Pools"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/SessionPool"}, {"type": "object", "properties": {"team_id": {"type": "string"}}}]}}}}, "responses": {"201": {"description": "Pool created"}}}
+    },
+    "/session-pools/{pool}": {
+      "patch": {"summary": "Update a pool with manage access", "operationId": "patchManagedSessionPool", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Pool updated"}}},
+      "delete": {"summary": "Delete a pool with manage access", "operationId": "deleteManagedSessionPool", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"204": {"description": "Pool deleted"}}}
+    },
+    "/session-pools/{pool}/bindings": {
+      "get": {"summary": "List bindings with manage access", "operationId": "listManagedSessionPoolBindings", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Pool bindings"}}},
+      "post": {"summary": "Grant pool use or manage access", "operationId": "createManagedSessionPoolBinding", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPoolBinding"}}}}, "responses": {"201": {"description": "Binding created"}, "409": {"description": "Subject is already bound"}}}
+    },
     "/admin/session-managers": {
       "get": {"summary": "List cluster-wide session managers", "operationId": "listSessionManagers", "tags": ["Session Pools"], "responses": {"200": {"description": "Manager registry"}}},
       "post": {
@@ -5333,7 +5345,7 @@
       },
       "SessionPoolBinding": {
         "type": "object", "required": ["subject_type"],
-        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}}
+        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}}
       },
       "SessionPoolPreference": {
         "type": "object",

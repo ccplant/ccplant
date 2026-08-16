@@ -30,5 +30,6 @@ export interface SessionPoolBinding {
   pool: string
   subject_type: 'user' | 'team' | 'all'
   subject_id: string
+  role: 'use' | 'manage'
   enabled: boolean
 }

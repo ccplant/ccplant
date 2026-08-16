@@ -23,6 +23,7 @@ export default function SessionPoolsAdminPage() {
   const [maxRunners, setMaxRunners] = useState(10)
   const [subjectType, setSubjectType] = useState<'user' | 'team' | 'all'>('team')
   const [subjectID, setSubjectID] = useState('')
+  const [bindingRole, setBindingRole] = useState<'use' | 'manage'>('use')
   const [bindingPool, setBindingPool] = useState('')
   const [connectionToken, setConnectionToken] = useState('')
   const [error, setError] = useState('')
@@ -97,7 +98,7 @@ export default function SessionPoolsAdminPage() {
   const addBinding = async (event: FormEvent) => {
     event.preventDefault()
     try {
-      await client.createSessionPoolBinding(bindingPool, subjectType, subjectID)
+      await client.createSessionPoolBinding(bindingPool, subjectType, subjectID, bindingRole)
       setSubjectID('')
       await reload()
     } catch (reason) {
@@ -208,11 +209,18 @@ export default function SessionPoolsAdminPage() {
           <select className={input} value={subjectType} onChange={(event) => {
             const nextType = event.target.value as 'user' | 'team' | 'all'
             setSubjectType(nextType)
-            if (nextType === 'all') setSubjectID('')
+            if (nextType === 'all') {
+              setSubjectID('')
+              setBindingRole('use')
+            }
           }}>
             <option value="team">Team</option>
             <option value="user">User</option>
             <option value="all">All users and teams</option>
+          </select>
+          <select className={input} value={bindingRole} onChange={(event) => setBindingRole(event.target.value as 'use' | 'manage')}>
+            <option value="use">Use</option>
+            <option value="manage" disabled={subjectType === 'all'}>Manage</option>
           </select>
           <input required={subjectType !== 'all'} disabled={subjectType === 'all'} className={input} value={subjectID} onChange={(event) => setSubjectID(event.target.value)} placeholder={subjectType === 'all' ? 'Subject IDは不要です' : subjectType === 'team' ? 'org/team' : 'user-id'} />
           <button disabled={!bindingPool} className="w-fit rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Bindingを追加</button>
@@ -256,7 +264,7 @@ export default function SessionPoolsAdminPage() {
                 <td className="p-3">
                   {(bindings[pool.name] || []).map((binding) => (
                     <span key={binding.id} className="mb-1 mr-2 inline-flex rounded bg-gray-100 px-2 py-1 text-xs dark:bg-gray-700">
-                      {binding.subject_type}: {binding.subject_id}
+                      {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.role || 'use'})
                       <button aria-label={`${binding.subject_id}のBindingを削除`} className="ml-2 text-red-600" onClick={() => void removeBinding(pool.name, binding.id)}>×</button>
                     </span>
                   ))}

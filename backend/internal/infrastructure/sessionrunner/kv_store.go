@@ -324,6 +324,9 @@ func (s *Store) ListBindings(ctx context.Context, pool string) ([]*core.Binding,
 			return err
 		}
 		if pool == "" || value.Pool == pool {
+			if value.Role == "" {
+				value.Role = core.BindingRoleUse
+			}
 			result = append(result, &value)
 		}
 		return nil
@@ -335,6 +338,20 @@ func (s *Store) ListBindings(ctx context.Context, pool string) ([]*core.Binding,
 		return result[i].Priority > result[j].Priority
 	})
 	return result, err
+}
+
+func (s *Store) UpdateBinding(ctx context.Context, binding *core.Binding) error {
+	bindings, err := s.ListBindings(ctx, binding.Pool)
+	if err != nil {
+		return err
+	}
+	for _, current := range bindings {
+		if current.ID == binding.ID {
+			binding.CreatedAt, binding.UpdatedAt = current.CreatedAt, s.now()
+			return s.update(ctx, bindingName(binding.ID), binding)
+		}
+	}
+	return core.ErrNotFound
 }
 
 func (s *Store) DeleteBinding(ctx context.Context, id string) error {
