@@ -159,6 +159,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	e.HideBanner = true
 	e.Use(middleware.Recover())
 	e.GET("/livez", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
+	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
 	e.GET("/readyz", func(c echo.Context) error {
 		ctx, cancel := context.WithTimeout(c.Request().Context(), 3*time.Second)
 		defer cancel()
@@ -185,6 +186,21 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		return nil, err
 	}
 	privateHandler.RegisterRoutes(e)
+	// A dedicated remote deployment exposes the signed session forwarding API
+	// directly; it does not need a second public API process in front of it.
+	if remoteMode {
+		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
+			runtimeCancel()
+			if redisClient != nil {
+				_ = redisClient.Close()
+			}
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("register remote session-manager routes: %w", err)
+		}
+	}
 
 	// Session Pods authenticate with the narrower provisioner/session token.
 	provisioner := controllers.NewProvisionerController(manager, manager, settingsRepo, nil, stateStore)

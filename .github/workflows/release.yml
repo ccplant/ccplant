@@ -283,6 +283,9 @@ jobs:
           - name: ccplant
             path: chart/ccplant
             dependencies: true
+          - name: session-manager
+            path: chart/session-manager
+            dependencies: false
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
