@@ -165,6 +165,7 @@ type KubernetesSessionManager struct {
 	runnerManagerID           string
 	runnerManagerToken        string
 	runnerDefaultPool         string
+	inheritedRuntimeProfile   *sessionsettings.RuntimeProfile
 }
 
 func (m *KubernetesSessionManager) ConfigureSessionRunnerPool(parentURL, managerID, managerToken, defaultPool string) {
@@ -197,6 +198,9 @@ func (m *KubernetesSessionManager) refreshConfig() {
 	}
 	m.config = current
 	m.k8sConfig = &current.KubernetesSession
+	if m.inheritedRuntimeProfile != nil {
+		m.applyRuntimeProfileLocked(m.inheritedRuntimeProfile)
+	}
 }
 
 func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontrol.Store) {
