@@ -1232,6 +1232,10 @@ func copyResponseHeaders(target, source http.Header) {
 
 func streamTunnelResponse(ctx echo.Context, resp *http.Response) error {
 	ctx.Response().WriteHeader(resp.StatusCode)
+	// The first tunnel frame already contains the upstream status and headers.
+	// Flush them before waiting for a body frame so idle SSE streams transition
+	// the browser's EventSource from CONNECTING to OPEN immediately.
+	ctx.Response().Flush()
 	buffer := make([]byte, 64*1024)
 	for {
 		n, err := resp.Body.Read(buffer)
