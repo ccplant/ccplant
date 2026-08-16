@@ -176,6 +176,9 @@ func (w *AllocatorWorker) process(ctx context.Context, allocation *sessionalloca
 	if remoteProvisioner {
 		sessionID = allocation.SessionID
 		req = allocation.Request
+		if req != nil {
+			req.ProvisionSettings = settings
+		}
 	} else {
 		req = runRequestFromSettings(settings)
 	}

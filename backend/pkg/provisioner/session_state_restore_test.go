@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
@@ -49,5 +51,21 @@ func TestRestoreSessionStateUnavailableCanBeSkipped(t *testing.T) {
 	}
 	if !errors.Is(err, errSessionStateBackendUnavailable) {
 		t.Fatalf("error = %v, want errSessionStateBackendUnavailable", err)
+	}
+}
+
+func TestNativeSessionDoesNotImplicitlyRestoreNewSession(t *testing.T) {
+	t.Setenv("AGENTAPI_NATIVE_SESSION_ROOT", t.TempDir())
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{PersistenceEnabled: true}}
+	if shouldImplicitlyRestoreSessionState(settings) {
+		t.Fatal("native session unexpectedly enabled implicit restore")
+	}
+}
+
+func TestKubernetesSessionImplicitlyRestoresPersistentSession(t *testing.T) {
+	t.Setenv("AGENTAPI_NATIVE_SESSION_ROOT", "")
+	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{PersistenceEnabled: true}}
+	if !shouldImplicitlyRestoreSessionState(settings) {
+		t.Fatal("persistent Kubernetes session unexpectedly disabled implicit restore")
 	}
 }

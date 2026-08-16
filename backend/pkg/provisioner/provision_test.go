@@ -83,6 +83,30 @@ func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
 	}
 }
 
+func TestNormalizeNativeSettingsUsesManagedBinary(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("AGENTAPI_NATIVE_SESSION_ROOT", root)
+	t.Setenv("HOME", home)
+	t.Setenv("CCPLANT_BINARY_PATH", "/usr/local/libexec/agentapi-proxy/agentapi-proxy")
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
+		Env: map[string]string{
+			"CCPLANT_BINARY_PATH": "ccplant",
+			"PI_ACP_PI_COMMAND":   "/home/agentapi/.session/pi-ollama-pi",
+		},
+	}
+
+	normalizeNativeSettings(settings)
+
+	if got := settings.Env["CCPLANT_BINARY_PATH"]; got != "/usr/local/libexec/agentapi-proxy/agentapi-proxy" {
+		t.Fatalf("CCPLANT_BINARY_PATH = %q", got)
+	}
+	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != filepath.Join(home, ".session", "pi-ollama-pi") {
+		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
+	}
+}
+
 func TestBuildAgentCommandPiOllama(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 	origCommandPath := piOllamaCommandPath

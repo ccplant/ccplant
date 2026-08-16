@@ -18,7 +18,6 @@ type Client struct {
 	baseURL           string
 	token             string
 	upstreamAuthToken string
-	metadataOnly      bool
 	client            *http.Client
 	profileRevision   string
 }
@@ -38,9 +37,7 @@ func NewClientWithUpstreamAuth(baseURL, token, upstreamAuthToken string) *Client
 }
 
 func NewNativeAllocatorClient(baseURL, token, upstreamAuthToken string) *Client {
-	c := NewClientWithUpstreamAuth(baseURL, token, upstreamAuthToken)
-	c.metadataOnly = true
-	return c
+	return NewClientWithUpstreamAuth(baseURL, token, upstreamAuthToken)
 }
 
 func (c *Client) authorize(req *http.Request) {
@@ -57,11 +54,7 @@ func (c *Client) Next(ctx context.Context, wait time.Duration) (*core.Allocation
 }
 
 func (c *Client) NextExternal(ctx context.Context, wait time.Duration) (*core.AllocationRequest, bool, error) {
-	path := "/internal/external-session-manager/allocations/next"
-	if c.metadataOnly {
-		path += "?metadata_only=true"
-	}
-	return c.next(ctx, path, wait)
+	return c.next(ctx, "/internal/external-session-manager/allocations/next", wait)
 }
 
 func (c *Client) RuntimeProfileRevision() string {

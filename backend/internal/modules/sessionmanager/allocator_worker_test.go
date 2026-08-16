@@ -218,19 +218,26 @@ func TestAllocatorWorkerCompletesErrorWhenProvisionSettingsMissing(t *testing.T)
 	}
 }
 
-func TestNativeAllocatorUsesMetadataAndPublicSessionID(t *testing.T) {
+func TestNativeAllocatorUsesSettingsAndPublicSessionID(t *testing.T) {
 	client := &fakeExternalAllocatorClient{}
 	manager := &fakeNativeAllocatorSessionManager{}
 	worker := NewAllocatorWorkerWithClient(manager, client, "https://native.example")
 	metadata := &entities.RunServerRequest{UserID: "user-1", Scope: entities.ScopeUser, AgentType: "codex-acp"}
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser), AgentType: "codex-acp"},
+	}
 
 	worker.process(context.Background(), &sessionallocation.AllocationRequest{
-		SessionID: "public-session",
-		Request:   metadata,
+		SessionID:         "public-session",
+		Request:           metadata,
+		ProvisionSettings: settings,
 	})
 
 	if manager.lastID != "public-session" || manager.lastReq != metadata {
 		t.Fatalf("native create = id %q request %#v", manager.lastID, manager.lastReq)
+	}
+	if manager.lastReq.ProvisionSettings != settings {
+		t.Fatal("native request did not receive provision settings")
 	}
 	if len(client.completed) != 1 || client.completed[0].result.Status != sessionallocation.StatusAssigned {
 		t.Fatalf("completion = %#v", client.completed)

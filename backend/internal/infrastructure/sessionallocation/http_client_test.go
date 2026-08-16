@@ -56,3 +56,18 @@ func TestExternalClientTracksRuntimeProfileRevisionAndFetchesSnapshot(t *testing
 		t.Fatalf("unexpected snapshot: %#v", snapshot)
 	}
 }
+
+func TestNativeAllocatorRequestsCompleteProvisionSettings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("metadata_only"); got != "" {
+			t.Errorf("metadata_only = %q, want empty", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewNativeAllocatorClient(server.URL, "manager-token", "upstream-token")
+	if _, ok, err := client.NextExternal(context.Background(), time.Second); err != nil || ok {
+		t.Fatalf("NextExternal() = ok %t, err %v", ok, err)
+	}
+}
