@@ -27,7 +27,10 @@ type ControlWorker struct {
 	instanceID      string
 	client          *http.Client
 	active          sync.Map
+	executeSlots    chan struct{}
 }
+
+const maxConcurrentControlRequests = 32
 
 func NewControlWorker(upstreamURL, connectionToken, upstreamAuth, localURL, instanceID, localHMACSecret string) *ControlWorker {
 	if localURL == "" {
@@ -38,6 +41,7 @@ func NewControlWorker(upstreamURL, connectionToken, upstreamAuth, localURL, inst
 		upstreamAuth: upstreamAuth, localURL: strings.TrimRight(localURL, "/"), instanceID: instanceID,
 		localHMACSecret: localHMACSecret,
 		client:          &http.Client{},
+		executeSlots:    make(chan struct{}, maxConcurrentControlRequests),
 	}
 }
 
@@ -62,10 +66,19 @@ func (w *ControlWorker) Start(ctx context.Context) {
 				_ = w.postFrames(ctx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusGatewayTimeout, Error: "command deadline exceeded", Done: true, CreatedAt: time.Now().UTC()}})
 				continue
 			}
-			if acceptsEventStream(command.Headers) {
-				go w.execute(ctx, command)
-			} else {
-				w.execute(ctx, command)
+			// The control connection is a multiplexed transport. Running ordinary
+			// requests serially here turns a page's independent bootstrap requests
+			// into a latency waterfall, and a slow request blocks every request behind
+			// it. Bound concurrency so unrelated sessions and endpoints can progress
+			// independently without allowing an unbounded goroutine fan-out.
+			select {
+			case w.executeSlots <- struct{}{}:
+				go func(command core.Command) {
+					defer func() { <-w.executeSlots }()
+					w.execute(ctx, command)
+				}(command)
+			case <-ctx.Done():
+				return
 			}
 		}
 		if next != "" {

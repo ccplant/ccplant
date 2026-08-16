@@ -494,7 +494,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // Always fetch history from the per-session bridge.
                 // We always use the per-session SSE (which does NOT replay history),
                 // so there is no risk of duplicates from SSE replay.
-                const historyResult = await agentAPIRef.current!.getACPMessageHistory(sessionId, info.sessionId);
+                // History and status are independent remote calls. External session
+                // managers may add noticeable tunnel latency to each request, so do
+                // not make chat bootstrap pay for them serially.
+                const [historyResult, currentStatus] = await Promise.all([
+                  agentAPIRef.current!.getACPMessageHistory(sessionId, info.sessionId),
+                  agentAPIRef.current!.getSessionStatus(sessionId).catch(() => null),
+                ]);
                 setMessages(historyResult.messages);
                 setACPUserPrompts(historyResult.userPrompts);
                 setLoadedACPStartPromptIndex(historyResult.userPromptIndex ?? getLatestACPUserPromptIndex(historyResult.userPrompts));
@@ -507,16 +513,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // Fetch current status immediately so the UI reflects running/stable
                 // on reconnect (e.g. user navigated away then came back while the
                 // agent was still processing the provisioner's initial prompt).
-                try {
-                  const currentStatus = await agentAPIRef.current!.getSessionStatus(sessionId);
+                if (currentStatus) {
                   setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
                   // Update agentType so markdown renders for ACP sessions.
                   // getACPSessionInfo hardcodes 'acp', but agent_type from status is authoritative.
                   if (currentStatus.agent_type) {
                     setAgentType(currentStatus.agent_type);
                   }
-                } catch {
-                  // Non-fatal — status will be updated via SSE events.
                 }
 
                 // Subscribe to ACP SSE stream.
