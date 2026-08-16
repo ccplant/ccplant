@@ -326,12 +326,31 @@ func (c *Client) CountStockSessions(ctx context.Context, dind bool) (int, error)
 	return response.Count, nil
 }
 
+func (c *Client) CreateStockSessionForPool(ctx context.Context, pool string, dind bool) error {
+	return c.do(ctx, http.MethodPost, stockPoolPath(pool, dind), nil, nil)
+}
+
+func (c *Client) CountStockSessionsForPool(ctx context.Context, pool string, dind bool) (int, error) {
+	var response stockCountResponse
+	if err := c.do(ctx, http.MethodGet, stockPoolPath(pool, dind), nil, &response); err != nil {
+		return 0, err
+	}
+	return response.Count, nil
+}
+
 func (c *Client) PurgeStaleStockSessions(ctx context.Context) error {
 	return c.do(ctx, http.MethodDelete, "/stock", nil, nil)
 }
 
 func stockPath(dind bool) string {
 	return "/stock?dind=" + fmt.Sprintf("%t", dind)
+}
+
+func stockPoolPath(pool string, dind bool) string {
+	values := url.Values{}
+	values.Set("pool", pool)
+	values.Set("dind", fmt.Sprintf("%t", dind))
+	return "/stock?" + values.Encode()
 }
 
 func (c *Client) DeletePendingSessionAllocation(ctx context.Context, id string) (bool, error) {

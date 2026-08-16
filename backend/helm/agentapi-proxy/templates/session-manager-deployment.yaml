@@ -4,6 +4,7 @@
 {{- $internalToken := dig "internalApi" "tokenSecretRef" (dict) $manager }}
 {{- $encryptionToken := dig "encryption" "keySecretRef" (dict) $manager }}
 {{- $registration := $manager.externalRegistration | default dict }}
+{{- $runner := $manager.runner | default dict }}
 {{- $kv := $manager.kvStore | default dict }}
 {{- $redisClient := $manager.redis | default dict }}
 {{- $sessionPersistence := $manager.sessionPersistence | default dict }}
@@ -92,6 +93,16 @@ spec:
                 secretKeyRef:
                   name: {{ required "sessionManager.externalRegistration.hmacSecretRef.name is required when external registration is enabled" (dig "hmacSecretRef" "name" "" $registration) | quote }}
                   key: {{ dig "hmacSecretRef" "key" "hmac-secret" $registration | quote }}
+            {{- end }}
+            {{- if (dig "enabled" false $runner) }}
+            - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "sessionManager.runner.managerId is required when runner mode is enabled" (dig "managerId" "" $runner) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "sessionManager.runner.pool is required when runner mode is enabled" (dig "pool" "" $runner) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "sessionManager.runner.upstreamUrl is required when runner mode is enabled" (dig "upstreamUrl" "" $runner) | quote }}}
+            - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.runner.connectionTokenSecretRef.name is required when runner mode is enabled" (dig "connectionTokenSecretRef" "name" "" $runner) | quote }}
+                  key: {{ dig "connectionTokenSecretRef" "key" "connection-token" $runner | quote }}
             {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}

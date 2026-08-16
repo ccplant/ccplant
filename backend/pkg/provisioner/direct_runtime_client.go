@@ -54,7 +54,7 @@ func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cf
 }
 
 func (w *directRuntimeWorker) run(ctx context.Context) {
-	cursorPath := "/workspace/.agentapi-direct-runtime-cursor"
+	cursorPath := filepath.Join(os.TempDir(), "agentapi-direct-runtime-cursor")
 	data, _ := os.ReadFile(cursorPath)
 	cursor := strings.TrimSpace(string(data))
 	if cursor == "" {
@@ -82,11 +82,10 @@ func (w *directRuntimeWorker) run(ctx context.Context) {
 				_ = w.postFrames(ctx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: request.ID, CommandStreamID: request.StreamID, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
 				continue
 			}
-			if acceptsRuntimeEventStream(request.Headers) {
-				go w.execute(ctx, request)
-			} else {
-				w.execute(ctx, request)
-			}
+			// A slow agent endpoint (for example a message request waiting on an
+			// upstream model) must not block status, cancellation, or other HTTP
+			// traffic for the session.
+			go w.execute(ctx, request)
 		}
 		if next != "" {
 			cursor = next

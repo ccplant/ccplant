@@ -746,6 +746,7 @@ export default function PersonalSettingsPage() {
                           {esm.default && (
                             <span className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded">デフォルト</span>
                           )}
+                          {esm.pool && <span className="px-1.5 py-0.5 text-xs bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded">Pool: {esm.pool}</span>}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           <span className="text-xs text-gray-500 dark:text-gray-400">allocator 接続</span>

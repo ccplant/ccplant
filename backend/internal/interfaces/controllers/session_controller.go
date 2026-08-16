@@ -952,7 +952,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 // It signs the request with HMAC-SHA256 before forwarding.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
-	if route.RemoteSessionID == "" || (route.ProxyURL == "" && route.ManagerID == "" && route.Transport != repositories.SessionRouteTransportDirectRuntime) {
+	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || (route.ProxyURL == "" && route.ManagerID == "")) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
 

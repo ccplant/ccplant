@@ -19,6 +19,11 @@ type StockRepository interface {
 	PurgeStaleStockSessions(ctx context.Context) error
 }
 
+type PoolStockRepository interface {
+	CreateStockSessionForPool(ctx context.Context, pool string, dind bool) error
+	CountStockSessionsForPool(ctx context.Context, pool string, dind bool) (int, error)
+}
+
 // StockRequirements captures the pod capabilities a stock session is prepared for.
 // Note: Sandbox (network filter) and scia sidecar are now always enabled and cannot be opted out.
 // Only DinD (Docker-in-Docker) remains configurable.
@@ -28,6 +33,7 @@ type StockRequirements struct {
 
 // StockPool captures one stock inventory target for a capability set.
 type StockPool struct {
+	Name         string
 	TargetCount  int
 	Requirements StockRequirements
 }
@@ -146,7 +152,7 @@ func (w *Worker) replenishStock(ctx context.Context) {
 }
 
 func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
-	count, err := w.repo.CountStockSessions(ctx, pool.Requirements.DinD)
+	count, err := w.countPool(ctx, pool)
 	if err != nil {
 		log.Printf("[STOCK_INVENTORY] Failed to count stock sessions: %v", err)
 		return
@@ -161,10 +167,24 @@ func (w *Worker) replenishPool(ctx context.Context, pool StockPool) {
 		needed, count, pool.TargetCount, pool.Requirements.DinD)
 
 	for i := 0; i < needed; i++ {
-		if err := w.repo.CreateStockSession(ctx, pool.Requirements.DinD); err != nil {
+		if err := w.createPool(ctx, pool); err != nil {
 			log.Printf("[STOCK_INVENTORY] Failed to create stock session: %v", err)
 		}
 	}
+}
+
+func (w *Worker) countPool(ctx context.Context, pool StockPool) (int, error) {
+	if named, ok := w.repo.(PoolStockRepository); ok && pool.Name != "" {
+		return named.CountStockSessionsForPool(ctx, pool.Name, pool.Requirements.DinD)
+	}
+	return w.repo.CountStockSessions(ctx, pool.Requirements.DinD)
+}
+
+func (w *Worker) createPool(ctx context.Context, pool StockPool) error {
+	if named, ok := w.repo.(PoolStockRepository); ok && pool.Name != "" {
+		return named.CreateStockSessionForPool(ctx, pool.Name, pool.Requirements.DinD)
+	}
+	return w.repo.CreateStockSession(ctx, pool.Requirements.DinD)
 }
 
 func (w *Worker) effectivePools() []StockPool {

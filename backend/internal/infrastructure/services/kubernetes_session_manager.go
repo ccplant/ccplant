@@ -161,6 +161,19 @@ type KubernetesSessionManager struct {
 
 	sessionAllocationNotifier coreallocation.Notifier
 	sessionControlStore       coresessioncontrol.Store
+	runnerParentURL           string
+	runnerManagerID           string
+	runnerManagerToken        string
+	runnerDefaultPool         string
+}
+
+func (m *KubernetesSessionManager) ConfigureSessionRunnerPool(parentURL, managerID, managerToken, defaultPool string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.runnerParentURL = strings.TrimRight(parentURL, "/")
+	m.runnerManagerID = managerID
+	m.runnerManagerToken = managerToken
+	m.runnerDefaultPool = defaultPool
 }
 
 func (m *KubernetesSessionManager) SetConfigProvider(provider interface {
@@ -663,6 +676,10 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 // waits for adoption, at which point adoptStockSession creates the request.
 // Note: Sandbox (network filter) and scia sidecar are always enabled.
 func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind bool) error {
+	return m.CreateStockSessionForPool(ctx, m.runnerDefaultPool, dind)
+}
+
+func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context, pool string, dind bool) error {
 	m.refreshConfig()
 	podTemplateHash, err := m.stockPodTemplateHash(ctx, dind)
 	if err != nil {
@@ -680,6 +697,19 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 	minimalReq := &entities.RunServerRequest{
 		Sandbox: stockSandboxParams(),
 	}
+	if pool != "" && m.runnerParentURL != "" {
+		runnerToken, registerErr := m.registerSessionRunner(ctx, id, pool)
+		if registerErr != nil {
+			cancel()
+			return fmt.Errorf("register stock session runner: %w", registerErr)
+		}
+		minimalReq.Environment = map[string]string{
+			"AGENTAPI_SESSION_RUNNER_POOL":  pool,
+			"AGENTAPI_SESSION_RUNNER_ID":    id,
+			"AGENTAPI_SESSION_RUNNER_TOKEN": runnerToken,
+			"PROVISIONER_PROXY_URL":         m.runnerParentURL,
+		}
+	}
 	if dind {
 		minimalReq.Docker = &entities.DockerParams{Enabled: true}
 	}
@@ -693,9 +723,24 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 	stockLabels := m.buildLabels(session)
 	stockLabels["agentapi.proxy/stock"] = "creating"
 	stockLabels[stockPodTemplateHashLabel] = podTemplateHash
+	if pool != "" {
+		stockLabels["agentapi.proxy/session-pool"] = pool
+	}
 	if err := m.createServiceWithLabels(ctx, session, stockLabels); err != nil {
 		cancel()
 		return fmt.Errorf("failed to create stock service: %w", err)
+	}
+	if minimalReq.Environment["AGENTAPI_SESSION_RUNNER_TOKEN"] != "" {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: runnerCredentialSecretName(id), Namespace: m.namespace, Labels: m.buildLabels(session), OwnerReferences: m.sessionServiceOwnerReferences(ctx, id)},
+			Type:       corev1.SecretTypeOpaque,
+			StringData: map[string]string{"runner-token": minimalReq.Environment["AGENTAPI_SESSION_RUNNER_TOKEN"]},
+		}
+		if _, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			_ = m.deleteSessionResources(ctx, session)
+			cancel()
+			return fmt.Errorf("create runner credential Secret: %w", err)
+		}
 	}
 
 	// Create PVC if enabled (required for Deployment volume mounts).
@@ -736,6 +781,42 @@ func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind 
 	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
 		id, dind)
 	return nil
+}
+
+func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string) (string, error) {
+	body, err := json.Marshal(map[string]string{"runner_id": runnerID, "pool": pool, "namespace": m.namespace})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.runnerParentURL+"/internal/session-runners/register", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+m.runnerManagerToken)
+	req.Header.Set("X-Session-Manager-ID", m.runnerManagerID)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("runner registration returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		RunnerToken string `json:"runner_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.RunnerToken == "" {
+		return "", fmt.Errorf("runner registration returned no token")
+	}
+	return result.RunnerToken, nil
+}
+
+func runnerCredentialSecretName(sessionID string) string {
+	return "agentapi-session-" + sessionID + "-runner"
 }
 
 // stockPodTemplateHash builds the effective session Pod template for a stable
@@ -835,16 +916,40 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 // CountStockSessions returns the number of available (not being deleted) stock sessions.
 // Note: Sandbox (network filter) is always enabled, so only DinD capability is queried.
 func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind bool) (int, error) {
+	return m.CountStockSessionsForPool(ctx, "", dind)
+}
+
+func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context, pool string, dind bool) (int, error) {
 	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
 		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
 		dind,
 	)
+	if pool != "" {
+		selector += ",agentapi.proxy/session-pool=" + pool
+	}
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to list stock services: %w", err)
+	}
+	count := 0
+	for i := range svcs.Items {
+		if svcs.Items[i].DeletionTimestamp == nil {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// CountRunnerSessionsForPool counts all live runner Services, including claimed
+// sessions. It is used to enforce a pool's total concurrency limit.
+func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Context, pool string) (int, error) {
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/session-pool=" + pool
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list runner services: %w", err)
 	}
 	count := 0
 	for i := range svcs.Items {
@@ -2509,6 +2614,14 @@ func (m *KubernetesSessionManager) createPod(ctx context.Context, session *Kuber
 func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) (*appsv1.Deployment, error) {
 	labels := m.buildLabels(session)
 	envVars := m.buildEnvVars(session, req)
+	if req.Environment["AGENTAPI_SESSION_RUNNER_TOKEN"] != "" {
+		for i := range envVars {
+			if envVars[i].Name == "AGENTAPI_SESSION_RUNNER_TOKEN" {
+				envVars[i].Value = ""
+				envVars[i].ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: runnerCredentialSecretName(session.id)}, Key: "runner-token"}}
+			}
+		}
+	}
 	replicas := int32(1)
 
 	// Parse resource requirements

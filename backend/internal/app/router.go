@@ -52,6 +52,7 @@ type HandlerRegistry struct {
 	sessionControlReaderController *controllers.SessionControlReaderController
 	esmControlController           *controllers.ESMControlController
 	sessionRuntimeController       *controllers.SessionRuntimeController
+	sessionPoolController          *controllers.SessionPoolController
 	usageController                *controllers.UsageController
 	customHandlers                 []CustomHandler
 }
@@ -67,6 +68,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
 	settingsController.SetESMControlTunnel(server.esmControlTunnel)
+	settingsController.SetSessionRunnerStore(server.sessionRunnerStore)
+	sessionPoolController := controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
@@ -284,6 +287,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionControlReaderController: sessionControlReaderController,
 			esmControlController:           esmControlController,
 			sessionRuntimeController:       sessionRuntimeController,
+			sessionPoolController:          sessionPoolController,
 			usageController:                usageController,
 			customHandlers:                 make([]CustomHandler, 0),
 		},
@@ -358,6 +362,17 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
+	if r.handlers.sessionPoolController != nil {
+		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/session-pool-preference", r.handlers.sessionPoolController.PutPreference,
+			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/internal/session-runners/register", r.handlers.sessionPoolController.RegisterRunner)
+		r.echo.GET("/internal/session-runners/allocations/next", r.handlers.sessionPoolController.ClaimRunnerAllocation)
+		r.echo.POST("/internal/session-runners/allocations/:sessionId/ack", r.handlers.sessionPoolController.AckRunnerAllocation)
+		r.echo.POST("/internal/session-runners/allocations/:sessionId/fail", r.handlers.sessionPoolController.FailRunnerAllocation)
+		r.echo.POST("/internal/session-managers/:id/heartbeat", r.handlers.sessionPoolController.HeartbeatManager)
+	}
 
 	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)
 	r.echo.GET("/sessions/status/stream", r.handlers.sessionController.StreamSessionsStatus)
@@ -540,6 +555,39 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/admin/system-settings", r.handlers.adminSettingsController.Get, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 		r.echo.GET("/admin/system-settings/versions", r.handlers.adminSettingsController.ListVersions, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 		r.echo.PUT("/admin/system-settings", r.handlers.adminSettingsController.Put, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
+	}
+	if r.handlers.sessionPoolController != nil {
+		adminOnly := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
+		poolRead := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
+		poolWrite := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
+		r.echo.POST("/session-pools", r.handlers.sessionPoolController.CreateLogicalPool, poolWrite)
+		r.echo.GET("/session-pools", r.handlers.sessionPoolController.ListPools, poolRead)
+		r.echo.PATCH("/session-pools/:pool", r.handlers.sessionPoolController.PatchLogicalPool, poolWrite)
+		r.echo.DELETE("/session-pools/:pool", r.handlers.sessionPoolController.DeleteLogicalPool, poolWrite)
+		r.echo.POST("/session-pools/:pool/bindings", r.handlers.sessionPoolController.CreateBinding, poolWrite)
+		r.echo.GET("/session-pools/:pool/bindings", r.handlers.sessionPoolController.ListBindings, poolRead)
+		r.echo.PATCH("/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.PatchBinding, poolWrite)
+		r.echo.DELETE("/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.DeleteBinding, poolWrite)
+		r.echo.POST("/session-pools/:pool/suppliers/:id", r.handlers.sessionPoolController.CreatePoolSupplier, poolWrite)
+		r.echo.GET("/session-pools/:pool/suppliers", r.handlers.sessionPoolController.ListPoolSuppliers, poolRead)
+		r.echo.PATCH("/session-pools/:pool/suppliers/:id", r.handlers.sessionPoolController.PatchPoolSupplier, poolWrite)
+		r.echo.DELETE("/session-pools/:pool/suppliers/:id", r.handlers.sessionPoolController.DeletePoolSupplier, poolWrite)
+		r.echo.POST("/admin/session-managers", r.handlers.sessionPoolController.CreateManager, adminOnly)
+		r.echo.GET("/admin/session-managers", r.handlers.sessionPoolController.ListManagers, adminOnly)
+		r.echo.PATCH("/admin/session-managers/:id", r.handlers.sessionPoolController.PatchManager, adminOnly)
+		r.echo.DELETE("/admin/session-managers/:id", r.handlers.sessionPoolController.DeleteManager, adminOnly)
+		r.echo.POST("/admin/session-managers/:id/pools", r.handlers.sessionPoolController.CreatePoolSupplier, adminOnly)
+		r.echo.GET("/admin/session-managers/:id/pools", r.handlers.sessionPoolController.ListPoolSuppliers, adminOnly)
+		r.echo.PATCH("/admin/session-managers/:id/pools/:pool", r.handlers.sessionPoolController.PatchPoolSupplier, adminOnly)
+		r.echo.DELETE("/admin/session-managers/:id/pools/:pool", r.handlers.sessionPoolController.DeletePoolSupplier, adminOnly)
+		r.echo.POST("/admin/session-pools", r.handlers.sessionPoolController.CreateLogicalPool, adminOnly)
+		r.echo.GET("/admin/session-pools", r.handlers.sessionPoolController.ListPools, adminOnly)
+		r.echo.PATCH("/admin/session-pools/:pool", r.handlers.sessionPoolController.PatchLogicalPool, adminOnly)
+		r.echo.DELETE("/admin/session-pools/:pool", r.handlers.sessionPoolController.DeleteLogicalPool, adminOnly)
+		r.echo.POST("/admin/session-pools/:pool/bindings", r.handlers.sessionPoolController.CreateBinding, adminOnly)
+		r.echo.GET("/admin/session-pools/:pool/bindings", r.handlers.sessionPoolController.ListBindings, adminOnly)
+		r.echo.PATCH("/admin/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.PatchBinding, adminOnly)
+		r.echo.DELETE("/admin/session-pools/:pool/bindings/:bindingId", r.handlers.sessionPoolController.DeleteBinding, adminOnly)
 	}
 
 	if r.handlers.googleOAuthController != nil {

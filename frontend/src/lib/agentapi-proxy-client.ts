@@ -78,6 +78,7 @@ import {
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
+import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 function defaultClientDebugEnabled(): boolean {
@@ -2931,6 +2932,88 @@ export class AgentAPIProxyClient {
   async listAdminSettingsVersions(): Promise<AdminSettingsVersionsResponse> {
     return this.makeRequest<AdminSettingsVersionsResponse>('/admin/system-settings/versions');
   }
+
+  async listClusterSessionManagers(): Promise<ClusterSessionManager[]> {
+    const result = await this.makeRequest<{ session_managers: ClusterSessionManager[] }>('/admin/session-managers');
+    return result.session_managers ?? [];
+  }
+
+  async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; connection_token: string }> {
+    return this.makeRequest('/admin/session-managers', { method: 'POST', body: JSON.stringify({ name }) });
+  }
+
+  async deleteClusterSessionManager(managerID: string): Promise<void> {
+    await this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
+  }
+
+  async listSessionPools(): Promise<LogicalSessionPool[]> {
+    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/admin/session-pools');
+    return result.session_pools ?? [];
+  }
+
+  async createSessionPool(input: Pick<LogicalSessionPool, 'name'> & Partial<Pick<LogicalSessionPool, 'labels' | 'default'>>): Promise<LogicalSessionPool> {
+    return this.makeRequest('/admin/session-pools', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async deleteSessionPool(pool: string): Promise<void> {
+    await this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
+  }
+
+  async listSessionPoolSuppliers(managerID: string): Promise<SessionPoolSupplier[]> {
+    const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`);
+    return result.pool_suppliers ?? [];
+  }
+
+  async createSessionPoolSupplier(managerID: string, input: Pick<SessionPoolSupplier, 'pool' | 'min_idle' | 'max_runners'>): Promise<SessionPoolSupplier> {
+    return this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async deleteSessionPoolSupplier(managerID: string, pool: string): Promise<void> {
+    await this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}/pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
+  }
+
+  async listSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
+    const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`);
+    return result.pool_bindings ?? [];
+  }
+
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' = 'use'): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role }) });
+  }
+
+  async listManagedSessionPools(): Promise<LogicalSessionPool[]> {
+    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/session-pools');
+    return result.session_pools ?? [];
+  }
+
+  async createManagedSessionPool(input: { name: string; team_id?: string }): Promise<LogicalSessionPool> {
+    return this.makeRequest('/session-pools', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async deleteManagedSessionPool(pool: string): Promise<void> {
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
+  }
+
+  async listManagedSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
+    const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/session-pools/${encodeURIComponent(pool)}/bindings`);
+    return result.pool_bindings ?? [];
+  }
+
+  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage'): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role }) });
+  }
+
+  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage'; enabled?: boolean }): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
+  async deleteManagedSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
+  }
+
+  async deleteSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
+    await this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
+  }
 }
 
 
@@ -3001,6 +3084,23 @@ export function createAgentAPIProxyClient(config: AgentAPIProxyClientConfig): Ag
 export function createAgentAPIProxyClientFromStorage(repoFullname?: string): AgentAPIProxyClient {
   const config = getAgentAPIProxyConfigFromStorage(repoFullname);
   return new AgentAPIProxyClient(config);
+}
+
+// Cluster administration always targets the proxy paired with this UI
+// deployment. User-configured endpoints may point at a session-specific or
+// external proxy and must not receive cluster-wide admin operations.
+export function createCurrentDeploymentAgentAPIProxyClient(): AgentAPIProxyClient {
+  const browser = typeof window !== 'undefined'
+  return new AgentAPIProxyClient({
+    baseURL: browser
+      ? `${window.location.protocol}//${window.location.host}/api/proxy`
+      : process.env.AGENTAPI_PROXY_URL || 'http://localhost:8080',
+    apiKey: browser ? undefined : process.env.AGENTAPI_API_KEY,
+    timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
+    maxSessions: 10,
+    sessionTimeout: 300000,
+    debug: defaultClientDebugEnabled(),
+  });
 }
 
 // Default proxy client instance for convenience (uses global settings from storage)

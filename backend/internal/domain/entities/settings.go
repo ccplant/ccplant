@@ -104,6 +104,9 @@ type ExternalSessionManagerEntry struct {
 	LastHeartbeatAt     time.Time         `json:"last_heartbeat_at,omitempty"`
 	EnrollmentTokenHash string            `json:"enrollment_token_hash,omitempty"`
 	EnrollmentExpiresAt time.Time         `json:"enrollment_expires_at,omitempty"`
+	Pool                string            `json:"pool,omitempty"`
+	BindingSubjectType  string            `json:"binding_subject_type,omitempty"`
+	BindingSubjectID    string            `json:"binding_subject_id,omitempty"`
 	// Default indicates this manager is used automatically when no manager_id is specified at session creation.
 	// At most one entry should have Default=true.
 	Default bool `json:"default,omitempty"`

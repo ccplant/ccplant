@@ -2,7 +2,7 @@
 
 import { use, useEffect, useState } from 'react'
 import { notFound } from 'next/navigation'
-import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import { AdminSettingsDocument, AdminSettingsSections } from '@/types/admin-settings'
 import { getAdminSection, AdminField } from '../config'
 import { useToast } from '@/contexts/ToastContext'
@@ -190,7 +190,7 @@ export default function AdminSectionPage({ params }: { params: Promise<{ section
   const { showToast } = useToast()
 
   useEffect(() => {
-    createAgentAPIProxyClientFromStorage().getAdminSettings().then((data) => { setDocument(data); setSections(data.sections || {}) }).catch(() => setError('設定を読み込めませんでした'))
+    createCurrentDeploymentAgentAPIProxyClient().getAdminSettings().then((data) => { setDocument(data); setSections(data.sections || {}) }).catch(() => setError('設定を読み込めませんでした'))
   }, [])
 
   if (!definition) notFound()
@@ -202,7 +202,7 @@ export default function AdminSectionPage({ params }: { params: Promise<{ section
     if (!document) return
     setSaving(true); setError(null)
     try {
-      const saved = await createAgentAPIProxyClientFromStorage().updateAdminSettings({ base_version: document.version, sections })
+      const saved = await createCurrentDeploymentAgentAPIProxyClient().updateAdminSettings({ base_version: document.version, sections })
       setDocument(saved); setSections(saved.sections); showToast(`設定をversion ${saved.version}として保存しました`, 'success')
     } catch (err) {
       setError(err instanceof Error && err.message.includes('409') ? '別の管理者が更新しました。再読み込みしてください。' : '設定の保存に失敗しました')
