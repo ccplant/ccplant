@@ -52,17 +52,14 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
 					return echo.NewHTTPError(http.StatusForbidden, "access denied")
 				}
-				timer := time.NewTimer(time.Second)
-				defer timer.Stop()
-				select {
-				case <-ctx.Request().Context().Done():
-					return nil
-				case timestamp := <-timer.C:
-					return ctx.JSON(http.StatusOK, map[string]interface{}{
-						"updated": true, "session_id": sessionID, "timestamp": timestamp,
-					})
-				}
+				return waitRemoteMessageRefresh(ctx, sessionID)
 			}
+		}
+		// Direct runtimes renew a parent-owned connection lease keyed by the
+		// public session ID. This is also authoritative while a route repository
+		// replica is catching up after rollout.
+		if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), sessionID) {
+			return waitRemoteMessageRefresh(ctx, sessionID)
 		}
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
@@ -139,5 +136,18 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 		case <-timer.C:
 			return ctx.JSON(http.StatusOK, map[string]interface{}{"updated": false})
 		}
+	}
+}
+
+func waitRemoteMessageRefresh(ctx echo.Context, sessionID string) error {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Request().Context().Done():
+		return nil
+	case timestamp := <-timer.C:
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"updated": true, "session_id": sessionID, "timestamp": timestamp,
+		})
 	}
 }
