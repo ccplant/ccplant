@@ -197,6 +197,9 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 	// Collect from user's own settings
 	if userSettings, err := c.repo.FindByName(ctx.Request().Context(), userID); err == nil {
 		for _, m := range userSettings.ExternalSessionManagers() {
+			if m.Pool != "" {
+				continue
+			}
 			managers = append(managers, AvailableManagerEntry{
 				ID:         m.ID,
 				Name:       m.Name,
@@ -213,6 +216,9 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 			teamID := team.Organization + "/" + team.TeamSlug
 			if teamSettings, err := c.repo.FindByName(ctx.Request().Context(), teamID); err == nil {
 				for _, m := range teamSettings.ExternalSessionManagers() {
+					if m.Pool != "" {
+						continue
+					}
 					managers = append(managers, AvailableManagerEntry{
 						ID:         m.ID,
 						Name:       m.Name,

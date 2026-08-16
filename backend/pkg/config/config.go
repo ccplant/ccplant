@@ -458,9 +458,11 @@ type SessionManagerConfig struct {
 	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
 	// to this manager when the outbound control lease is unavailable.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
-	// APIURL is the private session-manager API used by the public API process.
-	// It is intentionally distinct from UpstreamURL, which is only used when
-	// this manager is registered as an external manager of another control plane.
+	// APIURL is the private peer API URL. The public API process uses it to call
+	// the isolated session manager, while an external session-manager process
+	// uses it as the local target for outbound control-tunnel requests.
+	// It is intentionally distinct from UpstreamURL, which identifies the parent
+	// control plane.
 	APIURL string `json:"api_url" mapstructure:"api_url"`
 	// APIToken authenticates outbound API -> session-manager requests.
 	APIToken string `json:"api_token" mapstructure:"api_token"`

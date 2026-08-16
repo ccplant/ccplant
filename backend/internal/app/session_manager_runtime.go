@@ -216,7 +216,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		upstream := externalmanager.NewAllocatorWorker(manager, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, cfg.SessionManager.PublicURL)
 		go upstream.Start(runtimeCtx)
 		instanceID, _ := os.Hostname()
-		control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", "", instanceID, cfg.SessionManager.HMACSecret)
+		control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
 		go control.Start(runtimeCtx)
 	}
 	if cfg.SessionManager.RunnerPool != "" && cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ID != "" && cfg.SessionManager.ConnectionToken != "" {
