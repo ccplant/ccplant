@@ -6133,13 +6133,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] Injected CYCLE_ENABLED file (with message) for session %s", session.id)
 	}
 
-	// Embed sandbox configuration - always enabled.
-	// Sandbox (network filter) cannot be opted out.
-	if req.Sandbox == nil {
-		req.Sandbox = &entities.SandboxParams{Enabled: true}
-	} else {
-		req.Sandbox.Enabled = true
-	}
+	// Embed sandbox configuration - always enabled. Apply the same defaults here
+	// as direct allocation does because external allocations build and forward
+	// these settings before the remote manager runs allocateSessionDirect.
+	applySandboxDefaults(req)
 	effectiveSandbox := m.resolveSandboxParams(ctx, req)
 	settings.Sandbox = &sessionsettings.SandboxConfig{
 		Enabled:        true,
@@ -6357,25 +6354,6 @@ func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req
 	if scia.PublicBaseURL != "" {
 		env["AGENTAPI_SCIA_PUBLIC_BASE_URL"] = scia.PublicBaseURL
 	}
-	if scia.ProxyURL == "" {
-		return
-	}
-
-	env["AGENTAPI_SCIA_PROXY_URL"] = scia.ProxyURL
-	if env["HTTP_PROXY"] == "" {
-		env["HTTP_PROXY"] = scia.ProxyURL
-	}
-	if env["HTTPS_PROXY"] == "" {
-		env["HTTPS_PROXY"] = scia.ProxyURL
-	}
-	if env["http_proxy"] == "" {
-		env["http_proxy"] = scia.ProxyURL
-	}
-	if env["https_proxy"] == "" {
-		env["https_proxy"] = scia.ProxyURL
-	}
-	env["NO_PROXY"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["NO_PROXY"]), scia.NoProxy)
-	env["no_proxy"] = mergeNoProxy(mergeNoProxy(sciaNoProxyBase, env["no_proxy"]), scia.NoProxy)
 }
 
 func mergeNoProxy(existing, extra string) string {
