@@ -66,8 +66,8 @@ session:
   networkFilterImage: ghcr.io/ccplant/network-filter-agent:latest
   imagePullPolicy: IfNotPresent
   basePort: 9000
-  podStartTimeout: 5m
-  podStopTimeout: 30s
+  podStartTimeout: 120
+  podStopTimeout: 30
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "2", memory: 4Gi}
