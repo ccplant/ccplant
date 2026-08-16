@@ -15,7 +15,9 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
-    verbs: ["get"]
+    # list is also needed when synchronizing the inherited session Role: the
+    # manager cannot grant a permission that its own service account lacks.
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["services"]
     # patch: required for UpdateSlackLastMessageAt (agentapi.proxy/slack-last-message-at annotation)
@@ -40,4 +42,14 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    # Parent runtime profiles may select a service account that does not exist
+    # yet in the external manager namespace.
+    verbs: ["get", "create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    # Keep the inherited session service account permissions synchronized with
+    # the runtime profile advertised by the parent API.
+    verbs: ["get", "create", "update"]
 {{- end }}
