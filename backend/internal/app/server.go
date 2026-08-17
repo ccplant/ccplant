@@ -1068,7 +1068,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
-			if managerID, legacyErr := s.legacyAllocatorManagerForPool(context.Background(), resolved.Pool.Name); legacyErr != nil {
+			if managerID, legacyErr := s.legacyAllocatorManagerForPool(context.Background(), resolved.Pool.Name, sessionID); legacyErr != nil {
 				return nil, fmt.Errorf("select legacy pool supplier: %w", legacyErr)
 			} else if managerID != "" {
 				if startReq.Params == nil {
@@ -1245,7 +1245,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	return result.Session, nil
 }
 
-func (s *Server) legacyAllocatorManagerForPool(ctx context.Context, pool string) (string, error) {
+func (s *Server) legacyAllocatorManagerForPool(ctx context.Context, pool, sessionID string) (string, error) {
 	if s.sessionRunnerStore == nil {
 		return "", nil
 	}
@@ -1254,6 +1254,7 @@ func (s *Server) legacyAllocatorManagerForPool(ctx context.Context, pool string)
 		return "", err
 	}
 	selected := ""
+	var selectedScore [sha256.Size]byte
 	for _, supplier := range suppliers {
 		if supplier.Pool != pool || !supplier.Enabled || supplier.Draining {
 			continue
@@ -1262,10 +1263,11 @@ func (s *Server) legacyAllocatorManagerForPool(ctx context.Context, pool string)
 		if getErr != nil || !manager.Enabled || manager.Draining || !managerHasCapability(manager, sessionrunnercore.CapabilityLegacyAllocatorV1) {
 			continue
 		}
-		if selected != "" && selected != manager.ID {
-			return "", fmt.Errorf("pool %s has multiple legacy allocator suppliers", pool)
+		score := sha256.Sum256([]byte(sessionID + "\x00" + manager.ID))
+		if selected == "" || strings.Compare(string(score[:]), string(selectedScore[:])) > 0 {
+			selected = manager.ID
+			selectedScore = score
 		}
-		selected = manager.ID
 	}
 	return selected, nil
 }
