@@ -281,7 +281,7 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 	}
 	hash := sha256.Sum256([]byte(token))
 	registryManager := &sessionrunnercore.Manager{ID: manager.ID, Name: manager.Name, Labels: manager.Labels,
-		Capabilities: []string{sessionrunnercore.CapabilityLegacyAllocatorV1, sessionrunnercore.CapabilityDirectRuntimeV1},
+		Capabilities: []string{sessionrunnercore.CapabilityRunnerClaimV1, sessionrunnercore.CapabilityDirectRuntimeV1},
 		Enabled:      true, ConnectionTokenHash: hex.EncodeToString(hash[:])}
 	if err := c.sessionRunnerStore.CreateManager(ctx, registryManager); err != nil {
 		return err

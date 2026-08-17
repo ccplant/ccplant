@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["replicaCount", "image", "parent", "internalApi", "session"],
+  "required": ["replicaCount", "image", "parent", "runner", "internalApi", "session"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 1},
     "image": {
@@ -21,6 +21,14 @@
         "publicUrl": {"type": "string", "minLength": 1},
         "connectionTokenSecretRef": {"$ref": "#/$defs/namedSecretRef"},
         "hmacSecretRef": {"$ref": "#/$defs/namedSecretRef"}
+      }
+    },
+    "runner": {
+      "type": "object",
+      "required": ["managerId", "pool"],
+      "properties": {
+        "managerId": {"type": "string", "minLength": 1},
+        "pool": {"type": "string", "minLength": 1}
       }
     },
     "internalApi": {

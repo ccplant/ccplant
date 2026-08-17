@@ -95,7 +95,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 	manager, err := store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
-	require.Contains(t, manager.Capabilities, core.CapabilityLegacyAllocatorV1)
+	require.Contains(t, manager.Capabilities, core.CapabilityRunnerClaimV1)
 	_, err = store.GetLogicalPool(context.Background(), issued.Pool)
 	require.NoError(t, err)
 	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)

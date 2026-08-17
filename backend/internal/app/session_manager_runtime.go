@@ -58,6 +58,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if cfg.SessionManager.InternalAPIToken == "" {
 		return nil, errors.New("session-manager internal API token is required")
 	}
+	if cfg.SessionManager.ID == "" || cfg.SessionManager.RunnerPool == "" {
+		return nil, errors.New("session-manager ID and runner pool are required")
+	}
 	manager, err := services.NewKubernetesSessionManager(cfg, verbose, logger.NewLogger())
 	if err != nil {
 		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
@@ -268,14 +271,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(leaderCtx context.Context) {
 					log.Printf("[SESSION_MANAGER] Became remote execution leader")
-					if cfg.SessionManager.RunnerPool != "" {
-						runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
-						return
-					}
-					upstream := externalmanager.NewAllocatorWorker(manager, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, cfg.SessionManager.PublicURL)
 					control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
 					go control.Start(leaderCtx)
-					upstream.Start(leaderCtx)
+					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
 				},
 				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
 				OnNewLeader:      func(identity string) { log.Printf("[SESSION_MANAGER] Remote execution leader is %s", identity) },

@@ -139,7 +139,7 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuthAndRuntimeProfile(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, "", o.inheritRuntimeProfile)
+	worker := sessionmanager.NewRunnerWorker(manager, o.upstreamURL, o.managerID, o.connectionToken)
 	go worker.Start(ctx)
 	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
 	go controlWorker.Start(ctx)

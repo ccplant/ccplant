@@ -28,7 +28,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	corerepo "github.com/takutakahashi/agentapi-proxy/internal/core/repository"
-	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/di"
@@ -1068,15 +1067,6 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
-			if managerID, legacyErr := s.legacyAllocatorManagerForPool(context.Background(), resolved.Pool.Name, sessionID); legacyErr != nil {
-				return nil, fmt.Errorf("select legacy pool supplier: %w", legacyErr)
-			} else if managerID != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				startReq.Params.ManagerID = managerID
-				return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
-			}
 			return s.createPoolSession(context.Background(), resolved, sessionID, startReq, userID, teams)
 		}
 	}
@@ -1245,42 +1235,6 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 	return result.Session, nil
 }
 
-func (s *Server) legacyAllocatorManagerForPool(ctx context.Context, pool, sessionID string) (string, error) {
-	if s.sessionRunnerStore == nil {
-		return "", nil
-	}
-	suppliers, err := s.sessionRunnerStore.ListPoolSuppliers(ctx)
-	if err != nil {
-		return "", err
-	}
-	selected := ""
-	var selectedScore [sha256.Size]byte
-	for _, supplier := range suppliers {
-		if supplier.Pool != pool || !supplier.Enabled || supplier.Draining {
-			continue
-		}
-		manager, getErr := s.sessionRunnerStore.GetManager(ctx, supplier.ManagerID)
-		if getErr != nil || !manager.Enabled || manager.Draining || !managerHasCapability(manager, sessionrunnercore.CapabilityLegacyAllocatorV1) {
-			continue
-		}
-		score := sha256.Sum256([]byte(sessionID + "\x00" + manager.ID))
-		if selected == "" || strings.Compare(string(score[:]), string(selectedScore[:])) > 0 {
-			selected = manager.ID
-			selectedScore = score
-		}
-	}
-	return selected, nil
-}
-
-func managerHasCapability(manager *sessionrunnercore.Manager, capability string) bool {
-	for _, candidate := range manager.Capabilities {
-		if candidate == capability {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnercore.ResolvedPool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
 	pool := resolved.Pool.Name
 	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
@@ -1412,8 +1366,6 @@ func (s *Server) EnsurePersonalAPIKey(ctx context.Context, userID string) error 
 // createRemoteSession forwards session creation to an external session manager (External Session Manager).
 func (s *Server) createRemoteSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
 	managerID := startReq.Params.ManagerID
-
-	// Find the ESM entry by ID from the user's settings or team settings
 	esm, err := s.findESMByID(ctx, userID, teams, managerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find external session manager %s: %w", managerID, err)
@@ -1421,127 +1373,14 @@ func (s *Server) createRemoteSession(ctx context.Context, sessionID string, star
 	if esm == nil {
 		return nil, fmt.Errorf("external session manager not found: %s", managerID)
 	}
-
-	// Build the RunServerRequest used for settings resolution
-	var initialMessage string
-	var agentType string
-	var oneshot bool
-	var authProxy *bool
-	var unsyncedFilePaths []string
-	var credentialSource string
-	if startReq.Params != nil {
-		initialMessage = startReq.Params.Message
-		agentType = startReq.Params.AgentType
-		oneshot = startReq.Params.Oneshot
-		authProxy = startReq.Params.AuthProxy
-		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
-		credentialSource = startReq.Params.CredentialSource
+	if s.sessionRunnerStore == nil || esm.Pool == "" {
+		return nil, fmt.Errorf("session manager %s has no runner pool", managerID)
 	}
-	runReq := &entities.RunServerRequest{
-		UserID:             userID,
-		Teams:              teams,
-		Scope:              startReq.Scope,
-		TeamID:             startReq.TeamID,
-		AgentType:          agentType,
-		Oneshot:            oneshot,
-		Environment:        startReq.Environment,
-		ProfileEnvironment: startReq.ProfileEnvironment,
-		Tags:               startReq.Tags,
-		MemoryKey:          startReq.MemoryKey,
-		InitialMessage:     initialMessage,
-		RepoInfo:           s.extractRepositoryInfo(sessionID, startReq.Tags),
-		GithubToken:        githubTokenForStartRequest(startReq),
-		AuthProxy:          authProxy,
-		UnsyncedFilePaths:  unsyncedFilePaths,
-		CredentialSource:   credentialSource,
-		ProfileMCPServers:  startReq.ProfileMCPServers,
+	pool, err := s.sessionRunnerStore.GetLogicalPool(ctx, esm.Pool)
+	if err != nil || !pool.Enabled {
+		return nil, fmt.Errorf("session manager pool is unavailable: %s", esm.Pool)
 	}
-
-	// Try to build fully-resolved settings (env vars, Bedrock, MCP servers, OAuth token, etc.)
-	// by delegating to the session manager which has access to the settings resolution logic.
-	var settings *sessionsettings.SessionSettings
-	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
-		if builtSettings, buildErr := builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq); buildErr == nil {
-			settings = builtSettings
-			log.Printf("[REMOTE_SESSION] Built full provision settings for session %s (env vars: %d)", sessionID, len(settings.Env))
-		} else {
-			log.Printf("[REMOTE_SESSION] Warning: failed to build full provision settings for session %s: %v — falling back to minimal", sessionID, buildErr)
-		}
-	}
-
-	if settings == nil {
-		// Fallback: minimal settings without secrets resolution
-		settings = &sessionsettings.SessionSettings{
-			Session: sessionsettings.SessionMeta{
-				UserID:    userID,
-				Scope:     string(startReq.Scope),
-				TeamID:    startReq.TeamID,
-				AgentType: agentType,
-				Oneshot:   oneshot,
-				Teams:     teams,
-				MemoryKey: startReq.MemoryKey,
-			},
-			Env:               startReq.Environment,
-			InitialMessage:    initialMessage,
-			UnsyncedFilePaths: unsyncedFilePaths,
-		}
-	}
-
-	allocationQueue, ok := s.sessionManager.(sessionallocation.Queue)
-	if !ok {
-		return nil, fmt.Errorf("external session manager allocator requires allocation queue")
-	}
-	var runtimeBootstrap *sessionallocation.RuntimeBootstrap
-	runtimeTokenHash := ""
-	transport := portrepos.SessionRouteTransportESMTunnel
-	generation := int64(0)
-	if s.directSessionRuntimeEnabled && s.esmControlTunnel != nil && s.sessionRouteRepo != nil {
-		token, tokenHash, tokenErr := newDirectRuntimeToken()
-		if tokenErr != nil {
-			return nil, fmt.Errorf("create direct session runtime credential: %w", tokenErr)
-		}
-		generation = 1
-		transport = portrepos.SessionRouteTransportDirectRuntime
-		runtimeTokenHash = tokenHash
-		runtimeBootstrap = &sessionallocation.RuntimeBootstrap{Token: token, Generation: generation}
-	}
-	if err := allocationQueue.SubmitExternalSessionAllocation(ctx, managerID, sessionID, settings, runReq, runtimeBootstrap); err != nil {
-		return nil, err
-	}
-	startedAt := time.Now()
-	if s.sessionRouteRepo != nil {
-		tags := startReq.Tags
-		if tags == nil {
-			tags = map[string]string{}
-		}
-		route := &portrepos.SessionRoute{
-			SessionID:        sessionID,
-			ManagerID:        esm.ID,
-			HMACSecret:       esm.HMACSecret,
-			UserID:           userID,
-			Scope:            string(startReq.Scope),
-			TeamID:           startReq.TeamID,
-			Tags:             tags,
-			StartedAt:        startedAt,
-			InitialMessage:   initialMessage,
-			Transport:        transport,
-			RuntimeTokenHash: runtimeTokenHash,
-			Generation:       generation,
-		}
-		if saveErr := s.sessionRouteRepo.Save(ctx, route); saveErr != nil {
-			log.Printf("[REMOTE_SESSION] Warning: failed to save pending session route: %v", saveErr)
-		}
-	}
-	log.Printf("[REMOTE_SESSION] Queued external allocation for session %s (manager: %s)", sessionID, managerID)
-	return entities.NewProxySessionWithStatus(
-		sessionID,
-		userID,
-		startReq.Scope,
-		startReq.TeamID,
-		startReq.Tags,
-		startedAt,
-		"creating",
-	), nil
+	return s.createPoolSession(ctx, &sessionrunnercore.ResolvedPool{Pool: pool}, sessionID, startReq, userID, teams)
 }
 
 func newDirectRuntimeToken() (string, string, error) {
@@ -1690,6 +1529,10 @@ func (s *Server) DeleteProvisionRequest(ctx context.Context, sessionID string) e
 func (s *Server) DeleteSessionPoolAllocation(ctx context.Context, sessionID string) error {
 	if s.sessionRunnerStore == nil {
 		return nil
+	}
+	allocation, err := s.sessionRunnerStore.GetAllocation(ctx, sessionID)
+	if err == nil && allocation.RunnerID != "" {
+		_ = s.sessionRunnerStore.DeleteRunner(ctx, allocation.RunnerID)
 	}
 	return s.sessionRunnerStore.DeleteAllocation(ctx, sessionID)
 }

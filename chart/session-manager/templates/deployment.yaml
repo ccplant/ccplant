@@ -41,6 +41,8 @@ spec:
           env:
             - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
             - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "parent.url is required" .Values.parent.url | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "runner.managerId is required" .Values.runner.managerId | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "runner.pool is required" .Values.runner.pool | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ required "parent.publicUrl is required" .Values.parent.publicUrl | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_API_URL, value: {{ printf "http://%s.%s.svc.cluster.local:%v" (include "session-manager.fullname" .) .Release.Namespace .Values.service.port | quote }}}
             - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN

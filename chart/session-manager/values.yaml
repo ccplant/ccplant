@@ -41,6 +41,12 @@ parent:
     name: session-manager-parent
     key: hmac-secret
 
+runner:
+  # Pool-backed sessions are claimed by idle runners; allocation is never
+  # pre-assigned to this manager.
+  managerId: ""
+  pool: ""
+
 internalApi:
   tokenSecretRef:
     name: session-manager-internal

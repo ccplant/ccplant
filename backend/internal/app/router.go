@@ -410,12 +410,6 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-state/:sessionId/download-url", r.handlers.provisionerController.PresignSessionStateDownload)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
-	if r.handlers.externalAllocationController != nil {
-		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.externalAllocationController.GetNextExternalSessionAllocation)
-		r.echo.GET("/internal/external-session-manager/runtime-profile", r.handlers.externalAllocationController.GetExternalSessionManagerRuntimeProfile)
-		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.externalAllocationController.CompleteExternalSessionAllocation)
-		log.Printf("[ROUTES] External manager allocation endpoints registered")
-	}
 	if r.handlers.workerControlController != nil {
 		r.echo.POST("/internal/worker/sessions/:sessionId", r.handlers.workerControlController.CreateSession)
 		r.echo.GET("/internal/worker/sessions", r.handlers.workerControlController.ListSessions)
