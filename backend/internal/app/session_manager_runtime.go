@@ -209,10 +209,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
 	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
-	// Register the top-level runtime catch-all only after every private and
-	// provisioner route. Echo resolves an earlier /* route before later static
-	// routes, which would otherwise send /internal/session-state requests to the
-	// HMAC runtime proxy and reject valid provisioner bearer tokens.
+	// Register the top-level runtime forwarding routes after private and
+	// provisioner routes. The forwarding pattern is intentionally limited to
+	// one endpoint segment so it cannot overlap /internal/* callbacks.
 	if remoteMode {
 		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
 			runtimeCancel()
