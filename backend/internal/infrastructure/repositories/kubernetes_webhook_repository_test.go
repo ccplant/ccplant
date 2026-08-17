@@ -2,7 +2,76 @@ package repositories
 
 import (
 	"testing"
+	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
+
+func TestWebhookJSONToEntityRestoresPersistedMetadata(t *testing.T) {
+	createdAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	updatedAt := createdAt.Add(2 * time.Hour)
+	receivedAt := createdAt.Add(time.Hour)
+	repo := &KubernetesWebhookRepository{}
+
+	webhook := repo.jsonToEntity(&webhookJSON{
+		ID:            "webhook-id",
+		Name:          "webhook",
+		UserID:        "user-id",
+		Type:          entities.WebhookTypeGitHub,
+		Status:        entities.WebhookStatusActive,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
+		DeliveryCount: 7,
+		LastDelivery: &webhookDeliveryRecordJSON{
+			ID:         "delivery-id",
+			Status:     entities.DeliveryStatusProcessed,
+			ReceivedAt: receivedAt,
+		},
+	})
+
+	if !webhook.CreatedAt().Equal(createdAt) {
+		t.Fatalf("CreatedAt() = %v, want %v", webhook.CreatedAt(), createdAt)
+	}
+	if !webhook.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("UpdatedAt() = %v, want %v", webhook.UpdatedAt(), updatedAt)
+	}
+	if webhook.DeliveryCount() != 7 {
+		t.Fatalf("DeliveryCount() = %d, want 7", webhook.DeliveryCount())
+	}
+	webhook.IncrementDeliveryCount()
+	if webhook.DeliveryCount() != 8 {
+		t.Fatalf("DeliveryCount() after increment = %d, want 8", webhook.DeliveryCount())
+	}
+	if webhook.LastDelivery() == nil || !webhook.LastDelivery().ReceivedAt().Equal(receivedAt) {
+		t.Fatalf("LastDelivery().ReceivedAt() = %v, want %v", webhook.LastDelivery(), receivedAt)
+	}
+}
+
+func TestWebhookPersistenceRoundTripPreservesMetadata(t *testing.T) {
+	createdAt := time.Date(2026, time.February, 3, 4, 5, 6, 0, time.UTC)
+	updatedAt := createdAt.Add(2 * time.Hour)
+	receivedAt := createdAt.Add(time.Hour)
+	webhook := entities.NewWebhook("webhook-id", "webhook", "user-id", entities.WebhookTypeGitHub)
+	webhook.SetCreatedAt(createdAt)
+	webhook.SetDeliveryCount(3)
+	record := entities.NewWebhookDeliveryRecord("delivery-id", entities.DeliveryStatusProcessed)
+	record.SetReceivedAt(receivedAt)
+	webhook.SetLastDelivery(record)
+	webhook.SetUpdatedAt(updatedAt)
+	repo := &KubernetesWebhookRepository{}
+
+	restored := repo.jsonToEntity(repo.entityToJSON(webhook))
+
+	if !restored.CreatedAt().Equal(createdAt) || !restored.UpdatedAt().Equal(updatedAt) {
+		t.Fatalf("restored timestamps = (%v, %v), want (%v, %v)", restored.CreatedAt(), restored.UpdatedAt(), createdAt, updatedAt)
+	}
+	if restored.DeliveryCount() != 3 {
+		t.Fatalf("restored DeliveryCount() = %d, want 3", restored.DeliveryCount())
+	}
+	if restored.LastDelivery() == nil || !restored.LastDelivery().ReceivedAt().Equal(receivedAt) {
+		t.Fatalf("restored LastDelivery() = %#v", restored.LastDelivery())
+	}
+}
 
 func TestNormalizeEnterpriseURL(t *testing.T) {
 	tests := []struct {
