@@ -44,8 +44,8 @@ parent:
 runner:
   # Pool-backed sessions are claimed by idle runners; allocation is never
   # pre-assigned to this manager.
-  managerId: ""
-  pool: ""
+  managerId: replace-with-registered-manager-id
+  pool: default
 
 internalApi:
   tokenSecretRef:
