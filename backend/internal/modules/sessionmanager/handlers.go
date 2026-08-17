@@ -71,13 +71,11 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	// prefix. Register the finite AgentAPI/ACP surface explicitly. Echo's final
 	// path parameter is greedy, so even /:sessionId/:endpoint would also match
 	// /internal/session-state/... and steal provisioner callbacks.
-	runtime := e.Group("")
-	runtime.Use(h.hmacMiddleware())
 	for _, endpoint := range []string{
 		"health", "status", "session", "messages", "message", "rpc", "sse",
 		"events", "tool_status", "action", "stop",
 	} {
-		runtime.Any("/:sessionId/"+endpoint, h.ProxySession)
+		e.Any("/:sessionId/"+endpoint, h.ProxySession, h.hmacMiddleware())
 	}
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")

@@ -118,3 +118,18 @@ func TestRuntimeCatchAllDoesNotShadowPreviouslyRegisteredInternalRoute(t *testin
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
 	}
 }
+
+func TestRuntimeHMACMiddlewareDoesNotWrapUnmatchedInternalRoute(t *testing.T) {
+	e := echo.New()
+	h := NewHandlers(&proxyTestManager{}, "test-secret")
+	if err := h.RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/internal/session-state/session-1/download-url", nil)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
