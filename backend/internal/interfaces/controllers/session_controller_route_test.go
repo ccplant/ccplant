@@ -189,12 +189,13 @@ func TestRouteToSessionExternalRouteBypassesLocalEnsurer(t *testing.T) {
 func TestRouteToSessionUsesDirectSessionRuntime(t *testing.T) {
 	manager := &ensuringSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}
 	tunnel := &directRuntimeTunnel{}
+	routeRepo := &fakeACPRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a", Transport: "direct_session_runtime",
+	}}
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager},
 		nil,
-		controllers.WithSessionRouteRepository(&fakeACPRouteRepo{route: &repositories.SessionRoute{
-			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a", Transport: "direct_session_runtime",
-		}}),
+		controllers.WithSessionRouteRepository(routeRepo),
 		controllers.WithESMControlTunnel(tunnel),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
@@ -207,5 +208,8 @@ func TestRouteToSessionUsesDirectSessionRuntime(t *testing.T) {
 	}
 	if tunnel.managerID != "public-id" || tunnel.path != "/status" {
 		t.Fatalf("direct tunnel manager=%q path=%q", tunnel.managerID, tunnel.path)
+	}
+	if routeRepo.route.Status != "stable" || routeRepo.route.StatusUpdatedAt.IsZero() {
+		t.Fatalf("persisted route status=%q updated_at=%v, want stable with timestamp", routeRepo.route.Status, routeRepo.route.StatusUpdatedAt)
 	}
 }

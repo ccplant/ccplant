@@ -562,7 +562,32 @@ func routedSessionStatus(route *repositories.SessionRoute, allocatedSessions map
 	if allocatedSession := allocatedSessions[route.RemoteSessionID]; allocatedSession != nil {
 		return allocatedSession.Status()
 	}
-	return "active"
+	if route.Status != "" {
+		return route.Status
+	}
+	return "starting"
+}
+
+func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, resp *http.Response) {
+	if c.sessionRouteRepo == nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Status == "" {
+		return
+	}
+	route.Status = payload.Status
+	route.StatusUpdatedAt = time.Now()
+	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
+		log.Printf("[ROUTE] Failed to persist status for %s: %v", route.SessionID, err)
+	}
 }
 
 func indexAllocatedSessions(sessions []entities.Session, routes []*repositories.SessionRoute) map[string]entities.Session {
@@ -1011,6 +1036,9 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
+		}
 		copyResponseHeaders(ctx.Response().Header(), resp.Header)
 		return streamTunnelResponse(ctx, resp)
 	}
@@ -1034,6 +1062,9 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
+		}
 		copyResponseHeaders(ctx.Response().Header(), resp.Header)
 		return streamTunnelResponse(ctx, resp)
 	}
@@ -1073,6 +1104,9 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		}
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
+		}
 		resp.Header.Set("Access-Control-Allow-Origin", "*")
 		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 			resp.Header.Set("Cache-Control", "no-cache")

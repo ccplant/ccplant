@@ -26,12 +26,14 @@ type SessionRoute struct {
 	RuntimeTokenHash string // SHA-256 hash of the per-generation runtime bearer token
 	Generation       int64  // Fences stale Session Pods after replacement
 	// Metadata for session listing
-	UserID         string
-	Scope          string
-	TeamID         string
-	Tags           map[string]string
-	StartedAt      time.Time
-	InitialMessage string // The initial message/prompt for the session (shown as description)
+	UserID          string
+	Scope           string
+	TeamID          string
+	Tags            map[string]string
+	StartedAt       time.Time
+	InitialMessage  string // The initial message/prompt for the session (shown as description)
+	Status          string // Last status confirmed by the allocated session runtime
+	StatusUpdatedAt time.Time
 }
 
 // RemoteProvisionSettingsBuilder is an optional interface that SessionManager implementations

@@ -165,7 +165,8 @@ func TestRoutedSessionStatusFallbacks(t *testing.T) {
 		want  string
 	}{
 		{name: "allocation pending", route: &repositories.SessionRoute{SessionID: "public-id"}, want: "creating"},
-		{name: "remote session", route: &repositories.SessionRoute{SessionID: "public-id", RemoteSessionID: "remote-id"}, want: "active"},
+		{name: "assigned but unconfirmed session", route: &repositories.SessionRoute{SessionID: "public-id", RemoteSessionID: "remote-id"}, want: "starting"},
+		{name: "confirmed session", route: &repositories.SessionRoute{SessionID: "public-id", RemoteSessionID: "remote-id", Status: "stable"}, want: "stable"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
