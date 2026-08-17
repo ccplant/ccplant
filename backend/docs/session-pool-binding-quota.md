@@ -133,9 +133,13 @@ type ResolvedPool struct {
 func (r *Resolver) Resolve(ctx context.Context, owner Subject, tags map[string]string) (*ResolvedPool, error)
 ```
 
-Pool は既存どおり `allocator.pool`、Preference、default Pool の順序で選択する。候補 Pool の
-認可には owner の exact Binding または `all` Binding だけを使う。Resolver が Pool と
-effective Binding を一緒に返すことで、quota 検査時に Binding を探し直さない。
+Pool は既存どおり `allocator.pool`、Preference、default Pool の順序で選択する。
+`allocator.pool` は明示指定なので一致する利用可能な Pool がなければエラーにする。一方、
+Preference は soft hint とし、現在の Binding・health・label 条件で利用可能な候補に含まれる
+場合だけ採用する。Preference の Pool が利用不能なら利用可能な default Pool を選び、default
+Pool もなければ local Session Manager 経路へ進む。候補 Pool の認可には owner の exact
+Binding または `all` Binding だけを使う。Resolver が Pool と effective Binding を一緒に
+返すことで、quota 検査時に Binding を探し直さない。
 
 user scope は user Preference だけを、team scope は対象 team Preference だけを参照する。
 

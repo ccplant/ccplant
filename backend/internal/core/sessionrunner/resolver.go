@@ -74,33 +74,48 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 		return nil, err
 	}
 	requested := strings.TrimSpace(tags["allocator.pool"])
-	explicitlyRequested := requested != ""
+	preferred := ""
 	if requested == "" {
 		if preference, getErr := r.store.GetPreference(ctx, subject.Type, subject.ID); getErr == nil && preference.Enabled {
-			requested = preference.DefaultPool
+			preferred = strings.TrimSpace(preference.DefaultPool)
 		}
 	}
 	var candidates []*ResolvedPool
 	for _, resolved := range available {
-		if requested != "" && resolved.Pool.Name != requested {
-			continue
-		}
 		if !poolMatchesTags(resolved.Pool, tags) {
 			continue
 		}
-		if requested == "" && !resolved.Pool.IsDefault {
+		if requested != "" && resolved.Pool.Name != requested {
 			continue
 		}
 		candidates = append(candidates, resolved)
 	}
-	if len(candidates) == 0 {
-		if explicitlyRequested {
+	if requested != "" {
+		if len(candidates) == 0 {
 			return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requested)
 		}
+		return firstPoolByName(candidates), nil
+	}
+	for _, resolved := range candidates {
+		if resolved.Pool.Name == preferred {
+			return resolved, nil
+		}
+	}
+	defaults := candidates[:0]
+	for _, resolved := range candidates {
+		if resolved.Pool.IsDefault {
+			defaults = append(defaults, resolved)
+		}
+	}
+	if len(defaults) == 0 {
 		return nil, nil
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Pool.Name < candidates[j].Pool.Name })
-	return candidates[0], nil
+	return firstPoolByName(defaults), nil
+}
+
+func firstPoolByName(pools []*ResolvedPool) *ResolvedPool {
+	sort.Slice(pools, func(i, j int) bool { return pools[i].Pool.Name < pools[j].Pool.Name })
+	return pools[0]
 }
 
 func (r *Resolver) managerAvailable(manager *Manager) bool {

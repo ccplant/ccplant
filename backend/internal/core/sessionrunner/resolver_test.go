@@ -83,6 +83,26 @@ func TestResolverIgnoresStalePreferenceWithoutEffectiveBinding(t *testing.T) {
 	require.ErrorContains(t, err, `no authorized and healthy session pool matches "linux"`)
 }
 
+func TestResolverFallsBackToAvailableDefaultWhenPreferenceIsUnavailable(t *testing.T) {
+	store := &resolverStore{
+		managers: []*Manager{{ID: "manager-a", Enabled: true}},
+		pools: []*LogicalPool{
+			{Name: "preferred", Enabled: true},
+			{Name: "fallback", Enabled: true, IsDefault: true},
+		},
+		suppliers: []*PoolSupplier{
+			{Pool: "preferred", ManagerID: "manager-a", Enabled: true},
+			{Pool: "fallback", ManagerID: "manager-a", Enabled: true},
+		},
+		bindings:    []*Binding{{Pool: "fallback", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
+		preferences: map[string]*Preference{"user:alice": {SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "preferred"}},
+	}
+
+	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "fallback", resolved.Pool.Name)
+}
+
 func TestResolverAllowsClusterWideBinding(t *testing.T) {
 	store := &resolverStore{
 		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
