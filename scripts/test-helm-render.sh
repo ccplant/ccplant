@@ -149,6 +149,7 @@ all_role_args=(
   --set sessionControl.enabled=true
   --set sessionControl.directRuntimeEnabled=true
   --set sessionManager.scia.enabled=true
+  --set scia.enabled=true
   --set sessionManager.scia.publicBaseUrl=https://api.example
   --set sessionManager.github.tokenRef.name=manager-github
   --set sessionManager.kubernetesSession.provisioner.tokenSecretRef.name=provisioner
@@ -164,6 +165,20 @@ done
   --show-only templates/rolebinding.yaml "${all_role_args[@]}" \
   >"$TMP_DIR/backend-manager-rolebinding.yaml"
 
+# A parent-registered Kubernetes session manager is stateless and may run with
+# multiple replicas without a remote Redis. Kubernetes Lease elects its single
+# upstream allocation/control worker.
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/session-manager-deployment.yaml \
+  "${all_role_args[@]}" \
+  --set sessionManager.replicaCount=2 \
+  --set-string sessionManager.redis.addr= \
+  --set sessionManager.externalRegistration.enabled=true \
+  --set sessionManager.externalRegistration.upstreamUrl=https://parent.example \
+  --set sessionManager.externalRegistration.connectionTokenSecretRef.name=manager-connection \
+  --set sessionManager.externalRegistration.hmacSecretRef.name=manager-hmac \
+  >"$TMP_DIR/backend-remote-manager-no-redis.yaml"
+
 assert_contains 'image: "example/api:1.173.0"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-deployment.yaml"
@@ -171,6 +186,9 @@ assert_contains 'args: \["server"\]' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_URL' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_TOKEN' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'replicas: 2' "$TMP_DIR/backend-remote-manager-no-redis.yaml"
+assert_not_contains 'name: AGENTAPI_REDIS_ADDR' "$TMP_DIR/backend-remote-manager-no-redis.yaml"
+assert_contains 'resources: \["leases"\]' "$TMP_DIR/backend-all-roles.yaml"
 assert_contains 'name: SESSION_CONTROL_LONG_POLL_ENABLED' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'value: "true"' "$TMP_DIR/backend-deployment.yaml"
@@ -262,7 +280,6 @@ assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend
 assert_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/backend-all-roles.yaml"
 assert_contains 'name: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-all-roles.yaml"
 assert_contains 'verbs: \["get", "list", "create", "update", "patch", "delete"\]' "$TMP_DIR/backend-all-roles.yaml"
-assert_not_contains 'resources: \["leases"\]' "$TMP_DIR/backend-all-roles.yaml"
 
 # A shadow API release can reuse the stable control-plane Service without
 # creating it. Role-local values remain nil-safe for legacy --reuse-values.

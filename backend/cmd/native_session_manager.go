@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -113,7 +114,11 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	if o.upstreamURL == "" || o.connectionToken == "" {
 		return fmt.Errorf("--upstream-url and --connection-token are required")
 	}
-	manager, err := services.NewNativeSessionManager(o.stateDir, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, o.binaryPath, o.filesystemSandbox)
+	localURL, err := nativeSessionManagerLocalURL(o.listen)
+	if err != nil {
+		return err
+	}
+	manager, err := services.NewNativeSessionManager(o.stateDir, localURL, o.connectionToken, o.upstreamAuthToken, o.binaryPath, o.filesystemSandbox)
 	if err != nil {
 		return err
 	}
@@ -134,9 +139,8 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	worker := sessionmanager.NewAllocatorWorkerWithUpstreamAuthAndRuntimeProfile(manager, o.upstreamURL, o.connectionToken, o.upstreamAuthToken, "", o.inheritRuntimeProfile)
+	worker := sessionmanager.NewRunnerWorker(manager, o.upstreamURL, o.managerID, o.connectionToken)
 	go worker.Start(ctx)
-	localURL := "http://127.0.0.1" + o.listen
 	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
 	go controlWorker.Start(ctx)
 	if o.managerID != "" {
@@ -153,6 +157,17 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		return err
 	}
 	return nil
+}
+
+func nativeSessionManagerLocalURL(listen string) (string, error) {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "", fmt.Errorf("invalid native session manager listen address %q: %w", listen, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port), nil
 }
 
 func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token string, manager *services.NativeSessionManager) {

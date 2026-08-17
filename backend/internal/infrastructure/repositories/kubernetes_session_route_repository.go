@@ -36,6 +36,8 @@ type routeJSON struct {
 	Tags             map[string]string `json:"tags,omitempty"`
 	StartedAt        time.Time         `json:"started_at,omitempty"`
 	InitialMessage   string            `json:"initial_message,omitempty"`
+	Status           string            `json:"status,omitempty"`
+	StatusUpdatedAt  time.Time         `json:"status_updated_at,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -74,6 +76,8 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		Tags:             route.Tags,
 		StartedAt:        route.StartedAt,
 		InitialMessage:   route.InitialMessage,
+		Status:           route.Status,
+		StatusUpdatedAt:  route.StatusUpdatedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -151,6 +155,8 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 		Tags:             rj.Tags,
 		StartedAt:        rj.StartedAt,
 		InitialMessage:   rj.InitialMessage,
+		Status:           rj.Status,
+		StatusUpdatedAt:  rj.StatusUpdatedAt,
 	}, nil
 }
 
@@ -192,6 +198,8 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			Tags:             rj.Tags,
 			StartedAt:        rj.StartedAt,
 			InitialMessage:   rj.InitialMessage,
+			Status:           rj.Status,
+			StatusUpdatedAt:  rj.StatusUpdatedAt,
 		})
 	}
 	return routes, nil

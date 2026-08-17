@@ -131,6 +131,40 @@ func TestCreateClusterWidePoolBinding(t *testing.T) {
 	}
 }
 
+func TestBindingPriorityAndMaxConcurrentValidationAndPatch(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	if err := store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	invalid := callSessionPoolHandler(t, controller.CreateBinding, http.MethodPost, "/admin/session-pools/linux/bindings",
+		map[string]any{"subject_type": "user", "subject_id": "alice", "max_concurrent": -1}, map[string]string{"pool": "linux"}, nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("negative max_concurrent status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+
+	created := callSessionPoolHandler(t, controller.CreateBinding, http.MethodPost, "/admin/session-pools/linux/bindings",
+		map[string]any{"subject_type": "user", "subject_id": "alice", "priority": 10, "max_concurrent": 2}, map[string]string{"pool": "linux"}, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create binding status=%d body=%s", created.Code, created.Body.String())
+	}
+	bindings, err := store.ListBindings(context.Background(), "linux")
+	if err != nil || len(bindings) != 1 || bindings[0].Priority != 10 || bindings[0].MaxConcurrent != 2 {
+		t.Fatalf("created binding quota: bindings=%+v err=%v", bindings, err)
+	}
+
+	patched := callSessionPoolHandler(t, controller.PatchBinding, http.MethodPatch, "/admin/session-pools/linux/bindings/"+bindings[0].ID,
+		map[string]any{"priority": 20, "max_concurrent": 4}, map[string]string{"pool": "linux", "bindingId": bindings[0].ID}, nil)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch binding status=%d body=%s", patched.Code, patched.Body.String())
+	}
+	bindings, err = store.ListBindings(context.Background(), "linux")
+	if err != nil || bindings[0].Priority != 20 || bindings[0].MaxConcurrent != 4 {
+		t.Fatalf("patched binding quota: bindings=%+v err=%v", bindings, err)
+	}
+}
+
 func TestPoolCreatorReceivesManageBinding(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
@@ -200,9 +234,6 @@ func TestDeleteLogicalPoolCascadesRelatedResources(t *testing.T) {
 	if err := store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "alice", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.PutPreference(ctx, &core.Preference{SubjectType: core.SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "linux"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,9 +253,6 @@ func TestDeleteLogicalPoolCascadesRelatedResources(t *testing.T) {
 	}
 	if bindings, _ := store.ListBindings(ctx, "linux"); len(bindings) != 0 {
 		t.Fatalf("bindings remain: %+v", bindings)
-	}
-	if _, err := store.GetPreference(ctx, core.SubjectUser, "alice"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("preference still exists: %v", err)
 	}
 	if _, err := store.GetAllocation(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("allocation still exists: %v", err)

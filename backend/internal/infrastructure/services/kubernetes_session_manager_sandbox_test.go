@@ -135,6 +135,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 				SessionSidecarImage:       "ghcr.io/takutakahashi/scia:0.17.0",
 				SessionSidecarConfigImage: "busybox:1.36",
 				SessionSidecarPort:        18081,
+				ProxyURL:                  "http://scia-oauth.parent.svc.cluster.local:8081",
 				Credential:                "takutakahashi.google",
 				UserNamespace:             "takutakahashi",
 				NoProxy:                   ".svc,.cluster.local",
@@ -225,6 +226,7 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 	manager.injectSciaProxyEnv(env, req)
 	assert.Equal(t, "http://127.0.0.1:18081", env["HTTP_PROXY"])
 	assert.Equal(t, "http://127.0.0.1:18081", env["HTTPS_PROXY"])
+	assert.Equal(t, "http://127.0.0.1:18081", env["AGENTAPI_SCIA_PROXY_URL"])
 	assert.Equal(t, sciaCABundlePath, env["SSL_CERT_FILE"])
 	assert.Equal(t, "takutakahashi.google", env["AGENTAPI_SCIA_GOOGLE_CREDENTIAL"])
 	assert.Equal(t, "takutakahashi.todoist", env["AGENTAPI_SCIA_TODOIST_CREDENTIAL"])

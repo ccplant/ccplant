@@ -281,7 +281,7 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 	}
 	hash := sha256.Sum256([]byte(token))
 	registryManager := &sessionrunnercore.Manager{ID: manager.ID, Name: manager.Name, Labels: manager.Labels,
-		Capabilities: []string{sessionrunnercore.CapabilityLegacyAllocatorV1, sessionrunnercore.CapabilityDirectRuntimeV1},
+		Capabilities: []string{sessionrunnercore.CapabilityRunnerClaimV1, sessionrunnercore.CapabilityDirectRuntimeV1},
 		Enabled:      true, ConnectionTokenHash: hex.EncodeToString(hash[:])}
 	if err := c.sessionRunnerStore.CreateManager(ctx, registryManager); err != nil {
 		return err
@@ -306,13 +306,6 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
 		return err
 	}
-	if manager.Default {
-		if err := c.sessionRunnerStore.PutPreference(ctx, &sessionrunnercore.Preference{SubjectType: subjectType,
-			SubjectID: manager.BindingSubjectID, Enabled: true, DefaultPool: manager.Pool}); err != nil {
-			_ = c.deleteExternalManagerPool(ctx, *manager)
-			return err
-		}
-	}
 	return nil
 }
 
@@ -336,15 +329,6 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 	if err := c.sessionRunnerStore.UpdateLogicalPool(ctx, pool); err != nil {
 		return err
 	}
-	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
-	if manager.Default {
-		return c.sessionRunnerStore.PutPreference(ctx, &sessionrunnercore.Preference{SubjectType: subjectType,
-			SubjectID: manager.BindingSubjectID, Enabled: true, DefaultPool: manager.Pool})
-	}
-	preference, err := c.sessionRunnerStore.GetPreference(ctx, subjectType, manager.BindingSubjectID)
-	if err == nil && preference.DefaultPool == manager.Pool {
-		return c.sessionRunnerStore.DeletePreference(ctx, subjectType, manager.BindingSubjectID)
-	}
 	return nil
 }
 
@@ -359,17 +343,6 @@ func (c *SettingsController) deleteExternalManagerPool(ctx context.Context, mana
 	for _, binding := range bindings {
 		if err := c.sessionRunnerStore.DeleteBinding(ctx, binding.ID); err != nil {
 			return err
-		}
-	}
-	preferences, err := c.sessionRunnerStore.ListPreferences(ctx)
-	if err != nil {
-		return err
-	}
-	for _, preference := range preferences {
-		if preference.DefaultPool == manager.Pool {
-			if err := c.sessionRunnerStore.DeletePreference(ctx, preference.SubjectType, preference.SubjectID); err != nil {
-				return err
-			}
 		}
 	}
 	if err := c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {

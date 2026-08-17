@@ -19,7 +19,7 @@ func TestKVStorePoolBindings(t *testing.T) {
 	require.NoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "manager-a", Enabled: true}))
 	require.NoError(t, store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}))
 	require.NoError(t, store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: "manager-a", Enabled: true}))
-	require.NoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true, Priority: 10}))
+	require.NoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "linux", SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true, Priority: 10, MaxConcurrent: 3}))
 
 	pools, err := store.ListLogicalPools(ctx)
 	require.NoError(t, err)
@@ -29,16 +29,23 @@ func TestKVStorePoolBindings(t *testing.T) {
 	require.Len(t, bindings, 1)
 	require.Equal(t, "org/team", bindings[0].SubjectID)
 	require.Equal(t, core.BindingRoleUse, bindings[0].Role)
+	require.Equal(t, 3, bindings[0].MaxConcurrent)
 	bindings[0].Role = core.BindingRoleManage
 	require.NoError(t, store.UpdateBinding(ctx, bindings[0]))
 	updatedBindings, err := store.ListBindings(ctx, "linux")
 	require.NoError(t, err)
 	require.Equal(t, core.BindingRoleManage, updatedBindings[0].Role)
 
-	require.NoError(t, store.PutPreference(ctx, &core.Preference{SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true, DefaultPool: "linux"}))
-	preference, err := store.GetPreference(ctx, core.SubjectTeam, "org/team")
+}
+
+func TestKVStoreAllocationRetainsBindingID(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	require.NoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", BindingID: "binding-alice"}))
+
+	allocation, err := store.GetAllocation(ctx, "session-a")
 	require.NoError(t, err)
-	require.Equal(t, "linux", preference.DefaultPool)
+	require.Equal(t, "binding-alice", allocation.BindingID)
 }
 
 func TestKVStorePoolBindingIsUniqueByPoolAndSubject(t *testing.T) {

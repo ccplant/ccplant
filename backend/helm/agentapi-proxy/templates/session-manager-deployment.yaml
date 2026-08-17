@@ -5,6 +5,7 @@
 {{- $encryptionToken := dig "encryption" "keySecretRef" (dict) $manager }}
 {{- $registration := $manager.externalRegistration | default dict }}
 {{- $runner := $manager.runner | default dict }}
+{{- $remoteMode := or (dig "enabled" false $registration) (dig "enabled" false $runner) }}
 {{- $kv := $manager.kvStore | default dict }}
 {{- $redisClient := $manager.redis | default dict }}
 {{- $sessionPersistence := $manager.sessionPersistence | default dict }}
@@ -12,7 +13,10 @@
 {{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 {{- $sessionControl := $manager.sessionControl | default dict }}
-{{- $scia := $manager.scia | default dict }}
+{{- /* SCIA is a release-wide session runtime. Keep the API, the standalone
+      broker and the session manager on one source of truth so externally
+      allocated sessions inherit the same sidecar configuration. */}}
+{{- $scia := .Values.scia | default dict }}
 {{- $github := $manager.github | default dict }}
 {{- $k8s := $manager.kubernetesSession | default dict }}
 {{- $provisioner := $k8s.provisioner | default dict }}
@@ -80,6 +84,9 @@ spec:
                   name: {{ required "sessionManager.internalApi.tokenSecretRef.name is required" (dig "name" "" $internalToken) | quote }}
                   key: {{ dig "key" "token" $internalToken | quote }}
             - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
+            # Outbound ESM control commands must be handled by the public API,
+            # not by this reduced session-manager HTTP server.
+            - {name: AGENTAPI_SESSION_MANAGER_API_URL, value: "http://{{ include "agentapi-proxy.fullname" . }}:{{ .Values.service.port }}"}
             {{- if (dig "enabled" false $registration) }}
             - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ dig "publicUrl" "" $registration | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "sessionManager.externalRegistration.upstreamUrl is required when external registration is enabled" (dig "upstreamUrl" "" $registration) | quote }}}
@@ -139,6 +146,7 @@ spec:
             - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
             {{- end }}
             {{- end }}
+            {{- if not $remoteMode }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}
             {{- $redisSecret := $redisClient.existingSecret | default "" }}
@@ -157,6 +165,7 @@ spec:
             - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
             - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
             - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
+            {{- end }}
             - {name: LOG_DIR, value: "/var/log/agentapi/sessions"}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_PATH, value: {{ $sessionPersistencePath | quote }}}

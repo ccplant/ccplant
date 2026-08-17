@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
 
@@ -69,7 +70,14 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
 	settingsController.SetESMControlTunnel(server.esmControlTunnel)
 	settingsController.SetSessionRunnerStore(server.sessionRunnerStore)
-	sessionPoolController := controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
+	var sessionPoolController *controllers.SessionPoolController
+	if provider, ok := server.sessionManager.(interface {
+		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+	}); ok {
+		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo, provider)
+	} else {
+		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
+	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
@@ -224,7 +232,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController)
 			if server.sessionRouteRepo != nil {
-				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo)
+				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
 		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
@@ -238,7 +246,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController)
 			if server.sessionRouteRepo != nil {
-				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo)
+				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
 		}
 	}
@@ -365,13 +373,12 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.PUT("/session-pool-preference", r.handlers.sessionPoolController.PutPreference,
-			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.POST("/internal/session-runners/register", r.handlers.sessionPoolController.RegisterRunner)
 		r.echo.GET("/internal/session-runners/allocations/next", r.handlers.sessionPoolController.ClaimRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/ack", r.handlers.sessionPoolController.AckRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/fail", r.handlers.sessionPoolController.FailRunnerAllocation)
 		r.echo.POST("/internal/session-managers/:id/heartbeat", r.handlers.sessionPoolController.HeartbeatManager)
+		r.echo.GET("/internal/session-managers/:id/runtime-profile", r.handlers.sessionPoolController.GetManagerRuntimeProfile)
 	}
 
 	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)
@@ -412,12 +419,6 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-state/:sessionId/download-url", r.handlers.provisionerController.PresignSessionStateDownload)
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
-	if r.handlers.externalAllocationController != nil {
-		r.echo.GET("/internal/external-session-manager/allocations/next", r.handlers.externalAllocationController.GetNextExternalSessionAllocation)
-		r.echo.GET("/internal/external-session-manager/runtime-profile", r.handlers.externalAllocationController.GetExternalSessionManagerRuntimeProfile)
-		r.echo.POST("/internal/external-session-manager/allocations/:sessionId/result", r.handlers.externalAllocationController.CompleteExternalSessionAllocation)
-		log.Printf("[ROUTES] External manager allocation endpoints registered")
-	}
 	if r.handlers.workerControlController != nil {
 		r.echo.POST("/internal/worker/sessions/:sessionId", r.handlers.workerControlController.CreateSession)
 		r.echo.GET("/internal/worker/sessions", r.handlers.workerControlController.ListSessions)
@@ -448,6 +449,7 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionRuntimeController != nil {
 		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)
 		r.echo.POST("/internal/session-runtime/:sessionId/frames", r.handlers.sessionRuntimeController.AppendFrames)
+		r.echo.POST("/internal/session-runtime/:sessionId/status", r.handlers.sessionRuntimeController.UpdateStatus)
 		log.Printf("[ROUTES] Direct Session Pod runtime endpoints registered")
 	}
 

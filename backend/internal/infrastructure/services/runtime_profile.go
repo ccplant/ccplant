@@ -65,7 +65,25 @@ func (m *KubernetesSessionManager) ApplyRuntimeProfile(ctx context.Context, prof
 		return fmt.Errorf("unsupported runtime profile version %d", profile.Version)
 	}
 
+	profileCopy := *profile
+	profileCopy.Scia.GoogleHosts = append([]string(nil), profile.Scia.GoogleHosts...)
+	profileCopy.Scia.GooglePaths = append([]string(nil), profile.Scia.GooglePaths...)
+	profileCopy.Scia.TodoistHosts = append([]string(nil), profile.Scia.TodoistHosts...)
+	profileCopy.Scia.TodoistPaths = append([]string(nil), profile.Scia.TodoistPaths...)
+
 	m.mutex.Lock()
+	m.inheritedRuntimeProfile = &profileCopy
+	m.applyRuntimeProfileLocked(&profileCopy)
+	m.mutex.Unlock()
+
+	if err := m.ensureRuntimeProfileServiceAccount(ctx, profile.Kubernetes.ServiceAccount); err != nil {
+		return err
+	}
+	log.Printf("[SESSION_MANAGER_ALLOCATOR] Applied parent runtime profile version %d", profile.Version)
+	return nil
+}
+
+func (m *KubernetesSessionManager) applyRuntimeProfileLocked(profile *sessionsettings.RuntimeProfile) {
 	k8s := profile.Kubernetes
 	m.k8sConfig.ServiceAccount = k8s.ServiceAccount
 	m.k8sConfig.NetworkFilterImage = k8s.NetworkFilterImage
@@ -92,13 +110,6 @@ func (m *KubernetesSessionManager) ApplyRuntimeProfile(ctx context.Context, prof
 	m.config.Scia.TodoistCredential = scia.TodoistCredential
 	m.config.Scia.TodoistHosts = append([]string(nil), scia.TodoistHosts...)
 	m.config.Scia.TodoistPaths = append([]string(nil), scia.TodoistPaths...)
-	m.mutex.Unlock()
-
-	if err := m.ensureRuntimeProfileServiceAccount(ctx, k8s.ServiceAccount); err != nil {
-		return err
-	}
-	log.Printf("[SESSION_MANAGER_ALLOCATOR] Applied parent runtime profile version %d", profile.Version)
-	return nil
 }
 
 func (m *KubernetesSessionManager) ensureRuntimeProfileServiceAccount(ctx context.Context, name string) error {

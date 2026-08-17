@@ -9,7 +9,6 @@ export interface ClusterSessionManager {
 export interface LogicalSessionPool {
   name: string
   labels?: Record<string, string>
-  default?: boolean
   enabled: boolean
 }
 
@@ -32,4 +31,6 @@ export interface SessionPoolBinding {
   subject_id: string
   role: 'use' | 'manage'
   enabled: boolean
+  priority?: number
+  max_concurrent?: number
 }

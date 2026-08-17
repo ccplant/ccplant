@@ -34,6 +34,7 @@
       }
     },
     "replicaCount": { "type": "integer", "minimum": 1 },
+    "scia": { "$ref": "#/definitions/sessionManagerScia" },
     "observability": {
       "type": "object",
       "properties": {
@@ -132,7 +133,7 @@
     },
     "sessionManager": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "scia", "github", "kubernetesSession"],
+      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "github", "kubernetesSession"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 1 },
@@ -157,7 +158,6 @@
         "redis": { "$ref": "#/definitions/redisClient" },
         "sessionPersistence": { "$ref": "#/definitions/sessionPersistence" },
         "sessionControl": { "$ref": "#/definitions/sessionControl" },
-        "scia": { "$ref": "#/definitions/sessionManagerScia" },
         "github": { "$ref": "#/definitions/sessionManagerGitHub" },
         "kubernetesSession": {
           "type": "object",
@@ -236,10 +236,22 @@
             }
           }
         },
-        "anyOf": [
-          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
-          { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
-        ]
+        "if": {
+          "properties": {
+            "sessionManager": {
+              "properties": {
+                "externalRegistration": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] },
+                "runner": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] }
+              }
+            }
+          }
+        },
+        "then": {
+          "anyOf": [
+            { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+            { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+          ]
+        }
       }
     },
     {

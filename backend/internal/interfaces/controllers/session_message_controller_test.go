@@ -89,6 +89,29 @@ type mockWaitProvider struct {
 	manager portrepos.SessionManager
 }
 
+type mockWaitRouteRepo struct{ route *portrepos.SessionRoute }
+
+type mockConnectedWaitTunnel struct{ sessionID string }
+
+func (t mockConnectedWaitTunnel) IsConnected(_ context.Context, id string) bool {
+	return id == t.sessionID
+}
+func (mockConnectedWaitTunnel) Do(context.Context, string, string, string, *http.Request) (*http.Response, error) {
+	return nil, nil
+}
+
+func (r *mockWaitRouteRepo) Save(context.Context, *portrepos.SessionRoute) error { return nil }
+func (r *mockWaitRouteRepo) Get(_ context.Context, id string) (*portrepos.SessionRoute, error) {
+	if r.route != nil && r.route.SessionID == id {
+		return r.route, nil
+	}
+	return nil, nil
+}
+func (r *mockWaitRouteRepo) List(context.Context, string) ([]*portrepos.SessionRoute, error) {
+	return nil, nil
+}
+func (r *mockWaitRouteRepo) Delete(context.Context, string) error { return nil }
+
 func (p *mockWaitProvider) GetSessionManager() portrepos.SessionManager { return p.manager }
 
 // --- helpers ---
@@ -209,6 +232,42 @@ func TestWaitSessionMessages_NoSince_ReceivesEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["updated"])
+}
+
+func TestWaitSessionMessages_RemoteRouteReturnsPacedUpdate(t *testing.T) {
+	mgr := newMockWaitSessionManager(nil)
+	controller := NewSessionController(
+		&mockWaitProvider{manager: mgr}, nil,
+		WithSessionRouteRepository(&mockWaitRouteRepo{route: &portrepos.SessionRoute{
+			SessionID: "public-remote", RemoteSessionID: "runtime-remote",
+			UserID: "user-1", Scope: string(entities.ScopeUser),
+		}}),
+	)
+	c, rec := makeWaitEchoContext(t, "public-remote", nil, "user-1")
+	started := time.Now()
+
+	err := controller.WaitSessionMessages(c)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, time.Since(started), time.Second)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["updated"])
+	assert.Equal(t, "public-remote", resp["session_id"])
+}
+
+func TestWaitSessionMessages_DirectRuntimeLeaseReturnsPacedUpdate(t *testing.T) {
+	controller := NewSessionController(
+		&mockWaitProvider{manager: newMockWaitSessionManager(nil)}, nil,
+		WithESMControlTunnel(mockConnectedWaitTunnel{sessionID: "direct-runtime"}),
+	)
+	c, rec := makeWaitEchoContext(t, "direct-runtime", nil, "user-1")
+
+	require.NoError(t, controller.WaitSessionMessages(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, true, resp["updated"])

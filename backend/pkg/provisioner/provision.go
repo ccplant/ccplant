@@ -111,6 +111,12 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 	settings.Env["AGENTAPI_WORKDIR"] = envPath("AGENTAPI_WORKDIR", filepath.Dir(workdirRepoPath))
 	settings.Env["AGENTAPI_CLONE_DIR"] = workdirRepoPath
 	settings.Env["AGENTAPI_PORT"] = envPath("AGENTAPI_PORT", "8080")
+	if settings.Session.AgentType == "pi-ollama" {
+		settings.Env["PI_ACP_PI_COMMAND"] = currentPiOllamaCommandPath()
+	}
+	if binaryPath := strings.TrimSpace(os.Getenv("CCPLANT_BINARY_PATH")); binaryPath != "" {
+		settings.Env["CCPLANT_BINARY_PATH"] = binaryPath
+	}
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
 		if strings.Contains(settings.Env[key], "127.0.0.1:18081") {
 			delete(settings.Env, key)
@@ -208,7 +214,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Session setup complete")
 	restoreSource := settings.Session.ResumeFrom
 	restoreRequired := restoreSource != ""
-	if restoreSource == "" && settings.Session.PersistenceEnabled {
+	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
 		// Pod replacement keeps the proxy session ID. Use that stable ID as the
 		// implicit snapshot key so restart recovery needs no API parameter.
 		restoreSource = settings.Session.ID
@@ -413,6 +419,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {
+	return settings != nil && settings.Session.PersistenceEnabled && strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) == ""
 }
 
 func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
@@ -1296,14 +1306,22 @@ func ensurePiOllamaEnv(envMap map[string]string) {
 	if envMap == nil {
 		return
 	}
+	commandPath := currentPiOllamaCommandPath()
 	if strings.TrimSpace(envMap["PI_ACP_PI_COMMAND"]) == "" {
-		envMap["PI_ACP_PI_COMMAND"] = piOllamaCommandPath
+		envMap["PI_ACP_PI_COMMAND"] = commandPath
 	}
-	if envMap["PI_ACP_PI_COMMAND"] == piOllamaCommandPath {
-		if err := writePiOllamaCommandWrapper(piOllamaCommandPath); err != nil {
+	if envMap["PI_ACP_PI_COMMAND"] == commandPath {
+		if err := writePiOllamaCommandWrapper(commandPath); err != nil {
 			log.Printf("[PROVISIONER] Warning: failed to write pi-ollama command wrapper: %v", err)
 		}
 	}
+}
+
+func currentPiOllamaCommandPath() string {
+	if strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) != "" {
+		return filepath.Join(envPath("HOME", runtimeHome), ".session", "pi-ollama-pi")
+	}
+	return piOllamaCommandPath
 }
 
 func writePiOllamaCommandWrapper(path string) error {

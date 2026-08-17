@@ -18,7 +18,7 @@ func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func (r *Resolver) AvailablePools(ctx context.Context, userID string, teams []string) ([]*LogicalPool, error) {
+func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*ResolvedPool, error) {
 	pools, err := r.store.ListLogicalPools(ctx)
 	if err != nil {
 		return nil, err
@@ -39,63 +39,71 @@ func (r *Resolver) AvailablePools(ctx context.Context, userID string, teams []st
 	for _, manager := range managers {
 		managerByID[manager.ID] = manager
 	}
-	allowed := allowedPoolNames(bindings, userID, teams)
 	healthy := make(map[string]bool)
 	for _, supplier := range suppliers {
 		if supplier.Enabled && !supplier.Draining && r.managerAvailable(managerByID[supplier.ManagerID]) {
 			healthy[supplier.Pool] = true
 		}
 	}
-	result := make([]*LogicalPool, 0, len(pools))
+	result := make([]*ResolvedPool, 0, len(pools))
 	for _, pool := range pools {
-		if !allowed[pool.Name] || !pool.Enabled || !healthy[pool.Name] {
+		binding := effectiveBinding(bindings, pool.Name, subject)
+		if binding == nil || !pool.Enabled || !healthy[pool.Name] {
 			continue
 		}
-		result = append(result, pool)
+		result = append(result, &ResolvedPool{Pool: pool, Binding: binding})
 	}
 	return result, nil
 }
 
-func (r *Resolver) Resolve(ctx context.Context, userID string, teams []string, tags map[string]string) (*LogicalPool, error) {
-	available, err := r.AvailablePools(ctx, userID, teams)
+func (r *Resolver) AvailablePools(ctx context.Context, subject Subject) ([]*LogicalPool, error) {
+	available, err := r.availablePools(ctx, subject)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*LogicalPool, 0, len(available))
+	for _, resolved := range available {
+		result = append(result, resolved.Pool)
+	}
+	return result, nil
+}
+
+func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string]string) (*ResolvedPool, error) {
+	available, err := r.availablePools(ctx, subject)
 	if err != nil {
 		return nil, err
 	}
 	requested := strings.TrimSpace(tags["allocator.pool"])
-	if requested == "" {
-		if preference, getErr := r.store.GetPreference(ctx, SubjectUser, userID); getErr == nil && preference.Enabled {
-			requested = preference.DefaultPool
-		}
-	}
-	if requested == "" {
-		for _, team := range teams {
-			if preference, getErr := r.store.GetPreference(ctx, SubjectTeam, team); getErr == nil && preference.Enabled && preference.DefaultPool != "" {
-				requested = preference.DefaultPool
-				break
-			}
-		}
-	}
-	var candidates []*LogicalPool
-	for _, pool := range available {
-		if requested != "" && pool.Name != requested {
+	var candidates []*ResolvedPool
+	for _, resolved := range available {
+		if !poolMatchesTags(resolved.Pool, tags) {
 			continue
 		}
-		if !poolMatchesTags(pool, tags) {
+		if requested != "" && resolved.Pool.Name != requested {
 			continue
 		}
-		if requested == "" && !pool.IsDefault {
-			continue
-		}
-		candidates = append(candidates, pool)
+		candidates = append(candidates, resolved)
 	}
-	if len(candidates) == 0 {
-		if requested != "" {
+	if requested != "" {
+		if len(candidates) == 0 {
 			return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requested)
 		}
+		return firstPoolByPriority(candidates), nil
+	}
+	if len(candidates) == 0 {
 		return nil, nil
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
-	return candidates[0], nil
+	return firstPoolByPriority(candidates), nil
+}
+
+func firstPoolByPriority(pools []*ResolvedPool) *ResolvedPool {
+	sort.Slice(pools, func(i, j int) bool {
+		if pools[i].Binding.Priority != pools[j].Binding.Priority {
+			return pools[i].Binding.Priority > pools[j].Binding.Priority
+		}
+		return pools[i].Pool.Name < pools[j].Pool.Name
+	})
+	return pools[0]
 }
 
 func (r *Resolver) managerAvailable(manager *Manager) bool {
@@ -108,27 +116,20 @@ func (r *Resolver) managerAvailable(manager *Manager) bool {
 	return r.now().Sub(manager.LastHeartbeatAt) <= r.heartbeatTTL
 }
 
-func allowedPoolNames(bindings []*Binding, userID string, teams []string) map[string]bool {
-	teamSet := make(map[string]bool, len(teams))
-	for _, team := range teams {
-		teamSet[team] = true
-	}
-	allowed := make(map[string]bool)
+func effectiveBinding(bindings []*Binding, pool string, subject Subject) *Binding {
+	var all *Binding
 	for _, binding := range bindings {
-		if !binding.Enabled {
+		if !binding.Enabled || binding.Pool != pool {
 			continue
 		}
-		if binding.SubjectType == SubjectAll {
-			allowed[binding.Pool] = true
+		if binding.SubjectType == subject.Type && binding.SubjectID == subject.ID {
+			return binding
 		}
-		if binding.SubjectType == SubjectUser && binding.SubjectID == userID {
-			allowed[binding.Pool] = true
-		}
-		if binding.SubjectType == SubjectTeam && teamSet[binding.SubjectID] {
-			allowed[binding.Pool] = true
+		if binding.SubjectType == SubjectAll && binding.SubjectID == "" {
+			all = binding
 		}
 	}
-	return allowed
+	return all
 }
 
 func poolMatchesTags(pool *LogicalPool, tags map[string]string) bool {

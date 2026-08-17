@@ -3,9 +3,8 @@ package sessionrunner
 import "time"
 
 const (
-	CapabilityRunnerClaimV1     = "runner_claim_v1"
-	CapabilityDirectRuntimeV1   = "direct_session_runtime_v1"
-	CapabilityLegacyAllocatorV1 = "legacy_external_allocator_v1"
+	CapabilityRunnerClaimV1   = "runner_claim_v1"
+	CapabilityDirectRuntimeV1 = "direct_session_runtime_v1"
 )
 
 type SubjectType string
@@ -36,7 +35,6 @@ type LogicalPool struct {
 	Name      string            `json:"name"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	Enabled   bool              `json:"enabled"`
-	IsDefault bool              `json:"default,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
@@ -57,24 +55,26 @@ type PoolSupplier struct {
 }
 
 type Binding struct {
-	ID          string      `json:"id"`
-	Pool        string      `json:"pool"`
-	SubjectType SubjectType `json:"subject_type"`
-	SubjectID   string      `json:"subject_id"`
-	Role        BindingRole `json:"role"`
-	Enabled     bool        `json:"enabled"`
-	Priority    int         `json:"priority,omitempty"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
+	ID            string      `json:"id"`
+	Pool          string      `json:"pool"`
+	SubjectType   SubjectType `json:"subject_type"`
+	SubjectID     string      `json:"subject_id"`
+	Role          BindingRole `json:"role"`
+	Enabled       bool        `json:"enabled"`
+	Priority      int         `json:"priority,omitempty"`
+	MaxConcurrent int         `json:"max_concurrent,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
-type Preference struct {
-	SubjectType SubjectType `json:"subject_type"`
-	SubjectID   string      `json:"subject_id"`
-	Enabled     bool        `json:"enabled"`
-	DefaultPool string      `json:"default_pool,omitempty"`
-	Fallback    string      `json:"fallback,omitempty"`
-	UpdatedAt   time.Time   `json:"updated_at"`
+type Subject struct {
+	Type SubjectType `json:"type"`
+	ID   string      `json:"id"`
+}
+
+type ResolvedPool struct {
+	Pool    *LogicalPool `json:"pool"`
+	Binding *Binding     `json:"binding"`
 }
 
 type RunnerStatus string
@@ -113,6 +113,7 @@ const (
 type Allocation struct {
 	SessionID         string            `json:"session_id"`
 	Pool              string            `json:"pool"`
+	BindingID         string            `json:"binding_id,omitempty"`
 	ManagerID         string            `json:"manager_id,omitempty"`
 	RunnerID          string            `json:"runner_id,omitempty"`
 	Status            AllocationStatus  `json:"status"`
@@ -126,6 +127,17 @@ type Allocation struct {
 	ProvisionSettings []byte            `json:"provision_settings,omitempty"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+type QuotaExceededError struct {
+	Pool          string
+	BindingID     string
+	MaxConcurrent int
+	Active        int
+}
+
+func (e *QuotaExceededError) Error() string {
+	return "session pool quota exceeded"
 }
 
 type Claim struct {

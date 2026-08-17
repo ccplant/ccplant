@@ -6,11 +6,63 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 )
+
+func TestControlWorkerExecutesCommandsConcurrently(t *testing.T) {
+	var entered atomic.Int32
+	bothEntered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if entered.Add(1) == 2 {
+			once.Do(func() { close(bothEntered) })
+		}
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer local.Close()
+
+	var served atomic.Bool
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/external-session-manager/control/commands":
+			if served.Swap(true) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			deadline := time.Now().Add(time.Minute)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"commands": []core.Command{
+					{ID: "request-1", StreamID: "1-0", Method: http.MethodGet, Path: "/one", Deadline: deadline},
+					{ID: "request-2", StreamID: "2-0", Method: http.MethodGet, Path: "/two", Deadline: deadline},
+				},
+				"next_cursor": "2-0",
+			})
+		case "/internal/external-session-manager/control/frames":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer parent.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go NewControlWorker(parent.URL, "manager-token", "", local.URL, "instance-a", "local-secret").Start(ctx)
+	select {
+	case <-bothEntered:
+		close(release)
+	case <-time.After(2 * time.Second):
+		close(release)
+		cancel()
+		t.Fatalf("commands were serialized; only %d entered", entered.Load())
+	}
+	cancel()
+}
 
 func TestControlWorkerPollsAndReturnsResponseFrames(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

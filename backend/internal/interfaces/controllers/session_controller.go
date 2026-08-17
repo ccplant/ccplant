@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,10 +13,12 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -66,6 +69,9 @@ type SessionController struct {
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
 	esmControlTunnel       ESMControlTunnel
+	statusSubscribersMu    sync.RWMutex
+	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
+	nextStatusSubscriberID uint64
 }
 
 // NewSessionController creates a new SessionController instance
@@ -78,6 +84,7 @@ func NewSessionController(
 		sessionManagerProvider: sessionManagerProvider,
 		sessionCreator:         sessionCreator,
 		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
+		statusSubscribers:      make(map[uint64]chan repositories.SessionStatusEvent),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -296,6 +303,16 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 
 	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
 	if err != nil {
+		var quotaErr *sessionrunnercore.QuotaExceededError
+		if errors.As(err, &quotaErr) {
+			return ctx.JSON(http.StatusTooManyRequests, map[string]any{
+				"error":          quotaErr.Error(),
+				"pool":           quotaErr.Pool,
+				"binding_id":     quotaErr.BindingID,
+				"max_concurrent": quotaErr.MaxConcurrent,
+				"active":         quotaErr.Active,
+			})
+		}
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
 	}
@@ -544,13 +561,93 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 }
 
 func routedSessionStatus(route *repositories.SessionRoute, allocatedSessions map[string]entities.Session) string {
+	if route.Transport == repositories.SessionRouteTransportDirectRuntime && route.Status != "" {
+		return route.Status
+	}
 	if route.RemoteSessionID == "" {
 		return "creating"
 	}
 	if allocatedSession := allocatedSessions[route.RemoteSessionID]; allocatedSession != nil {
 		return allocatedSession.Status()
 	}
-	return "active"
+	if route.Status != "" {
+		return route.Status
+	}
+	return "starting"
+}
+
+// RecordRemoteSessionStatus persists a status pushed by a direct runtime and
+// immediately fans it out to the proxy-wide SSE subscribers.
+func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, runtimeStatus string) error {
+	if route == nil || runtimeStatus == "" {
+		return nil
+	}
+	status := publicSessionStatus(runtimeStatus)
+	previous := route.Status
+	route.Status, route.StatusUpdatedAt = status, time.Now()
+	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
+		return err
+	}
+	if previous != status {
+		c.publishRemoteStatusEvent(repositories.SessionStatusEvent{SessionID: route.SessionID, Status: status, Timestamp: route.StatusUpdatedAt})
+	}
+	return nil
+}
+
+func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, resp *http.Response) {
+	if c.sessionRouteRepo == nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Status == "" {
+		return
+	}
+	if err := c.RecordRemoteSessionStatus(ctx, route, payload.Status); err != nil {
+		log.Printf("[ROUTE] Failed to persist status for %s: %v", route.SessionID, err)
+	}
+}
+
+func publicSessionStatus(runtimeStatus string) string {
+	if runtimeStatus == "stable" {
+		return "active"
+	}
+	return runtimeStatus
+}
+
+func (c *SessionController) subscribeRemoteStatusEvents() (<-chan repositories.SessionStatusEvent, func()) {
+	c.statusSubscribersMu.Lock()
+	c.nextStatusSubscriberID++
+	id := c.nextStatusSubscriberID
+	ch := make(chan repositories.SessionStatusEvent, 32)
+	c.statusSubscribers[id] = ch
+	c.statusSubscribersMu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			c.statusSubscribersMu.Lock()
+			delete(c.statusSubscribers, id)
+			c.statusSubscribersMu.Unlock()
+		})
+	}
+}
+
+func (c *SessionController) publishRemoteStatusEvent(evt repositories.SessionStatusEvent) {
+	c.statusSubscribersMu.RLock()
+	defer c.statusSubscribersMu.RUnlock()
+	for _, ch := range c.statusSubscribers {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
 }
 
 func indexAllocatedSessions(sessions []entities.Session, routes []*repositories.SessionRoute) map[string]entities.Session {
@@ -999,6 +1096,9 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
+		}
 		copyResponseHeaders(ctx.Response().Header(), resp.Header)
 		return streamTunnelResponse(ctx, resp)
 	}
@@ -1022,6 +1122,9 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
+		}
 		copyResponseHeaders(ctx.Response().Header(), resp.Header)
 		return streamTunnelResponse(ctx, resp)
 	}
@@ -1061,6 +1164,9 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		}
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
+			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
+		}
 		resp.Header.Set("Access-Control-Allow-Origin", "*")
 		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 			resp.Header.Set("Cache-Control", "no-cache")
@@ -1220,6 +1326,10 @@ func copyResponseHeaders(target, source http.Header) {
 
 func streamTunnelResponse(ctx echo.Context, resp *http.Response) error {
 	ctx.Response().WriteHeader(resp.StatusCode)
+	// The first tunnel frame already contains the upstream status and headers.
+	// Flush them before waiting for a body frame so idle SSE streams transition
+	// the browser's EventSource from CONNECTING to OPEN immediately.
+	ctx.Response().Flush()
 	buffer := make([]byte, 64*1024)
 	for {
 		n, err := resp.Body.Read(buffer)
@@ -1239,14 +1349,19 @@ func streamTunnelResponse(ctx echo.Context, resp *http.Response) error {
 }
 
 func (c *SessionController) cleanupRemoteProvisionRequest(ctx context.Context, sessionID string) {
-	cleaner, ok := c.sessionCreator.(interface {
+	if cleaner, ok := c.sessionCreator.(interface {
 		DeleteProvisionRequest(context.Context, string) error
-	})
-	if !ok {
-		return
+	}); ok {
+		if err := cleaner.DeleteProvisionRequest(ctx, sessionID); err != nil {
+			log.Printf("[REMOTE_DELETE] Warning: failed to delete provision request for %s: %v", sessionID, err)
+		}
 	}
-	if err := cleaner.DeleteProvisionRequest(ctx, sessionID); err != nil {
-		log.Printf("[REMOTE_DELETE] Warning: failed to delete provision request for %s: %v", sessionID, err)
+	if cleaner, ok := c.sessionCreator.(interface {
+		DeleteSessionPoolAllocation(context.Context, string) error
+	}); ok {
+		if err := cleaner.DeleteSessionPoolAllocation(ctx, sessionID); err != nil {
+			log.Printf("[REMOTE_DELETE] Warning: failed to delete session pool allocation for %s: %v", sessionID, err)
+		}
 	}
 }
 

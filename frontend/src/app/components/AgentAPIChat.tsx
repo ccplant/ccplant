@@ -381,7 +381,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     if (agentAPI && sessionId) {
       // Reset initial load flag when session changes
       setIsInitialLoadComplete(false);
-      setIsStarting(false);
+      setIsStarting(true);
+      setIsConnected(false);
+      setAgentStatus(null);
+      setMessages([]);
       setACPInfo(null);
       setACPUserPrompts([]);
       setLoadedACPStartPromptIndex(null);
@@ -494,7 +497,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // Always fetch history from the per-session bridge.
                 // We always use the per-session SSE (which does NOT replay history),
                 // so there is no risk of duplicates from SSE replay.
-                const historyResult = await agentAPIRef.current!.getACPMessageHistory(sessionId, info.sessionId);
+                // History and status are independent remote calls. External session
+                // managers may add noticeable tunnel latency to each request, so do
+                // not make chat bootstrap pay for them serially.
+                const [historyResult, currentStatus] = await Promise.all([
+                  agentAPIRef.current!.getACPMessageHistory(sessionId, info.sessionId),
+                  agentAPIRef.current!.getSessionStatus(sessionId).catch(() => null),
+                ]);
                 setMessages(historyResult.messages);
                 setACPUserPrompts(historyResult.userPrompts);
                 setLoadedACPStartPromptIndex(historyResult.userPromptIndex ?? getLatestACPUserPromptIndex(historyResult.userPrompts));
@@ -507,16 +516,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // Fetch current status immediately so the UI reflects running/stable
                 // on reconnect (e.g. user navigated away then came back while the
                 // agent was still processing the provisioner's initial prompt).
-                try {
-                  const currentStatus = await agentAPIRef.current!.getSessionStatus(sessionId);
+                if (currentStatus) {
                   setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
                   // Update agentType so markdown renders for ACP sessions.
                   // getACPSessionInfo hardcodes 'acp', but agent_type from status is authoritative.
                   if (currentStatus.agent_type) {
                     setAgentType(currentStatus.agent_type);
                   }
-                } catch {
-                  // Non-fatal — status will be updated via SSE events.
                 }
 
                 // Subscribe to ACP SSE stream.
@@ -569,6 +575,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // session whose bridge is still starting. Check agent_type via session status.
                 try {
                   const statusResult = await agentAPIRef.current!.getSessionStatus(sessionId);
+                  setAgentStatus({ ...statusResult, status: normalizeAgentStatus(statusResult.status) });
                   if (isACPAgentType(statusResult.agent_type)) {
                     if (statusResult.status === 'error') {
                       const detail = statusResult.message || '不明なエラー';
@@ -1566,9 +1573,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     reconnectACP();
   }, [isPageVisible, acpInfo, sessionId, acpServerEnabled, applyACPConfigOptions]);
 
-  // Get agent type from /status endpoint
+  // Seed agent type and status independently from message-history bootstrap.
+  // This lets the loading screen reflect running/error even while history is slow.
   useEffect(() => {
-    const fetchAgentType = async () => {
+    const fetchAgentStatus = async () => {
       if (!sessionId || !agentAPIRef.current) {
         return;
       }
@@ -1576,6 +1584,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       try {
         const status = await agentAPIRef.current.getSessionStatus(sessionId);
         setAgentType(status.agent_type || null);
+        setAgentStatus({ ...status, status: normalizeAgentStatus(status.status) });
       } catch (error) {
         console.error('Failed to get agent type:', error);
         // If we can't get the agent type, assume it's not claude
@@ -1583,7 +1592,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       }
     };
 
-    fetchAgentType();
+    fetchAgentStatus();
   }, [sessionId]);
 
   // Handle new messages and auto-scroll
@@ -2118,7 +2127,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           </div>
         )}
 
-        {isStarting && !isConnected && agentStatus?.status !== 'error' && (
+        {!isInitialLoadComplete && agentStatus?.status !== 'error' && (
           <div className="text-center text-gray-500 dark:text-gray-400 py-12">
             <div className="mb-3">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
@@ -2128,7 +2137,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           </div>
         )}
 
-        {messages.length === 0 && isConnected && (
+        {isInitialLoadComplete && messages.length === 0 && isConnected && (
           <div className="text-center text-gray-500 dark:text-gray-400 py-12">
             <div className="mb-3">
               <svg className="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2511,7 +2520,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 setTimeout(() => setShowTemplates(false), 150);
               }}
               placeholder={
-                !isConnected 
+                !isConnected || !isInitialLoadComplete
                   ? "Connecting..." 
                   : agentStatus?.status === 'running'
                     ? "Agent is running, please wait..."
@@ -2519,7 +2528,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               }
               className="w-full resize-none border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[80px]"
               rows={3}
-              disabled={!isConnected || isLoading || agentStatus?.status === 'running'}
+              disabled={!isConnected || !isInitialLoadComplete || isLoading || agentStatus?.status === 'running'}
             />
             {showTemplates && templates.length > 0 && (
               <div className="absolute z-50 w-full bottom-full mb-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg max-h-60 overflow-y-auto">

@@ -77,6 +77,31 @@ func createTestUser(userID string, isAdmin bool) *entities.User {
 	return user
 }
 
+func TestGetAvailableManagersHidesPoolBackedManagers(t *testing.T) {
+	repo := newMockSettingsRepository()
+	settings := entities.NewSettings("test-user")
+	settings.SetExternalSessionManagers([]entities.ExternalSessionManagerEntry{
+		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s"},
+		{ID: "legacy", Name: "Direct manager"},
+	})
+	require.NoError(t, repo.Save(context.Background(), settings))
+
+	controller := NewSettingsController(repo, nil)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/settings/managers", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("internal_user", createTestUser("test-user", false))
+
+	require.NoError(t, controller.GetAvailableManagers(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var response AvailableManagersResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	require.Equal(t, []AvailableManagerEntry{{
+		ID: "legacy", Name: "Direct manager", Source: "user", SourceName: "test-user",
+	}}, response.Managers)
+}
+
 func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {
 	tests := []struct {
 		name                    string

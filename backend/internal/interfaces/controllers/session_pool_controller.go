@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -26,11 +27,36 @@ type SessionPoolController struct {
 	store    core.Store
 	resolver *core.Resolver
 	routes   portrepos.SessionRouteRepository
-	now      func() time.Time
+	profile  interface {
+		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+	}
+	now func() time.Time
 }
 
-func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository) *SessionPoolController {
-	return &SessionPoolController{store: store, resolver: core.NewResolver(store, 90*time.Second), routes: routes, now: func() time.Time { return time.Now().UTC() }}
+func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
+	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+}) *SessionPoolController {
+	c := &SessionPoolController{store: store, resolver: core.NewResolver(store, 90*time.Second), routes: routes, now: func() time.Time { return time.Now().UTC() }}
+	if len(providers) > 0 {
+		c.profile = providers[0]
+	}
+	return c
+}
+
+func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error {
+	if _, err := c.authenticateManager(ctx); err != nil {
+		return err
+	}
+	if c.profile == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "runtime profile is unavailable")
+	}
+	profile := c.profile.ExternalRuntimeProfile()
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "marshal runtime profile")
+	}
+	digest := sha256.Sum256(raw)
+	return ctx.JSON(http.StatusOK, &sessionallocation.RuntimeProfileSnapshot{Revision: hex.EncodeToString(digest[:]), Profile: profile})
 }
 
 type managerCreateRequest struct {
@@ -194,11 +220,10 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 
 func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
 	var input struct {
-		Name      string            `json:"name"`
-		Labels    map[string]string `json:"labels,omitempty"`
-		Enabled   *bool             `json:"enabled,omitempty"`
-		IsDefault bool              `json:"default,omitempty"`
-		TeamID    string            `json:"team_id,omitempty"`
+		Name    string            `json:"name"`
+		Labels  map[string]string `json:"labels,omitempty"`
+		Enabled *bool             `json:"enabled,omitempty"`
+		TeamID  string            `json:"team_id,omitempty"`
 	}
 	if err := ctx.Bind(&input); err != nil || strings.TrimSpace(input.Name) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name is required")
@@ -214,7 +239,7 @@ func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	pool := core.LogicalPool{Name: input.Name, Labels: input.Labels, Enabled: enabled, IsDefault: input.IsDefault}
+	pool := core.LogicalPool{Name: input.Name, Labels: input.Labels, Enabled: enabled}
 	if err := c.store.CreateLogicalPool(ctx.Request().Context(), &pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -281,9 +306,8 @@ func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
 		return err
 	}
 	var patch struct {
-		Labels    map[string]string `json:"labels,omitempty"`
-		Enabled   *bool             `json:"enabled,omitempty"`
-		IsDefault *bool             `json:"default,omitempty"`
+		Labels  map[string]string `json:"labels,omitempty"`
+		Enabled *bool             `json:"enabled,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -293,9 +317,6 @@ func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
 	}
 	if patch.Enabled != nil {
 		pool.Enabled = *patch.Enabled
-	}
-	if patch.IsDefault != nil {
-		pool.IsDefault = *patch.IsDefault
 	}
 	if err := c.store.UpdateLogicalPool(ctx.Request().Context(), pool); err != nil {
 		return sessionRunnerStoreError(err)
@@ -338,10 +359,6 @@ func (c *SessionPoolController) DeleteLogicalPool(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	preferences, err := c.store.ListPreferences(requestCtx)
-	if err != nil {
-		return sessionRunnerStoreError(err)
-	}
 	for _, allocation := range allocations {
 		if err := c.store.DeleteAllocation(requestCtx, allocation.SessionID); err != nil {
 			return sessionRunnerStoreError(err)
@@ -362,13 +379,6 @@ func (c *SessionPoolController) DeleteLogicalPool(ctx echo.Context) error {
 	for _, binding := range bindings {
 		if err := c.store.DeleteBinding(requestCtx, binding.ID); err != nil {
 			return sessionRunnerStoreError(err)
-		}
-	}
-	for _, preference := range preferences {
-		if preference.DefaultPool == poolName {
-			if err := c.store.DeletePreference(requestCtx, preference.SubjectType, preference.SubjectID); err != nil {
-				return sessionRunnerStoreError(err)
-			}
 		}
 	}
 	if err := c.store.DeleteLogicalPool(requestCtx, poolName); err != nil {
@@ -476,6 +486,9 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	if binding.MaxConcurrent < 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "max_concurrent must be non-negative")
+	}
 	if err := c.ensureLogicalPoolExists(ctx.Request().Context(), binding.Pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -541,8 +554,10 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
 	var patch struct {
-		Role    *core.BindingRole `json:"role,omitempty"`
-		Enabled *bool             `json:"enabled,omitempty"`
+		Role          *core.BindingRole `json:"role,omitempty"`
+		Enabled       *bool             `json:"enabled,omitempty"`
+		Priority      *int              `json:"priority,omitempty"`
+		MaxConcurrent *int              `json:"max_concurrent,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -552,6 +567,15 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	}
 	if patch.Enabled != nil {
 		binding.Enabled = *patch.Enabled
+	}
+	if patch.Priority != nil {
+		binding.Priority = *patch.Priority
+	}
+	if patch.MaxConcurrent != nil {
+		if *patch.MaxConcurrent < 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "max_concurrent must be non-negative")
+		}
+		binding.MaxConcurrent = *patch.MaxConcurrent
 	}
 	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -567,58 +591,11 @@ func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	pools, err := c.resolver.AvailablePools(ctx.Request().Context(), string(user.ID()), userTeamIDsForPools(user))
+	pools, err := c.resolver.AvailablePools(ctx.Request().Context(), poolSubjectForUser(user))
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"session_pools": pools})
-}
-
-func (c *SessionPoolController) PutPreference(ctx echo.Context) error {
-	user := auth.GetUserFromContext(ctx)
-	if user == nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
-	}
-	var preference core.Preference
-	preference.Enabled = true
-	if err := ctx.Bind(&preference); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
-	}
-	if preference.SubjectType == "" {
-		preference.SubjectType = core.SubjectUser
-	}
-	if preference.SubjectID == "" {
-		preference.SubjectID = string(user.ID())
-	}
-	if preference.SubjectType == core.SubjectUser && preference.SubjectID != string(user.ID()) && !user.IsAdmin() {
-		return echo.NewHTTPError(http.StatusForbidden, "access denied")
-	}
-	if preference.SubjectType == core.SubjectTeam && !user.IsAdmin() && !user.IsMemberOfTeam(preference.SubjectID) {
-		return echo.NewHTTPError(http.StatusForbidden, "access denied")
-	}
-	if err := validatePoolSubject(preference.SubjectType, preference.SubjectID); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-	if preference.DefaultPool != "" {
-		available, err := c.resolver.AvailablePools(ctx.Request().Context(), string(user.ID()), userTeamIDsForPools(user))
-		if err != nil {
-			return sessionRunnerStoreError(err)
-		}
-		found := false
-		for _, pool := range available {
-			if pool.Name == preference.DefaultPool {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return echo.NewHTTPError(http.StatusForbidden, "pool is not available to this subject")
-		}
-	}
-	if err := c.store.PutPreference(ctx.Request().Context(), &preference); err != nil {
-		return sessionRunnerStoreError(err)
-	}
-	return ctx.JSON(http.StatusOK, &preference)
 }
 
 type runnerRegisterRequest struct {
@@ -914,22 +891,11 @@ func (c *SessionPoolController) canManagePool(ctx context.Context, user *entitie
 	return false, nil
 }
 
-func userTeamIDsForPools(user *entities.User) []string {
-	if user == nil {
-		return nil
-	}
+func poolSubjectForUser(user *entities.User) core.Subject {
 	if user.UserType() == entities.UserTypeServiceAccount && user.TeamID() != "" {
-		return []string{user.TeamID()}
+		return core.Subject{Type: core.SubjectTeam, ID: user.TeamID()}
 	}
-	if user.GitHubInfo() == nil {
-		return nil
-	}
-	teams := user.GitHubInfo().Teams()
-	result := make([]string, 0, len(teams))
-	for _, team := range teams {
-		result = append(result, team.Organization+"/"+team.TeamSlug)
-	}
-	return result
+	return core.Subject{Type: core.SubjectUser, ID: string(user.ID())}
 }
 
 func parseRunnerWait(raw string) time.Duration {

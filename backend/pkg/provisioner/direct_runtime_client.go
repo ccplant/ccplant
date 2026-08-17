@@ -50,7 +50,73 @@ func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cf
 		cfg: cfg, client: &http.Client{Transport: transport},
 		localURL: "http://127.0.0.1:" + port, instanceID: instanceID,
 	}
+	go w.reportStatus(ctx)
 	w.run(ctx)
+}
+
+func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
+	var previous string
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		status := w.localStatus(ctx)
+		if status != "" && status != previous {
+			if err := w.postStatus(ctx, status); err != nil {
+				log.Printf("[DIRECT_RUNTIME] status push failed: %v", err)
+			} else {
+				previous = status
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (w *directRuntimeWorker) localStatus(ctx context.Context) string {
+	reqCtx, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, w.localURL+"/status", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return ""
+	}
+	var result struct {
+		Status string `json:"status"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return ""
+	}
+	return result.Status
+}
+
+func (w *directRuntimeWorker) postStatus(ctx context.Context, status string) error {
+	raw, _ := json.Marshal(map[string]string{"status": status})
+	u := strings.TrimRight(w.cfg.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(w.cfg.SessionID) + "/status?generation=" + fmt.Sprintf("%d", w.cfg.Generation)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	w.authorize(req)
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("status push returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (w *directRuntimeWorker) run(ctx context.Context) {

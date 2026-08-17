@@ -36,7 +36,37 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 	manager := c.getSessionManager()
 	session := manager.GetSession(sessionID)
 	if session == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+		// Remote sessions are represented by a durable route in the parent, not
+		// by an in-process Session. Their runtime event stream is transported by
+		// the ESM tunnel, so the local message watcher cannot subscribe to it.
+		// Return a paced update hint instead of 404: the UI then refreshes the
+		// canonical /<sessionId>/messages endpoint through that tunnel. This is a
+		// bounded compatibility poll until message events are carried by the
+		// direct runtime protocol.
+		if c.sessionRouteRepo != nil {
+			route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to look up session route")
+			}
+			if route != nil && route.RemoteSessionID != "" {
+				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+					return echo.NewHTTPError(http.StatusForbidden, "access denied")
+				}
+				return waitRemoteMessageRefresh(ctx, sessionID)
+			}
+		}
+		// Direct runtimes renew a parent-owned connection lease keyed by the
+		// public session ID. This is also authoritative while a route repository
+		// replica is catching up after rollout.
+		if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), sessionID) {
+			return waitRemoteMessageRefresh(ctx, sessionID)
+		}
+		// This endpoint carries no session data; it only tells an authenticated
+		// client to re-read the separately authorized /messages endpoint. Some
+		// API-only compositions intentionally keep routing out of this controller,
+		// so absence from both local state and injected route caches must not turn
+		// the chat refresh loop into a permanent 404.
+		return waitRemoteMessageRefresh(ctx, sessionID)
 	}
 	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 		return echo.NewHTTPError(http.StatusForbidden, "access denied")
@@ -111,5 +141,18 @@ func (c *SessionController) WaitSessionMessages(ctx echo.Context) error {
 		case <-timer.C:
 			return ctx.JSON(http.StatusOK, map[string]interface{}{"updated": false})
 		}
+	}
+}
+
+func waitRemoteMessageRefresh(ctx echo.Context, sessionID string) error {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Request().Context().Done():
+		return nil
+	case timestamp := <-timer.C:
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"updated": true, "session_id": sessionID, "timestamp": timestamp,
+		})
 	}
 }

@@ -35,10 +35,6 @@ type Store interface {
 	ListBindings(context.Context, string) ([]*Binding, error)
 	UpdateBinding(context.Context, *Binding) error
 	DeleteBinding(context.Context, string) error
-	PutPreference(context.Context, *Preference) error
-	GetPreference(context.Context, SubjectType, string) (*Preference, error)
-	ListPreferences(context.Context) ([]*Preference, error)
-	DeletePreference(context.Context, SubjectType, string) error
 
 	CreateRunner(context.Context, *Runner) error
 	GetRunner(context.Context, string) (*Runner, error)

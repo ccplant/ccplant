@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
@@ -33,6 +34,8 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
 // SessionManagerRuntime is the execution-plane composition root. It does not
@@ -54,6 +57,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 	if cfg.SessionManager.InternalAPIToken == "" {
 		return nil, errors.New("session-manager internal API token is required")
+	}
+	if cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != "" && (cfg.SessionManager.ID == "" || cfg.SessionManager.RunnerPool == "") {
+		return nil, errors.New("session-manager ID and runner pool are required")
 	}
 	manager, err := services.NewKubernetesSessionManager(cfg, verbose, logger.NewLogger())
 	if err != nil {
@@ -132,27 +138,38 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		manager.SetSessionControlStore(controlStore)
 	}
 
-	redisClient, err := newSessionManagerRedis(cfg)
-	if err != nil {
-		runtimeCancel()
-		if applicationStore != nil {
-			_ = applicationStore.Close()
+	// A manager registered with a parent is an execution plane only: the parent
+	// owns allocations and their claim leases.  Redis is needed only by the
+	// standalone/local allocator.  Remote replicas coordinate their single
+	// upstream poller with a Kubernetes Lease below.
+	remoteMode := cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != ""
+	var redisClient *redis.Client
+	if !remoteMode {
+		redisClient, err = newSessionManagerRedis(cfg)
+		if err != nil {
+			runtimeCancel()
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, err
 		}
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, err
+		manager.SetSessionAllocationNotifier(infraallocation.NewRedisNotifier(redisClient))
+		manager.SetSessionAllocatorEnabled(true)
 	}
-	manager.SetSessionAllocationNotifier(infraallocation.NewRedisNotifier(redisClient))
-	manager.SetSessionAllocatorEnabled(true)
 
 	e := echo.New()
 	e.HideBanner = true
 	e.Use(middleware.Recover())
 	e.GET("/livez", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
+	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
 	e.GET("/readyz", func(c echo.Context) error {
 		ctx, cancel := context.WithTimeout(c.Request().Context(), 3*time.Second)
 		defer cancel()
-		if err := redisClient.Ping(ctx).Err(); err != nil {
-			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "redis unavailable"})
+		if redisClient != nil {
+			if err := redisClient.Ping(ctx).Err(); err != nil {
+				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "redis unavailable"})
+			}
 		}
 		if _, err := manager.GetClient().Discovery().ServerVersion(); err != nil {
 			return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "kubernetes unavailable"})
@@ -162,7 +179,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	privateHandler, err := sessionmanagerapi.NewHandler(manager, cfg.SessionManager.InternalAPIToken)
 	if err != nil {
 		runtimeCancel()
-		_ = redisClient.Close()
+		if redisClient != nil {
+			_ = redisClient.Close()
+		}
 		if applicationStore != nil {
 			_ = applicationStore.Close()
 		}
@@ -193,34 +212,73 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
 	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
-	localClient := newLocalAllocationClient(manager, sessionRouteRepo)
-	allocator := allocationworker.NewWorker(manager, localClient)
+	// Register the top-level runtime forwarding routes after private and
+	// provisioner routes. The forwarding pattern is intentionally limited to
+	// one endpoint segment so it cannot overlap /internal/* callbacks.
+	if remoteMode {
+		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
+			runtimeCancel()
+			if redisClient != nil {
+				_ = redisClient.Close()
+			}
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("register remote session-manager routes: %w", err)
+		}
+	}
+	var allocator *allocationworker.Worker
 	lease := durationOr(cfg.SessionManager.Allocation.LeaseDuration, 15*time.Second)
 	renew := durationOr(cfg.SessionManager.Allocation.RenewDeadline, 10*time.Second)
 	retry := durationOr(cfg.SessionManager.Allocation.RetryPeriod, 2*time.Second)
-	elector := schedule.NewLeaderElector(redisClient, schedule.LeaderElectionConfig{
-		LeaseDuration: lease,
-		RenewDeadline: renew,
-		RetryPeriod:   retry,
-		LeaseName:     schedule.SessionAllocatorLeaseName,
-		Namespace:     manager.GetNamespace(),
-	})
-	go elector.Run(runtimeCtx, func(leaderCtx context.Context) {
-		log.Printf("[SESSION_MANAGER] Became local allocation leader")
-		if err := allocator.Start(leaderCtx); err != nil {
-			log.Printf("[SESSION_MANAGER] Allocation loop failed: %v", err)
-		}
-	}, allocator.Stop)
-
-	if cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != "" && cfg.SessionManager.RunnerPool == "" {
-		upstream := externalmanager.NewAllocatorWorker(manager, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, cfg.SessionManager.PublicURL)
-		go upstream.Start(runtimeCtx)
+	if !remoteMode {
+		localClient := newLocalAllocationClient(manager, sessionRouteRepo)
+		allocator = allocationworker.NewWorker(manager, localClient)
+		elector := schedule.NewLeaderElector(redisClient, schedule.LeaderElectionConfig{
+			LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry,
+			LeaseName: schedule.SessionAllocatorLeaseName, Namespace: manager.GetNamespace(),
+		})
+		go elector.Run(runtimeCtx, func(leaderCtx context.Context) {
+			log.Printf("[SESSION_MANAGER] Became local allocation leader")
+			if err := allocator.Start(leaderCtx); err != nil {
+				log.Printf("[SESSION_MANAGER] Allocation loop failed: %v", err)
+			}
+		}, allocator.Stop)
+	} else {
 		instanceID, _ := os.Hostname()
-		control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", "", instanceID, cfg.SessionManager.HMACSecret)
-		go control.Start(runtimeCtx)
-	}
-	if cfg.SessionManager.RunnerPool != "" && cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ID != "" && cfg.SessionManager.ConnectionToken != "" {
-		go runSessionRunnerManagerHeartbeat(runtimeCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
+		if instanceID == "" {
+			instanceID = uuid.NewString()
+		}
+		lock, lockErr := resourcelock.New(
+			resourcelock.LeasesResourceLock,
+			manager.GetNamespace(),
+			schedule.SessionAllocatorLeaseName,
+			manager.GetClient().CoreV1(),
+			manager.GetClient().CoordinationV1(),
+			resourcelock.ResourceLockConfig{Identity: instanceID},
+		)
+		if lockErr != nil {
+			runtimeCancel()
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("create Kubernetes session-manager lease: %w", lockErr)
+		}
+		go leaderelection.RunOrDie(runtimeCtx, leaderelection.LeaderElectionConfig{
+			Lock: lock, LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry, ReleaseOnCancel: true,
+			Callbacks: leaderelection.LeaderCallbacks{
+				OnStartedLeading: func(leaderCtx context.Context) {
+					log.Printf("[SESSION_MANAGER] Became remote execution leader")
+					control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
+					go control.Start(leaderCtx)
+					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
+				},
+				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
+				OnNewLeader:      func(identity string) { log.Printf("[SESSION_MANAGER] Remote execution leader is %s", identity) },
+			},
+		})
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
@@ -230,7 +288,13 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 	client := &http.Client{Timeout: 10 * time.Second}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	appliedRevision := ""
 	for {
+		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
+			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
+		} else if revision != "" {
+			appliedRevision = revision
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", nil)
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -258,6 +322,34 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, upstream, managerID, token, currentRevision string, manager *services.KubernetesSessionManager) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/runtime-profile", nil)
+	if err != nil {
+		return currentRevision, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return currentRevision, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return currentRevision, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var snapshot coreallocation.RuntimeProfileSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return currentRevision, err
+	}
+	if snapshot.Revision == "" || snapshot.Profile == nil || snapshot.Revision == currentRevision {
+		return currentRevision, nil
+	}
+	if err := manager.ApplyRuntimeProfile(ctx, snapshot.Profile); err != nil {
+		return currentRevision, err
+	}
+	log.Printf("[SESSION_MANAGER] Applied runner runtime profile revision %s", snapshot.Revision)
+	return snapshot.Revision, nil
 }
 
 func reconcileSessionRunnerPools(ctx context.Context, manager *services.KubernetesSessionManager, pools []*sessionrunnercore.PoolSupplier) {

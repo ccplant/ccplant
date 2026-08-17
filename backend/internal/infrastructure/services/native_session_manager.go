@@ -234,12 +234,22 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 }
 
 func nativeProvisionerEnvironment(base []string, values ...string) []string {
+	overrides := make(map[string]struct{}, len(values)+3)
+	for _, value := range values {
+		if key, _, ok := strings.Cut(value, "="); ok {
+			overrides[key] = struct{}{}
+		}
+	}
+	for _, key := range []string{"AGENTAPI_WORKDIR", "AGENTAPI_REPO_DIR", "CCPLANT_BINARY_PATH"} {
+		overrides[key] = struct{}{}
+	}
 	env := make([]string, 0, len(base)+len(values))
 	for _, value := range base {
-		if strings.HasPrefix(value, "AGENTAPI_WORKDIR=") ||
-			strings.HasPrefix(value, "AGENTAPI_REPO_DIR=") ||
-			strings.HasPrefix(value, "CCPLANT_BINARY_PATH=") {
-			continue
+		key, _, ok := strings.Cut(value, "=")
+		if ok {
+			if _, overridden := overrides[key]; overridden {
+				continue
+			}
 		}
 		env = append(env, value)
 	}

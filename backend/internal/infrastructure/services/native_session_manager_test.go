@@ -59,7 +59,8 @@ func TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome(t *te
 
 func TestNativeProvisionerEnvironmentOverridesInheritedProxyBinary(t *testing.T) {
 	env := nativeProvisionerEnvironment(
-		[]string{"PATH=/usr/bin", "CCPLANT_BINARY_PATH=/usr/local/bin/agentapi-proxy"},
+		[]string{"PATH=/usr/bin", "HOME=/home/agentapi", "CCPLANT_BINARY_PATH=/usr/local/bin/agentapi-proxy"},
+		"HOME=/var/lib/agentapi-native/sessions/one/home",
 		"CCPLANT_BINARY_PATH=/app/Contents/MacOS/agentapi-proxy",
 	)
 	want := "CCPLANT_BINARY_PATH=/app/Contents/MacOS/agentapi-proxy"
@@ -74,6 +75,18 @@ func TestNativeProvisionerEnvironmentOverridesInheritedProxyBinary(t *testing.T)
 	}
 	if count != 1 {
 		t.Fatalf("proxy binary entry count = %d, want 1", count)
+	}
+	homeCount := 0
+	for _, value := range env {
+		if strings.HasPrefix(value, "HOME=") {
+			homeCount++
+			if value != "HOME=/var/lib/agentapi-native/sessions/one/home" {
+				t.Fatalf("HOME = %q", value)
+			}
+		}
+	}
+	if homeCount != 1 {
+		t.Fatalf("HOME entry count = %d, want 1", homeCount)
 	}
 }
 

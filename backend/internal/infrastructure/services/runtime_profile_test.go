@@ -10,7 +10,15 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 )
+
+type staticRuntimeConfigProvider struct{ config *config.Config }
+
+func (p staticRuntimeConfigProvider) Current() *config.Config { return p.config }
+func (staticRuntimeConfigProvider) AgentDefaults() settingspatch.SettingsPatch {
+	return settingspatch.SettingsPatch{}
+}
 
 func TestApplyRuntimeProfileInheritsSciaNFAAndSessionRBAC(t *testing.T) {
 	cfg := config.DefaultConfig()
@@ -54,6 +62,13 @@ func TestApplyRuntimeProfileInheritsSciaNFAAndSessionRBAC(t *testing.T) {
 	}
 	if !manager.config.Scia.Enabled || !manager.config.Scia.SessionSidecarEnabled || manager.config.Scia.SessionSidecarImage != "scia:parent" {
 		t.Fatalf("scia profile was not inherited: %#v", manager.config.Scia)
+	}
+	localConfig := config.DefaultConfig()
+	localConfig.Scia.Enabled = false
+	manager.SetConfigProvider(staticRuntimeConfigProvider{config: localConfig})
+	manager.refreshConfig()
+	if !manager.config.Scia.Enabled || manager.config.Scia.SessionSidecarImage != "scia:parent" || manager.k8sConfig.NetworkFilterImage != "nfa:parent" {
+		t.Fatalf("runtime refresh discarded inherited profile: scia=%#v kubernetes=%#v", manager.config.Scia, manager.k8sConfig)
 	}
 	if _, err := client.CoreV1().ServiceAccounts("esm-sessions").Get(context.Background(), "parent-session", metav1.GetOptions{}); err != nil {
 		t.Fatalf("inherited service account not created: %v", err)
