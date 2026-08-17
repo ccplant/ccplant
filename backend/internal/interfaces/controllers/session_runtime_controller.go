@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -17,10 +18,39 @@ import (
 type SessionRuntimeController struct {
 	store  core.Store
 	routes repositories.SessionRouteRepository
+	status interface {
+		RecordRemoteSessionStatus(context.Context, *repositories.SessionRoute, string) error
+	}
 }
 
-func NewSessionRuntimeController(store core.Store, routes repositories.SessionRouteRepository) *SessionRuntimeController {
-	return &SessionRuntimeController{store: store, routes: routes}
+func NewSessionRuntimeController(store core.Store, routes repositories.SessionRouteRepository, recorders ...interface {
+	RecordRemoteSessionStatus(context.Context, *repositories.SessionRoute, string) error
+}) *SessionRuntimeController {
+	c := &SessionRuntimeController{store: store, routes: routes}
+	if len(recorders) > 0 {
+		c.status = recorders[0]
+	}
+	return c
+}
+
+func (c *SessionRuntimeController) UpdateStatus(ctx echo.Context) error {
+	route, status := c.authorize(ctx)
+	if status != http.StatusOK {
+		return ctx.NoContent(status)
+	}
+	var input struct {
+		Status string `json:"status"`
+	}
+	if err := ctx.Bind(&input); err != nil || input.Status == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "status is required")
+	}
+	if c.status == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "status recorder is unavailable")
+	}
+	if err := c.status.RecordRemoteSessionStatus(ctx.Request().Context(), route, input.Status); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (c *SessionRuntimeController) authorize(ctx echo.Context) (*repositories.SessionRoute, int) {

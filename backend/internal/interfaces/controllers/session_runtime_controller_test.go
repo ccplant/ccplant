@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -45,9 +46,37 @@ func (s *runtimeControllerStore) RequestBelongsToManager(context.Context, string
 
 type runtimeRouteRepo struct{ route *repositories.SessionRoute }
 
+type runtimeStatusRecorder struct{ status string }
+
+func (r *runtimeStatusRecorder) RecordRemoteSessionStatus(_ context.Context, _ *repositories.SessionRoute, status string) error {
+	r.status = status
+	return nil
+}
+
 func (r *runtimeRouteRepo) Save(context.Context, *repositories.SessionRoute) error { return nil }
 func (r *runtimeRouteRepo) Get(context.Context, string) (*repositories.SessionRoute, error) {
 	return r.route, nil
+}
+
+func TestSessionRuntimeUpdateStatus(t *testing.T) {
+	store := &runtimeControllerStore{}
+	route := &repositories.SessionRoute{SessionID: "session-a", Transport: repositories.SessionRouteTransportDirectRuntime, RuntimeTokenHash: runtimeTokenHash("secret"), Generation: 3}
+	recorder := &runtimeStatusRecorder{}
+	controller := NewSessionRuntimeController(store, &runtimeRouteRepo{route: route}, recorder)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/internal/session-runtime/session-a/status?generation=3", bytes.NewBufferString(`{"status":"stable"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-a")
+	if err := controller.UpdateStatus(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent || recorder.status != "stable" {
+		t.Fatalf("code=%d status=%q", rec.Code, recorder.status)
+	}
 }
 func (r *runtimeRouteRepo) List(context.Context, string) ([]*repositories.SessionRoute, error) {
 	return nil, nil

@@ -232,7 +232,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController)
 			if server.sessionRouteRepo != nil {
-				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo)
+				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
 		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
@@ -246,7 +246,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController)
 			if server.sessionRouteRepo != nil {
-				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo)
+				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
 		}
 	}
@@ -449,6 +449,7 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionRuntimeController != nil {
 		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)
 		r.echo.POST("/internal/session-runtime/:sessionId/frames", r.handlers.sessionRuntimeController.AppendFrames)
+		r.echo.POST("/internal/session-runtime/:sessionId/status", r.handlers.sessionRuntimeController.UpdateStatus)
 		log.Printf("[ROUTES] Direct Session Pod runtime endpoints registered")
 	}
 

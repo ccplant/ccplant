@@ -561,6 +561,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 }
 
 func routedSessionStatus(route *repositories.SessionRoute, allocatedSessions map[string]entities.Session) string {
+	if route.Transport == repositories.SessionRouteTransportDirectRuntime && route.Status != "" {
+		return route.Status
+	}
 	if route.RemoteSessionID == "" {
 		return "creating"
 	}
@@ -571,6 +574,24 @@ func routedSessionStatus(route *repositories.SessionRoute, allocatedSessions map
 		return route.Status
 	}
 	return "starting"
+}
+
+// RecordRemoteSessionStatus persists a status pushed by a direct runtime and
+// immediately fans it out to the proxy-wide SSE subscribers.
+func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, runtimeStatus string) error {
+	if route == nil || runtimeStatus == "" {
+		return nil
+	}
+	status := publicSessionStatus(runtimeStatus)
+	previous := route.Status
+	route.Status, route.StatusUpdatedAt = status, time.Now()
+	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
+		return err
+	}
+	if previous != status {
+		c.publishRemoteStatusEvent(repositories.SessionStatusEvent{SessionID: route.SessionID, Status: status, Timestamp: route.StatusUpdatedAt})
+	}
+	return nil
 }
 
 func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, resp *http.Response) {
@@ -588,20 +609,8 @@ func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, rou
 	if json.Unmarshal(body, &payload) != nil || payload.Status == "" {
 		return
 	}
-	payload.Status = publicSessionStatus(payload.Status)
-	previousStatus := route.Status
-	route.Status = payload.Status
-	route.StatusUpdatedAt = time.Now()
-	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
+	if err := c.RecordRemoteSessionStatus(ctx, route, payload.Status); err != nil {
 		log.Printf("[ROUTE] Failed to persist status for %s: %v", route.SessionID, err)
-		return
-	}
-	if previousStatus != payload.Status {
-		c.publishRemoteStatusEvent(repositories.SessionStatusEvent{
-			SessionID: route.SessionID,
-			Status:    payload.Status,
-			Timestamp: route.StatusUpdatedAt,
-		})
 	}
 }
 
