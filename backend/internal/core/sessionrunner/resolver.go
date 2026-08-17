@@ -74,6 +74,7 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 		return nil, err
 	}
 	requested := strings.TrimSpace(tags["allocator.pool"])
+	explicitlyRequested := requested != ""
 	if requested == "" {
 		if preference, getErr := r.store.GetPreference(ctx, subject.Type, subject.ID); getErr == nil && preference.Enabled {
 			requested = preference.DefaultPool
@@ -93,7 +94,7 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 		candidates = append(candidates, resolved)
 	}
 	if len(candidates) == 0 {
-		if requested != "" {
+		if explicitlyRequested {
 			return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requested)
 		}
 		return nil, nil
