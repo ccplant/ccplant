@@ -58,7 +58,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if cfg.SessionManager.InternalAPIToken == "" {
 		return nil, errors.New("session-manager internal API token is required")
 	}
-	if cfg.SessionManager.ID == "" || cfg.SessionManager.RunnerPool == "" {
+	if cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != "" && (cfg.SessionManager.ID == "" || cfg.SessionManager.RunnerPool == "") {
 		return nil, errors.New("session-manager ID and runner pool are required")
 	}
 	manager, err := services.NewKubernetesSessionManager(cfg, verbose, logger.NewLogger())
