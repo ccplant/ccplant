@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,6 +69,9 @@ type SessionController struct {
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
 	esmControlTunnel       ESMControlTunnel
+	statusSubscribersMu    sync.RWMutex
+	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
+	nextStatusSubscriberID uint64
 }
 
 // NewSessionController creates a new SessionController instance
@@ -80,6 +84,7 @@ func NewSessionController(
 		sessionManagerProvider: sessionManagerProvider,
 		sessionCreator:         sessionCreator,
 		validateTeamUC:         sessionuc.NewValidateTeamAccessUseCase(),
+		statusSubscribers:      make(map[uint64]chan repositories.SessionStatusEvent),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -583,10 +588,56 @@ func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, rou
 	if json.Unmarshal(body, &payload) != nil || payload.Status == "" {
 		return
 	}
+	payload.Status = publicSessionStatus(payload.Status)
+	previousStatus := route.Status
 	route.Status = payload.Status
 	route.StatusUpdatedAt = time.Now()
 	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
 		log.Printf("[ROUTE] Failed to persist status for %s: %v", route.SessionID, err)
+		return
+	}
+	if previousStatus != payload.Status {
+		c.publishRemoteStatusEvent(repositories.SessionStatusEvent{
+			SessionID: route.SessionID,
+			Status:    payload.Status,
+			Timestamp: route.StatusUpdatedAt,
+		})
+	}
+}
+
+func publicSessionStatus(runtimeStatus string) string {
+	if runtimeStatus == "stable" {
+		return "active"
+	}
+	return runtimeStatus
+}
+
+func (c *SessionController) subscribeRemoteStatusEvents() (<-chan repositories.SessionStatusEvent, func()) {
+	c.statusSubscribersMu.Lock()
+	c.nextStatusSubscriberID++
+	id := c.nextStatusSubscriberID
+	ch := make(chan repositories.SessionStatusEvent, 32)
+	c.statusSubscribers[id] = ch
+	c.statusSubscribersMu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			c.statusSubscribersMu.Lock()
+			delete(c.statusSubscribers, id)
+			c.statusSubscribersMu.Unlock()
+		})
+	}
+}
+
+func (c *SessionController) publishRemoteStatusEvent(evt repositories.SessionStatusEvent) {
+	c.statusSubscribersMu.RLock()
+	defer c.statusSubscribersMu.RUnlock()
+	for _, ch := range c.statusSubscribers {
+		select {
+		case ch <- evt:
+		default:
+		}
 	}
 }
 

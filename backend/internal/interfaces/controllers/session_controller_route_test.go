@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -29,6 +30,15 @@ func (m *ensuringSessionManager) EnsureSessionWorkload(_ context.Context, id str
 
 type routeSessionManagerProvider struct {
 	manager repositories.SessionManager
+}
+
+type statusWatchingSessionManager struct {
+	*fakeSessionManager
+	events chan repositories.SessionStatusEvent
+}
+
+func (m *statusWatchingSessionManager) SubscribeStatusEvents() (<-chan repositories.SessionStatusEvent, func()) {
+	return m.events, func() {}
 }
 
 type directRuntimeTunnel struct {
@@ -209,7 +219,48 @@ func TestRouteToSessionUsesDirectSessionRuntime(t *testing.T) {
 	if tunnel.managerID != "public-id" || tunnel.path != "/status" {
 		t.Fatalf("direct tunnel manager=%q path=%q", tunnel.managerID, tunnel.path)
 	}
-	if routeRepo.route.Status != "stable" || routeRepo.route.StatusUpdatedAt.IsZero() {
-		t.Fatalf("persisted route status=%q updated_at=%v, want stable with timestamp", routeRepo.route.Status, routeRepo.route.StatusUpdatedAt)
+	if routeRepo.route.Status != "active" || routeRepo.route.StatusUpdatedAt.IsZero() {
+		t.Fatalf("persisted route status=%q updated_at=%v, want active with timestamp", routeRepo.route.Status, routeRepo.route.StatusUpdatedAt)
+	}
+}
+
+func TestRemoteStatusChangeReachesStatusWait(t *testing.T) {
+	manager := &statusWatchingSessionManager{
+		fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}},
+		events:             make(chan repositories.SessionStatusEvent),
+	}
+	routeRepo := &fakeACPRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		Transport: repositories.SessionRouteTransportDirectRuntime, UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(&directRuntimeTunnel{}),
+	)
+
+	waitCtx, waitRec := routeContext(echo.New(), http.MethodGet, "/sessions/status/wait?timeout=2", "")
+	done := make(chan error, 1)
+	go func() { done <- controller.WaitSessionsStatus(waitCtx) }()
+	time.Sleep(20 * time.Millisecond)
+
+	statusCtx, _ := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+	if err := controller.RouteToSession(statusCtx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("remote status event was not delivered")
+	}
+	var evt repositories.SessionStatusEvent
+	if err := json.Unmarshal(waitRec.Body.Bytes(), &evt); err != nil {
+		t.Fatal(err)
+	}
+	if evt.SessionID != "public-id" || evt.Status != "active" {
+		t.Fatalf("event = %+v, want public-id active", evt)
 	}
 }

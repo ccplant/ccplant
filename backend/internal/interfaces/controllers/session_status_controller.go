@@ -53,8 +53,10 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 	}
 
 	eventCh, cancel := watcher.SubscribeStatusEvents()
+	remoteEventCh, cancelRemote := c.subscribeRemoteStatusEvents()
 	defer func() {
 		cancel()
+		cancelRemote()
 		log.Printf("[SSE] Client disconnected from /sessions/status/stream (user: %s)", authzCtx.PersonalScope.UserID)
 	}()
 
@@ -87,6 +89,17 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 				flusher.Flush()
 			}
 
+		case evt := <-remoteEventCh:
+			if !c.canAccessRemoteStatusEvent(ctx, authzCtx, evt) {
+				continue
+			}
+			if err := writeSessionStatusSSEEvent(r, evt); err != nil {
+				return nil
+			}
+			if hasFlusher {
+				flusher.Flush()
+			}
+
 		case <-heartbeat.C:
 			if _, err := fmt.Fprintf(r, ": heartbeat\n\n"); err != nil {
 				return nil
@@ -94,6 +107,7 @@ func (c *SessionController) StreamSessionsStatus(ctx echo.Context) error {
 			if hasFlusher {
 				flusher.Flush()
 			}
+
 		}
 	}
 }
@@ -123,6 +137,8 @@ func (c *SessionController) WaitSessionsStatus(ctx echo.Context) error {
 
 	eventCh, cancel := watcher.SubscribeStatusEvents()
 	defer cancel()
+	remoteEventCh, cancelRemote := c.subscribeRemoteStatusEvents()
+	defer cancelRemote()
 
 	timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 	defer timer.Stop()
@@ -149,12 +165,30 @@ func (c *SessionController) WaitSessionsStatus(ctx echo.Context) error {
 			}
 			return ctx.JSON(http.StatusOK, evt)
 
+		case evt := <-remoteEventCh:
+			if !c.canAccessRemoteStatusEvent(ctx, authzCtx, evt) {
+				continue
+			}
+			return ctx.JSON(http.StatusOK, evt)
+
 		case <-timer.C:
 			// Timeout reached: return empty event list so callers can distinguish
 			// a real change from a timeout without relying on HTTP status codes.
 			return ctx.JSON(http.StatusOK, map[string]interface{}{"events": []interface{}{}})
+
 		}
 	}
+}
+
+func (c *SessionController) canAccessRemoteStatusEvent(ctx echo.Context, authzCtx *auth.AuthorizationContext, evt portrepos.SessionStatusEvent) bool {
+	if c.sessionRouteRepo == nil || authzCtx == nil {
+		return false
+	}
+	route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), evt.SessionID)
+	if err != nil || route == nil {
+		return false
+	}
+	return authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID)
 }
 
 // writeSessionStatusSSEEvent marshals evt and writes a data event to the SSE response.
