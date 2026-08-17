@@ -100,3 +100,21 @@ func TestProxySessionRequiresHMAC(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestRuntimeCatchAllDoesNotShadowPreviouslyRegisteredInternalRoute(t *testing.T) {
+	e := echo.New()
+	e.GET("/internal/session-state/:sessionId/download-url", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+	h := NewHandlers(&proxyTestManager{}, "test-secret")
+	if err := h.RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/internal/session-state/session-1/download-url", nil)
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+}

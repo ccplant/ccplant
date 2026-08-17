@@ -186,21 +186,6 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		return nil, err
 	}
 	privateHandler.RegisterRoutes(e)
-	// A dedicated remote deployment exposes the signed session forwarding API
-	// directly; it does not need a second public API process in front of it.
-	if remoteMode {
-		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
-			runtimeCancel()
-			if redisClient != nil {
-				_ = redisClient.Close()
-			}
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, fmt.Errorf("register remote session-manager routes: %w", err)
-		}
-	}
 
 	// Session Pods authenticate with the narrower provisioner/session token.
 	provisioner := controllers.NewProvisionerController(manager, manager, settingsRepo, nil, stateStore)
@@ -224,6 +209,23 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
 	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
+	// Register the top-level runtime catch-all only after every private and
+	// provisioner route. Echo resolves an earlier /* route before later static
+	// routes, which would otherwise send /internal/session-state requests to the
+	// HMAC runtime proxy and reject valid provisioner bearer tokens.
+	if remoteMode {
+		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
+			runtimeCancel()
+			if redisClient != nil {
+				_ = redisClient.Close()
+			}
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("register remote session-manager routes: %w", err)
+		}
+	}
 	var allocator *allocationworker.Worker
 	lease := durationOr(cfg.SessionManager.Allocation.LeaseDuration, 15*time.Second)
 	renew := durationOr(cfg.SessionManager.Allocation.RenewDeadline, 10*time.Second)
