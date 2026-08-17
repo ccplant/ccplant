@@ -68,12 +68,17 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	// Runtime traffic is addressed by the parent as
 	// /<remote-id>/<agent-endpoint>, rather than through the management API
-	// prefix. AgentAPI/ACP endpoints are all one path segment. Deliberately do
-	// not use a trailing wildcard here: it also matches /internal/* and steals
-	// provisioner callbacks from their bearer-authenticated handlers.
+	// prefix. Register the finite AgentAPI/ACP surface explicitly. Echo's final
+	// path parameter is greedy, so even /:sessionId/:endpoint would also match
+	// /internal/session-state/... and steal provisioner callbacks.
 	runtime := e.Group("")
 	runtime.Use(h.hmacMiddleware())
-	runtime.Any("/:sessionId/:runtimeEndpoint", h.ProxySession)
+	for _, endpoint := range []string{
+		"health", "status", "session", "messages", "message", "rpc", "sse",
+		"events", "tool_status", "action", "stop",
+	} {
+		runtime.Any("/:sessionId/"+endpoint, h.ProxySession)
+	}
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
@@ -102,7 +107,7 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "invalid session runtime address")
 	}
 
-	suffix := c.Param("runtimeEndpoint")
+	suffix := strings.TrimPrefix(c.Request().URL.Path, "/"+sessionID+"/")
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = -1
 	originalDirector := proxy.Director
