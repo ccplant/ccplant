@@ -142,3 +142,26 @@ func TestResolverDoesNotUseBindingsFromAnotherScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, resolved)
 }
+
+func TestResolverWithoutEffectiveBindingLeavesPoolSelectionUnchanged(t *testing.T) {
+	store := &resolverStore{
+		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:       []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
+		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		preferences: map[string]*Preference{},
+	}
+
+	resolver := NewResolver(store, 0)
+	for _, subject := range []Subject{
+		{Type: SubjectUser, ID: "alice"},
+		{Type: SubjectTeam, ID: "org/team"},
+	} {
+		resolved, err := resolver.Resolve(context.Background(), subject, nil)
+		require.NoError(t, err)
+		require.Nil(t, resolved)
+
+		available, err := resolver.AvailablePools(context.Background(), subject)
+		require.NoError(t, err)
+		require.Empty(t, available)
+	}
+}

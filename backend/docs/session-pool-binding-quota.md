@@ -139,6 +139,12 @@ effective Binding を一緒に返すことで、quota 検査時に Binding を�
 
 user scope は user Preference だけを、team scope は対象 team Preference だけを参照する。
 
+これは旧 resolver との意図的な互換性変更である。旧 resolver は user scope でもユーザーの
+所属 team Binding を候補に含めていたが、新 resolver では含めない。移行時に user scope を
+cluster-wide Pool へ割り当て続ける場合は、対象 user Binding または `all` Binding を作成する。
+Binding がない owner、または別 scope の Binding しかない owner は Pool を選択せず、従来の
+local Session Manager 経路へ進む。
+
 ## Best-effort enforcement
 
 セッション作成時に、同じ `binding_id` を持つ active Allocation を数える。

@@ -349,28 +349,6 @@ sessionManager:
   sessionControl:
     enabled: false
     directRuntimeEnabled: false
-  # Deprecated compatibility copy. Session runtime SCIA settings are read from
-  # the release-wide `scia` section below so API and session-manager cannot
-  # disagree about whether the per-session sidecar is enabled.
-  scia:
-    enabled: false
-    publicBaseUrl: ""
-    oauthInternalUrl: ""
-    proxyUrl: ""
-    credential: ""
-    todoistCredential: default.todoist
-    userNamespace: ""
-    dynamicUserSecretNamePrefix: scia-oauth-
-    noProxy: localhost,127.0.0.1,.svc,.cluster.local
-    googleHosts: [www.googleapis.com, tasks.googleapis.com]
-    googlePaths: [/calendar/v3/*, /tasks/v1/*]
-    todoistHosts: [api.todoist.com]
-    todoistPaths: [/api/v1/*, /rest/v2/*, /sync/v9/*]
-    sessionSidecar:
-      enabled: true
-      image: ghcr.io/takutakahashi/scia:0.17.0
-      configImage: busybox:1.36
-      port: 18081
   # GitHub material copied into Session Pod Secrets. API OAuth/application
   # credentials remain independently configured at the root github key.
   github:
@@ -542,6 +520,7 @@ scia:
     pullPolicy: IfNotPresent
   replicaCount: 1
   publicBaseUrl: ""
+  oauthInternalUrl: ""
   proxyUrl: ""
   credential: ""
   todoistCredential: "default.todoist"
