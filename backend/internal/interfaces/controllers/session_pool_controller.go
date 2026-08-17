@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -26,11 +27,36 @@ type SessionPoolController struct {
 	store    core.Store
 	resolver *core.Resolver
 	routes   portrepos.SessionRouteRepository
-	now      func() time.Time
+	profile  interface {
+		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+	}
+	now func() time.Time
 }
 
-func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository) *SessionPoolController {
-	return &SessionPoolController{store: store, resolver: core.NewResolver(store, 90*time.Second), routes: routes, now: func() time.Time { return time.Now().UTC() }}
+func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
+	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+}) *SessionPoolController {
+	c := &SessionPoolController{store: store, resolver: core.NewResolver(store, 90*time.Second), routes: routes, now: func() time.Time { return time.Now().UTC() }}
+	if len(providers) > 0 {
+		c.profile = providers[0]
+	}
+	return c
+}
+
+func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error {
+	if _, err := c.authenticateManager(ctx); err != nil {
+		return err
+	}
+	if c.profile == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "runtime profile is unavailable")
+	}
+	profile := c.profile.ExternalRuntimeProfile()
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "marshal runtime profile")
+	}
+	digest := sha256.Sum256(raw)
+	return ctx.JSON(http.StatusOK, &sessionallocation.RuntimeProfileSnapshot{Revision: hex.EncodeToString(digest[:]), Profile: profile})
 }
 
 type managerCreateRequest struct {

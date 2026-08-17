@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
 
@@ -69,7 +70,14 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
 	settingsController.SetESMControlTunnel(server.esmControlTunnel)
 	settingsController.SetSessionRunnerStore(server.sessionRunnerStore)
-	sessionPoolController := controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
+	var sessionPoolController *controllers.SessionPoolController
+	if provider, ok := server.sessionManager.(interface {
+		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
+	}); ok {
+		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo, provider)
+	} else {
+		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
+	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
@@ -370,6 +378,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/ack", r.handlers.sessionPoolController.AckRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/fail", r.handlers.sessionPoolController.FailRunnerAllocation)
 		r.echo.POST("/internal/session-managers/:id/heartbeat", r.handlers.sessionPoolController.HeartbeatManager)
+		r.echo.GET("/internal/session-managers/:id/runtime-profile", r.handlers.sessionPoolController.GetManagerRuntimeProfile)
 	}
 
 	// Proxy-wide session status push endpoints (registered before /:sessionId/* catch-all)

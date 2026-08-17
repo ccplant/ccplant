@@ -288,7 +288,13 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 	client := &http.Client{Timeout: 10 * time.Second}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	appliedRevision := ""
 	for {
+		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
+			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
+		} else if revision != "" {
+			appliedRevision = revision
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", nil)
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -316,6 +322,34 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, upstream, managerID, token, currentRevision string, manager *services.KubernetesSessionManager) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/runtime-profile", nil)
+	if err != nil {
+		return currentRevision, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return currentRevision, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return currentRevision, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var snapshot coreallocation.RuntimeProfileSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return currentRevision, err
+	}
+	if snapshot.Revision == "" || snapshot.Profile == nil || snapshot.Revision == currentRevision {
+		return currentRevision, nil
+	}
+	if err := manager.ApplyRuntimeProfile(ctx, snapshot.Profile); err != nil {
+		return currentRevision, err
+	}
+	log.Printf("[SESSION_MANAGER] Applied runner runtime profile revision %s", snapshot.Revision)
+	return snapshot.Revision, nil
 }
 
 func reconcileSessionRunnerPools(ctx context.Context, manager *services.KubernetesSessionManager, pools []*sessionrunnercore.PoolSupplier) {
