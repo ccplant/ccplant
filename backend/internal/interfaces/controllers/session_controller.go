@@ -750,7 +750,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	}
 
 	session := c.getSessionManager().GetSession(sessionID)
-	pendingAllocation := false
+	uncreatedAllocation := false
 	if session == nil {
 		// Check if it's a remote session
 		if c.sessionRouteRepo != nil {
@@ -764,12 +764,12 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 				return c.deleteRemoteSession(ctx, route)
 			}
 		}
-		session = findPendingSessionAllocation(c.getSessionManager().ListSessions(entities.SessionFilter{}), sessionID)
+		session = findUncreatedSessionAllocation(c.getSessionManager().ListSessions(entities.SessionFilter{}), sessionID)
 		if session == nil {
 			log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
 			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 		}
-		pendingAllocation = true
+		uncreatedAllocation = true
 	}
 
 	// Check authorization using pre-resolved authorization context (guaranteed to be non-nil by AuthMiddleware)
@@ -782,7 +782,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
 		sessionID, session.Status(), session.UserID(), clientIP)
 
-	if pendingAllocation {
+	if uncreatedAllocation {
 		deleter, ok := c.sessionCreator.(pendingSessionAllocationDeleter)
 		if !ok {
 			log.Printf("Failed to delete pending session allocation %s: deletion is unsupported", sessionID)
@@ -819,9 +819,9 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	})
 }
 
-func findPendingSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {
+func findUncreatedSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {
 	for _, session := range sessions {
-		if session.ID() == sessionID && session.Status() == "pending" {
+		if session.ID() == sessionID && (session.Status() == "pending" || session.Status() == "allocating") {
 			return session
 		}
 	}
