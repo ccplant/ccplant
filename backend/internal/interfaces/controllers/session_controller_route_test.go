@@ -166,6 +166,26 @@ func TestResumeSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	controller := controllers.NewSessionController(&routeSessionManagerProvider{manager: manager}, nil)
+	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/missing-id", "missing-id")
+
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["session_id"] != "missing-id" || response["status"] != "terminated" {
+		t.Fatalf("response = %#v, want missing-id terminated", response)
+	}
+}
+
 func TestRouteToSessionExternalRouteBypassesLocalEnsurer(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/remote-id/status" {

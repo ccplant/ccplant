@@ -766,8 +766,16 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		}
 		session = findUncreatedSessionAllocation(c.getSessionManager().ListSessions(entities.SessionFilter{}), sessionID)
 		if session == nil {
-			log.Printf("Delete session failed: session %s not found (requested by %s)", sessionID, clientIP)
-			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+			// DELETE is idempotent. The UI may still hold a stale search result after
+			// an orphaned route or allocation has already been cleaned up. Treating
+			// that state as success lets the client remove the stale entry without
+			// exposing whether an unknown session ID ever existed.
+			log.Printf("Delete session: session %s is already absent (requested by %s)", sessionID, clientIP)
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"message":    "Session already absent",
+				"session_id": sessionID,
+				"status":     "terminated",
+			})
 		}
 		uncreatedAllocation = true
 	}
