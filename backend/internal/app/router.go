@@ -365,8 +365,6 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.PUT("/session-pool-preference", r.handlers.sessionPoolController.PutPreference,
-			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.POST("/internal/session-runners/register", r.handlers.sessionPoolController.RegisterRunner)
 		r.echo.GET("/internal/session-runners/allocations/next", r.handlers.sessionPoolController.ClaimRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/ack", r.handlers.sessionPoolController.AckRunnerAllocation)

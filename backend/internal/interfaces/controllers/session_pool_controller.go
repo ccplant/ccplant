@@ -194,11 +194,10 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 
 func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
 	var input struct {
-		Name      string            `json:"name"`
-		Labels    map[string]string `json:"labels,omitempty"`
-		Enabled   *bool             `json:"enabled,omitempty"`
-		IsDefault bool              `json:"default,omitempty"`
-		TeamID    string            `json:"team_id,omitempty"`
+		Name    string            `json:"name"`
+		Labels  map[string]string `json:"labels,omitempty"`
+		Enabled *bool             `json:"enabled,omitempty"`
+		TeamID  string            `json:"team_id,omitempty"`
 	}
 	if err := ctx.Bind(&input); err != nil || strings.TrimSpace(input.Name) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name is required")
@@ -214,7 +213,7 @@ func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	pool := core.LogicalPool{Name: input.Name, Labels: input.Labels, Enabled: enabled, IsDefault: input.IsDefault}
+	pool := core.LogicalPool{Name: input.Name, Labels: input.Labels, Enabled: enabled}
 	if err := c.store.CreateLogicalPool(ctx.Request().Context(), &pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -281,9 +280,8 @@ func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
 		return err
 	}
 	var patch struct {
-		Labels    map[string]string `json:"labels,omitempty"`
-		Enabled   *bool             `json:"enabled,omitempty"`
-		IsDefault *bool             `json:"default,omitempty"`
+		Labels  map[string]string `json:"labels,omitempty"`
+		Enabled *bool             `json:"enabled,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -293,9 +291,6 @@ func (c *SessionPoolController) PatchLogicalPool(ctx echo.Context) error {
 	}
 	if patch.Enabled != nil {
 		pool.Enabled = *patch.Enabled
-	}
-	if patch.IsDefault != nil {
-		pool.IsDefault = *patch.IsDefault
 	}
 	if err := c.store.UpdateLogicalPool(ctx.Request().Context(), pool); err != nil {
 		return sessionRunnerStoreError(err)
@@ -338,10 +333,6 @@ func (c *SessionPoolController) DeleteLogicalPool(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	preferences, err := c.store.ListPreferences(requestCtx)
-	if err != nil {
-		return sessionRunnerStoreError(err)
-	}
 	for _, allocation := range allocations {
 		if err := c.store.DeleteAllocation(requestCtx, allocation.SessionID); err != nil {
 			return sessionRunnerStoreError(err)
@@ -362,13 +353,6 @@ func (c *SessionPoolController) DeleteLogicalPool(ctx echo.Context) error {
 	for _, binding := range bindings {
 		if err := c.store.DeleteBinding(requestCtx, binding.ID); err != nil {
 			return sessionRunnerStoreError(err)
-		}
-	}
-	for _, preference := range preferences {
-		if preference.DefaultPool == poolName {
-			if err := c.store.DeletePreference(requestCtx, preference.SubjectType, preference.SubjectID); err != nil {
-				return sessionRunnerStoreError(err)
-			}
 		}
 	}
 	if err := c.store.DeleteLogicalPool(requestCtx, poolName); err != nil {
@@ -546,6 +530,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	var patch struct {
 		Role          *core.BindingRole `json:"role,omitempty"`
 		Enabled       *bool             `json:"enabled,omitempty"`
+		Priority      *int              `json:"priority,omitempty"`
 		MaxConcurrent *int              `json:"max_concurrent,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
@@ -556,6 +541,9 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	}
 	if patch.Enabled != nil {
 		binding.Enabled = *patch.Enabled
+	}
+	if patch.Priority != nil {
+		binding.Priority = *patch.Priority
 	}
 	if patch.MaxConcurrent != nil {
 		if *patch.MaxConcurrent < 0 {
@@ -582,53 +570,6 @@ func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"session_pools": pools})
-}
-
-func (c *SessionPoolController) PutPreference(ctx echo.Context) error {
-	user := auth.GetUserFromContext(ctx)
-	if user == nil {
-		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
-	}
-	var preference core.Preference
-	preference.Enabled = true
-	if err := ctx.Bind(&preference); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
-	}
-	if preference.SubjectType == "" {
-		preference.SubjectType = core.SubjectUser
-	}
-	if preference.SubjectID == "" {
-		preference.SubjectID = string(user.ID())
-	}
-	if preference.SubjectType == core.SubjectUser && preference.SubjectID != string(user.ID()) && !user.IsAdmin() {
-		return echo.NewHTTPError(http.StatusForbidden, "access denied")
-	}
-	if preference.SubjectType == core.SubjectTeam && !user.IsAdmin() && !user.IsMemberOfTeam(preference.SubjectID) {
-		return echo.NewHTTPError(http.StatusForbidden, "access denied")
-	}
-	if err := validatePoolSubject(preference.SubjectType, preference.SubjectID); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-	if preference.DefaultPool != "" {
-		available, err := c.resolver.AvailablePools(ctx.Request().Context(), core.Subject{Type: preference.SubjectType, ID: preference.SubjectID})
-		if err != nil {
-			return sessionRunnerStoreError(err)
-		}
-		found := false
-		for _, pool := range available {
-			if pool.Name == preference.DefaultPool {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return echo.NewHTTPError(http.StatusForbidden, "pool is not available to this subject")
-		}
-	}
-	if err := c.store.PutPreference(ctx.Request().Context(), &preference); err != nil {
-		return sessionRunnerStoreError(err)
-	}
-	return ctx.JSON(http.StatusOK, &preference)
 }
 
 type runnerRegisterRequest struct {

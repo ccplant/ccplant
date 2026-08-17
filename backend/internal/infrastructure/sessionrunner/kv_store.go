@@ -56,10 +56,7 @@ func logicalPoolName(pool string) string { return "agentapi-session-logical-pool
 func poolSupplierName(managerID, pool string) string {
 	return "agentapi-session-pool-supplier-" + hashName(managerID+"\x00"+pool)
 }
-func bindingName(id string) string { return "agentapi-session-pool-binding-" + hashName(id) }
-func preferenceName(kind core.SubjectType, id string) string {
-	return "agentapi-session-pool-preference-" + hashName(string(kind)+"\x00"+id)
-}
+func bindingName(id string) string    { return "agentapi-session-pool-binding-" + hashName(id) }
 func runnerName(id string) string     { return "agentapi-session-runner-" + hashName(id) }
 func allocationName(id string) string { return "agentapi-session-allocation-pool-" + hashName(id) }
 
@@ -356,41 +353,6 @@ func (s *Store) UpdateBinding(ctx context.Context, binding *core.Binding) error 
 
 func (s *Store) DeleteBinding(ctx context.Context, id string) error {
 	return s.delete(ctx, bindingName(id))
-}
-
-func (s *Store) PutPreference(ctx context.Context, preference *core.Preference) error {
-	preference.UpdatedAt = s.now()
-	name := preferenceName(preference.SubjectType, preference.SubjectID)
-	if err := s.create(ctx, name, "preference", preference.DefaultPool, preference); err != nil {
-		if !errors.Is(err, core.ErrConflict) {
-			return err
-		}
-		return s.update(ctx, name, preference)
-	}
-	return nil
-}
-
-func (s *Store) GetPreference(ctx context.Context, kind core.SubjectType, id string) (*core.Preference, error) {
-	var value core.Preference
-	_, err := s.get(ctx, preferenceName(kind, id), &value)
-	return &value, err
-}
-
-func (s *Store) ListPreferences(ctx context.Context) ([]*core.Preference, error) {
-	var result []*core.Preference
-	err := s.list(ctx, "preference", func(raw []byte) error {
-		var value core.Preference
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return err
-		}
-		result = append(result, &value)
-		return nil
-	})
-	return result, err
-}
-
-func (s *Store) DeletePreference(ctx context.Context, kind core.SubjectType, id string) error {
-	return s.delete(ctx, preferenceName(kind, id))
 }
 
 func (s *Store) CreateRunner(ctx context.Context, runner *core.Runner) error {

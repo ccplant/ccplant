@@ -36,7 +36,6 @@ type LogicalPool struct {
 	Name      string            `json:"name"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	Enabled   bool              `json:"enabled"`
-	IsDefault bool              `json:"default,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
@@ -77,15 +76,6 @@ type Subject struct {
 type ResolvedPool struct {
 	Pool    *LogicalPool `json:"pool"`
 	Binding *Binding     `json:"binding"`
-}
-
-type Preference struct {
-	SubjectType SubjectType `json:"subject_type"`
-	SubjectID   string      `json:"subject_id"`
-	Enabled     bool        `json:"enabled"`
-	DefaultPool string      `json:"default_pool,omitempty"`
-	Fallback    string      `json:"fallback,omitempty"`
-	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 type RunnerStatus string

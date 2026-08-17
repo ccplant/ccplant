@@ -2951,7 +2951,7 @@ export class AgentAPIProxyClient {
     return result.session_pools ?? [];
   }
 
-  async createSessionPool(input: Pick<LogicalSessionPool, 'name'> & Partial<Pick<LogicalSessionPool, 'labels' | 'default'>>): Promise<LogicalSessionPool> {
+  async createSessionPool(input: Pick<LogicalSessionPool, 'name'> & Partial<Pick<LogicalSessionPool, 'labels'>>): Promise<LogicalSessionPool> {
     return this.makeRequest('/admin/session-pools', { method: 'POST', body: JSON.stringify(input) });
   }
 
@@ -2977,8 +2977,8 @@ export class AgentAPIProxyClient {
     return result.pool_bindings ?? [];
   }
 
-  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' = 'use'): Promise<SessionPoolBinding> {
-    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role }) });
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' = 'use', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
   }
 
   async listManagedSessionPools(): Promise<LogicalSessionPool[]> {
@@ -2999,11 +2999,11 @@ export class AgentAPIProxyClient {
     return result.pool_bindings ?? [];
   }
 
-  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage'): Promise<SessionPoolBinding> {
-    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role }) });
+  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
   }
 
-  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage'; enabled?: boolean }): Promise<SessionPoolBinding> {
+  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage'; enabled?: boolean; priority?: number; max_concurrent?: number }): Promise<SessionPoolBinding> {
     return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'PATCH', body: JSON.stringify(input) });
   }
 

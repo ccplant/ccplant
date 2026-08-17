@@ -36,10 +36,6 @@ func TestKVStorePoolBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, core.BindingRoleManage, updatedBindings[0].Role)
 
-	require.NoError(t, store.PutPreference(ctx, &core.Preference{SubjectType: core.SubjectTeam, SubjectID: "org/team", Enabled: true, DefaultPool: "linux"}))
-	preference, err := store.GetPreference(ctx, core.SubjectTeam, "org/team")
-	require.NoError(t, err)
-	require.Equal(t, "linux", preference.DefaultPool)
 }
 
 func TestKVStoreAllocationRetainsBindingID(t *testing.T) {

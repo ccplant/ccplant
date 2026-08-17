@@ -105,9 +105,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
 	require.Equal(t, core.BindingRoleManage, bindings[0].Role)
-	preference, err := store.GetPreference(context.Background(), core.SubjectUser, "user1")
-	require.NoError(t, err)
-	require.Equal(t, issued.Pool, preference.DefaultPool)
+	require.Zero(t, bindings[0].Priority)
 	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)
@@ -125,8 +123,6 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	_, err = store.GetManager(context.Background(), created.ID)
 	require.ErrorIs(t, err, core.ErrNotFound)
 	_, err = store.GetLogicalPool(context.Background(), issued.Pool)
-	require.ErrorIs(t, err, core.ErrNotFound)
-	_, err = store.GetPreference(context.Background(), core.SubjectUser, "user1")
 	require.ErrorIs(t, err, core.ErrNotFound)
 }
 

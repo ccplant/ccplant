@@ -10,11 +10,10 @@ import (
 
 type resolverStore struct {
 	Store
-	managers    []*Manager
-	pools       []*LogicalPool
-	suppliers   []*PoolSupplier
-	bindings    []*Binding
-	preferences map[string]*Preference
+	managers  []*Manager
+	pools     []*LogicalPool
+	suppliers []*PoolSupplier
+	bindings  []*Binding
 }
 
 func (s *resolverStore) ListManagers(context.Context) ([]*Manager, error) { return s.managers, nil }
@@ -27,21 +26,14 @@ func (s *resolverStore) ListPoolSuppliers(context.Context) ([]*PoolSupplier, err
 func (s *resolverStore) ListBindings(context.Context, string) ([]*Binding, error) {
 	return s.bindings, nil
 }
-func (s *resolverStore) GetPreference(_ context.Context, kind SubjectType, id string) (*Preference, error) {
-	if value := s.preferences[string(kind)+":"+id]; value != nil {
-		return value, nil
-	}
-	return nil, ErrNotFound
-}
 
 func TestResolverRequiresBindingAndSelectsPool(t *testing.T) {
 	now := time.Now().UTC()
 	store := &resolverStore{
-		managers:    []*Manager{{ID: "manager-a", Enabled: true, LastHeartbeatAt: now}},
-		pools:       []*LogicalPool{{Name: "linux", Enabled: true, Labels: map[string]string{"arch": "amd64"}}},
-		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
-		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectTeam, SubjectID: "org/team", Enabled: true}},
-		preferences: map[string]*Preference{},
+		managers:  []*Manager{{ID: "manager-a", Enabled: true, LastHeartbeatAt: now}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true, Labels: map[string]string{"arch": "amd64"}}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings:  []*Binding{{Pool: "linux", SubjectType: SubjectTeam, SubjectID: "org/team", Enabled: true}},
 	}
 	resolver := NewResolver(store, time.Minute)
 	resolver.now = func() time.Time { return now }
@@ -54,62 +46,60 @@ func TestResolverRequiresBindingAndSelectsPool(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestResolverUsesUserPreference(t *testing.T) {
-	store := &resolverStore{
-		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
-		pools:       []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
-		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
-		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
-		preferences: map[string]*Preference{"user:alice": {SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "linux"}},
-	}
-	pool, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
-	require.NoError(t, err)
-	require.Equal(t, "linux", pool.Pool.Name)
-}
-
-func TestResolverIgnoresStalePreferenceWithoutEffectiveBinding(t *testing.T) {
-	store := &resolverStore{
-		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
-		pools:       []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
-		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
-		preferences: map[string]*Preference{"user:alice": {SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "linux"}},
-	}
-
-	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
-	require.NoError(t, err)
-	require.Nil(t, resolved)
-
-	_, err = NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, map[string]string{"allocator.pool": "linux"})
-	require.ErrorContains(t, err, `no authorized and healthy session pool matches "linux"`)
-}
-
-func TestResolverFallsBackToAvailableDefaultWhenPreferenceIsUnavailable(t *testing.T) {
+func TestResolverSelectsHighestPriorityEffectiveBinding(t *testing.T) {
 	store := &resolverStore{
 		managers: []*Manager{{ID: "manager-a", Enabled: true}},
 		pools: []*LogicalPool{
-			{Name: "preferred", Enabled: true},
-			{Name: "fallback", Enabled: true, IsDefault: true},
+			{Name: "lower", Enabled: true},
+			{Name: "higher", Enabled: true},
 		},
 		suppliers: []*PoolSupplier{
-			{Pool: "preferred", ManagerID: "manager-a", Enabled: true},
-			{Pool: "fallback", ManagerID: "manager-a", Enabled: true},
+			{Pool: "lower", ManagerID: "manager-a", Enabled: true},
+			{Pool: "higher", ManagerID: "manager-a", Enabled: true},
 		},
-		bindings:    []*Binding{{Pool: "fallback", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
-		preferences: map[string]*Preference{"user:alice": {SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, DefaultPool: "preferred"}},
+		bindings: []*Binding{
+			{Pool: "lower", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 10},
+			{Pool: "higher", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 20},
+		},
 	}
 
 	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
 	require.NoError(t, err)
-	require.Equal(t, "fallback", resolved.Pool.Name)
+	require.Equal(t, "higher", resolved.Pool.Name)
+
+	resolved, err = NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, map[string]string{"allocator.pool": "lower"})
+	require.NoError(t, err)
+	require.Equal(t, "lower", resolved.Pool.Name)
+}
+
+func TestResolverBreaksEqualPriorityByPoolName(t *testing.T) {
+	store := &resolverStore{
+		managers: []*Manager{{ID: "manager-a", Enabled: true}},
+		pools: []*LogicalPool{
+			{Name: "z-pool", Enabled: true},
+			{Name: "a-pool", Enabled: true},
+		},
+		suppliers: []*PoolSupplier{
+			{Pool: "z-pool", ManagerID: "manager-a", Enabled: true},
+			{Pool: "a-pool", ManagerID: "manager-a", Enabled: true},
+		},
+		bindings: []*Binding{
+			{Pool: "z-pool", SubjectType: SubjectAll, Enabled: true, Priority: 10},
+			{Pool: "a-pool", SubjectType: SubjectAll, Enabled: true, Priority: 10},
+		},
+	}
+
+	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "a-pool", resolved.Pool.Name)
 }
 
 func TestResolverAllowsClusterWideBinding(t *testing.T) {
 	store := &resolverStore{
-		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
-		pools:       []*LogicalPool{{Name: "linux", Enabled: true}},
-		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
-		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectAll, Enabled: true}},
-		preferences: map[string]*Preference{},
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings:  []*Binding{{Pool: "linux", SubjectType: SubjectAll, Enabled: true}},
 	}
 
 	pool, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "any-user"}, map[string]string{"allocator.pool": "linux"})
@@ -129,8 +119,7 @@ func TestResolverReturnsLogicalPoolOnceForMultipleSuppliers(t *testing.T) {
 			{Pool: "linux", ManagerID: "manager-a", Enabled: true},
 			{Pool: "linux", ManagerID: "manager-b", Enabled: true},
 		},
-		bindings:    []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
-		preferences: map[string]*Preference{},
+		bindings: []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
 	}
 	pools, err := NewResolver(store, 0).AvailablePools(context.Background(), Subject{Type: SubjectUser, ID: "alice"})
 	require.NoError(t, err)
@@ -141,13 +130,12 @@ func TestResolverReturnsLogicalPoolOnceForMultipleSuppliers(t *testing.T) {
 func TestResolverPrefersExactBindingOverAll(t *testing.T) {
 	store := &resolverStore{
 		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
-		pools:     []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
 		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
 		bindings: []*Binding{
 			{ID: "binding-all", Pool: "linux", SubjectType: SubjectAll, Enabled: true, MaxConcurrent: 100},
 			{ID: "binding-alice", Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, MaxConcurrent: 2},
 		},
-		preferences: map[string]*Preference{},
 	}
 
 	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
@@ -162,11 +150,10 @@ func TestResolverPrefersExactBindingOverAll(t *testing.T) {
 
 func TestResolverDoesNotUseBindingsFromAnotherScope(t *testing.T) {
 	store := &resolverStore{
-		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
-		pools:       []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
-		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
-		bindings:    []*Binding{{ID: "binding-team", Pool: "linux", SubjectType: SubjectTeam, SubjectID: "org/team", Enabled: true}},
-		preferences: map[string]*Preference{},
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings:  []*Binding{{ID: "binding-team", Pool: "linux", SubjectType: SubjectTeam, SubjectID: "org/team", Enabled: true}},
 	}
 
 	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
@@ -181,10 +168,9 @@ func TestResolverDoesNotUseBindingsFromAnotherScope(t *testing.T) {
 
 func TestResolverWithoutEffectiveBindingLeavesPoolSelectionUnchanged(t *testing.T) {
 	store := &resolverStore{
-		managers:    []*Manager{{ID: "manager-a", Enabled: true}},
-		pools:       []*LogicalPool{{Name: "linux", Enabled: true, IsDefault: true}},
-		suppliers:   []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
-		preferences: map[string]*Preference{},
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
 	}
 
 	resolver := NewResolver(store, 0)

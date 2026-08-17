@@ -74,12 +74,6 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 		return nil, err
 	}
 	requested := strings.TrimSpace(tags["allocator.pool"])
-	preferred := ""
-	if requested == "" {
-		if preference, getErr := r.store.GetPreference(ctx, subject.Type, subject.ID); getErr == nil && preference.Enabled {
-			preferred = strings.TrimSpace(preference.DefaultPool)
-		}
-	}
 	var candidates []*ResolvedPool
 	for _, resolved := range available {
 		if !poolMatchesTags(resolved.Pool, tags) {
@@ -94,27 +88,21 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 		if len(candidates) == 0 {
 			return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requested)
 		}
-		return firstPoolByName(candidates), nil
+		return firstPoolByPriority(candidates), nil
 	}
-	for _, resolved := range candidates {
-		if resolved.Pool.Name == preferred {
-			return resolved, nil
-		}
-	}
-	defaults := candidates[:0]
-	for _, resolved := range candidates {
-		if resolved.Pool.IsDefault {
-			defaults = append(defaults, resolved)
-		}
-	}
-	if len(defaults) == 0 {
+	if len(candidates) == 0 {
 		return nil, nil
 	}
-	return firstPoolByName(defaults), nil
+	return firstPoolByPriority(candidates), nil
 }
 
-func firstPoolByName(pools []*ResolvedPool) *ResolvedPool {
-	sort.Slice(pools, func(i, j int) bool { return pools[i].Pool.Name < pools[j].Pool.Name })
+func firstPoolByPriority(pools []*ResolvedPool) *ResolvedPool {
+	sort.Slice(pools, func(i, j int) bool {
+		if pools[i].Binding.Priority != pools[j].Binding.Priority {
+			return pools[i].Binding.Priority > pools[j].Binding.Priority
+		}
+		return pools[i].Pool.Name < pools[j].Pool.Name
+	})
 	return pools[0]
 }
 

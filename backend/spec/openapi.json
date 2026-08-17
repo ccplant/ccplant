@@ -5273,15 +5273,6 @@
         "responses": {"200": {"description": "Authorized and healthy logical pools", "content": {"application/json": {"schema": {"type": "object", "properties": {"session_pools": {"type": "array", "items": {"$ref": "#/components/schemas/SessionPool"}}}}}}}}
       }
     },
-    "/session-pool-preference": {
-      "put": {
-        "summary": "Set the default session pool for a user or team",
-        "operationId": "putSessionPoolPreference",
-        "tags": ["Session Pools"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPoolPreference"}}}},
-        "responses": {"200": {"description": "Preference saved"}, "403": {"description": "Pool is not bound to the subject"}}
-      }
-    },
     "/session-pools": {
       "get": {"summary": "List logical pools manageable by the authenticated subject", "operationId": "listManagedSessionPools", "tags": ["Session Pools"], "responses": {"200": {"description": "Manageable pools"}}},
       "post": {"summary": "Create a logical pool and grant its creator manage access", "operationId": "createManagedSessionPool", "tags": ["Session Pools"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/SessionPool"}, {"type": "object", "properties": {"team_id": {"type": "string"}}}]}}}}, "responses": {"201": {"description": "Pool created"}}}
@@ -5359,15 +5350,11 @@
       },
       "SessionPool": {
         "type": "object", "required": ["name"],
-        "properties": {"name": {"type": "string", "description": "Logical pool name shared by one or more managers"}, "manager_id": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "min_idle": {"type": "integer", "minimum": 0}, "max_runners": {"type": "integer", "minimum": 0}, "enabled": {"type": "boolean", "default": true}, "draining": {"type": "boolean"}, "default": {"type": "boolean"}}
+        "properties": {"name": {"type": "string", "description": "Logical pool name shared by one or more managers"}, "manager_id": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "min_idle": {"type": "integer", "minimum": 0}, "max_runners": {"type": "integer", "minimum": 0}, "enabled": {"type": "boolean", "default": true}, "draining": {"type": "boolean"}}
       },
       "SessionPoolBinding": {
         "type": "object", "required": ["subject_type"],
         "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}, "max_concurrent": {"type": "integer", "minimum": 0, "default": 0, "description": "Best-effort maximum active allocations attributed to this binding; zero is unlimited."}}
-      },
-      "SessionPoolPreference": {
-        "type": "object",
-        "properties": {"subject_type": {"type": "string", "enum": ["user", "team"], "default": "user"}, "subject_id": {"type": "string"}, "enabled": {"type": "boolean", "default": true}, "default_pool": {"type": "string"}, "fallback": {"type": "string"}}
       },
       "AdminSettingsDocument": {
         "type": "object",

@@ -133,15 +133,11 @@ type ResolvedPool struct {
 func (r *Resolver) Resolve(ctx context.Context, owner Subject, tags map[string]string) (*ResolvedPool, error)
 ```
 
-Pool は既存どおり `allocator.pool`、Preference、default Pool の順序で選択する。
-`allocator.pool` は明示指定なので一致する利用可能な Pool がなければエラーにする。一方、
-Preference は soft hint とし、現在の Binding・health・label 条件で利用可能な候補に含まれる
-場合だけ採用する。Preference の Pool が利用不能なら利用可能な default Pool を選び、default
-Pool もなければ local Session Manager 経路へ進む。候補 Pool の認可には owner の exact
-Binding または `all` Binding だけを使う。Resolver が Pool と effective Binding を一緒に
-返すことで、quota 検査時に Binding を探し直さない。
-
-user scope は user Preference だけを、team scope は対象 team Preference だけを参照する。
+`allocator.pool` があれば明示指定として扱い、一致する利用可能な Pool がなければエラーにする。
+指定がなければ、現在の Binding・health・label 条件で利用可能な候補を effective Binding の
+`priority` 降順で並べ、最も高い Pool を選ぶ。同じ priority は Pool 名の昇順で決定的に選ぶ。
+候補がなければ local Session Manager 経路へ進む。Preference と default Pool は持たない。
+Resolver が Pool と effective Binding を一緒に返すことで、quota 検査時に Binding を探し直さない。
 
 これは旧 resolver との意図的な互換性変更である。旧 resolver は user scope でもユーザーの
 所属 team Binding を候補に含めていたが、新 resolver では含めない。移行時に user scope を
@@ -212,14 +208,15 @@ quota 超過を理由に `all` Binding、別 Pool、local Session Manager へ自
 
 ## API changes
 
-Binding の create、patch、response と OpenAPI schema に `max_concurrent` を追加する。
+Binding の create、patch、response と OpenAPI schema に `priority` と `max_concurrent` を含める。
 
 - create: 省略時は0。
 - patch: 指定時だけ更新する。
 - validation: 0以上。
 - response: 0は省略可能。
 
-Preference API は変更しない。
+Preference API と保存モデル、Logical Pool の `default` フラグは廃止する。既存 Preference の
+保存データは参照されず、Pool 削除時の cleanup 対象にも含めない。
 
 ## Required tests
 
@@ -230,6 +227,8 @@ Binding resolution:
 - team scope で作成者の user Binding を使用しない。
 - user scope で所属 team の Binding を使用しない。
 - exact Binding がない場合だけ `all` Binding を使用する。
+- 複数候補では effective Binding の priority が最も高い Pool を選ぶ。
+- priority が同じ場合は Pool 名順で選ぶ。
 - exact Binding の quota 超過時に `all` Binding へ fallback しない。
 
 Quota enforcement:

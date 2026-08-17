@@ -25,6 +25,8 @@ export default function SessionPoolsAdminPage() {
   const [subjectID, setSubjectID] = useState('')
   const [bindingRole, setBindingRole] = useState<'use' | 'manage'>('use')
   const [bindingPool, setBindingPool] = useState('')
+  const [bindingPriority, setBindingPriority] = useState(0)
+  const [maxConcurrent, setMaxConcurrent] = useState(0)
   const [connectionToken, setConnectionToken] = useState('')
   const [error, setError] = useState('')
 
@@ -98,7 +100,7 @@ export default function SessionPoolsAdminPage() {
   const addBinding = async (event: FormEvent) => {
     event.preventDefault()
     try {
-      await client.createSessionPoolBinding(bindingPool, subjectType, subjectID, bindingRole)
+      await client.createSessionPoolBinding(bindingPool, subjectType, subjectID, bindingRole, bindingPriority, maxConcurrent)
       setSubjectID('')
       await reload()
     } catch (reason) {
@@ -126,7 +128,7 @@ export default function SessionPoolsAdminPage() {
   }
 
   const removePool = async (pool: LogicalSessionPool) => {
-    if (!window.confirm(`Logical Pool「${pool.name}」を削除しますか？Supplier、Binding、Preferenceなどの関連リソースも削除されます。`)) return
+    if (!window.confirm(`Logical Pool「${pool.name}」を削除しますか？Supplier、Bindingなどの関連リソースも削除されます。`)) return
     try {
       await client.deleteSessionPool(pool.name)
       await reload()
@@ -223,6 +225,10 @@ export default function SessionPoolsAdminPage() {
             <option value="manage" disabled={subjectType === 'all'}>Manage</option>
           </select>
           <input required={subjectType !== 'all'} disabled={subjectType === 'all'} className={input} value={subjectID} onChange={(event) => setSubjectID(event.target.value)} placeholder={subjectType === 'all' ? 'Subject IDは不要です' : subjectType === 'team' ? 'org/team' : 'user-id'} />
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs text-gray-500">Priority<input type="number" className={input} value={bindingPriority} onChange={(event) => setBindingPriority(Number(event.target.value))} /></label>
+            <label className="text-xs text-gray-500">Max concurrent<input min={0} type="number" className={input} value={maxConcurrent} onChange={(event) => setMaxConcurrent(Number(event.target.value))} /></label>
+          </div>
           <button disabled={!bindingPool} className="w-fit rounded bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Bindingを追加</button>
         </form>
       </div>
@@ -248,7 +254,6 @@ export default function SessionPoolsAdminPage() {
               <tr key={pool.name} className="border-b align-top last:border-0">
                 <td className="p-3">
                   <span className="font-medium">{pool.name}</span>
-                  {pool.default && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">default</span>}
                   <button aria-label={`${pool.name}を削除`} className="ml-3 text-xs text-red-600" onClick={() => void removePool(pool)}>削除</button>
                 </td>
                 <td className="p-3">
@@ -264,7 +269,7 @@ export default function SessionPoolsAdminPage() {
                 <td className="p-3">
                   {(bindings[pool.name] || []).map((binding) => (
                     <span key={binding.id} className="mb-1 mr-2 inline-flex rounded bg-gray-100 px-2 py-1 text-xs dark:bg-gray-700">
-                      {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.role || 'use'})
+                      {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.role || 'use'}, priority {binding.priority || 0}, max {binding.max_concurrent || '∞'})
                       <button aria-label={`${binding.subject_id}のBindingを削除`} className="ml-2 text-red-600" onClick={() => void removeBinding(pool.name, binding.id)}>×</button>
                     </span>
                   ))}
