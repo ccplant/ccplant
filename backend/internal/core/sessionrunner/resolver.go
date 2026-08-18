@@ -76,6 +76,9 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 	requested := strings.TrimSpace(tags["allocator.pool"])
 	var candidates []*ResolvedPool
 	for _, resolved := range available {
+		if requested == "" && resolved.Binding.ExplicitOnly {
+			continue
+		}
 		if !poolMatchesTags(resolved.Pool, tags) {
 			continue
 		}

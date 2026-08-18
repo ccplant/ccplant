@@ -101,7 +101,8 @@ type ExternalSessionManagerRequest struct {
 	ID                         string            `json:"id"`                                     // Required; registration uses the enrollment-token API
 	InstanceID                 string            `json:"instance_id,omitempty"`                  // Stable native host installation ID
 	Name                       string            `json:"name"`                                   // Human-readable name
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // Allow automatic assignment to this manager
+	PoolEnabled                bool              `json:"pool_enabled,omitempty"`                 // Enable explicit pool selection
+	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // Enable implicit pool selection
 	Labels                     map[string]string `json:"labels,omitempty"`                       // Matches allocator.* session tags
 }
 
@@ -158,7 +159,8 @@ type ExternalSessionManagerResponse struct {
 	Name                       string            `json:"name"`
 	HasConnectionToken         bool              `json:"has_connection_token"`                   // true if a connection token is configured
 	ConnectionToken            string            `json:"connection_token,omitempty"`             // returned only immediately after generation or rotation
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // true if automatic assignment may select this manager
+	PoolEnabled                bool              `json:"pool_enabled,omitempty"`                 // true if the manager pool is available for explicit selection
+	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // true if the resolver may select this manager pool implicitly
 	Labels                     map[string]string `json:"labels,omitempty"`
 	PublicURL                  string            `json:"public_url,omitempty"`
 	Version                    string            `json:"version,omitempty"`
@@ -171,6 +173,7 @@ type ExternalSessionManagerResponse struct {
 type AvailableManagerEntry struct {
 	ID                         string `json:"id"`
 	Name                       string `json:"name"`
+	PoolEnabled                bool   `json:"pool_enabled,omitempty"`
 	AutomaticAssignmentEnabled bool   `json:"automatic_assignment_enabled,omitempty"`
 	Source                     string `json:"source"`      // "user" or "team"
 	SourceName                 string `json:"source_name"` // user ID or team ID
@@ -199,6 +202,7 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 		for _, m := range userSettings.ExternalSessionManagers() {
 			managers = append(managers, AvailableManagerEntry{
 				ID: m.ID, Name: m.Name,
+				PoolEnabled:                m.IsPoolEnabled(),
 				AutomaticAssignmentEnabled: m.IsAutomaticAssignmentEnabled(),
 				Source:                     "user", SourceName: userID,
 			})
@@ -213,6 +217,7 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 				for _, m := range teamSettings.ExternalSessionManagers() {
 					managers = append(managers, AvailableManagerEntry{
 						ID: m.ID, Name: m.Name,
+						PoolEnabled:                m.IsPoolEnabled(),
 						AutomaticAssignmentEnabled: m.IsAutomaticAssignmentEnabled(),
 						Source:                     "team", SourceName: teamID,
 					})
@@ -471,6 +476,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				InstanceID:                 m.InstanceID,
 				Name:                       m.Name,
 				HMACSecret:                 prev.HMACSecret,
+				PoolEnabled:                boolValuePointer(m.PoolEnabled),
 				AutomaticAssignmentEnabled: m.AutomaticAssignmentEnabled,
 				Labels:                     m.Labels,
 				Pool:                       prev.Pool, BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
@@ -533,6 +539,10 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, c.toResponse(settings))
+}
+
+func boolValuePointer(value bool) *bool {
+	return &value
 }
 
 // DeleteSettings handles DELETE /settings/:name
@@ -796,6 +806,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				InstanceID:                 m.InstanceID,
 				Name:                       m.Name,
 				HasConnectionToken:         m.HMACSecret != "",
+				PoolEnabled:                m.IsPoolEnabled(),
 				AutomaticAssignmentEnabled: m.IsAutomaticAssignmentEnabled(),
 				Labels:                     m.Labels,
 				PublicURL:                  m.PublicURL,

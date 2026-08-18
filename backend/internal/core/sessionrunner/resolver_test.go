@@ -72,6 +72,28 @@ func TestResolverSelectsHighestPriorityEffectiveBinding(t *testing.T) {
 	require.Equal(t, "lower", resolved.Pool.Name)
 }
 
+func TestResolverExplicitOnlyPoolRequiresPoolSelector(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "native-mac", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "native-mac", ManagerID: "manager-a", Enabled: true}},
+		bindings:  []*Binding{{Pool: "native-mac", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, ExplicitOnly: true}},
+	}
+	resolver := NewResolver(store, 0)
+
+	available, err := resolver.AvailablePools(context.Background(), Subject{Type: SubjectUser, ID: "alice"})
+	require.NoError(t, err)
+	require.Len(t, available, 1)
+
+	resolved, err := resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved)
+
+	resolved, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, map[string]string{"allocator.pool": "native-mac"})
+	require.NoError(t, err)
+	require.Equal(t, "native-mac", resolved.Pool.Name)
+}
+
 func TestResolverBreaksEqualPriorityByPoolName(t *testing.T) {
 	store := &resolverStore{
 		managers: []*Manager{{ID: "manager-a", Enabled: true}},

@@ -21,6 +21,7 @@ type ESMUpdateRequest struct {
 	InstanceID                 string            `json:"instance_id"`
 	Name                       string            `json:"name"`
 	Labels                     map[string]string `json:"labels,omitempty"`
+	PoolEnabled                *bool             `json:"pool_enabled,omitempty"`
 	AutomaticAssignmentEnabled *bool             `json:"automatic_assignment_enabled,omitempty"`
 	PublicURL                  string            `json:"public_url,omitempty"`
 	Version                    string            `json:"version,omitempty"`
@@ -54,6 +55,7 @@ type ESMEnrollmentRequest struct {
 	InstanceID                 string            `json:"instance_id"`
 	Name                       string            `json:"name"`
 	Labels                     map[string]string `json:"labels,omitempty"`
+	PoolEnabled                *bool             `json:"pool_enabled,omitempty"`
 	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"`
 	PublicURL                  string            `json:"public_url,omitempty"`
 	Version                    string            `json:"version,omitempty"`
@@ -145,6 +147,7 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 			manager.Name = req.Name
 			manager.HMACSecret = connectionToken
 			manager.Labels = req.Labels
+			manager.PoolEnabled = req.PoolEnabled
 			manager.AutomaticAssignmentEnabled = req.AutomaticAssignmentEnabled
 			manager.LegacySchedulable = false
 			manager.LegacyDefault = false
@@ -234,6 +237,9 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 			managers[i].LegacySchedulable = false
 			managers[i].LegacyDefault = false
 		}
+		if req.PoolEnabled != nil {
+			managers[i].PoolEnabled = req.PoolEnabled
+		}
 		manager = &managers[i]
 	}
 	settings.SetExternalSessionManagers(managers)
@@ -297,7 +303,7 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 	}
 	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
 	binding := &sessionrunnercore.Binding{Pool: manager.Pool, SubjectType: subjectType, SubjectID: manager.BindingSubjectID,
-		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsAutomaticAssignmentEnabled()}
+		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsPoolEnabled(), ExplicitOnly: !manager.IsAutomaticAssignmentEnabled()}
 	if err := c.sessionRunnerStore.CreateBinding(ctx, binding); err != nil {
 		_ = c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool)
 		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
@@ -340,7 +346,8 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 		return err
 	}
 	for _, binding := range bindings {
-		binding.Enabled = manager.IsAutomaticAssignmentEnabled()
+		binding.Enabled = manager.IsPoolEnabled()
+		binding.ExplicitOnly = !manager.IsAutomaticAssignmentEnabled()
 		if err := c.sessionRunnerStore.UpdateBinding(ctx, binding); err != nil {
 			return err
 		}
@@ -535,6 +542,7 @@ func (c *SettingsController) findAuthorizedESM(ctx echo.Context, modify bool) (*
 func esmResponse(manager entities.ExternalSessionManagerEntry, token string) ExternalSessionManagerResponse {
 	return ExternalSessionManagerResponse{ID: manager.ID, InstanceID: manager.InstanceID, Name: manager.Name,
 		HasConnectionToken: manager.HMACSecret != "", ConnectionToken: token,
+		PoolEnabled:                manager.IsPoolEnabled(),
 		AutomaticAssignmentEnabled: manager.IsAutomaticAssignmentEnabled(),
 		Labels:                     manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
 		ActiveSessions:  manager.ActiveSessions,

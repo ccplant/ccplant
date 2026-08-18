@@ -24,6 +24,15 @@ func TestExternalSessionManagerAutomaticAssignmentBackwardCompatibility(t *testi
 	if !current.IsAutomaticAssignmentEnabled() {
 		t.Fatal("manager must be eligible for automatic assignment")
 	}
+	if !current.IsPoolEnabled() {
+		t.Fatal("automatic assignment must keep the pool enabled for backward compatibility")
+	}
+
+	poolEnabled := true
+	explicitOnly := ExternalSessionManagerEntry{ID: "explicit", PoolEnabled: &poolEnabled}
+	if !explicitOnly.IsPoolEnabled() || explicitOnly.IsAutomaticAssignmentEnabled() {
+		t.Fatal("pool enablement must be independent from automatic assignment")
+	}
 }
 
 func TestNewBedrockSettings(t *testing.T) {

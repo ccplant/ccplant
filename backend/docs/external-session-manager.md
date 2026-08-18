@@ -261,10 +261,12 @@ agentapi-proxy native install \
 Do not pass secrets through `--manager-env`; service definitions may be
 readable by other local users on some platforms.
 
-New managers are not scheduled automatically. After validating the connection,
-enable scheduling with `PATCH /external-session-managers/{id}` and
-`{"automatic_assignment_enabled":true}`. Alternatively, pass `--automatic-assignment-enabled` during installation
-to enable it immediately. To register it for a team instead of the current user:
+New managers are not selectable automatically. After validating the connection,
+enable their pool for explicit selection with `PATCH /external-session-managers/{id}` and
+`{"pool_enabled":true}`. Set `{"automatic_assignment_enabled":true}` separately
+when requests without `allocator.pool` should also use the pool. The existing
+`--automatic-assignment-enabled` installation option enables both behaviors for
+backward compatibility. To register it for a team instead of the current user:
 
 ```bash
 agentapi-proxy native install \
@@ -380,9 +382,10 @@ curl -X POST "$PARENT_PROXY_URL/start" \
   }'
 ```
 
-If the manager has `"automatic_assignment_enabled": true`, it is eligible for automatic routing
-when its pool, labels, health, and capacity match the session request. Setting it
-to false stops new allocations without unregistering the manager.
+If the manager has `"pool_enabled": true`, its pool is available for explicit
+selection with `allocator.pool`. `"automatic_assignment_enabled": true` additionally
+allows the resolver to select it for requests that omit `allocator.pool`. Disabling
+the pool stops all new pool allocations without unregistering the manager.
 
 ## macOS Native Filesystem Sandbox
 
