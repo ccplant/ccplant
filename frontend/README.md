@@ -40,6 +40,30 @@ NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key_here
 bun run dev
 ```
 
+## Cloudflare Workers
+
+このフロントエンドは OpenNext アダプターを使って Cloudflare Workers にデプロイできます。
+
+```bash
+bun install
+bun run preview:cloudflare
+bun run deploy:cloudflare
+```
+
+デプロイ前に Worker の圧縮後サイズを確認する場合は、次を実行します。
+
+```bash
+bun run size:cloudflare
+```
+
+Cloudflare 側には少なくとも以下の環境変数・secretを設定してください。
+
+- `AGENTAPI_PROXY_URL`: Worker から到達可能な agentapi-proxy の HTTPS URL
+- `COOKIE_ENCRYPTION_SECRET`: 64文字の16進数で表した32バイトの暗号鍵
+- `NEXT_PUBLIC_BASE_URL`: Worker またはカスタムドメインの公開URL
+
+GitHub OAuthやPush通知を利用する場合は、それぞれの追加環境変数もWorkers Buildsのビルド変数とWorkerの環境変数に設定してください。
+
 ### 認証
 
 ユーザーは `/login` ページで認証を行います：
