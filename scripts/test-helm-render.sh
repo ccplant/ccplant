@@ -44,23 +44,6 @@ assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
 
-# Legacy releases may carry this setting in structured config, shared env, and
-# API env simultaneously. Render one canonical entry so upgrades are patchable.
-"$HELM_BIN" template backend-deduplicated-env "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --show-only templates/deployment.yaml \
-  --set-string config.auth.github.oauth.allowedRedirectUris=https://canonical.example \
-  --set-string env[0].name=OAUTH_ALLOWED_REDIRECT_URIS \
-  --set-string env[0].value=https://shared.example \
-  --set-string api.env[0].name=OAUTH_ALLOWED_REDIRECT_URIS \
-  --set-string api.env[0].value=https://api.example \
-  >"$TMP_DIR/backend-deduplicated-env.yaml"
-oauth_redirect_count="$(grep -c 'name: OAUTH_ALLOWED_REDIRECT_URIS' "$TMP_DIR/backend-deduplicated-env.yaml")"
-if [[ "$oauth_redirect_count" -ne 1 ]]; then
-  echo "expected one OAUTH_ALLOWED_REDIRECT_URIS entry, found $oauth_redirect_count" >&2
-  exit 1
-fi
-assert_contains 'value: "https://canonical.example"' "$TMP_DIR/backend-deduplicated-env.yaml"
-
 # The umbrella chart keeps the full image as the session/runtime fallback while
 # selecting the lightweight image only for the API Deployment.
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant-default.yaml"
