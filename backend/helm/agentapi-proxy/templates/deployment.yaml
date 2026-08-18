@@ -27,7 +27,32 @@
 {{- $apiSecurityContext := $api.securityContext | default .Values.securityContext }}
 {{- $apiImagePullSecrets := $api.imagePullSecrets | default .Values.imagePullSecrets }}
 {{- $apiResources := $api.resources | default .Values.resources }}
-{{- $apiEnv := concat (.Values.env | default list) ($api.env | default list) }}
+{{- /* Deduplicate shared and API-specific env entries with API values winning. */}}
+{{- $apiEnvByName := dict }}
+{{- $apiEnvNames := list }}
+{{- range (concat (.Values.env | default list) ($api.env | default list)) }}
+{{- if not (hasKey $apiEnvByName .name) }}
+{{- $apiEnvNames = append $apiEnvNames .name }}
+{{- end }}
+{{- $_ := set $apiEnvByName .name . }}
+{{- end }}
+{{- $apiEnv := list }}
+{{- range $apiEnvNames }}
+{{- $apiEnv = append $apiEnv (index $apiEnvByName .) }}
+{{- end }}
+{{- /* Prefer canonical structured values over their legacy env entries. */}}
+{{- $canonicalApiEnv := dict }}
+{{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}
+{{- with .Values.config.auth.github.oauth.allowedRedirectUris }}{{- $_ := set $canonicalApiEnv "OAUTH_ALLOWED_REDIRECT_URIS" true }}{{- end }}
+{{- with .Values.config.vapid.publicKey }}{{- $_ := set $canonicalApiEnv "VAPID_PUBLIC_KEY" true }}{{- end }}
+{{- with .Values.config.vapid.contactEmail }}{{- $_ := set $canonicalApiEnv "VAPID_CONTACT_EMAIL" true }}{{- end }}
+{{- $filteredApiEnv := list }}
+{{- range $apiEnv }}
+{{- if not (hasKey $canonicalApiEnv .name) }}
+{{- $filteredApiEnv = append $filteredApiEnv . }}
+{{- end }}
+{{- end }}
+{{- $apiEnv = $filteredApiEnv }}
 {{- $apiEnvFrom := concat (.Values.envFrom | default list) ($api.envFrom | default list) }}
 {{- $apiKV := $api.kvStore | default dict }}
 {{- if not $apiKV }}
