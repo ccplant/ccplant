@@ -77,11 +77,11 @@ func createTestUser(userID string, isAdmin bool) *entities.User {
 	return user
 }
 
-func TestGetAvailableManagersOnlyReturnsSchedulableManagers(t *testing.T) {
+func TestGetAvailableManagersReturnsExplicitlySelectableManagers(t *testing.T) {
 	repo := newMockSettingsRepository()
 	settings := entities.NewSettings("test-user")
 	settings.SetExternalSessionManagers([]entities.ExternalSessionManagerEntry{
-		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s", Schedulable: true},
+		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s", AutomaticAssignmentEnabled: true},
 		{ID: "disabled", Name: "Disabled manager"},
 	})
 	require.NoError(t, repo.Save(context.Background(), settings))
@@ -97,9 +97,10 @@ func TestGetAvailableManagersOnlyReturnsSchedulableManagers(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var response AvailableManagersResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
-	require.Equal(t, []AvailableManagerEntry{{
-		ID: "pooled", Name: "Cluster pool manager", Schedulable: true, Source: "user", SourceName: "test-user",
-	}}, response.Managers)
+	require.Equal(t, []AvailableManagerEntry{
+		{ID: "pooled", Name: "Cluster pool manager", AutomaticAssignmentEnabled: true, Source: "user", SourceName: "test-user"},
+		{ID: "disabled", Name: "Disabled manager", Source: "user", SourceName: "test-user"},
+	}, response.Managers)
 }
 
 func TestUpdateSettings_PreserveExistingCredentials(t *testing.T) {

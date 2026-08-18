@@ -130,7 +130,7 @@ export interface ExternalSessionManagerConfig {
   name: string;         // Human-readable name
   has_connection_token?: boolean; // Response flag for allocator connection token
   connection_token?: string; // Returned only immediately after token generation
-  schedulable?: boolean; // Allow this manager to receive newly scheduled sessions
+  automatic_assignment_enabled?: boolean;
   labels?: Record<string, string>; // Matches allocator.* session tags
   pool?: string;        // Automatically managed logical pool
 }
@@ -139,7 +139,7 @@ export interface ExternalSessionManagerConfig {
 export interface AvailableManager {
   id: string;
   name: string;
-  schedulable?: boolean;
+  automatic_assignment_enabled?: boolean;
   source: 'user' | 'team';  // Where this manager comes from
   source_name: string;       // User ID or team ID
 }
@@ -403,7 +403,7 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
       id: manager.id,
       instance_id: manager.instance_id,
       name: manager.name,
-      schedulable: manager.schedulable,
+      automatic_assignment_enabled: manager.automatic_assignment_enabled,
       labels: manager.labels,
     }))
   }

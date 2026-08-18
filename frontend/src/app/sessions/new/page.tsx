@@ -731,9 +731,6 @@ export default function NewSessionPage() {
                             <span className="flex-1 min-w-0">
                               <span className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{m.name}</span>
-                                {m.schedulable && (
-                                  <span className="px-1 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded flex-shrink-0">スケジューリング可能</span>
-                                )}
                                 <span className="px-1 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded flex-shrink-0">
                                   {m.source === 'team' ? `チーム: ${m.source_name}` : '個人'}
                                 </span>

@@ -18,12 +18,12 @@ import (
 )
 
 type ESMUpdateRequest struct {
-	InstanceID  string            `json:"instance_id"`
-	Name        string            `json:"name"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Schedulable *bool             `json:"schedulable,omitempty"`
-	PublicURL   string            `json:"public_url,omitempty"`
-	Version     string            `json:"version,omitempty"`
+	InstanceID                 string            `json:"instance_id"`
+	Name                       string            `json:"name"`
+	Labels                     map[string]string `json:"labels,omitempty"`
+	AutomaticAssignmentEnabled *bool             `json:"automatic_assignment_enabled,omitempty"`
+	PublicURL                  string            `json:"public_url,omitempty"`
+	Version                    string            `json:"version,omitempty"`
 }
 
 type ESMHeartbeatRequest struct {
@@ -50,13 +50,13 @@ type esmEnrollmentTokenResponse struct {
 }
 
 type ESMEnrollmentRequest struct {
-	RegistrationToken string            `json:"registration_token"`
-	InstanceID        string            `json:"instance_id"`
-	Name              string            `json:"name"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	Schedulable       bool              `json:"schedulable,omitempty"`
-	PublicURL         string            `json:"public_url,omitempty"`
-	Version           string            `json:"version,omitempty"`
+	RegistrationToken          string            `json:"registration_token"`
+	InstanceID                 string            `json:"instance_id"`
+	Name                       string            `json:"name"`
+	Labels                     map[string]string `json:"labels,omitempty"`
+	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"`
+	PublicURL                  string            `json:"public_url,omitempty"`
+	Version                    string            `json:"version,omitempty"`
 }
 
 func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo.Context) error {
@@ -145,7 +145,8 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 			manager.Name = req.Name
 			manager.HMACSecret = connectionToken
 			manager.Labels = req.Labels
-			manager.Schedulable = req.Schedulable
+			manager.AutomaticAssignmentEnabled = req.AutomaticAssignmentEnabled
+			manager.LegacySchedulable = false
 			manager.LegacyDefault = false
 			manager.PublicURL = req.PublicURL
 			manager.Version = req.Version
@@ -228,8 +229,9 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 		if req.Version != "" {
 			managers[i].Version = req.Version
 		}
-		if req.Schedulable != nil {
-			managers[i].Schedulable = *req.Schedulable
+		if req.AutomaticAssignmentEnabled != nil {
+			managers[i].AutomaticAssignmentEnabled = *req.AutomaticAssignmentEnabled
+			managers[i].LegacySchedulable = false
 			managers[i].LegacyDefault = false
 		}
 		manager = &managers[i]
@@ -278,16 +280,16 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 	hash := sha256.Sum256([]byte(token))
 	registryManager := &sessionrunnercore.Manager{ID: manager.ID, Name: manager.Name, Labels: manager.Labels,
 		Capabilities: []string{sessionrunnercore.CapabilityRunnerClaimV1, sessionrunnercore.CapabilityDirectRuntimeV1},
-		Enabled:      manager.IsSchedulable(), ConnectionTokenHash: hex.EncodeToString(hash[:])}
+		Enabled:      true, ConnectionTokenHash: hex.EncodeToString(hash[:])}
 	if err := c.sessionRunnerStore.CreateManager(ctx, registryManager); err != nil {
 		return err
 	}
-	pool := &sessionrunnercore.LogicalPool{Name: manager.Pool, Labels: manager.Labels, Enabled: manager.IsSchedulable()}
+	pool := &sessionrunnercore.LogicalPool{Name: manager.Pool, Labels: manager.Labels, Enabled: true}
 	if err := c.sessionRunnerStore.CreateLogicalPool(ctx, pool); err != nil {
 		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
 		return err
 	}
-	supplier := &sessionrunnercore.PoolSupplier{Pool: manager.Pool, ManagerID: manager.ID, MinIdle: 1, MaxRunners: 10, Enabled: manager.IsSchedulable()}
+	supplier := &sessionrunnercore.PoolSupplier{Pool: manager.Pool, ManagerID: manager.ID, MinIdle: 1, MaxRunners: 10, Enabled: true}
 	if err := c.sessionRunnerStore.CreatePoolSupplier(ctx, supplier); err != nil {
 		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
 		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
@@ -295,7 +297,7 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 	}
 	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
 	binding := &sessionrunnercore.Binding{Pool: manager.Pool, SubjectType: subjectType, SubjectID: manager.BindingSubjectID,
-		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsSchedulable()}
+		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsAutomaticAssignmentEnabled()}
 	if err := c.sessionRunnerStore.CreateBinding(ctx, binding); err != nil {
 		_ = c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool)
 		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
@@ -313,7 +315,7 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 	if err != nil {
 		return err
 	}
-	registered.Name, registered.Labels, registered.Enabled = manager.Name, manager.Labels, manager.IsSchedulable()
+	registered.Name, registered.Labels, registered.Enabled = manager.Name, manager.Labels, true
 	if err := c.sessionRunnerStore.UpdateManager(ctx, registered); err != nil {
 		return err
 	}
@@ -321,7 +323,7 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 	if err != nil {
 		return err
 	}
-	pool.Labels, pool.Enabled = manager.Labels, manager.IsSchedulable()
+	pool.Labels, pool.Enabled = manager.Labels, true
 	if err := c.sessionRunnerStore.UpdateLogicalPool(ctx, pool); err != nil {
 		return err
 	}
@@ -329,7 +331,7 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 	if err != nil {
 		return err
 	}
-	supplier.Enabled = manager.IsSchedulable()
+	supplier.Enabled = true
 	if err := c.sessionRunnerStore.UpdatePoolSupplier(ctx, supplier); err != nil {
 		return err
 	}
@@ -338,7 +340,7 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 		return err
 	}
 	for _, binding := range bindings {
-		binding.Enabled = manager.IsSchedulable()
+		binding.Enabled = manager.IsAutomaticAssignmentEnabled()
 		if err := c.sessionRunnerStore.UpdateBinding(ctx, binding); err != nil {
 			return err
 		}
@@ -532,8 +534,9 @@ func (c *SettingsController) findAuthorizedESM(ctx echo.Context, modify bool) (*
 
 func esmResponse(manager entities.ExternalSessionManagerEntry, token string) ExternalSessionManagerResponse {
 	return ExternalSessionManagerResponse{ID: manager.ID, InstanceID: manager.InstanceID, Name: manager.Name,
-		HasConnectionToken: manager.HMACSecret != "", ConnectionToken: token, Schedulable: manager.IsSchedulable(),
-		Labels: manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
+		HasConnectionToken: manager.HMACSecret != "", ConnectionToken: token,
+		AutomaticAssignmentEnabled: manager.IsAutomaticAssignmentEnabled(),
+		Labels:                     manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
 		ActiveSessions:  manager.ActiveSessions,
 		LastHeartbeatAt: timePtrUnlessZero(manager.LastHeartbeatAt), Pool: manager.Pool}
 }

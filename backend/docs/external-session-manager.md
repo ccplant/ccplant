@@ -263,7 +263,7 @@ readable by other local users on some platforms.
 
 New managers are not scheduled automatically. After validating the connection,
 enable scheduling with `PATCH /external-session-managers/{id}` and
-`{"schedulable":true}`. Alternatively, pass `--schedulable` during installation
+`{"automatic_assignment_enabled":true}`. Alternatively, pass `--automatic-assignment-enabled` during installation
 to enable it immediately. To register it for a team instead of the current user:
 
 ```bash
@@ -380,7 +380,7 @@ curl -X POST "$PARENT_PROXY_URL/start" \
   }'
 ```
 
-If the manager has `"schedulable": true`, it is eligible for automatic routing
+If the manager has `"automatic_assignment_enabled": true`, it is eligible for automatic routing
 when its pool, labels, health, and capacity match the session request. Setting it
 to false stops new allocations without unregistering the manager.
 

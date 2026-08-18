@@ -96,13 +96,13 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	manager, err := store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Contains(t, manager.Capabilities, core.CapabilityRunnerClaimV1)
-	require.False(t, manager.Enabled)
+	require.True(t, manager.Enabled)
 	pool, err := store.GetLogicalPool(context.Background(), issued.Pool)
 	require.NoError(t, err)
-	require.False(t, pool.Enabled)
+	require.True(t, pool.Enabled)
 	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
 	require.NoError(t, err)
-	require.False(t, supplier.Enabled)
+	require.True(t, supplier.Enabled)
 	bindings, err := store.ListBindings(context.Background(), issued.Pool)
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
@@ -110,8 +110,8 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.Zero(t, bindings[0].Priority)
 	require.False(t, bindings[0].Enabled)
 
-	schedulable := true
-	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{Schedulable: &schedulable}, "user1")
+	automaticAssignmentEnabled := true
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)
 	require.NoError(t, controller.PatchExternalSessionManager(ctx))

@@ -7624,9 +7624,9 @@
               "type": "string"
             }
           },
-          "schedulable": {
+		  "automatic_assignment_enabled": {
             "type": "boolean",
-            "description": "Whether this manager may receive newly scheduled sessions"
+			"description": "Whether automatic assignment may select this manager; explicit manager selection remains available when false"
           },
           "public_url": {
             "type": "string",
@@ -7662,9 +7662,9 @@
               "type": "string"
             }
           },
-          "schedulable": {
+		  "automatic_assignment_enabled": {
             "type": "boolean",
-            "description": "Whether this manager may receive newly scheduled sessions"
+			"description": "Whether automatic assignment may select this manager; explicit manager selection remains available when false"
           },
           "public_url": {
             "type": "string",
