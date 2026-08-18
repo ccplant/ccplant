@@ -1,9 +1,30 @@
 package entities
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+func TestExternalSessionManagerAutomaticAssignmentBackwardCompatibility(t *testing.T) {
+	var legacy ExternalSessionManagerEntry
+	if err := json.Unmarshal([]byte(`{"id":"legacy","default":true}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if !legacy.IsAutomaticAssignmentEnabled() {
+		t.Fatal("legacy default manager must remain enabled for automatic assignment")
+	}
+
+	prerelease := ExternalSessionManagerEntry{ID: "prerelease", LegacySchedulable: true}
+	if !prerelease.IsAutomaticAssignmentEnabled() {
+		t.Fatal("legacy schedulable manager must remain enabled for automatic assignment")
+	}
+
+	current := ExternalSessionManagerEntry{ID: "current", AutomaticAssignmentEnabled: true}
+	if !current.IsAutomaticAssignmentEnabled() {
+		t.Fatal("manager must be eligible for automatic assignment")
+	}
+}
 
 func TestNewBedrockSettings(t *testing.T) {
 	bedrock := NewBedrockSettings(true)

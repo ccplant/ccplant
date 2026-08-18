@@ -7624,8 +7624,9 @@
               "type": "string"
             }
           },
-          "default": {
-            "type": "boolean"
+		  "automatic_assignment_enabled": {
+            "type": "boolean",
+			"description": "Whether automatic assignment may select this manager; explicit manager selection remains available when false"
           },
           "public_url": {
             "type": "string",
@@ -7661,8 +7662,9 @@
               "type": "string"
             }
           },
-          "default": {
-            "type": "boolean"
+		  "automatic_assignment_enabled": {
+            "type": "boolean",
+			"description": "Whether automatic assignment may select this manager; explicit manager selection remains available when false"
           },
           "public_url": {
             "type": "string",

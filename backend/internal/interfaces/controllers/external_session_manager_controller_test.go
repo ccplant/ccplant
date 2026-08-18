@@ -88,7 +88,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.Equal(t, "esm-"+issued.ManagerID, issued.Pool)
 
 	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", ESMEnrollmentRequest{
-		RegistrationToken: issued.RegistrationToken, InstanceID: "machine-pool", Name: "native-pool", Default: true,
+		RegistrationToken: issued.RegistrationToken, InstanceID: "machine-pool", Name: "native-pool",
 	}, "")
 	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
 	var created esmRegistrationResponse
@@ -96,8 +96,10 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	manager, err := store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Contains(t, manager.Capabilities, core.CapabilityRunnerClaimV1)
-	_, err = store.GetLogicalPool(context.Background(), issued.Pool)
+	require.True(t, manager.Enabled)
+	pool, err := store.GetLogicalPool(context.Background(), issued.Pool)
 	require.NoError(t, err)
+	require.True(t, pool.Enabled)
 	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
 	require.NoError(t, err)
 	require.True(t, supplier.Enabled)
@@ -106,7 +108,27 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.Len(t, bindings, 1)
 	require.Equal(t, core.BindingRoleManage, bindings[0].Role)
 	require.Zero(t, bindings[0].Priority)
-	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
+	require.False(t, bindings[0].Enabled)
+
+	automaticAssignmentEnabled := true
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues(created.ID)
+	require.NoError(t, controller.PatchExternalSessionManager(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	manager, err = store.GetManager(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.True(t, manager.Enabled)
+	pool, err = store.GetLogicalPool(context.Background(), issued.Pool)
+	require.NoError(t, err)
+	require.True(t, pool.Enabled)
+	supplier, err = store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
+	require.NoError(t, err)
+	require.True(t, supplier.Enabled)
+	bindings, err = store.ListBindings(context.Background(), issued.Pool)
+	require.NoError(t, err)
+	require.True(t, bindings[0].Enabled)
+	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)
 	ctx.Request().Header.Set("Authorization", "Bearer "+created.ConnectionToken)
