@@ -171,9 +171,9 @@ func (m *KubernetesSessionManager) deleteSessionAllocation(ctx context.Context, 
 	return err
 }
 
-// DeletePendingSessionAllocation removes an allocation that has not yet been
-// claimed by a session allocator. The boolean result reports whether a pending
-// allocation was found and deleted.
+// DeletePendingSessionAllocation removes an allocation that has not produced a
+// session yet. Allocating requests can otherwise become permanently orphaned
+// when their selected manager disappears after claiming them.
 func (m *KubernetesSessionManager) DeletePendingSessionAllocation(ctx context.Context, sessionID string) (bool, error) {
 	allocation, err := m.getSessionAllocation(ctx, sessionID)
 	if apierrors.IsNotFound(err) {
@@ -182,7 +182,7 @@ func (m *KubernetesSessionManager) DeletePendingSessionAllocation(ctx context.Co
 	if err != nil {
 		return false, err
 	}
-	if allocation.Status != sessionallocation.StatusPending {
+	if allocation.Status != sessionallocation.StatusPending && allocation.Status != sessionallocation.StatusAllocating {
 		return false, nil
 	}
 	if err := m.deleteSessionAllocation(ctx, sessionID); err != nil {

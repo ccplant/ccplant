@@ -1506,7 +1506,7 @@ func (s *Server) DeleteSessionByID(sessionID string) error {
 }
 
 // DeletePendingSessionAllocation deletes an allocation request that has not
-// yet been claimed by a local or external session manager.
+// produced a session yet, including one orphaned after being claimed.
 func (s *Server) DeletePendingSessionAllocation(ctx context.Context, sessionID string) (bool, error) {
 	manager, ok := s.sessionManager.(interface {
 		DeletePendingSessionAllocation(context.Context, string) (bool, error)

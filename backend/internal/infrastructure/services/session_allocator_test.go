@@ -286,7 +286,7 @@ func TestDeletePendingSessionAllocation(t *testing.T) {
 	}
 }
 
-func TestDeletePendingSessionAllocationDoesNotDeleteClaimedAllocation(t *testing.T) {
+func TestDeletePendingSessionAllocationDeletesClaimedOrphan(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 
 	cfg := config.DefaultConfig()
@@ -309,15 +309,15 @@ func TestDeletePendingSessionAllocationDoesNotDeleteClaimedAllocation(t *testing
 	if err != nil {
 		t.Fatalf("DeletePendingSessionAllocation() error = %v", err)
 	}
-	if deleted {
-		t.Fatal("DeletePendingSessionAllocation() deleted=true, want false")
+	if !deleted {
+		t.Fatal("DeletePendingSessionAllocation() deleted=false, want true")
 	}
 	if _, err := client.CoreV1().Secrets("test-ns").Get(
 		ctx,
 		sessionAllocationSecretName("allocating-session"),
 		metav1.GetOptions{},
-	); err != nil {
-		t.Fatalf("allocation Secret was deleted: %v", err)
+	); !apierrors.IsNotFound(err) {
+		t.Fatalf("allocation Secret still exists or returned unexpected error: %v", err)
 	}
 }
 
