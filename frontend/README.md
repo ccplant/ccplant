@@ -64,18 +64,6 @@ Cloudflare 側には少なくとも以下の環境変数・secretを設定して
 
 GitHub OAuthやPush通知を利用する場合は、それぞれの追加環境変数もWorkers Buildsのビルド変数とWorkerの環境変数に設定してください。
 
-### GitHub Actionsから継続デプロイ
-
-`main` ブランチにフロントエンドの変更がマージされると、`.github/workflows/deploy-cloudflare.yml` がWorkerをビルドして本番へデプロイします。GitHubの `cloudflare-production` Environmentに以下のSecretsを登録してください。
-
-- `CLOUDFLARE_ACCOUNT_ID`: デプロイ先CloudflareアカウントのID
-- `CLOUDFLARE_API_TOKEN`: 対象アカウントに限定した `Edit Cloudflare Workers` APIトークン
-- `AGENTAPI_PROXY_URL`: Workerから到達可能なagentapi-proxyのHTTPS URL
-- `COOKIE_ENCRYPTION_SECRET`: 64文字の16進数で表した32バイトの暗号鍵
-- `NEXT_PUBLIC_BASE_URL`: Workerまたはカスタムドメインの公開URL
-
-初回デプロイや再実行はGitHubのActions画面から `Deploy frontend to Cloudflare Workers` を選び、`Run workflow` でも開始できます。Environment protection ruleを設定すると、本番デプロイ前に承認を必須にできます。
-
 ### 認証
 
 ユーザーは `/login` ページで認証を行います：
