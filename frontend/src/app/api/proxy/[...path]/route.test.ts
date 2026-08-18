@@ -45,6 +45,8 @@ describe('API proxy route transport', () => {
     expect(headers.get('last-event-id')).toBe('9')
     expect(response.status).toBe(202)
     expect(response.headers.get('etag')).toBe('"stream"')
+    expect(response.headers.get('cache-control')).toBe('no-cache, no-transform')
+    expect(response.headers.get('x-accel-buffering')).toBe('no')
     expect(await response.text()).toBe(': connected\n\ndata: {"ok":true}\n\n')
   })
 
