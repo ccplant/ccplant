@@ -55,16 +55,19 @@ type PoolSupplier struct {
 }
 
 type Binding struct {
-	ID            string      `json:"id"`
-	Pool          string      `json:"pool"`
-	SubjectType   SubjectType `json:"subject_type"`
-	SubjectID     string      `json:"subject_id"`
-	Role          BindingRole `json:"role"`
-	Enabled       bool        `json:"enabled"`
-	Priority      int         `json:"priority,omitempty"`
-	MaxConcurrent int         `json:"max_concurrent,omitempty"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	ID          string      `json:"id"`
+	Pool        string      `json:"pool"`
+	SubjectType SubjectType `json:"subject_type"`
+	SubjectID   string      `json:"subject_id"`
+	Role        BindingRole `json:"role"`
+	Enabled     bool        `json:"enabled"`
+	// ExplicitOnly makes the pool available for explicit selection without
+	// allowing the resolver to choose it for requests that omit allocator.pool.
+	ExplicitOnly  bool      `json:"explicit_only,omitempty"`
+	Priority      int       `json:"priority,omitempty"`
+	MaxConcurrent int       `json:"max_concurrent,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type Subject struct {

@@ -101,7 +101,7 @@ type ExternalSessionManagerRequest struct {
 	ID                         string            `json:"id"`                                     // Required; registration uses the enrollment-token API
 	InstanceID                 string            `json:"instance_id,omitempty"`                  // Stable native host installation ID
 	Name                       string            `json:"name"`                                   // Human-readable name
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // Allow automatic assignment to this manager
+	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // Enable this manager's explicitly selectable pool
 	Labels                     map[string]string `json:"labels,omitempty"`                       // Matches allocator.* session tags
 }
 
@@ -158,7 +158,7 @@ type ExternalSessionManagerResponse struct {
 	Name                       string            `json:"name"`
 	HasConnectionToken         bool              `json:"has_connection_token"`                   // true if a connection token is configured
 	ConnectionToken            string            `json:"connection_token,omitempty"`             // returned only immediately after generation or rotation
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // true if automatic assignment may select this manager
+	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // true if the manager pool is available for explicit selection
 	Labels                     map[string]string `json:"labels,omitempty"`
 	PublicURL                  string            `json:"public_url,omitempty"`
 	Version                    string            `json:"version,omitempty"`

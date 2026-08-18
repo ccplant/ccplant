@@ -107,6 +107,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
 	require.Equal(t, core.BindingRoleManage, bindings[0].Role)
+	require.True(t, bindings[0].ExplicitOnly)
 	require.Zero(t, bindings[0].Priority)
 	require.False(t, bindings[0].Enabled)
 
@@ -128,6 +129,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	bindings, err = store.ListBindings(context.Background(), issued.Pool)
 	require.NoError(t, err)
 	require.True(t, bindings[0].Enabled)
+	require.True(t, bindings[0].ExplicitOnly)
 	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)

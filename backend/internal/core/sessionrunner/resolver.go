@@ -40,9 +40,17 @@ func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*Reso
 		managerByID[manager.ID] = manager
 	}
 	healthy := make(map[string]bool)
+	explicitOnly := make(map[string]bool)
+	automaticEligible := make(map[string]bool)
 	for _, supplier := range suppliers {
-		if supplier.Enabled && !supplier.Draining && r.managerAvailable(managerByID[supplier.ManagerID]) {
+		manager := managerByID[supplier.ManagerID]
+		if supplier.Enabled && !supplier.Draining && r.managerAvailable(manager) {
 			healthy[supplier.Pool] = true
+			if managerHasCapability(manager, CapabilityDirectRuntimeV1) {
+				explicitOnly[supplier.Pool] = true
+			} else {
+				automaticEligible[supplier.Pool] = true
+			}
 		}
 	}
 	result := make([]*ResolvedPool, 0, len(pools))
@@ -51,9 +59,23 @@ func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*Reso
 		if binding == nil || !pool.Enabled || !healthy[pool.Name] {
 			continue
 		}
-		result = append(result, &ResolvedPool{Pool: pool, Binding: binding})
+		resolvedBinding := *binding
+		resolvedBinding.ExplicitOnly = resolvedBinding.ExplicitOnly || (explicitOnly[pool.Name] && !automaticEligible[pool.Name])
+		result = append(result, &ResolvedPool{Pool: pool, Binding: &resolvedBinding})
 	}
 	return result, nil
+}
+
+func managerHasCapability(manager *Manager, capability string) bool {
+	if manager == nil {
+		return false
+	}
+	for _, candidate := range manager.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Resolver) AvailablePools(ctx context.Context, subject Subject) ([]*LogicalPool, error) {
@@ -76,6 +98,9 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string
 	requested := strings.TrimSpace(tags["allocator.pool"])
 	var candidates []*ResolvedPool
 	for _, resolved := range available {
+		if requested == "" && resolved.Binding.ExplicitOnly {
+			continue
+		}
 		if !poolMatchesTags(resolved.Pool, tags) {
 			continue
 		}

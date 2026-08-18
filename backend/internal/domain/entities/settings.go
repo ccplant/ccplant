@@ -107,7 +107,7 @@ type ExternalSessionManagerEntry struct {
 	Pool                string            `json:"pool,omitempty"`
 	BindingSubjectType  string            `json:"binding_subject_type,omitempty"`
 	BindingSubjectID    string            `json:"binding_subject_id,omitempty"`
-	// AutomaticAssignmentEnabled allows the automatic resolver to assign new sessions.
+	// AutomaticAssignmentEnabled enables the manager's explicitly selectable pool.
 	// Explicit manager selection remains available when this is disabled.
 	AutomaticAssignmentEnabled bool `json:"automatic_assignment_enabled,omitempty"`
 	// LegacySchedulable preserves settings written by the prerelease schedulable API.

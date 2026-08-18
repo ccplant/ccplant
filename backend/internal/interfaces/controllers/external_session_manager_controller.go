@@ -297,7 +297,7 @@ func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, m
 	}
 	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
 	binding := &sessionrunnercore.Binding{Pool: manager.Pool, SubjectType: subjectType, SubjectID: manager.BindingSubjectID,
-		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsAutomaticAssignmentEnabled()}
+		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsAutomaticAssignmentEnabled(), ExplicitOnly: true}
 	if err := c.sessionRunnerStore.CreateBinding(ctx, binding); err != nil {
 		_ = c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool)
 		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
@@ -341,6 +341,7 @@ func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manage
 	}
 	for _, binding := range bindings {
 		binding.Enabled = manager.IsAutomaticAssignmentEnabled()
+		binding.ExplicitOnly = true
 		if err := c.sessionRunnerStore.UpdateBinding(ctx, binding); err != nil {
 			return err
 		}

@@ -5354,7 +5354,7 @@
       },
       "SessionPoolBinding": {
         "type": "object", "required": ["subject_type"],
-        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "priority": {"type": "integer"}, "max_concurrent": {"type": "integer", "minimum": 0, "default": 0, "description": "Best-effort maximum active allocations attributed to this binding; zero is unlimited."}}
+        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "explicit_only": {"type": "boolean", "default": false, "description": "Expose the pool for explicit selection but exclude it from automatic resolution."}, "priority": {"type": "integer"}, "max_concurrent": {"type": "integer", "minimum": 0, "default": 0, "description": "Best-effort maximum active allocations attributed to this binding; zero is unlimited."}}
       },
       "AdminSettingsDocument": {
         "type": "object",

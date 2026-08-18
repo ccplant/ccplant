@@ -1071,7 +1071,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		}
 	}
 
-	// If no ManagerID is specified, check for an external session manager with automatic assignment enabled.
+	// Preserve automatic assignment only for legacy ESMs that do not have a runner pool.
 	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
 	// these features, which require local Kubernetes deployment to add init containers/sidecars.
 	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
@@ -1401,7 +1401,7 @@ func githubTokenForStartRequest(startReq entities.StartRequest) string {
 }
 
 // findESMByID searches the user's settings and team settings for an ESM entry with the given ID.
-// findAutomaticAssignmentESM searches user and team settings for an ESM enabled for automatic assignment.
+// findAutomaticAssignmentESM searches user and team settings for a legacy, pool-less ESM enabled for automatic assignment.
 // User settings take precedence over team settings.
 func (s *Server) findAutomaticAssignmentESM(ctx context.Context, userID string, teams []string, tags map[string]string) (*entities.ExternalSessionManagerEntry, error) {
 	if s.settingsRepo == nil {
@@ -1412,7 +1412,7 @@ func (s *Server) findAutomaticAssignmentESM(ctx context.Context, userID string, 
 	userSettings, err := s.settingsRepo.FindByName(ctx, userID)
 	if err == nil && userSettings != nil {
 		for _, esm := range userSettings.ExternalSessionManagers() {
-			if esm.IsAutomaticAssignmentEnabled() && externalSessionManagerMatches(esm, tags) {
+			if esm.Pool == "" && esm.IsAutomaticAssignmentEnabled() && externalSessionManagerMatches(esm, tags) {
 				entry := esm
 				return &entry, nil
 			}
@@ -1426,7 +1426,7 @@ func (s *Server) findAutomaticAssignmentESM(ctx context.Context, userID string, 
 			continue
 		}
 		for _, esm := range teamSettings.ExternalSessionManagers() {
-			if esm.IsAutomaticAssignmentEnabled() && externalSessionManagerMatches(esm, tags) {
+			if esm.Pool == "" && esm.IsAutomaticAssignmentEnabled() && externalSessionManagerMatches(esm, tags) {
 				entry := esm
 				return &entry, nil
 			}
