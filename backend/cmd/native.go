@@ -42,15 +42,15 @@ var NativeCmd = &cobra.Command{
 }
 
 type nativeManageOptions struct {
-	upstream, name, listen, apiKeyEnv, apiKeyFile, configPath, instance                      string
-	scope, teamID, drainTimeout, registrationToken                                           string
-	labels                                                                                   []string
-	environment                                                                              []string
-	defaultManager, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
-	inheritRuntimeProfile                                                                    bool
-	logsFollow, logsDaemon                                                                   bool
-	jsonOutput                                                                               bool
-	logsTail                                                                                 int
+	upstream, name, listen, apiKeyEnv, apiKeyFile, configPath, instance                   string
+	scope, teamID, drainTimeout, registrationToken                                        string
+	labels                                                                                []string
+	environment                                                                           []string
+	schedulable, apiKeyStdin, force, drain, keepRegistration, keepData, filesystemSandbox bool
+	inheritRuntimeProfile                                                                 bool
+	logsFollow, logsDaemon                                                                bool
+	jsonOutput                                                                            bool
+	logsTail                                                                              int
 }
 
 var nativeManageOpts nativeManageOptions
@@ -83,7 +83,7 @@ func init() {
 	f.StringVar(&nativeManageOpts.registrationToken, "registration-token", "", "one-time registration token issued by the parent proxy")
 	f.StringSliceVar(&nativeManageOpts.labels, "label", nil, "allocator label in key=value form")
 	f.StringArrayVar(&nativeManageOpts.environment, "manager-env", nil, "native manager environment variable in KEY=VALUE form (repeatable)")
-	f.BoolVar(&nativeManageOpts.defaultManager, "default", false, "make this the default external session manager")
+	f.BoolVar(&nativeManageOpts.schedulable, "schedulable", false, "allow this external session manager to receive scheduled sessions immediately")
 	f.BoolVar(&nativeManageOpts.force, "force", false, "install even if the existing state directory contains sessions")
 	f.BoolVar(&nativeManageOpts.filesystemSandbox, "filesystem-sandbox", false, "sandbox native session filesystem access on macOS")
 	f.BoolVar(&nativeManageOpts.inheritRuntimeProfile, "inherit-runtime-profile", false, "apply runtime profile received from the parent proxy")
@@ -199,7 +199,7 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 	}
 	payload := map[string]interface{}{
 		"instance_id": instanceID, "name": nativeManageOpts.name,
-		"labels": labels, "default": nativeManageOpts.defaultManager,
+		"labels": labels, "schedulable": nativeManageOpts.schedulable,
 		"version": nativeBuildVersion(), "registration_token": nativeManageOpts.registrationToken,
 	}
 	registration, err := enrollNativeManager(nativeManageOpts.upstream, payload)

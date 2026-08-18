@@ -77,12 +77,12 @@ func createTestUser(userID string, isAdmin bool) *entities.User {
 	return user
 }
 
-func TestGetAvailableManagersHidesPoolBackedManagers(t *testing.T) {
+func TestGetAvailableManagersOnlyReturnsSchedulableManagers(t *testing.T) {
 	repo := newMockSettingsRepository()
 	settings := entities.NewSettings("test-user")
 	settings.SetExternalSessionManagers([]entities.ExternalSessionManagerEntry{
-		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s"},
-		{ID: "legacy", Name: "Direct manager"},
+		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s", Schedulable: true},
+		{ID: "disabled", Name: "Disabled manager"},
 	})
 	require.NoError(t, repo.Save(context.Background(), settings))
 
@@ -98,7 +98,7 @@ func TestGetAvailableManagersHidesPoolBackedManagers(t *testing.T) {
 	var response AvailableManagersResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Equal(t, []AvailableManagerEntry{{
-		ID: "legacy", Name: "Direct manager", Source: "user", SourceName: "test-user",
+		ID: "pooled", Name: "Cluster pool manager", Schedulable: true, Source: "user", SourceName: "test-user",
 	}}, response.Managers)
 }
 

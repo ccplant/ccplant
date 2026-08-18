@@ -1071,7 +1071,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		}
 	}
 
-	// If no ManagerID is specified, check for a default external session manager.
+	// If no ManagerID is specified, check for a schedulable external session manager.
 	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
 	// these features, which require local Kubernetes deployment to add init containers/sidecars.
 	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
@@ -1081,7 +1081,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
 	}
 	if !sandboxRequested && !dindRequested {
-		selectedESM, err := s.findDefaultESM(context.Background(), userID, teams, startReq.Tags)
+		selectedESM, err := s.findSchedulableESM(context.Background(), userID, teams, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select external session manager: %w", err)
 		}
@@ -1401,9 +1401,9 @@ func githubTokenForStartRequest(startReq entities.StartRequest) string {
 }
 
 // findESMByID searches the user's settings and team settings for an ESM entry with the given ID.
-// findDefaultESM searches user and team settings for an ESM entry with Default=true.
+// findSchedulableESM searches user and team settings for a schedulable ESM matching the request tags.
 // User settings take precedence over team settings.
-func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []string, tags map[string]string) (*entities.ExternalSessionManagerEntry, error) {
+func (s *Server) findSchedulableESM(ctx context.Context, userID string, teams []string, tags map[string]string) (*entities.ExternalSessionManagerEntry, error) {
 	if s.settingsRepo == nil {
 		return nil, nil
 	}
@@ -1412,7 +1412,7 @@ func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []stri
 	userSettings, err := s.settingsRepo.FindByName(ctx, userID)
 	if err == nil && userSettings != nil {
 		for _, esm := range userSettings.ExternalSessionManagers() {
-			if (esm.Default || hasAllocatorSelector(tags)) && externalSessionManagerMatches(esm, tags) {
+			if esm.IsSchedulable() && externalSessionManagerMatches(esm, tags) {
 				entry := esm
 				return &entry, nil
 			}
@@ -1426,7 +1426,7 @@ func (s *Server) findDefaultESM(ctx context.Context, userID string, teams []stri
 			continue
 		}
 		for _, esm := range teamSettings.ExternalSessionManagers() {
-			if (esm.Default || hasAllocatorSelector(tags)) && externalSessionManagerMatches(esm, tags) {
+			if esm.IsSchedulable() && externalSessionManagerMatches(esm, tags) {
 				entry := esm
 				return &entry, nil
 			}

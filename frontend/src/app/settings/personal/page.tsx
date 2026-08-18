@@ -25,7 +25,7 @@ export default function PersonalSettingsPage() {
   const [notificationChannels, setNotificationChannels] = useState<string[] | undefined>(undefined)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
   const [editingEsmIndex, setEditingEsmIndex] = useState<number | null>(null)
-  const [editEsm, setEditEsm] = useState<{ name: string; default: boolean }>({ name: '', default: false })
+  const [editEsm, setEditEsm] = useState<{ name: string; schedulable: boolean }>({ name: '', schedulable: false })
   const [revealedTokens, setRevealedTokens] = useState<Record<string, string>>({})
   const [copiedSecretId, setCopiedSecretId] = useState<string | null>(null)
   const [regeneratingEsmId, setRegeneratingEsmId] = useState<string | null>(null)
@@ -197,8 +197,8 @@ export default function PersonalSettingsPage() {
     setSettings((prev) => ({ ...prev, external_session_managers: updated }))
   }
 
-  const handleToggleEsmDefault = (index: number) => {
-    const updated = esmList.map((e, i) => ({ ...e, default: i === index ? !e.default : false }))
+  const handleToggleEsmSchedulable = (index: number) => {
+    const updated = esmList.map((e, i) => ({ ...e, schedulable: i === index ? !e.schedulable : e.schedulable }))
     setEsmList(updated)
     setSettings((prev) => ({ ...prev, external_session_managers: updated }))
   }
@@ -206,19 +206,17 @@ export default function PersonalSettingsPage() {
   const handleStartEditEsm = (index: number) => {
     const esm = esmList[index]
     setEditingEsmIndex(index)
-    setEditEsm({ name: esm.name, default: esm.default ?? false })
+    setEditEsm({ name: esm.name, schedulable: esm.schedulable ?? false })
   }
 
   const handleSaveEditEsm = () => {
     if (editingEsmIndex === null) return
     if (!editEsm.name.trim()) return
-    const updatedList = editEsm.default
-      ? esmList.map((e) => ({ ...e, default: false }))
-      : [...esmList]
+    const updatedList = [...esmList]
     updatedList[editingEsmIndex] = {
       ...esmList[editingEsmIndex],
       name: editEsm.name.trim(),
-      default: editEsm.default,
+      schedulable: editEsm.schedulable,
     }
     setEsmList(updatedList)
     setSettings((prev) => ({ ...prev, external_session_managers: updatedList }))
@@ -713,11 +711,11 @@ export default function PersonalSettingsPage() {
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={editEsm.default}
-                          onChange={(e) => setEditEsm(prev => ({ ...prev, default: e.target.checked }))}
+                          checked={editEsm.schedulable}
+                          onChange={(e) => setEditEsm(prev => ({ ...prev, schedulable: e.target.checked }))}
                           className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                         />
-                        <span className="text-xs text-gray-700 dark:text-gray-300">デフォルトに設定する</span>
+                        <span className="text-xs text-gray-700 dark:text-gray-300">スケジューリングを有効にする</span>
                       </label>
                       <div className="flex gap-2">
                         <button
@@ -743,8 +741,8 @@ export default function PersonalSettingsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{esm.name}</span>
-                          {esm.default && (
-                            <span className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded">デフォルト</span>
+                          {esm.schedulable && (
+                            <span className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded">スケジューリング可能</span>
                           )}
                           {esm.pool && <span className="px-1.5 py-0.5 text-xs bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded">Pool: {esm.pool}</span>}
                         </div>
@@ -816,15 +814,15 @@ export default function PersonalSettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleToggleEsmDefault(index)}
+                          onClick={() => handleToggleEsmSchedulable(index)}
                           className={`text-xs px-2 py-1 rounded border transition-colors ${
-                            esm.default
+                            esm.schedulable
                               ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
                               : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-blue-300 dark:hover:border-blue-700'
                           }`}
-                          title={esm.default ? 'デフォルトを解除' : 'デフォルトに設定'}
+                          title={esm.schedulable ? 'スケジューリングを停止' : 'スケジューリングを有効化'}
                         >
-                          {esm.default ? '★' : '☆'}
+                          {esm.schedulable ? '停止' : '有効化'}
                         </button>
                         <button
                           type="button"

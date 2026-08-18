@@ -98,11 +98,11 @@ type UpdateSettingsRequest struct {
 
 // ExternalSessionManagerRequest represents updates to an already-enrolled manager.
 type ExternalSessionManagerRequest struct {
-	ID         string            `json:"id"`                    // Required; registration uses the enrollment-token API
-	InstanceID string            `json:"instance_id,omitempty"` // Stable native host installation ID
-	Name       string            `json:"name"`                  // Human-readable name
-	Default    bool              `json:"default,omitempty"`     // Use as default manager when no manager_id is specified
-	Labels     map[string]string `json:"labels,omitempty"`      // Matches allocator.* session tags
+	ID          string            `json:"id"`                    // Required; registration uses the enrollment-token API
+	InstanceID  string            `json:"instance_id,omitempty"` // Stable native host installation ID
+	Name        string            `json:"name"`                  // Human-readable name
+	Schedulable bool              `json:"schedulable,omitempty"` // Allow this manager to receive newly scheduled sessions
+	Labels      map[string]string `json:"labels,omitempty"`      // Matches allocator.* session tags
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -158,7 +158,7 @@ type ExternalSessionManagerResponse struct {
 	Name               string            `json:"name"`
 	HasConnectionToken bool              `json:"has_connection_token"`       // true if a connection token is configured
 	ConnectionToken    string            `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
-	Default            bool              `json:"default,omitempty"`          // true if this manager is used when no manager_id is specified
+	Schedulable        bool              `json:"schedulable,omitempty"`      // true if this manager may receive newly scheduled sessions
 	Labels             map[string]string `json:"labels,omitempty"`
 	PublicURL          string            `json:"public_url,omitempty"`
 	Version            string            `json:"version,omitempty"`
@@ -169,11 +169,11 @@ type ExternalSessionManagerResponse struct {
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
 type AvailableManagerEntry struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Default    bool   `json:"default,omitempty"` // true if this manager is used when no manager_id is specified
-	Source     string `json:"source"`            // "user" or "team"
-	SourceName string `json:"source_name"`       // user ID or team ID
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Schedulable bool   `json:"schedulable,omitempty"` // true if this manager may receive newly scheduled sessions
+	Source      string `json:"source"`                // "user" or "team"
+	SourceName  string `json:"source_name"`           // user ID or team ID
 }
 
 // AvailableManagersResponse is the response body for GET /settings/managers
@@ -197,15 +197,15 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 	// Collect from user's own settings
 	if userSettings, err := c.repo.FindByName(ctx.Request().Context(), userID); err == nil {
 		for _, m := range userSettings.ExternalSessionManagers() {
-			if m.Pool != "" {
+			if !m.IsSchedulable() {
 				continue
 			}
 			managers = append(managers, AvailableManagerEntry{
-				ID:         m.ID,
-				Name:       m.Name,
-				Default:    m.Default,
-				Source:     "user",
-				SourceName: userID,
+				ID:          m.ID,
+				Name:        m.Name,
+				Schedulable: m.IsSchedulable(),
+				Source:      "user",
+				SourceName:  userID,
 			})
 		}
 	}
@@ -216,15 +216,15 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 			teamID := team.Organization + "/" + team.TeamSlug
 			if teamSettings, err := c.repo.FindByName(ctx.Request().Context(), teamID); err == nil {
 				for _, m := range teamSettings.ExternalSessionManagers() {
-					if m.Pool != "" {
+					if !m.IsSchedulable() {
 						continue
 					}
 					managers = append(managers, AvailableManagerEntry{
-						ID:         m.ID,
-						Name:       m.Name,
-						Default:    m.Default,
-						Source:     "team",
-						SourceName: teamID,
+						ID:          m.ID,
+						Name:        m.Name,
+						Schedulable: m.IsSchedulable(),
+						Source:      "team",
+						SourceName:  teamID,
 					})
 				}
 			}
@@ -466,17 +466,6 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			existing[e.ID] = e
 		}
 
-		// Validate: at most one entry may have Default=true
-		defaultCount := 0
-		for _, m := range *req.ExternalSessionManagers {
-			if m.Default {
-				defaultCount++
-			}
-		}
-		if defaultCount > 1 {
-			return echo.NewHTTPError(http.StatusBadRequest, "at most one external session manager may be marked as default")
-		}
-
 		updated := make([]entities.ExternalSessionManagerEntry, 0, len(*req.ExternalSessionManagers))
 		retained := make(map[string]bool, len(*req.ExternalSessionManagers))
 		for _, m := range *req.ExternalSessionManagers {
@@ -488,13 +477,13 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				return echo.NewHTTPError(http.StatusBadRequest, "external session manager is not enrolled")
 			}
 			entry := entities.ExternalSessionManagerEntry{
-				ID:         m.ID,
-				InstanceID: m.InstanceID,
-				Name:       m.Name,
-				HMACSecret: prev.HMACSecret,
-				Default:    m.Default,
-				Labels:     m.Labels,
-				Pool:       prev.Pool, BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
+				ID:          m.ID,
+				InstanceID:  m.InstanceID,
+				Name:        m.Name,
+				HMACSecret:  prev.HMACSecret,
+				Schedulable: m.Schedulable,
+				Labels:      m.Labels,
+				Pool:        prev.Pool, BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
 			}
 			retained[m.ID] = true
 			// These fields are owned by the daemon registration/heartbeat API and
@@ -817,7 +806,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				InstanceID:         m.InstanceID,
 				Name:               m.Name,
 				HasConnectionToken: m.HMACSecret != "",
-				Default:            m.Default,
+				Schedulable:        m.IsSchedulable(),
 				Labels:             m.Labels,
 				PublicURL:          m.PublicURL,
 				Version:            m.Version,

@@ -1,9 +1,25 @@
 package entities
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+func TestExternalSessionManagerSchedulableBackwardCompatibility(t *testing.T) {
+	var legacy ExternalSessionManagerEntry
+	if err := json.Unmarshal([]byte(`{"id":"legacy","default":true}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if !legacy.IsSchedulable() {
+		t.Fatal("legacy default manager must remain schedulable")
+	}
+
+	current := ExternalSessionManagerEntry{ID: "current", Schedulable: true}
+	if !current.IsSchedulable() {
+		t.Fatal("schedulable manager must be eligible for scheduling")
+	}
+}
 
 func TestNewBedrockSettings(t *testing.T) {
 	bedrock := NewBedrockSettings(true)

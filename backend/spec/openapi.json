@@ -7624,8 +7624,9 @@
               "type": "string"
             }
           },
-          "default": {
-            "type": "boolean"
+          "schedulable": {
+            "type": "boolean",
+            "description": "Whether this manager may receive newly scheduled sessions"
           },
           "public_url": {
             "type": "string",
@@ -7661,8 +7662,9 @@
               "type": "string"
             }
           },
-          "default": {
-            "type": "boolean"
+          "schedulable": {
+            "type": "boolean",
+            "description": "Whether this manager may receive newly scheduled sessions"
           },
           "public_url": {
             "type": "string",

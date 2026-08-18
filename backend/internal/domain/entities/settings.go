@@ -107,9 +107,18 @@ type ExternalSessionManagerEntry struct {
 	Pool                string            `json:"pool,omitempty"`
 	BindingSubjectType  string            `json:"binding_subject_type,omitempty"`
 	BindingSubjectID    string            `json:"binding_subject_id,omitempty"`
-	// Default indicates this manager is used automatically when no manager_id is specified at session creation.
-	// At most one entry should have Default=true.
-	Default bool `json:"default,omitempty"`
+	// Schedulable indicates this manager may receive newly scheduled sessions.
+	// Managers are registered with this disabled and must be enabled explicitly.
+	Schedulable bool `json:"schedulable,omitempty"`
+	// LegacyDefault preserves backward compatibility with settings written before
+	// schedulable replaced default. It is never exposed by the public API.
+	LegacyDefault bool `json:"default,omitempty"`
+}
+
+// IsSchedulable treats the former default flag as schedulable so existing
+// installations keep routing sessions until their settings are saved again.
+func (e ExternalSessionManagerEntry) IsSchedulable() bool {
+	return e.Schedulable || e.LegacyDefault
 }
 
 // Settings represents user or team settings
