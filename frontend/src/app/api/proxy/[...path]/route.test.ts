@@ -43,11 +43,31 @@ describe('API proxy route transport', () => {
     expect(headers.get('accept')).toBe('text/event-stream')
     expect(headers.get('content-type')).toBe('application/json-patch+json')
     expect(headers.get('last-event-id')).toBe('9')
-    expect(response.status).toBe(202)
-    expect(response.headers.get('etag')).toBe('"stream"')
+    expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-cache, no-transform')
     expect(response.headers.get('x-accel-buffering')).toBe('no')
     expect(await response.text()).toBe(': connected\n\ndata: {"ok":true}\n\n')
+  })
+
+  it('opens the downstream SSE response before the upstream fetch resolves', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
+    let resolveUpstream: ((response: Response) => void) | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveUpstream = resolve
+    }))
+    const request = new NextRequest('https://ui.example.test/api/proxy/s/share-token/events', {
+      headers: { Accept: 'text/event-stream' },
+    })
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ['s', 'share-token', 'events'] }),
+    })
+    const reader = response.body!.getReader()
+    const firstChunk = await reader.read()
+
+    expect(new TextDecoder().decode(firstChunk.value)).toBe(': connected\n\n')
+    resolveUpstream?.(new Response('data: {"ok":true}\n\n'))
+    await reader.cancel()
   })
 
   it('aborts the upstream stream when the downstream reader cancels', async () => {
@@ -71,7 +91,7 @@ describe('API proxy route transport', () => {
     expect(upstreamSignal?.aborted).toBe(true)
   })
 
-  it('propagates an incoming request abort to the upstream fetch', async () => {
+  it('propagates an incoming request abort after committing the SSE response', async () => {
     vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
     const downstreamAbort = new AbortController()
     let upstreamSignal: AbortSignal | undefined
@@ -96,6 +116,6 @@ describe('API proxy route transport', () => {
 
     const response = await pendingResponse
     expect(upstreamSignal?.aborted).toBe(true)
-    expect(response.status).toBe(499)
+    expect(response.status).toBe(200)
   })
 })

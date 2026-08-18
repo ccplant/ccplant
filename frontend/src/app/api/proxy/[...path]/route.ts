@@ -195,6 +195,81 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse
   return new NextResponse(stream, responseInit)
 }
 
+function proxyServerSentEvents(
+  targetUrl: string,
+  requestInit: RequestInit,
+  linkedAbort: LinkedAbort,
+): NextResponse {
+  const encoder = new TextEncoder()
+  let keepalive: ReturnType<typeof setInterval> | undefined
+  let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    if (keepalive) clearInterval(keepalive)
+    linkedAbort.cleanup()
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Do not wait for the upstream server to emit its first event before
+      // opening the browser-facing stream. Some SSE servers do not commit
+      // their response headers while the session is idle.
+      controller.enqueue(encoder.encode(': connected\n\n'))
+      keepalive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'))
+        } catch {
+          // Cancellation races with the interval callback.
+        }
+      }, 15000)
+
+      void (async () => {
+        try {
+          const response = await fetch(targetUrl, requestInit)
+          if (!response.ok || !response.body) {
+            throw new Error(`Upstream SSE request failed with status ${response.status}`)
+          }
+
+          upstreamReader = response.body.getReader()
+          while (true) {
+            const { done, value } = await upstreamReader.read()
+            if (done) {
+              finish()
+              controller.close()
+              return
+            }
+            controller.enqueue(value)
+          }
+        } catch (error) {
+          finish()
+          controller.error(error)
+        }
+      })()
+    },
+    async cancel(reason) {
+      if (!linkedAbort.controller.signal.aborted) linkedAbort.controller.abort(reason)
+      try {
+        await upstreamReader?.cancel(reason)
+      } catch {
+        // The abort may already have closed the upstream reader.
+      } finally {
+        finish()
+      }
+    },
+  })
+
+  return new NextResponse(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  })
+}
+
 async function handleProxyRequest(
   request: NextRequest,
   pathParts: string[],
@@ -246,13 +321,21 @@ async function handleProxyRequest(
       streaming: isSSE,
     })
 
-    const response = await fetch(targetUrl, {
+    const requestInit: RequestInit = {
       method,
       headers,
       body,
       signal: linkedAbort.controller.signal,
       redirect: 'manual',
-    })
+    }
+
+    if (isSSE) {
+      const result = proxyServerSentEvents(targetUrl, requestInit, linkedAbort)
+      linkedAbort = undefined
+      return result
+    }
+
+    const response = await fetch(targetUrl, requestInit)
 
     debugLog('[API Proxy] Received upstream response', {
       method,
