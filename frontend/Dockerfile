@@ -15,7 +15,12 @@ RUN bun install --frozen-lockfile --production
 FROM base AS builder
 COPY . .
 RUN bun install --frozen-lockfile
-RUN bun run build
+# Next.js may exit before its worker processes finish when the Bun-provided
+# `node` shim is used under BuildKit. Use the Alpine Node runtime for the build
+# so `.next/standalone` and `.next/static` are always complete.
+RUN apk add --no-cache nodejs \
+    && BROWSERSLIST_IGNORE_OLD_DATA=1 NEXT_TELEMETRY_DISABLED=1 \
+       /usr/bin/node ./node_modules/next/dist/bin/next build
 
 # Production stage
 FROM oven/bun:1.3.5-alpine AS runner
