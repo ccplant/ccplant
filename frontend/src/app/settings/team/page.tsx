@@ -146,6 +146,13 @@ export default function TeamSettingsPage() {
     })))
   }
 
+  const handleTogglePool = (index: number) => {
+    updateEsmList(esmList.map((manager, current) => ({
+      ...manager,
+      pool_enabled: current === index ? !manager.pool_enabled : manager.pool_enabled,
+    })))
+  }
+
   const handleSave = async () => {
     if (!teamName) {
       setError('Please select a team first')
@@ -378,13 +385,17 @@ export default function TeamSettingsPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-gray-900 dark:text-white">{manager.name}</span>
-                        {manager.automatic_assignment_enabled && <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Pool 有効</span>}
+                        {manager.pool_enabled && <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Pool 有効</span>}
+                        {manager.automatic_assignment_enabled && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">自動割り当て ON</span>}
                         {manager.pool && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">Pool: {manager.pool}</span>}
                         {manager.has_connection_token && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">token 設定済み</span>}
                       </div>
                     </div>
+                    <button type="button" onClick={() => handleTogglePool(index)} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 dark:border-gray-600 dark:text-gray-300">
+					  {manager.pool_enabled ? 'Pool を無効化' : 'Pool を有効化'}
+                    </button>
                     <button type="button" onClick={() => handleToggleAutomaticAssignment(index)} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 dark:border-gray-600 dark:text-gray-300">
-					  {manager.automatic_assignment_enabled ? 'Pool を無効化' : 'Pool を有効化'}
+					  {manager.automatic_assignment_enabled ? '自動割り当てを停止' : '自動割り当てを有効化'}
                     </button>
                     <button type="button" onClick={() => updateEsmList(esmList.filter((_, current) => current !== index))} className="rounded border border-red-200 px-2 py-1 text-xs text-red-500 dark:border-red-700 dark:text-red-400">
                       削除

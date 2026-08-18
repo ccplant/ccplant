@@ -98,7 +98,7 @@ func TestGetAvailableManagersReturnsExplicitlySelectableManagers(t *testing.T) {
 	var response AvailableManagersResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Equal(t, []AvailableManagerEntry{
-		{ID: "pooled", Name: "Cluster pool manager", AutomaticAssignmentEnabled: true, Source: "user", SourceName: "test-user"},
+		{ID: "pooled", Name: "Cluster pool manager", PoolEnabled: true, AutomaticAssignmentEnabled: true, Source: "user", SourceName: "test-user"},
 		{ID: "disabled", Name: "Disabled manager", Source: "user", SourceName: "test-user"},
 	}, response.Managers)
 }

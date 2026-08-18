@@ -94,24 +94,6 @@ func TestResolverExplicitOnlyPoolRequiresPoolSelector(t *testing.T) {
 	require.Equal(t, "native-mac", resolved.Pool.Name)
 }
 
-func TestResolverTreatsExistingDirectRuntimePoolAsExplicitOnly(t *testing.T) {
-	store := &resolverStore{
-		managers:  []*Manager{{ID: "esm-a", Enabled: true, Capabilities: []string{CapabilityDirectRuntimeV1}}},
-		pools:     []*LogicalPool{{Name: "esm-pool", Enabled: true}},
-		suppliers: []*PoolSupplier{{Pool: "esm-pool", ManagerID: "esm-a", Enabled: true}},
-		bindings:  []*Binding{{Pool: "esm-pool", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
-	}
-	resolver := NewResolver(store, 0)
-
-	resolved, err := resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
-	require.NoError(t, err)
-	require.Nil(t, resolved)
-
-	resolved, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, map[string]string{"allocator.pool": "esm-pool"})
-	require.NoError(t, err)
-	require.True(t, resolved.Binding.ExplicitOnly)
-}
-
 func TestResolverBreaksEqualPriorityByPoolName(t *testing.T) {
 	store := &resolverStore{
 		managers: []*Manager{{ID: "manager-a", Enabled: true}},

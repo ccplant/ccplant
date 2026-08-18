@@ -25,7 +25,7 @@ export default function PersonalSettingsPage() {
   const [notificationChannels, setNotificationChannels] = useState<string[] | undefined>(undefined)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
   const [editingEsmIndex, setEditingEsmIndex] = useState<number | null>(null)
-  const [editEsm, setEditEsm] = useState<{ name: string; automatic_assignment_enabled: boolean }>({ name: '', automatic_assignment_enabled: false })
+  const [editEsm, setEditEsm] = useState<{ name: string; pool_enabled: boolean; automatic_assignment_enabled: boolean }>({ name: '', pool_enabled: false, automatic_assignment_enabled: false })
   const [revealedTokens, setRevealedTokens] = useState<Record<string, string>>({})
   const [copiedSecretId, setCopiedSecretId] = useState<string | null>(null)
   const [regeneratingEsmId, setRegeneratingEsmId] = useState<string | null>(null)
@@ -203,10 +203,16 @@ export default function PersonalSettingsPage() {
     setSettings((prev) => ({ ...prev, external_session_managers: updated }))
   }
 
+  const handleTogglePool = (index: number) => {
+    const updated = esmList.map((e, i) => ({ ...e, pool_enabled: i === index ? !e.pool_enabled : e.pool_enabled }))
+    setEsmList(updated)
+    setSettings((prev) => ({ ...prev, external_session_managers: updated }))
+  }
+
   const handleStartEditEsm = (index: number) => {
     const esm = esmList[index]
     setEditingEsmIndex(index)
-    setEditEsm({ name: esm.name, automatic_assignment_enabled: esm.automatic_assignment_enabled ?? false })
+    setEditEsm({ name: esm.name, pool_enabled: esm.pool_enabled ?? false, automatic_assignment_enabled: esm.automatic_assignment_enabled ?? false })
   }
 
   const handleSaveEditEsm = () => {
@@ -216,6 +222,7 @@ export default function PersonalSettingsPage() {
     updatedList[editingEsmIndex] = {
       ...esmList[editingEsmIndex],
       name: editEsm.name.trim(),
+	  pool_enabled: editEsm.pool_enabled,
       automatic_assignment_enabled: editEsm.automatic_assignment_enabled,
     }
     setEsmList(updatedList)
@@ -711,11 +718,20 @@ export default function PersonalSettingsPage() {
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
+						  checked={editEsm.pool_enabled}
+						  onChange={(e) => setEditEsm(prev => ({ ...prev, pool_enabled: e.target.checked }))}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <span className="text-xs text-gray-700 dark:text-gray-300">Pool の明示選択を有効にする</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
 						  checked={editEsm.automatic_assignment_enabled}
 						  onChange={(e) => setEditEsm(prev => ({ ...prev, automatic_assignment_enabled: e.target.checked }))}
                           className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                         />
-                        <span className="text-xs text-gray-700 dark:text-gray-300">Pool の明示選択を有効にする</span>
+                        <span className="text-xs text-gray-700 dark:text-gray-300">自動割り当てを有効にする</span>
                       </label>
                       <div className="flex gap-2">
                         <button
@@ -741,8 +757,11 @@ export default function PersonalSettingsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{esm.name}</span>
-						  {esm.automatic_assignment_enabled && (
+						  {esm.pool_enabled && (
 							<span className="px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded">Pool 有効</span>
+                          )}
+						  {esm.automatic_assignment_enabled && (
+							<span className="px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 rounded">自動割り当て ON</span>
                           )}
                           {esm.pool && <span className="px-1.5 py-0.5 text-xs bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded">Pool: {esm.pool}</span>}
                         </div>
@@ -788,6 +807,18 @@ export default function PersonalSettingsPage() {
                         ) : null}
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
+						<button
+						  type="button"
+						  onClick={() => handleTogglePool(index)}
+						  className={`text-xs px-2 py-1 rounded border transition-colors ${
+							esm.pool_enabled
+							  ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
+							  : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-blue-300 dark:hover:border-blue-700'
+						  }`}
+						  title={esm.pool_enabled ? 'Pool を無効化' : 'Pool を有効化'}
+						>
+						  {esm.pool_enabled ? 'Pool 停止' : 'Pool 有効化'}
+						</button>
                         <button
                           type="button"
                           onClick={() => handleStartEditEsm(index)}
@@ -820,9 +851,9 @@ export default function PersonalSettingsPage() {
                               ? 'border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
                               : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-blue-300 dark:hover:border-blue-700'
                           }`}
-						  title={esm.automatic_assignment_enabled ? 'Pool を無効化' : 'Pool を有効化'}
+						  title={esm.automatic_assignment_enabled ? '自動割り当てを停止' : '自動割り当てを有効化'}
                         >
-						  {esm.automatic_assignment_enabled ? '停止' : '有効化'}
+						  {esm.automatic_assignment_enabled ? '自動停止' : '自動有効化'}
                         </button>
                         <button
                           type="button"

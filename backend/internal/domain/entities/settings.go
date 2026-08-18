@@ -107,8 +107,10 @@ type ExternalSessionManagerEntry struct {
 	Pool                string            `json:"pool,omitempty"`
 	BindingSubjectType  string            `json:"binding_subject_type,omitempty"`
 	BindingSubjectID    string            `json:"binding_subject_id,omitempty"`
-	// AutomaticAssignmentEnabled enables the manager's explicitly selectable pool.
-	// Explicit manager selection remains available when this is disabled.
+	// PoolEnabled makes the manager's pool available for explicit selection.
+	// A nil value preserves compatibility with settings saved before this field existed.
+	PoolEnabled *bool `json:"pool_enabled,omitempty"`
+	// AutomaticAssignmentEnabled also allows the resolver to select the pool implicitly.
 	AutomaticAssignmentEnabled bool `json:"automatic_assignment_enabled,omitempty"`
 	// LegacySchedulable preserves settings written by the prerelease schedulable API.
 	LegacySchedulable bool `json:"schedulable,omitempty"`
@@ -121,6 +123,15 @@ type ExternalSessionManagerEntry struct {
 // installations keep routing sessions until their settings are saved again.
 func (e ExternalSessionManagerEntry) IsAutomaticAssignmentEnabled() bool {
 	return e.AutomaticAssignmentEnabled || e.LegacySchedulable || e.LegacyDefault
+}
+
+// IsPoolEnabled keeps previously auto-assignable managers available after the
+// independent pool_enabled setting is introduced.
+func (e ExternalSessionManagerEntry) IsPoolEnabled() bool {
+	if e.PoolEnabled != nil {
+		return *e.PoolEnabled
+	}
+	return e.IsAutomaticAssignmentEnabled()
 }
 
 // Settings represents user or team settings

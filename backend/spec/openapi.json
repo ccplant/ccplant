@@ -7626,7 +7626,11 @@
           },
 		  "automatic_assignment_enabled": {
             "type": "boolean",
-			"description": "Whether automatic assignment may select this manager; explicit manager selection remains available when false"
+			"description": "Whether automatic assignment may select this manager pool"
+		  },
+		  "pool_enabled": {
+            "type": "boolean",
+			"description": "Whether this manager pool is available for explicit selection"
           },
           "public_url": {
             "type": "string",
@@ -7664,7 +7668,11 @@
           },
 		  "automatic_assignment_enabled": {
             "type": "boolean",
-			"description": "Whether automatic assignment may select this manager; explicit manager selection remains available when false"
+			"description": "Whether automatic assignment may select this manager pool"
+		  },
+		  "pool_enabled": {
+            "type": "boolean",
+			"description": "Whether this manager pool is available for explicit selection"
           },
           "public_url": {
             "type": "string",

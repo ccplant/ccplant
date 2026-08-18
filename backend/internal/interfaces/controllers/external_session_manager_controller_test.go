@@ -111,8 +111,8 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.Zero(t, bindings[0].Priority)
 	require.False(t, bindings[0].Enabled)
 
-	automaticAssignmentEnabled := true
-	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
+	poolEnabled := true
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{PoolEnabled: &poolEnabled}, "user1")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)
 	require.NoError(t, controller.PatchExternalSessionManager(ctx))
@@ -126,6 +126,28 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	supplier, err = store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
 	require.NoError(t, err)
 	require.True(t, supplier.Enabled)
+	bindings, err = store.ListBindings(context.Background(), issued.Pool)
+	require.NoError(t, err)
+	require.True(t, bindings[0].Enabled)
+	require.True(t, bindings[0].ExplicitOnly)
+
+	automaticAssignmentEnabled := true
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues(created.ID)
+	require.NoError(t, controller.PatchExternalSessionManager(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	bindings, err = store.ListBindings(context.Background(), issued.Pool)
+	require.NoError(t, err)
+	require.True(t, bindings[0].Enabled)
+	require.False(t, bindings[0].ExplicitOnly)
+
+	automaticAssignmentEnabled = false
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues(created.ID)
+	require.NoError(t, controller.PatchExternalSessionManager(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
 	bindings, err = store.ListBindings(context.Background(), issued.Pool)
 	require.NoError(t, err)
 	require.True(t, bindings[0].Enabled)
