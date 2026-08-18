@@ -2,6 +2,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-client';
 
+describe('AgentAPIProxyClient Session Runner Pools', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('lists the healthy pools available to the current user', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        session_pools: [{ name: 'native-linux', enabled: true, labels: { arch: 'amd64' } }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.getAvailableSessionPools()).resolves.toEqual([
+      { name: 'native-linux', enabled: true, labels: { arch: 'amd64' } },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/available-session-pools',
+      expect.any(Object),
+    );
+  });
+});
+
 describe('AgentAPIProxyClient ACP message history', () => {
   afterEach(() => {
     vi.restoreAllMocks();
