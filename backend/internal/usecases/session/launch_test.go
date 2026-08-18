@@ -160,6 +160,53 @@ func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	}
 }
 
+func TestLaunchAppliesProfilePoolAsAllocatorSelector(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "pooled", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPool("native-linux")
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.Tags["allocator.pool"]; got != "native-linux" {
+		t.Fatalf("allocator.pool = %q, want %q", got, "native-linux")
+	}
+}
+
+func TestLaunchExplicitPoolSelectorOverridesProfilePool(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "pooled", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPool("profile-pool")
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+		Tags:   map[string]string{"allocator.pool": "request-pool"},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.Tags["allocator.pool"]; got != "request-pool" {
+		t.Fatalf("allocator.pool = %q, want %q", got, "request-pool")
+	}
+}
+
 func TestLaunchPropagatesProfileMCPServers(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "mcp", "user-1")

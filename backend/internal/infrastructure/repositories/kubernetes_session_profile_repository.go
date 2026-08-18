@@ -50,6 +50,7 @@ type sessionProfileJSON struct {
 type sessionProfileConfigJSON struct {
 	Environment            map[string]string         `json:"environment,omitempty"`
 	Tags                   map[string]string         `json:"tags,omitempty"`
+	Pool                   string                    `json:"pool,omitempty"`
 	InitialMessageTemplate string                    `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
 	Params                 *entities.SessionParams   `json:"params,omitempty"`
@@ -316,6 +317,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetEnvironment(pj.Config.Environment)
 	cfg.SetTags(pj.Config.Tags)
+	cfg.SetPool(pj.Config.Pool)
 	cfg.SetInitialMessageTemplate(pj.Config.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(pj.Config.ReuseMessageTemplate)
 	cfg.SetParams(pj.Config.Params)
@@ -365,6 +367,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 		Config: sessionProfileConfigJSON{
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
+			Pool:                   cfg.Pool(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			Params:                 cfg.Params(),

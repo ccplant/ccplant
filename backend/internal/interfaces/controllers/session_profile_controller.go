@@ -33,6 +33,7 @@ func (c *SessionProfileController) GetName() string {
 type SessionProfileConfigRequest struct {
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
+	Pool                   string                       `json:"pool,omitempty"`
 	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
@@ -83,6 +84,7 @@ type SessionProfileResponse struct {
 type SessionProfileConfigResponse struct {
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
+	Pool                   string                       `json:"pool,omitempty"`
 	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
@@ -336,6 +338,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	if req.Tags != nil {
 		cfg.SetTags(req.Tags)
 	}
+	cfg.SetPool(req.Pool)
 	cfg.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	cfg.SetReuseSession(req.ReuseSession)
@@ -387,6 +390,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		Config: SessionProfileConfigResponse{
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
+			Pool:                   cfg.Pool(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			Params:                 cfg.Params(),

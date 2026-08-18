@@ -23,6 +23,7 @@ type SessionProfile struct {
 type SessionProfileConfig struct {
 	environment            map[string]string
 	tags                   map[string]string
+	pool                   string
 	initialMessageTemplate string
 	reuseMessageTemplate   string
 	params                 *SessionParams
@@ -205,6 +206,12 @@ func (c *SessionProfileConfig) Tags() map[string]string { return c.tags }
 
 // SetTags sets the tags
 func (c *SessionProfileConfig) SetTags(tags map[string]string) { c.tags = tags }
+
+// Pool returns the logical session runner pool selected by this profile.
+func (c *SessionProfileConfig) Pool() string { return c.pool }
+
+// SetPool sets the logical session runner pool selected by this profile.
+func (c *SessionProfileConfig) SetPool(pool string) { c.pool = pool }
 
 // InitialMessageTemplate returns the initial message template
 func (c *SessionProfileConfig) InitialMessageTemplate() string { return c.initialMessageTemplate }

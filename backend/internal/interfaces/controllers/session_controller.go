@@ -233,10 +233,13 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			}
 
 			// Tags: profile is base, request keys override
-			if len(cfg.Tags()) > 0 {
-				merged := make(map[string]string, len(cfg.Tags()))
+			if len(cfg.Tags()) > 0 || cfg.Pool() != "" {
+				merged := make(map[string]string, len(cfg.Tags())+1)
 				for k, v := range cfg.Tags() {
 					merged[k] = v
+				}
+				if cfg.Pool() != "" {
+					merged["allocator.pool"] = cfg.Pool()
 				}
 				for k, v := range startReq.Tags {
 					merged[k] = v
