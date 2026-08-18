@@ -108,6 +108,8 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse
   }
 
   if (sse) {
+    headers.set('Cache-Control', 'no-cache, no-transform')
+    headers.set('X-Accel-Buffering', 'no')
     const encoder = new TextEncoder()
     let keepalive: ReturnType<typeof setInterval> | undefined
     const stream = new ReadableStream<Uint8Array>({
@@ -122,22 +124,29 @@ function proxyUpstreamResponse(response: Response, linkedAbort: LinkedAbort, sse
             // Cancellation races with the interval callback.
           }
         }, 15000)
-      },
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read()
-          if (done) {
+
+        // Pump independently from downstream pull requests. OpenNext consumes
+        // the returned stream through its own response pump; awaiting the
+        // upstream reader from pull() can otherwise leave both sides waiting
+        // and prevent even the initial SSE comment from being committed.
+        void (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) {
+                if (keepalive) clearInterval(keepalive)
+                finish()
+                controller.close()
+                return
+              }
+              controller.enqueue(value)
+            }
+          } catch (error) {
             if (keepalive) clearInterval(keepalive)
             finish()
-            controller.close()
-            return
+            controller.error(error)
           }
-          controller.enqueue(value)
-        } catch (error) {
-          if (keepalive) clearInterval(keepalive)
-          finish()
-          controller.error(error)
-        }
+        })()
       },
       async cancel(reason) {
         if (keepalive) clearInterval(keepalive)
