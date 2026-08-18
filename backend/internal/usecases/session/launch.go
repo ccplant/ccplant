@@ -362,10 +362,13 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		}
 	}
 	// Tags: profile is base, request overrides key-by-key
-	if len(cfg.Tags()) > 0 {
-		merged := make(map[string]string, len(cfg.Tags()))
+	if len(cfg.Tags()) > 0 || cfg.Pool() != "" {
+		merged := make(map[string]string, len(cfg.Tags())+1)
 		for k, v := range cfg.Tags() {
 			merged[k] = v
+		}
+		if cfg.Pool() != "" {
+			merged["allocator.pool"] = cfg.Pool()
 		}
 		for k, v := range req.Tags {
 			merged[k] = v

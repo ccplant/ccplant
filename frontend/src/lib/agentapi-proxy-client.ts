@@ -2096,6 +2096,14 @@ export class AgentAPIProxyClient {
   // Session Profile methods
 
   /**
+   * Get the healthy Session Runner Pools available to the current user.
+   */
+  async getAvailableSessionPools(): Promise<LogicalSessionPool[]> {
+    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/available-session-pools');
+    return result.session_pools || [];
+  }
+
+  /**
    * Create a new Session Profile
    */
   async createSessionProfile(data: CreateSessionProfileRequest): Promise<SessionProfile> {

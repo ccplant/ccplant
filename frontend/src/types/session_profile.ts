@@ -20,6 +20,7 @@ export type CredentialSource = 'session_user' | 'team' | 'none';
 export interface SessionProfileConfig {
   environment?: Record<string, string>;
   tags?: Record<string, string>;
+  pool?: string;
   initial_message_template?: string;
   reuse_message_template?: string;
   reuse_session?: boolean;

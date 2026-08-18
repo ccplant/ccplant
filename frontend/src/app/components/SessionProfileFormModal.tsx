@@ -8,6 +8,7 @@ import {
   CredentialSource,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
+import { LogicalSessionPool } from '../../types/session_pool'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import type { APIMCPServerConfig } from '../../types/settings'
@@ -43,6 +44,8 @@ export default function SessionProfileFormModal({
   // Config fields
   const [envPairs, setEnvPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
   const [tagPairs, setTagPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
+  const [pool, setPool] = useState('')
+  const [availablePools, setAvailablePools] = useState<LogicalSessionPool[]>([])
   const [agentType, setAgentType] = useState('')
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
 
@@ -74,26 +77,34 @@ export default function SessionProfileFormModal({
 
   useEffect(() => {
     if (!isOpen) return
-    const fetchSandboxPolicies = async () => {
+    const fetchConfigOptions = async () => {
+      const client = createAgentAPIProxyClientFromStorage()
       try {
-        const client = createAgentAPIProxyClientFromStorage()
         const response = await client.getSandboxPolicies({ ...getScopeParams() })
         setSandboxPolicies(response.sandbox_policies || [])
       } catch {
         setSandboxPolicies([])
       }
+      try {
+        setAvailablePools(await client.getAvailableSessionPools())
+      } catch {
+        setAvailablePools([])
+      }
     }
-    fetchSandboxPolicies()
+    fetchConfigOptions()
   }, [isOpen, getScopeParams])
 
   // Initialize form when editing
   useEffect(() => {
     if (editingProfile) {
+      setShowAdvanced(false)
       setName(editingProfile.name)
       setDescription(editingProfile.description ?? '')
       setIsDefault(editingProfile.is_default ?? false)
 
       const cfg = editingProfile.config
+      setPool(cfg?.pool ?? '')
+      if (cfg?.pool) setShowAdvanced(true)
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
       setMcpServers(cfg?.mcp_servers ?? {})
       if (cfg?.mcp_servers && Object.keys(cfg.mcp_servers).length > 0) {
@@ -159,6 +170,7 @@ export default function SessionProfileFormModal({
       setIsDefault(false)
       setEnvPairs([{ key: '', value: '' }])
       setTagPairs([{ key: '', value: '' }])
+      setPool('')
       setAgentType('')
       setMcpServers({})
       setDockerEnabled(false)
@@ -275,6 +287,7 @@ export default function SessionProfileFormModal({
       const config = {
         ...(Object.keys(environment).length > 0 ? { environment } : {}),
         ...(Object.keys(tags).length > 0 ? { tags } : {}),
+        ...(pool.trim() ? { pool: pool.trim() } : {}),
         ...(Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : {}),
         params,
         ...(sandboxPolicyId ? { sandbox_policy_id: sandboxPolicyId } : {}),
@@ -447,6 +460,37 @@ export default function SessionProfileFormModal({
 
               {showAdvanced && (
                 <div className="mt-4 space-y-5 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+                  {/* Session Runner Pool */}
+                  <div>
+                    <label htmlFor="session-profile-pool" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Session Runner Pool
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                      このプロファイルで作成するセッションの実行先Poolを指定します。空欄の場合は自動選択されます。
+                    </p>
+                    <select
+                      id="session-profile-pool"
+                      value={pool}
+                      onChange={(e) => setPool(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    >
+                      <option value="">自動選択</option>
+                      {pool && !availablePools.some((availablePool) => availablePool.name === pool) && (
+                        <option value={pool}>{pool}（現在の設定）</option>
+                      )}
+                      {availablePools.map((availablePool) => (
+                        <option key={availablePool.name} value={availablePool.name}>
+                          {availablePool.name}
+                        </option>
+                      ))}
+                    </select>
+                    {availablePools.length === 0 && (
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                        選択可能なPool候補がありません。
+                      </p>
+                    )}
+                  </div>
+
                   {/* Environment Variables */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

@@ -8194,6 +8194,10 @@
           },
           "description": "Tags to attach to the session"
         },
+        "pool": {
+          "type": "string",
+          "description": "Logical session runner pool to use for sessions created with this profile. An explicit allocator.pool tag on the start request takes precedence."
+        },
         "initial_message_template": {
           "type": "string",
           "description": "Go template for the initial message"
