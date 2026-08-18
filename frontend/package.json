@@ -5,7 +5,7 @@
   "packageManager": "bun@1.3.5",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "BROWSERSLIST_IGNORE_OLD_DATA=1 NEXT_TELEMETRY_DISABLED=1 next build",
     "preview:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy:cloudflare": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "size:cloudflare": "opennextjs-cloudflare build && wrangler deploy --dry-run",
@@ -54,6 +54,8 @@
     "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
+    "browserslist": "^4.28.8",
+    "caniuse-lite": "^1.0.30001809",
     "eslint": "^8",
     "eslint-config-next": "15.4.10",
     "happy-dom": "^18.0.1",
