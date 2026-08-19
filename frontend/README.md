@@ -64,6 +64,20 @@ Cloudflare 側には少なくとも以下の環境変数・secretを設定して
 
 GitHub OAuthやPush通知を利用する場合は、それぞれの追加環境変数もWorkers Buildsのビルド変数とWorkerの環境変数に設定してください。
 
+### `/api/v1` APIルーター
+
+APIクライアントは `/api/v1/*` を使って、`agentapi-proxy` APIへアクセスできます。
+公開パスの `/api/v1` は転送時に取り除かれます。
+
+```text
+https://app.example.com/api/v1/sessions?limit=10
+  -> https://<AGENTAPI_PROXY_URL>/sessions?limit=10
+```
+
+`Authorization` ヘッダーが指定されている場合は、その値をそのままバックエンドへ
+転送します。指定されていない場合は、従来の `/api/proxy/*` と同様に暗号化Cookieを
+復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。
+
 ### 認証
 
 ユーザーは `/login` ページで認証を行います：

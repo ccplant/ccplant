@@ -9,7 +9,7 @@ import {
   requestCanHaveBody,
 } from '@/lib/proxy-transport'
 
-type RouteContext = { params: Promise<{ path: string[] }> }
+type RouteContext = { params: Promise<{ path?: string[] }> }
 
 export async function GET(request: NextRequest, context: RouteContext) {
   return routeProxyRequest(request, context, 'GET')
@@ -44,7 +44,7 @@ async function routeProxyRequest(
   context: RouteContext,
   method: string,
 ): Promise<NextResponse> {
-  const { path } = await context.params
+  const { path = [] } = await context.params
   return handleProxyRequest(request, path, method)
 }
 
@@ -279,15 +279,19 @@ async function handleProxyRequest(
 
   try {
     // Preserve percent-encoded path separators decoded by Next.js catch-all params.
-    const proxyPrefix = '/api/proxy/'
     const rawPathname = request.nextUrl.pathname
-    const path = rawPathname.startsWith(proxyPrefix)
-      ? rawPathname.slice(proxyPrefix.length)
+    const isApiV1 = rawPathname === '/api/v1' || rawPathname.startsWith('/api/v1/')
+    const publicPrefix = isApiV1 ? '/api/v1' : '/api/proxy'
+    const path = rawPathname === publicPrefix
+      ? ''
+      : rawPathname.startsWith(`${publicPrefix}/`)
+        ? rawPathname.slice(publicPrefix.length + 1)
       : pathParts.join('/')
 
     const authenticationRequired = !isUnauthenticatedProxyPath(path)
+    const incomingAuthorization = isApiV1 ? request.headers.get('authorization') : null
     let apiKey: string | null = null
-    if (authenticationRequired) {
+    if (authenticationRequired && !incomingAuthorization) {
       apiKey = await getApiKeyFromCookie()
       if (!apiKey) {
         return NextResponse.json(
@@ -306,7 +310,7 @@ async function handleProxyRequest(
     }
 
     const body = requestCanHaveBody(method) ? await request.arrayBuffer() : undefined
-    const headers = buildUpstreamRequestHeaders(request.headers, apiKey)
+    const headers = buildUpstreamRequestHeaders(request.headers, apiKey, isApiV1)
     const targetUrl = `${getBackendBaseUrl()}/${path}${request.nextUrl.search}`
     const isSSE = isServerSentEventsRequest(headers)
     const isMessageEndpoint = pathParts.includes('message')
