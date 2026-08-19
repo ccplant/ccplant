@@ -7,7 +7,10 @@ interface SettingsCategoryContextValue {
   setActiveCategory: (category: string) => void
 }
 
-const SettingsCategoryContext = createContext<SettingsCategoryContextValue | null>(null)
+const SettingsCategoryContext = createContext<SettingsCategoryContextValue>({
+  activeCategory: '*',
+  setActiveCategory: () => undefined,
+})
 
 export function SettingsCategoryProvider({ children }: { children: React.ReactNode }) {
   const [activeCategory, setActiveCategoryState] = useState('settings-overview')
@@ -30,7 +33,5 @@ export function SettingsCategoryProvider({ children }: { children: React.ReactNo
 }
 
 export function useSettingsCategory() {
-  const context = useContext(SettingsCategoryContext)
-  if (!context) throw new Error('useSettingsCategory must be used within SettingsCategoryProvider')
-  return context
+  return useContext(SettingsCategoryContext)
 }

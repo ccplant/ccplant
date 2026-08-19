@@ -28,7 +28,7 @@ export function SettingsAccordion({
   children,
 }: SettingsAccordionProps) {
   const { activeCategory } = useSettingsCategory()
-  if (categoryId && categoryId !== activeCategory) return null
+  if (categoryId && activeCategory !== '*' && categoryId !== activeCategory) return null
 
   return (
     <section
