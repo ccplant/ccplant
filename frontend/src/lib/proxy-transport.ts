@@ -44,6 +44,7 @@ export function requestCanHaveBody(method: string): boolean {
 export function buildUpstreamRequestHeaders(
   source: Headers,
   apiKey: string | null,
+  passThroughAuthorization = false,
 ): Headers {
   const result = new Headers()
 
@@ -54,7 +55,9 @@ export function buildUpstreamRequestHeaders(
     }
   })
 
-  if (apiKey) {
+  if (passThroughAuthorization && source.has('authorization')) {
+    result.set('Authorization', source.get('authorization')!)
+  } else if (apiKey) {
     result.set('Authorization', `Bearer ${apiKey}`)
   }
 

@@ -24,6 +24,7 @@ describe('API proxy route transport', () => {
       method: 'POST',
       headers: {
         Accept: 'text/event-stream',
+        Authorization: 'Bearer api-client-token',
         'Content-Type': 'application/json-patch+json',
         'Last-Event-ID': '9',
       },
@@ -41,6 +42,7 @@ describe('API proxy route transport', () => {
     expect(options?.method).toBe('POST')
     expect(new TextDecoder().decode(options?.body as ArrayBuffer)).toBe('{"operation":"subscribe"}')
     expect(headers.get('accept')).toBe('text/event-stream')
+    expect(headers.get('authorization')).toBe('Bearer api-client-token')
     expect(headers.get('content-type')).toBe('application/json-patch+json')
     expect(headers.get('last-event-id')).toBe('9')
     expect(response.status).toBe(200)

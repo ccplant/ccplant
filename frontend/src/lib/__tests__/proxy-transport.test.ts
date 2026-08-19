@@ -53,6 +53,16 @@ describe('proxy transport helpers', () => {
     expect(result.get('cookie')).toBeNull()
   })
 
+  it('passes through Authorization only when explicitly enabled', () => {
+    const result = buildUpstreamRequestHeaders(new Headers({
+      Authorization: 'Bearer api-client-token',
+      Cookie: 'agentapi_token=encrypted-ui-cookie',
+    }), null, true)
+
+    expect(result.get('authorization')).toBe('Bearer api-client-token')
+    expect(result.get('cookie')).toBeNull()
+  })
+
   it('preserves response metadata without stale transport encodings', () => {
     const result = buildDownstreamResponseHeaders(new Headers({
       'Content-Type': 'application/octet-stream',

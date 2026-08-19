@@ -1,7 +1,7 @@
 import { createProxyRouteHandler } from '@/lib/server-proxy-route'
 
 const options = {
-  publicPrefix: '/api/proxy',
+  publicPrefix: '/api/v1',
   passThroughAuthorization: true,
 }
 
