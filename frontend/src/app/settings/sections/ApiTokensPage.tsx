@@ -19,7 +19,6 @@ export function ApiTokensPage() {
       />
       <ImmediateSaveNotice />
       <ApiTokensSection
-        bare
         scope={scopeKind === 'team' ? 'team' : 'personal'}
         teamId={scopeKind === 'team' ? scopeId : undefined}
       />
