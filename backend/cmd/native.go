@@ -450,15 +450,34 @@ func runNativeStatus(command *cobra.Command, _ []string) error {
 	if nativeHealth(cfg.Listen) == nil {
 		health = "ok"
 	}
-	active, _ := filepath.Glob(filepath.Join(cfg.StateDir, "sessions", "*"))
+	sessions, _ := readNativeSessionList(cfg.StateDir)
+	activeSessions := 0
+	for _, session := range sessions {
+		if nativeCLIStatusActive(session.Status) && processExists(session.PID) {
+			activeSessions++
+		}
+	}
 	status := nativeStatusOutput{Instance: instance, Service: service, ManagerID: cfg.ManagerID, Upstream: cfg.UpstreamURL,
 		Labels: cfg.Labels, Version: cfg.Version, FilesystemSandbox: cfg.FilesystemSandbox.Enabled,
-		ActiveSessions: len(active), Health: health, State: cfg.StateDir}
+		ActiveSessions: activeSessions, Health: health, State: cfg.StateDir}
 	if nativeManageOpts.jsonOutput {
 		return json.NewEncoder(command.OutOrStdout()).Encode(status)
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager ID: %s\nUpstream: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, cfg.ManagerID, cfg.UpstreamURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, len(active), health, cfg.StateDir)
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager ID: %s\nUpstream: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, cfg.ManagerID, cfg.UpstreamURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, activeSessions, health, cfg.StateDir)
 	return err
+}
+
+func nativeCLIStatusActive(status string) bool {
+	switch strings.ToLower(status) {
+	case "error", "failed", "exited", "stopped", "terminated":
+		return false
+	default:
+		return true
+	}
+}
+
+func processExists(pid int) bool {
+	return pid > 0 && syscall.Kill(pid, 0) == nil
 }
 
 type nativeSessionListEntry struct {

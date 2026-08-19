@@ -143,6 +143,73 @@ func TestNativeSessionManagerGetMissingSessionReturnsNil(t *testing.T) {
 	}
 }
 
+func TestNativeSessionManagerRemovesFinishedOneshotSession(t *testing.T) {
+	stateDir := t.TempDir()
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", "/bin/true", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.CreateSessionDirect(context.Background(), "oneshot-1", &entities.RunServerRequest{Oneshot: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(stateDir, "sessions", "oneshot-1")
+	deadline := time.Now().Add(3 * time.Second)
+	for m.GetSession("oneshot-1") != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("finished oneshot session was not removed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("oneshot session directory still exists: %v", err)
+	}
+}
+
+func TestNativeSessionManagerActiveSessionCountExcludesTerminalStates(t *testing.T) {
+	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, status := range map[string]string{
+		"creating": "creating", "running": "running", "error": "error", "stopped": "stopped",
+	} {
+		m.sessions[id] = &NativeSession{id: id, request: &entities.RunServerRequest{}, status: status}
+	}
+	if got := m.ActiveSessionCount(); got != 2 {
+		t.Fatalf("active session count = %d, want 2", got)
+	}
+}
+
+func TestNativeSessionManagerRemovesDeadSessionStateOnRestore(t *testing.T) {
+	stateDir := t.TempDir()
+	root := filepath.Join(stateDir, "sessions", "dead-1")
+	if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := nativeSessionState{
+		ID: "dead-1", Request: &entities.RunServerRequest{}, RootDir: root,
+		PID: 1 << 30, Status: "running",
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "state.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.GetSession("dead-1") != nil {
+		t.Fatal("dead session was restored")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("dead session directory still exists: %v", err)
+	}
+}
+
 func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
 	m, err := NewNativeSessionManager(t.TempDir(), "http://127.0.0.1:8080", "token", "", os.Args[0], false)
 	if err != nil {
