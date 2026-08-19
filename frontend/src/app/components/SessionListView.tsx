@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal } from 'lucide-react'
+import { CircleDot, GitPullRequest, Info, LoaderCircle, MoreHorizontal } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
@@ -118,6 +118,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [showHiddenSessions, setShowHiddenSessions] = useState(false)
   const [openAnnotationMenuId, setOpenAnnotationMenuId] = useState<string | null>(null)
+  const [expandedErrorSessionId, setExpandedErrorSessionId] = useState<string | null>(null)
 
   const [sortBy, setSortBy] = useState<'started_at' | 'updated_at'>(() => {
     if (typeof window !== 'undefined') {
@@ -187,7 +188,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }))
 
     // セッションが active になったタイミングでフルリフレッシュ（メタデータ取得のため）
-    if (event.status === 'active') {
+    if (event.status === 'active' || event.status === 'error' || event.status === 'timeout') {
       fetchSessions()
     }
   }, [fetchSessions])
@@ -430,8 +431,8 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (session.status === 'suspended') {
       return { status: 'suspended' as const, colorClass: 'bg-violet-500', text: 'Suspended' }
     }
-    if (session.status === 'error') {
-      return { status: 'error' as const, colorClass: 'bg-red-500', text: '起動失敗' }
+    if (session.status === 'error' || session.status === 'timeout') {
+      return { status: 'error' as const, colorClass: 'bg-red-500', text: session.status === 'timeout' ? '起動タイムアウト' : '起動失敗' }
     }
 
     // ステータスが取得できていない場合
@@ -824,7 +825,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                     } ${
                       isSelected
                         ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500'
-                        : session.status === 'error'
+                        : session.status === 'error' || session.status === 'timeout'
                         ? 'bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 border-l-4 border-red-500'
                         : session.status === 'creating' || session.status === 'starting'
                         ? 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 hover:from-blue-100 hover:to-indigo-100 dark:hover:from-blue-900/30 dark:hover:to-indigo-900/30 border-l-4 border-blue-500'
@@ -884,9 +885,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                             title={`Agent: ${agentStatusInfo.text}`}
                           />
                           {/* 新規セッション/作成中/起動中バッジ */}
-                          {(isNew || session.status === 'creating' || session.status === 'starting' || session.status === 'error') && (
+                          {(isNew || session.status === 'creating' || session.status === 'starting' || session.status === 'error' || session.status === 'timeout') && (
                             <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
-                              session.status === 'error'
+                              session.status === 'error' || session.status === 'timeout'
                                 ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
                                 : session.status === 'creating'
                                 ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
@@ -896,8 +897,8 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                 ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
                                 : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                             }`}>
-                              {session.status === 'error'
-                                ? '起動失敗'
+                              {session.status === 'error' || session.status === 'timeout'
+                                ? session.status === 'timeout' ? '起動タイムアウト' : '起動失敗'
                                 : session.status === 'creating'
                                 ? '作成中'
                                 : session.status === 'starting'
@@ -922,9 +923,26 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                           </div>
                         )}
 
-                        {session.status === 'error' && session.error_message && (
-                          <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" role="alert">
-                            <span className="font-medium">エラー: </span>{session.error_message}
+                        {(session.status === 'error' || session.status === 'timeout') && (
+                          <div className="mb-3">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setExpandedErrorSessionId(current => current === session.session_id ? null : session.session_id)
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
+                              aria-expanded={expandedErrorSessionId === session.session_id}
+                              aria-controls={`session-error-${session.session_id}`}
+                            >
+                              <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                              エラー詳細
+                            </button>
+                            {expandedErrorSessionId === session.session_id && (
+                              <div id={`session-error-${session.session_id}`} className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" role="alert">
+                                {session.error_message || 'エラーの詳細は取得できませんでした。管理者ログを確認してください。'}
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -999,7 +1017,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
 
                       {/* アクションボタン - モバイルでは縦並び */}
                       <div className="flex flex-row sm:flex-row items-center space-x-2 sm:space-x-2 sm:ml-4" onClick={(e) => e.stopPropagation()}>
-                        {session.status !== 'error' && (
+                        {session.status !== 'error' && session.status !== 'timeout' && (
                           <button
                             onClick={() => navigateToChat(session.session_id)}
                             className="inline-flex items-center justify-center px-3 py-2 sm:px-3 sm:py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors min-h-[44px] sm:min-h-0"

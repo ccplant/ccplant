@@ -1377,6 +1377,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 		case <-timeout:
 			readyTicker.Stop()
 			log.Printf("[K8S_SESSION] Stock session %s startup timeout", session.id)
+			session.SetStatusMessage("Timed out waiting for the session workload to become ready")
 			session.SetStatus("timeout")
 			return
 		case <-readyTicker.C:
@@ -1392,6 +1393,7 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for stock session %s", session.id)
 	if err := m.waitForPullProvisioner(ctx, session); err != nil {
 		log.Printf("[K8S_SESSION] Pull provisioner error for stock session %s: %v", session.id, err)
+		session.SetStatusMessage(err.Error())
 		session.SetStatus("error")
 		return
 	}
@@ -1671,12 +1673,14 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 		cacheKey := m.buildSessionListCacheKey(labelSelector)
 		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
 			sessions := m.filterSessionsFromCache(cached, filter)
+			m.hydrateSessionStatusMessages(ctx, sessions)
 			return m.withSessionAllocations(ctx, sessions, filter)
 		}
 	}
 
 	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
+	m.hydrateSessionStatusMessages(ctx, allSessions)
 	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
 
 	// Populate the cache with the full result set (before in-memory filters)
@@ -1695,6 +1699,20 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 	}
 
 	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
+}
+
+func (m *KubernetesSessionManager) hydrateSessionStatusMessages(ctx context.Context, sessions []entities.Session) {
+	for _, session := range sessions {
+		ks, ok := session.(*KubernetesSession)
+		if !ok || (ks.Status() != "error" && ks.Status() != "timeout") || ks.StatusMessage() != "" {
+			continue
+		}
+		request, err := m.getProvisionRequest(ctx, ks.ID())
+		if err != nil || request.Message == "" {
+			continue
+		}
+		ks.SetStatusMessage(request.Message)
+	}
 }
 
 func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
@@ -4016,6 +4034,7 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 
 		case <-timeout:
 			log.Printf("[K8S_SESSION] Session %s startup timeout", session.id)
+			session.SetStatusMessage("Timed out waiting for the session workload to become ready")
 			session.SetStatus("timeout")
 			return
 
@@ -4038,6 +4057,7 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 				log.Printf("[K8S_SESSION] Waiting for pull provision request to become ready for session %s", session.id)
 				if err := m.waitForPullProvisioner(ctx, session); err != nil {
 					log.Printf("[K8S_SESSION] Pull provisioner error for session %s: %v", session.id, err)
+					session.SetStatusMessage(err.Error())
 					session.SetStatus("error")
 					return
 				}

@@ -6198,6 +6198,7 @@
           "unhealthy",
           "stopped",
           "error",
+          "timeout",
           "unknown"
         ],
         "description": "Session status. 'running' means the agentapi backend is actively processing a message; 'error' means startup failed."

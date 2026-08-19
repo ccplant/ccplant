@@ -113,6 +113,10 @@ func TestKubernetesSession_Methods(t *testing.T) {
 	if session.Status() != "stopped" {
 		t.Errorf("Expected status 'stopped', got %s", session.Status())
 	}
+	session.SetStatusMessage("failed to start agent: executable not found")
+	if session.StatusMessage() != "failed to start agent: executable not found" {
+		t.Errorf("Unexpected status message %q", session.StatusMessage())
+	}
 
 	// Test ServiceDNS
 	expectedDNS := "test-svc.test-ns.svc.cluster.local"
