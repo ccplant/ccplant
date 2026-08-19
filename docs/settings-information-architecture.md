@@ -1,7 +1,5 @@
 # Settings information architecture proposal
 
-![Proposed compact settings screen](design/settings-information-architecture-v2.png)
-
 ## Objective
 
 Make settings easier to scan by separating the setting owner from the setting purpose, removing repeated card and accordion chrome, and keeping save state and search visible.
@@ -32,9 +30,3 @@ The setting owner becomes an **Edit scope** dropdown at the top of the sidebar. 
 ## Suggested first implementation slice
 
 Start with Personal settings and move Default Agent, preferred team, Claude OAuth, Codex credentials, and Bedrock into the new AI & authentication section. This validates the sidebar scope selector, flat setting-row component, and sticky save behavior before migrating the more complex list editors.
-
-## Image generation record
-
-- Mode: built-in image generation
-- Use case: `ui-mockup`
-- Direction: high-fidelity desktop SaaS settings screen with purpose-based navigation, sidebar edit-scope dropdown, search, sticky save state, flat full-width rows, no cards or accordions, and restrained status colors
