@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, PanelLeft, X } from 'lucide-react'
-import { SettingsSidebar, SidebarGroup } from './SettingsSidebar'
+import { SideNav, SideNavGroup } from '@/components/settings/ui/SideNav'
 import { ScopeSwitcher } from './ScopeSwitcher'
 import { SaveBar } from './SaveBar'
 import { SettingsScopeProvider, useSettingsScope } from './SettingsScopeContext'
@@ -42,9 +42,9 @@ const resolveScope = (pathname: string): ResolvedScope | null => {
 const buildGroups = (
   scope: ResolvedScope,
   dirtyFields: string[]
-): SidebarGroup[] => {
+): SideNavGroup[] => {
   const dirty = new Set(dirtyFields)
-  const groups: SidebarGroup[] = []
+  const groups: SideNavGroup[] = []
 
   for (const item of navItemsForScope(scope.scopeKind)) {
     const existing = groups.find((group) => group.title === item.group)
@@ -123,7 +123,7 @@ function ScopedShell({ scope, children }: { scope: ResolvedScope; children: Reac
 
       <div className="flex gap-8">
         <div className="hidden md:block">
-          <SettingsSidebar groups={groups} activeHref={pathname} header={sidebarHeader} />
+          <SideNav groups={groups} activeHref={pathname} header={sidebarHeader} />
         </div>
         <div className="min-w-0 flex-1">
           {children}
@@ -149,7 +149,7 @@ function ScopedShell({ scope, children }: { scope: ResolvedScope; children: Reac
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <SettingsSidebar groups={groups} activeHref={pathname} header={sidebarHeader} />
+            <SideNav groups={groups} activeHref={pathname} header={sidebarHeader} />
           </div>
         </div>
       )}

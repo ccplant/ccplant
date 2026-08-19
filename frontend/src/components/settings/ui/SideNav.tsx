@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { LucideIcon } from 'lucide-react'
 
-export interface SidebarItem {
+export interface SideNavItem {
   href: string
   label: string
   icon: LucideIcon
@@ -11,25 +11,34 @@ export interface SidebarItem {
   dirty?: boolean
 }
 
-export interface SidebarGroup {
+export interface SideNavGroup {
   /** 見出し。空文字ならグループ見出しなしで先頭に並ぶ */
   title: string
-  items: SidebarItem[]
+  items: SideNavItem[]
 }
 
-interface SettingsSidebarProps {
-  groups: SidebarGroup[]
+interface SideNavProps {
+  groups: SideNavGroup[]
   /** 現在表示中のパス */
   activeHref: string
   /** ナビ最上部に置くスコープスイッチャーなど */
   header?: React.ReactNode
   /** リンク遷移前に確認する。false を返すと遷移をキャンセルする */
   onNavigate?: (href: string) => boolean
+  ariaLabel?: string
+  className?: string
 }
 
-export function SettingsSidebar({ groups, activeHref, header, onNavigate }: SettingsSidebarProps) {
+export function SideNav({
+  groups,
+  activeHref,
+  header,
+  onNavigate,
+  ariaLabel = '設定',
+  className = '',
+}: SideNavProps) {
   return (
-    <nav className="w-full md:w-60 flex-shrink-0" aria-label="設定">
+    <nav className={`w-full flex-shrink-0 md:w-60 ${className}`} aria-label={ariaLabel}>
       {header}
       <div className="mt-3">
         {groups.map((group, groupIndex) => (

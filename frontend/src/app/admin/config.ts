@@ -1,3 +1,19 @@
+import {
+  Bell,
+  Cable,
+  Cpu,
+  Database,
+  Github,
+  Layers,
+  Lock,
+  type LucideIcon,
+  MessageSquare,
+  Boxes,
+  History,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react'
+
 export type AdminFieldType = 'text' | 'secret' | 'number' | 'toggle' | 'textarea' | 'select' | 'team-role-mapping'
 
 export interface AdminField {
@@ -13,12 +29,16 @@ export interface AdminSection {
   id: string
   title: string
   description: string
+  /** サイドバーのグループ見出し */
+  group: string
+  icon: LucideIcon
   fields: AdminField[]
 }
 
 export const adminSections: AdminSection[] = [
   {
     id: 'agents', title: 'AI・Agent', description: '全ユーザーのAI認証、MCP、Plugin、環境変数の既定値',
+    group: 'AI とエージェント', icon: Sparkles,
     fields: [
       { path: 'auth_mode', label: '既定の認証Mode', type: 'select', options: [{ label: 'OAuth', value: 'oauth' }, { label: 'AWS Bedrock', value: 'bedrock' }] },
       { path: 'bedrock_enabled', label: 'AWS Bedrock', type: 'toggle' },
@@ -32,6 +52,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'github', title: 'GitHub', description: 'GitHub OAuth、Enterprise、GitHub App の共通設定',
+    group: '認証と権限', icon: Github,
     fields: [
       { path: 'oauth.enabled', label: 'GitHub OAuth', type: 'toggle' },
       { path: 'oauth.client_id', label: 'OAuth Client ID', type: 'text' },
@@ -49,6 +70,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'authentication', title: '認証・認可', description: 'ログイン方式とGitHub Teamベースの権限設定',
+    group: '認証と権限', icon: ShieldCheck,
     fields: [
       { path: 'static.enabled', label: 'Static API Key認証', type: 'toggle' },
       { path: 'static.header_name', label: 'API Key Header', type: 'text', placeholder: 'X-API-Key' },
@@ -60,6 +82,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'slack', title: 'Slack', description: 'システム共通Slack Appの資格情報と動作設定',
+    group: '連携', icon: MessageSquare,
     fields: [
       { path: 'bot_token', label: 'Bot Token', type: 'secret', placeholder: 'xoxb-...' },
       { path: 'app_token', label: 'App Token', type: 'secret', placeholder: 'xapp-...' },
@@ -72,6 +95,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'notifications', title: '通知', description: 'Web Pushと通知リンクの設定',
+    group: '連携', icon: Bell,
     fields: [
       { path: 'base_url', label: '通知Base URL', type: 'text' },
       { path: 'vapid_public_key', label: 'VAPID Public Key', type: 'text' },
@@ -83,6 +107,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'workers', title: 'Workers', description: 'スケジュール実行とウォームプール',
+    group: '実行基盤', icon: Cpu,
     fields: [
       { path: 'schedule.enabled', label: 'Schedule Worker', type: 'toggle' },
       { path: 'schedule.check_interval', label: 'Schedule確認間隔', type: 'text', placeholder: '30s' },
@@ -94,6 +119,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'sessions', title: 'セッション', description: '全セッションに適用する実行環境の既定値',
+    group: '実行基盤', icon: Boxes,
     fields: [
       { path: 'image', label: 'Session Image', type: 'text' },
       { path: 'cpu_request', label: 'CPU Request', type: 'text', placeholder: '500m' },
@@ -111,6 +137,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'storage', title: 'ストレージ', description: 'KV、使用量、Redis、セッション永続化',
+    group: '実行基盤', icon: Database,
     fields: [
       { path: 'backend', label: 'KV Backend', type: 'select', options: [{ label: 'Kubernetes', value: 'kubernetes' }, { label: 'libSQL', value: 'libsql' }] },
       { path: 'database_url', label: 'Database URL', type: 'secret' },
@@ -126,6 +153,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'integrations', title: '外部連携', description: 'Google、Todoist、SCIAの共通設定',
+    group: '連携', icon: Cable,
     fields: [
       { path: 'scia_enabled', label: 'SCIA', type: 'toggle' },
       { path: 'google_client_id', label: 'Google Client ID', type: 'text' },
@@ -138,6 +166,7 @@ export const adminSections: AdminSection[] = [
   },
   {
     id: 'security', title: 'セキュリティ', description: '保存データの暗号化とネットワーク制御',
+    group: 'セキュリティ', icon: Lock,
     fields: [
       { path: 'encryption_key', label: 'Encryption Key', type: 'secret' },
       { path: 'network_filter_image', label: 'Network Filter Image', type: 'text' },
@@ -148,3 +177,16 @@ export const adminSections: AdminSection[] = [
 ]
 
 export const getAdminSection = (id: string) => adminSections.find((section) => section.id === id)
+
+/** 設定セクション以外のページ。サイドバーには同じ体裁で並ぶ */
+export interface AdminNavExtra {
+  href: string
+  title: string
+  group: string
+  icon: LucideIcon
+}
+
+export const adminNavExtras: AdminNavExtra[] = [
+  { href: '/admin/pools', title: 'Session Pools', group: '実行基盤', icon: Layers },
+  { href: '/admin/history', title: '変更履歴', group: '運用', icon: History },
+]

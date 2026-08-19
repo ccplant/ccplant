@@ -6,8 +6,6 @@ import { LogOut, Menu, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-r
 import PreferencesDialog from './PreferencesDialog'
 import { UserInfo } from '@/types/user'
 
-const MOVED_HINT_KEY = 'agentapi-global-menu-hint-seen'
-
 // ページ読み込みごとに 1 回だけ /api/user/info を取得する（メニューを開くたびに叩かない）
 let userInfoPromise: Promise<UserInfo | null> | null = null
 
@@ -26,28 +24,9 @@ export default function GlobalMenu() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [showPreferences, setShowPreferences] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
-  const [showMovedHint, setShowMovedHint] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-
-  // 歯車から移動したことを伝えるヒントを初回のみ表示する
-  useEffect(() => {
-    try {
-      setShowMovedHint(localStorage.getItem(MOVED_HINT_KEY) !== 'true')
-    } catch {
-      setShowMovedHint(false)
-    }
-  }, [])
-
-  const dismissMovedHint = useCallback(() => {
-    setShowMovedHint(false)
-    try {
-      localStorage.setItem(MOVED_HINT_KEY, 'true')
-    } catch {
-      // localStorage が使えない環境では何もしない
-    }
-  }, [])
 
   // 管理者判定はメニューを最初に開いたときにだけ取得する
   useEffect(() => {
@@ -114,7 +93,6 @@ export default function GlobalMenu() {
   }, [isOpen])
 
   const handleToggle = () => {
-    dismissMovedHint()
     setIsOpen((prev) => !prev)
   }
 
@@ -169,12 +147,6 @@ export default function GlobalMenu() {
           <Menu className="w-5 h-5" />
         </button>
 
-        {showMovedHint && !isOpen && (
-          <div className="absolute right-0 mt-2 z-50 w-56 px-3 py-2 rounded-md bg-gray-900 dark:bg-gray-700 text-white text-xs shadow-lg">
-            設定はこちらに移動しました
-          </div>
-        )}
-
         {isOpen && (
           <div
             ref={menuRef}
@@ -208,7 +180,7 @@ export default function GlobalMenu() {
                 <span>
                   <span className="block font-medium">Admin 設定</span>
                   <span className="block text-xs text-gray-500 dark:text-gray-400">
-                    ユーザー・チーム管理
+                    システム全体の設定
                   </span>
                 </span>
               </button>

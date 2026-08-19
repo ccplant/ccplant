@@ -1,5 +1,4 @@
 export { BedrockSettings } from './BedrockSettings'
-export { SettingsAccordion } from './SettingsAccordion'
 export { MCPServerSettings } from './MCPServerSettings'
 export { MarketplaceSettings } from './MarketplaceSettings'
 export { PluginSettings } from './PluginSettings'
@@ -20,6 +19,8 @@ export { FieldRow, FieldGroup } from './ui/FieldRow'
 export { SelectField } from './ui/SelectField'
 export { TextField } from './ui/TextField'
 export { ItemList, ItemListRow, ItemListEmpty, StatusBadge, RowAction } from './ui/ItemList'
+export { SideNav } from './ui/SideNav'
+export type { SideNavGroup, SideNavItem } from './ui/SideNav'
 export {
   SettingsPageHeader,
   SettingsSubsection,
