@@ -2,10 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestRunHelmMigrateValuesSeparatesLegacyRoles(t *testing.T) {
@@ -131,5 +137,123 @@ func TestRunHelmMigrateValuesRefusesExistingRoleValues(t *testing.T) {
 	err := runHelmMigrateValues(strings.NewReader("api: {replicaCount: 3}\n"), &bytes.Buffer{}, &bytes.Buffer{}, o)
 	if err == nil || !strings.Contains(err.Error(), "already contain") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestRunHelmMigrateValuesMigratesSecrets(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "provisioner", Namespace: "target"},
+		Data:       map[string][]byte{"token": []byte("legacy-provisioner")},
+	})
+	o := &helmMigrateValuesOptions{
+		input: "-", output: "-", namespace: "target", release: "backend",
+		workerControlSecret: "worker", managerInternalSecret: "manager",
+		encryptionSecret: "encryption", provisionerSecret: "provisioner",
+		migrateSecrets: true, kubeClient: client,
+	}
+	input := `config: {encryption: {key: legacy-encryption}}
+kubernetesSession: {enabled: true}
+scheduleWorker: {enabled: true}
+`
+	if err := runHelmMigrateValues(strings.NewReader(input), &bytes.Buffer{}, &bytes.Buffer{}, o); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSecretKey := func(name, key, want string) {
+		t.Helper()
+		secret, err := client.CoreV1().Secrets("target").Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(secret.Data[key]); got != want {
+			t.Fatalf("Secret %s key %s=%q, want %q", name, key, got, want)
+		}
+	}
+	assertSecretKey("encryption", "encryption-key", "legacy-encryption")
+	assertSecretKey("provisioner", "token", "legacy-provisioner")
+	assertSecretKey("provisioner", "provisioner-token", "legacy-provisioner")
+
+	for _, name := range []string{"worker", "manager"} {
+		secret, err := client.CoreV1().Secrets("target").Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(secret.Data["token"]) != 64 {
+			t.Fatalf("Secret %s generated token length=%d", name, len(secret.Data["token"]))
+		}
+	}
+}
+
+func TestRunHelmMigrateValuesDoesNotOverwriteExistingSecretKeys(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "target"}, Data: map[string][]byte{"token": []byte("keep-worker")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "manager", Namespace: "target"}, Data: map[string][]byte{"token": []byte("keep-manager")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "encryption", Namespace: "target"}, Data: map[string][]byte{"encryption-key": []byte("keep-encryption")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "provisioner", Namespace: "target"}, Data: map[string][]byte{"provisioner-token": []byte("keep-provisioner")}},
+	)
+	o := &helmMigrateValuesOptions{
+		input: "-", output: "-", namespace: "target", release: "backend",
+		workerControlSecret: "worker", managerInternalSecret: "manager",
+		encryptionSecret: "encryption", provisionerSecret: "provisioner",
+		migrateSecrets: true, kubeClient: client,
+	}
+	if err := runHelmMigrateValues(strings.NewReader("kubernetesSession: {enabled: true}\n"), &bytes.Buffer{}, &bytes.Buffer{}, o); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, expectation := range map[string][2]string{
+		"worker": {"token", "keep-worker"}, "manager": {"token", "keep-manager"},
+		"encryption": {"encryption-key", "keep-encryption"}, "provisioner": {"provisioner-token", "keep-provisioner"},
+	} {
+		secret, err := client.CoreV1().Secrets("target").Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(secret.Data[expectation[0]]); got != expectation[1] {
+			t.Fatalf("Secret %s was overwritten: %q", name, got)
+		}
+	}
+}
+
+func TestRunHelmMigrateValuesRejectsConflictingMigratedSecrets(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		input     string
+		secrets   []corev1.Secret
+		wantError string
+	}{
+		{
+			name:      "encryption",
+			input:     "config: {encryption: {key: legacy}}\nkubernetesSession: {enabled: true}\n",
+			secrets:   []corev1.Secret{{ObjectMeta: metav1.ObjectMeta{Name: "encryption", Namespace: "target"}, Data: map[string][]byte{"encryption-key": []byte("current")}}},
+			wantError: "conflicts with legacy config.encryption.key",
+		},
+		{
+			name:      "provisioner",
+			input:     "kubernetesSession: {enabled: true}\n",
+			secrets:   []corev1.Secret{{ObjectMeta: metav1.ObjectMeta{Name: "provisioner", Namespace: "target"}, Data: map[string][]byte{"token": []byte("legacy"), "provisioner-token": []byte("current")}}},
+			wantError: `keys "token" and "provisioner-token" conflict`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			objects := make([]runtime.Object, len(test.secrets))
+			for i := range test.secrets {
+				objects[i] = &test.secrets[i]
+			}
+			client := fake.NewSimpleClientset(objects...)
+			o := &helmMigrateValuesOptions{
+				input: "-", output: "-", namespace: "target", release: "backend",
+				workerControlSecret: "worker", managerInternalSecret: "manager",
+				encryptionSecret: "encryption", provisionerSecret: "provisioner",
+				migrateSecrets: true, kubeClient: client,
+			}
+			err := runHelmMigrateValues(strings.NewReader(test.input), &bytes.Buffer{}, &bytes.Buffer{}, o)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error=%v, want containing %q", err, test.wantError)
+			}
+			if _, getErr := client.CoreV1().Secrets("target").Get(context.Background(), "worker", metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+				t.Fatalf("worker Secret was created before conflict validation: %v", getErr)
+			}
+		})
 	}
 }
