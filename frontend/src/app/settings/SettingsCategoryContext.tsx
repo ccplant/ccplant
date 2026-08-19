@@ -13,11 +13,12 @@ const SettingsCategoryContext = createContext<SettingsCategoryContextValue>({
 })
 
 export function SettingsCategoryProvider({ children }: { children: React.ReactNode }) {
-  const [activeCategory, setActiveCategoryState] = useState('settings-overview')
+  const [activeCategory, setActiveCategoryState] = useState('ai-authentication')
 
   useEffect(() => {
     const category = window.location.hash.slice(1)
-    if (category) setActiveCategoryState(category)
+    const validCategories = ['ai-authentication', 'extensions', 'session-settings', 'client-settings', 'notification-settings', 'security-settings']
+    if (validCategories.includes(category)) setActiveCategoryState(category)
   }, [])
 
   const value = useMemo(() => ({

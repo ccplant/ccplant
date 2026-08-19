@@ -3,10 +3,6 @@
 import { useSettingsCategory } from './SettingsCategoryContext'
 
 const categoryCopy: Record<string, { title: string; description: string }> = {
-  'settings-overview': {
-    title: '設定の概要',
-    description: '現在の設定状態と、このスコープで有効な構成を確認できます。',
-  },
   'ai-authentication': {
     title: 'AI・認証',
     description: '既定のエージェント、AIプロバイダー、認証情報を管理します。',
@@ -18,6 +14,10 @@ const categoryCopy: Record<string, { title: string; description: string }> = {
   'session-settings': {
     title: 'セッション',
     description: 'セッションの動作、環境変数、ファイル、実行環境を設定します。',
+  },
+  'client-settings': {
+    title: 'クライアント',
+    description: 'このブラウザで使用する表示と入力操作を設定します。変更はすぐに反映されます。',
   },
   'notification-settings': {
     title: '通知',
@@ -31,7 +31,7 @@ const categoryCopy: Record<string, { title: string; description: string }> = {
 
 export function SettingsTabHeader({ scopeLabel }: { scopeLabel: string }) {
   const { activeCategory } = useSettingsCategory()
-  const copy = categoryCopy[activeCategory] || categoryCopy['settings-overview']
+  const copy = categoryCopy[activeCategory] || categoryCopy['ai-authentication']
 
   return (
     <header className="order-0 border-b border-gray-200 pb-5 dark:border-gray-700">
@@ -39,18 +39,5 @@ export function SettingsTabHeader({ scopeLabel }: { scopeLabel: string }) {
       <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{copy.title}</h1>
       <p className="mt-1.5 max-w-2xl text-sm leading-6 text-gray-500 dark:text-gray-400">{copy.description}</p>
     </header>
-  )
-}
-
-export function SettingsOverviewRows({ rows }: { rows: Array<{ label: string; value: string }> }) {
-  return (
-    <dl className="divide-y divide-gray-100 dark:divide-gray-800">
-      {rows.map((row) => (
-        <div key={row.label} className="flex min-h-12 items-center justify-between gap-4 py-2 first:pt-0 last:pb-0">
-          <dt className="text-sm text-gray-600 dark:text-gray-300">{row.label}</dt>
-          <dd className="text-right text-sm font-medium text-gray-900 dark:text-white">{row.value}</dd>
-        </div>
-      ))}
-    </dl>
   )
 }

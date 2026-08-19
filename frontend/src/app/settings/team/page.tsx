@@ -6,8 +6,7 @@ import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSetti
 import { createAgentAPIProxyClientFromStorage, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { useToast } from '@/contexts/ToastContext'
-import { useSettingsCategory } from '../SettingsCategoryContext'
-import { SettingsOverviewRows, SettingsTabHeader } from '../SettingsTabHeader'
+import { SettingsTabHeader } from '../SettingsTabHeader'
 
 export default function TeamSettingsPage() {
   const [settings, setSettings] = useState<SettingsData>({})
@@ -21,7 +20,6 @@ export default function TeamSettingsPage() {
   const [credentialsMetadata, setCredentialsMetadata] = useState<CredentialsMetadata | null>(null)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
   const { showToast } = useToast()
-  const { activeCategory } = useSettingsCategory()
   const hasUnsavedChangesRef = useRef(false)
 
   // 未保存の変更があるかチェック
@@ -236,20 +234,6 @@ export default function TeamSettingsPage() {
 
       {isTeamLoaded && (
         <>
-          <SettingsAccordion
-            title="現在の構成"
-            description="このチームで共有される主な設定です"
-            categoryId="settings-overview"
-            displayOrder={10}
-          >
-            <SettingsOverviewRows rows={[
-              { label: 'チーム', value: teamName },
-              { label: '既定のエージェント', value: settings.default_agent_type || '自動選択' },
-              { label: '有効なプラグイン', value: `${settings.enabled_plugins?.length || 0} 件` },
-              { label: 'MCPサーバー', value: `${Object.keys(settings.mcp_servers || {}).length} 件` },
-              { label: 'External Session Manager', value: `${esmList.length} 件` },
-            ]} />
-          </SettingsAccordion>
           <ApiTokensSection scope="team" teamId={teamName} defaultOpen={false} sectionId="security-settings" categoryId="security-settings" displayOrder={60} />
 
           <SettingsAccordion
@@ -430,7 +414,7 @@ export default function TeamSettingsPage() {
             </div>
           </SettingsAccordion>
 
-          {activeCategory !== 'settings-overview' && <div className="sticky bottom-0 z-20 order-[80] -mx-4 mt-6 flex items-center justify-between border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:mx-0 md:rounded-t-lg">
+          <div className="sticky bottom-0 z-20 order-[80] -mx-4 mt-6 flex items-center justify-between border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:mx-0 md:rounded-t-lg">
             {hasUnsavedChanges && (
               <div className="flex items-center gap-2 text-sm text-yellow-600 dark:text-yellow-400">
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -449,7 +433,7 @@ export default function TeamSettingsPage() {
               )}
               {saving ? 'Saving...' : 'Save'}
             </button>
-          </div>}
+          </div>
         </>
       )}
 

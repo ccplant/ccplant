@@ -8,7 +8,7 @@ import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import { useToast } from '@/contexts/ToastContext'
 import { useSettingsCategory } from '../SettingsCategoryContext'
-import { SettingsOverviewRows, SettingsTabHeader } from '../SettingsTabHeader'
+import { SettingsTabHeader } from '../SettingsTabHeader'
 
 export default function PersonalSettingsPage() {
   const router = useRouter()
@@ -449,20 +449,6 @@ export default function PersonalSettingsPage() {
 
       {userName && (
         <>
-          <SettingsAccordion
-            title="現在の構成"
-            description="このスコープで使用される主な設定です"
-            categoryId="settings-overview"
-            displayOrder={10}
-          >
-            <SettingsOverviewRows rows={[
-              { label: '既定のエージェント', value: settings.default_agent_type || '自動選択' },
-              { label: '利用するチーム', value: settings.preferred_team_id || 'すべてのチーム' },
-              { label: '有効なプラグイン', value: `${settings.enabled_plugins?.length || 0} 件` },
-              { label: 'MCPサーバー', value: `${Object.keys(settings.mcp_servers || {}).length} 件` },
-              { label: '通知チャネル', value: `${notificationChannels?.length || 0} 件` },
-            ]} />
-          </SettingsAccordion>
           <ApiTokensSection scope="personal" defaultOpen={false} sectionId="security-settings" categoryId="security-settings" displayOrder={60} />
 
           <SettingsAccordion
@@ -699,7 +685,7 @@ export default function PersonalSettingsPage() {
 
           <SettingsAccordion
             displayOrder={41}
-            categoryId="session-settings"
+            categoryId="client-settings"
             title="Session Settings"
             description="Configure session behavior"
             defaultOpen
@@ -930,7 +916,7 @@ export default function PersonalSettingsPage() {
             />
           </SettingsAccordion>
 
-          {activeCategory !== 'settings-overview' && <div className="sticky bottom-0 z-20 order-[80] -mx-4 mt-6 flex items-center justify-between border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:mx-0 md:rounded-t-lg">
+          {activeCategory !== 'client-settings' && <div className="sticky bottom-0 z-20 order-[80] -mx-4 mt-6 flex items-center justify-between border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:mx-0 md:rounded-t-lg">
             {hasUnsavedChanges && (
               <div className="flex items-center gap-2 text-sm text-yellow-600 dark:text-yellow-400">
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">

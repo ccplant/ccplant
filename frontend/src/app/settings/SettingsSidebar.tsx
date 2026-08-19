@@ -2,16 +2,16 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ArrowLeft, Bell, Bot, Blocks, LayoutDashboard, LockKeyhole, MonitorCog, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Bell, Bot, Blocks, Laptop, LockKeyhole, MonitorCog, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
 import { useSettingsCategory } from './SettingsCategoryContext'
 
 const categories = [
-  { label: '概要', hash: 'settings-overview', icon: LayoutDashboard },
   { label: 'AI・認証', hash: 'ai-authentication', icon: Bot },
   { label: '拡張機能', hash: 'extensions', icon: Blocks },
   { label: 'セッション', hash: 'session-settings', icon: MonitorCog },
+  { label: 'クライアント', hash: 'client-settings', icon: Laptop },
   { label: '通知', hash: 'notification-settings', icon: Bell },
   { label: 'セキュリティ', hash: 'security-settings', icon: LockKeyhole },
 ]
@@ -87,7 +87,7 @@ export function SettingsSidebar() {
 
       <nav aria-label="設定カテゴリ" className="-mx-4 overflow-x-auto border-y border-gray-200 px-4 dark:border-gray-700 md:mx-0 md:overflow-visible md:border-0 md:px-0">
         <ul className="flex min-w-max gap-1 py-2 md:block md:min-w-0 md:space-y-1 md:py-0">
-          {categories.filter(({ hash }) => pathname !== '/settings/team' || hash !== 'notification-settings').map(({ label, hash, icon: Icon }) => {
+          {categories.filter(({ hash }) => pathname !== '/settings/team' || !['client-settings', 'notification-settings'].includes(hash)).map(({ label, hash, icon: Icon }) => {
             const active = activeCategory === hash
             return (
               <li key={hash}>
