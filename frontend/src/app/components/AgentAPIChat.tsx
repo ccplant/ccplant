@@ -20,6 +20,7 @@ import ToolExecutionPane from './ToolExecutionPane';
 import PlanApprovalModal from './PlanApprovalModal';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
+import { mergeRefreshedMessageHistory } from './messageHistory';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -1312,7 +1313,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           });
         } else {
           // For other agents: always update with all messages to reflect timeline changes
-          setMessages(newMessages);
+          setMessages(prevMessages => mergeRefreshedMessageHistory(prevMessages, newMessages));
         }
       }
 
@@ -1449,10 +1450,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 .then(result => withACPHistoryMessageIds(result.messages, promptIndex));
             })
           );
-          setMessages([...historicalTurns.flat(), ...latestResult.messages]);
+          const refreshedMessages = [...historicalTurns.flat(), ...latestResult.messages];
+          setMessages(currentMessages => mergeRefreshedMessageHistory(currentMessages, refreshedMessages));
           setLoadedACPStartPromptIndex(currentStartIndex);
         } else {
-          setMessages(latestResult.messages);
+          setMessages(currentMessages => mergeRefreshedMessageHistory(currentMessages, latestResult.messages));
           setLoadedACPStartPromptIndex(latestPromptIndex);
         }
         setACPUserPrompts(latestResult.userPrompts);
