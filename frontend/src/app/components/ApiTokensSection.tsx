@@ -6,7 +6,6 @@ import {
   ApiTokenScope,
   CreateApiTokenResponse,
 } from '../../types/api_token'
-import { SettingsAccordion } from '../../components/settings'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError } from '../../lib/agentapi-proxy-client'
 import { useToast } from '../../contexts/ToastContext'
 import ApiTokenCreateModal from './ApiTokenCreateModal'
@@ -18,8 +17,6 @@ interface ApiTokensSectionProps {
   scope: ApiTokenScope
   /** Required and fixed for team scope; ignored for personal scope. */
   teamId?: string
-  /** Whether the accordion is open by default. */
-  defaultOpen?: boolean
 }
 
 function formatDate(iso?: string | null): string {
@@ -34,7 +31,6 @@ function formatDate(iso?: string | null): string {
 export default function ApiTokensSection({
   scope,
   teamId,
-  defaultOpen = false,
 }: ApiTokensSectionProps) {
   const { showToast } = useToast()
   const [tokens, setTokens] = useState<ApiToken[]>([])
@@ -130,11 +126,7 @@ export default function ApiTokensSection({
   }
 
   return (
-    <SettingsAccordion
-      title="API トークン"
-      description={scope === 'team' ? 'チーム用 API トークンを管理します' : 'パーソナル API トークンを管理します'}
-      defaultOpen={defaultOpen}
-    >
+    <>
       <div className="space-y-4">
         {/* Toolbar */}
         <div className="flex items-center justify-between">
@@ -250,6 +242,6 @@ export default function ApiTokensSection({
         onConfirm={handleDeleteConfirm}
         onCancel={handleDeleteCancel}
       />
-    </SettingsAccordion>
+    </>
   )
 }

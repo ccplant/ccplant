@@ -6,7 +6,21 @@ import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy
 import { AdminSettingsDocument, AdminSettingsSections } from '@/types/admin-settings'
 import { getAdminSection, AdminField } from '../config'
 import { useToast } from '@/contexts/ToastContext'
-import { BedrockSettings, EnvVarsSettings, MarketplaceSettings, MCPServerSettings, PluginSettings, SettingsAccordion } from '@/components/settings'
+import {
+  BedrockSettings,
+  EnvVarsSettings,
+  FieldGroup,
+  FieldRow,
+  MarketplaceSettings,
+  MCPServerSettings,
+  PluginSettings,
+  SelectField,
+  SettingsPageHeader,
+  SettingsSubsection,
+  TextField,
+  ToggleSwitch,
+} from '@/components/settings'
+import { AlertTriangle } from 'lucide-react'
 import { APIMCPServerConfig, BedrockConfig, MarketplaceConfig } from '@/types/settings'
 
 function getValue(section: Record<string, unknown>, path: string): unknown {
@@ -63,19 +77,35 @@ function AgentsSettingsFields({ section, onChange }: { section: Record<string, u
     onChange(updated)
   }
 
-  return <div className="space-y-4">
-    <SettingsAccordion title="AI Settings" description="Configure the default AI provider and Bedrock model" defaultOpen>
+  return <div>
+    <SettingsSubsection title="AI プロバイダ" description="全ユーザーの既定となる認証方式と Bedrock モデル">
       <div className="space-y-6">
-        <div><label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">既定の認証モード</label><div className="grid gap-3 sm:grid-cols-2">
-          {[['oauth', 'OAuth'], ['bedrock', 'AWS Bedrock']].map(([value, label]) => <label key={value} className={`cursor-pointer rounded-lg border p-4 ${section.auth_mode === value ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}><input type="radio" name="admin-agent-auth-mode" value={value} checked={section.auth_mode === value} onChange={() => update('auth_mode', value)} className="mr-2" />{label}</label>)}
-        </div></div>
-        <div className="border-t border-gray-200 pt-6 dark:border-gray-700"><BedrockSettings config={bedrock} onChange={updateBedrock} /></div>
+        <div>
+          <label className="mb-2 block text-sm font-medium text-gray-900 dark:text-white">既定の認証モード</label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {[['oauth', 'OAuth'], ['bedrock', 'AWS Bedrock']].map(([value, label]) => (
+              <label key={value} className={`cursor-pointer rounded-lg border p-4 text-sm ${section.auth_mode === value ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700'}`}>
+                <input type="radio" name="admin-agent-auth-mode" value={value} checked={section.auth_mode === value} onChange={() => update('auth_mode', value)} className="mr-2" />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <BedrockSettings config={bedrock} onChange={updateBedrock} />
       </div>
-    </SettingsAccordion>
-    <SettingsAccordion title="Marketplace" description="Configure default plugin marketplaces" defaultOpen><MarketplaceSettings marketplaces={marketplaces} onChange={(value) => update('marketplaces', value)} /></SettingsAccordion>
-    <SettingsAccordion title="Plugins" description="Enable default plugins from official and registered marketplaces" defaultOpen><PluginSettings enabledPlugins={enabledPlugins} availableMarketplaces={Object.keys(marketplaces)} onChange={(value) => update('enabled_plugins', value)} /></SettingsAccordion>
-    <SettingsAccordion title="MCP Servers" description="Configure default Model Context Protocol servers" defaultOpen><MCPServerSettings servers={mcpServers} onChange={(value) => update('mcp_servers', value)} /></SettingsAccordion>
-    <SettingsAccordion title="Environment Variables" description="Configure default environment variables for sessions" defaultOpen><EnvVarsSettings envVarKeys={Object.keys(envVars)} onChange={updateEnvVars} /></SettingsAccordion>
+    </SettingsSubsection>
+    <SettingsSubsection title="Marketplace" description="プラグインの既定の配布元">
+      <MarketplaceSettings marketplaces={marketplaces} onChange={(value) => update('marketplaces', value)} />
+    </SettingsSubsection>
+    <SettingsSubsection title="Plugins" description="既定で有効にするプラグイン">
+      <PluginSettings enabledPlugins={enabledPlugins} availableMarketplaces={Object.keys(marketplaces)} onChange={(value) => update('enabled_plugins', value)} />
+    </SettingsSubsection>
+    <SettingsSubsection title="MCP サーバー" description="既定で利用できる Model Context Protocol サーバー">
+      <MCPServerSettings servers={mcpServers} onChange={(value) => update('mcp_servers', value)} />
+    </SettingsSubsection>
+    <SettingsSubsection title="環境変数" description="全セッションに渡す既定の環境変数">
+      <EnvVarsSettings envVarKeys={Object.keys(envVars)} onChange={updateEnvVars} />
+    </SettingsSubsection>
   </div>
 }
 
@@ -172,12 +202,38 @@ function TeamRoleMappingBuilder({ initialRows, onChange }: { initialRows: TeamRo
 }
 
 function Field({ field, value, configured, onChange }: { field: AdminField; value: unknown; configured: boolean; onChange: (value: unknown) => void }) {
-  const baseClass = 'mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white'
-  if (field.type === 'toggle') return <button type="button" role="switch" aria-checked={Boolean(value)} onClick={() => onChange(!value)} className={`relative mt-2 inline-flex h-6 w-11 rounded-full transition-colors ${value ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}><span className={`inline-block h-5 w-5 translate-y-0.5 rounded-full bg-white shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} /></button>
+  if (field.type === 'toggle') {
+    return <ToggleSwitch checked={Boolean(value)} onChange={onChange} label={field.label} />
+  }
   if (field.type === 'team-role-mapping') return <TeamRoleMappingField value={value} onChange={onChange} />
-  if (field.type === 'textarea') return <textarea rows={4} className={baseClass} value={typeof value === 'string' ? value : ''} placeholder={field.placeholder} onChange={(event) => onChange(event.target.value)} />
-  if (field.type === 'select') return <select className={baseClass} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)}>{field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-  return <div><input className={baseClass} type={field.type === 'secret' ? 'password' : field.type} value={typeof value === 'string' || typeof value === 'number' ? value : ''} placeholder={field.type === 'secret' && configured ? '設定済み（変更時のみ入力）' : field.placeholder} onChange={(event) => onChange(field.type === 'number' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)} />{field.type === 'secret' && configured && <p className="mt-1 text-xs text-emerald-600">現在の値が設定されています</p>}</div>
+  if (field.type === 'textarea') {
+    return <textarea
+      rows={4}
+      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+      value={typeof value === 'string' ? value : ''}
+      placeholder={field.placeholder}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  }
+  if (field.type === 'select') {
+    return <SelectField
+      value={typeof value === 'string' ? value : ''}
+      onChange={onChange}
+      options={field.options ?? []}
+      className="w-full"
+    />
+  }
+
+  const isSecret = field.type === 'secret'
+  return <div>
+    <TextField
+      type={isSecret ? 'password' : field.type === 'number' ? 'number' : 'text'}
+      value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+      placeholder={isSecret && configured ? '設定済み（変更時のみ入力）' : field.placeholder}
+      onChange={(next) => onChange(field.type === 'number' ? (next === '' ? '' : Number(next)) : next)}
+    />
+    {isSecret && configured && <p className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">現在の値が設定されています</p>}
+  </div>
 }
 
 export default function AdminSectionPage({ params }: { params: Promise<{ section: string }> }) {
@@ -194,7 +250,11 @@ export default function AdminSectionPage({ params }: { params: Promise<{ section
   }, [])
 
   if (!definition) notFound()
-  if (!document && !error) return <div className="rounded-lg border bg-white p-8 text-center text-gray-500 dark:border-gray-700 dark:bg-gray-800">設定を読み込んでいます…</div>
+  if (!document && !error) return (
+    <div className="flex items-center justify-center py-16">
+      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
+    </div>
+  )
 
   const section = sections[sectionID] || {}
   const changed = document ? JSON.stringify(sections) !== JSON.stringify(document.sections) : false
@@ -209,12 +269,85 @@ export default function AdminSectionPage({ params }: { params: Promise<{ section
     } finally { setSaving(false) }
   }
 
-  return <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-    <div className="mb-6 flex items-start justify-between gap-4"><div><h2 className="text-2xl font-bold text-gray-900 dark:text-white">{definition.title}</h2><p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{definition.description}</p></div><span className="whitespace-nowrap rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">version {document?.version || 0}</span></div>
-    {error && <div className="mb-5 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">{error}</div>}
-    {sectionID === 'agents'
-      ? <AgentsSettingsFields section={section} onChange={(value) => setSections((previous) => ({ ...previous, agents: value }))} />
-      : <div className="space-y-6">{definition.fields.map((field) => <div key={field.path}><label className="block text-sm font-medium text-gray-800 dark:text-gray-200">{field.label}</label>{field.description && <p className="mt-0.5 text-xs text-gray-500">{field.description}</p>}<Field field={field} value={getValue(section, field.path)} configured={Boolean(document?.secret_configured[`${sectionID}.${field.path}`])} onChange={(value) => setSections((previous) => ({ ...previous, [sectionID]: setValue(previous[sectionID] || {}, field.path, value) }))} /></div>)}</div>}
-    <div className="mt-8 flex items-center justify-between border-t border-gray-200 pt-5 dark:border-gray-700"><span className="text-sm text-amber-600">{changed ? '未保存の変更があります' : ''}</span><button onClick={save} disabled={!changed || saving} className="rounded-md bg-blue-600 px-5 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">{saving ? '保存中…' : '新しいversionとして保存'}</button></div>
-  </div>
+  return (
+    <>
+      <SettingsPageHeader
+        title={definition.title}
+        description={definition.description}
+        action={
+          <span className="whitespace-nowrap rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+            version {document?.version || 0}
+          </span>
+        }
+      />
+
+      {error && (
+        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
+          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        </div>
+      )}
+
+      {sectionID === 'agents' ? (
+        <AgentsSettingsFields
+          section={section}
+          onChange={(value) => setSections((previous) => ({ ...previous, agents: value }))}
+        />
+      ) : (
+        <FieldGroup>
+          {definition.fields.map((field) => (
+            <FieldRow
+              key={field.path}
+              label={field.label}
+              description={field.description}
+              control={field.type === 'toggle' ? (
+                <Field
+                  field={field}
+                  value={getValue(section, field.path)}
+                  configured={Boolean(document?.secret_configured[`${sectionID}.${field.path}`])}
+                  onChange={(value) => setSections((previous) => ({ ...previous, [sectionID]: setValue(previous[sectionID] || {}, field.path, value) }))}
+                />
+              ) : undefined}
+            >
+              {field.type !== 'toggle' && (
+                <Field
+                  field={field}
+                  value={getValue(section, field.path)}
+                  configured={Boolean(document?.secret_configured[`${sectionID}.${field.path}`])}
+                  onChange={(value) => setSections((previous) => ({ ...previous, [sectionID]: setValue(previous[sectionID] || {}, field.path, value) }))}
+                />
+              )}
+            </FieldRow>
+          ))}
+        </FieldGroup>
+      )}
+
+      {changed && (
+        <div className="sticky bottom-0 z-30 -mx-4 mt-8 border-t border-gray-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <div className="mr-auto flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              <span>未保存の変更があります</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => document && setSections(document.sections)}
+              disabled={saving}
+              className="rounded-md border border-gray-300 px-4 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              破棄
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="flex items-center gap-2 rounded-md bg-blue-600 px-5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving && <span className="h-3.5 w-3.5 animate-spin rounded-full border-b-2 border-white" />}
+              {saving ? '保存中...' : '新しい version として保存'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
