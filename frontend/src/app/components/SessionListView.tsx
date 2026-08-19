@@ -430,6 +430,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (session.status === 'suspended') {
       return { status: 'suspended' as const, colorClass: 'bg-violet-500', text: 'Suspended' }
     }
+    if (session.status === 'error') {
+      return { status: 'error' as const, colorClass: 'bg-red-500', text: '起動失敗' }
+    }
 
     // ステータスが取得できていない場合
     if (!agentStatus) {
@@ -821,6 +824,8 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                     } ${
                       isSelected
                         ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500'
+                        : session.status === 'error'
+                        ? 'bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 border-l-4 border-red-500'
                         : session.status === 'creating' || session.status === 'starting'
                         ? 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 hover:from-blue-100 hover:to-indigo-100 dark:hover:from-blue-900/30 dark:hover:to-indigo-900/30 border-l-4 border-blue-500'
                         : isNew
@@ -879,9 +884,11 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                             title={`Agent: ${agentStatusInfo.text}`}
                           />
                           {/* 新規セッション/作成中/起動中バッジ */}
-                          {(isNew || session.status === 'creating' || session.status === 'starting') && (
+                          {(isNew || session.status === 'creating' || session.status === 'starting' || session.status === 'error') && (
                             <span className={`inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full ${
-                              session.status === 'creating'
+                              session.status === 'error'
+                                ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                                : session.status === 'creating'
                                 ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
                                 : session.status === 'starting'
                                 ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200'
@@ -889,7 +896,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                 ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
                                 : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                             }`}>
-                              {session.status === 'creating'
+                              {session.status === 'error'
+                                ? '起動失敗'
+                                : session.status === 'creating'
                                 ? '作成中'
                                 : session.status === 'starting'
                                 ? '起動中'
@@ -910,6 +919,12 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                               <span>作業中:</span>
                               <span className="truncate">{truncateText(annotations.runningTask, isMobile ? 32 : 64)}</span>
                             </span>
+                          </div>
+                        )}
+
+                        {session.status === 'error' && session.error_message && (
+                          <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" role="alert">
+                            <span className="font-medium">エラー: </span>{session.error_message}
                           </div>
                         )}
 
@@ -984,15 +999,17 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
 
                       {/* アクションボタン - モバイルでは縦並び */}
                       <div className="flex flex-row sm:flex-row items-center space-x-2 sm:space-x-2 sm:ml-4" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => navigateToChat(session.session_id)}
-                          className="inline-flex items-center justify-center px-3 py-2 sm:px-3 sm:py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors min-h-[44px] sm:min-h-0"
-                        >
-                          <svg className="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
-                          <span className="hidden sm:inline">チャット</span>
-                        </button>
+                        {session.status !== 'error' && (
+                          <button
+                            onClick={() => navigateToChat(session.session_id)}
+                            className="inline-flex items-center justify-center px-3 py-2 sm:px-3 sm:py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors min-h-[44px] sm:min-h-0"
+                          >
+                            <svg className="w-4 h-4 sm:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            </svg>
+                            <span className="hidden sm:inline">チャット</span>
+                          </button>
+                        )}
                         
                         {session.metadata?.claude_login_url ? (
                           <a

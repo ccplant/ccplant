@@ -1729,7 +1729,7 @@ func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
 
 func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {
 	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating)",
+		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)",
 	})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list session allocations: %v", err)
@@ -1767,6 +1767,7 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 			allocation.UpdatedAt,
 			string(allocation.Status),
 		)
+		session.SetStatusMessage(allocation.Message)
 		if len(m.applySessionListFilters([]entities.Session{session}, filter)) == 0 {
 			continue
 		}

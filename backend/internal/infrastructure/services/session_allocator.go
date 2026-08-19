@@ -189,7 +189,7 @@ func (m *KubernetesSessionManager) DeletePendingSessionAllocation(ctx context.Co
 	if err != nil {
 		return false, err
 	}
-	if allocation.Status != sessionallocation.StatusPending && allocation.Status != sessionallocation.StatusAllocating {
+	if allocation.Status != sessionallocation.StatusPending && allocation.Status != sessionallocation.StatusAllocating && allocation.Status != sessionallocation.StatusError {
 		return false, nil
 	}
 	if err := m.deleteSessionAllocation(ctx, sessionID); err != nil {
@@ -376,8 +376,10 @@ func (m *KubernetesSessionManager) CompleteExternalSessionAllocation(ctx context
 	if err := m.notifySessionAllocation(ctx); err != nil {
 		return nil, err
 	}
-	if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
-		log.Printf("[EXTERNAL_SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
+	if result.Status != sessionallocation.StatusError {
+		if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
+			log.Printf("[EXTERNAL_SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
+		}
 	}
 	return req, nil
 }
@@ -396,8 +398,10 @@ func (m *KubernetesSessionManager) CompleteSessionAllocation(ctx context.Context
 	if err := m.notifySessionAllocation(ctx); err != nil {
 		return nil, err
 	}
-	if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
-		log.Printf("[SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
+	if result.Status != sessionallocation.StatusError {
+		if err := m.deleteSessionAllocation(context.Background(), sessionID); err != nil {
+			log.Printf("[SESSION_ALLOCATOR] Warning: failed to delete completed allocation %s: %v", sessionID, err)
+		}
 	}
 	return req, nil
 }

@@ -250,6 +250,51 @@ func TestCompleteSessionAllocationDeletesAllocationSecret(t *testing.T) {
 	}
 }
 
+func TestCompleteSessionAllocationRetainsFailedAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := manager.saveSessionAllocation(ctx, &sessionallocation.AllocationRequest{
+		SessionID: "failed-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser},
+		Status:    sessionallocation.StatusAllocating,
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	if _, err := manager.CompleteSessionAllocation(ctx, "failed-session", sessionallocation.AllocationResult{
+		Status:  sessionallocation.StatusError,
+		Message: "pod admission denied",
+	}); err != nil {
+		t.Fatalf("CompleteSessionAllocation() error = %v", err)
+	}
+
+	allocation, err := manager.getSessionAllocation(ctx, "failed-session")
+	if err != nil {
+		t.Fatalf("failed allocation was not retained: %v", err)
+	}
+	if allocation.Status != sessionallocation.StatusError || allocation.Message != "pod admission denied" {
+		t.Fatalf("retained allocation = %#v", allocation)
+	}
+	sessions := manager.ListSessions(entities.SessionFilter{UserID: "test-user", Scope: entities.ScopeUser})
+	if len(sessions) != 1 || sessions[0].Status() != "error" {
+		t.Fatalf("ListSessions() = %#v, want one error session", sessions)
+	}
+	provider, ok := sessions[0].(interface{ StatusMessage() string })
+	if !ok {
+		t.Fatal("listed error session does not expose StatusMessage")
+	}
+	if provider.StatusMessage() != "pod admission denied" {
+		t.Fatalf("StatusMessage() = %q", provider.StatusMessage())
+	}
+}
+
 func TestDeletePendingSessionAllocation(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 
@@ -318,6 +363,31 @@ func TestDeletePendingSessionAllocationDeletesClaimedOrphan(t *testing.T) {
 		metav1.GetOptions{},
 	); !apierrors.IsNotFound(err) {
 		t.Fatalf("allocation Secret still exists or returned unexpected error: %v", err)
+	}
+}
+
+func TestDeletePendingSessionAllocationDeletesFailedAllocation(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := manager.saveSessionAllocation(ctx, &sessionallocation.AllocationRequest{
+		SessionID: "failed-session",
+		Request:   &entities.RunServerRequest{UserID: "test-user"},
+		Status:    sessionallocation.StatusError,
+		Message:   "failed",
+	}); err != nil {
+		t.Fatalf("saveSessionAllocation() error = %v", err)
+	}
+
+	deleted, err := manager.DeletePendingSessionAllocation(ctx, "failed-session")
+	if err != nil || !deleted {
+		t.Fatalf("DeletePendingSessionAllocation() = (%t, %v), want (true, nil)", deleted, err)
 	}
 }
 

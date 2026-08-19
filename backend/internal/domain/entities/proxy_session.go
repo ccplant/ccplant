@@ -13,7 +13,14 @@ type ProxySession struct {
 	status        string
 	startedAt     time.Time
 	lastMessageAt time.Time
+	statusMessage string
 }
+
+// SetStatusMessage attaches a human-readable explanation to the current status.
+func (p *ProxySession) SetStatusMessage(message string) { p.statusMessage = message }
+
+// StatusMessage returns a human-readable explanation for terminal states.
+func (p *ProxySession) StatusMessage() string { return p.statusMessage }
 
 // NewProxySession creates a new ProxySession
 func NewProxySession(id, userID string, scope ResourceScope, teamID string, tags map[string]string, startedAt time.Time) *ProxySession {

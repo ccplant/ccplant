@@ -20,6 +20,7 @@ function getStatusDotClass(status: SessionStatus): string {
     case 'starting': return 'bg-yellow-400 animate-pulse'
     case 'creating': return 'bg-blue-400 animate-pulse'
     case 'unhealthy':return 'bg-red-500'
+    case 'error':    return 'bg-red-500'
     default:         return 'bg-gray-300 dark:bg-gray-600'
   }
 }
@@ -171,13 +172,13 @@ export default function SessionListSidebar({
                 <li key={session.session_id} className="group/item relative">
                   {/* Navigate button (whole row) */}
                   <button
-                    onClick={() => router.push(`/sessions/${session.session_id}`)}
-                    disabled={isDeleting}
+                    onClick={() => session.status !== 'error' && router.push(`/sessions/${session.session_id}`)}
+                    disabled={isDeleting || session.status === 'error'}
                     className={`w-full text-left px-3 py-2 pr-9 flex items-start gap-2 transition-colors ${
                       isActive
                         ? 'bg-white dark:bg-gray-900 border-r-2 border-blue-500'
                         : 'hover:bg-white/60 dark:hover:bg-gray-900/60'
-                    } ${isDeleting ? 'opacity-40 pointer-events-none' : ''}`}
+                    } ${isDeleting ? 'opacity-40 pointer-events-none' : ''} ${session.status === 'error' ? 'cursor-default bg-red-50/60 dark:bg-red-950/20' : ''}`}
                   >
                     {/* Status dot */}
                     <div className="mt-[5px] flex-shrink-0 relative">
@@ -208,7 +209,9 @@ export default function SessionListSidebar({
                         </p>
                       )}
                       <p className="text-[10px] text-gray-400 dark:text-gray-600 mt-0.5 leading-none">
-                        {session.status === 'suspended' ? (
+                        {session.status === 'error' ? (
+                          <span className="text-red-600 dark:text-red-400" title={session.error_message}>起動失敗</span>
+                        ) : session.status === 'suspended' ? (
                           <span className="text-violet-600 dark:text-violet-400">サスペンド中</span>
                         ) : session.status === 'running' ? (
                           <span className="text-yellow-500 dark:text-yellow-400">実行中</span>

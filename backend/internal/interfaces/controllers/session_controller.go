@@ -37,6 +37,10 @@ type pendingSessionAllocationDeleter interface {
 	DeletePendingSessionAllocation(ctx context.Context, sessionID string) (bool, error)
 }
 
+type sessionStatusMessageProvider interface {
+	StatusMessage() string
+}
+
 // SessionManagerProvider provides access to the session manager
 // This allows the session manager to be swapped at runtime (e.g., for testing)
 type SessionManagerProvider interface {
@@ -495,6 +499,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				"description": description,
 			},
 		}
+		if provider, ok := session.(sessionStatusMessageProvider); ok && provider.StatusMessage() != "" {
+			sessionData["error_message"] = provider.StatusMessage()
+		}
 		if provider, ok := session.(sessionSandboxPolicyProvider); ok {
 			if policyID := provider.SandboxPolicyID(); policyID != "" {
 				sessionData["sandbox_policy_id"] = policyID
@@ -832,7 +839,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 func findUncreatedSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {
 	for _, session := range sessions {
-		if session.ID() == sessionID && (session.Status() == "pending" || session.Status() == "allocating") {
+		if session.ID() == sessionID && (session.Status() == "pending" || session.Status() == "allocating" || session.Status() == "error") {
 			return session
 		}
 	}
