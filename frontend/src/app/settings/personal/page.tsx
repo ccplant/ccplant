@@ -8,6 +8,7 @@ import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import { useToast } from '@/contexts/ToastContext'
 import { useSettingsCategory } from '../SettingsCategoryContext'
+import { SettingsOverviewRows, SettingsTabHeader } from '../SettingsTabHeader'
 
 export default function PersonalSettingsPage() {
   const router = useRouter()
@@ -429,19 +430,7 @@ export default function PersonalSettingsPage() {
 
   return (
     <div className="flex flex-col">
-      {activeCategory === 'settings-overview' && <div id="settings-overview" className="scroll-mt-24 border-b border-gray-200 pb-6 dark:border-gray-700">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-          Personal Settings
-        </h2>
-        <p className="text-gray-600 dark:text-gray-400">
-          Configure your personal preferences
-          {userName && (
-            <span className="ml-2 text-sm text-blue-600 dark:text-blue-400">
-              ({userName})
-            </span>
-          )}
-        </p>
-      </div>}
+      <SettingsTabHeader scopeLabel={userName ? `個人設定 — ${userName}` : '個人設定'} />
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
@@ -460,6 +449,20 @@ export default function PersonalSettingsPage() {
 
       {userName && (
         <>
+          <SettingsAccordion
+            title="現在の構成"
+            description="このスコープで使用される主な設定です"
+            categoryId="settings-overview"
+            displayOrder={10}
+          >
+            <SettingsOverviewRows rows={[
+              { label: '既定のエージェント', value: settings.default_agent_type || '自動選択' },
+              { label: '利用するチーム', value: settings.preferred_team_id || 'すべてのチーム' },
+              { label: '有効なプラグイン', value: `${settings.enabled_plugins?.length || 0} 件` },
+              { label: 'MCPサーバー', value: `${Object.keys(settings.mcp_servers || {}).length} 件` },
+              { label: '通知チャネル', value: `${notificationChannels?.length || 0} 件` },
+            ]} />
+          </SettingsAccordion>
           <ApiTokensSection scope="personal" defaultOpen={false} sectionId="security-settings" categoryId="security-settings" displayOrder={60} />
 
           <SettingsAccordion

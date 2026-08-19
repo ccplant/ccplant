@@ -34,14 +34,14 @@ export function SettingsAccordion({
     <section
       id={sectionId}
       style={displayOrder === undefined ? undefined : { order: displayOrder }}
-      className="scroll-mt-28 border-b border-gray-200 bg-white py-6 last:border-b-0 dark:border-gray-700 dark:bg-gray-900 md:grid md:grid-cols-[minmax(180px,240px)_minmax(0,1fr)] md:gap-8"
+      className="scroll-mt-28 border-b border-gray-200 bg-white py-5 last:border-b-0 dark:border-gray-700 dark:bg-gray-900 md:grid md:grid-cols-[minmax(190px,230px)_minmax(0,1fr)] md:gap-10 md:py-6"
     >
       <div className="mb-4 md:mb-0">
-        <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
           {title}
-        </h3>
+        </h2>
         {description && (
-          <p className="mt-1 text-sm leading-5 text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
             {description}
           </p>
         )}

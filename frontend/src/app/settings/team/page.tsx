@@ -7,6 +7,7 @@ import { createAgentAPIProxyClientFromStorage, CredentialsMetadata } from '@/lib
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { useToast } from '@/contexts/ToastContext'
 import { useSettingsCategory } from '../SettingsCategoryContext'
+import { SettingsOverviewRows, SettingsTabHeader } from '../SettingsTabHeader'
 
 export default function TeamSettingsPage() {
   const [settings, setSettings] = useState<SettingsData>({})
@@ -213,19 +214,7 @@ export default function TeamSettingsPage() {
 
   return (
     <div className="flex flex-col">
-      {activeCategory === 'settings-overview' && <div id="settings-overview" className="scroll-mt-24 border-b border-gray-200 pb-6 dark:border-gray-700">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-          Team Settings
-        </h2>
-        <p className="text-gray-600 dark:text-gray-400">
-          Configure settings for your team
-          {teamName && (
-            <span className="ml-2 text-sm text-blue-600 dark:text-blue-400">
-              ({teamName})
-            </span>
-          )}
-        </p>
-      </div>}
+      <SettingsTabHeader scopeLabel={teamName ? `チーム設定 — ${teamName}` : 'チーム設定'} />
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
@@ -269,6 +258,20 @@ export default function TeamSettingsPage() {
 
       {isTeamLoaded && (
         <>
+          <SettingsAccordion
+            title="現在の構成"
+            description="このチームで共有される主な設定です"
+            categoryId="settings-overview"
+            displayOrder={10}
+          >
+            <SettingsOverviewRows rows={[
+              { label: 'チーム', value: teamName },
+              { label: '既定のエージェント', value: settings.default_agent_type || '自動選択' },
+              { label: '有効なプラグイン', value: `${settings.enabled_plugins?.length || 0} 件` },
+              { label: 'MCPサーバー', value: `${Object.keys(settings.mcp_servers || {}).length} 件` },
+              { label: 'External Session Manager', value: `${esmList.length} 件` },
+            ]} />
+          </SettingsAccordion>
           <ApiTokensSection scope="team" teamId={teamName} defaultOpen={false} sectionId="security-settings" categoryId="security-settings" displayOrder={60} />
 
           <SettingsAccordion
