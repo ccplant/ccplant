@@ -53,7 +53,9 @@ export function SettingsSidebar() {
       router.push('/settings/personal')
       return
     }
-    router.push(`/settings/team?team=${encodeURIComponent(value.slice(5))}`)
+    const team = value.slice(5)
+    router.push(`/settings/team?team=${encodeURIComponent(team)}`)
+    window.dispatchEvent(new CustomEvent('settings-team-change', { detail: team }))
   }
 
   return (
