@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, AuthMode, ExternalSessionManagerConfig, prepareSettingsForSave, EnterKeyBehavior, getEnterKeyBehavior, setEnterKeyBehavior, FontSettings as FontSettingsType, getFontSettings, setFontSettings } from '@/types/settings'
-import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, KeyBindingSettings, ClaudeOAuthSettings, FontSettings, EnvVarsSettings, SlackSettings, FileSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
+import { SettingsData, BedrockConfig, APIMCPServerConfig, MarketplaceConfig, AuthMode, ExternalSessionManagerConfig, prepareSettingsForSave } from '@/types/settings'
+import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSettings, PluginSettings, ClaudeOAuthSettings, EnvVarsSettings, SlackSettings, FileSettings, CodexDeviceAuthSettings, ESMRegistrationToken } from '@/components/settings'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import { useToast } from '@/contexts/ToastContext'
@@ -19,8 +19,6 @@ export default function PersonalSettingsPage() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isAuthError, setIsAuthError] = useState(false)
-  const [enterKeyBehavior, setEnterKeyBehaviorState] = useState<EnterKeyBehavior>('newline')
-  const [fontSettings, setFontSettingsState] = useState<FontSettingsType>({ fontSize: 14, fontFamily: 'sans-serif' })
   const [slackUserId, setSlackUserId] = useState<string>('')
   const [notificationChannels, setNotificationChannels] = useState<string[] | undefined>(undefined)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
@@ -57,14 +55,6 @@ export default function PersonalSettingsPage() {
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [])
-
-  // Enter キー設定と Font 設定の読み込み
-  useEffect(() => {
-    // Enter キー設定を読み込み
-    setEnterKeyBehaviorState(getEnterKeyBehavior())
-    // Font 設定を読み込み
-    setFontSettingsState(getFontSettings())
   }, [])
 
   useEffect(() => {
@@ -169,16 +159,6 @@ export default function PersonalSettingsPage() {
 
   const handlePreferredTeamChange = (teamId: string) => {
     setSettings((prev) => ({ ...prev, preferred_team_id: teamId }))
-  }
-
-  const handleEnterKeyBehaviorChange = (behavior: EnterKeyBehavior) => {
-    setEnterKeyBehaviorState(behavior)
-    setEnterKeyBehavior(behavior)
-  }
-
-  const handleFontSettingsChange = (settings: FontSettingsType) => {
-    setFontSettingsState(settings)
-    setFontSettings(settings)
   }
 
   const handleSlackUserIdChange = (value: string) => {
@@ -678,19 +658,6 @@ export default function PersonalSettingsPage() {
           </SettingsAccordion>
 
           <SettingsAccordion
-            title="Session Settings"
-            description="Configure session behavior"
-            defaultOpen
-          >
-            <div className="space-y-6">
-              <KeyBindingSettings enterKeyBehavior={enterKeyBehavior} onChange={handleEnterKeyBehaviorChange} />
-              <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                <FontSettings fontSettings={fontSettings} onChange={handleFontSettingsChange} />
-              </div>
-            </div>
-          </SettingsAccordion>
-
-          <SettingsAccordion
             title="セッションマネージャー"
             description="外部セッションマネージャーを登録し、接続トークンを発行します"
             defaultOpen={false}
@@ -922,25 +889,6 @@ export default function PersonalSettingsPage() {
             </button>
           </div>
 
-          {/* ログアウト */}
-          <div className="mt-8 pt-6 border-t border-red-200 dark:border-red-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white">ログアウト</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">アカウントからサインアウトします</p>
-              </div>
-              <button
-                onClick={handleLogout}
-                disabled={loggingOut}
-                className="px-4 py-2 text-sm text-red-600 dark:text-red-400 border border-red-200 dark:border-red-700 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              >
-                {loggingOut && (
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-red-600"></div>
-                )}
-                {loggingOut ? 'ログアウト中...' : 'ログアウト'}
-              </button>
-            </div>
-          </div>
         </>
       )}
     </div>
