@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -425,35 +424,40 @@ func durationOr(raw string, fallback time.Duration) time.Duration {
 }
 
 type localAllocationClient struct {
-	queue   coreallocation.Queue
-	routes  portrepos.SessionRouteRepository
-	mu      sync.Mutex
-	pending map[string]*coreallocation.AllocationRequest
+	queue  coreallocation.Queue
+	routes portrepos.SessionRouteRepository
 }
 
 func newLocalAllocationClient(queue coreallocation.Queue, routes portrepos.SessionRouteRepository) *localAllocationClient {
-	return &localAllocationClient{queue: queue, routes: routes, pending: make(map[string]*coreallocation.AllocationRequest)}
+	return &localAllocationClient{queue: queue, routes: routes}
 }
 
 func (c *localAllocationClient) Next(ctx context.Context, wait time.Duration) (*coreallocation.AllocationRequest, bool, error) {
-	allocation, found, err := c.queue.NextSessionAllocation(ctx, wait)
-	if err == nil && found && allocation != nil {
-		c.mu.Lock()
-		c.pending[allocation.SessionID] = allocation
-		c.mu.Unlock()
-	}
-	return allocation, found, err
+	return c.queue.NextSessionAllocation(ctx, wait)
 }
 
 func (c *localAllocationClient) Complete(ctx context.Context, sessionID string, result coreallocation.AllocationResult) error {
-	c.mu.Lock()
-	allocation := c.pending[sessionID]
-	c.mu.Unlock()
-
 	// Persist the public-to-runtime stock alias before acknowledging the queue.
 	// Queue completion deletes the allocation, so doing this in the opposite
 	// order can permanently lose the only mapping after a crash or KV failure.
-	if allocation != nil && result.Status == coreallocation.StatusAssigned && result.AllocatedSessionID != "" && result.AllocatedSessionID != allocation.SessionID && c.routes != nil {
+	if result.Status == coreallocation.StatusAssigned && result.AllocatedSessionID != "" && result.AllocatedSessionID != sessionID {
+		if c.routes == nil {
+			return fmt.Errorf("save session route for allocation %s: route repository is not configured", sessionID)
+		}
+		reader, ok := c.queue.(coreallocation.AllocationReader)
+		if !ok {
+			return fmt.Errorf("load allocation %s before saving session route: queue does not support durable allocation reads", sessionID)
+		}
+		allocation, err := reader.GetSessionAllocation(ctx, sessionID)
+		if err != nil {
+			return fmt.Errorf("load allocation %s before saving session route: %w", sessionID, err)
+		}
+		if allocation == nil {
+			return fmt.Errorf("load allocation %s before saving session route: allocation not found", sessionID)
+		}
+		if allocation.SessionID != sessionID {
+			return fmt.Errorf("load allocation %s before saving session route: durable allocation has session ID %s", sessionID, allocation.SessionID)
+		}
 		route := &portrepos.SessionRoute{SessionID: allocation.SessionID, RemoteSessionID: result.AllocatedSessionID, StartedAt: time.Now()}
 		if allocation.Request != nil {
 			route.UserID = allocation.Request.UserID
@@ -469,9 +473,6 @@ func (c *localAllocationClient) Complete(ctx context.Context, sessionID string, 
 	if _, err := c.queue.CompleteSessionAllocation(ctx, sessionID, result); err != nil {
 		return err
 	}
-	c.mu.Lock()
-	delete(c.pending, sessionID)
-	c.mu.Unlock()
 	return nil
 }
 

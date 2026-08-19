@@ -277,6 +277,9 @@ func (w *Webhook) SetMaxSessions(max int) {
 // CreatedAt returns the creation time
 func (w *Webhook) CreatedAt() time.Time { return w.createdAt }
 
+// SetCreatedAt sets the creation time when restoring persisted state.
+func (w *Webhook) SetCreatedAt(t time.Time) { w.createdAt = t }
+
 // UpdatedAt returns the last update time
 func (w *Webhook) UpdatedAt() time.Time { return w.updatedAt }
 
@@ -294,6 +297,9 @@ func (w *Webhook) SetLastDelivery(record *WebhookDeliveryRecord) {
 
 // DeliveryCount returns the delivery count
 func (w *Webhook) DeliveryCount() int64 { return w.deliveryCount }
+
+// SetDeliveryCount sets the delivery count when restoring persisted state.
+func (w *Webhook) SetDeliveryCount(count int64) { w.deliveryCount = count }
 
 // IncrementDeliveryCount increments the delivery count
 func (w *Webhook) IncrementDeliveryCount() {
@@ -617,6 +623,9 @@ func (r *WebhookDeliveryRecord) ID() string { return r.id }
 
 // ReceivedAt returns the received time
 func (r *WebhookDeliveryRecord) ReceivedAt() time.Time { return r.receivedAt }
+
+// SetReceivedAt sets the received time when restoring persisted state.
+func (r *WebhookDeliveryRecord) SetReceivedAt(t time.Time) { r.receivedAt = t }
 
 // Status returns the delivery status
 func (r *WebhookDeliveryRecord) Status() DeliveryStatus { return r.status }

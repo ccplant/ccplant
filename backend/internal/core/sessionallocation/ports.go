@@ -31,6 +31,12 @@ type Queue interface {
 	CompleteExternalSessionAllocation(ctx context.Context, sessionID string, result AllocationResult) (*AllocationRequest, error)
 }
 
+// AllocationReader exposes durable allocation state to in-process allocator
+// clients that must persist dependent resources before queue completion.
+type AllocationReader interface {
+	GetSessionAllocation(ctx context.Context, sessionID string) (*AllocationRequest, error)
+}
+
 type Notifier interface {
 	Notify(ctx context.Context) error
 	Subscribe(ctx context.Context) (<-chan struct{}, func(), error)

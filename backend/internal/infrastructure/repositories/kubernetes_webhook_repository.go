@@ -570,10 +570,22 @@ func (r *KubernetesWebhookRepository) jsonToEntity(wj *webhookJSON) *entities.We
 	// Last delivery
 	if wj.LastDelivery != nil {
 		record := entities.NewWebhookDeliveryRecord(wj.LastDelivery.ID, wj.LastDelivery.Status)
+		if !wj.LastDelivery.ReceivedAt.IsZero() {
+			record.SetReceivedAt(wj.LastDelivery.ReceivedAt)
+		}
 		record.SetMatchedTrigger(wj.LastDelivery.MatchedTrigger)
 		record.SetSessionID(wj.LastDelivery.SessionID)
 		record.SetError(wj.LastDelivery.Error)
 		webhook.SetLastDelivery(record)
+	}
+
+	// Restore persisted metadata last because the setters above update timestamps.
+	if !wj.CreatedAt.IsZero() {
+		webhook.SetCreatedAt(wj.CreatedAt)
+	}
+	webhook.SetDeliveryCount(wj.DeliveryCount)
+	if !wj.UpdatedAt.IsZero() {
+		webhook.SetUpdatedAt(wj.UpdatedAt)
 	}
 
 	return webhook

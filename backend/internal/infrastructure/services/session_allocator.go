@@ -106,6 +106,13 @@ func (m *KubernetesSessionManager) getSessionAllocation(ctx context.Context, ses
 	return &req, nil
 }
 
+// GetSessionAllocation returns the durable allocation request. Allocator
+// clients use it to persist dependent state before completion deletes the
+// allocation Secret.
+func (m *KubernetesSessionManager) GetSessionAllocation(ctx context.Context, sessionID string) (*sessionallocation.AllocationRequest, error) {
+	return m.getSessionAllocation(ctx, sessionID)
+}
+
 func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, req *sessionallocation.AllocationRequest) error {
 	req.UpdatedAt = time.Now().UTC()
 	data, err := json.Marshal(req)
