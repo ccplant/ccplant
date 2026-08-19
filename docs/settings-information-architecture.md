@@ -1,14 +1,14 @@
 # Settings information architecture proposal
 
-![Proposed compact settings screen](design/settings-information-architecture.png)
+![Proposed compact settings screen](design/settings-information-architecture-v2.png)
 
 ## Objective
 
-Make settings easier to scan by separating the setting owner from the setting purpose, reducing repeated card chrome, and keeping save state and search visible.
+Make settings easier to scan by separating the setting owner from the setting purpose, removing repeated card and accordion chrome, and keeping save state and search visible.
 
 ## Proposed structure
 
-The `Personal` / `Team` choice becomes a scope switch in the page header. The primary navigation is reorganized by user intent:
+The setting owner becomes an **Edit scope** dropdown at the top of the sidebar. It shows the exact target, such as `Personal settings — Jane Doe` or `Team settings — Platform`, while the primary navigation below it is organized by user intent:
 
 | Category | Current settings included |
 | --- | --- |
@@ -21,20 +21,20 @@ The `Personal` / `Team` choice becomes a scope switch in the page header. The pr
 
 ## Density rules
 
-- Use 40–48 px setting rows with a label, one-line description, current value or status, and a trailing action.
-- Use a two-column grid at desktop widths; collapse to one column below the existing medium breakpoint.
-- Reserve expanded panels for forms and multi-item editors. Do not wrap every setting group in an accordion.
-- Keep scope, search, unsaved state, and the save action in a sticky page header.
+- Use conventional full-width setting rows with a label and one-line description on the left, plus the current value, status, or action on the right.
+- Separate rows with thin horizontal rules on one flat content surface. Do not place individual settings in cards.
+- Show all settings in the selected category. Do not use accordions or collapsed panels.
+- Keep the edit scope visible at the top of the sidebar; keep search, unsaved state, and the save action in a sticky page header.
 - Show setup state with concise chips such as `Connected`, `Configured`, and `Not configured`.
 - Put counts on navigation items so users can judge section size before opening it.
-- Move long explanations into inline help or disclosure panels; keep the default view scannable.
+- Move long explanations into inline help or dedicated detail screens; keep the category view scannable.
 
 ## Suggested first implementation slice
 
-Start with Personal settings and move Default Agent, preferred team, Claude OAuth, Codex credentials, and Bedrock into the new AI & authentication section. This validates the shell, compact row component, responsive grid, and sticky save behavior before migrating the more complex list editors.
+Start with Personal settings and move Default Agent, preferred team, Claude OAuth, Codex credentials, and Bedrock into the new AI & authentication section. This validates the sidebar scope selector, flat setting-row component, and sticky save behavior before migrating the more complex list editors.
 
 ## Image generation record
 
 - Mode: built-in image generation
 - Use case: `ui-mockup`
-- Direction: high-fidelity desktop SaaS settings screen with purpose-based navigation, personal/team scope switch, search, sticky save state, compact two-column rows, and restrained status colors
+- Direction: high-fidelity desktop SaaS settings screen with purpose-based navigation, sidebar edit-scope dropdown, search, sticky save state, flat full-width rows, no cards or accordions, and restrained status colors
