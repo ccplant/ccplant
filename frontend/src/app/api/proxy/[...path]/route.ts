@@ -2,7 +2,7 @@ import { createProxyRouteHandler } from '@/lib/server-proxy-route'
 
 const options = {
   publicPrefix: '/api/proxy',
-  passThroughAuthorization: false,
+  passThroughAuthorization: true,
 }
 
 export const GET = createProxyRouteHandler('GET', options)

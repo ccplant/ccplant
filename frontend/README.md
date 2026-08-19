@@ -74,8 +74,8 @@ https://app.example.com/api/v1/sessions?limit=10
   -> https://<AGENTAPI_PROXY_URL>/sessions?limit=10
 ```
 
-`Authorization` ヘッダーが指定されている場合は、その値をそのままバックエンドへ
-転送します。指定されていない場合は、従来の `/api/proxy/*` と同様に暗号化Cookieを
+`/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
+場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを
 復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。
 
 ### 認証
