@@ -25,7 +25,7 @@ export default function PersonalSettingsPage() {
   const [notificationChannels, setNotificationChannels] = useState<string[] | undefined>(undefined)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
   const [editingEsmIndex, setEditingEsmIndex] = useState<number | null>(null)
-  const [editEsm, setEditEsm] = useState<{ name: string; pool_enabled: boolean; automatic_assignment_enabled: boolean }>({ name: '', pool_enabled: false, automatic_assignment_enabled: false })
+  const [editEsm, setEditEsm] = useState<{ name: string; pool: string; pool_enabled: boolean; automatic_assignment_enabled: boolean }>({ name: '', pool: '', pool_enabled: false, automatic_assignment_enabled: false })
   const [revealedTokens, setRevealedTokens] = useState<Record<string, string>>({})
   const [copiedSecretId, setCopiedSecretId] = useState<string | null>(null)
   const [regeneratingEsmId, setRegeneratingEsmId] = useState<string | null>(null)
@@ -212,7 +212,7 @@ export default function PersonalSettingsPage() {
   const handleStartEditEsm = (index: number) => {
     const esm = esmList[index]
     setEditingEsmIndex(index)
-    setEditEsm({ name: esm.name, pool_enabled: esm.pool_enabled ?? false, automatic_assignment_enabled: esm.automatic_assignment_enabled ?? false })
+    setEditEsm({ name: esm.name, pool: esm.pool ?? '', pool_enabled: esm.pool_enabled ?? false, automatic_assignment_enabled: esm.automatic_assignment_enabled ?? false })
   }
 
   const handleSaveEditEsm = () => {
@@ -222,7 +222,8 @@ export default function PersonalSettingsPage() {
     updatedList[editingEsmIndex] = {
       ...esmList[editingEsmIndex],
       name: editEsm.name.trim(),
-	  pool_enabled: editEsm.pool_enabled,
+      pool: editEsm.pool.trim(),
+      pool_enabled: editEsm.pool_enabled,
       automatic_assignment_enabled: editEsm.automatic_assignment_enabled,
     }
     setEsmList(updatedList)
@@ -715,6 +716,16 @@ export default function PersonalSettingsPage() {
                           className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Pool 名</label>
+                        <input
+                          type="text"
+                          required
+                          value={editEsm.pool}
+                          onChange={(e) => setEditEsm(prev => ({ ...prev, pool: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -737,7 +748,7 @@ export default function PersonalSettingsPage() {
                         <button
                           type="button"
                           onClick={handleSaveEditEsm}
-                          disabled={!editEsm.name.trim()}
+                          disabled={!editEsm.name.trim() || !editEsm.pool.trim()}
                           className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
                           更新

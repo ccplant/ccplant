@@ -153,6 +153,13 @@ export default function TeamSettingsPage() {
     })))
   }
 
+  const handlePoolNameChange = (index: number, pool: string) => {
+    updateEsmList(esmList.map((manager, current) => ({
+      ...manager,
+      pool: current === index ? pool : manager.pool,
+    })))
+  }
+
   const handleSave = async () => {
     if (!teamName) {
       setError('Please select a team first')
@@ -390,6 +397,16 @@ export default function TeamSettingsPage() {
                         {manager.pool && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">Pool: {manager.pool}</span>}
                         {manager.has_connection_token && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">token 設定済み</span>}
                       </div>
+                      <label className="mt-2 block text-xs text-gray-500 dark:text-gray-400">
+                        Pool 名
+                        <input
+                          type="text"
+                          required
+                          value={manager.pool ?? ''}
+                          onChange={(event) => handlePoolNameChange(index, event.target.value)}
+                          className="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                        />
+                      </label>
                     </div>
                     <button type="button" onClick={() => handleTogglePool(index)} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 dark:border-gray-600 dark:text-gray-300">
 					  {manager.pool_enabled ? 'Pool を無効化' : 'Pool を有効化'}
