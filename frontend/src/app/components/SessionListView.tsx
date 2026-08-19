@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { CircleDot, GitPullRequest, Info, LoaderCircle, MoreHorizontal } from 'lucide-react'
+import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
@@ -908,6 +908,22 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                 : '新規'}
                             </span>
                           )}
+                          {(session.status === 'error' || session.status === 'timeout') && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setExpandedErrorSessionId(current => current === session.session_id ? null : session.session_id)
+                              }}
+                              className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-red-600 transition-colors hover:bg-red-100 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1 dark:text-red-400 dark:hover:bg-red-900/50 dark:hover:text-red-200"
+                              aria-label="エラー詳細を表示"
+                              title="エラー詳細"
+                              aria-expanded={expandedErrorSessionId === session.session_id}
+                              aria-controls={`session-error-${session.session_id}`}
+                            >
+                              <CircleAlert className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          )}
                         </div>
 
                         {annotations.runningTask && (
@@ -923,26 +939,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                           </div>
                         )}
 
-                        {(session.status === 'error' || session.status === 'timeout') && (
-                          <div className="mb-3">
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                setExpandedErrorSessionId(current => current === session.session_id ? null : session.session_id)
-                              }}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-900/50"
-                              aria-expanded={expandedErrorSessionId === session.session_id}
-                              aria-controls={`session-error-${session.session_id}`}
-                            >
-                              <Info className="h-3.5 w-3.5" aria-hidden="true" />
-                              エラー詳細
-                            </button>
-                            {expandedErrorSessionId === session.session_id && (
-                              <div id={`session-error-${session.session_id}`} className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" role="alert">
-                                {session.error_message || 'エラーの詳細は取得できませんでした。管理者ログを確認してください。'}
-                              </div>
-                            )}
+                        {(session.status === 'error' || session.status === 'timeout') && expandedErrorSessionId === session.session_id && (
+                          <div id={`session-error-${session.session_id}`} className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" role="alert">
+                            {session.error_message || 'エラーの詳細は取得できませんでした。管理者ログを確認してください。'}
                           </div>
                         )}
 
