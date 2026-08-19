@@ -22,6 +22,7 @@ interface ApiTokensSectionProps {
   defaultOpen?: boolean
   sectionId?: string
   displayOrder?: number
+  categoryId?: string
 }
 
 function formatDate(iso?: string | null): string {
@@ -39,6 +40,7 @@ export default function ApiTokensSection({
   defaultOpen = false,
   sectionId,
   displayOrder,
+  categoryId,
 }: ApiTokensSectionProps) {
   const { showToast } = useToast()
   const [tokens, setTokens] = useState<ApiToken[]>([])
@@ -137,6 +139,7 @@ export default function ApiTokensSection({
     <SettingsAccordion
       sectionId={sectionId}
       displayOrder={displayOrder}
+      categoryId={categoryId}
       title="API トークン"
       description={scope === 'team' ? 'チーム用 API トークンを管理します' : 'パーソナル API トークンを管理します'}
       defaultOpen={defaultOpen}

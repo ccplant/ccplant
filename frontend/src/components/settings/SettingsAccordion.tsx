@@ -1,9 +1,14 @@
+'use client'
+
+import { useSettingsCategory } from '@/app/settings/SettingsCategoryContext'
+
 interface SettingsAccordionProps {
   title: string
   description?: string
   defaultOpen?: boolean
   sectionId?: string
   displayOrder?: number
+  categoryId?: string
   children: React.ReactNode
 }
 
@@ -19,8 +24,12 @@ export function SettingsAccordion({
   description,
   sectionId,
   displayOrder,
+  categoryId,
   children,
 }: SettingsAccordionProps) {
+  const { activeCategory } = useSettingsCategory()
+  if (categoryId && categoryId !== activeCategory) return null
+
   return (
     <section
       id={sectionId}

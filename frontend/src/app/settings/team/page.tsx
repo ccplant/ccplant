@@ -6,6 +6,7 @@ import { BedrockSettings, SettingsAccordion, MCPServerSettings, MarketplaceSetti
 import { createAgentAPIProxyClientFromStorage, CredentialsMetadata } from '@/lib/agentapi-proxy-client'
 import ApiTokensSection from '@/app/components/ApiTokensSection'
 import { useToast } from '@/contexts/ToastContext'
+import { useSettingsCategory } from '../SettingsCategoryContext'
 
 export default function TeamSettingsPage() {
   const [settings, setSettings] = useState<SettingsData>({})
@@ -19,6 +20,7 @@ export default function TeamSettingsPage() {
   const [credentialsMetadata, setCredentialsMetadata] = useState<CredentialsMetadata | null>(null)
   const [esmList, setEsmList] = useState<ExternalSessionManagerConfig[]>([])
   const { showToast } = useToast()
+  const { activeCategory } = useSettingsCategory()
   const hasUnsavedChangesRef = useRef(false)
 
   // 未保存の変更があるかチェック
@@ -211,7 +213,7 @@ export default function TeamSettingsPage() {
 
   return (
     <div className="flex flex-col">
-      <div id="settings-overview" className="scroll-mt-24 border-b border-gray-200 pb-6 dark:border-gray-700">
+      {activeCategory === 'settings-overview' && <div id="settings-overview" className="scroll-mt-24 border-b border-gray-200 pb-6 dark:border-gray-700">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
           Team Settings
         </h2>
@@ -223,7 +225,7 @@ export default function TeamSettingsPage() {
             </span>
           )}
         </p>
-      </div>
+      </div>}
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
@@ -267,11 +269,12 @@ export default function TeamSettingsPage() {
 
       {isTeamLoaded && (
         <>
-          <ApiTokensSection scope="team" teamId={teamName} defaultOpen={false} sectionId="security-settings" displayOrder={60} />
+          <ApiTokensSection scope="team" teamId={teamName} defaultOpen={false} sectionId="security-settings" categoryId="security-settings" displayOrder={60} />
 
           <SettingsAccordion
             sectionId="ai-authentication"
             displayOrder={20}
+            categoryId="ai-authentication"
             title="Codex Authentication"
             description="Register a shared Codex auth.json for the team"
             defaultOpen={false}
@@ -291,6 +294,7 @@ export default function TeamSettingsPage() {
           <SettingsAccordion
             sectionId="extensions"
             displayOrder={30}
+            categoryId="extensions"
             title="Marketplace"
             description="Configure plugin marketplaces"
             defaultOpen
@@ -300,6 +304,7 @@ export default function TeamSettingsPage() {
 
           <SettingsAccordion
             displayOrder={31}
+            categoryId="extensions"
             title="Plugins"
             description="Enable plugins from official and registered marketplaces"
             defaultOpen
@@ -313,6 +318,7 @@ export default function TeamSettingsPage() {
 
           <SettingsAccordion
             displayOrder={21}
+            categoryId="ai-authentication"
             title="Default Agent Type"
             description="Choose the agent used when a team session does not specify one"
             defaultOpen={false}
@@ -335,6 +341,7 @@ export default function TeamSettingsPage() {
 
           <SettingsAccordion
             displayOrder={22}
+            categoryId="ai-authentication"
             title="AI Settings"
             description="Configure AI providers and models"
             defaultOpen
@@ -344,6 +351,7 @@ export default function TeamSettingsPage() {
 
           <SettingsAccordion
             displayOrder={32}
+            categoryId="extensions"
             title="MCP Servers"
             description="Configure Model Context Protocol servers for the team"
             defaultOpen
@@ -353,6 +361,7 @@ export default function TeamSettingsPage() {
 
           <SettingsAccordion
             displayOrder={61}
+            categoryId="security-settings"
             title="GitHub App Authentication"
             description="Configure the GitHub App installation used by team sessions"
             defaultOpen={false}
@@ -383,6 +392,7 @@ export default function TeamSettingsPage() {
           <SettingsAccordion
             sectionId="session-settings"
             displayOrder={40}
+            categoryId="session-settings"
             title="Environment Variables"
             description="Configure custom environment variables for team sessions"
             defaultOpen
@@ -392,6 +402,7 @@ export default function TeamSettingsPage() {
 
           <SettingsAccordion
             displayOrder={41}
+            categoryId="session-settings"
             title="セッションマネージャー"
             description="チームで共有する External Session Manager を登録します"
             defaultOpen={false}
@@ -438,7 +449,7 @@ export default function TeamSettingsPage() {
             </div>
           </SettingsAccordion>
 
-          <div className="sticky bottom-0 z-20 order-[80] -mx-4 mt-6 flex items-center justify-between border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:mx-0 md:rounded-t-lg">
+          {activeCategory !== 'settings-overview' && <div className="sticky bottom-0 z-20 order-[80] -mx-4 mt-6 flex items-center justify-between border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] backdrop-blur dark:border-gray-700 dark:bg-gray-900/95 md:mx-0 md:rounded-t-lg">
             {hasUnsavedChanges && (
               <div className="flex items-center gap-2 text-sm text-yellow-600 dark:text-yellow-400">
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -457,7 +468,7 @@ export default function TeamSettingsPage() {
               )}
               {saving ? 'Saving...' : 'Save'}
             </button>
-          </div>
+          </div>}
         </>
       )}
 

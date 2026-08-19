@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { ArrowLeft, Bell, Bot, Blocks, LayoutDashboard, LockKeyhole, MonitorCog, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import { useSettingsCategory } from './SettingsCategoryContext'
 
 const categories = [
   { label: '概要', hash: 'settings-overview', icon: LayoutDashboard },
@@ -21,7 +22,7 @@ export function SettingsSidebar() {
   const [userName, setUserName] = useState('')
   const [teams, setTeams] = useState<string[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
-  const [activeCategory, setActiveCategory] = useState('settings-overview')
+  const { activeCategory, setActiveCategory } = useSettingsCategory()
   const [scope, setScope] = useState(pathname === '/settings/team' ? 'team:' : 'personal')
 
   useEffect(() => {
@@ -45,13 +46,6 @@ export function SettingsSidebar() {
 
     loadScopeOptions()
   }, [pathname])
-
-  useEffect(() => {
-    const updateHash = () => setActiveCategory(window.location.hash.slice(1) || 'settings-overview')
-    updateHash()
-    window.addEventListener('hashchange', updateHash)
-    return () => window.removeEventListener('hashchange', updateHash)
-  }, [])
 
   const handleScopeChange = (value: string) => {
     setScope(value)
@@ -91,12 +85,12 @@ export function SettingsSidebar() {
 
       <nav aria-label="設定カテゴリ" className="-mx-4 overflow-x-auto border-y border-gray-200 px-4 dark:border-gray-700 md:mx-0 md:overflow-visible md:border-0 md:px-0">
         <ul className="flex min-w-max gap-1 py-2 md:block md:min-w-0 md:space-y-1 md:py-0">
-          {categories.map(({ label, hash, icon: Icon }) => {
+          {categories.filter(({ hash }) => pathname !== '/settings/team' || hash !== 'notification-settings').map(({ label, hash, icon: Icon }) => {
             const active = activeCategory === hash
             return (
               <li key={hash}>
-                <a
-                  href={`#${hash}`}
+                <button
+                  type="button"
                   onClick={() => setActiveCategory(hash)}
                   className={`flex h-11 items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors md:w-full ${
                     active
@@ -106,7 +100,7 @@ export function SettingsSidebar() {
                 >
                   <Icon className="h-4 w-4" />
                   {label}
-                </a>
+                </button>
               </li>
             )
           })}
