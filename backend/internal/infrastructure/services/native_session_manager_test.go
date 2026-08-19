@@ -216,6 +216,7 @@ func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.provisionRequests["session-1"] = &ProvisionRequest{RequestID: "request-1", SessionID: "session-1", Status: "pending"}
+	m.sessions["session-1"] = &NativeSession{id: "session-1", request: &entities.RunServerRequest{}, rootDir: t.TempDir(), status: "starting"}
 	if err := m.ConnectProvisioner(context.Background(), ProvisionerConnectRequest{SessionID: "session-1", PodName: "native-worker"}); err != nil {
 		t.Fatal(err)
 	}
@@ -225,5 +226,13 @@ func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
 	}
 	if _, ok, err := m.ClaimProvisionRequest(context.Background(), "session-1", "other"); err != nil || ok {
 		t.Fatalf("duplicate claim ok=%v err=%v", ok, err)
+	}
+	if err := m.UpdateProvisionRequestStatus(context.Background(), "session-1", "request-1", ProvisionRequestStatusUpdate{
+		Status: "error", Message: "failed to start agent: executable not found",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.sessions["session-1"].StatusMessage(); got != "failed to start agent: executable not found" {
+		t.Fatalf("StatusMessage() = %q", got)
 	}
 }

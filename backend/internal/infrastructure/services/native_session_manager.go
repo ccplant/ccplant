@@ -52,6 +52,7 @@ type NativeSession struct {
 	updatedAt       time.Time
 	lastMessageAt   time.Time
 	status          string
+	statusMessage   string
 	description     string
 	cancel          context.CancelFunc
 }
@@ -67,6 +68,7 @@ type nativeSessionState struct {
 	UpdatedAt         time.Time                  `json:"updated_at"`
 	LastMessageAt     time.Time                  `json:"last_message_at"`
 	Status            string                     `json:"status"`
+	StatusMessage     string                     `json:"status_message,omitempty"`
 	Description       string                     `json:"description,omitempty"`
 	FilesystemSandbox bool                       `json:"filesystem_sandbox,omitempty"`
 }
@@ -223,7 +225,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		if s.status != "stopped" {
 			s.status = "error"
 			if err != nil {
-				s.description = err.Error()
+				s.statusMessage = err.Error()
 			}
 		}
 		s.updatedAt = time.Now().UTC()
@@ -324,8 +326,10 @@ func (m *NativeSessionManager) UpdateProvisionRequestStatus(_ context.Context, s
 	if s := m.sessions[sessionID]; s != nil {
 		s.mu.Lock()
 		s.status = update.Status
+		s.statusMessage = update.Message
 		if update.Status == "ready" {
 			s.status = "running"
+			s.statusMessage = ""
 		}
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
@@ -586,7 +590,7 @@ func (m *NativeSessionManager) persistSession(s *NativeSession) error {
 	s.mu.RLock()
 	state := nativeSessionState{ID: s.id, Request: s.request, RootDir: s.rootDir, AgentPort: s.agentPort,
 		ProvisionerPort: s.provisionerPort, PID: s.pid, StartedAt: s.startedAt, UpdatedAt: s.updatedAt,
-		LastMessageAt: s.lastMessageAt, Status: s.status, Description: s.description,
+		LastMessageAt: s.lastMessageAt, Status: s.status, StatusMessage: s.statusMessage, Description: s.description,
 		FilesystemSandbox: m.filesystemSandbox}
 	s.mu.RUnlock()
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -654,7 +658,7 @@ func (m *NativeSessionManager) restoreSessions() error {
 		m.sessions[state.ID] = &NativeSession{id: state.ID, request: state.Request, rootDir: state.RootDir,
 			agentPort: state.AgentPort, provisionerPort: state.ProvisionerPort, pid: state.PID,
 			startedAt: state.StartedAt, updatedAt: state.UpdatedAt, lastMessageAt: state.LastMessageAt,
-			status: state.Status, description: state.Description, cancel: cancel}
+			status: state.Status, statusMessage: state.StatusMessage, description: state.Description, cancel: cancel}
 	}
 	return nil
 }
@@ -707,6 +711,11 @@ func (s *NativeSession) Description() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.description
+}
+func (s *NativeSession) StatusMessage() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.statusMessage
 }
 func (s *NativeSession) Cancel() {
 	if s.cancel != nil {

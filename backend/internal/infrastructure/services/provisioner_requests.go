@@ -226,6 +226,7 @@ func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Cont
 	if err := m.saveProvisionRequest(ctx, provisionReq); err != nil {
 		return err
 	}
+	m.invalidateSessionListCache("provision request status update")
 
 	if sess := m.GetSession(sessionID); sess != nil {
 		if ks, ok := sess.(*KubernetesSession); ok {
@@ -233,10 +234,12 @@ func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Cont
 			case "provisioning":
 				ks.SetStatus("starting")
 			case "ready":
+				ks.SetStatusMessage("")
 				if ks.Status() != "running" {
 					ks.SetStatus("active")
 				}
 			case "error":
+				ks.SetStatusMessage(req.Message)
 				ks.SetStatus("error")
 			}
 		}

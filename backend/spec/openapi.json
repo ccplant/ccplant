@@ -6141,6 +6141,10 @@
           "status": {
             "$ref": "#/components/schemas/SessionStatus"
           },
+          "error_message": {
+            "type": "string",
+            "description": "Human-readable startup error when status is 'error'"
+          },
           "started_at": {
             "type": "string",
             "format": "date-time",
@@ -6190,11 +6194,14 @@
           "starting",
           "running",
           "active",
+          "suspended",
           "unhealthy",
           "stopped",
+          "error",
+          "timeout",
           "unknown"
         ],
-        "description": "Session status. 'running' means the agentapi backend is actively processing a message."
+        "description": "Session status. 'running' means the agentapi backend is actively processing a message; 'error' means startup failed."
       },
       "SessionStatusEvent": {
         "type": "object",

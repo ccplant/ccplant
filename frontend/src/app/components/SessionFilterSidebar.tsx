@@ -131,6 +131,8 @@ export default function SessionFilterSidebar({
     { value: 'all' as const, label: 'All Statuses' },
     { value: 'creating' as const, label: '作成中' },
     { value: 'starting' as const, label: '起動中' },
+    { value: 'error' as const, label: '起動失敗' },
+    { value: 'timeout' as const, label: '起動タイムアウト' },
     { value: 'active' as const, label: 'Active' },
     { value: 'unhealthy' as const, label: 'Unhealthy' },
     { value: 'stopped' as const, label: 'Stopped' },

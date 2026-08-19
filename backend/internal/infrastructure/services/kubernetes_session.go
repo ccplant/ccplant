@@ -23,6 +23,7 @@ type KubernetesSession struct {
 	updatedAt         time.Time
 	lastMessageAt     time.Time
 	status            string
+	statusMessage     string
 	cancelFunc        context.CancelFunc
 	mutex             sync.RWMutex
 	description       string // Preserved description from Secret (not truncated by label limits)
@@ -182,6 +183,20 @@ func (s *KubernetesSession) SetStatus(status string) {
 	if changed && cb != nil {
 		cb(s.id, status)
 	}
+}
+
+// SetStatusMessage stores a human-readable explanation for the current status.
+func (s *KubernetesSession) SetStatusMessage(message string) {
+	s.mutex.Lock()
+	s.statusMessage = message
+	s.mutex.Unlock()
+}
+
+// StatusMessage returns a human-readable explanation for terminal states.
+func (s *KubernetesSession) StatusMessage() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.statusMessage
 }
 
 // SetStatusSilent updates the in-memory status without invoking the

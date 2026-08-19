@@ -157,7 +157,7 @@ export interface RateLimitInfo {
 }
 
 // Session status types based on agentapi-proxy OpenAPI specification
-export type SessionStatus = 'creating' | 'starting' | 'running' | 'active' | 'suspended' | 'unhealthy' | 'stopped' | 'unknown';
+export type SessionStatus = 'creating' | 'starting' | 'running' | 'active' | 'suspended' | 'unhealthy' | 'stopped' | 'error' | 'timeout' | 'unknown';
 
 // Resource scope types for team support
 export type ResourceScope = 'user' | 'team';
@@ -185,6 +185,7 @@ export interface Session {
   scope?: ResourceScope;
   team_id?: string;
   sandbox_policy_id?: string;
+  error_message?: string;
 }
 
 export interface SessionListParams {
