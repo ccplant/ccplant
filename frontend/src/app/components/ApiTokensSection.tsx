@@ -20,6 +20,8 @@ interface ApiTokensSectionProps {
   teamId?: string
   /** Whether the accordion is open by default. */
   defaultOpen?: boolean
+  /** Render the contents without the accordion wrapper (for a dedicated settings page). */
+  bare?: boolean
 }
 
 function formatDate(iso?: string | null): string {
@@ -35,6 +37,7 @@ export default function ApiTokensSection({
   scope,
   teamId,
   defaultOpen = false,
+  bare = false,
 }: ApiTokensSectionProps) {
   const { showToast } = useToast()
   const [tokens, setTokens] = useState<ApiToken[]>([])
@@ -129,12 +132,8 @@ export default function ApiTokensSection({
     setDeleteError(null)
   }
 
-  return (
-    <SettingsAccordion
-      title="API トークン"
-      description={scope === 'team' ? 'チーム用 API トークンを管理します' : 'パーソナル API トークンを管理します'}
-      defaultOpen={defaultOpen}
-    >
+  const content = (
+    <>
       <div className="space-y-4">
         {/* Toolbar */}
         <div className="flex items-center justify-between">
@@ -250,6 +249,18 @@ export default function ApiTokensSection({
         onConfirm={handleDeleteConfirm}
         onCancel={handleDeleteCancel}
       />
+    </>
+  )
+
+  if (bare) return content
+
+  return (
+    <SettingsAccordion
+      title="API トークン"
+      description={scope === 'team' ? 'チーム用 API トークンを管理します' : 'パーソナル API トークンを管理します'}
+      defaultOpen={defaultOpen}
+    >
+      {content}
     </SettingsAccordion>
   )
 }

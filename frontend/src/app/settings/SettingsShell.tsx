@@ -3,66 +3,134 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, PanelLeft, User, Users, X } from 'lucide-react'
+import { ArrowLeft, PanelLeft, X } from 'lucide-react'
 import { SettingsSidebar, SidebarGroup } from './SettingsSidebar'
+import { ScopeSwitcher } from './ScopeSwitcher'
+import { SaveBar } from './SaveBar'
+import { SettingsScopeProvider, useSettingsScope } from './SettingsScopeContext'
+import {
+  DEFAULT_SETTINGS_SLUG,
+  SettingsScopeKind,
+  navItemsForScope,
+  settingsHref,
+} from './navConfig'
 
-const legacyGroups: SidebarGroup[] = [
-  {
-    title: '',
-    items: [
-      { href: '/settings/personal', label: 'Personal', icon: User },
-      { href: '/settings/team', label: 'Team', icon: Users },
-    ],
-  },
-]
+interface ResolvedScope {
+  scopeKind: SettingsScopeKind
+  teamId?: string
+  slug: string
+}
 
-export function SettingsShell({ children }: { children: React.ReactNode }) {
+/** /settings/personal/xxx と /settings/team/<team>/xxx からスコープを読み取る */
+const resolveScope = (pathname: string): ResolvedScope | null => {
+  const segments = pathname.split('/').filter(Boolean) // ['settings', ...]
+  if (segments[0] !== 'settings') return null
+
+  if (segments[1] === 'personal') {
+    return { scopeKind: 'personal', slug: segments[2] ?? DEFAULT_SETTINGS_SLUG }
+  }
+  if (segments[1] === 'team' && segments[2]) {
+    return {
+      scopeKind: 'team',
+      teamId: decodeURIComponent(segments[2]),
+      slug: segments[3] ?? DEFAULT_SETTINGS_SLUG,
+    }
+  }
+  return null
+}
+
+const buildGroups = (
+  scope: ResolvedScope,
+  dirtyFields: string[]
+): SidebarGroup[] => {
+  const dirty = new Set(dirtyFields)
+  const groups: SidebarGroup[] = []
+
+  for (const item of navItemsForScope(scope.scopeKind)) {
+    const existing = groups.find((group) => group.title === item.group)
+    const entry = {
+      href: settingsHref(scope.scopeKind, item.slug, scope.teamId),
+      label: item.label,
+      icon: item.icon,
+      dirty: item.fields.some((field) => dirty.has(field)),
+    }
+    if (existing) {
+      existing.items.push(entry)
+    } else {
+      groups.push({ title: item.group, items: [entry] })
+    }
+  }
+  return groups
+}
+
+/** スコープの状態を読んでサイドバーと保存バーを描画する内側のシェル */
+function ScopedShell({ scope, children }: { scope: ResolvedScope; children: React.ReactNode }) {
   const pathname = usePathname()
+  const { dirty, dirtyFields, userName, userTeams } = useSettingsScope()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  // ページを移動したらモバイルのドロワーを閉じる
   useEffect(() => {
     setDrawerOpen(false)
   }, [pathname])
 
-  const activeItem = legacyGroups
+  const groups = buildGroups(scope, dirtyFields as string[])
+  const activeLabel = groups
     .flatMap((group) => group.items)
-    .find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
+    .find((item) => item.href === pathname)?.label
+
+  // スコープをまたぐ移動だけ確認する。同じスコープ内は編集内容が保持される
+  const confirmLeave = () =>
+    !dirty || confirm('未保存の変更があります。破棄して移動しますか？')
+
+  const sidebarHeader = (
+    <ScopeSwitcher
+      scopeKind={scope.scopeKind}
+      teamId={scope.teamId}
+      userName={userName}
+      userTeams={userTeams}
+      currentSlug={scope.slug}
+      confirmLeave={confirmLeave}
+    />
+  )
 
   return (
-    <main className="min-h-dvh bg-gray-50 dark:bg-gray-950">
-      <div className="container mx-auto max-w-6xl px-4 py-6">
-        <div className="mb-4 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="md:hidden rounded-md p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-            aria-label="設定メニューを開く"
-          >
-            <PanelLeft className="h-5 w-5" />
-          </button>
-          <Link
-            href="/chats"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            チャットに戻る
-          </Link>
-          <span className="md:hidden ml-auto text-sm font-medium text-gray-900 dark:text-white">
-            {activeItem?.label}
+    <>
+      <div className="mb-4 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          className="rounded-md p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 md:hidden"
+          aria-label="設定メニューを開く"
+        >
+          <PanelLeft className="h-5 w-5" />
+        </button>
+        <Link
+          href="/chats"
+          onClick={(e) => {
+            if (!confirmLeave()) e.preventDefault()
+          }}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          チャットに戻る
+        </Link>
+        {activeLabel && (
+          <span className="ml-auto text-sm font-medium text-gray-900 dark:text-white md:hidden">
+            {activeLabel}
           </span>
+        )}
+      </div>
+
+      <div className="flex gap-8">
+        <div className="hidden md:block">
+          <SettingsSidebar groups={groups} activeHref={pathname} header={sidebarHeader} />
         </div>
-
-        <div className="flex gap-8">
-          <div className="hidden md:block">
-            <SettingsSidebar groups={legacyGroups} activeHref={activeItem?.href ?? pathname} />
-          </div>
-
-          <div className="min-w-0 flex-1">{children}</div>
+        <div className="min-w-0 flex-1">
+          {children}
+          <SaveBar />
         </div>
       </div>
 
-      {/* モバイル用ドロワー */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true">
           <div
@@ -70,7 +138,7 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
             onClick={() => setDrawerOpen(false)}
           />
           <div className="absolute left-0 top-0 h-full w-72 overflow-y-auto bg-white p-4 shadow-xl dark:bg-gray-900">
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between">
               <span className="text-sm font-semibold text-gray-900 dark:text-white">設定</span>
               <button
                 type="button"
@@ -81,10 +149,34 @@ export function SettingsShell({ children }: { children: React.ReactNode }) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <SettingsSidebar groups={legacyGroups} activeHref={activeItem?.href ?? pathname} />
+            <SettingsSidebar groups={groups} activeHref={pathname} header={sidebarHeader} />
           </div>
         </div>
       )}
+    </>
+  )
+}
+
+export function SettingsShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const scope = resolveScope(pathname)
+
+  return (
+    <main className="min-h-dvh bg-gray-50 dark:bg-gray-950">
+      <div className="container mx-auto max-w-6xl px-4 py-6">
+        {scope ? (
+          // key でスコープが変わったときだけ編集状態をリセットする
+          <SettingsScopeProvider
+            key={`${scope.scopeKind}:${scope.teamId ?? ''}`}
+            scopeKind={scope.scopeKind}
+            teamId={scope.teamId}
+          >
+            <ScopedShell scope={scope}>{children}</ScopedShell>
+          </SettingsScopeProvider>
+        ) : (
+          children
+        )}
+      </div>
     </main>
   )
 }
