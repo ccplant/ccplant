@@ -3,6 +3,7 @@ package controllers
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
+	validation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // BaseSettingsName is the reserved name for global base settings (admin-only)
@@ -104,6 +106,7 @@ type ExternalSessionManagerRequest struct {
 	PoolEnabled                bool              `json:"pool_enabled,omitempty"`                 // Enable explicit pool selection
 	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // Enable implicit pool selection
 	Labels                     map[string]string `json:"labels,omitempty"`                       // Matches allocator.* session tags
+	Pool                       string            `json:"pool,omitempty"`                         // Logical pool selected through allocator.pool
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -173,6 +176,7 @@ type ExternalSessionManagerResponse struct {
 type AvailableManagerEntry struct {
 	ID                         string `json:"id"`
 	Name                       string `json:"name"`
+	Pool                       string `json:"pool"`
 	PoolEnabled                bool   `json:"pool_enabled,omitempty"`
 	AutomaticAssignmentEnabled bool   `json:"automatic_assignment_enabled,omitempty"`
 	Source                     string `json:"source"`      // "user" or "team"
@@ -200,8 +204,11 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 	// Collect from user's own settings
 	if userSettings, err := c.repo.FindByName(ctx.Request().Context(), userID); err == nil {
 		for _, m := range userSettings.ExternalSessionManagers() {
+			if m.HMACSecret == "" || !m.IsPoolEnabled() || m.Pool == "" {
+				continue
+			}
 			managers = append(managers, AvailableManagerEntry{
-				ID: m.ID, Name: m.Name,
+				ID: m.ID, Name: m.Name, Pool: m.Pool,
 				PoolEnabled:                m.IsPoolEnabled(),
 				AutomaticAssignmentEnabled: m.IsAutomaticAssignmentEnabled(),
 				Source:                     "user", SourceName: userID,
@@ -215,8 +222,11 @@ func (c *SettingsController) GetAvailableManagers(ctx echo.Context) error {
 			teamID := team.Organization + "/" + team.TeamSlug
 			if teamSettings, err := c.repo.FindByName(ctx.Request().Context(), teamID); err == nil {
 				for _, m := range teamSettings.ExternalSessionManagers() {
+					if m.HMACSecret == "" || !m.IsPoolEnabled() || m.Pool == "" {
+						continue
+					}
 					managers = append(managers, AvailableManagerEntry{
-						ID: m.ID, Name: m.Name,
+						ID: m.ID, Name: m.Name, Pool: m.Pool,
 						PoolEnabled:                m.IsPoolEnabled(),
 						AutomaticAssignmentEnabled: m.IsAutomaticAssignmentEnabled(),
 						Source:                     "team", SourceName: teamID,
@@ -452,7 +462,11 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	}
 
 	var removedExternalManagers []entities.ExternalSessionManagerEntry
-	var updatedExternalManagers []entities.ExternalSessionManagerEntry
+	type externalManagerUpdate struct {
+		previous entities.ExternalSessionManagerEntry
+		current  entities.ExternalSessionManagerEntry
+	}
+	var updatedExternalManagers []externalManagerUpdate
 	// Update already-enrolled external session managers. New registrations are
 	// accepted only through the one-time enrollment-token API.
 	if req.ExternalSessionManagers != nil {
@@ -479,7 +493,23 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				PoolEnabled:                boolValuePointer(m.PoolEnabled),
 				AutomaticAssignmentEnabled: m.AutomaticAssignmentEnabled,
 				Labels:                     m.Labels,
-				Pool:                       prev.Pool, BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
+				Pool:                       strings.TrimSpace(m.Pool), BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
+			}
+			if entry.Pool == "" {
+				entry.Pool = prev.Pool
+			}
+			if problems := validation.IsValidLabelValue(entry.Pool); len(problems) > 0 {
+				return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
+			}
+			if entry.Pool != prev.Pool && prev.ActiveSessions > 0 {
+				return echo.NewHTTPError(http.StatusConflict, "pool name cannot be changed while sessions are active")
+			}
+			if entry.Pool != prev.Pool && c.sessionRunnerStore != nil {
+				if _, getErr := c.sessionRunnerStore.GetLogicalPool(ctx.Request().Context(), entry.Pool); getErr == nil {
+					return echo.NewHTTPError(http.StatusConflict, "pool name is already in use")
+				} else if !errors.Is(getErr, sessionrunnercore.ErrNotFound) {
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate pool name").SetInternal(getErr)
+				}
 			}
 			retained[m.ID] = true
 			// These fields are owned by the daemon registration/heartbeat API and
@@ -489,7 +519,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			entry.ActiveSessions = prev.ActiveSessions
 			entry.LastHeartbeatAt = prev.LastHeartbeatAt
 			updated = append(updated, entry)
-			updatedExternalManagers = append(updatedExternalManagers, entry)
+			updatedExternalManagers = append(updatedExternalManagers, externalManagerUpdate{previous: prev, current: entry})
 		}
 		// Pending one-time enrollments are not returned by settings responses and
 		// must survive unrelated settings saves.
@@ -532,8 +562,8 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusConflict, "settings saved but manager pool cleanup failed").SetInternal(err)
 		}
 	}
-	for _, manager := range updatedExternalManagers {
-		if err := c.syncExternalManagerPool(ctx.Request().Context(), manager); err != nil {
+	for _, update := range updatedExternalManagers {
+		if err := c.syncExternalManagerPool(ctx.Request().Context(), update.current, update.previous.Pool); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "settings saved but manager pool sync failed").SetInternal(err)
 		}
 	}

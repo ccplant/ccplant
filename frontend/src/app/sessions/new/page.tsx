@@ -175,7 +175,7 @@ export default function NewSessionPage() {
     message: string,
     repo: string,
     agentType: AgentApiType,
-    managerId: string
+    pool: string
   ): Promise<{ success: boolean; error?: string }> => {
     try {
       console.log('Starting session creation with initial message...')
@@ -206,8 +206,8 @@ export default function NewSessionPage() {
       }
 
       // セッションマネージャーが指定されている場合は送信
-      if (managerId) {
-        params.manager_id = managerId
+      if (pool) {
+        tags['allocator.pool'] = pool
       }
 
       // サイクルセッションが有効な場合はcycle_messageを送信
@@ -311,6 +311,7 @@ export default function NewSessionPage() {
         await acpClient.initialize()
         const tags = buildRepositoryTags(currentRepository, checkoutTarget, checkoutBranch, checkoutPrNumber)
         if (selectedTeam) tags.team = selectedTeam
+        if (selectedManagerId) tags['allocator.pool'] = selectedManagerId
         // cwd: リポジトリが指定されていれば /home/user/workdir/<repo名> を使用、なければデフォルト
         const repoPart = currentRepository ? currentRepository.split('/').pop() : ''
         const cwd = repoPart ? `/home/user/workdir/${repoPart}` : '/home/user'
@@ -670,7 +671,7 @@ export default function NewSessionPage() {
                 )}
                 {selectedManagerId !== '' && (
                   <span className="px-1.5 py-0.5 bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 text-xs rounded-full">
-                    {availableManagers.find(m => m.id === selectedManagerId)?.name ?? 'カスタム'}
+                    {availableManagers.find(m => m.pool === selectedManagerId)?.pool ?? 'カスタム'}
                   </span>
                 )}
                 {cycleEnabled && cycleMessage.trim() && (
@@ -712,9 +713,9 @@ export default function NewSessionPage() {
                         {/* 各マネージャーオプション */}
                         {availableManagers.map((m) => (
                           <label
-                            key={m.id}
+                            key={`${m.source}:${m.source_name}:${m.pool}`}
                             className={`flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                              selectedManagerId === m.id
+                              selectedManagerId === m.pool
                                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                                 : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                             } ${isCreating ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -722,21 +723,21 @@ export default function NewSessionPage() {
                             <input
                               type="radio"
                               name="session-manager"
-                              value={m.id}
-                              checked={selectedManagerId === m.id}
-                              onChange={() => setSelectedManagerId(m.id)}
+                              value={m.pool}
+                              checked={selectedManagerId === m.pool}
+                              onChange={() => setSelectedManagerId(m.pool)}
                               disabled={isCreating}
                               className="mt-0.5 w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-gray-600 focus:ring-blue-500 flex-shrink-0"
                             />
                             <span className="flex-1 min-w-0">
                               <span className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{m.name}</span>
+                                <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{m.pool}</span>
                                 <span className="px-1 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded flex-shrink-0">
                                   {m.source === 'team' ? `チーム: ${m.source_name}` : '個人'}
                                 </span>
                               </span>
                               <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate" title="allocator 接続">
-                                allocator 接続
+                                {m.name}
                               </span>
                             </span>
                           </label>

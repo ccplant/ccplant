@@ -140,6 +140,7 @@ export interface ExternalSessionManagerConfig {
 export interface AvailableManager {
   id: string;
   name: string;
+  pool: string;
   pool_enabled?: boolean;
   automatic_assignment_enabled?: boolean;
   source: 'user' | 'team';  // Where this manager comes from

@@ -81,8 +81,9 @@ func TestGetAvailableManagersReturnsExplicitlySelectableManagers(t *testing.T) {
 	repo := newMockSettingsRepository()
 	settings := entities.NewSettings("test-user")
 	settings.SetExternalSessionManagers([]entities.ExternalSessionManagerEntry{
-		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s", AutomaticAssignmentEnabled: true},
+		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s", HMACSecret: "connected", AutomaticAssignmentEnabled: true},
 		{ID: "disabled", Name: "Disabled manager"},
+		{ID: "pending", Name: "pending registration", Pool: "pending", EnrollmentTokenHash: "unused"},
 	})
 	require.NoError(t, repo.Save(context.Background(), settings))
 
@@ -98,8 +99,7 @@ func TestGetAvailableManagersReturnsExplicitlySelectableManagers(t *testing.T) {
 	var response AvailableManagersResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Equal(t, []AvailableManagerEntry{
-		{ID: "pooled", Name: "Cluster pool manager", PoolEnabled: true, AutomaticAssignmentEnabled: true, Source: "user", SourceName: "test-user"},
-		{ID: "disabled", Name: "Disabled manager", Source: "user", SourceName: "test-user"},
+		{ID: "pooled", Name: "Cluster pool manager", Pool: "k8s", PoolEnabled: true, AutomaticAssignmentEnabled: true, Source: "user", SourceName: "test-user"},
 	}, response.Managers)
 }
 

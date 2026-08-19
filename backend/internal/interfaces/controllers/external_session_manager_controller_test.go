@@ -85,7 +85,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
 	var issued esmEnrollmentTokenResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
-	require.Equal(t, "esm-"+issued.ManagerID, issued.Pool)
+	require.Empty(t, issued.Pool)
 
 	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", ESMEnrollmentRequest{
 		RegistrationToken: issued.RegistrationToken, InstanceID: "machine-pool", Name: "native-pool",
@@ -93,17 +93,18 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
 	var created esmRegistrationResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.Equal(t, "native-pool", created.Pool)
 	manager, err := store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Contains(t, manager.Capabilities, core.CapabilityRunnerClaimV1)
 	require.True(t, manager.Enabled)
-	pool, err := store.GetLogicalPool(context.Background(), issued.Pool)
+	pool, err := store.GetLogicalPool(context.Background(), created.Pool)
 	require.NoError(t, err)
 	require.True(t, pool.Enabled)
-	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
+	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, created.Pool)
 	require.NoError(t, err)
 	require.True(t, supplier.Enabled)
-	bindings, err := store.ListBindings(context.Background(), issued.Pool)
+	bindings, err := store.ListBindings(context.Background(), created.Pool)
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
 	require.Equal(t, core.BindingRoleManage, bindings[0].Role)
@@ -120,13 +121,13 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	manager, err = store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.True(t, manager.Enabled)
-	pool, err = store.GetLogicalPool(context.Background(), issued.Pool)
+	pool, err = store.GetLogicalPool(context.Background(), created.Pool)
 	require.NoError(t, err)
 	require.True(t, pool.Enabled)
-	supplier, err = store.GetPoolSupplier(context.Background(), created.ID, issued.Pool)
+	supplier, err = store.GetPoolSupplier(context.Background(), created.ID, created.Pool)
 	require.NoError(t, err)
 	require.True(t, supplier.Enabled)
-	bindings, err = store.ListBindings(context.Background(), issued.Pool)
+	bindings, err = store.ListBindings(context.Background(), created.Pool)
 	require.NoError(t, err)
 	require.True(t, bindings[0].Enabled)
 	require.True(t, bindings[0].ExplicitOnly)
@@ -137,7 +138,7 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	ctx.SetParamValues(created.ID)
 	require.NoError(t, controller.PatchExternalSessionManager(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	bindings, err = store.ListBindings(context.Background(), issued.Pool)
+	bindings, err = store.ListBindings(context.Background(), created.Pool)
 	require.NoError(t, err)
 	require.True(t, bindings[0].Enabled)
 	require.False(t, bindings[0].ExplicitOnly)
@@ -148,8 +149,25 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	ctx.SetParamValues(created.ID)
 	require.NoError(t, controller.PatchExternalSessionManager(ctx))
 	require.Equal(t, http.StatusOK, rec.Code)
-	bindings, err = store.ListBindings(context.Background(), issued.Pool)
+	bindings, err = store.ListBindings(context.Background(), created.Pool)
 	require.NoError(t, err)
+	require.True(t, bindings[0].Enabled)
+	require.True(t, bindings[0].ExplicitOnly)
+
+	previousPool := created.Pool
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{Pool: "renamed-native-pool"}, "user1")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues(created.ID)
+	require.NoError(t, controller.PatchExternalSessionManager(ctx))
+	require.Equal(t, http.StatusOK, rec.Code)
+	created.Pool = "renamed-native-pool"
+	_, err = store.GetLogicalPool(context.Background(), previousPool)
+	require.ErrorIs(t, err, core.ErrNotFound)
+	_, err = store.GetLogicalPool(context.Background(), created.Pool)
+	require.NoError(t, err)
+	bindings, err = store.ListBindings(context.Background(), created.Pool)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
 	require.True(t, bindings[0].Enabled)
 	require.True(t, bindings[0].ExplicitOnly)
 	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
@@ -168,8 +186,14 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	_, err = store.GetManager(context.Background(), created.ID)
 	require.ErrorIs(t, err, core.ErrNotFound)
-	_, err = store.GetLogicalPool(context.Background(), issued.Pool)
+	_, err = store.GetLogicalPool(context.Background(), created.Pool)
 	require.ErrorIs(t, err, core.ErrNotFound)
+}
+
+func TestNativePoolNameUsesDeviceNameAndNormalizesInvalidCharacters(t *testing.T) {
+	require.Equal(t, "MacBook-Pro", nativePoolName("MacBook Pro", "manager-1"))
+	require.Equal(t, "native-device", nativePoolName("native-device", "manager-1"))
+	require.Equal(t, "esm-manager-1", nativePoolName("___", "manager-1"))
 }
 
 func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T) {
