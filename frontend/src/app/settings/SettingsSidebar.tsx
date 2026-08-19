@@ -1,84 +1,93 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { User, Users, ArrowLeft, ShieldCheck } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import { LucideIcon } from 'lucide-react'
 
-const baseNavItems = [
-  {
-    label: 'Personal',
-    href: '/settings/personal',
-    icon: User,
-    adminOnly: false,
-  },
-  {
-    label: 'Team',
-    href: '/settings/team',
-    icon: Users,
-    adminOnly: false,
-  },
-  {
-    label: 'Admin',
-    href: '/admin',
-    icon: ShieldCheck,
-    adminOnly: true,
-  },
-]
+export interface SidebarItem {
+  href: string
+  label: string
+  icon: LucideIcon
+  /** 未保存の変更があることを示すドットを出す */
+  dirty?: boolean
+}
 
-export function SettingsSidebar() {
-  const pathname = usePathname()
-  const [isAdmin, setIsAdmin] = useState(false)
+export interface SidebarGroup {
+  /** 見出し。空文字ならグループ見出しなしで先頭に並ぶ */
+  title: string
+  items: SidebarItem[]
+}
 
-  useEffect(() => {
-    const checkAdminStatus = async () => {
-      try {
-        const client = createAgentAPIProxyClientFromStorage()
-        const userInfo = await client.getUserInfo()
-        setIsAdmin(userInfo?.is_admin === true)
-      } catch {
-        setIsAdmin(false)
-      }
-    }
+interface SettingsSidebarProps {
+  groups: SidebarGroup[]
+  /** 現在表示中のパス */
+  activeHref: string
+  /** ナビ最上部に置くスコープスイッチャーなど */
+  header?: React.ReactNode
+  /** リンク遷移前に確認する。false を返すと遷移をキャンセルする */
+  onNavigate?: (href: string) => boolean
+}
 
-    checkAdminStatus()
-  }, [])
-
-  const navItems = baseNavItems.filter((item) => !item.adminOnly || isAdmin)
-
+export function SettingsSidebar({ groups, activeHref, header, onNavigate }: SettingsSidebarProps) {
   return (
-    <nav className="w-full md:w-64 flex-shrink-0">
-      <div className="mb-4">
-        <Link
-          href="/chats"
-          className="flex items-center gap-2 px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span className="text-sm">Back to Chats</span>
-        </Link>
+    <nav className="w-full md:w-60 flex-shrink-0" aria-label="設定">
+      {header}
+      <div className="mt-3">
+        {groups.map((group, groupIndex) => (
+          <div
+            key={group.title || `group-${groupIndex}`}
+            className={groupIndex > 0 ? 'mt-2 pt-2 border-t border-gray-200 dark:border-gray-700' : ''}
+          >
+            {group.title && (
+              <p className="px-3 pt-2 pb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                {group.title}
+              </p>
+            )}
+            <ul>
+              {group.items.map((item) => {
+                const isActive = activeHref === item.href
+                const Icon = item.icon
+                return (
+                  <li key={item.href} className="relative">
+                    {isActive && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute left-0 top-1 bottom-1 w-[3px] rounded-full bg-blue-500"
+                      />
+                    )}
+                    <Link
+                      href={item.href}
+                      aria-current={isActive ? 'page' : undefined}
+                      onClick={(e) => {
+                        if (onNavigate && !onNavigate(item.href)) {
+                          e.preventDefault()
+                        }
+                      }}
+                      className={`flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
+                        isActive
+                          ? 'bg-gray-200/60 dark:bg-gray-800 font-semibold text-gray-900 dark:text-white'
+                          : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      }`}
+                    >
+                      <Icon
+                        className={`h-4 w-4 flex-shrink-0 ${
+                          isActive ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'
+                        }`}
+                      />
+                      <span className="truncate">{item.label}</span>
+                      {item.dirty && (
+                        <span
+                          title="未保存の変更があります"
+                          className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-500"
+                        />
+                      )}
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ))}
       </div>
-      <ul className="space-y-1">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href
-          const Icon = item.icon
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                  isActive
-                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="font-medium">{item.label}</span>
-              </Link>
-            </li>
-          )
-        })}
-      </ul>
     </nav>
   )
 }
