@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 type helmMigrateValuesOptions struct {
@@ -20,7 +23,9 @@ type helmMigrateValuesOptions struct {
 	managerInternalSecret string
 	encryptionSecret      string
 	provisionerSecret     string
+	migrateSecrets        bool
 	force                 bool
+	kubeClient            kubernetes.Interface
 }
 
 func newHelmMigrateValuesCommand() *cobra.Command {
@@ -42,6 +47,7 @@ func newHelmMigrateValuesCommand() *cobra.Command {
 	f.StringVar(&o.managerInternalSecret, "manager-internal-secret", "agentapi-session-manager-internal", "Secret shared by API and session-manager")
 	f.StringVar(&o.encryptionSecret, "encryption-secret", "agentapi-application-encryption", "application encryption Secret")
 	f.StringVar(&o.provisionerSecret, "provisioner-secret", "agentapi-provisioner-token", "session provisioner Secret")
+	f.BoolVar(&o.migrateSecrets, "migrate-secrets", false, "create or migrate role Secrets in the target Kubernetes namespace")
 	f.BoolVar(&o.force, "force", false, "replace existing api, worker, and sessionManager sections")
 	return cmd
 }
@@ -49,6 +55,9 @@ func newHelmMigrateValuesCommand() *cobra.Command {
 func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigrateValuesOptions) error {
 	if strings.TrimSpace(o.namespace) == "" || strings.TrimSpace(o.release) == "" {
 		return errors.New("namespace and release must not be empty")
+	}
+	if o.migrateSecrets && len(nonEmptyStrings(o.workerControlSecret, o.managerInternalSecret, o.encryptionSecret, o.provisionerSecret)) != 4 {
+		return errors.New("all Secret names must be non-empty when --migrate-secrets is set")
 	}
 	data, err := readValuesInput(stdin, o.input)
 	if err != nil {
@@ -146,6 +155,22 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 	}
 
 	values["api"], values["worker"], values["sessionManager"] = api, worker, manager
+	if o.migrateSecrets {
+		client := o.kubeClient
+		if client == nil {
+			restConfig, configErr := config.GetConfig()
+			if configErr != nil {
+				return fmt.Errorf("load Kubernetes configuration: %w", configErr)
+			}
+			client, configErr = kubernetes.NewForConfig(restConfig)
+			if configErr != nil {
+				return fmt.Errorf("create Kubernetes client: %w", configErr)
+			}
+		}
+		if err := migrateRoleSecrets(context.Background(), client, values, o, stderr); err != nil {
+			return err
+		}
+	}
 	result, err := yaml.Marshal(values)
 	if err != nil {
 		return fmt.Errorf("encode migrated values: %w", err)
@@ -159,13 +184,25 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 			return fmt.Errorf("write migrated values %s: %w", o.output, err)
 		}
 	}
-	fmt.Fprintf(stderr, "Migrated legacy values: worker.enabled=%t sessionManager.enabled=%t\n", workerEnabled, managerEnabled)
+	if _, err := fmt.Fprintf(stderr, "Migrated legacy values: worker.enabled=%t sessionManager.enabled=%t\n", workerEnabled, managerEnabled); err != nil {
+		return fmt.Errorf("write migration status: %w", err)
+	}
 	secretNames := nonEmptyStrings(o.workerControlSecret, o.managerInternalSecret, o.encryptionSecret, o.provisionerSecret)
 	if len(secretNames) > 0 {
-		fmt.Fprintf(stderr, "Ensure Secrets %q exist before upgrade.\n", strings.Join(secretNames, `", "`))
+		if o.migrateSecrets {
+			if _, err := fmt.Fprintf(stderr, "Migrated Secrets %q in namespace %q.\n", strings.Join(secretNames, `", "`), o.namespace); err != nil {
+				return fmt.Errorf("write Secret migration status: %w", err)
+			}
+		} else {
+			if _, err := fmt.Fprintf(stderr, "Ensure Secrets %q exist before upgrade, or rerun with --migrate-secrets.\n", strings.Join(secretNames, `", "`)); err != nil {
+				return fmt.Errorf("write Secret migration warning: %w", err)
+			}
+		}
 	}
 	if workerEnabled || managerEnabled {
-		fmt.Fprintf(stderr, "Verify image %q contains the worker and session-manager subcommands before upgrade.\n", imageReference(image))
+		if _, err := fmt.Fprintf(stderr, "Verify image %q contains the worker and session-manager subcommands before upgrade.\n", imageReference(image)); err != nil {
+			return fmt.Errorf("write image migration warning: %w", err)
+		}
 	}
 	return nil
 }

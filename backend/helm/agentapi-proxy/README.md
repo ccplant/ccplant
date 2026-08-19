@@ -123,15 +123,22 @@ ccplant helm migrate-values \
   --worker-control-secret agentapi-worker-control \
   --manager-internal-secret agentapi-session-manager-internal \
   --encryption-secret agentapi-application-encryption \
-  --provisioner-secret agentapi-provisioner-token
+  --provisioner-secret agentapi-provisioner-token \
+  --migrate-secrets
 
 helm upgrade agentapi-proxy oci://ghcr.io/ccplant/charts/agentapi-proxy \
   -n agentapi -f separated-values.yaml
 ```
 
 The converter preserves all legacy keys and adds the independent `api`,
-`worker`, and `sessionManager` sections. It does not create or copy Secrets;
-the four referenced Secrets must exist before the upgrade. Existing separated
+`worker`, and `sessionManager` sections. With `--migrate-secrets`, it creates
+the four referenced Secrets in `--namespace`, preserves existing target keys,
+copies the legacy inline encryption key, and copies the legacy provisioner
+Secret's `token` key to `provisioner-token`. Missing credentials are generated
+with cryptographically secure randomness. Existing keys are never overwritten;
+the command fails before writing Secrets when legacy and destination values
+conflict. Without this option, the referenced
+Secrets must exist before the upgrade. Existing separated
 role sections are rejected unless `--force` is explicitly supplied. Verify
 that the migrated root image contains the `worker` and `session-manager`
 subcommands; older monolithic images cannot run the separated Deployments.
