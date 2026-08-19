@@ -114,6 +114,26 @@ func TestReadNativeSessionList(t *testing.T) {
 	require.Equal(t, "session-new", entries[1].ID)
 }
 
+func TestNativeCLIStatusActive(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		want   bool
+	}{
+		{status: "creating", want: true},
+		{status: "running", want: true},
+		{status: "stable", want: true},
+		{status: "error", want: false},
+		{status: "failed", want: false},
+		{status: "exited", want: false},
+		{status: "stopped", want: false},
+		{status: "terminated", want: false},
+	} {
+		t.Run(test.status, func(t *testing.T) {
+			require.Equal(t, test.want, nativeCLIStatusActive(test.status))
+		})
+	}
+}
+
 func TestNativeGUIJSONContracts(t *testing.T) {
 	statusJSON, err := json.Marshal(nativeStatusOutput{
 		Instance: "default", Service: "running", ManagerID: "manager-1", Upstream: "https://parent.example",

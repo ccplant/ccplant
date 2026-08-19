@@ -229,6 +229,9 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
 		_ = m.persistSession(s)
+		if req.Oneshot {
+			m.removeFinishedSession(s)
+		}
 	}()
 	return s, nil
 }
@@ -363,6 +366,41 @@ func (m *NativeSessionManager) ListSessions(filter entities.SessionFilter) []ent
 	return result
 }
 
+// ActiveSessionCount returns the number of native workloads that have not
+// reached a terminal state. Finished sessions may remain available for
+// inspection until they are explicitly deleted, but must not be reported as
+// active in manager heartbeats.
+func (m *NativeSessionManager) ActiveSessionCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, s := range m.sessions {
+		if s != nil && nativeSessionStatusActive(s.Status()) {
+			count++
+		}
+	}
+	return count
+}
+
+func nativeSessionStatusActive(status string) bool {
+	switch strings.ToLower(status) {
+	case "error", "failed", "exited", "stopped", "terminated":
+		return false
+	default:
+		return true
+	}
+}
+
+func (m *NativeSessionManager) removeFinishedSession(s *NativeSession) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sessions[s.id] == s {
+		_ = os.RemoveAll(s.rootDir)
+		delete(m.sessions, s.id)
+		delete(m.provisionRequests, s.id)
+	}
+}
+
 func (m *NativeSessionManager) DeleteSession(id string) error {
 	m.mu.Lock()
 	s := m.sessions[id]
@@ -370,22 +408,33 @@ func (m *NativeSessionManager) DeleteSession(id string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("session %s not found", id)
 	}
-	delete(m.sessions, id)
 	delete(m.provisionRequests, id)
-	m.mu.Unlock()
 	s.mu.Lock()
+	if s.status == "stopped" {
+		s.mu.Unlock()
+		m.mu.Unlock()
+		return nil
+	}
 	s.status = "stopped"
 	s.updatedAt = time.Now().UTC()
 	pid := s.pid
 	cancel := s.cancel
 	s.mu.Unlock()
+	m.mu.Unlock()
 	if pid > 0 {
 		_ = syscall.Kill(-pid, syscall.SIGTERM)
 	}
 	if cancel != nil {
 		cancel()
 	}
-	go terminateNativeProcessGroup(pid, s.rootDir)
+	go func() {
+		terminateNativeProcessGroup(pid, s.rootDir)
+		m.mu.Lock()
+		if m.sessions[id] == s {
+			delete(m.sessions, id)
+		}
+		m.mu.Unlock()
+	}()
 	return nil
 }
 
@@ -393,12 +442,12 @@ func terminateNativeProcessGroup(pid int, root string) {
 	if pid > 0 {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
-			if syscall.Kill(pid, 0) != nil {
+			if syscall.Kill(-pid, 0) != nil {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		if syscall.Kill(pid, 0) == nil {
+		if syscall.Kill(-pid, 0) == nil {
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		}
 	}
@@ -578,7 +627,8 @@ func (m *NativeSessionManager) restoreSessions() error {
 		if !entry.IsDir() {
 			continue
 		}
-		path := filepath.Join(m.stateDir, "sessions", entry.Name(), "runtime", "state.json")
+		sessionDir := filepath.Join(m.stateDir, "sessions", entry.Name())
+		path := filepath.Join(sessionDir, "runtime", "state.json")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -587,10 +637,14 @@ func (m *NativeSessionManager) restoreSessions() error {
 		if json.Unmarshal(data, &state) != nil || state.ID == "" || state.PID <= 0 {
 			continue
 		}
+		if filepath.Clean(state.RootDir) != filepath.Clean(sessionDir) {
+			continue
+		}
 		if state.FilesystemSandbox != m.filesystemSandbox {
 			continue
 		}
 		if err := syscall.Kill(state.PID, 0); err != nil || !nativeProcessMatchesSession(state.PID, state.RootDir) {
+			_ = os.RemoveAll(sessionDir)
 			continue
 		}
 		if state.Status == "running" && !nativeAgentHealthy(state.AgentPort) {

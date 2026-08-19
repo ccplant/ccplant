@@ -20,7 +20,6 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/spf13/cobra"
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
@@ -175,7 +174,7 @@ func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token strin
 	defer ticker.Stop()
 	send := func() {
 		body, _ := json.Marshal(map[string]interface{}{
-			"version": nativeBuildVersion(), "active_sessions": len(manager.ListSessions(entities.SessionFilter{})),
+			"version": nativeBuildVersion(), "active_sessions": manager.ActiveSessionCount(),
 		})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstreamURL, "/")+"/external-session-managers/"+url.PathEscape(managerID)+"/heartbeat", bytes.NewReader(body))
 		if err != nil {
