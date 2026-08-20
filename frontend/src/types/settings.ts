@@ -134,6 +134,23 @@ export interface ExternalSessionManagerConfig {
   automatic_assignment_enabled?: boolean;
   labels?: Record<string, string>; // Matches allocator.* session tags
   pool?: string;        // Automatically managed logical pool
+  public_url?: string;
+  version?: string;
+  active_sessions?: number;
+  last_heartbeat_at?: string;
+}
+
+export interface ExternalSessionManagerOperationalStatus {
+  status: 'online' | 'offline'
+  version: string
+  active_sessions: number
+  uptime_seconds: number
+  capabilities: string[]
+}
+
+export interface ExternalSessionManagerLogs {
+  lines: string[]
+  source: string
 }
 
 // Available manager entry from GET /settings/managers
@@ -406,7 +423,8 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
       id: manager.id,
       instance_id: manager.instance_id,
       name: manager.name,
-	  pool_enabled: manager.pool_enabled,
+      pool: manager.pool,
+      pool_enabled: manager.pool_enabled,
       automatic_assignment_enabled: manager.automatic_assignment_enabled,
       labels: manager.labels,
     }))
