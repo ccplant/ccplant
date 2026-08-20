@@ -70,6 +70,10 @@ document, and optimistic version. Both Secret and ConfigMap repositories retain
 their existing labels and selectors. Migration is deliberately not performed by
 server startup.
 
+Application-level encryption for the document value, including its searchable
+metadata split, key rotation, and rollout strategy, is specified in
+[KV value encryption design](kv-store-encryption.md).
+
 ## Migrating from primary to secondary
 
 With replicated storage configured, the command reads the same
