@@ -17,6 +17,7 @@ type CachedSessionDTO struct {
 	TeamID         string                      `json:"team_id"`
 	Tags           map[string]string           `json:"tags"`
 	Status         string                      `json:"status"`
+	StatusMessage  string                      `json:"status_message,omitempty"`
 	StartedAt      time.Time                   `json:"started_at"`
 	UpdatedAt      time.Time                   `json:"updated_at"`
 	LastMessageAt  time.Time                   `json:"last_message_at"`

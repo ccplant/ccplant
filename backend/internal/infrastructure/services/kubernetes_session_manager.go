@@ -1973,6 +1973,9 @@ func sessionsToCacheDTOs(sessions []entities.Session) []portrepos.CachedSessionD
 			Description:   s.Description(),
 			Annotations:   sessionAnnotations(s),
 		}
+		if provider, ok := s.(interface{ StatusMessage() string }); ok {
+			dto.StatusMessage = provider.StatusMessage()
+		}
 		// Capture Kubernetes-specific fields when available.
 		if ks, ok := s.(*KubernetesSession); ok {
 			dto.ServicePort = ks.servicePort
@@ -3360,17 +3363,28 @@ func applySandboxPolicyToProvisioner(ctx context.Context, stockSvc *corev1.Servi
 
 	url := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/sandbox-policy", stockSvc.Name, stockSvc.Namespace, ProvisionerPort)
 	client := &http.Client{Timeout: 2 * time.Second}
+	return retrySandboxPolicy(ctx, client, url, body, 60, 500*time.Millisecond)
+}
+
+// retrySandboxPolicy tolerates the window between a stock workload becoming
+// claimable and its provisioner HTTP server beginning to listen. Container
+// startup can legitimately take longer than the previous five-second retry
+// window, especially while nodes are under load.
+func retrySandboxPolicy(ctx context.Context, client *http.Client, url string, body []byte, attempts int, delay time.Duration) error {
 	var lastErr error
-	for attempt := 0; attempt < 10; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		if err := postSandboxPolicy(ctx, client, url, body); err == nil {
 			return nil
 		} else {
 			lastErr = err
 		}
+		if attempt == attempts-1 {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(delay):
 		}
 	}
 	return lastErr
