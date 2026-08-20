@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, PanelLeft, X } from 'lucide-react'
 import { SideNav, SideNavGroup } from '@/components/settings/ui/SideNav'
 import { ScopeSwitcher } from './ScopeSwitcher'
@@ -66,6 +66,7 @@ const buildGroups = (
 /** スコープの状態を読んでサイドバーと保存バーを描画する内側のシェル */
 function ScopedShell({ scope, children }: { scope: ResolvedScope; children: React.ReactNode }) {
   const pathname = usePathname()
+  const router = useRouter()
   const { dirty, dirtyFields, userName, userTeams } = useSettingsScope()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -74,9 +75,35 @@ function ScopedShell({ scope, children }: { scope: ResolvedScope; children: Reac
   }, [pathname])
 
   const groups = buildGroups(scope, dirtyFields as string[])
+  const navHrefs = useMemo(
+    () =>
+      navItemsForScope(scope.scopeKind).map((item) =>
+        settingsHref(scope.scopeKind, item.slug, scope.teamId)
+      ),
+    [scope.scopeKind, scope.teamId]
+  )
   const activeLabel = groups
     .flatMap((group) => group.items)
     .find((item) => item.href === pathname)?.label
+
+  // 設定項目はそれぞれ別ルートなので、初回クリック時にページの JS を取得すると
+  // 遷移が重く感じられる。ブラウザが暇になった時点で同一スコープの各ページを
+  // 明示的に先読みし、設定を開いている間の項目切り替えを即座に行えるようにする。
+  useEffect(() => {
+    const prefetch = () => {
+      for (const href of navHrefs) {
+        if (href !== pathname) router.prefetch(href)
+      }
+    }
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(prefetch, { timeout: 1500 })
+      return () => window.cancelIdleCallback(idleId)
+    }
+
+    const timeoutId = globalThis.setTimeout(prefetch, 0)
+    return () => globalThis.clearTimeout(timeoutId)
+  }, [pathname, router, navHrefs])
 
   // スコープをまたぐ移動だけ確認する。同じスコープ内は編集内容が保持される
   const confirmLeave = () =>
