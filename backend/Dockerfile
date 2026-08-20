@@ -95,7 +95,7 @@ FROM ubuntu:24.04
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables && \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bash git make sudo jq procps tzdata iptables tini && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
@@ -315,5 +315,8 @@ COPY --chmod=755 scripts/wrapped_claude.sh /usr/local/bin/wrapped_claude
 EXPOSE 8080
 
 # Run the application with entrypoint
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# Session containers run the provisioner as PID 1. Use a minimal init so that
+# orphaned tool subprocesses are reaped instead of accumulating as zombies.
+# -g also forwards termination signals to the provisioner's process group.
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["sh", "-c", "exec \"${CCPLANT_BINARY_PATH:-ccplant}\" server"]
