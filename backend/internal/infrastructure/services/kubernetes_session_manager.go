@@ -766,6 +766,20 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 		return fmt.Errorf("failed to create stock workload: %w", err)
 	}
 
+	// Do not publish the stock session to allocators until every container is
+	// ready. In particular, adoption immediately POSTs the sandbox policy to the
+	// provisioner. Marking the Service stock=true before its readiness probe has
+	// passed lets a concurrent allocation claim it while port 9001 is still
+	// closed, causing the allocation (and the newly claimed stock session) to be
+	// deleted.
+	if err := m.waitForSessionWorkloadReady(ctx, session); err != nil {
+		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload readiness failure: %v", delErr)
+		}
+		cancel()
+		return fmt.Errorf("stock workload did not become ready: %w", err)
+	}
+
 	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
 		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
@@ -4968,6 +4982,29 @@ func (m *KubernetesSessionManager) isSessionWorkloadReady(ctx context.Context, s
 		return false, err
 	}
 	return isPodReady(pod), nil
+}
+
+func (m *KubernetesSessionManager) waitForSessionWorkloadReady(ctx context.Context, session *KubernetesSession) error {
+	timeout := time.NewTimer(time.Duration(m.k8sConfig.PodStartTimeout) * time.Second)
+	defer timeout.Stop()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		ready, err := m.isSessionWorkloadReady(ctx, session)
+		if err == nil && ready {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout.C:
+			return fmt.Errorf("timed out after %d seconds", m.k8sConfig.PodStartTimeout)
+		case <-ticker.C:
+		}
+	}
 }
 
 func isPodReady(pod *corev1.Pod) bool {
