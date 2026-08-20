@@ -66,6 +66,44 @@ func assertOwnedByService(t *testing.T, obj metav1.Object, serviceName string) {
 	}
 }
 
+func TestSessionWorkloadReadyFallsBackToReadyPodWhenDeploymentStatusLags(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	session := newWorkloadTestSession()
+	ctx := context.Background()
+
+	_, err := manager.client.AppsV1().Deployments("test-ns").Create(ctx, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: session.DeploymentName(), Namespace: "test-ns"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create deployment: %v", err)
+	}
+	_, err = manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      session.DeploymentName() + "-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"agentapi.proxy/session-id": session.ID()},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{
+				Type:   corev1.PodReady,
+				Status: corev1.ConditionTrue,
+			}},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create ready pod: %v", err)
+	}
+
+	ready, err := manager.isSessionWorkloadReady(ctx, session)
+	if err != nil {
+		t.Fatalf("isSessionWorkloadReady() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("Expected ready Pod to make workload ready while Deployment status lags")
+	}
+}
+
 func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	session := newWorkloadTestSession()
