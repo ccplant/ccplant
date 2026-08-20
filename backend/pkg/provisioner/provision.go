@@ -359,6 +359,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Agent process started (pid %d)", cmd.Process.Pid)
+	agentDone := make(chan error, 1)
+	go func() {
+		agentDone <- cmd.Wait()
+	}()
 
 	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
 	s.setPhase("provision:wait-agentapi-ready")
@@ -372,6 +376,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	if err := waitForAgentAPI(ctx, agentapiURL, 120); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("agentapi not ready: %v", err))
 		_ = cmd.Process.Kill()
+		<-agentDone
 		return
 	}
 	log.Printf("[PROVISIONER] agentapi is ready")
@@ -413,7 +418,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
-		if err := cmd.Wait(); err != nil {
+		if err := <-agentDone; err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("agent process exited: %v", err))
 		} else {
 			s.setStatus(StatusError, "agent process exited with code 0")

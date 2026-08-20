@@ -114,6 +114,10 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start agent %q: %w", agentArgs[0], err)
 	}
 	log.Printf("[acp-server] agent started (pid=%d)", proc.Process.Pid)
+	procDoneCh := make(chan error, 1)
+	go func() {
+		procDoneCh <- proc.Wait()
+	}()
 
 	// Create ACP client and wire it to the subprocess pipes.
 	acpClient := acp.NewClient(agentStdout, agentStdin, acpVerbose)
@@ -178,12 +182,6 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 	httpErrCh := make(chan error, 1)
 	go func() {
 		httpErrCh <- srv.Start(ctx, addr)
-	}()
-
-	// Watch for the process exiting unexpectedly.
-	procDoneCh := make(chan error, 1)
-	go func() {
-		procDoneCh <- proc.Wait()
 	}()
 
 	select {
