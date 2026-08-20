@@ -4974,7 +4974,27 @@ func (m *KubernetesSessionManager) isSessionWorkloadReady(ctx context.Context, s
 		if err != nil {
 			return false, err
 		}
-		return deployment.Status.ReadyReplicas > 0, nil
+		if deployment.Status.ReadyReplicas > 0 {
+			return true, nil
+		}
+
+		// Deployment status can lag behind the Pod status while a node or the
+		// deployment controller is briefly unavailable. Stock adoption only needs
+		// the provisioner and sidecars in the selected Pod to be ready, so consult
+		// the Pod directly before continuing to wait. This also keeps the stock
+		// creation request within the session-manager client's timeout.
+		pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "agentapi.proxy/session-id=" + session.ID(),
+		})
+		if err != nil {
+			return false, err
+		}
+		for i := range pods.Items {
+			if pods.Items[i].DeletionTimestamp == nil && isPodReady(&pods.Items[i]) {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
 
 	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})

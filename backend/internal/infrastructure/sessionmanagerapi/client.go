@@ -68,7 +68,9 @@ func NewClient(baseURL, bearerToken string, options ...ClientOption) (*Client, e
 	client := &Client{
 		baseURL: baseURL,
 		token:   bearerToken,
-		http:    &http.Client{Timeout: 40 * time.Second},
+		// Stock creation can wait up to 120 seconds for its Kubernetes workload.
+		// Keep this hop alive for the entire session-manager operation.
+		http: &http.Client{Timeout: 150 * time.Second},
 	}
 	for _, option := range options {
 		option(client)

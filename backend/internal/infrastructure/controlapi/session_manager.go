@@ -35,7 +35,10 @@ type sessionInfo struct {
 }
 
 func NewSessionManager(baseURL, token string) *SessionManager {
-	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 35 * time.Second}}
+	// Stock creation waits for a Kubernetes workload to become ready. Keep the
+	// transport timeout above the session manager's 120-second pod start timeout
+	// so the caller does not cancel an otherwise healthy startup prematurely.
+	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 150 * time.Second}}
 }
 
 func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, _ []byte) (entities.Session, error) {
