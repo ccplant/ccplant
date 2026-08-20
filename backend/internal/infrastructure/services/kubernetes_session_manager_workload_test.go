@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -506,6 +507,74 @@ func TestPurgeStaleStockSessionsUsesEffectiveSessionPodTemplateHash(t *testing.T
 		if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
 			t.Fatalf("Expected stale deployment %s to be deleted, got err=%v", id, err)
 		}
+	}
+}
+
+func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.PodStartTimeout = 120
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		id      string
+		created time.Time
+	}{
+		{id: "expired-creating", created: time.Now().Add(-10 * time.Minute)},
+		{id: "current-creating", created: time.Now()},
+	} {
+		labels := map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy",
+			"agentapi.proxy/stock":         "creating",
+			"agentapi.proxy/session-id":    tc.id,
+		}
+		name := "agentapi-session-" + tc.id
+		_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: labels, CreationTimestamp: metav1.NewTime(tc.created)},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create service %s: %v", tc.id, err)
+		}
+	}
+
+	if err := manager.PurgeStaleStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStaleStockSessions failed: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-expired-creating-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
+		t.Fatalf("expected expired creating stock to be deleted, got %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-current-creating-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected current creating stock to remain, got %v", err)
+	}
+}
+
+func TestCleanupStockSessionResourcesUsesIndependentContext(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+
+	session := NewKubernetesSession(
+		"cleanup-stock",
+		&entities.RunServerRequest{},
+		"agentapi-session-cleanup-stock",
+		"agentapi-session-cleanup-stock-svc",
+		"agentapi-session-cleanup-stock-pvc",
+		"test-ns",
+		9000,
+		func() {},
+		nil,
+	)
+	_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: session.ServiceName(), Namespace: "test-ns"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+
+	// This helper intentionally accepts no caller context, so a timeout in the
+	// stock creation request cannot cancel these deletion calls.
+	if err := manager.cleanupStockSessionResources(session); err != nil {
+		t.Fatalf("cleanupStockSessionResources failed: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), session.ServiceName(), metav1.GetOptions{}); !errors.IsNotFound(err) {
+		t.Fatalf("expected stock service to be deleted, got %v", err)
 	}
 }
 

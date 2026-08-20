@@ -741,7 +741,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 			StringData: map[string]string{"runner-token": minimalReq.Environment["AGENTAPI_SESSION_RUNNER_TOKEN"]},
 		}
 		if _, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-			_ = m.deleteSessionResources(ctx, session)
+			_ = m.cleanupStockSessionResources(session)
 			cancel()
 			return fmt.Errorf("create runner credential Secret: %w", err)
 		}
@@ -750,7 +750,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 	// Create PVC if enabled (required for Deployment volume mounts).
 	if m.isPVCEnabled() {
 		if err := m.createPVC(ctx, session); err != nil {
-			if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+			if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 				log.Printf("[K8S_SESSION] Failed to cleanup resources after stock PVC creation failure: %v", delErr)
 			}
 			cancel()
@@ -759,7 +759,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 	}
 
 	if err := m.createSessionWorkload(ctx, session, minimalReq); err != nil {
-		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload creation failure: %v", delErr)
 		}
 		cancel()
@@ -773,7 +773,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 	// closed, causing the allocation (and the newly claimed stock session) to be
 	// deleted.
 	if err := m.waitForSessionWorkloadReady(ctx, session); err != nil {
-		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload readiness failure: %v", delErr)
 		}
 		cancel()
@@ -782,7 +782,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 
 	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
-		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
 		}
 		cancel()
@@ -790,7 +790,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 	}
 	stockSvc.Labels["agentapi.proxy/stock"] = "true"
 	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, stockSvc, metav1.UpdateOptions{}); err != nil {
-		if delErr := m.deleteSessionResources(ctx, session); delErr != nil {
+		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
 		}
 		cancel()
@@ -879,7 +879,7 @@ func (m *KubernetesSessionManager) stockPodTemplateHash(ctx context.Context, din
 func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	m.refreshConfig()
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy",
+		LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list stock services for template reconciliation: %w", err)
@@ -891,25 +891,42 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 	desiredHashes := make(map[bool]string, 2)
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
-		dind := svc.Labels["agentapi.proxy/capability-dind"] == "true"
-		desiredHash, ok := desiredHashes[dind]
-		if !ok {
-			desiredHash, err = m.stockPodTemplateHash(ctx, dind)
-			if err != nil {
-				return fmt.Errorf("calculate stock pod template hash (dind=%t): %w", dind, err)
+		stockState := svc.Labels["agentapi.proxy/stock"]
+		if stockState == "creating" {
+			// A creating entry older than the complete pod-start window cannot
+			// still be a valid in-flight stock request. This also recovers
+			// resources left behind by a process crash or request cancellation.
+			staleAfter := time.Duration(m.k8sConfig.PodStartTimeout)*time.Second + 30*time.Second
+			if time.Since(svc.CreationTimestamp.Time) < staleAfter {
+				continue
 			}
-			desiredHashes[dind] = desiredHash
-		}
-		stockHash := svc.Labels[stockPodTemplateHashLabel]
-		if stockHash == desiredHash {
+		} else if stockState != "true" {
 			continue
+		}
+		dind := svc.Labels["agentapi.proxy/capability-dind"] == "true"
+		if stockState == "true" {
+			desiredHash, ok := desiredHashes[dind]
+			if !ok {
+				desiredHash, err = m.stockPodTemplateHash(ctx, dind)
+				if err != nil {
+					return fmt.Errorf("calculate stock pod template hash (dind=%t): %w", dind, err)
+				}
+				desiredHashes[dind] = desiredHash
+			}
+			stockHash := svc.Labels[stockPodTemplateHashLabel]
+			if stockHash == desiredHash {
+				continue
+			}
+			log.Printf("[STOCK_INVENTORY] Recreating stock session %s after pod template hash changed (%q -> %q, dind=%t)", svc.Labels["agentapi.proxy/session-id"], stockHash, desiredHash, dind)
 		}
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID == "" {
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s has no session-id", svc.Name))
 			continue
 		}
-		log.Printf("[STOCK_INVENTORY] Recreating stock session %s after pod template hash changed (%q -> %q, dind=%t)", sessionID, stockHash, desiredHash, dind)
+		if stockState == "creating" {
+			log.Printf("[STOCK_INVENTORY] Purging stale creating stock session %s (age=%s)", sessionID, time.Since(svc.CreationTimestamp.Time).Round(time.Second))
+		}
 		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
 		}
@@ -4147,6 +4164,20 @@ func (m *KubernetesSessionManager) watchDeploymentStatus(ctx context.Context, se
 
 func statusCanRecoverFromWorkloadReadiness(status string) bool {
 	return status == "unhealthy" || status == "stopped"
+}
+
+// cleanupStockSessionResources deliberately does not inherit the request
+// context. Stock creation failures commonly happen because that context has
+// expired; reusing it would make every cleanup call fail immediately and leak
+// the workload's CPU and memory reservations.
+func (m *KubernetesSessionManager) cleanupStockSessionResources(session *KubernetesSession) error {
+	timeout := time.Duration(m.k8sConfig.PodStopTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return m.deleteSessionResources(ctx, session)
 }
 
 // deleteSessionResources deletes all Kubernetes resources for a session
