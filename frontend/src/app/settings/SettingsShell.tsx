@@ -101,8 +101,8 @@ function ScopedShell({ scope, children }: { scope: ResolvedScope; children: Reac
       return () => window.cancelIdleCallback(idleId)
     }
 
-    const timeoutId = window.setTimeout(prefetch, 0)
-    return () => window.clearTimeout(timeoutId)
+    const timeoutId = globalThis.setTimeout(prefetch, 0)
+    return () => globalThis.clearTimeout(timeoutId)
   }, [pathname, router, navHrefs])
 
   // スコープをまたぐ移動だけ確認する。同じスコープ内は編集内容が保持される
