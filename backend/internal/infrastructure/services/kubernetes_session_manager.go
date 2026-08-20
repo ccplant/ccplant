@@ -2798,9 +2798,13 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			},
 		},
 		VolumeMounts: m.buildMainContainerVolumeMounts(session, req),
-		// Run agent-provisioner instead of the inline shell setup+agentapi script.
-		Command: []string{"/bin/sh", "-c"},
-		Args:    []string{"exec " + proxybinary.ShellReference() + " agent-provisioner"},
+		// Kubernetes command overrides the image ENTRYPOINT, so invoke tini here
+		// explicitly. It remains PID 1 and reaps orphaned agent/tool processes.
+		Command: []string{"/usr/bin/tini"},
+		Args: []string{
+			"-g", "--", "/bin/sh", "-c",
+			"exec " + proxybinary.ShellReference() + " agent-provisioner",
+		},
 		// Probes target /healthz on the provisioner port (always-200) so that
 		// the pod becomes Ready as soon as agent-provisioner is listening.
 		// The proxy's watchSession goroutine handles waiting for the actual

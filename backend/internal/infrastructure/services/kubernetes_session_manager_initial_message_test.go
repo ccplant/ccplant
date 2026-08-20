@@ -254,10 +254,10 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 
 	// Verify the main container uses agent-provisioner command.
 	mainContainer := podSpec.Containers[0]
-	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "/bin/sh" {
-		t.Errorf("Expected main container command [/bin/sh -c], got %v", mainContainer.Command)
+	if len(mainContainer.Command) == 0 || mainContainer.Command[0] != "/usr/bin/tini" {
+		t.Errorf("Expected main container command [/usr/bin/tini], got %v", mainContainer.Command)
 	}
-	if len(mainContainer.Args) == 0 || !strings.Contains(mainContainer.Args[0], "agent-provisioner") {
+	if len(mainContainer.Args) == 0 || !strings.Contains(mainContainer.Args[len(mainContainer.Args)-1], "agent-provisioner") {
 		t.Errorf("Expected main container args to run agent-provisioner, got %v", mainContainer.Args)
 	}
 
