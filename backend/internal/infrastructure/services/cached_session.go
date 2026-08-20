@@ -56,6 +56,11 @@ func (s *cachedSession) Status() string {
 	return s.dto.Status
 }
 
+// StatusMessage preserves the diagnostic attached to terminal session states.
+func (s *cachedSession) StatusMessage() string {
+	return s.dto.StatusMessage
+}
+
 func (s *cachedSession) StartedAt() time.Time {
 	return s.dto.StartedAt
 }

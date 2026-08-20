@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -57,4 +59,34 @@ func TestPostSandboxPolicy(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.JSONEq(t, `{"allowed":["slack.com"]}`, gotBody)
+}
+
+func TestRetrySandboxPolicyWaitsForProvisioner(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) < 3 {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	err := retrySandboxPolicy(context.Background(), server.Client(), server.URL, nil, 3, time.Millisecond)
+
+	assert.NoError(t, err)
+	assert.Equal(t, int32(3), attempts.Load())
+}
+
+func TestRetrySandboxPolicyHonorsContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "starting", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := retrySandboxPolicy(ctx, server.Client(), server.URL, nil, 60, time.Second)
+
+	assert.ErrorIs(t, err, context.Canceled)
 }
