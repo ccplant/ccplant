@@ -1,13 +1,14 @@
 # ccplant brand assets
 
-The mark combines a sprout with branching AI-agent session routes. Runtime
-assets preserve the approved raster artwork without vector reconstruction.
+The mark is a simple two-leaf sprout. Runtime assets preserve the approved
+raster artwork without vector reconstruction.
 
 | Asset | Use |
 | --- | --- |
-| `ccplant-logo-approved.png` | High-resolution transparent logo candidate approved in chat |
+| `ccplant-logo-approved.png` | High-resolution copy of the active transparent logo |
 | `ccplant-logo-icon-matched.png` | Active transparent logo using the approved app icon mark |
-| `ccplant-app-icon-approved.png` | High-resolution no-sparkle app icon master |
+| `ccplant-app-icon-approved.png` | Active high-resolution sprout app icon master |
+| `ccplant-sprout-transparent.png` | Transparent sprout used by the logo and monochrome tray asset |
 | `/icon-{192,256,384,512}x*.png` | Generated PWA icons |
 | `/favicon.ico` | Browser favicon with multiple sizes |
 | `../../../native/src-tauri/icons/tray-template.png` | Monochrome macOS menu-bar template |
