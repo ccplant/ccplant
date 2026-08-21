@@ -33,8 +33,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &refresh, &restart, &quit])?;
 
-    TrayIconBuilder::with_id("native-esm")
-        .icon(app.default_window_icon().cloned().expect("default icon"))
+    #[cfg(target_os = "macos")]
+    let tray_icon = tauri::include_image!("icons/tray-template.png");
+    #[cfg(not(target_os = "macos"))]
+    let tray_icon = app.default_window_icon().cloned().expect("default icon");
+
+    let tray = TrayIconBuilder::with_id("native-esm").icon(tray_icon);
+    #[cfg(target_os = "macos")]
+    let tray = tray.icon_as_template(true);
+
+    tray
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("ccplant")
