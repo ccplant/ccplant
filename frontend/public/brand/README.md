@@ -7,7 +7,7 @@ raster artwork without vector reconstruction.
 | --- | --- |
 | `ccplant-logo-approved.png` | High-resolution copy of the active transparent logo |
 | `ccplant-logo-icon-matched.png` | Active transparent logo using the approved app icon mark |
-| `ccplant-app-icon-approved.png` | Active high-resolution sprout app icon master |
+| `ccplant-app-icon-approved.png` | Active high-resolution sprout app icon master, with home-screen-safe mark spacing |
 | `ccplant-sprout-transparent.png` | Transparent sprout used by the logo and monochrome tray asset |
 | `/icon-{192,256,384,512}x*.png` | Generated PWA icons |
 | `/favicon.ico` | Browser favicon with multiple sizes |
