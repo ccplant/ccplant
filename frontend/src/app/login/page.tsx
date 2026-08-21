@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { Github } from 'lucide-react'
 import { getRedirectUri } from '@/lib/oauth-utils'
 import { useConfig } from '@/hooks/useConfig'
@@ -16,7 +17,7 @@ export default function LoginPage() {
   const [checkingAuth, setCheckingAuth] = useState(true)
 
   // 設定から値を取得
-  const loginTitle = config?.loginTitle ?? 'AgentAPI UI'
+  const loginTitle = config?.loginTitle ?? 'ccplant'
   const loginDescription = config?.loginDescription ?? 'Enter an access token or sign in with GitHub to continue.'
   const loginSubDescription = config?.loginSubDescription ?? ''
 
@@ -117,7 +118,17 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
-          <h1 className="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
+          <Image
+            src="/brand/ccplant-logo-icon-matched.png"
+            alt="ccplant"
+            width={380}
+            height={97}
+            priority
+            className="mx-auto h-16 w-auto"
+          />
+          <h1 className={loginTitle === 'ccplant'
+            ? 'sr-only'
+            : 'mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white'}>
             {loginTitle}
           </h1>
           <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">

@@ -12,33 +12,33 @@ import { DynamicFavicon } from './components/DynamicFavicon'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'AgentAPI UI',
-  description: 'User interface for AgentAPI - AI agent conversation management',
+  title: 'ccplant',
+  description: 'Launch, connect, and manage AI agent sessions with ccplant.',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'AgentAPI UI',
+    title: 'ccplant',
   },
   formatDetection: {
     telephone: false,
   },
   openGraph: {
     type: 'website',
-    siteName: 'AgentAPI UI',
-    title: 'AgentAPI UI',
-    description: 'User interface for AgentAPI - AI agent conversation management',
+    siteName: 'ccplant',
+    title: 'ccplant',
+    description: 'Launch, connect, and manage AI agent sessions with ccplant.',
   },
   twitter: {
     card: 'summary',
-    title: 'AgentAPI UI',
-    description: 'User interface for AgentAPI - AI agent conversation management',
+    title: 'ccplant',
+    description: 'Launch, connect, and manage AI agent sessions with ccplant.',
   },
 }
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#000000',
+  themeColor: '#071A1D',
 }
 
 export default function RootLayout({

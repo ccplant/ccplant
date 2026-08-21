@@ -23,7 +23,7 @@ self.addEventListener('push', (event) => {
     console.log('Push data:', data);
     
     options.body = data.body || options.body;
-    options.title = data.title || 'AgentAPI UI';
+    options.title = data.title || 'ccplant';
     
     if (data.url) {
       options.data = { url: data.url };
@@ -39,7 +39,7 @@ self.addEventListener('push', (event) => {
     }
   } catch (error) {
     console.error('プッシュデータの解析に失敗:', error);
-    options.title = 'AgentAPI UI';
+    options.title = 'ccplant';
     options.body = event.data.text();
   }
 

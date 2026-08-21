@@ -158,7 +158,7 @@ config:
   # Internal AgentAPI proxy URL. When empty, the umbrella release service is used.
   proxyUrl: ""
   # Login page title
-  loginTitle: "AgentAPI UI"
+  loginTitle: "ccplant"
   # Login page description
   loginDescription: "Enter an access token or sign in with GitHub to continue."
   # Login page sub-description
@@ -170,11 +170,11 @@ config:
 # PWA (Progressive Web App) configuration
 pwa:
   # App name shown when installing PWA
-  appName: "AgentAPI UI"
+  appName: "ccplant"
   # Short name shown on home screen
-  shortName: "AgentAPI"
+  shortName: "ccplant"
   # App description
-  description: "User interface for AgentAPI - AI agent conversation management"
+  description: "Launch, connect, and manage AI agent sessions with ccplant."
   # Custom icon URL (optional, leave empty to use default icons)
   # Example: "https://example.com/icon.png"
   iconUrl: ""

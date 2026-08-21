@@ -18,7 +18,7 @@ export interface AppConfig {
 
 /** デフォルト設定 */
 export const DEFAULT_CONFIG: AppConfig = {
-  loginTitle: 'AgentAPI UI',
+  loginTitle: 'ccplant',
   loginDescription: 'Enter an access token or sign in with GitHub to continue.',
   loginSubDescription: 'Use any valid authentication token for your AgentAPI service.',
   oauthProviders: ['github'],

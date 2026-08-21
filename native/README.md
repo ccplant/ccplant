@@ -1,4 +1,4 @@
-# agentapi-proxy Native Dashboard
+# ccplant Native Dashboard
 
 A minimal, production-shaped **macOS menu-bar dashboard** for the
 agentapi-proxy **native External Session Manager** (ESM). Built with

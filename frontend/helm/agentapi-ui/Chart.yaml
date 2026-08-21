@@ -1,6 +1,6 @@
 apiVersion: v2
 name: agentapi-ui
-description: A Helm chart for agentapi-ui Next.js application
+description: A Helm chart for the ccplant Next.js application
 type: application
 version: 0.1.0
 appVersion: "v0.1.0"

@@ -104,11 +104,11 @@ spec:
             # PWA configuration
             {{- if .Values.pwa }}
             - name: PWA_APP_NAME
-              value: {{ .Values.pwa.appName | default "AgentAPI UI" | quote }}
+              value: {{ .Values.pwa.appName | default "ccplant" | quote }}
             - name: PWA_SHORT_NAME
-              value: {{ .Values.pwa.shortName | default "AgentAPI" | quote }}
+              value: {{ .Values.pwa.shortName | default "ccplant" | quote }}
             - name: PWA_DESCRIPTION
-              value: {{ .Values.pwa.description | default "AgentAPI UI" | quote }}
+              value: {{ .Values.pwa.description | default "Launch, connect, and manage AI agent sessions with ccplant." | quote }}
             {{- if .Values.pwa.iconUrl }}
             - name: PWA_ICON_URL
               value: {{ .Values.pwa.iconUrl | quote }}

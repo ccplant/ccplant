@@ -1,6 +1,6 @@
-# E2E Tests for AgentAPI UI
+# E2E Tests for ccplant
 
-This directory contains end-to-end tests for the AgentAPI UI application, with a focus on testing authentication functionality using mock backends.
+This directory contains end-to-end tests for the ccplant application, with a focus on testing authentication functionality using mock backends.
 
 **Note: E2E tests are separate from unit tests and should be run independently.**
 

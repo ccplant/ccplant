@@ -118,7 +118,7 @@ export function App() {
     <div className="app">
       <header className="app__header">
         <div className="app__title">
-          <h1>agentapi-proxy Native</h1>
+          <h1>ccplant</h1>
           <span className="app__subtitle">External Session Manager</span>
         </div>
         <div className="app__actions">
