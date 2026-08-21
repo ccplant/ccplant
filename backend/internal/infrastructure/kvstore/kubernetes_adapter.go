@@ -57,7 +57,7 @@ func (a *secretAdapter) Create(ctx context.Context, object *corev1.Secret, opts 
 	if err != nil {
 		return nil, err
 	}
-	record, err := a.store.Create(ctx, Record{Kind: KindSecret, Namespace: a.namespace, Key: object.Name, Value: value})
+	record, err := a.store.Create(ctx, Record{Kind: KindSecret, Namespace: a.namespace, Key: object.Name, Labels: object.Labels, Value: value})
 	if err != nil {
 		return nil, createStorageError(secretResource, object.Name, err)
 	}
@@ -74,7 +74,7 @@ func (a *secretAdapter) Update(ctx context.Context, object *corev1.Secret, opts 
 	if err != nil {
 		return nil, err
 	}
-	record, err := a.store.Update(ctx, Record{Kind: KindSecret, Namespace: a.namespace, Key: object.Name, Value: value, Version: version})
+	record, err := a.store.Update(ctx, Record{Kind: KindSecret, Namespace: a.namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version})
 	if err != nil {
 		return nil, storageError(secretResource, object.Name, err)
 	}
@@ -110,7 +110,7 @@ func (a *secretAdapter) Delete(ctx context.Context, name string, opts metav1.Del
 }
 
 func (a *secretAdapter) List(ctx context.Context, opts metav1.ListOptions) (*corev1.SecretList, error) {
-	records, err := a.store.List(ctx, Query{Kind: KindSecret, Namespace: a.namespace})
+	records, err := a.store.List(ctx, Query{Kind: KindSecret, Namespace: a.namespace, LabelSelector: opts.LabelSelector})
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func (a *configMapAdapter) Create(ctx context.Context, object *corev1.ConfigMap,
 	if err != nil {
 		return nil, err
 	}
-	record, err := a.store.Create(ctx, Record{Kind: KindConfigMap, Namespace: a.namespace, Key: object.Name, Value: value})
+	record, err := a.store.Create(ctx, Record{Kind: KindConfigMap, Namespace: a.namespace, Key: object.Name, Labels: object.Labels, Value: value})
 	if err != nil {
 		return nil, createStorageError(configMapResource, object.Name, err)
 	}
@@ -178,7 +178,7 @@ func (a *configMapAdapter) Update(ctx context.Context, object *corev1.ConfigMap,
 	if err != nil {
 		return nil, err
 	}
-	record, err := a.store.Update(ctx, Record{Kind: KindConfigMap, Namespace: a.namespace, Key: object.Name, Value: value, Version: version})
+	record, err := a.store.Update(ctx, Record{Kind: KindConfigMap, Namespace: a.namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version})
 	if err != nil {
 		return nil, storageError(configMapResource, object.Name, err)
 	}
@@ -213,7 +213,7 @@ func (a *configMapAdapter) Delete(ctx context.Context, name string, opts metav1.
 }
 
 func (a *configMapAdapter) List(ctx context.Context, opts metav1.ListOptions) (*corev1.ConfigMapList, error) {
-	records, err := a.store.List(ctx, Query{Kind: KindConfigMap, Namespace: a.namespace})
+	records, err := a.store.List(ctx, Query{Kind: KindConfigMap, Namespace: a.namespace, LabelSelector: opts.LabelSelector})
 	if err != nil {
 		return nil, err
 	}

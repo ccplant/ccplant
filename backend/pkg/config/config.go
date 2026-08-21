@@ -516,6 +516,11 @@ type KVStoreReplicationConfig struct {
 	Mode string `json:"mode" mapstructure:"mode"`
 }
 
+type KVStoreEncryptionConfig struct {
+	ActiveKeyID string            `json:"active_key_id" mapstructure:"active_key_id"`
+	Keys        map[string]string `json:"keys" mapstructure:"keys"`
+}
+
 type KVStoreConfig struct {
 	// Legacy single-backend fields. They remain supported as primary-only configuration.
 	Namespace   string                   `json:"namespace" mapstructure:"namespace"`
@@ -525,6 +530,7 @@ type KVStoreConfig struct {
 	Primary     *KVStoreBackendConfig    `json:"primary" mapstructure:"primary"`
 	Secondary   *KVStoreBackendConfig    `json:"secondary" mapstructure:"secondary"`
 	Replication KVStoreReplicationConfig `json:"replication" mapstructure:"replication"`
+	Encryption  KVStoreEncryptionConfig  `json:"encryption" mapstructure:"encryption"`
 }
 
 // UsageConfig configures the dedicated libSQL database used for usage events.
@@ -637,7 +643,8 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	var config Config
-	if err := v.Unmarshal(&config, viper.DecodeHook(stockInventoryPoolsDecodeHook())); err != nil {
+	decodeHook := mapstructure.ComposeDecodeHookFunc(stockInventoryPoolsDecodeHook(), stringMapJSONDecodeHook())
+	if err := v.Unmarshal(&config, viper.DecodeHook(decodeHook)); err != nil {
 		return nil, err
 	}
 
@@ -670,6 +677,23 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
+}
+
+func stringMapJSONDecodeHook() mapstructure.DecodeHookFunc {
+	stringMapType := reflect.TypeOf(map[string]string{})
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String || to != stringMapType {
+			return data, nil
+		}
+		if data == "" {
+			return map[string]string{}, nil
+		}
+		var values map[string]string
+		if err := json.Unmarshal([]byte(data.(string)), &values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	}
 }
 
 func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
@@ -1040,6 +1064,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
 	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
 	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
+	_ = v.BindEnv("kv_store.encryption.active_key_id", "AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID")
+	_ = v.BindEnv("kv_store.encryption.keys", "AGENTAPI_KV_ENCRYPTION_KEYS")
 	_ = v.BindEnv("usage.enabled", "AGENTAPI_USAGE_ENABLED")
 	_ = v.BindEnv("usage.database_url", "AGENTAPI_USAGE_DATABASE_URL")
 	_ = v.BindEnv("usage.auth_token", "AGENTAPI_USAGE_AUTH_TOKEN")

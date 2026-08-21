@@ -11,4 +11,5 @@ var KVStoreCmd = &cobra.Command{
 func init() {
 	KVStoreCmd.AddCommand(newKVStoreMigrateCommand())
 	KVStoreCmd.AddCommand(newKVStoreVerifyCommand())
+	KVStoreCmd.AddCommand(newKVStoreRotateKeyCommand())
 }

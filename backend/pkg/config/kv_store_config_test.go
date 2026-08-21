@@ -59,3 +59,22 @@ func TestLoadConfigWithReplicatedKVStoreEnvironment(t *testing.T) {
 		t.Fatalf("replication mode = %q", cfg.KVStore.Replication.Mode)
 	}
 }
+
+func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
+	t.Setenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID", "current")
+	t.Setenv("AGENTAPI_KV_ENCRYPTION_KEYS", `{"previous":"old-key","current":"new-key"}`)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.KVStore.Encryption.ActiveKeyID != "current" {
+		t.Fatalf("active key ID = %q", cfg.KVStore.Encryption.ActiveKeyID)
+	}
+	if cfg.KVStore.Encryption.Keys["previous"] != "old-key" || cfg.KVStore.Encryption.Keys["current"] != "new-key" {
+		t.Fatalf("keys = %#v", cfg.KVStore.Encryption.Keys)
+	}
+}

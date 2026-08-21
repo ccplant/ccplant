@@ -5,6 +5,22 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* Environment variables for application KV value encryption. */}}
+{{- define "agentapi-proxy.kvEncryptionEnv" -}}
+{{- $encryption := dig "encryption" (dict) . -}}
+{{- $activeKeyID := dig "activeKeyId" "" $encryption -}}
+{{- $secretName := dig "keysSecretRef" "name" "" $encryption -}}
+{{- if or $activeKeyID $secretName -}}
+- name: AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID
+  value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
+- name: AGENTAPI_KV_ENCRYPTION_KEYS
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "kvStore.encryption.keysSecretRef.name is required when KV encryption is configured" $secretName | quote }}
+      key: {{ dig "keysSecretRef" "key" "keys.json" $encryption | quote }}
+{{- end -}}
+{{- end }}
+
 {{/* Role-specific image helpers. Empty role values preserve the legacy root image. */}}
 {{- define "agentapi-proxy.apiImage" -}}
 {{- $api := .Values.api | default dict -}}

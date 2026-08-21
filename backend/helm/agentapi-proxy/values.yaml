@@ -107,6 +107,11 @@ api:
         key: auth-token
     replication:
       mode: ""
+    encryption:
+      activeKeyId: ""
+      keysSecretRef:
+        name: ""
+        key: keys.json
     migration:
       enabled: false
       dryRun: false
@@ -204,6 +209,11 @@ worker:
     authTokenSecretRef:
       name: ""
       key: auth-token
+    encryption:
+      activeKeyId: ""
+      keysSecretRef:
+        name: ""
+        key: keys.json
 
   # Redis is mandatory for worker leader election. When addr is empty and the
   # bundled Redis chart is enabled, the chart derives its in-cluster address.
@@ -320,6 +330,11 @@ sessionManager:
     authTokenSecretRef:
       name: ""
       key: auth-token
+    encryption:
+      activeKeyId: ""
+      keysSecretRef:
+        name: ""
+        key: keys.json
   redis:
     addr: ""
     existingSecret: ""

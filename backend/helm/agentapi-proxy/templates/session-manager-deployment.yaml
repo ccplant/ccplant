@@ -146,6 +146,7 @@ spec:
             - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
             {{- end }}
             {{- end }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" $kv | nindent 12 }}
             {{- if not $remoteMode }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}

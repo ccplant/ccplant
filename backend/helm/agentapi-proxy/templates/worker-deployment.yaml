@@ -95,6 +95,7 @@ spec:
               value: {{ $kv.authToken | quote }}
             {{- end }}
             {{- end }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" $kv | nindent 12 }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "worker.redis.addr or redis.enabled=true is required when worker is enabled" $redisAddr | quote }}
             {{- $redisSecret := $redisClient.existingSecret | default "" }}

@@ -29,6 +29,14 @@ assert_not_contains() {
   fi
 }
 
+"$HELM_BIN" template backend-kv-encryption "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set api.kvStore.encryption.activeKeyId=current \
+  --set api.kvStore.encryption.keysSecretRef.name=agentapi-kv-keys >"$TMP_DIR/backend-kv-encryption.yaml"
+assert_contains 'name: AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID' "$TMP_DIR/backend-kv-encryption.yaml"
+assert_contains 'value: "current"' "$TMP_DIR/backend-kv-encryption.yaml"
+assert_contains 'name: AGENTAPI_KV_ENCRYPTION_KEYS' "$TMP_DIR/backend-kv-encryption.yaml"
+assert_contains 'name: "agentapi-kv-keys"' "$TMP_DIR/backend-kv-encryption.yaml"
+
 # A default install is API-only. It must not receive workload RBAC or any
 # worker/session-manager configuration.
 assert_contains '^  replicas: 1$' "$TMP_DIR/backend-default.yaml"

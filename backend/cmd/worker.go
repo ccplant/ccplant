@@ -196,7 +196,24 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return kvstore.NewLibSQLStore(ctx, databaseURL, authToken)
+	store, err := kvstore.NewLibSQLStore(ctx, databaseURL, authToken)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Encryption.ActiveKeyID == "" && len(cfg.Encryption.Keys) == 0 {
+		return store, nil
+	}
+	keyring, err := kvstore.NewLocalKeyring(cfg.Encryption.ActiveKeyID, cfg.Encryption.Keys)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("configure worker KV encryption: %w", err)
+	}
+	encrypted, err := kvstore.NewEncryptedStore(store, keyring)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return encrypted, nil
 }
 
 func newRemoteScheduleWorker(cfg *config.Config, manager schedule.Manager, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, redisClient redis.UniversalClient, namespace string) *schedule.LeaderWorker {

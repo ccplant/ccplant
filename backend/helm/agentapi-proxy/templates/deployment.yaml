@@ -326,6 +326,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" $apiKV | nindent 12 }}
             - name: AGENTAPI_USAGE_ENABLED
               value: {{ dig "usage" "enabled" false .Values.config | quote }}
             {{- if (dig "usage" "enabled" false .Values.config) }}

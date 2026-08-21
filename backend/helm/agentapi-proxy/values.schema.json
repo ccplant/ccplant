@@ -331,7 +331,8 @@
         "databaseUrl": { "type": "string" },
         "authToken": { "type": "string" },
         "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
-        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" },
+        "encryption": { "$ref": "#/definitions/kvEncryption" }
       }
     },
     "apiKVStore": {
@@ -413,6 +414,14 @@
         "authToken": { "type": "string" },
         "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
         "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+      }
+    },
+    "kvEncryption": {
+      "type": "object",
+      "required": ["activeKeyId", "keysSecretRef"],
+      "properties": {
+        "activeKeyId": { "type": "string" },
+        "keysSecretRef": { "$ref": "#/definitions/secretRef" }
       }
     },
     "enabledKVStore": {
