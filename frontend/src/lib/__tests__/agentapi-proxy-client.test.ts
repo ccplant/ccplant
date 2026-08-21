@@ -113,6 +113,7 @@ describe('AgentAPIProxyClient ACP message history', () => {
           },
         }],
         userPromptCount: 0,
+        lastEventId: 7,
         userPrompts: [],
       }), {
         status: 200,
@@ -127,6 +128,7 @@ describe('AgentAPIProxyClient ACP message history', () => {
     expect(history.messages[0].images).toEqual([
       { mimeType: 'image/png', data: 'iVBORw0KGgo=' },
     ]);
+    expect(history.lastEventId).toBe(7);
   });
 
   it('restores images nested in completed ACP tool results', async () => {
@@ -250,5 +252,57 @@ describe('AgentAPIProxyClient ACP message history', () => {
     expect(serializedLogs).not.toContain('xapp-super-secret');
     expect(serializedLogs).not.toContain('login-api-key');
     expect(serializedLogs).not.toContain('url-secret');
+  });
+});
+
+describe('AgentAPIProxyClient ACP SSE cursor', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('resumes after the history cursor and ignores replayed event IDs', () => {
+    class FakeEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      static instances: FakeEventSource[] = [];
+      readonly url: string;
+      readyState = FakeEventSource.OPEN;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL) {
+        this.url = String(url);
+        FakeEventSource.instances.push(this);
+      }
+
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const onMessage = vi.fn();
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    const subscription = client.subscribeToACPSessionEvents('session-1', 'acp-1', {
+      onMessage,
+      onChunk: vi.fn(),
+      onThoughtChunk: vi.fn(),
+      onStatus: vi.fn(),
+      onPermission: vi.fn(),
+      onError: vi.fn(),
+    }, 7);
+
+    const source = FakeEventSource.instances[0];
+    expect(source.url).toBe('http://proxy.example.test/session-1/sse?lastEventId=7');
+    const payload = JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } } },
+    });
+    source.onmessage?.(new MessageEvent('message', { data: payload, lastEventId: '7' }));
+    source.onmessage?.(new MessageEvent('message', { data: payload, lastEventId: '8' }));
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    subscription.close();
   });
 });

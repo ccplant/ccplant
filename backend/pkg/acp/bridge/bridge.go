@@ -186,6 +186,14 @@ func (b *Bridge) Messages() []json.RawMessage {
 	return b.messagesFromIndexLocked(b.lastUserMessageIdx)
 }
 
+// MessagesSnapshot returns the current-turn messages together with the SSE ID
+// of the last event included in the snapshot.
+func (b *Bridge) MessagesSnapshot() ([]json.RawMessage, int) {
+	b.histMu.RLock()
+	defer b.histMu.RUnlock()
+	return b.messagesFromIndexLocked(b.lastUserMessageIdx), len(b.history) - 1
+}
+
 // UserPromptCount returns the number of user prompts recorded in history.
 func (b *Bridge) UserPromptCount() int {
 	b.histMu.RLock()

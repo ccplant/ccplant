@@ -192,6 +192,20 @@ func TestMessagesReturnsAllMessagesWhenNoUserMessageExists(t *testing.T) {
 	}
 }
 
+func TestMessagesSnapshotReturnsMatchingSSECursor(t *testing.T) {
+	b := New(nil, "session-1", false, "", false)
+	b.broadcast(testIndexedUpdate(t, acp.SessionUpdateKindAgentMessageChunk, 0))
+	b.broadcast(testIndexedUpdate(t, acp.SessionUpdateKindAgentMessageChunk, 1))
+
+	msgs, lastEventID := b.MessagesSnapshot()
+	if len(msgs) != 2 {
+		t.Fatalf("messages length = %d, want 2", len(msgs))
+	}
+	if lastEventID != 1 {
+		t.Fatalf("lastEventID = %d, want 1", lastEventID)
+	}
+}
+
 func userPromptUpdate(t *testing.T, text string) jsonRPCMsg {
 	t.Helper()
 	content, err := json.Marshal(map[string]interface{}{

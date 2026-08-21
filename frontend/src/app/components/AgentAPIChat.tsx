@@ -539,7 +539,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 if (acpServerEnabled && acpServerClientRef.current) {
                   acpEventSourceRef.current = acpServerClientRef.current.subscribeToEvents(
                     sessionId,
-                    acpCallbacks
+                    acpCallbacks,
+                    historyResult.lastEventId
                   );
                 } else {
                   acpEventSourceRef.current = agentAPIRef.current.subscribeToACPSessionEvents(
@@ -550,7 +551,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                       onCommandsUpdate: (commands) => {
                         console.log('[ACP] available_commands_update:', commands);
                       },
-                    }
+                    },
+                    historyResult.lastEventId
                   );
                 }
                 return;

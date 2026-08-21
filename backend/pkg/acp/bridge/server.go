@@ -131,9 +131,10 @@ func (s *Server) handleGetMessages(c echo.Context) error {
 	var (
 		msgs            []json.RawMessage
 		userPromptIndex int
+		lastEventID     = -1
 	)
 	if indexParam == "" {
-		msgs = s.bridge.Messages()
+		msgs, lastEventID = s.bridge.MessagesSnapshot()
 		userPromptIndex = s.bridge.LatestUserPromptIndex()
 	} else {
 		index, err := strconv.Atoi(indexParam)
@@ -158,6 +159,7 @@ func (s *Server) handleGetMessages(c echo.Context) error {
 
 	resp := map[string]interface{}{
 		"messages":        msgs,
+		"lastEventId":     lastEventID,
 		"userPromptCount": userPromptCount,
 		"userPrompts":     userPrompts,
 	}

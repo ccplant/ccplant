@@ -613,6 +613,9 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 
 	// Forward Last-Event-ID so the bridge replays only missed messages.
 	lastEventID := ctx.Request().Header.Get("Last-Event-ID")
+	if lastEventID == "" {
+		lastEventID = ctx.QueryParam("lastEventId")
+	}
 
 	w := ctx.Response()
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -647,7 +650,11 @@ func (c *ACPController) handleRemoteSessionSSE(ctx echo.Context, route *portrepo
 	if hasFlusher {
 		flusher.Flush()
 	}
-	c.streamRemoteBridgeSSE(ctx.Request().Context(), route, w, flusher, hasFlusher, ctx.Request().Header.Get("Last-Event-ID"))
+	lastEventID := ctx.Request().Header.Get("Last-Event-ID")
+	if lastEventID == "" {
+		lastEventID = ctx.QueryParam("lastEventId")
+	}
+	c.streamRemoteBridgeSSE(ctx.Request().Context(), route, w, flusher, hasFlusher, lastEventID)
 	return nil
 }
 
