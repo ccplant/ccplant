@@ -6,7 +6,7 @@ test.describe('Authentication', () => {
     
     // Should redirect to login page
     await page.waitForURL('**/login');
-    await expect(page.getByRole('heading', { name: /AgentAPI UI/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /ccplant/i })).toBeVisible();
     await expect(page.getByPlaceholder(/Enter your API key/i)).toBeVisible();
     await expect(page.getByRole('button', { name: /login/i })).toBeVisible();
   });
@@ -122,7 +122,7 @@ test.describe('Authentication', () => {
     await page.waitForURL('**/login');
     
     // Should show login page
-    await expect(page.getByRole('heading', { name: /AgentAPI UI/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /ccplant/i })).toBeVisible();
   });
 
   test('should send and receive messages when authenticated', async ({ page }) => {

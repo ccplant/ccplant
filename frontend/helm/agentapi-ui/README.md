@@ -1,6 +1,6 @@
 # agentapi-ui Helm Chart
 
-このHelm ChartはAgentAPI UIアプリケーションをKubernetesにデプロイするためのものです。
+このHelm ChartはccplantアプリケーションをKubernetesにデプロイするためのものです。
 
 ## インストール
 

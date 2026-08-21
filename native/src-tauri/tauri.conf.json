@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "agentapi-proxy Native",
+  "productName": "ccplant",
   "version": "0.1.0",
   "identifier": "com.agentapi.native-ui",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "dashboard",
-        "title": "agentapi-proxy Native",
+        "title": "ccplant",
         "width": 760,
         "height": 600,
         "minWidth": 520,
@@ -34,8 +34,8 @@
     "targets": ["app", "dmg"],
     "icon": ["icons/icon.png", "icons/icon.icns"],
     "category": "DeveloperTool",
-    "shortDescription": "Native ESM dashboard",
-    "longDescription": "Menu-bar dashboard for the agentapi-proxy native External Session Manager."
+    "shortDescription": "ccplant native dashboard",
+    "longDescription": "ccplant menu-bar dashboard for the agentapi-proxy native External Session Manager."
   },
   "plugins": {}
 }

@@ -1,7 +1,7 @@
 [package]
 name = "agentapi-proxy-native-dashboard"
 version = "0.1.0"
-description = "macOS menu-bar dashboard for the agentapi-proxy native External Session Manager"
+description = "ccplant macOS menu-bar dashboard for the agentapi-proxy native External Session Manager"
 authors = ["ccplant"]
 edition = "2021"
 rust-version = "1.77"
