@@ -438,7 +438,7 @@
     },
     "kvEncryption": {
       "type": "object",
-      "required": ["provider", "activeKeyId", "allowLegacyPlaintext", "kmsRegion", "kmsKeys", "keysSecretRef"],
+      "required": ["provider", "activeKeyId", "kmsRegion", "kmsKeys", "keysSecretRef"],
       "properties": {
         "provider": { "enum": ["local", "aws-kms"] },
         "activeKeyId": { "type": "string" },
