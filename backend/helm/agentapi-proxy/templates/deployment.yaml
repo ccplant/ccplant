@@ -96,7 +96,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "agentapi-proxy.apiServiceAccountName" . }}
-      automountServiceAccountToken: {{ eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes" }}
+      automountServiceAccountToken: {{ or (eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes") (eq (dig "primary" "backend" "" ($api.kvStore | default dict)) "kubernetes") }}
       securityContext:
         {{- if $apiPodSecurityContext }}
         {{- toYaml $apiPodSecurityContext | nindent 8 }}
