@@ -205,7 +205,8 @@ worker:
       name: ""
       key: auth-token
 
-  # Deprecated. Worker leader election is coordinated through controlApi.
+  # Deprecated. Worker leader election is coordinated through controlApi, and
+  # Redis is configured on api.redis.
   redis:
     addr: ""
     existingSecret: ""

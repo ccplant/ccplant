@@ -18,7 +18,7 @@
     "/internal/worker/leases/{leaseName}": {
       "post": {
         "summary": "Coordinate a background-worker lease",
-        "description": "Acquires, renews, or releases a leader-election lease through the authenticated worker control plane.",
+        "description": "Acquires, renews, or releases a Redis-backed leader-election lease through the authenticated worker control plane.",
         "operationId": "coordinateWorkerLease",
         "tags": ["Worker Control"],
         "parameters": [
@@ -60,7 +60,7 @@
           },
           "400": {"description": "Invalid lease operation"},
           "401": {"description": "Invalid worker control token"},
-          "503": {"description": "Lease persistence is unavailable"}
+          "503": {"description": "API Redis is not configured"}
         }
       }
     },

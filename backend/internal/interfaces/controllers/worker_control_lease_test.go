@@ -6,15 +6,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/labstack/echo/v4"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
-	"k8s.io/client-go/kubernetes/fake"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 )
 
 func TestWorkerLeaseAcquireRenewRelease(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, nil).WithLeases(fake.NewSimpleClientset(), "default")
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, nil).WithLeases(schedule.NewRedisLeaseClient(redisClient))
 	call := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/internal/worker/leases/test", strings.NewReader(body))
 		req.Header.Set(echo.HeaderAuthorization, "Bearer secret")

@@ -51,6 +51,7 @@ assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant
 "$HELM_BIN" template backend-worker-default "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --set worker.enabled=true \
   --set api.workerControl.tokenSecretRef.name=worker-control \
+  --set api.redis.addr=redis:6379 \
   --set worker.controlApi.tokenSecretRef.name=worker-control \
   --set worker.kvStore.databaseUrl=file:///tmp/worker.db \
   >"$TMP_DIR/backend-worker-default.yaml"

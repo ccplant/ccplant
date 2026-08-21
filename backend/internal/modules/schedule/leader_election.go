@@ -42,7 +42,7 @@ type LeaderElector struct {
 type LeaseClient interface {
 	Acquire(context.Context, string, string, time.Duration) (bool, error)
 	Renew(context.Context, string, string, time.Duration) (bool, error)
-	Release(context.Context, string, string) error
+	Release(context.Context, string, string) (bool, error)
 }
 
 type redisLeaseClient struct{ client redis.UniversalClient }
@@ -69,9 +69,9 @@ func (c *redisLeaseClient) Renew(ctx context.Context, key, identity string, dura
 	return result != 0, err
 }
 
-func (c *redisLeaseClient) Release(ctx context.Context, key, identity string) error {
-	_, err := releaseLease.Run(ctx, c.client, []string{key}, identity).Result()
-	return err
+func (c *redisLeaseClient) Release(ctx context.Context, key, identity string) (bool, error) {
+	result, err := releaseLease.Run(ctx, c.client, []string{key}, identity).Int64()
+	return result != 0, err
 }
 
 var renewLease = redis.NewScript(`
@@ -105,7 +105,7 @@ func (l *LeaderElector) Run(ctx context.Context, onStartedLeading func(context.C
 		lost := l.renew(ctx, key)
 		cancel()
 		<-done
-		_ = l.client.Release(context.Background(), key, l.identity)
+		_, _ = l.client.Release(context.Background(), key, l.identity)
 		if onStoppedLeading != nil {
 			onStoppedLeading()
 		}

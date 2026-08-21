@@ -122,9 +122,8 @@ func (m *SessionManager) Acquire(ctx context.Context, key, identity string, dura
 func (m *SessionManager) Renew(ctx context.Context, key, identity string, duration time.Duration) (bool, error) {
 	return m.lease(ctx, key, identity, "renew", duration)
 }
-func (m *SessionManager) Release(ctx context.Context, key, identity string) error {
-	_, err := m.lease(ctx, key, identity, "release", 0)
-	return err
+func (m *SessionManager) Release(ctx context.Context, key, identity string) (bool, error) {
+	return m.lease(ctx, key, identity, "release", 0)
 }
 
 func (m *SessionManager) do(ctx context.Context, method, path string, input, output any) error {

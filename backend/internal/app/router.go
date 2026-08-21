@@ -251,7 +251,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
-		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(server.GetPersistenceClient(), cfg.KVStore.Namespace)
+		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg))
 		log.Printf("[ROUTER] Worker control controller initialized")
 	}
 	if server.sessionControlStore != nil {
