@@ -102,14 +102,13 @@ Use envelope encryption rather than calling AWS KMS for the whole document:
 The GCM additional authenticated data (AAD) is a canonical encoding of:
 
 ```text
-format || kind || namespace || key || version || canonical(labels)
+format || kind || namespace || key || canonical(labels)
 ```
 
-This prevents moving ciphertext to a different record, changing its version,
-or changing searchable labels without detection. The new optimistic version
-must be known before encryption; therefore the physical store API must assign
-the next version transactionally or accept an expected and next version. Do not
-encrypt with the old version and then increment it afterward.
+This prevents moving ciphertext to a different record or changing searchable
+labels without detection. Version remains an optimistic-concurrency mechanism
+owned by the physical store; excluding it from AAD avoids coupling encryption
+to version allocation.
 
 The existing `EncryptionService` is not sufficient for this layer: it accepts
 strings, has no AAD parameter, and the KMS implementation encrypts the complete
@@ -124,11 +123,21 @@ buffers where the Go implementation makes that meaningful.
 
 ## libSQL schema and filtering
 
-Evolve the table without replacing the primary key:
+Store searchable metadata as validated JSON text. SQLite/libSQL does not have a
+separate JSON storage class, but its JSON functions operate on `TEXT` and the
+constraint rejects malformed metadata:
 
 ```sql
-ALTER TABLE agentapi_kv ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
-ALTER TABLE agentapi_kv ADD COLUMN value_format TEXT NOT NULL DEFAULT 'plaintext-v1';
+CREATE TABLE agentapi_kv (
+  kind TEXT NOT NULL,
+  namespace TEXT NOT NULL,
+  key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  metadata TEXT NOT NULL CHECK (json_valid(metadata)),
+  value BLOB NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (kind, namespace, key)
+);
 ```
 
 `metadata` contains a versioned canonical JSON object with labels only:
@@ -139,8 +148,10 @@ ALTER TABLE agentapi_kv ADD COLUMN value_format TEXT NOT NULL DEFAULT 'plaintext
 
 Initially, evaluate Kubernetes label selectors against `metadata` in the store
 after reading candidate rows by kind and namespace. This avoids decryption and
-is behaviorally compatible, while keeping the migration simple. If cardinality
-makes that scan expensive, add a normalized label index later:
+is behaviorally compatible, while keeping the schema simple. Fixed, frequently
+queried paths may use expression indexes, for example
+`json_extract(metadata, '$.labels.scope')`. If arbitrary-label cardinality makes
+the scan expensive, add a normalized label index later:
 
 ```sql
 CREATE TABLE agentapi_kv_labels (
@@ -183,29 +194,33 @@ For local AES KEKs, rotation requires unwrapping with the old master key and
 wrapping with the new one. KMS rotation of key material behind an unchanged KMS
 key ID needs no row rewrite; changing KMS keys does.
 
-## Migration and rollout
+## Migration
 
-Use a mixed-reader, single-writer-format rollout:
+Rolling compatibility is intentionally out of scope. Perform a stop-the-world
+migration in a maintenance window:
 
-1. Add schema columns and deploy readers that understand both `plaintext-v1`
-   and `agentapi-kv-envelope/v1`; writes remain plaintext.
-2. Backfill `metadata` from plaintext documents. Validate that stored labels
-   match decoded object labels.
-3. Configure the keyring and switch new writes to encrypted envelopes.
-4. Encrypt existing rows in bounded, resumable batches using optimistic version
-   checks. A concurrent change is skipped and retried, never overwritten.
-5. Verify every row is decryptable and its authenticated metadata matches.
-6. Disable plaintext reads. A later release may reject or remove
-   `plaintext-v1` entirely.
+1. Stop every application process that can read or write the KV store.
+2. Back up the database and separately verify that the decrypting key is
+   recoverable.
+3. Create the new table, extract labels into validated `metadata`, encrypt each
+   complete document into `value`, and preserve its optimistic version.
+4. Verify every migrated row can be decrypted and that its authenticated labels
+   match the labels in the decrypted document.
+5. Atomically replace the old table, deploy the encryption-aware application,
+   and start service.
+6. Retain the pre-migration backup until application-level smoke tests pass.
 
-The migration command must support dry-run, progress counters, restart from a
-cursor, a rate limit, and per-row error reporting without printing plaintext.
-The existing primary/secondary KV migration and verification commands must
-compare logical plaintext documents, not ciphertext, because randomized
-encryption intentionally produces different bytes for the same value.
+There is no mixed plaintext/ciphertext read mode and no `value_format` column.
+After cutover every value must be an `agentapi-kv-envelope/v1` envelope; a
+plaintext or malformed value fails closed. Rollback means stopping the service,
+restoring the complete pre-migration database, and deploying the old binary.
 
-During rollback, binaries must retain the new decryptor and keyring. Rolling
-back to a version that only understands plaintext after step 3 is unsafe.
+The migration command should support dry-run and per-row error reporting
+without printing plaintext. Since writers are stopped, batching, cursors, rate
+limits, and optimistic retry logic are not required for correctness. The
+existing primary/secondary KV migration and verification commands must compare
+logical plaintext documents, not ciphertext, because randomized encryption
+intentionally produces different bytes for the same value.
 
 ## Failure behavior and observability
 
@@ -236,9 +251,9 @@ transport encryption, database access control, or backup policy.
   migration completes.
 - Exact existing Kubernetes label-selector behavior is preserved.
 - Nonmatching rows in a filtered list cause no decrypt or KMS operation.
-- Swapping envelopes or modifying identity, version, or labels causes GCM
-  authentication failure.
+- Swapping envelopes or modifying identity or labels causes GCM authentication
+  failure.
 - New and old keys can decrypt concurrently, and rotation can resume safely.
 - Missing keys and corrupt envelopes fail closed without leaking record data.
-- Migration, replication verification, backup restore, and rollback paths have
-  integration tests.
+- Offline migration, replication verification, backup restore, and rollback
+  paths have integration tests.
