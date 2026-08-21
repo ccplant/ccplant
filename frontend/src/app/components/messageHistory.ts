@@ -32,3 +32,12 @@ export function mergeRefreshedMessageHistory<T extends MessageWithID>(
 
   return merged
 }
+
+/**
+ * Replace the rendered history after a refresh has rebuilt the complete loaded
+ * window. ACP live messages and restored messages use different local IDs, so
+ * merging a complete rebuild by ID can retain two copies of the same turn.
+ */
+export function replaceRebuiltMessageHistory<T>(current: T[], rebuilt: T[]): T[] {
+  return rebuilt.length > 0 ? rebuilt : current
+}
