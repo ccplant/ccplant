@@ -40,6 +40,15 @@
 {{- range $apiEnvNames }}
 {{- $apiEnv = append $apiEnv (index $apiEnvByName .) }}
 {{- end }}
+{{- /* Let the API opt out of release-wide variables used by other roles. */}}
+{{- $apiEnvExclude := $api.envExclude | default list }}
+{{- $unexcludedApiEnv := list }}
+{{- range $apiEnv }}
+{{- if not (has .name $apiEnvExclude) }}
+{{- $unexcludedApiEnv = append $unexcludedApiEnv . }}
+{{- end }}
+{{- end }}
+{{- $apiEnv = $unexcludedApiEnv }}
 {{- /* Prefer canonical structured values over their legacy env entries. */}}
 {{- $canonicalApiEnv := dict }}
 {{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}

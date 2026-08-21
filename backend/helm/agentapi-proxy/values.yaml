@@ -68,6 +68,10 @@ api:
   tolerations: []
   affinity: {}
   env: []
+  # Names to omit from the API container after merging global and API env.
+  # This is useful when another component needs generic AWS_* credentials but
+  # the API must use credentials supplied through its own envFrom secret.
+  envExclude: []
   envFrom: []
   # API application persistence. This is independent from the worker and
   # session-manager stores even when all three roles use the same libSQL

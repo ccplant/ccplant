@@ -9,6 +9,11 @@
         "replicaCount": { "type": "integer", "minimum": 1 },
         "image": { "$ref": "#/definitions/image" },
         "imagePullSecrets": { "type": "array" },
+        "envExclude": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
         "serviceAccount": {
           "allOf": [
             { "$ref": "#/definitions/serviceAccount" },
