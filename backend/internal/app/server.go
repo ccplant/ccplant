@@ -871,7 +871,7 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 		if encryption.ActiveKeyID == "" && len(encryption.Keys) == 0 {
 			return store, nil
 		}
-		keyring, err := kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
+		keyring, err := buildKVEncryptionKeyring(ctx, encryption)
 		if err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("configure KV encryption: %w", err)
@@ -884,6 +884,17 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 		return encrypted, nil
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
+	}
+}
+
+func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncryptionConfig) (kvstore.EnvelopeKeyring, error) {
+	switch encryption.Provider {
+	case "", "local":
+		return kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
+	case "aws-kms":
+		return kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
+	default:
+		return nil, fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
 	}
 }
 

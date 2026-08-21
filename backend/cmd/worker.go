@@ -203,7 +203,15 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	if cfg.Encryption.ActiveKeyID == "" && len(cfg.Encryption.Keys) == 0 {
 		return store, nil
 	}
-	keyring, err := kvstore.NewLocalKeyring(cfg.Encryption.ActiveKeyID, cfg.Encryption.Keys)
+	var keyring kvstore.EnvelopeKeyring
+	switch cfg.Encryption.Provider {
+	case "", "local":
+		keyring, err = kvstore.NewLocalKeyring(cfg.Encryption.ActiveKeyID, cfg.Encryption.Keys)
+	case "aws-kms":
+		keyring, err = kvstore.NewKMSKeyring(ctx, cfg.Encryption.ActiveKeyID, cfg.Encryption.KMSRegion, cfg.Encryption.Keys)
+	default:
+		err = fmt.Errorf("unsupported KV encryption provider %q", cfg.Encryption.Provider)
+	}
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("configure worker KV encryption: %w", err)

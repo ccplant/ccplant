@@ -8,16 +8,27 @@ Expand the name of the chart.
 {{/* Environment variables for application KV value encryption. */}}
 {{- define "agentapi-proxy.kvEncryptionEnv" -}}
 {{- $encryption := dig "encryption" (dict) . -}}
+{{- $provider := dig "provider" "local" $encryption -}}
 {{- $activeKeyID := dig "activeKeyId" "" $encryption -}}
 {{- $secretName := dig "keysSecretRef" "name" "" $encryption -}}
-{{- if or $activeKeyID $secretName -}}
+{{- $kmsKeys := dig "kmsKeys" (dict) $encryption -}}
+{{- if or $activeKeyID $secretName $kmsKeys -}}
+- name: AGENTAPI_KV_ENCRYPTION_PROVIDER
+  value: {{ $provider | quote }}
 - name: AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID
   value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
+{{- if eq $provider "aws-kms" }}
+- name: AGENTAPI_KV_ENCRYPTION_KMS_REGION
+  value: {{ required "kvStore.encryption.kmsRegion is required for aws-kms" (dig "kmsRegion" "" $encryption) | quote }}
+- name: AGENTAPI_KV_ENCRYPTION_KEYS
+  value: {{ toJson $kmsKeys | quote }}
+{{- else }}
 - name: AGENTAPI_KV_ENCRYPTION_KEYS
   valueFrom:
     secretKeyRef:
       name: {{ required "kvStore.encryption.keysSecretRef.name is required when KV encryption is configured" $secretName | quote }}
       key: {{ dig "keysSecretRef" "key" "keys.json" $encryption | quote }}
+{{- end }}
 {{- end -}}
 {{- end }}
 

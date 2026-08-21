@@ -418,9 +418,12 @@
     },
     "kvEncryption": {
       "type": "object",
-      "required": ["activeKeyId", "keysSecretRef"],
+      "required": ["provider", "activeKeyId", "kmsRegion", "kmsKeys", "keysSecretRef"],
       "properties": {
+        "provider": { "enum": ["local", "aws-kms"] },
         "activeKeyId": { "type": "string" },
+        "kmsRegion": { "type": "string" },
+        "kmsKeys": { "type": "object", "additionalProperties": { "type": "string" } },
         "keysSecretRef": { "$ref": "#/definitions/secretRef" }
       }
     },

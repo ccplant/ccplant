@@ -108,7 +108,10 @@ api:
     replication:
       mode: ""
     encryption:
+      provider: local
       activeKeyId: ""
+      kmsRegion: ""
+      kmsKeys: {}
       keysSecretRef:
         name: ""
         key: keys.json
@@ -210,7 +213,10 @@ worker:
       name: ""
       key: auth-token
     encryption:
+      provider: local
       activeKeyId: ""
+      kmsRegion: ""
+      kmsKeys: {}
       keysSecretRef:
         name: ""
         key: keys.json
@@ -331,7 +337,10 @@ sessionManager:
       name: ""
       key: auth-token
     encryption:
+      provider: local
       activeKeyId: ""
+      kmsRegion: ""
+      kmsKeys: {}
       keysSecretRef:
         name: ""
         key: keys.json

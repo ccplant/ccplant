@@ -29,6 +29,44 @@ type LocalKeyring struct {
 	keys     map[string][]byte
 }
 
+type EnvelopeKeyring interface {
+	ActiveKeyID() string
+	GenerateDataKey(context.Context, Record) ([]byte, []byte, error)
+	WrapDataKey(context.Context, string, []byte, Record) ([]byte, error)
+	UnwrapDataKey(context.Context, string, []byte, Record) ([]byte, error)
+}
+
+func (k *LocalKeyring) ActiveKeyID() string { return k.activeID }
+
+func (k *LocalKeyring) GenerateDataKey(_ context.Context, record Record) ([]byte, []byte, error) {
+	dek := make([]byte, dataKeySize)
+	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+		return nil, nil, fmt.Errorf("generate KV data key: %w", err)
+	}
+	wrapped, err := wrapDEK(k.keys[k.activeID], dek, record)
+	if err != nil {
+		clear(dek)
+		return nil, nil, err
+	}
+	return dek, wrapped, nil
+}
+
+func (k *LocalKeyring) WrapDataKey(_ context.Context, keyID string, dek []byte, record Record) ([]byte, error) {
+	key, ok := k.keys[keyID]
+	if !ok {
+		return nil, ErrDecrypt
+	}
+	return wrapDEK(key, dek, record)
+}
+
+func (k *LocalKeyring) UnwrapDataKey(_ context.Context, keyID string, wrapped []byte, record Record) ([]byte, error) {
+	key, ok := k.keys[keyID]
+	if !ok {
+		return nil, ErrDecrypt
+	}
+	return unwrapDEK(key, wrapped, record)
+}
+
 func NewLocalKeyring(activeID string, encodedKeys map[string]string) (*LocalKeyring, error) {
 	activeID = strings.TrimSpace(activeID)
 	if activeID == "" {
@@ -59,7 +97,7 @@ func NewLocalKeyring(activeID string, encodedKeys map[string]string) (*LocalKeyr
 
 type encryptedStore struct {
 	backend Store
-	keyring *LocalKeyring
+	keyring EnvelopeKeyring
 }
 
 type RewrapResult struct {
@@ -70,7 +108,7 @@ type RewrapResult struct {
 
 // RewrapAll changes only the wrapped DEK of every encrypted record in a
 // namespace to the active key. Callers must stop writers before invoking it.
-func RewrapAll(ctx context.Context, backend Store, keyring *LocalKeyring, namespace string, dryRun bool) (RewrapResult, error) {
+func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, namespace string, dryRun bool) (RewrapResult, error) {
 	var result RewrapResult
 	for _, kind := range []Kind{KindSecret, KindConfigMap} {
 		records, err := backend.List(ctx, Query{Kind: kind, Namespace: namespace})
@@ -83,27 +121,23 @@ func RewrapAll(ctx context.Context, backend Store, keyring *LocalKeyring, namesp
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
-			oldKEK, ok := keyring.keys[envelope.KeyID]
-			if !ok {
-				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
-			}
-			dek, err := unwrapDEK(oldKEK, envelope.WrappedDEK, record)
+			dek, err := keyring.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, record)
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
-			if envelope.KeyID == keyring.activeID {
+			if envelope.KeyID == keyring.ActiveKeyID() {
 				clear(dek)
 				result.Skipped++
 				continue
 			}
-			wrapped, err := wrapDEK(keyring.keys[keyring.activeID], dek, record)
+			wrapped, err := keyring.WrapDataKey(ctx, keyring.ActiveKeyID(), dek, record)
 			clear(dek)
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, err)
 			}
 			if !dryRun {
 				record.Value, err = marshalEnvelope(valueEnvelope{
-					Format: envelopeFormat, KeyID: keyring.activeID, WrappedDEK: wrapped,
+					Format: envelopeFormat, KeyID: keyring.ActiveKeyID(), WrappedDEK: wrapped,
 					Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
 				})
 				if err != nil {
@@ -119,7 +153,7 @@ func RewrapAll(ctx context.Context, backend Store, keyring *LocalKeyring, namesp
 	return result, nil
 }
 
-func NewEncryptedStore(backend Store, keyring *LocalKeyring) (Store, error) {
+func NewEncryptedStore(backend Store, keyring EnvelopeKeyring) (Store, error) {
 	if backend == nil || keyring == nil {
 		return nil, errors.New("KV backend and encryption keyring are required")
 	}
@@ -130,7 +164,7 @@ func (s *encryptedStore) Close() error { return s.backend.Close() }
 
 func (s *encryptedStore) Create(ctx context.Context, record Record) (Record, error) {
 	plaintext := append([]byte(nil), record.Value...)
-	sealed, err := s.seal(&record)
+	sealed, err := s.seal(ctx, &record)
 	if err != nil {
 		return Record{}, err
 	}
@@ -145,7 +179,7 @@ func (s *encryptedStore) Create(ctx context.Context, record Record) (Record, err
 
 func (s *encryptedStore) Update(ctx context.Context, record Record) (Record, error) {
 	plaintext := append([]byte(nil), record.Value...)
-	sealed, err := s.seal(&record)
+	sealed, err := s.seal(ctx, &record)
 	if err != nil {
 		return Record{}, err
 	}
@@ -163,7 +197,7 @@ func (s *encryptedStore) Get(ctx context.Context, kind Kind, namespace, key stri
 	if err != nil {
 		return Record{}, err
 	}
-	if err := s.open(&record); err != nil {
+	if err := s.open(ctx, &record); err != nil {
 		return Record{}, err
 	}
 	return record, nil
@@ -179,7 +213,7 @@ func (s *encryptedStore) List(ctx context.Context, query Query) ([]Record, error
 		return nil, err
 	}
 	for i := range records {
-		if err := s.open(&records[i]); err != nil {
+		if err := s.open(ctx, &records[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -202,7 +236,7 @@ type envelopeJSON struct {
 	Ciphertext string `json:"ciphertext"`
 }
 
-func (s *encryptedStore) seal(record *Record) ([]byte, error) {
+func (s *encryptedStore) seal(ctx context.Context, record *Record) ([]byte, error) {
 	actualLabels, err := documentLabels(record.Kind, record.Value)
 	if err != nil {
 		return nil, fmt.Errorf("extract KV document labels: %w", err)
@@ -211,9 +245,9 @@ func (s *encryptedStore) seal(record *Record) ([]byte, error) {
 		return nil, errors.New("KV record labels do not match document labels")
 	}
 	record.Labels = actualLabels
-	dek := make([]byte, dataKeySize)
-	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
-		return nil, fmt.Errorf("generate KV data key: %w", err)
+	dek, wrappedDEK, err := s.keyring.GenerateDataKey(ctx, *record)
+	if err != nil {
+		return nil, err
 	}
 	defer clear(dek)
 
@@ -231,12 +265,8 @@ func (s *encryptedStore) seal(record *Record) ([]byte, error) {
 	}
 	ciphertext := dataAEAD.Seal(nil, nonce, record.Value, aad)
 
-	wrappedDEK, err := wrapDEK(s.keyring.keys[s.keyring.activeID], dek, *record)
-	if err != nil {
-		return nil, err
-	}
 	encoded, err := marshalEnvelope(valueEnvelope{
-		Format: envelopeFormat, KeyID: s.keyring.activeID, WrappedDEK: wrappedDEK,
+		Format: envelopeFormat, KeyID: s.keyring.ActiveKeyID(), WrappedDEK: wrappedDEK,
 		Nonce: nonce, Ciphertext: ciphertext,
 	})
 	if err != nil {
@@ -264,16 +294,12 @@ func marshalEnvelope(envelope valueEnvelope) ([]byte, error) {
 	return encoded, nil
 }
 
-func (s *encryptedStore) open(record *Record) error {
+func (s *encryptedStore) open(ctx context.Context, record *Record) error {
 	envelope, err := parseEnvelope(record.Value)
 	if err != nil {
 		return ErrDecrypt
 	}
-	kek, ok := s.keyring.keys[envelope.KeyID]
-	if !ok {
-		return ErrDecrypt
-	}
-	dek, err := unwrapDEK(kek, envelope.WrappedDEK, *record)
+	dek, err := s.keyring.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, *record)
 	if err != nil {
 		return ErrDecrypt
 	}
