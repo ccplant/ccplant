@@ -1,27 +1,23 @@
 # ccplant brand assets
 
-The mark combines a sprout with branching AI-agent session routes. All final
-artwork uses flat colors—there are no gradients, glows, sparkles, or shadows.
+The mark combines a sprout with branching AI-agent session routes. Runtime
+assets preserve the approved raster artwork without vector reconstruction.
 
 | Asset | Use |
 | --- | --- |
-| `ccplant-mark.svg` | Standalone mark on dark surfaces |
-| `ccplant-app-icon.svg` | Scalable app-icon master |
-| `ccplant-logo.svg` | Horizontal wordmark on dark surfaces |
-| `ccplant-logo-light.svg` | Horizontal wordmark on light surfaces |
 | `ccplant-logo-approved.png` | High-resolution transparent logo candidate approved in chat |
-| `ccplant-logo-icon-matched.png` | Transparent logo using the approved app icon mark |
-| `ccplant-app-icon-approved.png` | High-resolution no-sparkle app icon candidate approved in chat |
+| `ccplant-logo-icon-matched.png` | Active transparent logo using the approved app icon mark |
+| `ccplant-app-icon-approved.png` | High-resolution no-sparkle app icon master |
 | `/icon-{192,256,384,512}x*.png` | Generated PWA icons |
 | `/favicon.ico` | Browser favicon with multiple sizes |
-| `../../../native/src-tauri/icons/tray-template.svg` | Monochrome macOS menu-bar master |
+| `../../../native/src-tauri/icons/tray-template.png` | Monochrome macOS menu-bar template |
 
 The macOS tray uses a separate transparent template image, allowing AppKit to
 adapt the mark automatically for light, dark, and pressed menu-bar states.
 
-The approved and icon-matched PNG files are review candidates and are not wired
-into the applications yet. They preserve the conversation-approved raster
-artwork for GitHub review before replacing the current runtime assets.
+The app icon master and icon-matched logo preserve the conversation-approved
+raster artwork. Runtime PWA, favicon, and native icon sizes are derived from the
+high-resolution app icon master without redrawing it.
 
 ## Palette
 

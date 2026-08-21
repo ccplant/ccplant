@@ -118,17 +118,16 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
-          <picture>
-            <source srcSet="/brand/ccplant-logo.svg" media="(prefers-color-scheme: dark)" />
+          <div className="mx-auto w-fit rounded-2xl bg-[#071A1D] px-6 py-3">
             <Image
-              src="/brand/ccplant-logo-light.svg"
+              src="/brand/ccplant-logo-icon-matched.png"
               alt="ccplant"
-              width={310}
-              height={80}
+              width={380}
+              height={97}
               priority
-              className="mx-auto h-16 w-auto"
+              className="h-16 w-auto"
             />
-          </picture>
+          </div>
           <h1 className={loginTitle === 'ccplant'
             ? 'sr-only'
             : 'mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white'}>
