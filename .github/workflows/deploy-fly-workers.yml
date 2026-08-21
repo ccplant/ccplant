@@ -1,0 +1,119 @@
+name: Deploy Fly workers
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - .github/workflows/deploy-fly-workers.yml
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Worker environment to deploy
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: fly-worker-${{ github.event_name }}-${{ inputs.environment || 'automatic' }}
+  cancel-in-progress: false
+
+jobs:
+  dev:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      IMAGE: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha,scope=fly-worker-dev
+          cache-to: type=gha,mode=max,scope=fly-worker-dev
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ccplant/ccplant-deploy
+          ref: main
+          path: deploy
+          token: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Deploy development worker
+        run: flyctl deploy --app ccplant-worker-dev --config deploy/dev/fly.toml --image "$IMAGE" --ha=false --yes
+
+      - name: Verify development worker
+        run: |
+          set -euo pipefail
+          machine=$(flyctl machine list --app ccplant-worker-dev --json | jq '.[0]')
+          test "$(jq -r .state <<<"$machine")" = started
+          test "$(jq -r .config.image <<<"$machine")" = "$IMAGE"
+
+  production:
+    if: (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ccplant/ccplant-deploy
+          ref: main
+          path: deploy
+          token: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: image
+        name: Resolve released worker image
+        run: |
+          set -euo pipefail
+          release_tag=$(gh api repos/ccplant/ccplant/releases/latest --jq .tag_name)
+          image="ghcr.io/ccplant/ccplant-api:${release_tag}"
+          docker buildx imagetools inspect "$image" >/dev/null
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Deploy production worker
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: flyctl deploy --app ccplant-worker-production --config deploy/production/fly.toml --image "$IMAGE" --ha=false --yes
+
+      - name: Verify production worker
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          machine=$(flyctl machine list --app ccplant-worker-production --json | jq '.[0]')
+          test "$(jq -r .state <<<"$machine")" = started
+          test "$(jq -r .config.image <<<"$machine")" = "$IMAGE"
