@@ -96,8 +96,13 @@ func NewLocalKeyring(activeID string, encodedKeys map[string]string) (*LocalKeyr
 }
 
 type encryptedStore struct {
-	backend Store
-	keyring EnvelopeKeyring
+	backend              Store
+	keyring              EnvelopeKeyring
+	allowLegacyPlaintext bool
+}
+
+type EncryptedStoreOptions struct {
+	AllowLegacyPlaintext bool
 }
 
 type RewrapResult struct {
@@ -154,10 +159,14 @@ func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, name
 }
 
 func NewEncryptedStore(backend Store, keyring EnvelopeKeyring) (Store, error) {
+	return NewEncryptedStoreWithOptions(backend, keyring, EncryptedStoreOptions{})
+}
+
+func NewEncryptedStoreWithOptions(backend Store, keyring EnvelopeKeyring, options EncryptedStoreOptions) (Store, error) {
 	if backend == nil || keyring == nil {
 		return nil, errors.New("KV backend and encryption keyring are required")
 	}
-	return &encryptedStore{backend: backend, keyring: keyring}, nil
+	return &encryptedStore{backend: backend, keyring: keyring, allowLegacyPlaintext: options.AllowLegacyPlaintext}, nil
 }
 
 func (s *encryptedStore) Close() error { return s.backend.Close() }
@@ -295,6 +304,12 @@ func marshalEnvelope(envelope valueEnvelope) ([]byte, error) {
 }
 
 func (s *encryptedStore) open(ctx context.Context, record *Record) error {
+	if !isEnvelopeCandidate(record.Value) {
+		if !s.allowLegacyPlaintext {
+			return ErrDecrypt
+		}
+		return s.openLegacyPlaintext(ctx, record)
+	}
 	envelope, err := parseEnvelope(record.Value)
 	if err != nil {
 		return ErrDecrypt
@@ -323,6 +338,61 @@ func (s *encryptedStore) open(ctx context.Context, record *Record) error {
 	}
 	record.Value = plaintext
 	return nil
+}
+
+func (s *encryptedStore) openLegacyPlaintext(ctx context.Context, record *Record) error {
+	plaintext := append([]byte(nil), record.Value...)
+	actualLabels, err := documentLabels(record.Kind, plaintext)
+	if err != nil || !equalLabels(actualLabels, record.Labels) {
+		return ErrDecrypt
+	}
+	repair := *record
+	repair.Value = plaintext
+	sealed, err := s.seal(ctx, &repair)
+	if err != nil {
+		return fmt.Errorf("encrypt legacy KV value: %w", err)
+	}
+	repair.Value = sealed
+	updated, err := s.backend.Update(ctx, repair)
+	if err != nil {
+		return fmt.Errorf("replace legacy KV value: %w", err)
+	}
+	record.Version = updated.Version
+	record.Value = plaintext
+	return nil
+}
+
+func isEnvelopeCandidate(data []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return false
+	}
+	candidate := false
+	for decoder.More() {
+		nameToken, err := decoder.Token()
+		if err != nil {
+			return candidate
+		}
+		name, ok := nameToken.(string)
+		if !ok {
+			return candidate
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return candidate
+		}
+		switch name {
+		case "key_id", "wrapped_dek", "nonce", "ciphertext":
+			candidate = true
+		case "format":
+			var format string
+			if json.Unmarshal(value, &format) == nil && format == envelopeFormat {
+				candidate = true
+			}
+		}
+	}
+	return candidate
 }
 
 func wrapDEK(kek, dek []byte, record Record) ([]byte, error) {

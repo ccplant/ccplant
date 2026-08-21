@@ -63,6 +63,7 @@ func TestLoadConfigWithReplicatedKVStoreEnvironment(t *testing.T) {
 func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
 	t.Setenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID", "current")
 	t.Setenv("AGENTAPI_KV_ENCRYPTION_KEYS", `{"previous":"old-key","current":"new-key"}`)
+	t.Setenv("AGENTAPI_KV_ENCRYPTION_ALLOW_LEGACY_PLAINTEXT", "true")
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -76,5 +77,8 @@ func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
 	}
 	if cfg.KVStore.Encryption.Keys["previous"] != "old-key" || cfg.KVStore.Encryption.Keys["current"] != "new-key" {
 		t.Fatalf("keys = %#v", cfg.KVStore.Encryption.Keys)
+	}
+	if !cfg.KVStore.Encryption.AllowLegacyPlaintext {
+		t.Fatal("allow legacy plaintext was not loaded")
 	}
 }

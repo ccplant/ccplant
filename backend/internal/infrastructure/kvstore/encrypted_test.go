@@ -142,6 +142,65 @@ func TestEncryptedStoreReadsOldKeyAndWritesActiveKey(t *testing.T) {
 	}
 }
 
+func TestEncryptedStoreReadsAndRepairsLegacyPlaintext(t *testing.T) {
+	ctx := context.Background()
+	backend := newMemoryStore()
+	value := secretDocument(t, "legacy", map[string]string{"scope": "user"}, "legacy-secret")
+	created, err := backend.Create(ctx, Record{
+		Kind: KindSecret, Namespace: "ns", Key: "legacy",
+		Labels: map[string]string{"scope": "user"}, Value: value,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := NewLocalKeyring("current", map[string]string{"current": randomEncodedKey(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewEncryptedStoreWithOptions(backend, keyring, EncryptedStoreOptions{AllowLegacyPlaintext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Get(ctx, KindSecret, "ns", "legacy")
+	if err != nil || !bytes.Equal(got.Value, value) {
+		t.Fatalf("read legacy plaintext: value=%q err=%v", got.Value, err)
+	}
+	if got.Version != created.Version+1 {
+		t.Fatalf("repaired version = %d, want %d", got.Version, created.Version+1)
+	}
+	raw := backend.records[recordKey(KindSecret, "ns", "legacy")]
+	if bytes.Contains(raw.Value, []byte("legacy-secret")) {
+		t.Fatal("read repair left plaintext in backend")
+	}
+	if _, err := parseEnvelope(raw.Value); err != nil {
+		t.Fatalf("read repair did not write an envelope: %v", err)
+	}
+}
+
+func TestEncryptedStoreLegacyModeDoesNotDowngradeMalformedEnvelope(t *testing.T) {
+	ctx := context.Background()
+	backend := newMemoryStore()
+	value := []byte(`{"format":"agentapi-kv-envelope/v1","format":"legacy","metadata":{"labels":{}},"data":{"value":"plaintext"}}`)
+	if _, err := backend.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "malformed", Value: value}); err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := NewLocalKeyring("current", map[string]string{"current": randomEncodedKey(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewEncryptedStoreWithOptions(backend, keyring, EncryptedStoreOptions{AllowLegacyPlaintext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, KindSecret, "ns", "malformed"); !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("malformed envelope error = %v", err)
+	}
+	if !bytes.Equal(backend.records[recordKey(KindSecret, "ns", "malformed")].Value, value) {
+		t.Fatal("malformed envelope was rewritten as legacy plaintext")
+	}
+}
+
 func TestRewrapAllPreservesCiphertextAndRemovesOldKeyDependency(t *testing.T) {
 	ctx := context.Background()
 	backend := newMemoryStore()

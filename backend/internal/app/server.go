@@ -877,7 +877,9 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 			_ = store.Close()
 			return nil, fmt.Errorf("configure KV encryption: %w", err)
 		}
-		encrypted, err := kvstore.NewEncryptedStore(store, keyring)
+		encrypted, err := kvstore.NewEncryptedStoreWithOptions(store, keyring, kvstore.EncryptedStoreOptions{
+			AllowLegacyPlaintext: encryption.AllowLegacyPlaintext,
+		})
 		if err != nil {
 			_ = store.Close()
 			return nil, err

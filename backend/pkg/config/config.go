@@ -517,10 +517,11 @@ type KVStoreReplicationConfig struct {
 }
 
 type KVStoreEncryptionConfig struct {
-	Provider    string            `json:"provider" mapstructure:"provider"`
-	ActiveKeyID string            `json:"active_key_id" mapstructure:"active_key_id"`
-	KMSRegion   string            `json:"kms_region" mapstructure:"kms_region"`
-	Keys        map[string]string `json:"keys" mapstructure:"keys"`
+	Provider             string            `json:"provider" mapstructure:"provider"`
+	ActiveKeyID          string            `json:"active_key_id" mapstructure:"active_key_id"`
+	KMSRegion            string            `json:"kms_region" mapstructure:"kms_region"`
+	Keys                 map[string]string `json:"keys" mapstructure:"keys"`
+	AllowLegacyPlaintext bool              `json:"allow_legacy_plaintext" mapstructure:"allow_legacy_plaintext"`
 }
 
 type KVStoreConfig struct {
@@ -1070,6 +1071,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.encryption.provider", "AGENTAPI_KV_ENCRYPTION_PROVIDER")
 	_ = v.BindEnv("kv_store.encryption.kms_region", "AGENTAPI_KV_ENCRYPTION_KMS_REGION")
 	_ = v.BindEnv("kv_store.encryption.keys", "AGENTAPI_KV_ENCRYPTION_KEYS")
+	_ = v.BindEnv("kv_store.encryption.allow_legacy_plaintext", "AGENTAPI_KV_ENCRYPTION_ALLOW_LEGACY_PLAINTEXT")
 	_ = v.BindEnv("usage.enabled", "AGENTAPI_USAGE_ENABLED")
 	_ = v.BindEnv("usage.database_url", "AGENTAPI_USAGE_DATABASE_URL")
 	_ = v.BindEnv("usage.auth_token", "AGENTAPI_USAGE_AUTH_TOKEN")

@@ -114,6 +114,7 @@ api:
     encryption:
       provider: local
       activeKeyId: ""
+      allowLegacyPlaintext: false
       kmsRegion: ""
       kmsKeys: {}
       keysSecretRef:
@@ -219,6 +220,7 @@ worker:
     encryption:
       provider: local
       activeKeyId: ""
+      allowLegacyPlaintext: false
       kmsRegion: ""
       kmsKeys: {}
       keysSecretRef:
@@ -343,6 +345,7 @@ sessionManager:
     encryption:
       provider: local
       activeKeyId: ""
+      allowLegacyPlaintext: false
       kmsRegion: ""
       kmsKeys: {}
       keysSecretRef:
