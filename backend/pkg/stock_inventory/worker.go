@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 )
 
@@ -208,12 +207,12 @@ type LeaderWorker struct {
 // leader election configuration.
 func NewLeaderWorker(
 	repo StockRepository,
-	redisClient redis.UniversalClient,
+	leaderElectionClient schedule.LeaseClient,
 	workerConfig WorkerConfig,
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderWorker {
 	worker := NewWorker(repo, workerConfig)
-	elector := schedule.NewLeaderElector(redisClient, electionConfig)
+	elector := schedule.NewLeaderElector(leaderElectionClient, electionConfig)
 	return &LeaderWorker{
 		worker:  worker,
 		elector: elector,

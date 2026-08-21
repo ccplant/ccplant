@@ -39,6 +39,7 @@ import (
 	infrasessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionmanagerapi"
 	infrasessionrunner "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	personalapikeyuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -1924,4 +1925,25 @@ func buildStatusEventRepository(cfg *config.Config) portrepos.StatusEventReposit
 	}
 	log.Printf("[SERVER] Redis status event repository connected: addr=%s podID=%s", cfg.Redis.Addr, podID)
 	return repositories.NewRedisStatusRepository(client, podID)
+}
+
+func buildWorkerLeaseClient(cfg *config.Config) schedule.LeaseClient {
+	if cfg.Redis.Addr == "" {
+		log.Printf("[WORKER_CONTROL] Leader election disabled: API Redis is required")
+		return nil
+	}
+	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB}
+	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.ReadTimeout); err == nil && d > 0 {
+		opts.ReadTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if cfg.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	return schedule.NewRedisLeaseClient(redis.NewClient(opts))
 }

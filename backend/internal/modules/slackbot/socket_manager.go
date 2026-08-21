@@ -43,7 +43,7 @@ type SlackSocketManager struct {
 
 	reconcileInterval    time.Duration
 	leaderElectionConfig schedule.LeaderElectionConfig
-	redisClient          redis.UniversalClient
+	leaderElectionClient schedule.LeaseClient
 
 	mu      sync.Mutex
 	running map[string]runningEntry // botKey → entry
@@ -64,7 +64,15 @@ type SlackSocketManagerConfig struct {
 	DefaultBotTokenSecretKey  string
 	ReconcileInterval         time.Duration
 	LeaderElectionConfig      schedule.LeaderElectionConfig
-	RedisClient               redis.UniversalClient
+	RedisClient               redis.UniversalClient // Deprecated: use LeaderElectionClient.
+	LeaderElectionClient      schedule.LeaseClient
+}
+
+func firstLeaderElectionClient(preferred schedule.LeaseClient, fallback redis.UniversalClient) schedule.LeaseClient {
+	if preferred != nil {
+		return preferred
+	}
+	return schedule.NewRedisLeaseClient(fallback)
 }
 
 // NewSlackSocketManager creates a new SlackSocketManager
@@ -101,7 +109,7 @@ func NewSlackSocketManager(
 		defaultBotTokenSecretKey:  cfg.DefaultBotTokenSecretKey,
 		reconcileInterval:         cfg.ReconcileInterval,
 		leaderElectionConfig:      cfg.LeaderElectionConfig,
-		redisClient:               cfg.RedisClient,
+		leaderElectionClient:      firstLeaderElectionClient(cfg.LeaderElectionClient, cfg.RedisClient),
 		running:                   make(map[string]runningEntry),
 	}
 }
@@ -215,7 +223,7 @@ func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey str
 	leaseName := slackSocketLeasePrefix + sanitizeLeaseName(botKey)
 	electionConfig := m.leaderElectionConfig
 	electionConfig.LeaseName = leaseName
-	elector := schedule.NewLeaderElector(m.redisClient, electionConfig)
+	elector := schedule.NewLeaderElector(m.leaderElectionClient, electionConfig)
 
 	childCtx, cancel := context.WithCancel(ctx)
 	entryID := uuid.New().String()

@@ -251,7 +251,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
-		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo)
+		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg))
 		log.Printf("[ROUTER] Worker control controller initialized")
 	}
 	if server.sessionControlStore != nil {
@@ -428,6 +428,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/worker/stock", r.handlers.workerControlController.Stock)
 		r.echo.POST("/internal/worker/stock", r.handlers.workerControlController.Stock)
 		r.echo.DELETE("/internal/worker/stock", r.handlers.workerControlController.Stock)
+		r.echo.POST("/internal/worker/leases/:leaseName", r.handlers.workerControlController.Lease)
 		log.Printf("[ROUTES] Isolated worker-control endpoints registered")
 	}
 	if r.handlers.sessionControlController != nil {

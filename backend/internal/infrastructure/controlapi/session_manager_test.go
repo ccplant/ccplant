@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
@@ -40,5 +41,31 @@ func TestSessionManagerDelegatesCreateAndStockToControlAPI(t *testing.T) {
 	}
 	if got := <-requests; got != "POST /internal/worker/stock?dind=true" {
 		t.Fatalf("request = %q", got)
+	}
+}
+
+func TestSessionManagerDelegatesLeaseToControlAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/worker/leases/agentapi:leader:test:worker" {
+			http.NotFound(w, r)
+			return
+		}
+		var request leaseRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Action != "acquire" || request.Identity != "worker-1" || request.DurationMS != 15000 {
+			t.Fatalf("request = %#v", request)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"acquired": true})
+	}))
+	defer server.Close()
+
+	acquired, err := NewSessionManager(server.URL, "token").Acquire(context.Background(), "agentapi:leader:test:worker", "worker-1", 15*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("lease was not acquired")
 	}
 }

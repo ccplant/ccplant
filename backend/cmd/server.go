@@ -286,7 +286,7 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	leaderWorker := schedule.NewLeaderWorker(
 		scheduleManager,
 		proxyServer.GetSessionManager(),
-		redisClient,
+		schedule.NewRedisLeaseClient(redisClient),
 		workerConfig,
 		electionConfig,
 		proxyServer.GetMemoryRepository(),
@@ -370,7 +370,7 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 
 	leaderCleanupWorker := slackbotcleanup.NewLeaderCleanupWorker(
 		proxyServer.GetSessionManager(),
-		redisClient,
+		schedule.NewRedisLeaseClient(redisClient),
 		workerConfig,
 		electionConfig,
 	)
@@ -449,7 +449,7 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 		Namespace:     namespace,
 	}
 
-	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, redisClient, workerConfig, electionConfig)
+	leaderWorker := stock_inventory.NewLeaderWorker(stockRepo, schedule.NewRedisLeaseClient(redisClient), workerConfig, electionConfig)
 
 	go leaderWorker.Run(context.Background())
 
