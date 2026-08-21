@@ -11,6 +11,26 @@ serialized Kubernetes object are ciphertext.
 This is application-level encryption. Database encryption at rest and
 Kubernetes encryption at rest are still recommended as independent controls.
 
+## Threat model
+
+The primary security goal is confidentiality of document values when libSQL or
+a database backup is read by an unauthorized party. The design also detects
+record-identity and metadata substitution when a selected record is decrypted.
+
+The following are explicitly outside that guarantee:
+
+- compromise of an application process that is authorized to decrypt values;
+- disclosure of record count, kind, namespace, key, labels, sizes, access
+  patterns, and update timing;
+- deletion of rows or replay of a complete, previously valid database state by
+  an attacker with write access to the database.
+
+Preventing replay of an old row requires a trusted monotonic counter or an
+append-only authenticated log outside the database. Database `version`, even
+when authenticated, is not sufficient because an attacker can restore the old
+version with the old envelope. This design does not claim rollback protection;
+database access control, audit logs, and recoverable backups remain required.
+
 ## Why metadata and value are separated
 
 The current libSQL row contains `kind`, `namespace`, `key`, `version`, and the
@@ -91,13 +111,17 @@ Use envelope encryption rather than calling AWS KMS for the whole document:
 ```json
 {
   "format": "agentapi-kv-envelope/v1",
-  "algorithm": "AES-256-GCM",
-  "key_id": "kms-key-arn-or-local-fingerprint",
+  "key_id": "logical-key-id",
   "wrapped_dek": "base64...",
   "nonce": "base64...",
   "ciphertext": "base64..."
 }
 ```
+
+The format fixes the data algorithm to AES-256-GCM; an envelope-controlled
+algorithm field is deliberately omitted to avoid algorithm downgrade and
+confusion. `key_id` is an opaque logical identifier resolved through configured
+keyring entries, not an arbitrary KMS ARN accepted from the row.
 
 The GCM additional authenticated data (AAD) is a canonical encoding of:
 
@@ -110,6 +134,25 @@ labels without detection. Version remains an optimistic-concurrency mechanism
 owned by the physical store; excluding it from AAD avoids coupling encryption
 to version allocation.
 
+For AWS KMS, wrap the DEK with a symmetric KMS key and use `application`,
+`kind`, `namespace`, and `key` as the KMS encryption context. The context binds
+the wrapped DEK to the same record identity. It is non-secret and may appear in
+CloudTrail, so it must not contain labels or sensitive identifiers. A local KEK
+must wrap the DEK with a standard authenticated construction and a fresh nonce;
+do not implement custom key wrapping.
+
+Parsing is strict and bounded before any allocation or KMS call:
+
+- accept only the exact supported `format` and configured logical `key_id`;
+- reject unknown and duplicate fields, invalid base64, incorrect nonce/DEK
+  lengths, empty ciphertext, and values above configured size limits;
+- never infer plaintext or another algorithm after a parse or authentication
+  failure.
+
+After every successful decrypt, reconstruct labels from the plaintext document
+and compare them exactly with canonical `metadata`. A mismatch is a corruption
+error, not a partially valid object.
+
 The existing `EncryptionService` is not sufficient for this layer: it accepts
 strings, has no AAD parameter, and the KMS implementation encrypts the complete
 plaintext directly. Introduce a KV-specific byte-oriented envelope interface,
@@ -117,9 +160,10 @@ for example `Seal(ctx, plaintext, aad)` and `Open(ctx, envelope, aad)`. Keep the
 existing service for settings compatibility until it can be migrated
 separately.
 
-Cache only unwrapped DEKs, keyed by the digest of `wrapped_dek`, with a small
-bounded size and short TTL. Never persist or log a plaintext DEK. Zero key
-buffers where the Go implementation makes that meaningful.
+Do not cache plaintext DEKs initially. If KMS latency later requires a cache,
+introduce it only with an explicit threat review, a small bound, a short TTL,
+and keys based on a digest of `wrapped_dek`. Never persist or log a plaintext
+DEK. Zero key buffers where the Go implementation makes that meaningful.
 
 ## libSQL schema and filtering
 
@@ -176,10 +220,18 @@ for matching rows. Callers that only need names should use a new metadata-only
 list method so they never receive plaintext unnecessarily. Pagination must also
 be introduced before large collections are expected.
 
+Because filtering happens before authentication, changing metadata can hide a
+row from a particular selector. Run a scheduled full-store integrity scan that
+decrypts every row and verifies canonical metadata. Searchable metadata must
+not be the sole authorization source when changing it could grant access;
+authorization must also be checked against the authenticated plaintext or a
+separate authoritative identity.
+
 ## Key management and rotation
 
-- Production should use a KMS-backed KEK. Grant encrypt/wrap to writers and
-  decrypt/unwrap only to processes that read values.
+- Production should use a KMS-backed KEK. Use separate workload identities and
+  least-privilege KMS grants for API readers, writers, and migration jobs.
+  Restrict grants by key and encryption context where the provider supports it.
 - Local development may use a 32-byte base64 master key from a mounted Secret.
   The key must not appear in config files, Helm values, logs, or API responses.
 - `key_id` selects the decrypting key. Configuration contains one active key for
@@ -189,6 +241,9 @@ be introduced before large collections are expected.
   must use optimistic version checks.
 - A key cannot be removed from the keyring until a scan reports zero envelopes
   using it. Expose counts by envelope format and key ID, never record names.
+- Database credentials and KEK access must not come from the same secret or
+  administrative boundary. A local KEK colocated with database credentials is
+  development-only because compromise is likely to disclose both.
 
 For local AES KEKs, rotation requires unwrapping with the old master key and
 wrapping with the new one. KMS rotation of key material behind an unchanged KMS
@@ -224,7 +279,9 @@ intentionally produces different bytes for the same value.
 
 ## Failure behavior and observability
 
-- `Get`: return a typed decryption error; never return a partial object.
+- `Get`: return a typed internal decryption error; never return a partial
+  object. Map unknown key, malformed envelope, authentication failure, and KMS
+  denial to one generic external storage error to avoid a decryption oracle.
 - `List`: fail the request if any selected record cannot be decrypted. Silently
   omitting it creates incorrect authorization and reconciliation behavior.
 - Replication: encrypt once above `ReplicatedStore` so both stores receive the
@@ -235,15 +292,18 @@ intentionally produces different bytes for the same value.
 - Metrics may include operation, result, envelope format, and key ID. Logs and
   traces must never contain plaintext, ciphertext, wrapped DEKs, nonces, or full
   metadata.
+- KMS calls use bounded timeouts, limited retries, quota/error metrics, and a
+  circuit breaker. KMS failure never enables plaintext fallback.
 
 ## Security properties and non-goals
 
 This design protects document contents if the database or a backup is exposed.
-It detects ciphertext and plaintext-metadata substitution when a value is read.
-It does not hide record count, kind, namespace, key, labels, sizes, access
-patterns, or update timing. It also does not protect plaintext after a process
-with decrypt permission reads it, and it does not replace authorization,
-transport encryption, database access control, or backup policy.
+It detects ciphertext and plaintext-metadata substitution when a selected value
+is read. A metadata change that hides a row is detected by the full-store audit,
+not necessarily by the filtered request. It does not protect plaintext after a
+process with decrypt permission reads it, and it does not replace
+authorization, transport encryption, database access control, audit logging, or
+backup policy.
 
 ## Acceptance criteria
 
@@ -253,7 +313,15 @@ transport encryption, database access control, or backup policy.
 - Nonmatching rows in a filtered list cause no decrypt or KMS operation.
 - Swapping envelopes or modifying identity or labels causes GCM authentication
   failure.
+- Swapping wrapped DEKs between records fails because the KMS encryption
+  context or local authenticated wrapping is bound to record identity.
+- The envelope parser rejects downgrade attempts, duplicate/unknown fields, and
+  oversized or malformed inputs before invoking KMS.
 - New and old keys can decrypt concurrently, and rotation can resume safely.
 - Missing keys and corrupt envelopes fail closed without leaking record data.
+- Full-store integrity scans detect metadata changes that make rows evade label
+  selectors.
+- KMS policies and integration tests demonstrate that each workload identity
+  has only its required encrypt/decrypt permissions.
 - Offline migration, replication verification, backup restore, and rollback
   paths have integration tests.
