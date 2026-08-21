@@ -1,0 +1,13 @@
+app = "ccplant-worker-dev"
+primary_region = "nrt"
+
+[build]
+  image = "ghcr.io/ccplant/ccplant-backend:dev.ccplant.dbd74594789255741287ea46d95c878c994e684d"
+
+[processes]
+  worker = "sh -c 'exec \"${CCPLANT_BINARY_PATH:-ccplant}\" worker'"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
