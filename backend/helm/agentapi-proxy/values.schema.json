@@ -375,6 +375,21 @@
             },
             {
               "properties": {
+                "backend": { "maxLength": 0 },
+                "primary": {
+                  "properties": { "backend": { "const": "kubernetes" } }
+                },
+                "secondary": {
+                  "properties": { "backend": { "const": "libsql" } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
                 "backend": { "const": "libsql" },
                 "primary": { "properties": { "backend": { "maxLength": 0 } } }
               },
