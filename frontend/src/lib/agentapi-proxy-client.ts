@@ -328,6 +328,7 @@ export interface ACPUserPromptInfo {
 
 export interface ACPMessageHistoryResult {
   messages: SessionMessage[];
+  lastEventId?: number;
   userPromptCount: number;
   userPromptIndex?: number;
   userPrompts: ACPUserPromptInfo[];
@@ -670,12 +671,14 @@ export class AgentAPIProxyClient {
       onReconnect?: (attempt: number, delayMs: number) => void;
       onClosed?: (event: Event, state: number) => void;
     },
-    options?: SessionEventsOptions
+    options?: SessionEventsOptions,
+    initialLastEventId?: number
   ): EventSubscription {
     let eventSource: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
     let reconnectAttempts = 0;
+    let lastEventId = initialLastEventId;
 
     const reconnectEnabled = options?.reconnect !== false;
     const baseDelayMs = options?.reconnectInterval ?? 1000;
@@ -709,7 +712,10 @@ export class AgentAPIProxyClient {
     const connect = () => {
       if (closed) return;
 
-      const source = new EventSource(url);
+      const reconnectUrl = lastEventId === undefined
+        ? url
+        : `${url}${url.includes('?') ? '&' : '?'}lastEventId=${encodeURIComponent(String(lastEventId))}`;
+      const source = new EventSource(reconnectUrl);
       eventSource = source;
 
       source.onopen = () => {
@@ -720,6 +726,13 @@ export class AgentAPIProxyClient {
 
       source.onmessage = (event) => {
         if (source !== eventSource || closed) return;
+        if (event.lastEventId !== '') {
+          const parsedEventId = Number(event.lastEventId);
+          if (Number.isSafeInteger(parsedEventId)) {
+            if (lastEventId !== undefined && parsedEventId <= lastEventId) return;
+            lastEventId = parsedEventId;
+          }
+        }
         handlers.onMessage(event);
       };
 
@@ -2502,6 +2515,7 @@ export class AgentAPIProxyClient {
     const query = userPromptIndex !== undefined ? `?userPromptIndex=${userPromptIndex}` : '';
     const resp = await this.makeRequest<{
       messages: ACPJSONRPCMessage[];
+      lastEventId?: number;
       userPromptCount?: number;
       userPromptIndex?: number;
       userPrompts?: ACPUserPromptInfo[];
@@ -2514,6 +2528,7 @@ export class AgentAPIProxyClient {
 
     return {
       messages,
+      lastEventId: resp?.lastEventId,
       userPromptCount: resp?.userPromptCount ?? 0,
       userPromptIndex: resp?.userPromptIndex,
       userPrompts: resp?.userPrompts ?? [],
@@ -2533,7 +2548,8 @@ export class AgentAPIProxyClient {
   subscribeToACPSessionEvents(
     sessionId: string,
     acpSessionId: string,
-    callbacks: ACPSessionCallbacks
+    callbacks: ACPSessionCallbacks,
+    initialLastEventId?: number
   ): EventSubscription {
     const isUsingProxy = this.baseURL.includes('/api/proxy');
     const sseUrl = isUsingProxy
@@ -2830,7 +2846,8 @@ export class AgentAPIProxyClient {
           callbacks.onError(new Error(`ACP SSE connection closed (readyState=${state})`));
         },
       },
-      { reconnect: true, reconnectInterval: 1000 }
+      { reconnect: true, reconnectInterval: 1000 },
+      initialLastEventId
     );
   }
 

@@ -423,7 +423,8 @@ export class ACPServerClient {
    */
   subscribeToEvents(
     sessionId: string,
-    callbacks: ACPServerEventCallbacks
+    callbacks: ACPServerEventCallbacks,
+    initialLastEventId?: number
   ): { close: () => void } {
     const abortController = new AbortController();
 
@@ -433,6 +434,7 @@ export class ACPServerClient {
     let streamingMsgId: number | null = null;
     let streamingThoughtId: number | null = null;
     let streamingUserMsgId: number | null = null;
+    let lastEventId = initialLastEventId;
 
     const dispatchEvent = (data: string) => {
       try {
@@ -655,6 +657,7 @@ export class ACPServerClient {
             ...this.getHeaders(),
             'Accept': 'text/event-stream',
             'Acp-Session-Id': sessionId,
+            ...(lastEventId !== undefined ? { 'Last-Event-ID': String(lastEventId) } : {}),
           },
           signal: abortController.signal,
         });
@@ -673,6 +676,7 @@ export class ACPServerClient {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let pendingEventId: number | undefined;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -683,9 +687,18 @@ export class ACPServerClient {
           buffer = lines.pop() ?? '';
 
           for (const line of lines) {
+            if (line.startsWith('id: ')) {
+              const parsedEventId = Number(line.slice(4).trim());
+              if (Number.isSafeInteger(parsedEventId)) pendingEventId = parsedEventId;
+              continue;
+            }
             if (line.startsWith('data: ')) {
               const data = line.slice(6).trim();
-              if (data) dispatchEvent(data);
+              if (data && (pendingEventId === undefined || lastEventId === undefined || pendingEventId > lastEventId)) {
+                dispatchEvent(data);
+                if (pendingEventId !== undefined) lastEventId = pendingEventId;
+              }
+              pendingEventId = undefined;
             }
           }
         }
