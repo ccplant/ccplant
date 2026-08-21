@@ -19,7 +19,7 @@ import MessageItem from './MessageItem';
 import ToolExecutionPane from './ToolExecutionPane';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
-import { mergeRefreshedMessageHistory } from './messageHistory';
+import { mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -1448,7 +1448,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
             })
           );
           const refreshedMessages = [...historicalTurns.flat(), ...latestResult.messages];
-          setMessages(currentMessages => mergeRefreshedMessageHistory(currentMessages, refreshedMessages));
+          // Every loaded turn was rebuilt above. Replace this complete window
+          // instead of merging by local ID: live SSE messages use positive IDs,
+          // while restored historical turns are namespaced with negative IDs.
+          // Merging those representations retains duplicate copies.
+          setMessages(currentMessages => replaceRebuiltMessageHistory(currentMessages, refreshedMessages));
           setLoadedACPStartPromptIndex(currentStartIndex);
         } else {
           setMessages(currentMessages => mergeRefreshedMessageHistory(currentMessages, latestResult.messages));
