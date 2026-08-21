@@ -118,7 +118,7 @@ describe('MessageItem plan messages', () => {
       />,
     );
 
-    expect(screen.getByText('Inspect the code')).toBeInTheDocument();
+    expect(screen.getByText(/Inspect the code/)).toBeInTheDocument();
     expect(screen.queryByText('A plan is ready for your review.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /View plan details/i })).not.toBeInTheDocument();
   });
