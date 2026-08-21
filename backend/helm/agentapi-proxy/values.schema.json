@@ -202,11 +202,7 @@
               "kvStore": { "$ref": "#/definitions/enabledKVStore" }
             }
           }
-        },
-        "anyOf": [
-          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
-          { "properties": { "worker": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
-        ]
+        }
       }
     },
     {

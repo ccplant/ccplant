@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -75,11 +74,7 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	scheduleManager := schedule.NewKubernetesManager(persistence, persistenceNamespace)
 	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, persistenceNamespace)
 	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, persistenceNamespace)
-	redisClient, err := newWorkerRedisClient(cfg)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = redisClient.Close() }()
+	leaseClient := remote
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -88,18 +83,18 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
 	var stockWorker *stockinventory.LeaderWorker
 	if cfg.ScheduleWorker.Enabled {
-		scheduleWorker = newRemoteScheduleWorker(cfg, scheduleManager, remote, memoryRepo, profileRepo, redisClient, runtimeNamespace)
+		scheduleWorker = newRemoteScheduleWorker(cfg, scheduleManager, remote, memoryRepo, profileRepo, leaseClient, runtimeNamespace)
 		go scheduleWorker.Run(ctx)
 	}
 	if cfg.SlackbotCleanupWorker.Enabled {
-		cleanupWorker = newRemoteCleanupWorker(cfg, remote, redisClient, runtimeNamespace)
+		cleanupWorker = newRemoteCleanupWorker(cfg, remote, leaseClient, runtimeNamespace)
 		go cleanupWorker.Run(ctx)
 	}
 	if cfg.StockInventoryWorker.Enabled {
-		stockWorker = newRemoteStockWorker(cfg, remote, redisClient, runtimeNamespace)
+		stockWorker = newRemoteStockWorker(cfg, remote, leaseClient, runtimeNamespace)
 		go stockWorker.Run(ctx)
 	}
-	startRemoteSlackSocketManager(ctx, cfg, persistence, persistenceNamespace, runtimeNamespace, remote, memoryRepo, profileRepo, redisClient)
+	startRemoteSlackSocketManager(ctx, cfg, persistence, persistenceNamespace, runtimeNamespace, remote, memoryRepo, profileRepo, leaseClient)
 	<-ctx.Done()
 	mu.Lock()
 	defer mu.Unlock()
@@ -154,7 +149,7 @@ func configureWorkerSlackCredential(ctx context.Context, cfg *config.Config, per
 	return nil
 }
 
-func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, persistence kubernetes.Interface, persistenceNamespace, runtimeNamespace string, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, redisClient redis.UniversalClient) {
+func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, persistence kubernetes.Interface, persistenceNamespace, runtimeNamespace string, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient) {
 	repo := repositories.NewKubernetesSlackBotRepository(persistence, persistenceNamespace)
 	resolver := slackbot.NewSlackChannelResolver(persistence, persistenceNamespace).WithSecretClient(persistence)
 	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, resolver, cfg.Webhook.BaseURL, cfg.Slack.DryRun, memory, profiles)
@@ -167,7 +162,7 @@ func startRemoteSlackSocketManager(ctx context.Context, cfg *config.Config, pers
 		appKey = "app-token"
 	}
 	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, "", runtimeNamespace)
-	manager := slackbot.NewSlackSocketManager(persistence, persistenceNamespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, RedisClient: redisClient})
+	manager := slackbot.NewSlackSocketManager(persistence, persistenceNamespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, LeaderElectionClient: leaseClient})
 	go manager.Run(ctx)
 }
 
@@ -199,30 +194,30 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	return kvstore.NewLibSQLStore(ctx, databaseURL, authToken)
 }
 
-func newRemoteScheduleWorker(cfg *config.Config, manager schedule.Manager, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, redisClient redis.UniversalClient, namespace string) *schedule.LeaderWorker {
+func newRemoteScheduleWorker(cfg *config.Config, manager schedule.Manager, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient, namespace string) *schedule.LeaderWorker {
 	interval, _ := time.ParseDuration(cfg.ScheduleWorker.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
 	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, schedule.ScheduleWorkerLeaseName, namespace)
-	return schedule.NewLeaderWorker(manager, remote, redisClient, schedule.WorkerConfig{CheckInterval: interval, Enabled: true}, election, memory, profiles)
+	return schedule.NewLeaderWorker(manager, remote, leaseClient, schedule.WorkerConfig{CheckInterval: interval, Enabled: true}, election, memory, profiles)
 }
 
-func newRemoteCleanupWorker(cfg *config.Config, remote *controlapi.SessionManager, redisClient redis.UniversalClient, namespace string) *slackbotcleanup.LeaderCleanupWorker {
+func newRemoteCleanupWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *slackbotcleanup.LeaderCleanupWorker {
 	check, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.CheckInterval)
 	ttl, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.SessionTTL)
 	ttlCheck, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.SessionTTLCheckInterval)
 	election := workerElection(cfg.SlackbotCleanupWorker.LeaseDuration, cfg.SlackbotCleanupWorker.RenewDeadline, cfg.SlackbotCleanupWorker.RetryPeriod, schedule.SlackbotCleanupWorkerLeaseName, namespace)
-	return slackbotcleanup.NewLeaderCleanupWorker(remote, redisClient, slackbotcleanup.CleanupWorkerConfig{CheckInterval: check, SessionTTL: ttl, SessionTTLCheckInterval: ttlCheck, Enabled: true, DryRun: cfg.SlackbotCleanupWorker.DryRun}, election)
+	return slackbotcleanup.NewLeaderCleanupWorker(remote, leaseClient, slackbotcleanup.CleanupWorkerConfig{CheckInterval: check, SessionTTL: ttl, SessionTTLCheckInterval: ttlCheck, Enabled: true, DryRun: cfg.SlackbotCleanupWorker.DryRun}, election)
 }
 
-func newRemoteStockWorker(cfg *config.Config, remote *controlapi.SessionManager, redisClient redis.UniversalClient, namespace string) *stockinventory.LeaderWorker {
+func newRemoteStockWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *stockinventory.LeaderWorker {
 	interval, _ := time.ParseDuration(cfg.StockInventoryWorker.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
 	election := workerElection(cfg.StockInventoryWorker.LeaseDuration, cfg.StockInventoryWorker.RenewDeadline, cfg.StockInventoryWorker.RetryPeriod, schedule.StockInventoryWorkerLeaseName, namespace)
-	return stockinventory.NewLeaderWorker(remote, redisClient, stockinventory.WorkerConfig{CheckInterval: interval, TargetCount: cfg.StockInventoryWorker.TargetCount, Requirements: stockinventory.StockRequirements{DinD: cfg.StockInventoryWorker.DockerEnabled}, Pools: buildStockInventoryPools(cfg.StockInventoryWorker, cfg.StockInventoryWorker.TargetCount), Enabled: true}, election)
+	return stockinventory.NewLeaderWorker(remote, leaseClient, stockinventory.WorkerConfig{CheckInterval: interval, TargetCount: cfg.StockInventoryWorker.TargetCount, Requirements: stockinventory.StockRequirements{DinD: cfg.StockInventoryWorker.DockerEnabled}, Pools: buildStockInventoryPools(cfg.StockInventoryWorker, cfg.StockInventoryWorker.TargetCount), Enabled: true}, election)
 }
 
 func workerElection(lease, renew, retry, name, namespace string) schedule.LeaderElectionConfig {

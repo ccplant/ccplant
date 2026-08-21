@@ -102,6 +102,31 @@ func (m *SessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	return m.do(ctx, http.MethodDelete, "/internal/worker/stock", nil, nil)
 }
 
+type leaseRequest struct {
+	Action     string `json:"action"`
+	Identity   string `json:"identity"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+}
+
+func (m *SessionManager) lease(ctx context.Context, key, identity, action string, duration time.Duration) (bool, error) {
+	var result struct {
+		Acquired bool `json:"acquired"`
+	}
+	err := m.do(ctx, http.MethodPost, "/internal/worker/leases/"+url.PathEscape(key), leaseRequest{Action: action, Identity: identity, DurationMS: duration.Milliseconds()}, &result)
+	return result.Acquired, err
+}
+
+func (m *SessionManager) Acquire(ctx context.Context, key, identity string, duration time.Duration) (bool, error) {
+	return m.lease(ctx, key, identity, "acquire", duration)
+}
+func (m *SessionManager) Renew(ctx context.Context, key, identity string, duration time.Duration) (bool, error) {
+	return m.lease(ctx, key, identity, "renew", duration)
+}
+func (m *SessionManager) Release(ctx context.Context, key, identity string) error {
+	_, err := m.lease(ctx, key, identity, "release", 0)
+	return err
+}
+
 func (m *SessionManager) do(ctx context.Context, method, path string, input, output any) error {
 	var body io.Reader
 	if input != nil {

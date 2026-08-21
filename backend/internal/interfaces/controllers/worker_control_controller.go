@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"net/http"
 	"strings"
 	"time"
@@ -10,16 +12,22 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // WorkerControlController is the deliberately small API surface available to
 // background workers. Its credential is not accepted by provisioner or
 // session-manager endpoints.
 type WorkerControlController struct {
-	manager repositories.SessionManager
-	token   string
-	teams   workerTeamEnsurer
-	routes  repositories.SessionRouteRepository
+	manager        repositories.SessionManager
+	token          string
+	teams          workerTeamEnsurer
+	routes         repositories.SessionRouteRepository
+	leases         kubernetes.Interface
+	leaseNamespace string
 }
 
 type workerTeamEnsurer interface {
@@ -66,6 +74,88 @@ func NewWorkerControlController(manager repositories.SessionManager, token strin
 	controller.teams = teams
 	controller.routes = routes
 	return controller
+}
+
+func (wc *WorkerControlController) WithLeases(client kubernetes.Interface, namespace string) *WorkerControlController {
+	if namespace == "" {
+		namespace = "default"
+	}
+	wc.leases, wc.leaseNamespace = client, namespace
+	return wc
+}
+
+type workerLeaseRequest struct {
+	Action     string `json:"action"`
+	Identity   string `json:"identity"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+func (wc *WorkerControlController) Lease(c echo.Context) error {
+	if !wc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if wc.leases == nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	var req workerLeaseRequest
+	if err := c.Bind(&req); err != nil || req.Identity == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid lease request"})
+	}
+	if req.DurationMS <= 0 && req.Action != "release" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "duration_ms must be positive"})
+	}
+	key := c.Param("leaseName")
+	digest := sha256.Sum256([]byte(key))
+	name := "agentapi-worker-lease-" + hex.EncodeToString(digest[:])[:20]
+	items := wc.leases.CoreV1().ConfigMaps(wc.leaseNamespace)
+	now := time.Now().UTC()
+	current, err := items.Get(c.Request().Context(), name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if req.Action != "acquire" {
+			return c.JSON(http.StatusOK, map[string]bool{"acquired": false})
+		}
+		_, err = items.Create(c.Request().Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name}, Data: map[string]string{"key": key, "identity": req.Identity, "expires_at": now.Add(time.Duration(req.DurationMS) * time.Millisecond).Format(time.RFC3339Nano)}}, metav1.CreateOptions{})
+		if apierrors.IsAlreadyExists(err) {
+			return c.JSON(http.StatusOK, map[string]bool{"acquired": false})
+		}
+		if err != nil {
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, map[string]bool{"acquired": true})
+	}
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+	expires, _ := time.Parse(time.RFC3339Nano, current.Data["expires_at"])
+	owned := current.Data["identity"] == req.Identity
+	switch req.Action {
+	case "acquire":
+		if !owned && now.Before(expires) {
+			return c.JSON(http.StatusOK, map[string]bool{"acquired": false})
+		}
+		current.Data["identity"], current.Data["expires_at"] = req.Identity, now.Add(time.Duration(req.DurationMS)*time.Millisecond).Format(time.RFC3339Nano)
+		_, err = items.Update(c.Request().Context(), current, metav1.UpdateOptions{})
+	case "renew":
+		if !owned || !now.Before(expires) {
+			return c.JSON(http.StatusOK, map[string]bool{"acquired": false})
+		}
+		current.Data["expires_at"] = now.Add(time.Duration(req.DurationMS) * time.Millisecond).Format(time.RFC3339Nano)
+		_, err = items.Update(c.Request().Context(), current, metav1.UpdateOptions{})
+	case "release":
+		if !owned {
+			return c.JSON(http.StatusOK, map[string]bool{"acquired": false})
+		}
+		err = items.Delete(c.Request().Context(), name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{ResourceVersion: &current.ResourceVersion}})
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "unsupported lease action"})
+	}
+	if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+		return c.JSON(http.StatusOK, map[string]bool{"acquired": false})
+	}
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"acquired": true})
 }
 
 func (wc *WorkerControlController) runtimeID(ctx context.Context, publicID string) string {

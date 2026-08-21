@@ -15,6 +15,55 @@
     }
   ],
   "paths": {
+    "/internal/worker/leases/{leaseName}": {
+      "post": {
+        "summary": "Coordinate a background-worker lease",
+        "description": "Acquires, renews, or releases a leader-election lease through the authenticated worker control plane.",
+        "operationId": "coordinateWorkerLease",
+        "tags": ["Worker Control"],
+        "parameters": [
+          {
+            "name": "leaseName",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"}
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action", "identity"],
+                "properties": {
+                  "action": {"type": "string", "enum": ["acquire", "renew", "release"]},
+                  "identity": {"type": "string"},
+                  "duration_ms": {"type": "integer", "format": "int64", "minimum": 1}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lease operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["acquired"],
+                  "properties": {"acquired": {"type": "boolean"}}
+                }
+              }
+            }
+          },
+          "400": {"description": "Invalid lease operation"},
+          "401": {"description": "Invalid worker control token"},
+          "503": {"description": "Lease persistence is unavailable"}
+        }
+      }
+    },
     "/usage": {
       "get": {
         "summary": "Get usage totals",
@@ -8487,6 +8536,10 @@
     }
   ],
   "tags": [
+    {
+      "name": "Worker Control",
+      "description": "Internal authenticated control plane for background workers"
+    },
     {
       "name": "Usage",
       "description": "Response-level token usage collection"
