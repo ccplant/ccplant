@@ -3,15 +3,10 @@
 {{- $control := $worker.controlApi | default dict }}
 {{- $controlToken := $control.tokenSecretRef | default dict }}
 {{- $kv := $worker.kvStore | default dict }}
-{{- $redisClient := $worker.redis | default dict }}
 {{- $workerImage := $worker.image | default dict }}
 {{- $slack := $worker.slack | default dict }}
 {{- $slackToken := $slack.tokenSecretRef | default dict }}
 {{- $controlURL := $control.url | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port) }}
-{{- $redisAddr := $redisClient.addr | default "" }}
-{{- if and (not $redisAddr) .Values.redis.enabled }}
-{{- $redisAddr = printf "%s-redis-master:6379" (include "agentapi-proxy.fullname" .) }}
-{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -95,24 +90,6 @@ spec:
               value: {{ $kv.authToken | quote }}
             {{- end }}
             {{- end }}
-            - name: AGENTAPI_REDIS_ADDR
-              value: {{ required "worker.redis.addr or redis.enabled=true is required when worker is enabled" $redisAddr | quote }}
-            {{- $redisSecret := $redisClient.existingSecret | default "" }}
-            {{- if and (not $redisSecret) .Values.redis.enabled .Values.redis.auth.enabled }}
-            {{- $redisSecret = printf "%s-redis" (include "agentapi-proxy.fullname" .) }}
-            {{- end }}
-            {{- with $redisSecret }}
-            - name: AGENTAPI_REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . | quote }}
-                  key: {{ $redisClient.existingSecretPasswordKey | default "redis-password" | quote }}
-            {{- end }}
-            - {name: AGENTAPI_REDIS_DB, value: {{ $redisClient.db | default 0 | quote }}}
-            - {name: AGENTAPI_REDIS_TLS_ENABLED, value: {{ $redisClient.tlsEnabled | default false | quote }}}
-            - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redisClient.dialTimeout | default "5s" | quote }}}
-            - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redisClient.readTimeout | default "3s" | quote }}}
-            - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redisClient.writeTimeout | default "3s" | quote }}}
             {{- with $slackToken.name }}
             - name: AGENTAPI_SLACK_APP_TOKEN
               valueFrom:

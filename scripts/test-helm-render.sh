@@ -51,9 +51,10 @@ assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant
 "$HELM_BIN" template backend-worker-default "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --set worker.enabled=true \
   --set api.workerControl.tokenSecretRef.name=worker-control \
+  --set api.redis.addr=redis:6379 \
   --set worker.controlApi.tokenSecretRef.name=worker-control \
   --set worker.kvStore.databaseUrl=file:///tmp/worker.db \
-  --set worker.redis.addr=redis:6379 >"$TMP_DIR/backend-worker-default.yaml"
+  >"$TMP_DIR/backend-worker-default.yaml"
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/backend-worker-default.yaml"
 
 # Role image tags are release-controlled by Chart.appVersion and are not valid
@@ -127,12 +128,6 @@ all_role_args=(
   --set worker.image.repository=example/worker
   --set worker.controlApi.tokenSecretRef.name=worker-control
   --set worker.kvStore.databaseUrlSecretRef.name=worker-libsql
-  --set worker.redis.addr=redis.example:6380
-  --set worker.redis.db=5
-  --set worker.redis.tlsEnabled=true
-  --set worker.redis.dialTimeout=9s
-  --set worker.redis.readTimeout=8s
-  --set worker.redis.writeTimeout=7s
   --set worker.stockInventory.enabled=true
   --set worker.stockInventory.pools[0].targetCount=3
   --set worker.stockInventory.pools[0].dockerEnabled=true
@@ -213,9 +208,7 @@ assert_contains 'name: AGENTAPI_WORKER_CONTROL_API_URL' "$TMP_DIR/backend-worker
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: "worker-control"' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains 'name: AGENTAPI_REDIS_DB, value: "5"' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains 'name: AGENTAPI_REDIS_TLS_ENABLED, value: "true"' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains 'name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: "9s"' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'name: AGENTAPI_REDIS_' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS' "$TMP_DIR/backend-worker-deployment.yaml"

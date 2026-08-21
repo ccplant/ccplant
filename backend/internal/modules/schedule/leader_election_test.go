@@ -15,7 +15,7 @@ func TestLeaderElectorAcquiresAndReleasesRedisLease(t *testing.T) {
 	config := DefaultLeaderElectionConfig("test")
 	config.LeaseDuration = time.Second
 	config.RenewDeadline = 20 * time.Millisecond
-	elector := NewLeaderElector(client, config)
+	elector := NewRedisLeaderElector(client, config)
 	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan struct{})
 	done := make(chan struct{})

@@ -205,8 +205,8 @@ worker:
       name: ""
       key: auth-token
 
-  # Redis is mandatory for worker leader election. When addr is empty and the
-  # bundled Redis chart is enabled, the chart derives its in-cluster address.
+  # Deprecated. Worker leader election is coordinated through controlApi, and
+  # Redis is configured on api.redis.
   redis:
     addr: ""
     existingSecret: ""

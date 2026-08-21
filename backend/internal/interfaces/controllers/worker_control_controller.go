@@ -9,6 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
@@ -20,6 +21,7 @@ type WorkerControlController struct {
 	token   string
 	teams   workerTeamEnsurer
 	routes  repositories.SessionRouteRepository
+	leases  schedule.LeaseClient
 }
 
 type workerTeamEnsurer interface {
@@ -66,6 +68,51 @@ func NewWorkerControlController(manager repositories.SessionManager, token strin
 	controller.teams = teams
 	controller.routes = routes
 	return controller
+}
+
+func (wc *WorkerControlController) WithLeases(client schedule.LeaseClient) *WorkerControlController {
+	wc.leases = client
+	return wc
+}
+
+type workerLeaseRequest struct {
+	Action     string `json:"action"`
+	Identity   string `json:"identity"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+func (wc *WorkerControlController) Lease(c echo.Context) error {
+	if !wc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if wc.leases == nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	var req workerLeaseRequest
+	if err := c.Bind(&req); err != nil || req.Identity == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid lease request"})
+	}
+	if req.DurationMS <= 0 && req.Action != "release" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "duration_ms must be positive"})
+	}
+	key := c.Param("leaseName")
+	duration := time.Duration(req.DurationMS) * time.Millisecond
+	var acquired bool
+	var err error
+	switch req.Action {
+	case "acquire":
+		acquired, err = wc.leases.Acquire(c.Request().Context(), key, req.Identity, duration)
+	case "renew":
+		acquired, err = wc.leases.Renew(c.Request().Context(), key, req.Identity, duration)
+	case "release":
+		acquired, err = wc.leases.Release(c.Request().Context(), key, req.Identity)
+	default:
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "unsupported lease action"})
+	}
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"acquired": acquired})
 }
 
 func (wc *WorkerControlController) runtimeID(ctx context.Context, publicID string) string {

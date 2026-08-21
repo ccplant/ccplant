@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -294,7 +293,7 @@ type LeaderCleanupWorker struct {
 // NewLeaderCleanupWorker creates a new LeaderCleanupWorker.
 func NewLeaderCleanupWorker(
 	sessionManager portrepos.SessionManager,
-	redisClient redis.UniversalClient,
+	leaderElectionClient schedule.LeaseClient,
 	workerConfig CleanupWorkerConfig,
 	electionConfig schedule.LeaderElectionConfig,
 ) *LeaderCleanupWorker {
@@ -302,7 +301,7 @@ func NewLeaderCleanupWorker(
 	electionConfig.LeaseName = schedule.SlackbotCleanupWorkerLeaseName
 
 	worker := NewCleanupWorker(sessionManager, workerConfig)
-	elector := schedule.NewLeaderElector(redisClient, electionConfig)
+	elector := schedule.NewLeaderElector(leaderElectionClient, electionConfig)
 
 	return &LeaderCleanupWorker{
 		worker:  worker,

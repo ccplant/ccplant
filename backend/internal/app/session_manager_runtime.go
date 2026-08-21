@@ -234,7 +234,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if !remoteMode {
 		localClient := newLocalAllocationClient(manager, sessionRouteRepo)
 		allocator = allocationworker.NewWorker(manager, localClient)
-		elector := schedule.NewLeaderElector(redisClient, schedule.LeaderElectionConfig{
+		elector := schedule.NewRedisLeaderElector(redisClient, schedule.LeaderElectionConfig{
 			LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry,
 			LeaseName: schedule.SessionAllocatorLeaseName, Namespace: manager.GetNamespace(),
 		})

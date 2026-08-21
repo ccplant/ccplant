@@ -31,17 +31,47 @@ func DefaultLeaderElectionConfig(namespace string) LeaderElectionConfig {
 	return LeaderElectionConfig{LeaseDuration: 15 * time.Second, RenewDeadline: 10 * time.Second, RetryPeriod: 2 * time.Second, LeaseName: ScheduleWorkerLeaseName, Namespace: namespace}
 }
 
-// LeaderElector uses a Redis lease. The compare-and-renew/release scripts ensure
-// a candidate can only mutate a lease it owns.
+// LeaderElector delegates atomic lease operations to its client. Workers use the
+// control API client, while legacy in-process workers use the Redis adapter.
 type LeaderElector struct {
-	client   redis.UniversalClient
+	client   LeaseClient
 	config   LeaderElectionConfig
 	identity string
 }
 
-func NewLeaderElector(client redis.UniversalClient, config LeaderElectionConfig) *LeaderElector {
+type LeaseClient interface {
+	Acquire(context.Context, string, string, time.Duration) (bool, error)
+	Renew(context.Context, string, string, time.Duration) (bool, error)
+	Release(context.Context, string, string) (bool, error)
+}
+
+type redisLeaseClient struct{ client redis.UniversalClient }
+
+func NewLeaderElector(client LeaseClient, config LeaderElectionConfig) *LeaderElector {
 	hostname, _ := os.Hostname()
 	return &LeaderElector{client: client, config: config, identity: hostname + "_" + uuid.NewString()[:8]}
+}
+
+func NewRedisLeaseClient(client redis.UniversalClient) LeaseClient {
+	return &redisLeaseClient{client: client}
+}
+
+func NewRedisLeaderElector(client redis.UniversalClient, config LeaderElectionConfig) *LeaderElector {
+	return NewLeaderElector(NewRedisLeaseClient(client), config)
+}
+
+func (c *redisLeaseClient) Acquire(ctx context.Context, key, identity string, duration time.Duration) (bool, error) {
+	return c.client.SetNX(ctx, key, identity, duration).Result()
+}
+
+func (c *redisLeaseClient) Renew(ctx context.Context, key, identity string, duration time.Duration) (bool, error) {
+	result, err := renewLease.Run(ctx, c.client, []string{key}, identity, duration.Milliseconds()).Int64()
+	return result != 0, err
+}
+
+func (c *redisLeaseClient) Release(ctx context.Context, key, identity string) (bool, error) {
+	result, err := releaseLease.Run(ctx, c.client, []string{key}, identity).Int64()
+	return result != 0, err
 }
 
 var renewLease = redis.NewScript(`
@@ -59,10 +89,10 @@ return 0`)
 func (l *LeaderElector) Run(ctx context.Context, onStartedLeading func(context.Context), onStoppedLeading func()) {
 	key := "agentapi:leader:" + l.config.Namespace + ":" + l.config.LeaseName
 	for ctx.Err() == nil {
-		acquired, err := l.client.SetNX(ctx, key, l.identity, l.config.LeaseDuration).Result()
+		acquired, err := l.client.Acquire(ctx, key, l.identity, l.config.LeaseDuration)
 		if err != nil || !acquired {
 			if err != nil {
-				log.Printf("[LEADER_ELECTION] Redis acquire failed: %v", err)
+				log.Printf("[LEADER_ELECTION] lease acquire failed: %v", err)
 			}
 			if !waitFor(ctx, l.config.RetryPeriod) {
 				return
@@ -75,7 +105,7 @@ func (l *LeaderElector) Run(ctx context.Context, onStartedLeading func(context.C
 		lost := l.renew(ctx, key)
 		cancel()
 		<-done
-		_, _ = releaseLease.Run(context.Background(), l.client, []string{key}, l.identity).Result()
+		_, _ = l.client.Release(context.Background(), key, l.identity)
 		if onStoppedLeading != nil {
 			onStoppedLeading()
 		}
@@ -97,8 +127,8 @@ func (l *LeaderElector) renew(ctx context.Context, key string) bool {
 		case <-ctx.Done():
 			return false
 		case <-ticker.C:
-			result, err := renewLease.Run(ctx, l.client, []string{key}, l.identity, l.config.LeaseDuration.Milliseconds()).Int64()
-			if err != nil || result == 0 {
+			renewed, err := l.client.Renew(ctx, key, l.identity, l.config.LeaseDuration)
+			if err != nil || !renewed {
 				return true
 			}
 		}
@@ -123,14 +153,14 @@ type LeaderWorker struct {
 	elector *LeaderElector
 }
 
-func NewLeaderWorker(manager Manager, sessionManager portrepos.SessionManager, client redis.UniversalClient, workerConfig WorkerConfig, electionConfig LeaderElectionConfig, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository) *LeaderWorker {
+func NewLeaderWorker(manager Manager, sessionManager portrepos.SessionManager, client LeaseClient, workerConfig WorkerConfig, electionConfig LeaderElectionConfig, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository) *LeaderWorker {
 	return &LeaderWorker{worker: NewWorker(manager, sessionManager, memoryRepo, workerConfig, sessionProfileRepo), elector: NewLeaderElector(client, electionConfig)}
 }
+
+var ErrRedisRequired = errors.New("worker leader election requires Redis")
 
 func (lw *LeaderWorker) Run(ctx context.Context) {
 	lw.elector.Run(ctx, func(leaderCtx context.Context) { _ = lw.worker.Start(leaderCtx); <-leaderCtx.Done() }, lw.worker.Stop)
 }
 
 func (lw *LeaderWorker) Stop() { lw.worker.Stop() }
-
-var ErrRedisRequired = errors.New("worker leader election requires Redis")
