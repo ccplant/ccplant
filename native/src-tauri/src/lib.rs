@@ -37,7 +37,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .icon(app.default_window_icon().cloned().expect("default icon"))
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("agentapi-proxy Native")
+        .tooltip("ccplant")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_dashboard_window(app),
             "refresh" => emit_refresh(app),

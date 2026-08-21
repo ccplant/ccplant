@@ -11,15 +11,15 @@ import type { MetadataRoute } from 'next'
 export default function manifest(): MetadataRoute.Manifest {
   const appName = process.env.PWA_APP_NAME
     || process.env.NEXT_PUBLIC_PWA_APP_NAME
-    || 'AgentAPI UI'
+    || 'ccplant'
 
   const shortName = process.env.PWA_SHORT_NAME
     || process.env.NEXT_PUBLIC_PWA_SHORT_NAME
-    || 'AgentAPI'
+    || 'ccplant'
 
   const description = process.env.PWA_DESCRIPTION
     || process.env.NEXT_PUBLIC_PWA_DESCRIPTION
-    || 'User interface for AgentAPI - AI agent conversation management'
+    || 'Launch, connect, and manage AI agent sessions with ccplant.'
 
   // カスタムアイコン URL が設定されている場合はそれを使用
   const customIconUrl = process.env.PWA_ICON_URL
@@ -93,8 +93,8 @@ export default function manifest(): MetadataRoute.Manifest {
     name: appName,
     short_name: shortName,
     description: description,
-    theme_color: '#000000',
-    background_color: '#ffffff',
+    theme_color: '#071A1D',
+    background_color: '#071A1D',
     display: 'standalone',
     orientation: 'portrait',
     scope: '/',

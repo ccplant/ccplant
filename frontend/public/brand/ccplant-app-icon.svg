@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">ccplant app icon</title>
+  <desc id="desc">A flat emerald sprout formed from branching agent network paths on midnight navy.</desc>
+  <rect width="512" height="512" rx="108" fill="#071A1D"/>
+  <g transform="translate(51.2 51.2) scale(1.6)">
+    <path fill="#2EDC91" fill-rule="evenodd" d="M47 43c39 0 69 12 81 42 12-30 42-42 81-42 0 49-22 80-66 84v27l22-22a16 16 0 1 1 11 11l-33 33v13a18 18 0 1 1-30 0v-13l-33-33a16 16 0 1 1 11-11l22 22v-27c-44-4-66-35-66-84Zm17 17c5 29 21 45 49 50-5-28-21-44-49-50Zm128 0c-28 6-44 22-49 50 28-5 44-21 49-50Z"/>
+  </g>
+</svg>
