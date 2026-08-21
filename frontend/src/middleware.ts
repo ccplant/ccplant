@@ -15,6 +15,8 @@ export async function middleware(request: NextRequest) {
     pathname === '/manifest.json' ||
     pathname === '/manifest.webmanifest' ||
     pathname === '/favicon.ico' ||
+    pathname.startsWith('/brand/') ||
+    /^\/icon-\d+x\d+\.png$/.test(pathname) ||
     pathname.startsWith('/icons/')
   ) {
     return NextResponse.next()
@@ -42,10 +44,12 @@ export const config = {
      * - favicon.ico (favicon file)
      * - manifest.json (PWA manifest - legacy)
      * - manifest.webmanifest (PWA manifest - dynamic)
+     * - brand/ (brand logos and marks)
+     * - icon-*.png (PWA icon files)
      * - icons/ (icon files)
      *
      * Shared session pages (/s/*) are public and are allowed above.
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|manifest.json|manifest.webmanifest|icons/).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|manifest.json|manifest.webmanifest|brand/|icon-.*\\.png|icons/).*)',
   ],
 }

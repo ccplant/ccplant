@@ -10,6 +10,17 @@ describe('frontend middleware', () => {
     expect(response.headers.get('x-middleware-next')).toBe('1')
   })
 
+  it.each([
+    '/brand/ccplant-logo.svg',
+    '/brand/ccplant-mark.svg',
+    '/icon-192x192.png',
+    '/icon-512x512.png',
+  ])('allows public brand asset %s without a cookie', async (path) => {
+    const response = await middleware(new NextRequest(`https://ui.example.test${path}`))
+
+    expect(response.headers.get('x-middleware-next')).toBe('1')
+  })
+
   it('redirects a protected page without a cookie', async () => {
     const response = await middleware(new NextRequest('https://ui.example.test/chats'))
 
