@@ -140,6 +140,18 @@ jobs:
       - run: helm lint "${{ matrix.path }}" --strict
       - name: Render chart
         run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
+      - name: Render Cloud Run manifest
+        if: matrix.name == 'ccplant'
+        run: |
+          helm template ccplant "${{ matrix.path }}" \
+            --show-only templates/cloud-run-service.yaml \
+            --set cloudRun.enabled=true \
+            --set cloudRun.service.name=ccplant-api-test \
+            --set cloudRun.service.project=ccplant-test \
+            --set cloudRun.service.region=asia-northeast1 \
+            --set cloudRun.service.serviceAccount=runtime@ccplant-test.iam.gserviceaccount.com \
+            --set-string cloudRun.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            >/dev/null
 
   publish-dev-charts:
     if: github.event_name == 'pull_request'

@@ -1,0 +1,55 @@
+{{- if .Values.cloudRun.enabled }}
+{{- $service := .Values.cloudRun.service }}
+{{- $image := .Values.cloudRun.image }}
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ required "cloudRun.service.name is required" $service.name | quote }}
+  namespace: {{ required "cloudRun.service.project is required" $service.project | quote }}
+  labels:
+    cloud.googleapis.com/location: {{ required "cloudRun.service.region is required" $service.region | quote }}
+  annotations:
+    run.googleapis.com/ingress: {{ .Values.cloudRun.ingress | quote }}
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: {{ .Values.cloudRun.scaling.minInstances | quote }}
+        autoscaling.knative.dev/maxScale: {{ .Values.cloudRun.scaling.maxInstances | quote }}
+        run.googleapis.com/startup-cpu-boost: {{ .Values.cloudRun.startupCpuBoost | quote }}
+    spec:
+      containerConcurrency: {{ .Values.cloudRun.containerConcurrency }}
+      timeoutSeconds: {{ .Values.cloudRun.timeoutSeconds }}
+      serviceAccountName: {{ required "cloudRun.service.serviceAccount is required" $service.serviceAccount | quote }}
+      containers:
+        - name: {{ .Values.cloudRun.container.name | quote }}
+          image: {{ printf "%s@%s" $image.repository (required "cloudRun.image.digest is required" $image.digest) | quote }}
+          command:
+            {{- toYaml .Values.cloudRun.container.command | nindent 12 }}
+          args:
+            {{- toYaml .Values.cloudRun.container.args | nindent 12 }}
+          ports:
+            - name: http1
+              containerPort: {{ .Values.cloudRun.container.port }}
+          resources:
+            limits:
+              cpu: {{ .Values.cloudRun.container.resources.cpu | quote }}
+              memory: {{ .Values.cloudRun.container.resources.memory | quote }}
+          {{- if or .Values.cloudRun.env .Values.cloudRun.secrets }}
+          env:
+            {{- range $name, $value := .Values.cloudRun.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range $name, $secret := .Values.cloudRun.secrets }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret.name | quote }}
+                  key: {{ $secret.version | quote }}
+            {{- end }}
+          {{- end }}
+  traffic:
+    - percent: 100
+      latestRevision: true
+{{- end }}

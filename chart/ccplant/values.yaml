@@ -24,3 +24,34 @@ frontend:
     repository: ghcr.io/ccplant/ccplant-frontend
   ingress:
     enabled: false
+
+# Render a Google Cloud Run Knative Service manifest from this chart. This is
+# disabled for normal Kubernetes releases. Environment-specific values live in
+# ccplant/ccplant-deploy; secret values themselves remain in Secret Manager.
+cloudRun:
+  enabled: false
+  service:
+    name: ""
+    project: ""
+    region: ""
+    serviceAccount: ""
+  ingress: all
+  scaling:
+    minInstances: 0
+    maxInstances: 3
+  startupCpuBoost: true
+  containerConcurrency: 80
+  timeoutSeconds: 300
+  image:
+    repository: ghcr.io/ccplant/ccplant-api
+    digest: ""
+  container:
+    name: ccplant-api
+    command: [/usr/local/bin/ccplant]
+    args: [server]
+    port: 8080
+    resources:
+      cpu: "1"
+      memory: 512Mi
+  env: {}
+  secrets: {}
