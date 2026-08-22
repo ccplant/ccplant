@@ -835,11 +835,11 @@ func resolveApplicationNamespace(configured string) string {
 
 func validateAPIKVStore(cfg config.KVStoreConfig) error {
 	backend := configuredKVBackend(cfg)
-	if backend != "libsql" && backend != "kubernetes" {
-		return fmt.Errorf("primary backend must be libsql or kubernetes, got %q", backend)
+	if backend != "libsql" && backend != "libsql-encrypted" && backend != "kubernetes" {
+		return fmt.Errorf("primary backend must be libsql, libsql-encrypted, or kubernetes, got %q", backend)
 	}
-	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" && cfg.Secondary.Backend != "kubernetes" {
-		return fmt.Errorf("secondary backend must be libsql or kubernetes in the API role, got %q", cfg.Secondary.Backend)
+	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" && cfg.Secondary.Backend != "libsql-encrypted" && cfg.Secondary.Backend != "kubernetes" {
+		return fmt.Errorf("secondary backend must be libsql, libsql-encrypted, or kubernetes in the API role, got %q", cfg.Secondary.Backend)
 	}
 	return nil
 }
@@ -859,7 +859,7 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 	switch cfg.Backend {
 	case "", "kubernetes":
 		return kvstore.NewKubernetesStore(kubeClient), nil
-	case "libsql":
+	case "libsql", "libsql-encrypted":
 		if strings.TrimSpace(cfg.DatabaseURL) == "" {
 			return nil, errors.New("database_url is required for libSQL")
 		}
@@ -869,8 +869,12 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 		if err != nil {
 			return nil, err
 		}
-		if encryption.ActiveKeyID == "" && len(encryption.Keys) == 0 {
+		if cfg.Backend == "libsql" {
 			return store, nil
+		}
+		if encryption.ActiveKeyID == "" || len(encryption.Keys) == 0 {
+			_ = store.Close()
+			return nil, errors.New("KV encryption keys are required for libsql-encrypted")
 		}
 		keyring, err := buildKVEncryptionKeyring(ctx, encryption, store)
 		if err != nil {

@@ -186,7 +186,7 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 		}
 		return kvstore.NewKubernetesStore(client), nil
 	}
-	if backend != "libsql" {
+	if backend != "libsql" && backend != "libsql-encrypted" {
 		return nil, fmt.Errorf("unsupported worker kv_store backend %q", backend)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -195,8 +195,12 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Encryption.ActiveKeyID == "" && len(cfg.Encryption.Keys) == 0 {
+	if backend == "libsql" {
 		return store, nil
+	}
+	if cfg.Encryption.ActiveKeyID == "" || len(cfg.Encryption.Keys) == 0 {
+		_ = store.Close()
+		return nil, errors.New("KV encryption keys are required for libsql-encrypted")
 	}
 	var keyring kvstore.EnvelopeKeyring
 	switch cfg.Encryption.Provider {

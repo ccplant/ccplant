@@ -9,6 +9,7 @@ binary_path: ccplant
 # Persistence for application KV data represented as Secrets and ConfigMaps.
 # Inject auth_token with AGENTAPI_KV_STORE_AUTH_TOKEN in production.
 kv_store:
+  # kubernetes, libsql (plaintext), or libsql-encrypted
   backend: kubernetes
   database_url: ""
   auth_token: ""
@@ -16,7 +17,7 @@ kv_store:
   # primary:
   #   backend: kubernetes
   # secondary:
-  #   backend: libsql
+  #   backend: libsql-encrypted
   #   database_url: "libsql://example.turso.io"
   #   auth_token: ""
   # replication:

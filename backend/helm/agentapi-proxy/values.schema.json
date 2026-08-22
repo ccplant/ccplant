@@ -385,7 +385,7 @@
                   "properties": { "backend": { "const": "kubernetes" } }
                 },
                 "secondary": {
-                  "properties": { "backend": { "const": "libsql" } },
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
                   "anyOf": [
                     { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                     { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
@@ -395,7 +395,7 @@
             },
             {
               "properties": {
-                "backend": { "const": "libsql" },
+                "backend": { "enum": ["libsql", "libsql-encrypted"] },
                 "primary": { "properties": { "backend": { "maxLength": 0 } } }
               },
               "anyOf": [
@@ -406,14 +406,14 @@
             {
               "properties": {
                 "primary": {
-                  "properties": { "backend": { "const": "libsql" } },
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
                   "anyOf": [
                     { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                     { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
                   ]
                 },
                 "secondary": {
-                  "properties": { "backend": { "const": "libsql" } },
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
                   "anyOf": [
                     { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                     { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
@@ -456,7 +456,7 @@
           "oneOf": [
             { "properties": { "backend": { "const": "kubernetes" } } },
             {
-              "properties": { "backend": { "const": "libsql" } },
+              "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
               "anyOf": [
                 { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                 { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
