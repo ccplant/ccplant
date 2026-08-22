@@ -217,9 +217,7 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 		_ = store.Close()
 		return nil, fmt.Errorf("configure worker KV encryption: %w", err)
 	}
-	encrypted, err := kvstore.NewEncryptedStoreWithOptions(store, keyring, kvstore.EncryptedStoreOptions{
-		AllowLegacyPlaintext: cfg.Encryption.AllowLegacyPlaintext,
-	})
+	encrypted, err := kvstore.NewEncryptedStore(store, keyring)
 	if err != nil {
 		_ = store.Close()
 		return nil, err

@@ -142,11 +142,11 @@ func TestEncryptedStoreReadsOldKeyAndWritesActiveKey(t *testing.T) {
 	}
 }
 
-func TestEncryptedStoreReadsAndRepairsLegacyPlaintext(t *testing.T) {
+func TestEncryptedStoreRejectsPlaintext(t *testing.T) {
 	ctx := context.Background()
 	backend := newMemoryStore()
 	value := secretDocument(t, "legacy", map[string]string{"scope": "user"}, "legacy-secret")
-	created, err := backend.Create(ctx, Record{
+	_, err := backend.Create(ctx, Record{
 		Kind: KindSecret, Namespace: "ns", Key: "legacy",
 		Labels: map[string]string{"scope": "user"}, Value: value,
 	})
@@ -157,28 +157,43 @@ func TestEncryptedStoreReadsAndRepairsLegacyPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewEncryptedStoreWithOptions(backend, keyring, EncryptedStoreOptions{AllowLegacyPlaintext: true})
+	store, err := NewEncryptedStore(backend, keyring)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := store.Get(ctx, KindSecret, "ns", "legacy")
-	if err != nil || !bytes.Equal(got.Value, value) {
-		t.Fatalf("read legacy plaintext: value=%q err=%v", got.Value, err)
-	}
-	if got.Version != created.Version+1 {
-		t.Fatalf("repaired version = %d, want %d", got.Version, created.Version+1)
-	}
-	raw := backend.records[recordKey(KindSecret, "ns", "legacy")]
-	if bytes.Contains(raw.Value, []byte("legacy-secret")) {
-		t.Fatal("read repair left plaintext in backend")
-	}
-	if _, err := parseEnvelope(raw.Value); err != nil {
-		t.Fatalf("read repair did not write an envelope: %v", err)
+	if _, err := store.Get(ctx, KindSecret, "ns", "legacy"); !errors.Is(err, ErrPlaintextInEncryptedStore) {
+		t.Fatalf("plaintext mismatch error = %v", err)
 	}
 }
 
-func TestEncryptedStoreLegacyModeDoesNotDowngradeMalformedEnvelope(t *testing.T) {
+func TestPlaintextLibSQLStoreRejectsEncryptedValue(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "format-mismatch.db")
+	backend, err := NewLibSQLStore(ctx, "file://"+path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := encryptedTestStore(t, backend, "current", map[string]string{"current": randomEncodedKey(t)})
+	value := secretDocument(t, "encrypted", nil, "secret")
+	if _, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "encrypted", Value: value}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	plaintextStore, err := NewLibSQLStore(ctx, "file://"+path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plaintextStore.Close()
+	if _, err := plaintextStore.Get(ctx, KindSecret, "ns", "encrypted"); !errors.Is(err, ErrEncryptedInPlaintextStore) {
+		t.Fatalf("encrypted mismatch error = %v", err)
+	}
+}
+
+func TestEncryptedStoreRejectsMalformedEnvelope(t *testing.T) {
 	ctx := context.Background()
 	backend := newMemoryStore()
 	value := []byte(`{"format":"agentapi-kv-envelope/v1","format":"legacy","metadata":{"labels":{}},"data":{"value":"plaintext"}}`)
@@ -189,7 +204,7 @@ func TestEncryptedStoreLegacyModeDoesNotDowngradeMalformedEnvelope(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewEncryptedStoreWithOptions(backend, keyring, EncryptedStoreOptions{AllowLegacyPlaintext: true})
+	store, err := NewEncryptedStore(backend, keyring)
 	if err != nil {
 		t.Fatal(err)
 	}

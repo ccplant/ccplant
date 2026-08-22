@@ -63,7 +63,6 @@ func TestLoadConfigWithReplicatedKVStoreEnvironment(t *testing.T) {
 func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
 	t.Setenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID", "current")
 	t.Setenv("AGENTAPI_KV_ENCRYPTION_KEYS", `{"previous":"old-key","current":"new-key"}`)
-	t.Setenv("AGENTAPI_KV_ENCRYPTION_ALLOW_LEGACY_PLAINTEXT", "true")
 	t.Setenv("AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_TTL_SECONDS", "600")
 	t.Setenv("AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_MAX_ENTRIES", "64")
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -80,24 +79,7 @@ func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
 	if cfg.KVStore.Encryption.Keys["previous"] != "old-key" || cfg.KVStore.Encryption.Keys["current"] != "new-key" {
 		t.Fatalf("keys = %#v", cfg.KVStore.Encryption.Keys)
 	}
-	if !cfg.KVStore.Encryption.AllowLegacyPlaintext {
-		t.Fatal("allow legacy plaintext was not loaded")
-	}
 	if cfg.KVStore.Encryption.BranchCacheTTLSeconds != 600 || cfg.KVStore.Encryption.BranchCacheMaxEntries != 64 {
 		t.Fatalf("branch cache config = ttl:%d max:%d", cfg.KVStore.Encryption.BranchCacheTTLSeconds, cfg.KVStore.Encryption.BranchCacheMaxEntries)
-	}
-}
-
-func TestKVEncryptionAllowsLegacyPlaintextByDefault(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.KVStore.Encryption.AllowLegacyPlaintext {
-		t.Fatal("allow legacy plaintext should default to true")
 	}
 }

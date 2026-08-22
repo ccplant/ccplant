@@ -13,7 +13,23 @@ import (
 	_ "modernc.org/sqlite" // register the sqlite driver for local file:// databases
 )
 
-type LibSQLStore struct{ db *sql.DB }
+type LibSQLStore struct {
+	db              *sql.DB
+	encryptedValues bool
+}
+
+func (s *LibSQLStore) expectEncryptedValues() { s.encryptedValues = true }
+
+func (s *LibSQLStore) validateValueMode(value []byte) error {
+	isEncrypted := isEnvelopeCandidate(value)
+	if s.encryptedValues && !isEncrypted {
+		return ErrPlaintextInEncryptedStore
+	}
+	if !s.encryptedValues && isEncrypted {
+		return ErrEncryptedInPlaintextStore
+	}
+	return nil
+}
 
 func NewLibSQLStore(ctx context.Context, databaseURL, authToken string) (*LibSQLStore, error) {
 	opts := []libsql.Option{}
@@ -178,6 +194,9 @@ VALUES (?, ?, ?, ?, ?, 'active', ?)`, record.Provider, record.KeyID, record.Gene
 }
 
 func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error) {
+	if err := s.validateValueMode(record.Value); err != nil {
+		return Record{}, err
+	}
 	record.Version = 1
 	metadata, err := marshalRecordMetadata(record.Labels)
 	if err != nil {
@@ -196,6 +215,9 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 }
 
 func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error) {
+	if err := s.validateValueMode(record.Value); err != nil {
+		return Record{}, err
+	}
 	metadata, err := marshalRecordMetadata(record.Labels)
 	if err != nil {
 		return Record{}, err
@@ -231,6 +253,9 @@ WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&recor
 	record.Labels, err = unmarshalRecordMetadata(metadata)
 	if err != nil {
 		return Record{}, fmt.Errorf("decode libSQL metadata: %w", err)
+	}
+	if err := s.validateValueMode(record.Value); err != nil {
+		return Record{}, err
 	}
 	return record, nil
 }
@@ -274,6 +299,9 @@ WHERE kind = ? AND namespace = ? ORDER BY key`, query.Kind, query.Namespace)
 		record.Labels, err = unmarshalRecordMetadata(metadata)
 		if err != nil {
 			return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
+		}
+		if err := s.validateValueMode(record.Value); err != nil {
+			return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
 		}
 		if !selector.Matches(labels.Set(record.Labels)) {
 			continue

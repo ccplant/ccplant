@@ -17,8 +17,6 @@ Expand the name of the chart.
   value: {{ $provider | quote }}
 - name: AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID
   value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
-- name: AGENTAPI_KV_ENCRYPTION_ALLOW_LEGACY_PLAINTEXT
-  value: {{ dig "allowLegacyPlaintext" true $encryption | quote }}
 {{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") }}
 - name: AGENTAPI_KV_ENCRYPTION_KMS_REGION
   value: {{ required "kvStore.encryption.kmsRegion is required for an AWS KMS provider" (dig "kmsRegion" "" $encryption) | quote }}

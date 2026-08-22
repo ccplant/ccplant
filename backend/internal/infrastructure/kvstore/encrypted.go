@@ -20,7 +20,11 @@ const (
 	maxEnvelopeSize = 16 << 20
 )
 
-var ErrDecrypt = errors.New("kv value decryption failed")
+var (
+	ErrDecrypt                   = errors.New("kv value decryption failed")
+	ErrPlaintextInEncryptedStore = errors.New("encrypted KV store contains a plaintext value")
+	ErrEncryptedInPlaintextStore = errors.New("plaintext KV store contains an encrypted value")
+)
 
 // LocalKeyring provides envelope encryption with one active KEK and any number
 // of read keys. Each configured key must be a 32-byte AES key.
@@ -96,13 +100,8 @@ func NewLocalKeyring(activeID string, encodedKeys map[string]string) (*LocalKeyr
 }
 
 type encryptedStore struct {
-	backend              Store
-	keyring              EnvelopeKeyring
-	allowLegacyPlaintext bool
-}
-
-type EncryptedStoreOptions struct {
-	AllowLegacyPlaintext bool
+	backend Store
+	keyring EnvelopeKeyring
 }
 
 type RewrapResult struct {
@@ -115,6 +114,9 @@ type RewrapResult struct {
 // namespace to the active key. Callers must stop writers before invoking it.
 func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, namespace string, dryRun bool) (RewrapResult, error) {
 	var result RewrapResult
+	if mode, ok := backend.(interface{ expectEncryptedValues() }); ok {
+		mode.expectEncryptedValues()
+	}
 	for _, kind := range []Kind{KindSecret, KindConfigMap} {
 		records, err := backend.List(ctx, Query{Kind: kind, Namespace: namespace})
 		if err != nil {
@@ -159,14 +161,13 @@ func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, name
 }
 
 func NewEncryptedStore(backend Store, keyring EnvelopeKeyring) (Store, error) {
-	return NewEncryptedStoreWithOptions(backend, keyring, EncryptedStoreOptions{})
-}
-
-func NewEncryptedStoreWithOptions(backend Store, keyring EnvelopeKeyring, options EncryptedStoreOptions) (Store, error) {
 	if backend == nil || keyring == nil {
 		return nil, errors.New("KV backend and encryption keyring are required")
 	}
-	return &encryptedStore{backend: backend, keyring: keyring, allowLegacyPlaintext: options.AllowLegacyPlaintext}, nil
+	if mode, ok := backend.(interface{ expectEncryptedValues() }); ok {
+		mode.expectEncryptedValues()
+	}
+	return &encryptedStore{backend: backend, keyring: keyring}, nil
 }
 
 func (s *encryptedStore) Close() error {
@@ -310,10 +311,7 @@ func marshalEnvelope(envelope valueEnvelope) ([]byte, error) {
 
 func (s *encryptedStore) open(ctx context.Context, record *Record) error {
 	if !isEnvelopeCandidate(record.Value) {
-		if !s.allowLegacyPlaintext {
-			return ErrDecrypt
-		}
-		return s.openLegacyPlaintext(ctx, record)
+		return ErrPlaintextInEncryptedStore
 	}
 	envelope, err := parseEnvelope(record.Value)
 	if err != nil {
@@ -341,28 +339,6 @@ func (s *encryptedStore) open(ctx context.Context, record *Record) error {
 		clear(plaintext)
 		return ErrDecrypt
 	}
-	record.Value = plaintext
-	return nil
-}
-
-func (s *encryptedStore) openLegacyPlaintext(ctx context.Context, record *Record) error {
-	plaintext := append([]byte(nil), record.Value...)
-	actualLabels, err := documentLabels(record.Kind, plaintext)
-	if err != nil || !equalLabels(actualLabels, record.Labels) {
-		return ErrDecrypt
-	}
-	repair := *record
-	repair.Value = plaintext
-	sealed, err := s.seal(ctx, &repair)
-	if err != nil {
-		return fmt.Errorf("encrypt legacy KV value: %w", err)
-	}
-	repair.Value = sealed
-	updated, err := s.backend.Update(ctx, repair)
-	if err != nil {
-		return fmt.Errorf("replace legacy KV value: %w", err)
-	}
-	record.Version = updated.Version
 	record.Value = plaintext
 	return nil
 }
