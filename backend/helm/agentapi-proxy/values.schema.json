@@ -405,6 +405,19 @@
             },
             {
               "properties": {
+                "backend": { "maxLength": 0 },
+                "primary": {
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                },
+                "secondary": { "properties": { "backend": { "maxLength": 0 } } }
+              }
+            },
+            {
+              "properties": {
                 "primary": {
                   "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
                   "anyOf": [
