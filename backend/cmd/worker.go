@@ -170,10 +170,12 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	backend := cfg.Backend
 	databaseURL := cfg.DatabaseURL
 	authToken := cfg.AuthToken
+	encryption := cfg.Encryption
 	if cfg.Primary != nil {
 		backend = cfg.Primary.Backend
 		databaseURL = cfg.Primary.DatabaseURL
 		authToken = cfg.Primary.AuthToken
+		encryption = cfg.Primary.Encryption
 	}
 	if backend == "" || backend == "kubernetes" {
 		restConfig, err := ctrlconfig.GetConfig()
@@ -198,24 +200,24 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	if backend == "libsql" {
 		return store, nil
 	}
-	if cfg.Encryption.ActiveKeyID == "" || len(cfg.Encryption.Keys) == 0 {
+	if encryption.ActiveKeyID == "" || len(encryption.Keys) == 0 {
 		_ = store.Close()
 		return nil, errors.New("KV encryption keys are required for libsql-encrypted")
 	}
 	var keyring kvstore.EnvelopeKeyring
-	switch cfg.Encryption.Provider {
+	switch encryption.Provider {
 	case "", "local":
-		keyring, err = kvstore.NewLocalKeyring(cfg.Encryption.ActiveKeyID, cfg.Encryption.Keys)
+		keyring, err = kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
 	case "aws-kms":
-		keyring, err = kvstore.NewKMSKeyring(ctx, cfg.Encryption.ActiveKeyID, cfg.Encryption.KMSRegion, cfg.Encryption.Keys)
+		keyring, err = kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
 	case "aws-kms-branch":
-		keyring, err = kvstore.NewBranchKMSKeyring(ctx, cfg.Encryption.ActiveKeyID, cfg.Encryption.KMSRegion, cfg.Encryption.Keys, store,
-			time.Duration(cfg.Encryption.BranchCacheTTLSeconds)*time.Second, cfg.Encryption.BranchCacheMaxEntries)
+		keyring, err = kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, store,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	case "cloud-kms-branch":
-		keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, cfg.Encryption.ActiveKeyID, cfg.Encryption.Keys, store,
-			time.Duration(cfg.Encryption.BranchCacheTTLSeconds)*time.Second, cfg.Encryption.BranchCacheMaxEntries)
+		keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	default:
-		err = fmt.Errorf("unsupported KV encryption provider %q", cfg.Encryption.Provider)
+		err = fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
 	}
 	if err != nil {
 		_ = store.Close()

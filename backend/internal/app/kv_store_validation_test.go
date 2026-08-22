@@ -21,7 +21,8 @@ func TestValidateAPIKVStoreSupportsCustomerBackends(t *testing.T) {
 func TestLibSQLBackendNameControlsEncryption(t *testing.T) {
 	plain, err := buildKVBackend(config.KVStoreBackendConfig{
 		Backend: "libsql", DatabaseURL: "file://" + filepath.Join(t.TempDir(), "plain.db"),
-	}, config.KVStoreEncryptionConfig{ActiveKeyID: "ignored", Keys: map[string]string{"ignored": "invalid"}}, nil)
+		Encryption: config.KVStoreEncryptionConfig{ActiveKeyID: "ignored", Keys: map[string]string{"ignored": "invalid"}},
+	}, nil)
 	if err != nil {
 		t.Fatalf("plain libsql unexpectedly configured encryption: %v", err)
 	}
@@ -29,7 +30,7 @@ func TestLibSQLBackendNameControlsEncryption(t *testing.T) {
 
 	_, err = buildKVBackend(config.KVStoreBackendConfig{
 		Backend: "libsql-encrypted", DatabaseURL: "file://" + filepath.Join(t.TempDir(), "encrypted.db"),
-	}, config.KVStoreEncryptionConfig{}, nil)
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "encryption keys are required") {
 		t.Fatalf("libsql-encrypted missing-key error = %v", err)
 	}

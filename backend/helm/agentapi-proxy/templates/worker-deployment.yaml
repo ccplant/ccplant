@@ -90,7 +90,7 @@ spec:
               value: {{ $kv.authToken | quote }}
             {{- end }}
             {{- end }}
-            {{- include "agentapi-proxy.kvEncryptionEnv" $kv | nindent 12 }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "encryption" (dict) $kv) "prefix" "AGENTAPI_KV_ENCRYPTION") | nindent 12 }}
             {{- with $slackToken.name }}
             - name: AGENTAPI_SLACK_APP_TOKEN
               valueFrom:

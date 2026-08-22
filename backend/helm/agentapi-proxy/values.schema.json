@@ -427,13 +427,14 @@
     },
     "kvStoreBackend": {
       "type": "object",
-      "required": ["backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef"],
+      "required": ["backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef", "encryption"],
       "properties": {
         "backend": { "type": "string" },
         "databaseUrl": { "type": "string" },
         "authToken": { "type": "string" },
         "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
-        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" },
+        "encryption": { "$ref": "#/definitions/kvEncryption" }
       }
     },
     "kvEncryption": {

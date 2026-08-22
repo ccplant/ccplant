@@ -507,9 +507,10 @@ type RedisConfig struct {
 // KVStoreConfig configures persistence for application data represented as
 // Kubernetes Secrets and ConfigMaps by the repository layer.
 type KVStoreBackendConfig struct {
-	Backend     string `json:"backend" mapstructure:"backend"`
-	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
-	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+	Backend     string                  `json:"backend" mapstructure:"backend"`
+	DatabaseURL string                  `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string                  `json:"auth_token" mapstructure:"auth_token"`
+	Encryption  KVStoreEncryptionConfig `json:"encryption" mapstructure:"encryption"`
 }
 
 type KVStoreReplicationConfig struct {
@@ -1064,9 +1065,11 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
 	_ = v.BindEnv("kv_store.primary.database_url", "AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL")
 	_ = v.BindEnv("kv_store.primary.auth_token", "AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN")
+	bindKVEncryptionEnv(v, "kv_store.primary.encryption", "AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION")
 	_ = v.BindEnv("kv_store.secondary.backend", "AGENTAPI_KV_STORE_SECONDARY_BACKEND")
 	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
 	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
+	bindKVEncryptionEnv(v, "kv_store.secondary.encryption", "AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION")
 	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
 	_ = v.BindEnv("kv_store.encryption.active_key_id", "AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID")
 	_ = v.BindEnv("kv_store.encryption.provider", "AGENTAPI_KV_ENCRYPTION_PROVIDER")
@@ -1242,6 +1245,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
 	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
 
+}
+
+func bindKVEncryptionEnv(v *viper.Viper, path, envPrefix string) {
+	_ = v.BindEnv(path+".active_key_id", envPrefix+"_ACTIVE_KEY_ID")
+	_ = v.BindEnv(path+".provider", envPrefix+"_PROVIDER")
+	_ = v.BindEnv(path+".kms_region", envPrefix+"_KMS_REGION")
+	_ = v.BindEnv(path+".keys", envPrefix+"_KEYS")
+	_ = v.BindEnv(path+".branch_cache_ttl_seconds", envPrefix+"_BRANCH_CACHE_TTL_SECONDS")
+	_ = v.BindEnv(path+".branch_cache_max_entries", envPrefix+"_BRANCH_CACHE_MAX_ENTRIES")
 }
 
 // setDefaults sets default values for viper configuration

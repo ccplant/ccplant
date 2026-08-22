@@ -335,7 +335,8 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- include "agentapi-proxy.kvEncryptionEnv" $apiKV | nindent 12 }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "primary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION") | nindent 12 }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "secondary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION") | nindent 12 }}
             - name: AGENTAPI_USAGE_ENABLED
               value: {{ dig "usage" "enabled" false .Values.config | quote }}
             {{- if (dig "usage" "enabled" false .Values.config) }}

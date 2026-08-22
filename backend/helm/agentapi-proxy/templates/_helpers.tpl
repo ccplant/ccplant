@@ -7,31 +7,32 @@ Expand the name of the chart.
 
 {{/* Environment variables for application KV value encryption. */}}
 {{- define "agentapi-proxy.kvEncryptionEnv" -}}
-{{- $encryption := dig "encryption" (dict) . -}}
+{{- $encryption := .encryption | default dict -}}
+{{- $prefix := .prefix | default "AGENTAPI_KV_ENCRYPTION" -}}
 {{- $provider := dig "provider" "local" $encryption -}}
 {{- $activeKeyID := dig "activeKeyId" "" $encryption -}}
 {{- $secretName := dig "keysSecretRef" "name" "" $encryption -}}
 {{- $kmsKeys := dig "kmsKeys" (dict) $encryption -}}
 {{- if or $activeKeyID $secretName $kmsKeys -}}
-- name: AGENTAPI_KV_ENCRYPTION_PROVIDER
+- name: {{ printf "%s_PROVIDER" $prefix }}
   value: {{ $provider | quote }}
-- name: AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID
+- name: {{ printf "%s_ACTIVE_KEY_ID" $prefix }}
   value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
 {{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") }}
-- name: AGENTAPI_KV_ENCRYPTION_KMS_REGION
+- name: {{ printf "%s_KMS_REGION" $prefix }}
   value: {{ required "kvStore.encryption.kmsRegion is required for an AWS KMS provider" (dig "kmsRegion" "" $encryption) | quote }}
 {{- end }}
 {{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") (eq $provider "cloud-kms-branch") }}
-- name: AGENTAPI_KV_ENCRYPTION_KEYS
+- name: {{ printf "%s_KEYS" $prefix }}
   value: {{ toJson $kmsKeys | quote }}
 {{- if or (eq $provider "aws-kms-branch") (eq $provider "cloud-kms-branch") }}
-- name: AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_TTL_SECONDS
+- name: {{ printf "%s_BRANCH_CACHE_TTL_SECONDS" $prefix }}
   value: {{ dig "branchCacheTTLSeconds" 900 $encryption | quote }}
-- name: AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_MAX_ENTRIES
+- name: {{ printf "%s_BRANCH_CACHE_MAX_ENTRIES" $prefix }}
   value: {{ dig "branchCacheMaxEntries" 128 $encryption | quote }}
 {{- end }}
 {{- else }}
-- name: AGENTAPI_KV_ENCRYPTION_KEYS
+- name: {{ printf "%s_KEYS" $prefix }}
   valueFrom:
     secretKeyRef:
       name: {{ required "kvStore.encryption.keysSecretRef.name is required when KV encryption is configured" $secretName | quote }}

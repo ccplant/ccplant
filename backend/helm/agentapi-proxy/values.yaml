@@ -99,6 +99,16 @@ api:
       authTokenSecretRef:
         name: ""
         key: auth-token
+      encryption:
+        provider: local
+        activeKeyId: ""
+        branchCacheTTLSeconds: 900
+        branchCacheMaxEntries: 128
+        kmsRegion: ""
+        kmsKeys: {}
+        keysSecretRef:
+          name: ""
+          key: keys.json
     secondary:
       backend: ""
       databaseUrl: ""
@@ -109,18 +119,18 @@ api:
       authTokenSecretRef:
         name: ""
         key: auth-token
+      encryption:
+        provider: local
+        activeKeyId: ""
+        branchCacheTTLSeconds: 900
+        branchCacheMaxEntries: 128
+        kmsRegion: ""
+        kmsKeys: {}
+        keysSecretRef:
+          name: ""
+          key: keys.json
     replication:
       mode: ""
-    encryption:
-      provider: local
-      activeKeyId: ""
-      branchCacheTTLSeconds: 900
-      branchCacheMaxEntries: 128
-      kmsRegion: ""
-      kmsKeys: {}
-      keysSecretRef:
-        name: ""
-        key: keys.json
     migration:
       enabled: false
       dryRun: false

@@ -787,7 +787,7 @@ func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Int
 		if cfg.Backend == "" || cfg.Backend == "kubernetes" {
 			return nil, false, nil
 		}
-		store, err := buildKVBackend(config.KVStoreBackendConfig{Backend: cfg.Backend, DatabaseURL: cfg.DatabaseURL, AuthToken: cfg.AuthToken}, cfg.Encryption, kubeClient)
+		store, err := buildKVBackend(config.KVStoreBackendConfig{Backend: cfg.Backend, DatabaseURL: cfg.DatabaseURL, AuthToken: cfg.AuthToken, Encryption: cfg.Encryption}, kubeClient)
 		return store, err == nil, err
 	}
 	if cfg.Primary == nil {
@@ -796,7 +796,7 @@ func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Int
 	if cfg.Backend != "" || cfg.DatabaseURL != "" || cfg.AuthToken != "" {
 		return nil, false, errors.New("legacy kv_store fields cannot be combined with primary/secondary")
 	}
-	primary, err := buildKVBackend(*cfg.Primary, cfg.Encryption, kubeClient)
+	primary, err := buildKVBackend(*cfg.Primary, kubeClient)
 	if err != nil {
 		return nil, false, fmt.Errorf("primary: %w", err)
 	}
@@ -806,7 +806,7 @@ func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Int
 		}
 		return primary, true, nil
 	}
-	secondary, err := buildKVBackend(*cfg.Secondary, cfg.Encryption, kubeClient)
+	secondary, err := buildKVBackend(*cfg.Secondary, kubeClient)
 	if err != nil {
 		_ = primary.Close()
 		return nil, false, fmt.Errorf("secondary: %w", err)
@@ -855,7 +855,7 @@ func configuredKVBackend(cfg config.KVStoreConfig) string {
 	return backend
 }
 
-func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEncryptionConfig, kubeClient kubernetes.Interface) (kvstore.Store, error) {
+func buildKVBackend(cfg config.KVStoreBackendConfig, kubeClient kubernetes.Interface) (kvstore.Store, error) {
 	switch cfg.Backend {
 	case "", "kubernetes":
 		return kvstore.NewKubernetesStore(kubeClient), nil
@@ -872,11 +872,11 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 		if cfg.Backend == "libsql" {
 			return store, nil
 		}
-		if encryption.ActiveKeyID == "" || len(encryption.Keys) == 0 {
+		if cfg.Encryption.ActiveKeyID == "" || len(cfg.Encryption.Keys) == 0 {
 			_ = store.Close()
 			return nil, errors.New("KV encryption keys are required for libsql-encrypted")
 		}
-		keyring, err := buildKVEncryptionKeyring(ctx, encryption, store)
+		keyring, err := buildKVEncryptionKeyring(ctx, cfg.Encryption, store)
 		if err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("configure KV encryption: %w", err)
