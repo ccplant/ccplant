@@ -320,6 +320,17 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 	if err := copyExecutable(paths.binary); err != nil {
 		return err
 	}
+	if runtime.GOOS == "linux" {
+		uid, gid := lookupUID("agentapi"), lookupGID("agentapi")
+		// The daemon replaces this checksummed binary during dashboard-initiated
+		// upgrades. The directory contains only the managed native ESM executable.
+		if err := os.Chown(filepath.Dir(paths.binary), uid, gid); err != nil {
+			return err
+		}
+		if err := os.Chown(paths.binary, uid, gid); err != nil {
+			return err
+		}
+	}
 	cfg.CredentialsPath = paths.credentials
 	credentials, _ := json.MarshalIndent(map[string]string{"connection_token": cfg.ConnectionToken}, "", "  ")
 	if err := atomicWriteFile(paths.credentials, append(credentials, '\n'), 0o600); err != nil {

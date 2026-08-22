@@ -474,6 +474,19 @@ Expected result:
 }
 ```
 
+## Dashboard operations
+
+The settings dashboard shows the last heartbeat, reported version, and active
+session count for each native ESM. Its **Operations** panel uses the outbound
+control channel to read daemon logs and live status, restart the service, or
+install a specific tagged release. No additional inbound management port is
+required.
+
+Upgrades verify the release archive against the published `checksums.txt` and
+are rejected while sessions are active. Linux installations must be installed
+again once with a version containing dashboard operations so the dedicated
+managed-binary directory is writable by the `agentapi` service account.
+
 ## Troubleshooting
 
 - ESM logs should include:

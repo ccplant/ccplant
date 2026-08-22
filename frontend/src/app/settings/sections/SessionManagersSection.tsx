@@ -39,6 +39,8 @@ export function SessionManagersSection() {
           revealedTokens={revealedTokens}
           onRegenerate={regenerateEsmToken}
           regeneratingEsmId={regeneratingEsmId}
+          scope={scopeKind === 'personal' ? 'user' : 'team'}
+          teamId={scopeKind === 'team' ? scopeId : undefined}
         />
       </SettingsSubsection>
     </>

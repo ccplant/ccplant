@@ -134,6 +134,7 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 		return err
 	}
 	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
+	registerNativeManagementRoutes(e, o, manager, []byte(o.connectionToken))
 	e.Any("/:sessionId/*", nativeSessionProxy(manager, []byte(o.connectionToken)))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
