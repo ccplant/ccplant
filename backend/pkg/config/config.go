@@ -517,13 +517,13 @@ type KVStoreReplicationConfig struct {
 }
 
 type KVStoreEncryptionConfig struct {
-	Provider             string            `json:"provider" mapstructure:"provider"`
-	ActiveKeyID          string            `json:"active_key_id" mapstructure:"active_key_id"`
-	KMSRegion            string            `json:"kms_region" mapstructure:"kms_region"`
-	Keys                 map[string]string `json:"keys" mapstructure:"keys"`
-	AllowLegacyPlaintext bool              `json:"allow_legacy_plaintext" mapstructure:"allow_legacy_plaintext"`
-	BranchCacheTTLSeconds int              `json:"branch_cache_ttl_seconds" mapstructure:"branch_cache_ttl_seconds"`
-	BranchCacheMaxEntries int              `json:"branch_cache_max_entries" mapstructure:"branch_cache_max_entries"`
+	Provider              string            `json:"provider" mapstructure:"provider"`
+	ActiveKeyID           string            `json:"active_key_id" mapstructure:"active_key_id"`
+	KMSRegion             string            `json:"kms_region" mapstructure:"kms_region"`
+	Keys                  map[string]string `json:"keys" mapstructure:"keys"`
+	AllowLegacyPlaintext  bool              `json:"allow_legacy_plaintext" mapstructure:"allow_legacy_plaintext"`
+	BranchCacheTTLSeconds int               `json:"branch_cache_ttl_seconds" mapstructure:"branch_cache_ttl_seconds"`
+	BranchCacheMaxEntries int               `json:"branch_cache_max_entries" mapstructure:"branch_cache_max_entries"`
 }
 
 type KVStoreConfig struct {
@@ -1249,6 +1249,7 @@ func bindEnvVars(v *viper.Viper) {
 // setDefaults sets default values for viper configuration
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("binary_path", "ccplant")
+	v.SetDefault("kv_store.encryption.allow_legacy_plaintext", true)
 	// Auth defaults
 	v.SetDefault("auth.bootstrap_admin.enabled", false)
 	v.SetDefault("auth.bootstrap_admin.user_id", "bootstrap-admin")

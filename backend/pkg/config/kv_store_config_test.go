@@ -87,3 +87,17 @@ func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
 		t.Fatalf("branch cache config = ttl:%d max:%d", cfg.KVStore.Encryption.BranchCacheTTLSeconds, cfg.KVStore.Encryption.BranchCacheMaxEntries)
 	}
 }
+
+func TestKVEncryptionAllowsLegacyPlaintextByDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.KVStore.Encryption.AllowLegacyPlaintext {
+		t.Fatal("allow legacy plaintext should default to true")
+	}
+}

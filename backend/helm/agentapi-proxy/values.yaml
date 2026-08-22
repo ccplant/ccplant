@@ -114,7 +114,7 @@ api:
     encryption:
       provider: local
       activeKeyId: ""
-      allowLegacyPlaintext: false
+      allowLegacyPlaintext: true
       branchCacheTTLSeconds: 900
       branchCacheMaxEntries: 128
       kmsRegion: ""
@@ -222,7 +222,7 @@ worker:
     encryption:
       provider: local
       activeKeyId: ""
-      allowLegacyPlaintext: false
+      allowLegacyPlaintext: true
       branchCacheTTLSeconds: 900
       branchCacheMaxEntries: 128
       kmsRegion: ""
@@ -349,7 +349,7 @@ sessionManager:
     encryption:
       provider: local
       activeKeyId: ""
-      allowLegacyPlaintext: false
+      allowLegacyPlaintext: true
       branchCacheTTLSeconds: 900
       branchCacheMaxEntries: 128
       kmsRegion: ""
