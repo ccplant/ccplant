@@ -440,9 +440,11 @@
       "type": "object",
       "required": ["provider", "activeKeyId", "kmsRegion", "kmsKeys", "keysSecretRef"],
       "properties": {
-        "provider": { "enum": ["local", "aws-kms"] },
+        "provider": { "enum": ["local", "aws-kms", "aws-kms-branch"] },
         "activeKeyId": { "type": "string" },
         "allowLegacyPlaintext": { "type": "boolean" },
+        "branchCacheTTLSeconds": { "type": "integer", "minimum": 1 },
+        "branchCacheMaxEntries": { "type": "integer", "minimum": 1 },
         "kmsRegion": { "type": "string" },
         "kmsKeys": { "type": "object", "additionalProperties": { "type": "string" } },
         "keysSecretRef": { "$ref": "#/definitions/secretRef" }

@@ -115,6 +115,8 @@ api:
       provider: local
       activeKeyId: ""
       allowLegacyPlaintext: false
+      branchCacheTTLSeconds: 900
+      branchCacheMaxEntries: 128
       kmsRegion: ""
       kmsKeys: {}
       keysSecretRef:
@@ -221,6 +223,8 @@ worker:
       provider: local
       activeKeyId: ""
       allowLegacyPlaintext: false
+      branchCacheTTLSeconds: 900
+      branchCacheMaxEntries: 128
       kmsRegion: ""
       kmsKeys: {}
       keysSecretRef:
@@ -346,6 +350,8 @@ sessionManager:
       provider: local
       activeKeyId: ""
       allowLegacyPlaintext: false
+      branchCacheTTLSeconds: 900
+      branchCacheMaxEntries: 128
       kmsRegion: ""
       kmsKeys: {}
       keysSecretRef:

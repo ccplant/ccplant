@@ -896,6 +896,9 @@ func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncr
 		return kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
 	case "aws-kms":
 		return kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
+	case "aws-kms-branch":
+		return kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	default:
 		return nil, fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
 	}

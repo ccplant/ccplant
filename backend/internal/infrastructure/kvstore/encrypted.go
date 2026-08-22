@@ -169,7 +169,12 @@ func NewEncryptedStoreWithOptions(backend Store, keyring EnvelopeKeyring, option
 	return &encryptedStore{backend: backend, keyring: keyring, allowLegacyPlaintext: options.AllowLegacyPlaintext}, nil
 }
 
-func (s *encryptedStore) Close() error { return s.backend.Close() }
+func (s *encryptedStore) Close() error {
+	if closer, ok := s.keyring.(interface{ Close() }); ok {
+		closer.Close()
+	}
+	return s.backend.Close()
+}
 
 func (s *encryptedStore) Create(ctx context.Context, record Record) (Record, error) {
 	plaintext := append([]byte(nil), record.Value...)

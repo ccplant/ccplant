@@ -19,11 +19,17 @@ Expand the name of the chart.
   value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
 - name: AGENTAPI_KV_ENCRYPTION_ALLOW_LEGACY_PLAINTEXT
   value: {{ dig "allowLegacyPlaintext" false $encryption | quote }}
-{{- if eq $provider "aws-kms" }}
+{{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") }}
 - name: AGENTAPI_KV_ENCRYPTION_KMS_REGION
-  value: {{ required "kvStore.encryption.kmsRegion is required for aws-kms" (dig "kmsRegion" "" $encryption) | quote }}
+  value: {{ required "kvStore.encryption.kmsRegion is required for an AWS KMS provider" (dig "kmsRegion" "" $encryption) | quote }}
 - name: AGENTAPI_KV_ENCRYPTION_KEYS
   value: {{ toJson $kmsKeys | quote }}
+{{- if eq $provider "aws-kms-branch" }}
+- name: AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_TTL_SECONDS
+  value: {{ dig "branchCacheTTLSeconds" 900 $encryption | quote }}
+- name: AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_MAX_ENTRIES
+  value: {{ dig "branchCacheMaxEntries" 128 $encryption | quote }}
+{{- end }}
 {{- else }}
 - name: AGENTAPI_KV_ENCRYPTION_KEYS
   valueFrom:
