@@ -1,0 +1,147 @@
+name: Dispatch deployment
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Release
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+      api_image:
+        description: Immutable API image (ghcr.io/ccplant/ccplant-api@sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  dev-image:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'CI' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.reference.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        name: Build and publish development API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          push: true
+          tags: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=deploy-dev-api
+          cache-to: type=gha,mode=max,scope=deploy-dev-api
+
+      - id: reference
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "image=ghcr.io/ccplant/ccplant-api@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+  dispatch-dev:
+    needs: dev-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch development deployment
+        env:
+          GH_TOKEN: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          API_IMAGE: ${{ needs.dev-image.outputs.image }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$FLY_API_TOKEN"
+          printf '%s' "$FLY_API_TOKEN" | gh secret set FLY_API_TOKEN --repo ccplant/ccplant-deploy --env dev
+          jq -n \
+            --arg environment dev \
+            --arg api_image "$API_IMAGE" \
+            --arg source_sha "$SOURCE_SHA" \
+            '{event_type:"deploy",client_payload:{environment:$environment,api_image:$api_image,source_sha:$source_sha}}' \
+            | gh api --method POST repos/ccplant/ccplant-deploy/dispatches --input -
+
+  dispatch-production:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Release' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - id: image
+        name: Resolve released API image digest
+        env:
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]
+          tagged="ghcr.io/ccplant/ccplant-api:${RELEASE_TAG}"
+          digest="sha256:$(docker buildx imagetools inspect "$tagged" --raw | sha256sum | cut -d' ' -f1)"
+          echo "image=ghcr.io/ccplant/ccplant-api@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch production deployment
+        env:
+          GH_TOKEN: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          API_IMAGE: ${{ steps.image.outputs.image }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$FLY_API_TOKEN"
+          printf '%s' "$FLY_API_TOKEN" | gh secret set FLY_API_TOKEN --repo ccplant/ccplant-deploy --env production
+          jq -n \
+            --arg environment production \
+            --arg api_image "$API_IMAGE" \
+            --arg source_sha "$SOURCE_SHA" \
+            '{event_type:"deploy",client_payload:{environment:$environment,api_image:$api_image,source_sha:$source_sha}}' \
+            | gh api --method POST repos/ccplant/ccplant-deploy/dispatches --input -
+
+  dispatch-manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate and dispatch manual deployment
+        env:
+          GH_TOKEN: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          API_IMAGE: ${{ inputs.api_image }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$API_IMAGE" =~ ^ghcr\.io/ccplant/ccplant-api@sha256:[a-f0-9]{64}$ ]]
+          test -n "$FLY_API_TOKEN"
+          printf '%s' "$FLY_API_TOKEN" | gh secret set FLY_API_TOKEN --repo ccplant/ccplant-deploy --env "$ENVIRONMENT"
+          jq -n \
+            --arg environment "$ENVIRONMENT" \
+            --arg api_image "$API_IMAGE" \
+            --arg source_sha "$SOURCE_SHA" \
+            '{event_type:"deploy",client_payload:{environment:$environment,api_image:$api_image,source_sha:$source_sha}}' \
+            | gh api --method POST repos/ccplant/ccplant-deploy/dispatches --input -
