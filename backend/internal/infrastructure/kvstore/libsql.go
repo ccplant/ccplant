@@ -39,7 +39,25 @@ PRIMARY KEY (kind, namespace, key))`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensureLibSQLBranchKeyTable(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+func ensureLibSQLBranchKeyTable(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS agentapi_kv_branch_keys (
+provider TEXT NOT NULL, key_id TEXT NOT NULL, generation INTEGER NOT NULL,
+kms_key_ref TEXT NOT NULL, wrapped_key BLOB NOT NULL, status TEXT NOT NULL,
+created_at TEXT NOT NULL, PRIMARY KEY (provider, key_id, generation))`); err != nil {
+		return fmt.Errorf("initialize libSQL branch key table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS agentapi_kv_branch_keys_active
+ON agentapi_kv_branch_keys(provider, key_id) WHERE status = 'active'`); err != nil {
+		return fmt.Errorf("initialize libSQL active branch key index: %w", err)
+	}
+	return nil
 }
 
 func ensureLibSQLMetadataColumn(ctx context.Context, db *sql.DB) error {
@@ -115,6 +133,49 @@ WHERE json_extract(metadata, '$.format') = 'agentapi-kv-metadata/legacy'`)
 }
 
 func (s *LibSQLStore) Close() error { return s.db.Close() }
+
+func (s *LibSQLStore) GetActiveBranchKey(ctx context.Context, provider, keyID string) (BranchKeyRecord, error) {
+	var record BranchKeyRecord
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT provider, key_id, generation, kms_key_ref, wrapped_key, created_at
+FROM agentapi_kv_branch_keys WHERE provider = ? AND key_id = ? AND status = 'active'`, provider, keyID).
+		Scan(&record.Provider, &record.KeyID, &record.Generation, &record.KMSKeyRef, &record.WrappedKey, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BranchKeyRecord{}, ErrBranchKeyNotFound
+	}
+	if err != nil {
+		return BranchKeyRecord{}, fmt.Errorf("get active libSQL branch key: %w", err)
+	}
+	record.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return BranchKeyRecord{}, fmt.Errorf("parse libSQL branch key timestamp: %w", err)
+	}
+	return record, nil
+}
+
+func (s *LibSQLStore) NextBranchKeyGeneration(ctx context.Context, provider, keyID string) (int64, error) {
+	var maximum int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(generation), 0)
+FROM agentapi_kv_branch_keys WHERE provider = ? AND key_id = ?`, provider, keyID).Scan(&maximum); err != nil {
+		return 0, fmt.Errorf("get next libSQL branch key generation: %w", err)
+	}
+	return maximum + 1, nil
+}
+
+func (s *LibSQLStore) CreateActiveBranchKey(ctx context.Context, record BranchKeyRecord) error {
+	createdAt := record.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agentapi_kv_branch_keys
+(provider, key_id, generation, kms_key_ref, wrapped_key, status, created_at)
+VALUES (?, ?, ?, ?, ?, 'active', ?)`, record.Provider, record.KeyID, record.Generation,
+		record.KMSKeyRef, record.WrappedKey, createdAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("create active libSQL branch key: %w", err)
+	}
+	return nil
+}
 
 func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error) {
 	record.Version = 1

@@ -440,7 +440,7 @@
       "type": "object",
       "required": ["provider", "activeKeyId", "kmsRegion", "kmsKeys", "keysSecretRef"],
       "properties": {
-        "provider": { "enum": ["local", "aws-kms", "aws-kms-branch"] },
+        "provider": { "enum": ["local", "aws-kms", "aws-kms-branch", "cloud-kms-branch"] },
         "activeKeyId": { "type": "string" },
         "allowLegacyPlaintext": { "type": "boolean" },
         "branchCacheTTLSeconds": { "type": "integer", "minimum": 1 },

@@ -872,7 +872,7 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 		if encryption.ActiveKeyID == "" && len(encryption.Keys) == 0 {
 			return store, nil
 		}
-		keyring, err := buildKVEncryptionKeyring(ctx, encryption)
+		keyring, err := buildKVEncryptionKeyring(ctx, encryption, store)
 		if err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("configure KV encryption: %w", err)
@@ -890,14 +890,17 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, encryption config.KVStoreEn
 	}
 }
 
-func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncryptionConfig) (kvstore.EnvelopeKeyring, error) {
+func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncryptionConfig, registry kvstore.BranchKeyRegistry) (kvstore.EnvelopeKeyring, error) {
 	switch encryption.Provider {
 	case "", "local":
 		return kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
 	case "aws-kms":
 		return kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
 	case "aws-kms-branch":
-		return kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys,
+		return kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, registry,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "cloud-kms-branch":
+		return kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, registry,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	default:
 		return nil, fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
