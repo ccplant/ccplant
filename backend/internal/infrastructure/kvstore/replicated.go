@@ -75,6 +75,7 @@ func (s *ReplicatedStore) Update(ctx context.Context, record Record) (Record, er
 	secondaryRecord, secondaryErr := s.secondary.Get(ctx, record.Kind, record.Namespace, record.Key)
 	switch {
 	case secondaryErr == nil:
+		secondaryRecord.Labels = updated.Labels
 		secondaryRecord.Value = updated.Value
 		_, secondaryErr = s.secondary.Update(ctx, secondaryRecord)
 	case errors.Is(secondaryErr, ErrNotFound):

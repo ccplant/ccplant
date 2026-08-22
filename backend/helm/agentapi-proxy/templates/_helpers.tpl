@@ -5,6 +5,42 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/* Environment variables for application KV value encryption. */}}
+{{- define "agentapi-proxy.kvEncryptionEnv" -}}
+{{- $encryption := .encryption | default dict -}}
+{{- $prefix := .prefix | default "AGENTAPI_KV_ENCRYPTION" -}}
+{{- $provider := dig "provider" "local" $encryption -}}
+{{- $activeKeyID := dig "activeKeyId" "" $encryption -}}
+{{- $secretName := dig "keysSecretRef" "name" "" $encryption -}}
+{{- $kmsKeys := dig "kmsKeys" (dict) $encryption -}}
+{{- if or $activeKeyID $secretName $kmsKeys -}}
+- name: {{ printf "%s_PROVIDER" $prefix }}
+  value: {{ $provider | quote }}
+- name: {{ printf "%s_ACTIVE_KEY_ID" $prefix }}
+  value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
+{{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") }}
+- name: {{ printf "%s_KMS_REGION" $prefix }}
+  value: {{ required "kvStore.encryption.kmsRegion is required for an AWS KMS provider" (dig "kmsRegion" "" $encryption) | quote }}
+{{- end }}
+{{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") (eq $provider "cloud-kms-branch") }}
+- name: {{ printf "%s_KEYS" $prefix }}
+  value: {{ toJson $kmsKeys | quote }}
+{{- if or (eq $provider "aws-kms-branch") (eq $provider "cloud-kms-branch") }}
+- name: {{ printf "%s_BRANCH_CACHE_TTL_SECONDS" $prefix }}
+  value: {{ dig "branchCacheTTLSeconds" 900 $encryption | quote }}
+- name: {{ printf "%s_BRANCH_CACHE_MAX_ENTRIES" $prefix }}
+  value: {{ dig "branchCacheMaxEntries" 128 $encryption | quote }}
+{{- end }}
+{{- else }}
+- name: {{ printf "%s_KEYS" $prefix }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ required "kvStore.encryption.keysSecretRef.name is required when KV encryption is configured" $secretName | quote }}
+      key: {{ dig "keysSecretRef" "key" "keys.json" $encryption | quote }}
+{{- end }}
+{{- end -}}
+{{- end }}
+
 {{/* Role-specific image helpers. Empty role values preserve the legacy root image. */}}
 {{- define "agentapi-proxy.apiImage" -}}
 {{- $api := .Values.api | default dict -}}

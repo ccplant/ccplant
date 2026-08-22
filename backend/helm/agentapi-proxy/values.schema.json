@@ -9,6 +9,11 @@
         "replicaCount": { "type": "integer", "minimum": 1 },
         "image": { "$ref": "#/definitions/image" },
         "imagePullSecrets": { "type": "array" },
+        "envExclude": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
         "serviceAccount": {
           "allOf": [
             { "$ref": "#/definitions/serviceAccount" },
@@ -331,7 +336,8 @@
         "databaseUrl": { "type": "string" },
         "authToken": { "type": "string" },
         "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
-        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" },
+        "encryption": { "$ref": "#/definitions/kvEncryption" }
       }
     },
     "apiKVStore": {
@@ -374,7 +380,22 @@
             },
             {
               "properties": {
-                "backend": { "const": "libsql" },
+                "backend": { "maxLength": 0 },
+                "primary": {
+                  "properties": { "backend": { "const": "kubernetes" } }
+                },
+                "secondary": {
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "backend": { "enum": ["libsql", "libsql-encrypted"] },
                 "primary": { "properties": { "backend": { "maxLength": 0 } } }
               },
               "anyOf": [
@@ -384,15 +405,28 @@
             },
             {
               "properties": {
+                "backend": { "maxLength": 0 },
                 "primary": {
-                  "properties": { "backend": { "const": "libsql" } },
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                },
+                "secondary": { "properties": { "backend": { "maxLength": 0 } } }
+              }
+            },
+            {
+              "properties": {
+                "primary": {
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
                   "anyOf": [
                     { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                     { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
                   ]
                 },
                 "secondary": {
-                  "properties": { "backend": { "const": "libsql" } },
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
                   "anyOf": [
                     { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                     { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
@@ -406,13 +440,27 @@
     },
     "kvStoreBackend": {
       "type": "object",
-      "required": ["backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef"],
+      "required": ["backend", "databaseUrl", "authToken", "databaseUrlSecretRef", "authTokenSecretRef", "encryption"],
       "properties": {
         "backend": { "type": "string" },
         "databaseUrl": { "type": "string" },
         "authToken": { "type": "string" },
         "databaseUrlSecretRef": { "$ref": "#/definitions/secretRef" },
-        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+        "authTokenSecretRef": { "$ref": "#/definitions/secretRef" },
+        "encryption": { "$ref": "#/definitions/kvEncryption" }
+      }
+    },
+    "kvEncryption": {
+      "type": "object",
+      "required": ["provider", "activeKeyId", "kmsRegion", "kmsKeys", "keysSecretRef"],
+      "properties": {
+        "provider": { "enum": ["local", "aws-kms", "aws-kms-branch", "cloud-kms-branch"] },
+        "activeKeyId": { "type": "string" },
+        "branchCacheTTLSeconds": { "type": "integer", "minimum": 1 },
+        "branchCacheMaxEntries": { "type": "integer", "minimum": 1 },
+        "kmsRegion": { "type": "string" },
+        "kmsKeys": { "type": "object", "additionalProperties": { "type": "string" } },
+        "keysSecretRef": { "$ref": "#/definitions/secretRef" }
       }
     },
     "enabledKVStore": {
@@ -422,7 +470,7 @@
           "oneOf": [
             { "properties": { "backend": { "const": "kubernetes" } } },
             {
-              "properties": { "backend": { "const": "libsql" } },
+              "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
               "anyOf": [
                 { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
                 { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }

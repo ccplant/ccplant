@@ -507,13 +507,23 @@ type RedisConfig struct {
 // KVStoreConfig configures persistence for application data represented as
 // Kubernetes Secrets and ConfigMaps by the repository layer.
 type KVStoreBackendConfig struct {
-	Backend     string `json:"backend" mapstructure:"backend"`
-	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
-	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
+	Backend     string                  `json:"backend" mapstructure:"backend"`
+	DatabaseURL string                  `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string                  `json:"auth_token" mapstructure:"auth_token"`
+	Encryption  KVStoreEncryptionConfig `json:"encryption" mapstructure:"encryption"`
 }
 
 type KVStoreReplicationConfig struct {
 	Mode string `json:"mode" mapstructure:"mode"`
+}
+
+type KVStoreEncryptionConfig struct {
+	Provider              string            `json:"provider" mapstructure:"provider"`
+	ActiveKeyID           string            `json:"active_key_id" mapstructure:"active_key_id"`
+	KMSRegion             string            `json:"kms_region" mapstructure:"kms_region"`
+	Keys                  map[string]string `json:"keys" mapstructure:"keys"`
+	BranchCacheTTLSeconds int               `json:"branch_cache_ttl_seconds" mapstructure:"branch_cache_ttl_seconds"`
+	BranchCacheMaxEntries int               `json:"branch_cache_max_entries" mapstructure:"branch_cache_max_entries"`
 }
 
 type KVStoreConfig struct {
@@ -525,6 +535,7 @@ type KVStoreConfig struct {
 	Primary     *KVStoreBackendConfig    `json:"primary" mapstructure:"primary"`
 	Secondary   *KVStoreBackendConfig    `json:"secondary" mapstructure:"secondary"`
 	Replication KVStoreReplicationConfig `json:"replication" mapstructure:"replication"`
+	Encryption  KVStoreEncryptionConfig  `json:"encryption" mapstructure:"encryption"`
 }
 
 // UsageConfig configures the dedicated libSQL database used for usage events.
@@ -637,7 +648,8 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	var config Config
-	if err := v.Unmarshal(&config, viper.DecodeHook(stockInventoryPoolsDecodeHook())); err != nil {
+	decodeHook := mapstructure.ComposeDecodeHookFunc(stockInventoryPoolsDecodeHook(), stringMapJSONDecodeHook())
+	if err := v.Unmarshal(&config, viper.DecodeHook(decodeHook)); err != nil {
 		return nil, err
 	}
 
@@ -670,6 +682,23 @@ func LoadConfig(filename string) (*Config, error) {
 	log.Printf("[CONFIG] Role-based env files enabled: %v", config.RoleEnvFiles.Enabled)
 
 	return &config, nil
+}
+
+func stringMapJSONDecodeHook() mapstructure.DecodeHookFunc {
+	stringMapType := reflect.TypeOf(map[string]string{})
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String || to != stringMapType {
+			return data, nil
+		}
+		if data == "" {
+			return map[string]string{}, nil
+		}
+		var values map[string]string
+		if err := json.Unmarshal([]byte(data.(string)), &values); err != nil {
+			return nil, err
+		}
+		return values, nil
+	}
 }
 
 func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
@@ -1036,10 +1065,18 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kv_store.primary.backend", "AGENTAPI_KV_STORE_PRIMARY_BACKEND")
 	_ = v.BindEnv("kv_store.primary.database_url", "AGENTAPI_KV_STORE_PRIMARY_DATABASE_URL")
 	_ = v.BindEnv("kv_store.primary.auth_token", "AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN")
+	bindKVEncryptionEnv(v, "kv_store.primary.encryption", "AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION")
 	_ = v.BindEnv("kv_store.secondary.backend", "AGENTAPI_KV_STORE_SECONDARY_BACKEND")
 	_ = v.BindEnv("kv_store.secondary.database_url", "AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL")
 	_ = v.BindEnv("kv_store.secondary.auth_token", "AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN")
+	bindKVEncryptionEnv(v, "kv_store.secondary.encryption", "AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION")
 	_ = v.BindEnv("kv_store.replication.mode", "AGENTAPI_KV_STORE_REPLICATION_MODE")
+	_ = v.BindEnv("kv_store.encryption.active_key_id", "AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID")
+	_ = v.BindEnv("kv_store.encryption.provider", "AGENTAPI_KV_ENCRYPTION_PROVIDER")
+	_ = v.BindEnv("kv_store.encryption.kms_region", "AGENTAPI_KV_ENCRYPTION_KMS_REGION")
+	_ = v.BindEnv("kv_store.encryption.keys", "AGENTAPI_KV_ENCRYPTION_KEYS")
+	_ = v.BindEnv("kv_store.encryption.branch_cache_ttl_seconds", "AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_TTL_SECONDS")
+	_ = v.BindEnv("kv_store.encryption.branch_cache_max_entries", "AGENTAPI_KV_ENCRYPTION_BRANCH_CACHE_MAX_ENTRIES")
 	_ = v.BindEnv("usage.enabled", "AGENTAPI_USAGE_ENABLED")
 	_ = v.BindEnv("usage.database_url", "AGENTAPI_USAGE_DATABASE_URL")
 	_ = v.BindEnv("usage.auth_token", "AGENTAPI_USAGE_AUTH_TOKEN")
@@ -1208,6 +1245,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("redis.read_timeout", "AGENTAPI_REDIS_READ_TIMEOUT")
 	_ = v.BindEnv("redis.write_timeout", "AGENTAPI_REDIS_WRITE_TIMEOUT")
 
+}
+
+func bindKVEncryptionEnv(v *viper.Viper, path, envPrefix string) {
+	_ = v.BindEnv(path+".active_key_id", envPrefix+"_ACTIVE_KEY_ID")
+	_ = v.BindEnv(path+".provider", envPrefix+"_PROVIDER")
+	_ = v.BindEnv(path+".kms_region", envPrefix+"_KMS_REGION")
+	_ = v.BindEnv(path+".keys", envPrefix+"_KEYS")
+	_ = v.BindEnv(path+".branch_cache_ttl_seconds", envPrefix+"_BRANCH_CACHE_TTL_SECONDS")
+	_ = v.BindEnv(path+".branch_cache_max_entries", envPrefix+"_BRANCH_CACHE_MAX_ENTRIES")
 }
 
 // setDefaults sets default values for viper configuration

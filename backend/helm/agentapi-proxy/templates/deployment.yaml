@@ -40,6 +40,15 @@
 {{- range $apiEnvNames }}
 {{- $apiEnv = append $apiEnv (index $apiEnvByName .) }}
 {{- end }}
+{{- /* Let the API opt out of release-wide variables used by other roles. */}}
+{{- $apiEnvExclude := $api.envExclude | default list }}
+{{- $unexcludedApiEnv := list }}
+{{- range $apiEnv }}
+{{- if not (has .name $apiEnvExclude) }}
+{{- $unexcludedApiEnv = append $unexcludedApiEnv . }}
+{{- end }}
+{{- end }}
+{{- $apiEnv = $unexcludedApiEnv }}
 {{- /* Prefer canonical structured values over their legacy env entries. */}}
 {{- $canonicalApiEnv := dict }}
 {{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}
@@ -96,7 +105,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "agentapi-proxy.apiServiceAccountName" . }}
-      automountServiceAccountToken: {{ eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes" }}
+      automountServiceAccountToken: {{ or (eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes") (eq (dig "primary" "backend" "" ($api.kvStore | default dict)) "kubernetes") }}
       securityContext:
         {{- if $apiPodSecurityContext }}
         {{- toYaml $apiPodSecurityContext | nindent 8 }}
@@ -326,6 +335,8 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "primary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION") | nindent 12 }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "secondary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION") | nindent 12 }}
             - name: AGENTAPI_USAGE_ENABLED
               value: {{ dig "usage" "enabled" false .Values.config | quote }}
             {{- if (dig "usage" "enabled" false .Values.config) }}

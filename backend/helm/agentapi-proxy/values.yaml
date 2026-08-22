@@ -68,6 +68,10 @@ api:
   tolerations: []
   affinity: {}
   env: []
+  # Names to omit from the API container after merging global and API env.
+  # This is useful when another component needs generic AWS_* credentials but
+  # the API must use credentials supplied through its own envFrom secret.
+  envExclude: []
   envFrom: []
   # API application persistence. This is independent from the worker and
   # session-manager stores even when all three roles use the same libSQL
@@ -95,6 +99,16 @@ api:
       authTokenSecretRef:
         name: ""
         key: auth-token
+      encryption:
+        provider: local
+        activeKeyId: ""
+        branchCacheTTLSeconds: 900
+        branchCacheMaxEntries: 128
+        kmsRegion: ""
+        kmsKeys: {}
+        keysSecretRef:
+          name: ""
+          key: keys.json
     secondary:
       backend: ""
       databaseUrl: ""
@@ -105,6 +119,16 @@ api:
       authTokenSecretRef:
         name: ""
         key: auth-token
+      encryption:
+        provider: local
+        activeKeyId: ""
+        branchCacheTTLSeconds: 900
+        branchCacheMaxEntries: 128
+        kmsRegion: ""
+        kmsKeys: {}
+        keysSecretRef:
+          name: ""
+          key: keys.json
     replication:
       mode: ""
     migration:
@@ -204,6 +228,16 @@ worker:
     authTokenSecretRef:
       name: ""
       key: auth-token
+    encryption:
+      provider: local
+      activeKeyId: ""
+      branchCacheTTLSeconds: 900
+      branchCacheMaxEntries: 128
+      kmsRegion: ""
+      kmsKeys: {}
+      keysSecretRef:
+        name: ""
+        key: keys.json
 
   # Deprecated. Worker leader election is coordinated through controlApi, and
   # Redis is configured on api.redis.
@@ -320,6 +354,16 @@ sessionManager:
     authTokenSecretRef:
       name: ""
       key: auth-token
+    encryption:
+      provider: local
+      activeKeyId: ""
+      branchCacheTTLSeconds: 900
+      branchCacheMaxEntries: 128
+      kmsRegion: ""
+      kmsKeys: {}
+      keysSecretRef:
+        name: ""
+        key: keys.json
   redis:
     addr: ""
     existingSecret: ""

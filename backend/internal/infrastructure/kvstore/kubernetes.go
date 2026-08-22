@@ -101,7 +101,11 @@ func (s *KubernetesStore) List(ctx context.Context, query Query) ([]Record, erro
 	var records []Record
 	switch query.Kind {
 	case KindSecret:
-		list, err := s.client.CoreV1().Secrets(query.Namespace).List(ctx, metav1.ListOptions{LabelSelector: labels.Everything().String()})
+		selector := query.LabelSelector
+		if selector == "" {
+			selector = labels.Everything().String()
+		}
+		list, err := s.client.CoreV1().Secrets(query.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
 			return nil, translateKubernetesError(err)
 		}
@@ -113,7 +117,11 @@ func (s *KubernetesStore) List(ctx context.Context, query Query) ([]Record, erro
 			records = append(records, record)
 		}
 	case KindConfigMap:
-		list, err := s.client.CoreV1().ConfigMaps(query.Namespace).List(ctx, metav1.ListOptions{LabelSelector: labels.Everything().String()})
+		selector := query.LabelSelector
+		if selector == "" {
+			selector = labels.Everything().String()
+		}
+		list, err := s.client.CoreV1().ConfigMaps(query.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {
 			return nil, translateKubernetesError(err)
 		}
@@ -142,7 +150,7 @@ func secretRecord(object *corev1.Secret, err error) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{Kind: KindSecret, Namespace: object.Namespace, Key: object.Name, Value: value, Version: version}, nil
+	return Record{Kind: KindSecret, Namespace: object.Namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version}, nil
 }
 
 func configMapRecord(object *corev1.ConfigMap, err error) (Record, error) {
@@ -157,7 +165,7 @@ func configMapRecord(object *corev1.ConfigMap, err error) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{Kind: KindConfigMap, Namespace: object.Namespace, Key: object.Name, Value: value, Version: version}, nil
+	return Record{Kind: KindConfigMap, Namespace: object.Namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version}, nil
 }
 
 func parseResourceVersion(value string) (int64, error) {

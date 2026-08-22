@@ -787,7 +787,7 @@ func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Int
 		if cfg.Backend == "" || cfg.Backend == "kubernetes" {
 			return nil, false, nil
 		}
-		store, err := buildKVBackend(config.KVStoreBackendConfig{Backend: cfg.Backend, DatabaseURL: cfg.DatabaseURL, AuthToken: cfg.AuthToken}, kubeClient)
+		store, err := buildKVBackend(config.KVStoreBackendConfig{Backend: cfg.Backend, DatabaseURL: cfg.DatabaseURL, AuthToken: cfg.AuthToken, Encryption: cfg.Encryption}, kubeClient)
 		return store, err == nil, err
 	}
 	if cfg.Primary == nil {
@@ -835,11 +835,11 @@ func resolveApplicationNamespace(configured string) string {
 
 func validateAPIKVStore(cfg config.KVStoreConfig) error {
 	backend := configuredKVBackend(cfg)
-	if backend != "libsql" && backend != "kubernetes" {
-		return fmt.Errorf("primary backend must be libsql or kubernetes, got %q", backend)
+	if backend != "libsql" && backend != "libsql-encrypted" && backend != "kubernetes" {
+		return fmt.Errorf("primary backend must be libsql, libsql-encrypted, or kubernetes, got %q", backend)
 	}
-	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" && cfg.Secondary.Backend != "kubernetes" {
-		return fmt.Errorf("secondary backend must be libsql or kubernetes in the API role, got %q", cfg.Secondary.Backend)
+	if cfg.Secondary != nil && cfg.Secondary.Backend != "libsql" && cfg.Secondary.Backend != "libsql-encrypted" && cfg.Secondary.Backend != "kubernetes" {
+		return fmt.Errorf("secondary backend must be libsql, libsql-encrypted, or kubernetes in the API role, got %q", cfg.Secondary.Backend)
 	}
 	return nil
 }
@@ -859,15 +859,53 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, kubeClient kubernetes.Inter
 	switch cfg.Backend {
 	case "", "kubernetes":
 		return kvstore.NewKubernetesStore(kubeClient), nil
-	case "libsql":
+	case "libsql", "libsql-encrypted":
 		if strings.TrimSpace(cfg.DatabaseURL) == "" {
 			return nil, errors.New("database_url is required for libSQL")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		return kvstore.NewLibSQLStore(ctx, cfg.DatabaseURL, cfg.AuthToken)
+		store, err := kvstore.NewLibSQLStore(ctx, cfg.DatabaseURL, cfg.AuthToken)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Backend == "libsql" {
+			return store, nil
+		}
+		if cfg.Encryption.ActiveKeyID == "" || len(cfg.Encryption.Keys) == 0 {
+			_ = store.Close()
+			return nil, errors.New("KV encryption keys are required for libsql-encrypted")
+		}
+		keyring, err := buildKVEncryptionKeyring(ctx, cfg.Encryption, store)
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("configure KV encryption: %w", err)
+		}
+		encrypted, err := kvstore.NewEncryptedStore(store, keyring)
+		if err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		return encrypted, nil
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
+	}
+}
+
+func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncryptionConfig, registry kvstore.BranchKeyRegistry) (kvstore.EnvelopeKeyring, error) {
+	switch encryption.Provider {
+	case "", "local":
+		return kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
+	case "aws-kms":
+		return kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
+	case "aws-kms-branch":
+		return kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, registry,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "cloud-kms-branch":
+		return kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, registry,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	default:
+		return nil, fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
 	}
 }
 

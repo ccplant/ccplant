@@ -22,13 +22,15 @@ type Record struct {
 	Kind      Kind
 	Namespace string
 	Key       string
+	Labels    map[string]string
 	Value     []byte
 	Version   int64
 }
 
 type Query struct {
-	Kind      Kind
-	Namespace string
+	Kind          Kind
+	Namespace     string
+	LabelSelector string
 }
 
 // Store is the single persistence boundary for Kubernetes-backed KV data.

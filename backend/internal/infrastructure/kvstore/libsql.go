@@ -3,15 +3,33 @@ package kvstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
+	"k8s.io/apimachinery/pkg/labels"
 	_ "modernc.org/sqlite" // register the sqlite driver for local file:// databases
 )
 
-type LibSQLStore struct{ db *sql.DB }
+type LibSQLStore struct {
+	db              *sql.DB
+	encryptedValues bool
+}
+
+func (s *LibSQLStore) expectEncryptedValues() { s.encryptedValues = true }
+
+func (s *LibSQLStore) validateValueMode(value []byte) error {
+	isEncrypted := isEnvelopeCandidate(value)
+	if s.encryptedValues && !isEncrypted {
+		return ErrPlaintextInEncryptedStore
+	}
+	if !s.encryptedValues && isEncrypted {
+		return ErrEncryptedInPlaintextStore
+	}
+	return nil
+}
 
 func NewLibSQLStore(ctx context.Context, databaseURL, authToken string) (*LibSQLStore, error) {
 	opts := []libsql.Option{}
@@ -28,20 +46,165 @@ func NewLibSQLStore(ctx context.Context, databaseURL, authToken string) (*LibSQL
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS agentapi_kv (
 kind TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL,
 version INTEGER NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL,
+	metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
 PRIMARY KEY (kind, namespace, key))`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize libSQL schema: %w", err)
 	}
+	if err := ensureLibSQLMetadataColumn(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureLibSQLBranchKeyTable(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+func ensureLibSQLBranchKeyTable(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS agentapi_kv_branch_keys (
+provider TEXT NOT NULL, key_id TEXT NOT NULL, generation INTEGER NOT NULL,
+kms_key_ref TEXT NOT NULL, wrapped_key BLOB NOT NULL, status TEXT NOT NULL,
+created_at TEXT NOT NULL, PRIMARY KEY (provider, key_id, generation))`); err != nil {
+		return fmt.Errorf("initialize libSQL branch key table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS agentapi_kv_branch_keys_active
+ON agentapi_kv_branch_keys(provider, key_id) WHERE status = 'active'`); err != nil {
+		return fmt.Errorf("initialize libSQL active branch key index: %w", err)
+	}
+	return nil
+}
+
+func ensureLibSQLMetadataColumn(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(agentapi_kv)`)
+	if err != nil {
+		return fmt.Errorf("inspect libSQL schema: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("scan libSQL schema: %w", err)
+		}
+		if name == "metadata" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect libSQL schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close libSQL schema rows: %w", err)
+	}
+	if found {
+		return backfillLegacyLibSQLMetadata(ctx, db)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE agentapi_kv ADD COLUMN metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/legacy","labels":{}}' CHECK (json_valid(metadata))`); err != nil {
+		return fmt.Errorf("add libSQL metadata column: %w", err)
+	}
+	return backfillLegacyLibSQLMetadata(ctx, db)
+}
+
+func backfillLegacyLibSQLMetadata(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `SELECT kind, namespace, key, value FROM agentapi_kv
+WHERE json_extract(metadata, '$.format') = 'agentapi-kv-metadata/legacy'`)
+	if err != nil {
+		return fmt.Errorf("list legacy libSQL metadata: %w", err)
+	}
+	type legacyRecord struct {
+		kind           Kind
+		namespace, key string
+		value          []byte
+	}
+	var records []legacyRecord
+	for rows.Next() {
+		var record legacyRecord
+		if err := rows.Scan(&record.kind, &record.namespace, &record.key, &record.value); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan legacy libSQL metadata: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close legacy libSQL metadata rows: %w", err)
+	}
+	for _, record := range records {
+		recordLabels, err := documentLabels(record.kind, record.value)
+		if err != nil {
+			return fmt.Errorf("extract labels for legacy %s/%s: %w", record.kind, record.key, err)
+		}
+		metadata, err := marshalRecordMetadata(recordLabels)
+		if err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE agentapi_kv SET metadata = ? WHERE kind = ? AND namespace = ? AND key = ?`, metadata, record.kind, record.namespace, record.key); err != nil {
+			return fmt.Errorf("backfill metadata for legacy %s/%s: %w", record.kind, record.key, err)
+		}
+	}
+	return nil
 }
 
 func (s *LibSQLStore) Close() error { return s.db.Close() }
 
+func (s *LibSQLStore) GetActiveBranchKey(ctx context.Context, provider, keyID string) (BranchKeyRecord, error) {
+	var record BranchKeyRecord
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT provider, key_id, generation, kms_key_ref, wrapped_key, created_at
+FROM agentapi_kv_branch_keys WHERE provider = ? AND key_id = ? AND status = 'active'`, provider, keyID).
+		Scan(&record.Provider, &record.KeyID, &record.Generation, &record.KMSKeyRef, &record.WrappedKey, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BranchKeyRecord{}, ErrBranchKeyNotFound
+	}
+	if err != nil {
+		return BranchKeyRecord{}, fmt.Errorf("get active libSQL branch key: %w", err)
+	}
+	record.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return BranchKeyRecord{}, fmt.Errorf("parse libSQL branch key timestamp: %w", err)
+	}
+	return record, nil
+}
+
+func (s *LibSQLStore) NextBranchKeyGeneration(ctx context.Context, provider, keyID string) (int64, error) {
+	var maximum int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(generation), 0)
+FROM agentapi_kv_branch_keys WHERE provider = ? AND key_id = ?`, provider, keyID).Scan(&maximum); err != nil {
+		return 0, fmt.Errorf("get next libSQL branch key generation: %w", err)
+	}
+	return maximum + 1, nil
+}
+
+func (s *LibSQLStore) CreateActiveBranchKey(ctx context.Context, record BranchKeyRecord) error {
+	createdAt := record.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agentapi_kv_branch_keys
+(provider, key_id, generation, kms_key_ref, wrapped_key, status, created_at)
+VALUES (?, ?, ?, ?, ?, 'active', ?)`, record.Provider, record.KeyID, record.Generation,
+		record.KMSKeyRef, record.WrappedKey, createdAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("create active libSQL branch key: %w", err)
+	}
+	return nil
+}
+
 func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error) {
+	if err := s.validateValueMode(record.Value); err != nil {
+		return Record{}, err
+	}
 	record.Version = 1
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agentapi_kv
-(kind, namespace, key, version, value, updated_at) VALUES (?, ?, ?, 1, ?, ?)`,
-		record.Kind, record.Namespace, record.Key, record.Value, time.Now().UTC().Format(time.RFC3339Nano))
+	metadata, err := marshalRecordMetadata(record.Labels)
+	if err != nil {
+		return Record{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO agentapi_kv
+(kind, namespace, key, version, metadata, value, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)`,
+		record.Kind, record.Namespace, record.Key, metadata, record.Value, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		if _, getErr := s.Get(ctx, record.Kind, record.Namespace, record.Key); getErr == nil {
 			return Record{}, ErrConflict
@@ -52,9 +215,16 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 }
 
 func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error) {
+	if err := s.validateValueMode(record.Value); err != nil {
+		return Record{}, err
+	}
+	metadata, err := marshalRecordMetadata(record.Labels)
+	if err != nil {
+		return Record{}, err
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE agentapi_kv SET version = version + 1,
-value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`,
-		record.Value, time.Now().UTC().Format(time.RFC3339Nano), record.Kind, record.Namespace, record.Key, record.Version)
+metadata = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`,
+		metadata, record.Value, time.Now().UTC().Format(time.RFC3339Nano), record.Kind, record.Namespace, record.Key, record.Version)
 	if err != nil {
 		return Record{}, fmt.Errorf("update libSQL record: %w", err)
 	}
@@ -71,13 +241,21 @@ value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND versi
 
 func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string) (Record, error) {
 	record := Record{Kind: kind, Namespace: namespace, Key: key}
-	err := s.db.QueryRowContext(ctx, `SELECT version, value FROM agentapi_kv
-WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&record.Version, &record.Value)
+	var metadata []byte
+	err := s.db.QueryRowContext(ctx, `SELECT version, metadata, value FROM agentapi_kv
+WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&record.Version, &metadata, &record.Value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
 	if err != nil {
 		return Record{}, fmt.Errorf("get libSQL record: %w", err)
+	}
+	record.Labels, err = unmarshalRecordMetadata(metadata)
+	if err != nil {
+		return Record{}, fmt.Errorf("decode libSQL metadata: %w", err)
+	}
+	if err := s.validateValueMode(record.Value); err != nil {
+		return Record{}, err
 	}
 	return record, nil
 }
@@ -101,7 +279,11 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 }
 
 func (s *LibSQLStore) List(ctx context.Context, query Query) ([]Record, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT key, version, value FROM agentapi_kv
+	selector, err := labels.Parse(query.LabelSelector)
+	if err != nil {
+		return nil, fmt.Errorf("parse label selector: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT key, version, metadata, value FROM agentapi_kv
 WHERE kind = ? AND namespace = ? ORDER BY key`, query.Kind, query.Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list libSQL records: %w", err)
@@ -110,10 +292,53 @@ WHERE kind = ? AND namespace = ? ORDER BY key`, query.Kind, query.Namespace)
 	var records []Record
 	for rows.Next() {
 		record := Record{Kind: query.Kind, Namespace: query.Namespace}
-		if err := rows.Scan(&record.Key, &record.Version, &record.Value); err != nil {
+		var metadata []byte
+		if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.Value); err != nil {
 			return nil, fmt.Errorf("scan libSQL record: %w", err)
+		}
+		record.Labels, err = unmarshalRecordMetadata(metadata)
+		if err != nil {
+			return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
+		}
+		if err := s.validateValueMode(record.Value); err != nil {
+			return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
+		}
+		if !selector.Matches(labels.Set(record.Labels)) {
+			continue
 		}
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+const recordMetadataFormat = "agentapi-kv-metadata/v1"
+
+type recordMetadata struct {
+	Format string            `json:"format"`
+	Labels map[string]string `json:"labels"`
+}
+
+func marshalRecordMetadata(recordLabels map[string]string) ([]byte, error) {
+	if recordLabels == nil {
+		recordLabels = map[string]string{}
+	}
+	metadata, err := json.Marshal(recordMetadata{Format: recordMetadataFormat, Labels: recordLabels})
+	if err != nil {
+		return nil, fmt.Errorf("encode libSQL metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+func unmarshalRecordMetadata(data []byte) (map[string]string, error) {
+	var metadata recordMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, err
+	}
+	if metadata.Format != recordMetadataFormat {
+		return nil, fmt.Errorf("unsupported metadata format %q", metadata.Format)
+	}
+	if metadata.Labels == nil {
+		metadata.Labels = map[string]string{}
+	}
+	return metadata.Labels, nil
 }

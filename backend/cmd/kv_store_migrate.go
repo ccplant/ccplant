@@ -19,19 +19,21 @@ import (
 )
 
 type kvStoreMigrateOptions struct {
-	namespace            string
-	destinationNamespace string
-	primaryBackend       string
-	primaryDatabaseURL   string
-	primaryAuthToken     string
-	secondaryBackend     string
-	secondaryDatabaseURL string
-	secondaryAuthToken   string
-	legacyDatabaseURL    string
-	legacyAuthToken      string
-	dryRun               bool
-	overwrite            bool
-	output               string
+	namespace             string
+	destinationNamespace  string
+	primaryBackend        string
+	primaryDatabaseURL    string
+	primaryAuthToken      string
+	secondaryBackend      string
+	secondaryDatabaseURL  string
+	secondaryAuthToken    string
+	legacyDatabaseURL     string
+	legacyAuthToken       string
+	encryptionActiveKeyID string
+	encryptionKeysJSON    string
+	dryRun                bool
+	overwrite             bool
+	output                string
 }
 
 type kvStoreMigrationEntry struct {
@@ -81,6 +83,10 @@ without writing anything.`,
 				return err
 			}
 			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
+			secondary, err = encryptedMigrationDestination(secondary, o.encryptionActiveKeyID, o.encryptionKeysJSON)
+			if err != nil {
+				return err
+			}
 
 			result, migrateErr := migrateKVStores(cmd.Context(), primary, secondary, *o)
 			if err := writeKVStoreMigrationResult(cmd.OutOrStdout(), result, o.output); err != nil {
@@ -100,10 +106,30 @@ without writing anything.`,
 	flags.StringVar(&o.secondaryAuthToken, "secondary-auth-token", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN"), "secondary libSQL authentication token")
 	flags.StringVar(&o.legacyDatabaseURL, "database-url", os.Getenv("AGENTAPI_KV_STORE_DATABASE_URL"), "deprecated: destination libSQL database URL")
 	flags.StringVar(&o.legacyAuthToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "deprecated: destination libSQL authentication token")
+	flags.StringVar(&o.encryptionActiveKeyID, "encryption-active-key-id", os.Getenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID"), "active key ID used to encrypt destination values")
+	flags.StringVar(&o.encryptionKeysJSON, "encryption-keys-json", os.Getenv("AGENTAPI_KV_ENCRYPTION_KEYS"), "JSON object mapping destination key IDs to base64-encoded 32-byte keys")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "inspect records and conflicts without writing to the secondary store")
 	flags.BoolVar(&o.overwrite, "overwrite", false, "replace different records that already exist in the secondary store")
 	flags.StringVarP(&o.output, "output", "o", "text", "output format: text or json")
 	return command
+}
+
+func encryptedMigrationDestination(store kvstore.Store, activeKeyID, keysJSON string) (kvstore.Store, error) {
+	if activeKeyID == "" && strings.TrimSpace(keysJSON) == "" {
+		return store, nil
+	}
+	if activeKeyID == "" || strings.TrimSpace(keysJSON) == "" {
+		return nil, errors.New("both encryption active key ID and encryption keys JSON are required")
+	}
+	var keys map[string]string
+	if err := json.Unmarshal([]byte(keysJSON), &keys); err != nil {
+		return nil, fmt.Errorf("decode encryption keys JSON: %w", err)
+	}
+	keyring, err := kvstore.NewLocalKeyring(activeKeyID, keys)
+	if err != nil {
+		return nil, err
+	}
+	return kvstore.NewEncryptedStore(store, keyring)
 }
 
 type migrationStoreConfig struct {

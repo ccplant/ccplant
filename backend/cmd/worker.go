@@ -170,10 +170,12 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	backend := cfg.Backend
 	databaseURL := cfg.DatabaseURL
 	authToken := cfg.AuthToken
+	encryption := cfg.Encryption
 	if cfg.Primary != nil {
 		backend = cfg.Primary.Backend
 		databaseURL = cfg.Primary.DatabaseURL
 		authToken = cfg.Primary.AuthToken
+		encryption = cfg.Primary.Encryption
 	}
 	if backend == "" || backend == "kubernetes" {
 		restConfig, err := ctrlconfig.GetConfig()
@@ -186,12 +188,47 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 		}
 		return kvstore.NewKubernetesStore(client), nil
 	}
-	if backend != "libsql" {
+	if backend != "libsql" && backend != "libsql-encrypted" {
 		return nil, fmt.Errorf("unsupported worker kv_store backend %q", backend)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return kvstore.NewLibSQLStore(ctx, databaseURL, authToken)
+	store, err := kvstore.NewLibSQLStore(ctx, databaseURL, authToken)
+	if err != nil {
+		return nil, err
+	}
+	if backend == "libsql" {
+		return store, nil
+	}
+	if encryption.ActiveKeyID == "" || len(encryption.Keys) == 0 {
+		_ = store.Close()
+		return nil, errors.New("KV encryption keys are required for libsql-encrypted")
+	}
+	var keyring kvstore.EnvelopeKeyring
+	switch encryption.Provider {
+	case "", "local":
+		keyring, err = kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
+	case "aws-kms":
+		keyring, err = kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
+	case "aws-kms-branch":
+		keyring, err = kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, store,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "cloud-kms-branch":
+		keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	default:
+		err = fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
+	}
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("configure worker KV encryption: %w", err)
+	}
+	encrypted, err := kvstore.NewEncryptedStore(store, keyring)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return encrypted, nil
 }
 
 func newRemoteScheduleWorker(cfg *config.Config, manager schedule.Manager, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient, namespace string) *schedule.LeaderWorker {

@@ -1,6 +1,7 @@
 package kvstore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -59,6 +60,39 @@ func TestReplicatedStoreCreateWritesBoth(t *testing.T) {
 	}
 	if created.Version != 1 || len(primary.records) != 1 || len(secondary.records) != 1 {
 		t.Fatalf("create was not replicated: created=%+v primary=%v secondary=%v", created, primary.records, secondary.records)
+	}
+}
+
+func TestReplicatedStoreEncryptsOnlySecondary(t *testing.T) {
+	ctx := context.Background()
+	primary := newMemoryStore()
+	secondaryBackend := newMemoryStore()
+	keyring, err := NewLocalKeyring("current", map[string]string{"current": randomEncodedKey(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondary, err := NewEncryptedStore(secondaryBackend, keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := secretDocument(t, "key", nil, "secret")
+	if _, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "key", Value: value}); err != nil {
+		t.Fatal(err)
+	}
+	primaryRecord, err := primary.Get(ctx, KindSecret, "ns", "key")
+	if err != nil || !bytes.Equal(primaryRecord.Value, value) {
+		t.Fatalf("plaintext primary value=%q err=%v", primaryRecord.Value, err)
+	}
+	rawSecondary, err := secondaryBackend.Get(ctx, KindSecret, "ns", "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(rawSecondary.Value, value) || !isEnvelopeCandidate(rawSecondary.Value) {
+		t.Fatalf("secondary was not encrypted: %q", rawSecondary.Value)
 	}
 }
 

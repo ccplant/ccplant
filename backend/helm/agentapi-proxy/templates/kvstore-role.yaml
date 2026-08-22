@@ -1,6 +1,7 @@
 {{- $api := .Values.api | default dict -}}
 {{- $worker := .Values.worker | default dict -}}
-{{- $apiKubernetes := eq (dig "backend" "" ($api.kvStore | default dict)) "kubernetes" -}}
+{{- $apiKV := $api.kvStore | default dict -}}
+{{- $apiKubernetes := or (eq (dig "backend" "" $apiKV) "kubernetes") (eq (dig "primary" "backend" "" $apiKV) "kubernetes") -}}
 {{- $workerKubernetes := and ($worker.enabled | default false) (eq (dig "backend" "" ($worker.kvStore | default dict)) "kubernetes") -}}
 {{- if or $apiKubernetes $workerKubernetes }}
 apiVersion: rbac.authorization.k8s.io/v1
