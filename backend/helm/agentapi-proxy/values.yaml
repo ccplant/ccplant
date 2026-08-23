@@ -165,6 +165,25 @@ api:
       name: ""
       key: token
 
+# Optional Google Cloud Run output. The application configuration continues to
+# come from this chart's existing api/config/github/asset/scia/sessionControl
+# values; this section contains only Cloud Run platform settings.
+cloudRun:
+  enabled: false
+  service:
+    name: ""
+    project: ""
+    region: ""
+    serviceAccount: ""
+  ingress: all
+  scaling:
+    minInstances: 0
+    maxInstances: 3
+  startupCpuBoost: true
+  containerConcurrency: 80
+  timeoutSeconds: 300
+  imageDigest: ""
+
 # Deprecated API aliases retained for upgrades using older values files.
 replicaCount: 1
 

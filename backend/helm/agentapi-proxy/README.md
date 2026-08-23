@@ -22,6 +22,16 @@ are delegated to the backend control API. Enabling `worker` requires either
 libSQL or Kubernetes KV persistence, bundled or external Redis, and a
 worker-control Secret shared only with the API.
 
+## Cloud Run manifest
+
+The same application values can render the API as a Google Cloud Run Knative
+Service by setting `cloudRun.enabled=true` and selecting
+`templates/cloud-run-service.yaml`. Settings under `api`, `config`, `github`,
+`asset`, `scia`, and `sessionControl` are shared with the Kubernetes Deployment;
+`cloudRun` contains platform-only service and scaling settings. For Cloud Run,
+the `key` in a Secret Manager-backed `secretRef` is its version such as
+`latest`. Secret values must not be stored in Helm values.
+
 ```yaml
 worker:
   enabled: true

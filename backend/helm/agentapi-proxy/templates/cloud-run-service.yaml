@@ -1,0 +1,104 @@
+{{- if .Values.cloudRun.enabled }}
+{{- $cloudRun := .Values.cloudRun }}
+{{- $service := $cloudRun.service }}
+{{- $api := .Values.api }}
+{{- $kv := $api.kvStore }}
+{{- $oauth := .Values.config.auth.github.oauth }}
+{{- $asset := .Values.asset }}
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ required "cloudRun.service.name is required" $service.name | quote }}
+  namespace: {{ required "cloudRun.service.project is required" $service.project | quote }}
+  labels:
+    cloud.googleapis.com/location: {{ required "cloudRun.service.region is required" $service.region | quote }}
+  annotations:
+    run.googleapis.com/ingress: {{ $cloudRun.ingress | quote }}
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: {{ $cloudRun.scaling.minInstances | quote }}
+        autoscaling.knative.dev/maxScale: {{ $cloudRun.scaling.maxInstances | quote }}
+        run.googleapis.com/startup-cpu-boost: {{ $cloudRun.startupCpuBoost | quote }}
+    spec:
+      containerConcurrency: {{ $cloudRun.containerConcurrency }}
+      timeoutSeconds: {{ $cloudRun.timeoutSeconds }}
+      serviceAccountName: {{ required "cloudRun.service.serviceAccount is required" $service.serviceAccount | quote }}
+      containers:
+        - name: agentapi-proxy
+          image: {{ printf "%s@%s" $api.image.repository (required "cloudRun.imageDigest is required" $cloudRun.imageDigest) | quote }}
+          command: [/usr/local/bin/ccplant]
+          args: [server]
+          ports:
+            - name: http1
+              containerPort: {{ .Values.service.port }}
+          resources:
+            limits:
+              cpu: {{ $api.resources.limits.cpu | quote }}
+              memory: {{ $api.resources.limits.memory | quote }}
+          env:
+            - {name: AGENTAPI_KV_STORE_NAMESPACE, value: {{ $kv.namespace | quote }}}
+            - {name: AGENTAPI_KV_STORE_BACKEND, value: {{ $kv.backend | quote }}}
+            {{- with $kv.databaseUrlSecretRef.name }}
+            - name: AGENTAPI_KV_STORE_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $kv.databaseUrlSecretRef.key | quote }}}}
+            {{- else }}
+            - {name: AGENTAPI_KV_STORE_DATABASE_URL, value: {{ $kv.databaseUrl | quote }}}
+            {{- end }}
+            {{- with $kv.authTokenSecretRef.name }}
+            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $kv.authTokenSecretRef.key | quote }}}}
+            {{- else }}
+            {{- if $kv.authToken }}
+            - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
+            {{- end }}
+            {{- end }}
+            - {name: AGENTAPI_USAGE_ENABLED, value: {{ .Values.config.usage.enabled | quote }}}
+            - {name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_ENABLED, value: {{ .Values.config.auth.bootstrapAdmin.enabled | quote }}}
+            - {name: AGENTAPI_AUTH_STATIC_ENABLED, value: {{ .Values.config.auth.static.enabled | quote }}}
+            - {name: AGENTAPI_AUTH_STATIC_HEADER_NAME, value: {{ .Values.config.auth.static.headerName | quote }}}
+            - {name: AGENTAPI_AUTH_GITHUB_ENABLED, value: {{ .Values.config.auth.github.enabled | quote }}}
+            - {name: AGENTAPI_AUTH_GITHUB_BASE_URL, value: {{ .Values.config.auth.github.baseUrl | quote }}}
+            - {name: AGENTAPI_AUTH_GITHUB_TOKEN_HEADER, value: {{ .Values.config.auth.github.tokenHeader | quote }}}
+            - {name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_ID, value: {{ $oauth.clientId | quote }}}
+            {{- with $oauth.clientSecretRef.name }}
+            - name: AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $oauth.clientSecretRef.key | quote }}}}
+            {{- end }}
+            - {name: AGENTAPI_AUTH_GITHUB_OAUTH_SCOPE, value: {{ $oauth.scope | quote }}}
+            {{- with $oauth.allowedRedirectUris }}
+            - {name: OAUTH_ALLOWED_REDIRECT_URIS, value: {{ . | quote }}}
+            {{- end }}
+            - {name: AGENTAPI_ROLE_ENV_FILES_ENABLED, value: {{ .Values.roleEnvFiles.enabled | quote }}}
+            - {name: REPOSITORY_RESTRICTION, value: {{ .Values.github.app.repositoryRestriction | quote }}}
+            {{- with .Values.github.tokenRef.name }}
+            - name: GITHUB_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.github.tokenRef.key | quote }}}}
+            {{- end }}
+            {{- with .Values.config.notification.baseUrl }}
+            - {name: NOTIFICATION_BASE_URL, value: {{ . | quote }}}
+            {{- end }}
+            {{- with .Values.config.webhook.baseUrl }}
+            - {name: AGENTAPI_WEBHOOK_BASE_URL, value: {{ . | quote }}}
+            {{- end }}
+            - {name: AGENTAPI_ASSET_BACKEND, value: {{ $asset.backend | quote }}}
+            - {name: AGENTAPI_ASSET_PUBLIC_BASE_URL, value: {{ $asset.publicBaseUrl | quote }}}
+            - {name: AGENTAPI_ASSET_STORAGE_PATH, value: {{ $asset.storagePath | quote }}}
+            - {name: AGENTAPI_SCIA_ENABLED, value: {{ .Values.scia.enabled | quote }}}
+            - {name: SESSION_CONTROL_LONG_POLL_ENABLED, value: {{ .Values.sessionControl.enabled | quote }}}
+            - {name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED, value: {{ .Values.sessionControl.directRuntimeEnabled | quote }}}
+            {{- with .Values.config.vapid.publicKey }}
+            - {name: VAPID_PUBLIC_KEY, value: {{ . | quote }}}
+            {{- end }}
+            {{- with .Values.config.vapid.privateKeyRef.name }}
+            - name: VAPID_PRIVATE_KEY
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $.Values.config.vapid.privateKeyRef.key | quote }}}}
+            {{- end }}
+            {{- range concat (.Values.env | default list) ($api.env | default list) }}
+            {{- toYaml (list .) | nindent 12 }}
+            {{- end }}
+  traffic:
+    - percent: 100
+      latestRevision: true
+{{- end }}

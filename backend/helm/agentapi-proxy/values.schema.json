@@ -2,6 +2,38 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "cloudRun": {
+      "type": "object",
+      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "service": {
+          "type": "object",
+          "required": ["name", "project", "region", "serviceAccount"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "project": { "type": "string" },
+            "region": { "type": "string" },
+            "serviceAccount": { "type": "string" }
+          }
+        },
+        "ingress": { "enum": ["all", "internal", "internal-and-cloud-load-balancing"] },
+        "scaling": {
+          "type": "object",
+          "required": ["minInstances", "maxInstances"],
+          "properties": {
+            "minInstances": { "type": "integer", "minimum": 0 },
+            "maxInstances": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "startupCpuBoost": { "type": "boolean" },
+        "containerConcurrency": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "imageDigest": { "type": "string" }
+      }
+    },
     "api": {
       "type": "object",
       "required": ["replicaCount", "image", "serviceAccount", "kvStore", "redis", "encryption", "workerControl", "sessionManager"],
