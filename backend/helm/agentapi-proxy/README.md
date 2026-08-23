@@ -29,7 +29,23 @@ Service by setting `cloudRun.enabled=true` and selecting
 `templates/cloud-run-service.yaml`. Settings under `api`, `config`, `github`,
 `asset`, `scia`, and `sessionControl` are shared with the Kubernetes Deployment;
 `cloudRun` contains platform-only service and scaling settings. For Cloud Run,
-the `key` in a Secret Manager-backed `secretRef` is its version such as
+an optional `cloudRun.authConfigSecretRef` can mount an auth configuration file
+from Google Cloud Secret Manager. The secret contents remain environment-owned
+and are not stored in the chart:
+
+```yaml
+cloudRun:
+  authConfigSecretRef:
+    name: my-auth-config
+    key: latest
+```
+
+When configured, the secret version is mounted at
+`/etc/auth-config/auth-config.yaml` and `AGENTAPI_AUTH_CONFIG_FILE` points to
+that path. The Cloud Run runtime service account must have Secret Manager
+Secret Accessor permission for the referenced secret.
+
+The `key` in a Secret Manager-backed `secretRef` is its version such as
 `latest`. Secret values must not be stored in Helm values.
 
 ```yaml

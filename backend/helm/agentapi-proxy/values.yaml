@@ -183,6 +183,11 @@ cloudRun:
   containerConcurrency: 80
   timeoutSeconds: 300
   imageDigest: ""
+  # Optional Secret Manager secret mounted as the application's auth config.
+  # Keep environment-specific mappings in Secret Manager, not chart values.
+  authConfigSecretRef:
+    name: ""
+    key: latest
 
 # Deprecated API aliases retained for upgrades using older values files.
 replicaCount: 1
