@@ -61,6 +61,15 @@ const allTabs: Tab[] = [
     ),
   },
   {
+    label: 'Pools',
+    href: '/pools',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l9 5-9 5-9-5 9-5zm-9 9l9 5 9-5M3 16l9 5 9-5" />
+      </svg>
+    ),
+  },
+  {
     label: 'Sandbox',
     href: '/sandbox-policies',
     icon: (

@@ -3021,6 +3021,10 @@ export class AgentAPIProxyClient {
     return this.makeRequest('/session-pools', { method: 'POST', body: JSON.stringify(input) });
   }
 
+  async patchManagedSessionPool(pool: string, input: { enabled?: boolean; labels?: Record<string, string> }): Promise<LogicalSessionPool> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
   async deleteManagedSessionPool(pool: string): Promise<void> {
     await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
   }
@@ -3028,6 +3032,15 @@ export class AgentAPIProxyClient {
   async listManagedSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
     const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/session-pools/${encodeURIComponent(pool)}/bindings`);
     return result.pool_bindings ?? [];
+  }
+
+  async listManagedSessionPoolSuppliers(pool: string): Promise<SessionPoolSupplier[]> {
+    const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/session-pools/${encodeURIComponent(pool)}/suppliers`);
+    return result.pool_suppliers ?? [];
+  }
+
+  async patchManagedSessionPoolSupplier(pool: string, managerID: string, input: { enabled?: boolean; draining?: boolean; min_idle?: number; max_runners?: number }): Promise<SessionPoolSupplier> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'PATCH', body: JSON.stringify(input) });
   }
 
   async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {

@@ -7,7 +7,6 @@ import {
   KeyRound,
   LucideIcon,
   Plug,
-  Server,
   Sparkles,
   Store,
   Terminal,
@@ -124,14 +123,6 @@ export const settingsNavItems: SettingsNavItem[] = [
     group: 'アクセス',
     scopes: ['team'],
     fields: ['github_app_installation_id'],
-  },
-  {
-    slug: 'session-managers',
-    label: 'セッションマネージャー',
-    icon: Server,
-    group: 'アクセス',
-    scopes: ['personal', 'team'],
-    fields: ['external_session_managers'],
   },
 ]
 
