@@ -5,6 +5,7 @@ import {
   FolderKey,
   Github,
   KeyRound,
+  Layers3,
   LucideIcon,
   Plug,
   Sparkles,
@@ -123,6 +124,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     group: 'アクセス',
     scopes: ['team'],
     fields: ['github_app_installation_id'],
+  },
+  {
+    slug: 'pools',
+    label: 'プール',
+    icon: Layers3,
+    group: '実行基盤',
+    scopes: ['personal', 'team'],
+    fields: ['external_session_managers'],
   },
 ]
 
