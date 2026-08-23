@@ -112,23 +112,6 @@ helm install ccplant oci://ghcr.io/ccplant/charts/ccplant \
 `backend.*`と`frontend.*`以下には各コンポーネントChartのvaluesを指定できます。
 デフォルトの `values.yaml` がこの最小構成を定義しています。
 
-## Cloud Run manifestを生成する場合
-
-`cloudRun.enabled=true`とし、環境固有valuesとイメージdigestを指定すると、このChartを
-Cloud Run Service manifestのSSoTとして利用できます。ChartをCloud Runへ直接installする
-のではなく、対象テンプレートだけを生成して`gcloud run services replace`へ渡します。
-
-```bash
-helm template ccplant chart/ccplant \
-  --show-only templates/cloud-run-service.yaml \
-  --values environments/dev/values.yaml \
-  --set-string cloudRun.image.digest=sha256:... \
-  | gcloud run services replace - --region asia-northeast1
-```
-
-`cloudRun.secrets`にはSecret Managerのsecret名とversionだけを指定し、機密値そのものを
-valuesへ保存しないでください。
-
 注意事項:
 
 - sessionの作業領域はデフォルトで`emptyDir`です。永続化する場合は
