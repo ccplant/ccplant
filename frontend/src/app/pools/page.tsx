@@ -3,7 +3,6 @@
 import { Suspense, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTeamScope } from '@/contexts/TeamScopeContext'
-import NavigationTabs from '../components/NavigationTabs'
 import TopBar from '../components/TopBar'
 import { SaveBar } from '../settings/SaveBar'
 import { SettingsScopeProvider } from '../settings/SettingsScopeContext'
@@ -39,17 +38,10 @@ function PoolsPageContent() {
   return (
     <main className="min-h-dvh bg-gray-50 dark:bg-gray-950">
       <TopBar
-        title="Pools"
-        subtitle="セッションの実行先、供給元、利用権限、稼働状態を管理"
+        title=""
       >
-        <div className="md:hidden">
-          <NavigationTabs />
-        </div>
       </TopBar>
       <div className="flex">
-        <aside className="hidden w-64 flex-shrink-0 border-r border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900 md:block">
-          <NavigationTabs />
-        </aside>
         <div className="min-w-0 flex-1 px-4 py-6 md:px-6 md:py-8 lg:px-8">
           <SettingsScopeProvider
             key={`${scopeKind}:${team ?? ''}`}
