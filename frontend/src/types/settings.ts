@@ -130,10 +130,7 @@ export interface ExternalSessionManagerConfig {
   name: string;         // Human-readable name
   has_connection_token?: boolean; // Response flag for allocator connection token
   connection_token?: string; // Returned only immediately after token generation
-  pool_enabled?: boolean;
-  automatic_assignment_enabled?: boolean;
   labels?: Record<string, string>; // Matches allocator.* session tags
-  pool?: string;        // Automatically managed logical pool
   public_url?: string;
   version?: string;
   active_sessions?: number;
@@ -166,7 +163,6 @@ export interface AvailableManager {
 
 export interface ExternalSessionManagerRegistrationToken {
   manager_id: string;
-  pool: string;
   registration_token: string;
   expires_at: string;
 }
@@ -423,9 +419,6 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
       id: manager.id,
       instance_id: manager.instance_id,
       name: manager.name,
-      pool: manager.pool,
-      pool_enabled: manager.pool_enabled,
-      automatic_assignment_enabled: manager.automatic_assignment_enabled,
       labels: manager.labels,
     }))
   }

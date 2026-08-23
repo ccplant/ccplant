@@ -75,7 +75,7 @@ func TestExternalSessionManagerEnrollmentAndHeartbeatUsesToken(t *testing.T) {
 	require.Equal(t, 2, manager.ActiveSessions)
 }
 
-func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
+func TestExternalSessionManagerPoolMembershipIsManagedBySuppliers(t *testing.T) {
 	repo := newMockSettingsRepository()
 	store := sessionrunnerinfra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSettingsController(repo, nil)
@@ -85,35 +85,25 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
 	var issued esmEnrollmentTokenResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
-	require.Empty(t, issued.Pool)
-
 	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", ESMEnrollmentRequest{
 		RegistrationToken: issued.RegistrationToken, InstanceID: "machine-pool", Name: "native-pool",
 	}, "")
 	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
 	var created esmRegistrationResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-	require.Equal(t, "native-pool", created.Pool)
 	manager, err := store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.Contains(t, manager.Capabilities, core.CapabilityRunnerClaimV1)
 	require.True(t, manager.Enabled)
-	pool, err := store.GetLogicalPool(context.Background(), created.Pool)
+	pools, err := store.ListLogicalPools(context.Background())
 	require.NoError(t, err)
-	require.True(t, pool.Enabled)
-	supplier, err := store.GetPoolSupplier(context.Background(), created.ID, created.Pool)
-	require.NoError(t, err)
-	require.True(t, supplier.Enabled)
-	bindings, err := store.ListBindings(context.Background(), created.Pool)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	require.Equal(t, core.BindingRoleManage, bindings[0].Role)
-	require.True(t, bindings[0].ExplicitOnly)
-	require.Zero(t, bindings[0].Priority)
-	require.False(t, bindings[0].Enabled)
+	require.Empty(t, pools, "enrollment must not create a manager-owned pool")
 
-	poolEnabled := true
-	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{PoolEnabled: &poolEnabled}, "user1")
+	require.NoError(t, store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "shared", Enabled: true}))
+	require.NoError(t, store.CreatePoolSupplier(context.Background(), &core.PoolSupplier{Pool: "shared", ManagerID: created.ID, Enabled: true}))
+	require.NoError(t, store.CreateBinding(context.Background(), &core.Binding{Pool: "shared", SubjectType: core.SubjectUser, SubjectID: "user1", Role: core.BindingRoleManage, Enabled: true}))
+
+	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{Name: "renamed-manager"}, "user1")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)
 	require.NoError(t, controller.PatchExternalSessionManager(ctx))
@@ -121,55 +111,9 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	manager, err = store.GetManager(context.Background(), created.ID)
 	require.NoError(t, err)
 	require.True(t, manager.Enabled)
-	pool, err = store.GetLogicalPool(context.Background(), created.Pool)
-	require.NoError(t, err)
-	require.True(t, pool.Enabled)
-	supplier, err = store.GetPoolSupplier(context.Background(), created.ID, created.Pool)
-	require.NoError(t, err)
-	require.True(t, supplier.Enabled)
-	bindings, err = store.ListBindings(context.Background(), created.Pool)
-	require.NoError(t, err)
-	require.True(t, bindings[0].Enabled)
-	require.True(t, bindings[0].ExplicitOnly)
-
-	automaticAssignmentEnabled := true
-	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
-	ctx.SetParamNames("id")
-	ctx.SetParamValues(created.ID)
-	require.NoError(t, controller.PatchExternalSessionManager(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	bindings, err = store.ListBindings(context.Background(), created.Pool)
-	require.NoError(t, err)
-	require.True(t, bindings[0].Enabled)
-	require.False(t, bindings[0].ExplicitOnly)
-
-	automaticAssignmentEnabled = false
-	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{AutomaticAssignmentEnabled: &automaticAssignmentEnabled}, "user1")
-	ctx.SetParamNames("id")
-	ctx.SetParamValues(created.ID)
-	require.NoError(t, controller.PatchExternalSessionManager(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	bindings, err = store.ListBindings(context.Background(), created.Pool)
-	require.NoError(t, err)
-	require.True(t, bindings[0].Enabled)
-	require.True(t, bindings[0].ExplicitOnly)
-
-	previousPool := created.Pool
-	ctx, rec = esmTestContext(e, http.MethodPatch, "/external-session-managers/:id", ESMUpdateRequest{Pool: "renamed-native-pool"}, "user1")
-	ctx.SetParamNames("id")
-	ctx.SetParamValues(created.ID)
-	require.NoError(t, controller.PatchExternalSessionManager(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	created.Pool = "renamed-native-pool"
-	_, err = store.GetLogicalPool(context.Background(), previousPool)
-	require.ErrorIs(t, err, core.ErrNotFound)
-	_, err = store.GetLogicalPool(context.Background(), created.Pool)
-	require.NoError(t, err)
-	bindings, err = store.ListBindings(context.Background(), created.Pool)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	require.True(t, bindings[0].Enabled)
-	require.True(t, bindings[0].ExplicitOnly)
+	require.Equal(t, "renamed-manager", manager.Name)
+	_, err = store.GetPoolSupplier(context.Background(), created.ID, "shared")
+	require.NoError(t, err, "manager metadata updates must not change pool membership")
 	ctx, _ = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{}, "")
 	ctx.SetParamNames("id")
 	ctx.SetParamValues(created.ID)
@@ -186,14 +130,10 @@ func TestExternalSessionManagerCreatesAndDeletesPoolResources(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	_, err = store.GetManager(context.Background(), created.ID)
 	require.ErrorIs(t, err, core.ErrNotFound)
-	_, err = store.GetLogicalPool(context.Background(), created.Pool)
+	_, err = store.GetPoolSupplier(context.Background(), created.ID, "shared")
 	require.ErrorIs(t, err, core.ErrNotFound)
-}
-
-func TestNativePoolNameUsesDeviceNameAndNormalizesInvalidCharacters(t *testing.T) {
-	require.Equal(t, "MacBook-Pro", nativePoolName("MacBook Pro", "manager-1"))
-	require.Equal(t, "native-device", nativePoolName("native-device", "manager-1"))
-	require.Equal(t, "esm-manager-1", nativePoolName("___", "manager-1"))
+	_, err = store.GetLogicalPool(context.Background(), "shared")
+	require.NoError(t, err, "deleting a manager must not delete an independently owned pool")
 }
 
 func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T) {

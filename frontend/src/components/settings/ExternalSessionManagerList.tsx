@@ -19,9 +19,6 @@ interface ExternalSessionManagerListProps {
 
 interface EditForm {
   name: string
-  pool: string
-  pool_enabled: boolean
-  automatic_assignment_enabled: boolean
 }
 
 const buildStartCommand = (token: string): string =>
@@ -46,9 +43,6 @@ export function ExternalSessionManagerList({
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [editForm, setEditForm] = useState<EditForm>({
     name: '',
-    pool: '',
-    pool_enabled: false,
-    automatic_assignment_enabled: false,
   })
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [operationsId, setOperationsId] = useState<string | null>(null)
@@ -102,36 +96,22 @@ export function ExternalSessionManagerList({
     setEditingIndex(index)
     setEditForm({
       name: manager.name,
-      pool: manager.pool ?? '',
-      pool_enabled: manager.pool_enabled ?? false,
-      automatic_assignment_enabled: manager.automatic_assignment_enabled ?? false,
     })
   }
 
   const saveEdit = () => {
-    if (editingIndex === null || !editForm.name.trim() || !editForm.pool.trim()) return
+    if (editingIndex === null || !editForm.name.trim()) return
     onChange(
       managers.map((manager, index) =>
         index === editingIndex
           ? {
               ...manager,
               name: editForm.name.trim(),
-              pool: editForm.pool.trim(),
-              pool_enabled: editForm.pool_enabled,
-              automatic_assignment_enabled: editForm.automatic_assignment_enabled,
             }
           : manager
       )
     )
     setEditingIndex(null)
-  }
-
-  const toggleField = (index: number, field: 'pool_enabled' | 'automatic_assignment_enabled') => {
-    onChange(
-      managers.map((manager, current) =>
-        current === index ? { ...manager, [field]: !manager[field] } : manager
-      )
-    )
   }
 
   const remove = (index: number) => {
@@ -170,11 +150,6 @@ export function ExternalSessionManagerList({
             meta={manager.id}
             badges={
               <>
-                {manager.pool_enabled && <StatusBadge tone="blue">Pool 有効</StatusBadge>}
-                {manager.automatic_assignment_enabled && (
-                  <StatusBadge tone="amber">自動割り当て ON</StatusBadge>
-                )}
-                {manager.pool && <StatusBadge tone="violet">Pool: {manager.pool}</StatusBadge>}
                 {(manager.has_connection_token || token) && (
                   <StatusBadge tone="green">token 設定済み</StatusBadge>
                 )}
@@ -190,12 +165,6 @@ export function ExternalSessionManagerList({
             actions={
               !isEditing && (
                 <>
-                  <RowAction onClick={() => toggleField(index, 'pool_enabled')}>
-                    {manager.pool_enabled ? 'Pool 停止' : 'Pool 有効化'}
-                  </RowAction>
-                  <RowAction onClick={() => toggleField(index, 'automatic_assignment_enabled')}>
-                    {manager.automatic_assignment_enabled ? '自動停止' : '自動有効化'}
-                  </RowAction>
                   <RowAction onClick={() => startEdit(index)}>編集</RowAction>
                   <RowAction onClick={() => manager.id && loadOperations(manager.id)} disabled={!manager.id}>
                     運用管理
@@ -227,51 +196,11 @@ export function ExternalSessionManagerList({
                     className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Pool 名
-                  </label>
-                  <input
-                    type="text"
-                    value={editForm.pool}
-                    onChange={(e) => setEditForm((prev) => ({ ...prev, pool: e.target.value }))}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                  />
-                </div>
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={editForm.pool_enabled}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({ ...prev, pool_enabled: e.target.checked }))
-                    }
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-xs text-gray-700 dark:text-gray-300">
-                    Pool の明示選択を有効にする
-                  </span>
-                </label>
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={editForm.automatic_assignment_enabled}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({
-                        ...prev,
-                        automatic_assignment_enabled: e.target.checked,
-                      }))
-                    }
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-xs text-gray-700 dark:text-gray-300">
-                    自動割り当てを有効にする
-                  </span>
-                </label>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={saveEdit}
-                    disabled={!editForm.name.trim() || !editForm.pool.trim()}
+                    disabled={!editForm.name.trim()}
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     更新

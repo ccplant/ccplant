@@ -3,7 +3,6 @@ package controllers
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -19,7 +18,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
-	validation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // BaseSettingsName is the reserved name for global base settings (admin-only)
@@ -100,13 +98,10 @@ type UpdateSettingsRequest struct {
 
 // ExternalSessionManagerRequest represents updates to an already-enrolled manager.
 type ExternalSessionManagerRequest struct {
-	ID                         string            `json:"id"`                                     // Required; registration uses the enrollment-token API
-	InstanceID                 string            `json:"instance_id,omitempty"`                  // Stable native host installation ID
-	Name                       string            `json:"name"`                                   // Human-readable name
-	PoolEnabled                bool              `json:"pool_enabled,omitempty"`                 // Enable explicit pool selection
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // Enable implicit pool selection
-	Labels                     map[string]string `json:"labels,omitempty"`                       // Matches allocator.* session tags
-	Pool                       string            `json:"pool,omitempty"`                         // Logical pool selected through allocator.pool
+	ID         string            `json:"id"`                    // Required; registration uses the enrollment-token API
+	InstanceID string            `json:"instance_id,omitempty"` // Stable native host installation ID
+	Name       string            `json:"name"`                  // Human-readable name
+	Labels     map[string]string `json:"labels,omitempty"`      // Matches allocator.* session tags
 }
 
 // BedrockSettingsResponse is the response body for Bedrock settings
@@ -157,19 +152,16 @@ type SettingsResponse struct {
 
 // ExternalSessionManagerResponse represents a single external session manager in responses
 type ExternalSessionManagerResponse struct {
-	ID                         string            `json:"id"`
-	InstanceID                 string            `json:"instance_id,omitempty"`
-	Name                       string            `json:"name"`
-	HasConnectionToken         bool              `json:"has_connection_token"`                   // true if a connection token is configured
-	ConnectionToken            string            `json:"connection_token,omitempty"`             // returned only immediately after generation or rotation
-	PoolEnabled                bool              `json:"pool_enabled,omitempty"`                 // true if the manager pool is available for explicit selection
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"` // true if the resolver may select this manager pool implicitly
-	Labels                     map[string]string `json:"labels,omitempty"`
-	PublicURL                  string            `json:"public_url,omitempty"`
-	Version                    string            `json:"version,omitempty"`
-	ActiveSessions             int               `json:"active_sessions,omitempty"`
-	LastHeartbeatAt            *time.Time        `json:"last_heartbeat_at,omitempty"`
-	Pool                       string            `json:"pool,omitempty"`
+	ID                 string            `json:"id"`
+	InstanceID         string            `json:"instance_id,omitempty"`
+	Name               string            `json:"name"`
+	HasConnectionToken bool              `json:"has_connection_token"`       // true if a connection token is configured
+	ConnectionToken    string            `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
+	Labels             map[string]string `json:"labels,omitempty"`
+	PublicURL          string            `json:"public_url,omitempty"`
+	Version            string            `json:"version,omitempty"`
+	ActiveSessions     int               `json:"active_sessions,omitempty"`
+	LastHeartbeatAt    *time.Time        `json:"last_heartbeat_at,omitempty"`
 }
 
 // AvailableManagerEntry represents a single available ESM entry returned by GET /settings/managers
@@ -463,8 +455,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 
 	var removedExternalManagers []entities.ExternalSessionManagerEntry
 	type externalManagerUpdate struct {
-		previous entities.ExternalSessionManagerEntry
-		current  entities.ExternalSessionManagerEntry
+		current entities.ExternalSessionManagerEntry
 	}
 	var updatedExternalManagers []externalManagerUpdate
 	// Update already-enrolled external session managers. New registrations are
@@ -486,31 +477,18 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 				return echo.NewHTTPError(http.StatusBadRequest, "external session manager is not enrolled")
 			}
 			entry := entities.ExternalSessionManagerEntry{
-				ID:                         m.ID,
-				InstanceID:                 m.InstanceID,
-				Name:                       m.Name,
-				HMACSecret:                 prev.HMACSecret,
-				PoolEnabled:                boolValuePointer(m.PoolEnabled),
-				AutomaticAssignmentEnabled: m.AutomaticAssignmentEnabled,
-				Labels:                     m.Labels,
-				Pool:                       strings.TrimSpace(m.Pool), BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
+				ID:                 m.ID,
+				InstanceID:         m.InstanceID,
+				Name:               m.Name,
+				HMACSecret:         prev.HMACSecret,
+				Labels:             m.Labels,
+				BindingSubjectType: prev.BindingSubjectType, BindingSubjectID: prev.BindingSubjectID,
 			}
-			if entry.Pool == "" {
-				entry.Pool = prev.Pool
-			}
-			if problems := validation.IsValidLabelValue(entry.Pool); len(problems) > 0 {
-				return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
-			}
-			if entry.Pool != prev.Pool && prev.ActiveSessions > 0 {
-				return echo.NewHTTPError(http.StatusConflict, "pool name cannot be changed while sessions are active")
-			}
-			if entry.Pool != prev.Pool && c.sessionRunnerStore != nil {
-				if _, getErr := c.sessionRunnerStore.GetLogicalPool(ctx.Request().Context(), entry.Pool); getErr == nil {
-					return echo.NewHTTPError(http.StatusConflict, "pool name is already in use")
-				} else if !errors.Is(getErr, sessionrunnercore.ErrNotFound) {
-					return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate pool name").SetInternal(getErr)
-				}
-			}
+			// Pool membership is owned exclusively by PoolSupplier resources.
+			// Preserve deprecated stored fields only during rolling upgrades.
+			entry.Pool, entry.PoolEnabled = prev.Pool, prev.PoolEnabled
+			entry.AutomaticAssignmentEnabled = prev.AutomaticAssignmentEnabled
+			entry.LegacySchedulable, entry.LegacyDefault = prev.LegacySchedulable, prev.LegacyDefault
 			retained[m.ID] = true
 			// These fields are owned by the daemon registration/heartbeat API and
 			// must survive a legacy settings update.
@@ -519,7 +497,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			entry.ActiveSessions = prev.ActiveSessions
 			entry.LastHeartbeatAt = prev.LastHeartbeatAt
 			updated = append(updated, entry)
-			updatedExternalManagers = append(updatedExternalManagers, externalManagerUpdate{previous: prev, current: entry})
+			updatedExternalManagers = append(updatedExternalManagers, externalManagerUpdate{current: entry})
 		}
 		// Pending one-time enrollments are not returned by settings responses and
 		// must survive unrelated settings saves.
@@ -558,21 +536,17 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to save settings")
 	}
 	for _, manager := range removedExternalManagers {
-		if err := c.deleteExternalManagerPool(ctx.Request().Context(), manager); err != nil {
-			return echo.NewHTTPError(http.StatusConflict, "settings saved but manager pool cleanup failed").SetInternal(err)
+		if err := c.deleteExternalManagerRegistration(ctx.Request().Context(), manager); err != nil {
+			return echo.NewHTTPError(http.StatusConflict, "settings saved but manager cleanup failed").SetInternal(err)
 		}
 	}
 	for _, update := range updatedExternalManagers {
-		if err := c.syncExternalManagerPool(ctx.Request().Context(), update.current, update.previous.Pool); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "settings saved but manager pool sync failed").SetInternal(err)
+		if err := c.syncExternalManager(ctx.Request().Context(), update.current); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "settings saved but manager sync failed").SetInternal(err)
 		}
 	}
 
 	return ctx.JSON(http.StatusOK, c.toResponse(settings))
-}
-
-func boolValuePointer(value bool) *bool {
-	return &value
 }
 
 // DeleteSettings handles DELETE /settings/:name
@@ -603,8 +577,8 @@ func (c *SettingsController) DeleteSettings(ctx echo.Context) error {
 	if settings != nil {
 		for _, manager := range settings.ExternalSessionManagers() {
 			if manager.HMACSecret != "" {
-				if cleanupErr := c.deleteExternalManagerPool(ctx.Request().Context(), manager); cleanupErr != nil {
-					return echo.NewHTTPError(http.StatusConflict, "settings deleted but manager pool cleanup failed").SetInternal(cleanupErr)
+				if cleanupErr := c.deleteExternalManagerRegistration(ctx.Request().Context(), manager); cleanupErr != nil {
+					return echo.NewHTTPError(http.StatusConflict, "settings deleted but manager cleanup failed").SetInternal(cleanupErr)
 				}
 			}
 		}
@@ -832,18 +806,15 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				continue
 			}
 			resp.ExternalSessionManagers = append(resp.ExternalSessionManagers, ExternalSessionManagerResponse{
-				ID:                         m.ID,
-				InstanceID:                 m.InstanceID,
-				Name:                       m.Name,
-				HasConnectionToken:         m.HMACSecret != "",
-				PoolEnabled:                m.IsPoolEnabled(),
-				AutomaticAssignmentEnabled: m.IsAutomaticAssignmentEnabled(),
-				Labels:                     m.Labels,
-				PublicURL:                  m.PublicURL,
-				Version:                    m.Version,
-				ActiveSessions:             m.ActiveSessions,
-				LastHeartbeatAt:            timePtrUnlessZero(m.LastHeartbeatAt),
-				Pool:                       m.Pool,
+				ID:                 m.ID,
+				InstanceID:         m.InstanceID,
+				Name:               m.Name,
+				HasConnectionToken: m.HMACSecret != "",
+				Labels:             m.Labels,
+				PublicURL:          m.PublicURL,
+				Version:            m.Version,
+				ActiveSessions:     m.ActiveSessions,
+				LastHeartbeatAt:    timePtrUnlessZero(m.LastHeartbeatAt),
 			})
 		}
 	}
