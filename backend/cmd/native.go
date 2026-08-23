@@ -320,6 +320,17 @@ func installNativeService(paths nativeInstallPaths, cfg nativeDaemonConfig) erro
 	if err := copyExecutable(paths.binary); err != nil {
 		return err
 	}
+	if runtime.GOOS == "linux" {
+		uid, gid := lookupUID("agentapi"), lookupGID("agentapi")
+		// The daemon replaces this checksummed binary during dashboard-initiated
+		// upgrades. The directory contains only the managed native ESM executable.
+		if err := os.Chown(filepath.Dir(paths.binary), uid, gid); err != nil {
+			return err
+		}
+		if err := os.Chown(paths.binary, uid, gid); err != nil {
+			return err
+		}
+	}
 	cfg.CredentialsPath = paths.credentials
 	credentials, _ := json.MarshalIndent(map[string]string{"connection_token": cfg.ConnectionToken}, "", "  ")
 	if err := atomicWriteFile(paths.credentials, append(credentials, '\n'), 0o600); err != nil {
@@ -400,7 +411,7 @@ func renderNativeSystemdUnit(paths nativeInstallPaths, environment map[string]st
 		value := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%").Replace(environment[key])
 		fmt.Fprintf(&env, "Environment=\"%s=%s\"\n", key, value)
 	}
-	return fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\n%sExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\n\n[Install]\nWantedBy=multi-user.target\n", env.String(), paths.binary, paths.config)
+	return fmt.Sprintf("[Unit]\nDescription=agentapi-proxy native external session manager\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=agentapi\nGroup=agentapi\n%sExecStart=%s native-session-manager --config %s\nRestart=always\nRestartSec=3\nKillMode=process\nTimeoutStopSec=30\nLimitNOFILE=65536\nStandardOutput=append:%s/native.log\nStandardError=append:%s/native.log\n\n[Install]\nWantedBy=multi-user.target\n", env.String(), paths.binary, paths.config, paths.logDir, paths.logDir)
 }
 
 func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]string) string {

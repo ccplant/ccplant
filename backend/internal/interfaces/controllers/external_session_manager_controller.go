@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,18 +15,14 @@ import (
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	validation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 type ESMUpdateRequest struct {
-	InstanceID                 string            `json:"instance_id"`
-	Name                       string            `json:"name"`
-	Pool                       string            `json:"pool"`
-	Labels                     map[string]string `json:"labels,omitempty"`
-	PoolEnabled                *bool             `json:"pool_enabled,omitempty"`
-	AutomaticAssignmentEnabled *bool             `json:"automatic_assignment_enabled,omitempty"`
-	PublicURL                  string            `json:"public_url,omitempty"`
-	Version                    string            `json:"version,omitempty"`
+	InstanceID string            `json:"instance_id"`
+	Name       string            `json:"name"`
+	Labels     map[string]string `json:"labels,omitempty"`
+	PublicURL  string            `json:"public_url,omitempty"`
+	Version    string            `json:"version,omitempty"`
 }
 
 type ESMHeartbeatRequest struct {
@@ -48,20 +43,17 @@ type ESMEnrollmentTokenRequest struct {
 
 type esmEnrollmentTokenResponse struct {
 	ManagerID         string    `json:"manager_id"`
-	Pool              string    `json:"pool"`
 	RegistrationToken string    `json:"registration_token"`
 	ExpiresAt         time.Time `json:"expires_at"`
 }
 
 type ESMEnrollmentRequest struct {
-	RegistrationToken          string            `json:"registration_token"`
-	InstanceID                 string            `json:"instance_id"`
-	Name                       string            `json:"name"`
-	Labels                     map[string]string `json:"labels,omitempty"`
-	PoolEnabled                *bool             `json:"pool_enabled,omitempty"`
-	AutomaticAssignmentEnabled bool              `json:"automatic_assignment_enabled,omitempty"`
-	PublicURL                  string            `json:"public_url,omitempty"`
-	Version                    string            `json:"version,omitempty"`
+	RegistrationToken string            `json:"registration_token"`
+	InstanceID        string            `json:"instance_id"`
+	Name              string            `json:"name"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	PublicURL         string            `json:"public_url,omitempty"`
+	Version           string            `json:"version,omitempty"`
 }
 
 func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo.Context) error {
@@ -86,7 +78,6 @@ func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate registration token")
 	}
 	managerID := uuid.NewString()
-	pool := ""
 	expiresAt := time.Now().UTC().Add(15 * time.Minute)
 	hash := sha256.Sum256([]byte(token))
 
@@ -105,14 +96,14 @@ func (c *SettingsController) IssueExternalSessionManagerEnrollmentToken(ctx echo
 	}
 	managers = append(managers, entities.ExternalSessionManagerEntry{
 		ID: managerID, Name: "pending registration", EnrollmentTokenHash: hex.EncodeToString(hash[:]), EnrollmentExpiresAt: expiresAt,
-		Pool: pool, BindingSubjectType: req.Scope, BindingSubjectID: name,
+		BindingSubjectType: req.Scope, BindingSubjectID: name,
 	})
 	settings.SetExternalSessionManagers(managers)
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save registration token")
 	}
 	return ctx.JSON(http.StatusCreated, esmEnrollmentTokenResponse{
-		ManagerID: managerID, Pool: pool, RegistrationToken: token, ExpiresAt: expiresAt,
+		ManagerID: managerID, RegistrationToken: token, ExpiresAt: expiresAt,
 	})
 }
 
@@ -148,23 +139,20 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 			manager := &managers[i]
 			manager.InstanceID = req.InstanceID
 			manager.Name = req.Name
-			manager.Pool = nativePoolName(req.Name, manager.ID)
 			manager.HMACSecret = connectionToken
 			manager.Labels = req.Labels
-			manager.PoolEnabled = req.PoolEnabled
-			manager.AutomaticAssignmentEnabled = req.AutomaticAssignmentEnabled
 			manager.LegacySchedulable = false
 			manager.LegacyDefault = false
 			manager.PublicURL = req.PublicURL
 			manager.Version = req.Version
 			manager.EnrollmentTokenHash = ""
 			manager.EnrollmentExpiresAt = time.Time{}
-			if err := c.provisionExternalManagerPool(ctx.Request().Context(), manager, connectionToken); err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to provision manager pool").SetInternal(err)
+			if err := c.registerExternalManager(ctx.Request().Context(), manager, connectionToken); err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to register manager").SetInternal(err)
 			}
 			settings.SetExternalSessionManagers(managers)
 			if saveErr := c.repo.Save(ctx.Request().Context(), settings); saveErr != nil {
-				_ = c.deleteExternalManagerPool(ctx.Request().Context(), *manager)
+				_ = c.deleteExternalManagerRegistration(ctx.Request().Context(), *manager)
 				return echo.NewHTTPError(http.StatusInternalServerError, "failed to enroll external session manager")
 			}
 			return ctx.JSON(http.StatusOK, esmRegistrationResponse{
@@ -173,19 +161,6 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 		}
 	}
 	return echo.NewHTTPError(http.StatusUnauthorized, "invalid or already used registration token")
-}
-
-var invalidPoolCharacters = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
-
-func nativePoolName(deviceName, managerID string) string {
-	pool := strings.Trim(invalidPoolCharacters.ReplaceAllString(strings.TrimSpace(deviceName), "-"), "-_.")
-	if len(pool) > 63 {
-		pool = strings.Trim(pool[:63], "-_.")
-	}
-	if pool == "" {
-		return "esm-" + managerID
-	}
-	return pool
 }
 
 func (c *SettingsController) ListExternalSessionManagers(ctx echo.Context) error {
@@ -229,23 +204,6 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 	if err != nil {
 		return err
 	}
-	previousPool := manager.Pool
-	requestedPool := strings.TrimSpace(req.Pool)
-	if requestedPool != "" {
-		if problems := validation.IsValidLabelValue(requestedPool); len(problems) > 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
-		}
-		if requestedPool != previousPool && manager.ActiveSessions > 0 {
-			return echo.NewHTTPError(http.StatusConflict, "pool name cannot be changed while sessions are active")
-		}
-		if requestedPool != previousPool && c.sessionRunnerStore != nil {
-			if _, getErr := c.sessionRunnerStore.GetLogicalPool(ctx.Request().Context(), requestedPool); getErr == nil {
-				return echo.NewHTTPError(http.StatusConflict, "pool name is already in use")
-			} else if !errors.Is(getErr, sessionrunnercore.ErrNotFound) {
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate pool name").SetInternal(getErr)
-			}
-		}
-	}
 	managers := settings.ExternalSessionManagers()
 	for i := range managers {
 		if managers[i].ID != manager.ID {
@@ -253,9 +211,6 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 		}
 		if req.Name != "" {
 			managers[i].Name = req.Name
-		}
-		if requestedPool != "" {
-			managers[i].Pool = requestedPool
 		}
 		if req.InstanceID != "" {
 			managers[i].InstanceID = req.InstanceID
@@ -269,22 +224,14 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 		if req.Version != "" {
 			managers[i].Version = req.Version
 		}
-		if req.AutomaticAssignmentEnabled != nil {
-			managers[i].AutomaticAssignmentEnabled = *req.AutomaticAssignmentEnabled
-			managers[i].LegacySchedulable = false
-			managers[i].LegacyDefault = false
-		}
-		if req.PoolEnabled != nil {
-			managers[i].PoolEnabled = req.PoolEnabled
-		}
 		manager = &managers[i]
 	}
 	settings.SetExternalSessionManagers(managers)
 	if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update external session manager")
 	}
-	if err := c.syncExternalManagerPool(ctx.Request().Context(), *manager, previousPool); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update manager pool").SetInternal(err)
+	if err := c.syncExternalManager(ctx.Request().Context(), *manager); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update manager").SetInternal(err)
 	}
 	return ctx.JSON(http.StatusOK, esmResponse(*manager, ""))
 }
@@ -296,8 +243,8 @@ func (c *SettingsController) DeleteExternalSessionManager(ctx echo.Context) erro
 	if err != nil {
 		return err
 	}
-	if err := c.deleteExternalManagerPool(ctx.Request().Context(), *manager); err != nil {
-		return echo.NewHTTPError(http.StatusConflict, "failed to delete manager pool resources").SetInternal(err)
+	if err := c.deleteExternalManagerRegistration(ctx.Request().Context(), *manager); err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "failed to delete manager resources").SetInternal(err)
 	}
 	managers := settings.ExternalSessionManagers()
 	updated := make([]entities.ExternalSessionManagerEntry, 0, len(managers)-1)
@@ -313,151 +260,43 @@ func (c *SettingsController) DeleteExternalSessionManager(ctx echo.Context) erro
 	return ctx.NoContent(http.StatusNoContent)
 }
 
-func (c *SettingsController) provisionExternalManagerPool(ctx context.Context, manager *entities.ExternalSessionManagerEntry, token string) error {
+func (c *SettingsController) registerExternalManager(ctx context.Context, manager *entities.ExternalSessionManagerEntry, token string) error {
 	if c.sessionRunnerStore == nil {
 		return nil
-	}
-	if manager.Pool == "" {
-		manager.Pool = "esm-" + manager.ID
 	}
 	hash := sha256.Sum256([]byte(token))
 	registryManager := &sessionrunnercore.Manager{ID: manager.ID, Name: manager.Name, Labels: manager.Labels,
 		Capabilities: []string{sessionrunnercore.CapabilityRunnerClaimV1, sessionrunnercore.CapabilityDirectRuntimeV1},
 		Enabled:      true, ConnectionTokenHash: hex.EncodeToString(hash[:])}
-	if err := c.sessionRunnerStore.CreateManager(ctx, registryManager); err != nil {
-		return err
-	}
-	pool := &sessionrunnercore.LogicalPool{Name: manager.Pool, Labels: manager.Labels, Enabled: true}
-	if err := c.sessionRunnerStore.CreateLogicalPool(ctx, pool); err != nil {
-		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
-		return err
-	}
-	supplier := &sessionrunnercore.PoolSupplier{Pool: manager.Pool, ManagerID: manager.ID, MinIdle: 1, MaxRunners: 10, Enabled: true}
-	if err := c.sessionRunnerStore.CreatePoolSupplier(ctx, supplier); err != nil {
-		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
-		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
-		return err
-	}
-	subjectType := sessionrunnercore.SubjectType(manager.BindingSubjectType)
-	binding := &sessionrunnercore.Binding{Pool: manager.Pool, SubjectType: subjectType, SubjectID: manager.BindingSubjectID,
-		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsPoolEnabled(), ExplicitOnly: !manager.IsAutomaticAssignmentEnabled()}
-	if err := c.sessionRunnerStore.CreateBinding(ctx, binding); err != nil {
-		_ = c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool)
-		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
-		_ = c.sessionRunnerStore.DeleteManager(ctx, manager.ID)
-		return err
-	}
-	return nil
+	return c.sessionRunnerStore.CreateManager(ctx, registryManager)
 }
 
-func (c *SettingsController) syncExternalManagerPool(ctx context.Context, manager entities.ExternalSessionManagerEntry, previousPools ...string) error {
-	if c.sessionRunnerStore == nil || manager.Pool == "" {
+func (c *SettingsController) syncExternalManager(ctx context.Context, manager entities.ExternalSessionManagerEntry) error {
+	if c.sessionRunnerStore == nil {
 		return nil
-	}
-	previousPool := manager.Pool
-	if len(previousPools) > 0 && previousPools[0] != "" {
-		previousPool = previousPools[0]
 	}
 	registered, err := c.sessionRunnerStore.GetManager(ctx, manager.ID)
 	if err != nil {
 		return err
 	}
 	registered.Name, registered.Labels, registered.Enabled = manager.Name, manager.Labels, true
-	if err := c.sessionRunnerStore.UpdateManager(ctx, registered); err != nil {
-		return err
-	}
-	if previousPool != manager.Pool {
-		if err := c.renameExternalManagerPool(ctx, manager, previousPool); err != nil {
-			return err
-		}
-	}
-	pool, err := c.sessionRunnerStore.GetLogicalPool(ctx, manager.Pool)
-	if err != nil {
-		return err
-	}
-	pool.Labels, pool.Enabled = manager.Labels, true
-	if err := c.sessionRunnerStore.UpdateLogicalPool(ctx, pool); err != nil {
-		return err
-	}
-	supplier, err := c.sessionRunnerStore.GetPoolSupplier(ctx, manager.ID, manager.Pool)
-	if err != nil {
-		return err
-	}
-	supplier.Enabled = true
-	if err := c.sessionRunnerStore.UpdatePoolSupplier(ctx, supplier); err != nil {
-		return err
-	}
-	bindings, err := c.sessionRunnerStore.ListBindings(ctx, manager.Pool)
-	if err != nil {
-		return err
-	}
-	for _, binding := range bindings {
-		binding.Enabled = manager.IsPoolEnabled()
-		binding.ExplicitOnly = !manager.IsAutomaticAssignmentEnabled()
-		if err := c.sessionRunnerStore.UpdateBinding(ctx, binding); err != nil {
-			return err
-		}
-	}
-	return nil
+	return c.sessionRunnerStore.UpdateManager(ctx, registered)
 }
 
-func (c *SettingsController) renameExternalManagerPool(ctx context.Context, manager entities.ExternalSessionManagerEntry, previousPool string) error {
-	if _, err := c.sessionRunnerStore.GetLogicalPool(ctx, manager.Pool); err == nil {
-		return sessionrunnercore.ErrConflict
-	} else if !errors.Is(err, sessionrunnercore.ErrNotFound) {
-		return err
-	}
-	if err := c.sessionRunnerStore.CreateLogicalPool(ctx, &sessionrunnercore.LogicalPool{Name: manager.Pool, Labels: manager.Labels, Enabled: true}); err != nil {
-		return err
-	}
-	if err := c.sessionRunnerStore.CreatePoolSupplier(ctx, &sessionrunnercore.PoolSupplier{Pool: manager.Pool, ManagerID: manager.ID, MinIdle: 1, MaxRunners: 10, Enabled: true}); err != nil {
-		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
-		return err
-	}
-	if err := c.sessionRunnerStore.CreateBinding(ctx, &sessionrunnercore.Binding{
-		Pool: manager.Pool, SubjectType: sessionrunnercore.SubjectType(manager.BindingSubjectType), SubjectID: manager.BindingSubjectID,
-		Role: sessionrunnercore.BindingRoleManage, Enabled: manager.IsPoolEnabled(), ExplicitOnly: !manager.IsAutomaticAssignmentEnabled(),
-	}); err != nil {
-		_ = c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool)
-		_ = c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool)
-		return err
-	}
-	bindings, err := c.sessionRunnerStore.ListBindings(ctx, previousPool)
-	if err != nil {
-		return err
-	}
-	for _, binding := range bindings {
-		if err := c.sessionRunnerStore.DeleteBinding(ctx, binding.ID); err != nil {
-			return err
-		}
-	}
-	if err := c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, previousPool); err != nil {
-		return err
-	}
-	if err := c.sessionRunnerStore.DeleteLogicalPool(ctx, previousPool); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *SettingsController) deleteExternalManagerPool(ctx context.Context, manager entities.ExternalSessionManagerEntry) error {
-	if c.sessionRunnerStore == nil || manager.Pool == "" {
+func (c *SettingsController) deleteExternalManagerRegistration(ctx context.Context, manager entities.ExternalSessionManagerEntry) error {
+	if c.sessionRunnerStore == nil {
 		return nil
 	}
-	bindings, err := c.sessionRunnerStore.ListBindings(ctx, manager.Pool)
+	suppliers, err := c.sessionRunnerStore.ListPoolSuppliers(ctx)
 	if err != nil {
 		return err
 	}
-	for _, binding := range bindings {
-		if err := c.sessionRunnerStore.DeleteBinding(ctx, binding.ID); err != nil {
-			return err
+	for _, supplier := range suppliers {
+		if supplier.ManagerID == manager.ID {
+			if err := c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, supplier.Pool); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
+				return err
+			}
 		}
-	}
-	if err := c.sessionRunnerStore.DeletePoolSupplier(ctx, manager.ID, manager.Pool); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
-		return err
-	}
-	if err := c.sessionRunnerStore.DeleteLogicalPool(ctx, manager.Pool); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
-		return err
 	}
 	if err := c.sessionRunnerStore.DeleteManager(ctx, manager.ID); err != nil && !errors.Is(err, sessionrunnercore.ErrNotFound) {
 		return err
@@ -627,11 +466,9 @@ func (c *SettingsController) findAuthorizedESM(ctx echo.Context, modify bool) (*
 func esmResponse(manager entities.ExternalSessionManagerEntry, token string) ExternalSessionManagerResponse {
 	return ExternalSessionManagerResponse{ID: manager.ID, InstanceID: manager.InstanceID, Name: manager.Name,
 		HasConnectionToken: manager.HMACSecret != "", ConnectionToken: token,
-		PoolEnabled:                manager.IsPoolEnabled(),
-		AutomaticAssignmentEnabled: manager.IsAutomaticAssignmentEnabled(),
-		Labels:                     manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
+		Labels: manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
 		ActiveSessions:  manager.ActiveSessions,
-		LastHeartbeatAt: timePtrUnlessZero(manager.LastHeartbeatAt), Pool: manager.Pool}
+		LastHeartbeatAt: timePtrUnlessZero(manager.LastHeartbeatAt)}
 }
 
 func timePtrUnlessZero(value time.Time) *time.Time {

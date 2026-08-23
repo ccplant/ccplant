@@ -3258,6 +3258,48 @@
         }
       }
     },
+    "/external-session-managers/{id}/operations/status": {
+      "get": {
+        "summary": "Get External Session Manager operational status",
+        "description": "Reads live daemon status through the outbound control channel.",
+        "operationId": "getExternalSessionManagerOperationalStatus",
+        "tags": ["External Session Managers"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {"200":{"description":"Live daemon status"},"503":{"description":"Control channel is offline"}}
+      }
+    },
+    "/external-session-managers/{id}/operations/logs": {
+      "get": {
+        "summary": "Read External Session Manager daemon logs",
+        "operationId": "getExternalSessionManagerLogs",
+        "tags": ["External Session Managers"],
+        "parameters": [
+          {"name":"id","in":"path","required":true,"schema":{"type":"string"}},
+          {"name":"tail","in":"query","schema":{"type":"integer","minimum":1,"maximum":5000,"default":200}}
+        ],
+        "responses": {"200":{"description":"Recent daemon log lines"},"503":{"description":"Control channel is offline"}}
+      }
+    },
+    "/external-session-managers/{id}/operations/restart": {
+      "post": {
+        "summary": "Restart an External Session Manager",
+        "operationId": "restartExternalSessionManager",
+        "tags": ["External Session Managers"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {"202":{"description":"Restart accepted"},"503":{"description":"Control channel is offline"}}
+      }
+    },
+    "/external-session-managers/{id}/operations/upgrade": {
+      "post": {
+        "summary": "Upgrade an External Session Manager",
+        "description": "Downloads a checksummed ccplant release, replaces the managed binary, and restarts. Active sessions must be drained first.",
+        "operationId": "upgradeExternalSessionManager",
+        "tags": ["External Session Managers"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+        "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["version"],"properties":{"version":{"type":"string","example":"v1.20.0"}}}}}},
+        "responses": {"202":{"description":"Upgrade accepted"},"409":{"description":"Active sessions must be drained"},"503":{"description":"Control channel is offline"}}
+      }
+    },
     "/admin/system-settings": {
       "get": {
         "summary": "Get the current or a historical admin settings snapshot",

@@ -5,7 +5,7 @@ import { useTeamScope } from '../../contexts/TeamScopeContext'
 import GlobalMenu from './GlobalMenu'
 
 interface TopBarProps {
-  title: string
+  title?: string
   subtitle?: string
   showFilterButton?: boolean
   filterButtonText?: string
@@ -88,9 +88,11 @@ export default function TopBar({
         {/* ヘッダーセクション */}
         <div className="flex items-center justify-between gap-4">
           <div className="flex-1">
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
-              {title}
-            </h1>
+            {title && (
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
+                {title}
+              </h1>
+            )}
             {subtitle && (
               <p className="text-gray-600 dark:text-gray-400 mt-1">
                 {subtitle}

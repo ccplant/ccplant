@@ -10,7 +10,7 @@ import { MessageTemplate } from '../../../types/messageTemplate'
 import { recentMessagesManager } from '../../../utils/recentMessagesManager'
 import { OrganizationHistory } from '../../../utils/organizationHistory'
 import { addRepositoryToHistory, AgentApiType, getACPServerEnabled } from '../../../types/settings'
-import { AvailableManager } from '../../../types/settings'
+import type { LogicalSessionPool } from '../../../types/session_pool'
 import { createAgentAPIProxyClientFromStorage } from '../../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage } from '../../../lib/acp-server-client'
 import TopBar from '../../components/TopBar'
@@ -87,7 +87,7 @@ export default function NewSessionPage() {
   const [creationProgress, setCreationProgress] = useState<SessionCreationProgress | null>(null)
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
   const [selectedAgentType, setSelectedAgentType] = useState<AgentApiType>('default')
-  const [availableManagers, setAvailableManagers] = useState<AvailableManager[]>([])
+  const [availablePools, setAvailablePools] = useState<LogicalSessionPool[]>([])
   const [selectedManagerId, setSelectedManagerId] = useState<string>('')
   const [cycleEnabled, setCycleEnabled] = useState(false)
   const [cycleMessage, setCycleMessage] = useState('')
@@ -110,7 +110,7 @@ export default function NewSessionPage() {
   useEffect(() => {
     loadTemplates()
     loadRecentMessages()
-    loadAvailableManagers()
+    loadAvailablePools()
   }, [])
 
   // ESCキーで戻る
@@ -148,13 +148,12 @@ export default function NewSessionPage() {
     }
   }
 
-  const loadAvailableManagers = async () => {
+  const loadAvailablePools = async () => {
     try {
       const client = createAgentAPIProxyClientFromStorage()
-      const managers = await client.getAvailableManagers()
-      setAvailableManagers(managers)
+      setAvailablePools(await client.getAvailableSessionPools())
     } catch (error) {
-      console.error('Failed to load available managers:', error)
+      console.error('Failed to load available pools:', error)
     }
   }
 
@@ -671,7 +670,7 @@ export default function NewSessionPage() {
                 )}
                 {selectedManagerId !== '' && (
                   <span className="px-1.5 py-0.5 bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 text-xs rounded-full">
-                    {availableManagers.find(m => m.pool === selectedManagerId)?.pool ?? 'カスタム'}
+                    {availablePools.find((pool) => pool.name === selectedManagerId)?.name ?? 'カスタム'}
                   </span>
                 )}
                 {cycleEnabled && cycleMessage.trim() && (
@@ -683,10 +682,10 @@ export default function NewSessionPage() {
 
               {showAdvancedSettings && (
                 <div className="mt-3 pl-1 space-y-4">
-                  {/* セッションマネージャー選択 */}
-                  {availableManagers.length > 0 && (
+                  {/* 実行Pool選択 */}
+                  {availablePools.length > 0 && (
                     <div>
-                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">セッションマネージャー</p>
+                      <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">実行Pool</p>
                       <div className="space-y-1.5">
                         {/* ローカル（マネージャーなし）オプション */}
                         <label
@@ -710,12 +709,12 @@ export default function NewSessionPage() {
                             <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">このサーバー上で作成</span>
                           </span>
                         </label>
-                        {/* 各マネージャーオプション */}
-                        {availableManagers.map((m) => (
+                        {/* 各Poolオプション */}
+                        {availablePools.map((pool) => (
                           <label
-                            key={`${m.source}:${m.source_name}:${m.pool}`}
+                            key={pool.name}
                             className={`flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                              selectedManagerId === m.pool
+                              selectedManagerId === pool.name
                                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                                 : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                             } ${isCreating ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -723,22 +722,17 @@ export default function NewSessionPage() {
                             <input
                               type="radio"
                               name="session-manager"
-                              value={m.pool}
-                              checked={selectedManagerId === m.pool}
-                              onChange={() => setSelectedManagerId(m.pool)}
+                              value={pool.name}
+                              checked={selectedManagerId === pool.name}
+                              onChange={() => setSelectedManagerId(pool.name)}
                               disabled={isCreating}
                               className="mt-0.5 w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-gray-600 focus:ring-blue-500 flex-shrink-0"
                             />
                             <span className="flex-1 min-w-0">
                               <span className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{m.pool}</span>
-                                <span className="px-1 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded flex-shrink-0">
-                                  {m.source === 'team' ? `チーム: ${m.source_name}` : '個人'}
-                                </span>
+                                <span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{pool.name}</span>
                               </span>
-                              <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate" title="allocator 接続">
-                                {m.name}
-                              </span>
+                              <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">Poolに割り当てられたManagerで実行</span>
                             </span>
                           </label>
                         ))}

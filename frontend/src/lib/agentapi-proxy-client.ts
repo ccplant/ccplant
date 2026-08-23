@@ -75,7 +75,7 @@ import {
   ShareStatus,
   RevokeShareResponse
 } from '../types/share';
-import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken } from '../types/settings';
+import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
@@ -1662,6 +1662,29 @@ export class AgentAPIProxyClient {
     });
   }
 
+  private externalSessionManagerOperationPath(managerId: string, operation: string, scope: 'user' | 'team', teamId?: string): string {
+    const query = new URLSearchParams({ scope })
+    if (teamId) query.set('team_id', teamId)
+    return `/external-session-managers/${encodeURIComponent(managerId)}/operations/${operation}?${query}`
+  }
+
+  async getExternalSessionManagerOperationalStatus(managerId: string, scope: 'user' | 'team' = 'user', teamId?: string): Promise<ExternalSessionManagerOperationalStatus> {
+    return this.makeRequest(this.externalSessionManagerOperationPath(managerId, 'status', scope, teamId))
+  }
+
+  async getExternalSessionManagerLogs(managerId: string, scope: 'user' | 'team' = 'user', teamId?: string, tail = 200): Promise<ExternalSessionManagerLogs> {
+    const path = this.externalSessionManagerOperationPath(managerId, 'logs', scope, teamId)
+    return this.makeRequest(`${path}&tail=${tail}`)
+  }
+
+  async restartExternalSessionManager(managerId: string, scope: 'user' | 'team' = 'user', teamId?: string): Promise<void> {
+    await this.makeRequest(this.externalSessionManagerOperationPath(managerId, 'restart', scope, teamId), { method: 'POST', body: '{}' })
+  }
+
+  async upgradeExternalSessionManager(managerId: string, version: string, scope: 'user' | 'team' = 'user', teamId?: string): Promise<void> {
+    await this.makeRequest(this.externalSessionManagerOperationPath(managerId, 'upgrade', scope, teamId), { method: 'POST', body: JSON.stringify({ version }) })
+  }
+
   /**
    * Get scia Google OAuth integration status for the current user.
    */
@@ -3015,6 +3038,10 @@ export class AgentAPIProxyClient {
     return this.makeRequest('/session-pools', { method: 'POST', body: JSON.stringify(input) });
   }
 
+  async patchManagedSessionPool(pool: string, input: { enabled?: boolean; labels?: Record<string, string> }): Promise<LogicalSessionPool> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
   async deleteManagedSessionPool(pool: string): Promise<void> {
     await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
   }
@@ -3022,6 +3049,23 @@ export class AgentAPIProxyClient {
   async listManagedSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
     const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/session-pools/${encodeURIComponent(pool)}/bindings`);
     return result.pool_bindings ?? [];
+  }
+
+  async listManagedSessionPoolSuppliers(pool: string): Promise<SessionPoolSupplier[]> {
+    const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/session-pools/${encodeURIComponent(pool)}/suppliers`);
+    return result.pool_suppliers ?? [];
+  }
+
+  async createManagedSessionPoolSupplier(pool: string, managerID: string, input: { min_idle?: number; max_runners?: number; enabled?: boolean }): Promise<SessionPoolSupplier> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async patchManagedSessionPoolSupplier(pool: string, managerID: string, input: { enabled?: boolean; draining?: boolean; min_idle?: number; max_runners?: number }): Promise<SessionPoolSupplier> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
+  async deleteManagedSessionPoolSupplier(pool: string, managerID: string): Promise<void> {
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
   }
 
   async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
