@@ -25,21 +25,21 @@ interface ItemListRowProps {
 export function ItemListRow({ name, meta, badges, actions, children }: ItemListRowProps) {
   return (
     <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+            <span className="min-w-0 break-words text-sm font-semibold text-gray-900 dark:text-white">
               {name}
             </span>
             {badges}
           </div>
           {meta && (
-            <div className="mt-0.5 text-xs font-mono text-gray-500 dark:text-gray-400 truncate">
+            <div className="mt-0.5 break-all text-xs font-mono text-gray-500 dark:text-gray-400">
               {meta}
             </div>
           )}
         </div>
-        {actions && <div className="flex flex-shrink-0 items-center gap-1.5">{actions}</div>}
+        {actions && <div className="flex flex-wrap items-center gap-1.5 sm:max-w-[45%] sm:justify-end">{actions}</div>}
       </div>
       {children}
     </div>
@@ -67,7 +67,7 @@ const badgeToneClass: Record<BadgeTone, string> = {
 
 export function StatusBadge({ tone = 'neutral', children }: { tone?: BadgeTone; children: React.ReactNode }) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeToneClass[tone]}`}>
+    <span className={`max-w-full break-words rounded-full px-2 py-0.5 text-xs font-medium ${badgeToneClass[tone]}`}>
       {children}
     </span>
   )
