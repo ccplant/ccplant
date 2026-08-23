@@ -28,6 +28,11 @@ var nativeManagementExit = os.Exit
 var nativeManagementStartedAt = time.Now().UTC()
 var nativeReleaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 
+// The operation response must be uploaded through the outbound control tunnel
+// before the daemon exits. Exiting immediately leaves the command unacked and
+// causes it to be replayed after systemd/launchd starts the daemon again.
+const nativeManagementRestartDelay = 3 * time.Second
+
 func registerNativeManagementRoutes(e *echo.Echo, options struct {
 	listen, upstreamURL, connectionToken, upstreamAuthToken, stateDir, binaryPath, managerID, configPath string
 	filesystemSandbox                                                                                    bool
@@ -58,7 +63,7 @@ func registerNativeManagementRoutes(e *echo.Echo, options struct {
 	})
 	group.POST("/restart", func(c echo.Context) error {
 		go func() {
-			time.Sleep(250 * time.Millisecond)
+			time.Sleep(nativeManagementRestartDelay)
 			nativeManagementExit(0) // systemd/launchd KeepAlive starts the managed daemon again.
 		}()
 		return c.JSON(http.StatusAccepted, map[string]string{"status": "restarting"})
@@ -77,7 +82,7 @@ func registerNativeManagementRoutes(e *echo.Echo, options struct {
 			return echo.NewHTTPError(http.StatusBadGateway, "failed to install release").SetInternal(err)
 		}
 		go func() {
-			time.Sleep(250 * time.Millisecond)
+			time.Sleep(nativeManagementRestartDelay)
 			nativeManagementExit(0)
 		}()
 		return c.JSON(http.StatusAccepted, map[string]string{"status": "upgrading", "version": request.Version})
