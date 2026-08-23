@@ -5,6 +5,7 @@
 {{- $kv := $api.kvStore }}
 {{- $oauth := .Values.config.auth.github.oauth }}
 {{- $asset := .Values.asset }}
+{{- $authConfigSecretRef := $cloudRun.authConfigSecretRef }}
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
@@ -70,6 +71,9 @@ spec:
             {{- with $oauth.allowedRedirectUris }}
             - {name: OAUTH_ALLOWED_REDIRECT_URIS, value: {{ . | quote }}}
             {{- end }}
+            {{- with $authConfigSecretRef.name }}
+            - {name: AGENTAPI_AUTH_CONFIG_FILE, value: "/etc/auth-config/auth-config.yaml"}
+            {{- end }}
             - {name: AGENTAPI_ROLE_ENV_FILES_ENABLED, value: {{ .Values.roleEnvFiles.enabled | quote }}}
             - {name: REPOSITORY_RESTRICTION, value: {{ .Values.github.app.repositoryRestriction | quote }}}
             {{- with .Values.github.tokenRef.name }}
@@ -98,6 +102,21 @@ spec:
             {{- range concat (.Values.env | default list) ($api.env | default list) }}
             {{- toYaml (list .) | nindent 12 }}
             {{- end }}
+          {{- with $authConfigSecretRef.name }}
+          volumeMounts:
+            - name: auth-config
+              mountPath: /etc/auth-config
+              readOnly: true
+          {{- end }}
+      {{- with $authConfigSecretRef.name }}
+      volumes:
+        - name: auth-config
+          secret:
+            secretName: {{ . | quote }}
+            items:
+              - key: {{ $authConfigSecretRef.key | quote }}
+                path: auth-config.yaml
+      {{- end }}
   traffic:
     - percent: 100
       latestRevision: true

@@ -4,7 +4,7 @@
   "properties": {
     "cloudRun": {
       "type": "object",
-      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest"],
+      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest", "authConfigSecretRef"],
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
@@ -31,7 +31,16 @@
         "startupCpuBoost": { "type": "boolean" },
         "containerConcurrency": { "type": "integer", "minimum": 1 },
         "timeoutSeconds": { "type": "integer", "minimum": 1 },
-        "imageDigest": { "type": "string" }
+        "imageDigest": { "type": "string" },
+        "authConfigSecretRef": {
+          "type": "object",
+          "required": ["name", "key"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string", "minLength": 1 }
+          }
+        }
       }
     },
     "api": {
