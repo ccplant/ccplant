@@ -179,11 +179,12 @@
     },
     "sessionManager": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "github", "kubernetesSession"],
+      "required": ["enabled", "replicaCount", "port", "apiUrl", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "github", "kubernetesSession"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 1 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "apiUrl": { "type": "string" },
         "image": { "$ref": "#/definitions/image" },
         "imagePullSecrets": { "type": "array" },
         "serviceAccount": {
