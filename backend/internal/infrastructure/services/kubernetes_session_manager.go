@@ -114,6 +114,7 @@ type KubernetesSessionManager struct {
 	teamConfigRepo     portrepos.TeamConfigRepository
 	personalAPIKeyRepo portrepos.PersonalAPIKeyRepository
 	sandboxPolicyRepo  portrepos.SandboxPolicyRepository
+	userFileRepo       portrepos.UserFileRepository
 	// credentialsRepo reads managed credential files (e.g. ~/.codex/auth.json,
 	// ~/.claude/.credentials.json) from the application KV store, which is the
 	// canonical store written to by the credentials/Codex device-auth flows.
@@ -4603,6 +4604,12 @@ func (m *KubernetesSessionManager) SetCredentialsRepository(repo portrepos.Crede
 	m.credentialsRepo = repo
 }
 
+// SetUserFileRepository sets the application KV-backed repository used to load
+// user-managed files when building session provision settings.
+func (m *KubernetesSessionManager) SetUserFileRepository(repo portrepos.UserFileRepository) {
+	m.userFileRepo = repo
+}
+
 // loadCredentialFiles retrieves the managed credential files for a credential
 // owner. It reads from the credentials repository (backed by the application KV
 // store, where the Codex device-auth flow and credentials API persist files) and
@@ -6233,16 +6240,29 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// User-managed files retain their existing user-scope-only behavior; the
-	// credential selector above controls authentication files only.
-	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" {
-		userFilesSecretName := fmt.Sprintf("agentapi-user-files-%s", sanitizeLabelValue(req.UserID))
-		userFilesSecret, userFilesErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, userFilesSecretName, metav1.GetOptions{})
-		if userFilesErr == nil && len(userFilesSecret.Data) > 0 {
-			userManagedFiles := userFilesSecretDataToManagedFiles(userFilesSecret.Data)
+	// credential selector above controls authentication files only. The
+	// repository is backed by the application KV store so the API and execution
+	// plane always read the same source of truth.
+	if (req.Scope == entities.ScopeUser || req.Scope == "") && req.UserID != "" && m.userFileRepo != nil {
+		userFiles, userFilesErr := m.userFileRepo.List(ctx, req.UserID)
+		if userFilesErr != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to load user files for %s: %v", req.UserID, userFilesErr)
+		} else {
+			userManagedFiles := make([]sessionsettings.ManagedFile, 0, len(userFiles))
+			for _, file := range userFiles {
+				if file == nil || file.Path() == "" {
+					continue
+				}
+				userManagedFiles = append(userManagedFiles, sessionsettings.ManagedFile{
+					Path:        file.Path(),
+					Content:     file.Content(),
+					Permissions: file.Permissions(),
+				})
+			}
 			if len(userManagedFiles) > 0 {
 				settings.Files = append(settings.Files, userManagedFiles...)
-				log.Printf("[K8S_SESSION] Embedded %d user file(s) from Secret %s for session %s",
-					len(userManagedFiles), userFilesSecretName, session.id)
+				log.Printf("[K8S_SESSION] Embedded %d user file(s) from application KV store for session %s",
+					len(userManagedFiles), session.id)
 			}
 		}
 	}
@@ -6817,52 +6837,4 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	}
 	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
 	return settings, nil
-}
-
-// userFilesSecretDataToManagedFiles converts the index-based Secret data from
-// agentapi-user-files-{userID} into a slice of ManagedFile for embedding in
-// SessionSettings.Files.  Only entries that have both a non-empty path and
-// content are included.
-func userFilesSecretDataToManagedFiles(data map[string][]byte) []sessionsettings.ManagedFile {
-	// Collect unique indices.
-	indexSet := map[int]struct{}{}
-	for k := range data {
-		dot := strings.LastIndex(k, ".")
-		if dot < 0 {
-			continue
-		}
-		suffix := k[dot+1:]
-		if suffix != "id" && suffix != "name" && suffix != "path" && suffix != "content" &&
-			suffix != "permissions" && suffix != "created_at" && suffix != "updated_at" {
-			continue
-		}
-		idxStr := k[:dot]
-		idx, err := strconv.Atoi(idxStr)
-		if err != nil {
-			continue
-		}
-		indexSet[idx] = struct{}{}
-	}
-
-	indices := make([]int, 0, len(indexSet))
-	for idx := range indexSet {
-		indices = append(indices, idx)
-	}
-	sort.Ints(indices)
-
-	files := make([]sessionsettings.ManagedFile, 0, len(indices))
-	for _, idx := range indices {
-		prefix := strconv.Itoa(idx)
-		path := string(data[prefix+".path"])
-		content := string(data[prefix+".content"])
-		if path == "" {
-			continue
-		}
-		files = append(files, sessionsettings.ManagedFile{
-			Path:        path,
-			Content:     content,
-			Permissions: string(data[prefix+".permissions"]),
-		})
-	}
-	return files
 }

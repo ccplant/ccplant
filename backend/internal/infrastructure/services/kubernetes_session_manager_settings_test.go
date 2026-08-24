@@ -27,6 +27,75 @@ type fakeSettingsRepository struct {
 	settings map[string]*entities.Settings
 }
 
+type fakeUserFileRepository struct {
+	files map[string][]*entities.UserFile
+}
+
+func (r *fakeUserFileRepository) Save(_ context.Context, userID string, file *entities.UserFile) error {
+	r.files[userID] = append(r.files[userID], file)
+	return nil
+}
+
+func (r *fakeUserFileRepository) FindByID(_ context.Context, userID, fileID string) (*entities.UserFile, error) {
+	for _, file := range r.files[userID] {
+		if file.ID() == fileID {
+			return file, nil
+		}
+	}
+	return nil, fmt.Errorf("user file not found: %s", fileID)
+}
+
+func (r *fakeUserFileRepository) List(_ context.Context, userID string) ([]*entities.UserFile, error) {
+	return r.files[userID], nil
+}
+
+func (r *fakeUserFileRepository) Delete(_ context.Context, userID, fileID string) error {
+	files := r.files[userID]
+	for i, file := range files {
+		if file.ID() == fileID {
+			r.files[userID] = append(files[:i], files[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("user file not found: %s", fileID)
+}
+
+func TestBuildSessionSettings_UserFilesComeFromInjectedRepository(t *testing.T) {
+	sessionClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-user-files-test-user", Namespace: "test-ns"},
+			Data: map[string][]byte{
+				"0.path":    []byte("/stale/file"),
+				"0.content": []byte("stale"),
+			},
+		},
+	)
+	wantFile := entities.NewUserFile("file-1", "GCP key", "/opt/gcp/cred.json", "kv-content", "0600")
+	userFileRepo := &fakeUserFileRepository{files: map[string][]*entities.UserFile{"test-user": {wantFile}}}
+
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), sessionClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.SetUserFileRepository(userFileRepo)
+	req := &entities.RunServerRequest{UserID: "test-user", Scope: entities.ScopeUser}
+	session := NewKubernetesSession("test-session", req,
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if len(settings.Files) != 1 {
+		t.Fatalf("managed files count = %d, want 1", len(settings.Files))
+	}
+	if got := settings.Files[0]; got.Path != "/opt/gcp/cred.json" || got.Content != "kv-content" || got.Permissions != "0600" {
+		t.Fatalf("managed file = %#v, want injected repository file", got)
+	}
+}
+
 func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},

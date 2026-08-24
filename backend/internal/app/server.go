@@ -466,6 +466,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		persistenceClient,
 		namespace,
 	))
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetUserFileRepository(userFileRepo)
+	}
 	log.Printf("[SERVER] User file repository initialized")
 
 	// Initialize session profile repository (Kubernetes Secret-backed)
