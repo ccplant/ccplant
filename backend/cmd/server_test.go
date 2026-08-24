@@ -20,6 +20,28 @@ func TestServerCmd(t *testing.T) {
 	assert.NotNil(t, ServerCmd.Run)
 }
 
+func TestResolvePersistenceNamespace(t *testing.T) {
+	t.Run("uses KV store namespace without a service account mount", func(t *testing.T) {
+		t.Setenv("POD_NAMESPACE", "")
+		cfg := &config.Config{}
+		cfg.KVStore.Namespace = "agentapi-ui"
+
+		assert.Equal(t, "agentapi-ui", resolvePersistenceNamespace(cfg))
+	})
+
+	t.Run("falls back to pod namespace", func(t *testing.T) {
+		t.Setenv("POD_NAMESPACE", "runtime-namespace")
+
+		assert.Equal(t, "runtime-namespace", resolvePersistenceNamespace(&config.Config{}))
+	})
+
+	t.Run("falls back to default outside Kubernetes", func(t *testing.T) {
+		t.Setenv("POD_NAMESPACE", "")
+
+		assert.Equal(t, "default", resolvePersistenceNamespace(nil))
+	})
+}
+
 func TestServerCmdFlags(t *testing.T) {
 	// Test flags are properly configured
 

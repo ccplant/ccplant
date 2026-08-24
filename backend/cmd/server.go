@@ -59,6 +59,18 @@ func resolveKubernetesNamespace(candidates ...string) string {
 	return "default"
 }
 
+func resolvePersistenceNamespace(configData *config.Config) string {
+	if configData != nil {
+		if namespace := strings.TrimSpace(configData.KVStore.Namespace); namespace != "" {
+			return namespace
+		}
+	}
+	if namespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); namespace != "" {
+		return namespace
+	}
+	return "default"
+}
+
 func init() {
 	ServerCmd.Flags().StringVarP(&port, "port", "p", "8080", "Port to listen on")
 	ServerCmd.Flags().StringVarP(&cfg, "config", "c", "config.json", "Configuration file path")
@@ -489,8 +501,9 @@ func buildStockInventoryPools(workerConfig config.StockInventoryWorkerConfig, de
 func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[WEBHOOK_HANDLERS] Registering webhook handlers...")
 
-	// Determine namespace
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
+	// Webhooks are persisted through the application KV store, so their logical
+	// namespace must not depend on a mounted Kubernetes ServiceAccount token.
+	namespace := resolvePersistenceNamespace(configData)
 
 	// Create webhook repository (clean architecture)
 	webhookRepo := repositories.NewKubernetesWebhookRepository(proxyServer.GetPersistenceClient(), namespace)
@@ -544,8 +557,9 @@ func newWorkerRedisClient(configData *config.Config) (redis.UniversalClient, err
 func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server) {
 	log.Printf("[SLACKBOT_HANDLERS] Registering slackbot handlers...")
 
-	// Determine namespace
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
+	// SlackBots are persisted through the application KV store, so their logical
+	// namespace must not depend on a mounted Kubernetes ServiceAccount token.
+	namespace := resolvePersistenceNamespace(configData)
 
 	// Create SlackBot repository
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
@@ -574,12 +588,14 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		return
 	}
 
-	// Determine namespace
-	namespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
+	// Keep application records in the KV-store namespace. The runtime namespace
+	// remains responsible for Kubernetes leases and operational Secrets.
+	persistenceNamespace := resolvePersistenceNamespace(configData)
+	runtimeNamespace := resolveKubernetesNamespace(configData.ScheduleWorker.Namespace, configData.KubernetesSession.Namespace)
 
 	// Create dependencies
-	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
-	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), namespace).WithSecretClient(client)
+	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), persistenceNamespace)
+	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), persistenceNamespace).WithSecretClient(client)
 
 	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,
@@ -624,7 +640,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		LeaseDuration: leaseDuration,
 		RenewDeadline: renewDeadline,
 		RetryPeriod:   retryPeriod,
-		Namespace:     namespace,
+		Namespace:     runtimeNamespace,
 	}
 
 	managerConfig := slackbot.SlackSocketManagerConfig{
@@ -643,7 +659,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	manager := slackbot.NewSlackSocketManager(
 		client,
-		namespace,
+		persistenceNamespace,
 		slackbotRepo,
 		eventHandler,
 		channelResolver,
@@ -652,7 +668,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	go manager.Run(context.Background())
 
-	log.Printf("[SOCKET_MANAGER] Slack Socket Mode manager started in namespace: %s", namespace)
+	log.Printf("[SOCKET_MANAGER] Slack Socket Mode manager started with persistence namespace %s and runtime namespace %s", persistenceNamespace, runtimeNamespace)
 }
 
 // registerMCPHandler registers MCP HTTP handler
