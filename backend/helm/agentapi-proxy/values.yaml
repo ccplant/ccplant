@@ -320,6 +320,9 @@ sessionManager:
   enabled: false
   replicaCount: 1
   port: 8080
+  # Public API used by the manager for outbound control commands. Leave empty
+  # to use the in-cluster agentapi-proxy Service.
+  apiUrl: ""
   image:
     repository: ghcr.io/ccplant/ccplant-backend
     pullPolicy: IfNotPresent
