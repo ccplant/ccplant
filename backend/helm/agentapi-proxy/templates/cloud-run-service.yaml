@@ -39,6 +39,7 @@ spec:
               cpu: {{ $api.resources.limits.cpu | quote }}
               memory: {{ $api.resources.limits.memory | quote }}
           env:
+            - {name: AGENTAPI_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - {name: AGENTAPI_KV_STORE_NAMESPACE, value: {{ $kv.namespace | quote }}}
             - {name: AGENTAPI_KV_STORE_BACKEND, value: {{ $kv.backend | quote }}}
             {{- with $kv.databaseUrlSecretRef.name }}

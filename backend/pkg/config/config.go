@@ -467,8 +467,14 @@ type SessionManagerConfig struct {
 	// APIToken authenticates outbound API -> session-manager requests.
 	APIToken string `json:"api_token" mapstructure:"api_token"`
 	// InternalAPIToken authenticates inbound requests to the private manager API.
-	InternalAPIToken string                         `json:"internal_api_token" mapstructure:"internal_api_token"`
-	Allocation       SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+	InternalAPIToken string `json:"internal_api_token" mapstructure:"internal_api_token"`
+	// AutoUpgrade lets a Kubernetes manager roll its own Deployment forward to
+	// the version advertised by the connected parent proxy.
+	AutoUpgrade     bool                           `json:"auto_upgrade" mapstructure:"auto_upgrade"`
+	DeploymentName  string                         `json:"deployment_name" mapstructure:"deployment_name"`
+	ImageRepository string                         `json:"image_repository" mapstructure:"image_repository"`
+	CurrentVersion  string                         `json:"current_version" mapstructure:"current_version"`
+	Allocation      SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
 }
 
 type SessionManagerAllocationConfig struct {
@@ -1200,6 +1206,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
 	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
 	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
+	_ = v.BindEnv("session_manager.auto_upgrade", "AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE")
+	_ = v.BindEnv("session_manager.deployment_name", "AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME")
+	_ = v.BindEnv("session_manager.image_repository", "AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY")
+	_ = v.BindEnv("session_manager.current_version", "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION")
 	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
 	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
 	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")

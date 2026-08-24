@@ -30,11 +30,11 @@ assert_not_contains() {
 }
 
 "$HELM_BIN" template backend-kv-encryption "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set api.kvStore.encryption.activeKeyId=current \
-  --set api.kvStore.encryption.keysSecretRef.name=agentapi-kv-keys >"$TMP_DIR/backend-kv-encryption.yaml"
-assert_contains 'name: AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID' "$TMP_DIR/backend-kv-encryption.yaml"
+  --set api.kvStore.primary.encryption.activeKeyId=current \
+  --set api.kvStore.primary.encryption.keysSecretRef.name=agentapi-kv-keys >"$TMP_DIR/backend-kv-encryption.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_ACTIVE_KEY_ID' "$TMP_DIR/backend-kv-encryption.yaml"
 assert_contains 'value: "current"' "$TMP_DIR/backend-kv-encryption.yaml"
-assert_contains 'name: AGENTAPI_KV_ENCRYPTION_KEYS' "$TMP_DIR/backend-kv-encryption.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KEYS' "$TMP_DIR/backend-kv-encryption.yaml"
 assert_contains 'name: "agentapi-kv-keys"' "$TMP_DIR/backend-kv-encryption.yaml"
 
 # A default install is API-only. It must not receive workload RBAC or any
@@ -227,6 +227,10 @@ assert_not_contains 'name: "manager-internal"' "$TMP_DIR/backend-worker-deployme
 assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-worker-deployment.yaml"
 
 assert_contains 'image: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'value: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-session-manager-deployment.yaml"

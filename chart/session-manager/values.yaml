@@ -6,6 +6,9 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
+# Follow newer semantic versions advertised by the authenticated parent proxy.
+autoUpgrade: true
+
 nameOverride: ""
 fullnameOverride: ""
 
