@@ -6,7 +6,7 @@ hero:
   text: Your agents, always within reach.
   tagline: AI coding agentsの実行環境、セッション、UIをひとつに。ローカルからKubernetesまで、チームの開発を止めずに育てるオープンソース基盤です。
   image:
-    src: /logo.svg
+    src: /brand/ccplant-app-icon-approved.png
     alt: ccplant
   actions:
     - theme: brand

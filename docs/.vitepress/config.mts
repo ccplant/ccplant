@@ -6,6 +6,10 @@ export default defineConfig({
   description: 'AI coding agentsを、どこからでも安全に動かすためのオープンソース基盤。',
   base: process.env.DOCS_BASE ?? '/ccplant/',
   cleanUrls: true,
+  vite: {
+    // Reuse the approved runtime brand assets instead of maintaining docs-only copies.
+    publicDir: '../frontend/public'
+  },
   lastUpdated: true,
   head: [
     ['meta', { name: 'theme-color', content: '#07130d' }],
@@ -14,7 +18,7 @@ export default defineConfig({
     ['meta', { property: 'og:description', content: 'AI coding agentsを、どこからでも安全に動かすためのオープンソース基盤。' }]
   ],
   themeConfig: {
-    logo: '/logo.svg',
+    logo: '/brand/ccplant-app-icon-approved.png',
     siteTitle: 'ccplant',
     nav: [
       { text: 'ガイド', link: '/guide/getting-started' },
