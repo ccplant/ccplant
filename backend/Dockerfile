@@ -228,7 +228,7 @@ RUN bun install -g @openai/codex && \
 # pi-acp starts `pi --mode rpc`, and pi-ollama-cloud connects directly to
 # https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS. pi-mcp-adapter
 # lets Pi read MCP servers from ~/.config/mcp/mcp.json.
-RUN bun install -g @earendil-works/pi-coding-agent && \
+RUN bun install -g @earendil-works/pi-coding-agent@0.84.2 && \
     npm install --global pi-acp@latest && \
     mkdir -p /home/agentapi/.pi/agent/npm && \
     printf '{"private":true,"dependencies":{}}\n' > /home/agentapi/.pi/agent/npm/package.json && \
