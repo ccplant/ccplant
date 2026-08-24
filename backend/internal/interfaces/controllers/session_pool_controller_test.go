@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
@@ -112,6 +113,57 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	runner, err := store.GetRunner(context.Background(), "runner-a")
 	if err != nil || runner.Status != core.RunnerRunning {
 		t.Fatalf("runner should be running: runner=%+v err=%v", runner, err)
+	}
+}
+
+func TestRunnerCannotClaimWhileManagerHeartbeatIsStaleAndRecoversAutomatically(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	now := time.Now().UTC()
+	controller.now = func() time.Time { return now }
+
+	managerToken, managerTokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{
+		ID: "manager-a", Name: "Manager A", Enabled: true,
+		ConnectionTokenHash: managerTokenHash, LastHeartbeatAt: now.Add(-sessionManagerHeartbeatTTL - time.Second),
+	}
+	if err := store.CreateManager(context.Background(), manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(context.Background(), &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	runnerToken, runnerTokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRunner(context.Background(), &core.Runner{ID: "runner-a", ManagerID: manager.ID, Pool: "linux", TokenHash: runnerTokenHash, Status: core.RunnerIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+
+	headers := map[string]string{"Authorization": "Bearer " + runnerToken, "X-Session-Runner-ID": "runner-a"}
+	stale := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s", nil, nil, headers)
+	if stale.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stale manager claim status=%d body=%s", stale.Code, stale.Body.String())
+	}
+
+	heartbeat := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer " + managerToken})
+	if heartbeat.Code != http.StatusOK {
+		t.Fatalf("recovery heartbeat status=%d body=%s", heartbeat.Code, heartbeat.Body.String())
+	}
+	recovered := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s", nil, nil, headers)
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("recovered manager claim status=%d body=%s", recovered.Code, recovered.Body.String())
 	}
 }
 
