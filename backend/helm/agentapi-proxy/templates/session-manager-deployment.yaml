@@ -79,6 +79,9 @@ spec:
               protocol: TCP
           env:
             - {name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: {{ dig "autoUpgrade" true $manager | quote }}}
+            {{- if (dig "versionUrl" "" $manager) }}
+            - {name: AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL, value: {{ dig "versionUrl" "" $manager | quote }}}
+            {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME, value: {{ printf "%s-session-manager" (include "agentapi-proxy.fullname" .) | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: {{ $image.repository | default .Values.image.repository | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION, value: {{ .Chart.AppVersion | quote }}}

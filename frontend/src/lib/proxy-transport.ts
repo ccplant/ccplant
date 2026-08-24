@@ -29,7 +29,8 @@ const BLOCKED_RESPONSE_HEADERS = new Set([
 ])
 
 export function isUnauthenticatedProxyPath(path: string): boolean {
-  return path === 's'
+  return path === 'health'
+    || path === 's'
     || path.startsWith('s/')
     || path.startsWith('oauth/')
     || path.startsWith('auth/')

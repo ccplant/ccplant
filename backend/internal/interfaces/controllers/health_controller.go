@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 )
@@ -22,6 +24,7 @@ func (c *HealthController) GetName() string {
 // HealthCheck handles GET /health requests to check server health
 func (c *HealthController) HealthCheck(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]string{
-		"status": "ok",
+		"status":  "ok",
+		"version": strings.TrimSpace(os.Getenv("AGENTAPI_VERSION")),
 	})
 }

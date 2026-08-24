@@ -10,6 +10,7 @@ import {
 
 describe('proxy transport helpers', () => {
   it('allows only explicitly public backend paths without a login cookie', () => {
+    expect(isUnauthenticatedProxyPath('health')).toBe(true)
     expect(isUnauthenticatedProxyPath('s/share-token/messages')).toBe(true)
     expect(isUnauthenticatedProxyPath('oauth/callback')).toBe(true)
     expect(isUnauthenticatedProxyPath('auth/status')).toBe(true)

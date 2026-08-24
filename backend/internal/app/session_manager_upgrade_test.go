@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -11,6 +13,33 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
+
+func TestFetchSessionManagerDesiredVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","version":" v1.4.0 "}`))
+	}))
+	defer server.Close()
+
+	got, err := fetchSessionManagerDesiredVersion(context.Background(), server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "v1.4.0" {
+		t.Fatalf("version = %q", got)
+	}
+}
+
+func TestFetchSessionManagerDesiredVersionRejectsEmptyVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	if _, err := fetchSessionManagerDesiredVersion(context.Background(), server.Client(), server.URL); err == nil {
+		t.Fatal("expected an empty version error")
+	}
+}
 
 func TestReconcileSessionManagerVersionUpgradesDeploymentAndFutureSessions(t *testing.T) {
 	client := fake.NewSimpleClientset(&appsv1.Deployment{
