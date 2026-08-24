@@ -4,7 +4,7 @@
   "properties": {
     "cloudRun": {
       "type": "object",
-      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest", "authConfigSecretRef"],
+      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest"],
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
@@ -179,7 +179,7 @@
     },
     "sessionManager": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "port", "apiUrl", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "github", "kubernetesSession"],
+      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "github", "kubernetesSession"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 1 },
