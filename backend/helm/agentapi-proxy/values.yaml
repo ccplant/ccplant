@@ -319,8 +319,12 @@ worker:
 sessionManager:
   enabled: false
   # Roll the manager Deployment and future session Pods forward when its parent
-  # proxy advertises a newer semantic version in the authenticated heartbeat.
+  # proxy advertises a newer semantic version. Runner mode reads the version
+  # from its authenticated heartbeat; standalone mode can poll versionUrl.
   autoUpgrade: true
+  # Optional endpoint returning {"version":"vX.Y.Z"}. This allows an in-cluster
+  # standalone manager to follow the API release without enabling runner mode.
+  versionUrl: ""
   replicaCount: 1
   port: 8080
   # Public API used by the manager for outbound control commands. Leave empty

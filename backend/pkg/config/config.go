@@ -470,11 +470,14 @@ type SessionManagerConfig struct {
 	InternalAPIToken string `json:"internal_api_token" mapstructure:"internal_api_token"`
 	// AutoUpgrade lets a Kubernetes manager roll its own Deployment forward to
 	// the version advertised by the connected parent proxy.
-	AutoUpgrade     bool                           `json:"auto_upgrade" mapstructure:"auto_upgrade"`
-	DeploymentName  string                         `json:"deployment_name" mapstructure:"deployment_name"`
-	ImageRepository string                         `json:"image_repository" mapstructure:"image_repository"`
-	CurrentVersion  string                         `json:"current_version" mapstructure:"current_version"`
-	Allocation      SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+	AutoUpgrade bool `json:"auto_upgrade" mapstructure:"auto_upgrade"`
+	// UpgradeVersionURL is an optional HTTP endpoint polled by a standalone
+	// Kubernetes manager. It must return JSON containing a "version" field.
+	UpgradeVersionURL string                         `json:"upgrade_version_url" mapstructure:"upgrade_version_url"`
+	DeploymentName    string                         `json:"deployment_name" mapstructure:"deployment_name"`
+	ImageRepository   string                         `json:"image_repository" mapstructure:"image_repository"`
+	CurrentVersion    string                         `json:"current_version" mapstructure:"current_version"`
+	Allocation        SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
 }
 
 type SessionManagerAllocationConfig struct {
@@ -1207,6 +1210,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
 	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
 	_ = v.BindEnv("session_manager.auto_upgrade", "AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE")
+	_ = v.BindEnv("session_manager.upgrade_version_url", "AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL")
 	_ = v.BindEnv("session_manager.deployment_name", "AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME")
 	_ = v.BindEnv("session_manager.image_repository", "AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY")
 	_ = v.BindEnv("session_manager.current_version", "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION")

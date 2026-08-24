@@ -167,6 +167,11 @@ done
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --show-only templates/rolebinding.yaml "${all_role_args[@]}" \
   >"$TMP_DIR/backend-manager-rolebinding.yaml"
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/session-manager-deployment.yaml \
+  "${all_role_args[@]}" \
+  --set sessionManager.versionUrl=https://app.example/api/v1/health \
+  >"$TMP_DIR/backend-manager-version-poller.yaml"
 
 # A parent-registered Kubernetes session manager is stateless and may run with
 # multiple replicas without a remote Redis. Kubernetes Lease elects its single
@@ -228,6 +233,8 @@ assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-worker-deployment.ya
 
 assert_contains 'image: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL, value: "https://app.example/api/v1/health"' "$TMP_DIR/backend-manager-version-poller.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/backend-session-manager-deployment.yaml"

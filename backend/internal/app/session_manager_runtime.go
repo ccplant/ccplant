@@ -241,6 +241,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if !remoteMode {
 		localClient := newLocalAllocationClient(manager, sessionRouteRepo)
 		allocator = allocationworker.NewWorker(manager, localClient)
+		if cfg.SessionManager.UpgradeVersionURL != "" {
+			go runSessionManagerVersionPoller(runtimeCtx, cfg, manager.GetClient(), manager.GetNamespace())
+		}
 		elector := schedule.NewRedisLeaderElector(redisClient, schedule.LeaderElectionConfig{
 			LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry,
 			LeaseName: schedule.SessionAllocatorLeaseName, Namespace: manager.GetNamespace(),
@@ -288,6 +291,51 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+func runSessionManagerVersionPoller(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace string) {
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		desired, err := fetchSessionManagerDesiredVersion(ctx, httpClient, cfg.SessionManager.UpgradeVersionURL)
+		if err != nil {
+			log.Printf("[SESSION_MANAGER] Version check failed: %v", err)
+		} else if err := reconcileSessionManagerVersion(ctx, cfg, client, namespace, desired); err != nil {
+			log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func fetchSessionManagerDesiredVersion(ctx context.Context, client *http.Client, endpoint string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("version endpoint returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode version response: %w", err)
+	}
+	result.Version = strings.TrimSpace(result.Version)
+	if result.Version == "" {
+		return "", errors.New("version endpoint returned an empty version")
+	}
+	return result.Version, nil
 }
 
 func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, token string, cfg *config.Config, manager *services.KubernetesSessionManager) {

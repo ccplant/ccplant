@@ -11,6 +11,7 @@ import (
 )
 
 func TestHealthCheck(t *testing.T) {
+	t.Setenv("AGENTAPI_VERSION", "v1.4.0")
 	cfg := config.DefaultConfig()
 	// Auth is now always enabled, disable specific auth methods if needed
 	if cfg.Auth.Static != nil {
@@ -33,7 +34,7 @@ func TestHealthCheck(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	expected := "{\"status\":\"ok\"}\n"
+	expected := "{\"status\":\"ok\",\"version\":\"v1.4.0\"}\n"
 	if body != expected {
 		t.Errorf("Expected body '%s' (len=%d), got '%s' (len=%d)", expected, len(expected), body, len(body))
 	}
