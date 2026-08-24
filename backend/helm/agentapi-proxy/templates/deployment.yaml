@@ -210,6 +210,7 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
+            - {name: AGENTAPI_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - name: HOME
               value: "/home/agentapi"
             {{- if (dig "enabled" false $openTelemetry) }}

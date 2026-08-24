@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -739,7 +740,10 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			owned = append(owned, &copy)
 		}
 	}
-	return ctx.JSON(http.StatusOK, map[string]any{"ok": true, "at": manager.LastHeartbeatAt, "pools": owned})
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"ok": true, "at": manager.LastHeartbeatAt, "pools": owned,
+		"upstream_version": strings.TrimSpace(os.Getenv("AGENTAPI_VERSION")),
+	})
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {

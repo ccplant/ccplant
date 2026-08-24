@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,8 +34,12 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/client-go/util/retry"
 )
 
 // SessionManagerRuntime is the execution-plane composition root. It does not
@@ -274,7 +279,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 					log.Printf("[SESSION_MANAGER] Became remote execution leader")
 					control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
 					go control.Start(leaderCtx)
-					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, manager)
+					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg, manager)
 				},
 				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
 				OnNewLeader:      func(identity string) { log.Printf("[SESSION_MANAGER] Remote execution leader is %s", identity) },
@@ -285,7 +290,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
 }
 
-func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, token string, manager *services.KubernetesSessionManager) {
+func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, token string, cfg *config.Config, manager *services.KubernetesSessionManager) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -307,13 +312,17 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
-						Pools []*sessionrunnercore.PoolSupplier `json:"pools"`
+						Pools           []*sessionrunnercore.PoolSupplier `json:"pools"`
+						UpstreamVersion string                            `json:"upstream_version"`
 					}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
 					reconcileSessionRunnerPools(ctx, manager, result.Pools)
+					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
+						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
+					}
 				}
 			}
 		}
@@ -323,6 +332,78 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace, desired string) error {
+	if !cfg.SessionManager.AutoUpgrade || desired == "" || cfg.SessionManager.CurrentVersion == "" {
+		return nil
+	}
+	upgrade, err := sessionManagerUpgradeRequired(cfg.SessionManager.CurrentVersion, desired)
+	if err != nil {
+		return err
+	}
+	if !upgrade {
+		return nil
+	}
+	if cfg.SessionManager.DeploymentName == "" || cfg.SessionManager.ImageRepository == "" {
+		return errors.New("deployment name and image repository are required for auto-upgrade")
+	}
+	image := strings.TrimSuffix(cfg.SessionManager.ImageRepository, ":") + ":" + desired
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		deployment, getErr := client.AppsV1().Deployments(namespace).Get(ctx, cfg.SessionManager.DeploymentName, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		found := false
+		for i := range deployment.Spec.Template.Spec.Containers {
+			container := &deployment.Spec.Template.Spec.Containers[i]
+			if container.Name != "session-manager" {
+				continue
+			}
+			found = true
+			container.Image = image
+			for j := range container.Env {
+				if container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE" {
+					container.Env[j].Value = image
+				}
+				if container.Env[j].Name == "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION" {
+					container.Env[j].Value = desired
+				}
+			}
+		}
+		if !found {
+			return errors.New("session-manager container not found in deployment")
+		}
+		_, updateErr := client.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+		return updateErr
+	})
+}
+
+func sessionManagerUpgradeRequired(current, desired string) (bool, error) {
+	// Development charts use immutable commit-addressed tags. Git commit order
+	// is not encoded in the tag, so the authenticated parent is authoritative.
+	if strings.HasPrefix(desired, "dev.ccplant.") {
+		sha := strings.TrimPrefix(desired, "dev.ccplant.")
+		if len(sha) != 40 {
+			return false, fmt.Errorf("invalid upstream development version %q", desired)
+		}
+		if _, err := hex.DecodeString(sha); err != nil {
+			return false, fmt.Errorf("invalid upstream development version %q", desired)
+		}
+		return current != desired, nil
+	}
+	desiredVersion, err := utilversion.ParseSemantic(desired)
+	if err != nil {
+		return false, fmt.Errorf("invalid upstream version %q: %w", desired, err)
+	}
+	currentVersion, err := utilversion.ParseSemantic(current)
+	if err != nil {
+		if strings.HasPrefix(current, "dev.ccplant.") {
+			return true, nil
+		}
+		return false, fmt.Errorf("invalid current version %q: %w", current, err)
+	}
+	return currentVersion.LessThan(desiredVersion), nil
 }
 
 func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, upstream, managerID, token, currentRevision string, manager *services.KubernetesSessionManager) (string, error) {
@@ -335,7 +416,7 @@ func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, u
 	if err != nil {
 		return currentRevision, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return currentRevision, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}

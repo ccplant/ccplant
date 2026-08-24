@@ -16,3 +16,9 @@ during migration.
 Required values are `parent.url`, `parent.publicUrl`, the parent connection/HMAC
 Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRef.name`, and
 `session.provisioner.tokenSecretRef.name`.
+
+By default, the authenticated heartbeat also advertises the parent proxy's
+semantic version. When it is newer, the elected manager updates its own
+Deployment image and the image used for newly created session Pods. Set
+`autoUpgrade=false` to pin the manager to the installed chart version. Existing
+session Pods are never restarted or mutated.

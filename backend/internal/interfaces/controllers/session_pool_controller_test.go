@@ -33,6 +33,19 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	if created.ConnectionToken == "" {
 		t.Fatal("manager connection token was not returned")
 	}
+	t.Setenv("AGENTAPI_VERSION", "v2.4.0")
+	heartbeatResult := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer " + created.ConnectionToken})
+	if heartbeatResult.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", heartbeatResult.Code, heartbeatResult.Body.String())
+	}
+	var heartbeat struct {
+		UpstreamVersion string `json:"upstream_version"`
+	}
+	decodeRecorder(t, heartbeatResult, &heartbeat)
+	if heartbeat.UpstreamVersion != "v2.4.0" {
+		t.Fatalf("upstream_version = %q", heartbeat.UpstreamVersion)
+	}
 	if _, err := store.GetManager(context.Background(), "manager-a"); err != nil {
 		t.Fatalf("created manager not persisted: %v, body=%s", err, managerResult.Body.String())
 	}

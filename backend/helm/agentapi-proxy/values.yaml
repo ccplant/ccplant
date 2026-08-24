@@ -318,6 +318,9 @@ worker:
 # The forwarding session manager is an independent HTTP workload.
 sessionManager:
   enabled: false
+  # Roll the manager Deployment and future session Pods forward when its parent
+  # proxy advertises a newer semantic version in the authenticated heartbeat.
+  autoUpgrade: true
   replicaCount: 1
   port: 8080
   # Public API used by the manager for outbound control commands. Leave empty
