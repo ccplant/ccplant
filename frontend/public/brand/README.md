@@ -6,6 +6,7 @@ raster artwork without vector reconstruction.
 | Asset | Use |
 | --- | --- |
 | `ccplant-logo-approved.png` | High-resolution copy of the active transparent logo |
+| `ccplant-logo-light.svg` | Light-background wordmark; preserves the approved mark and uses Midnight for `cc` |
 | `ccplant-logo-icon-matched.png` | Active transparent logo using the approved app icon mark |
 | `ccplant-app-icon-approved.png` | Active high-resolution sprout app icon master, with home-screen-safe mark spacing |
 | `ccplant-sprout-transparent.png` | Transparent sprout used by the logo and monochrome tray asset |

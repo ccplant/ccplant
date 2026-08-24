@@ -6,7 +6,8 @@ hero:
   text: AIエージェントを、どこからでも動かす。
   tagline: セッションをリモートで実行し、多彩なトリガーから起動。好きなエージェントを、セルフホストした実行基盤で動かせます。
   image:
-    src: /brand/ccplant-logo-approved.png
+    light: /brand/ccplant-logo-light.svg
+    dark: /brand/ccplant-logo-approved.png
     alt: ccplant
   actions:
     - theme: brand
@@ -35,15 +36,7 @@ features:
 
 ccplantは、AI coding agentのセッションをリモートで作成・実行・再接続できるオープンソース基盤です。人がUIから開始する作業も、イベントやスケジュールから始まる自動処理も、同じセッション基盤で扱えます。
 
-```text
-UI / API / Schedule / Webhook / Slack
-                  ↓
-              ccplant API
-                  ↓
-     Codex / Claude Code / other agents
-                  ↓
-      Your infrastructure / Kubernetes
-```
+![トリガーからセルフホスト環境のエージェントを実行するまでの流れ](./assets/remote-execution.svg)
 
 エージェントと実行場所は交換可能です。使いたいエージェントを選び、コードや認証情報を自分たちの管理するインフラに置いたまま運用できます。
 

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 384" role="img" aria-labelledby="title">
+  <title id="title">ccplant</title>
+  <defs>
+    <clipPath id="mark"><rect width="450" height="384"/></clipPath>
+    <clipPath id="cc"><rect x="430" width="370" height="384"/></clipPath>
+    <clipPath id="plant"><rect x="780" width="756" height="384"/></clipPath>
+    <filter id="midnight" color-interpolation-filters="sRGB">
+      <feColorMatrix values="0 0 0 0 0.027
+                             0 0 0 0 0.102
+                             0 0 0 0 0.114
+                             0 0 0 1 0"/>
+    </filter>
+  </defs>
+  <image href="ccplant-logo-approved.png" width="1536" height="384" clip-path="url(#mark)"/>
+  <image href="ccplant-logo-approved.png" width="1536" height="384" clip-path="url(#cc)" filter="url(#midnight)"/>
+  <image href="ccplant-logo-approved.png" width="1536" height="384" clip-path="url(#plant)"/>
+</svg>
