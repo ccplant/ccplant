@@ -2,10 +2,9 @@ package controllers
 
 import (
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 )
 
 // HealthController handles health check endpoints
@@ -25,6 +24,6 @@ func (c *HealthController) GetName() string {
 func (c *HealthController) HealthCheck(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]string{
 		"status":  "ok",
-		"version": strings.TrimSpace(os.Getenv("AGENTAPI_VERSION")),
+		"version": buildinfo.Version,
 	})
 }

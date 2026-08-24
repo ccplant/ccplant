@@ -41,6 +41,7 @@ jobs:
         with:
           context: ./backend
           target: api
+          build-args: RELEASE_VERSION=test
           platforms: ${{ matrix.platform }}
           push: false
           cache-from: type=gha,scope=api-image-${{ matrix.arch }}
@@ -48,12 +49,12 @@ jobs:
       - name: Smoke-test API-only image
         if: matrix.arch == 'amd64'
         run: |
-          docker build --target api --tag ccplant-api:test ./backend
+          docker build --build-arg RELEASE_VERSION=test --target api --tag ccplant-api:test ./backend
           container_id=$(docker run --detach --publish 127.0.0.1::8080 ccplant-api:test)
           trap 'docker rm --force "$container_id" >/dev/null' EXIT
           host_port=$(docker port "$container_id" 8080/tcp | sed 's/.*://')
           for attempt in {1..30}; do
-            if curl --fail --silent "http://127.0.0.1:${host_port}/health" >/dev/null; then
+            if test "$(curl --fail --silent "http://127.0.0.1:${host_port}/health" | jq -r .version)" = test; then
               break
             fi
             if [ "$attempt" -eq 30 ]; then
@@ -196,6 +197,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.component }}
+          build-args: ${{ matrix.component == 'backend' && format('RELEASE_VERSION=dev.ccplant.{0}', github.event.pull_request.head.sha) || '' }}
           push: true
           tags: ghcr.io/${{ matrix.image }}:dev.ccplant.${{ github.event.pull_request.head.sha }}
           cache-from: type=gha,scope=dev-${{ matrix.component }}
@@ -206,6 +208,7 @@ jobs:
         with:
           context: ./backend
           target: api
+          build-args: RELEASE_VERSION=dev.ccplant.${{ github.event.pull_request.head.sha }}
           push: true
           tags: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
           cache-from: type=gha,scope=dev-api

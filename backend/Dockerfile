@@ -3,6 +3,8 @@
 # Build stage
 FROM golang:1.25-alpine AS builder
 
+ARG RELEASE_VERSION=dev
+
 # Install git for Go modules
 RUN apk add --no-cache git
 
@@ -23,7 +25,7 @@ COPY . .
 # Build the application with optimizations
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/ccplant main.go
+    CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Version=${RELEASE_VERSION}" -o bin/ccplant main.go
 
 # Extract the standalone Codex binary from the official npm package. Keeping
 # Node.js and npm in this throwaway stage lets the API image contain Codex only.

@@ -212,6 +212,7 @@ jobs:
         with:
           context: ./${{ matrix.component }}
           target: ${{ matrix.target }}
+          build-args: ${{ matrix.component == 'backend' && format('RELEASE_VERSION={0}', needs.metadata.outputs.tag) || '' }}
           platforms: ${{ matrix.platform }}
           push: true
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
