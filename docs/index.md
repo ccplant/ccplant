@@ -6,7 +6,7 @@ hero:
   text: AIエージェントを、どこからでも動かす。
   tagline: セッションをリモートで実行し、多彩なトリガーから起動。好きなエージェントを、セルフホストした実行基盤で動かせます。
   image:
-    src: /brand/ccplant-app-icon-approved.png
+    src: /brand/ccplant-logo-approved.png
     alt: ccplant
   actions:
     - theme: brand

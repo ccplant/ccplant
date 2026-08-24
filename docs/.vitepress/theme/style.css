@@ -26,6 +26,9 @@
 .VPHomeHero .name { letter-spacing: -.05em; }
 .VPHomeHero .text { max-width: 720px; letter-spacing: -.035em; }
 .VPHomeHero .tagline { max-width: 650px; line-height: 1.8; }
+.VPHomeHero .image-src { max-width: 420px; padding: 28px; border-radius: 24px; background: #071a1d; }
+.VPNavBarTitle .logo { width: auto; max-width: 112px; padding: 5px 8px; border-radius: 8px; background: #071a1d; }
+.VPNavBarTitle .title > span { display: none; }
 .VPFeature { border: 1px solid var(--vp-c-divider); transition: transform .2s ease, border-color .2s ease; }
 .VPFeature:hover { transform: translateY(-3px); border-color: var(--vp-c-brand-1); }
 .VPFeature .icon { background: var(--vp-c-brand-soft) !important; }

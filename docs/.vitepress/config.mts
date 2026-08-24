@@ -18,7 +18,7 @@ export default defineConfig({
     ['meta', { property: 'og:description', content: 'AI coding agentsを、どこからでも安全に動かすためのオープンソース基盤。' }]
   ],
   themeConfig: {
-    logo: '/brand/ccplant-app-icon-approved.png',
+    logo: '/brand/ccplant-logo-approved.png',
     siteTitle: 'ccplant',
     nav: [
       { text: 'ガイド', link: '/guide/getting-started' },
