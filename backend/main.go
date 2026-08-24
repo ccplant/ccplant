@@ -7,12 +7,14 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/cmd"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ccplant",
-	Short: "AgentAPI Proxy Server",
-	Long:  "A reverse proxy server for AgentAPI that routes requests based on configuration",
+	Use:     "ccplant",
+	Short:   "AgentAPI Proxy Server",
+	Long:    "A reverse proxy server for AgentAPI that routes requests based on configuration",
+	Version: buildinfo.Version,
 }
 
 func init() {

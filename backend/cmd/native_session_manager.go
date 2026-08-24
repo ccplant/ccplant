@@ -13,13 +13,13 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
@@ -205,10 +205,7 @@ func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token strin
 }
 
 func nativeBuildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-		return info.Main.Version
-	}
-	return "devel"
+	return buildinfo.Version
 }
 
 func nativeSessionProxy(manager *services.NativeSessionManager, secret []byte) echo.HandlerFunc {

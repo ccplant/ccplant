@@ -9,12 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -748,7 +748,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": manager.LastHeartbeatAt, "pools": owned,
-		"upstream_version": strings.TrimSpace(os.Getenv("AGENTAPI_VERSION")),
+		"upstream_version": buildinfo.Version,
 	})
 }
 

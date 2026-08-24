@@ -7,11 +7,14 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
 func TestHealthCheck(t *testing.T) {
-	t.Setenv("AGENTAPI_VERSION", "v1.4.0")
+	previous := buildinfo.Version
+	buildinfo.Version = "v1.4.0"
+	t.Cleanup(func() { buildinfo.Version = previous })
 	cfg := config.DefaultConfig()
 	// Auth is now always enabled, disable specific auth methods if needed
 	if cfg.Auth.Static != nil {

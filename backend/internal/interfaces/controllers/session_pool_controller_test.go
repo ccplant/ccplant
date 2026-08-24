@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -34,7 +35,9 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	if created.ConnectionToken == "" {
 		t.Fatal("manager connection token was not returned")
 	}
-	t.Setenv("AGENTAPI_VERSION", "v2.4.0")
+	previousVersion := buildinfo.Version
+	buildinfo.Version = "v2.4.0"
+	t.Cleanup(func() { buildinfo.Version = previousVersion })
 	heartbeatResult := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
 		nil, map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer " + created.ConnectionToken})
 	if heartbeatResult.Code != http.StatusOK {

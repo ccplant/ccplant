@@ -7,10 +7,13 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 )
 
 func TestHealthCheckIncludesReleaseVersion(t *testing.T) {
-	t.Setenv("AGENTAPI_VERSION", "v1.4.0")
+	previous := buildinfo.Version
+	buildinfo.Version = "v1.4.0"
+	t.Cleanup(func() { buildinfo.Version = previous })
 	e := echo.New()
 	recorder := httptest.NewRecorder()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/health", nil), recorder)
