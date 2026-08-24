@@ -56,3 +56,15 @@ func TestReconcileSessionManagerVersionDoesNotDowngrade(t *testing.T) {
 		t.Fatalf("unexpected Kubernetes actions: %v", client.Actions())
 	}
 }
+
+func TestSessionManagerUpgradeRequiredForDevelopmentCommit(t *testing.T) {
+	desired := "dev.ccplant.0123456789abcdef0123456789abcdef01234567"
+	upgrade, err := sessionManagerUpgradeRequired("dev.ccplant.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", desired)
+	if err != nil || !upgrade {
+		t.Fatalf("upgrade=%v err=%v", upgrade, err)
+	}
+	upgrade, err = sessionManagerUpgradeRequired(desired, desired)
+	if err != nil || upgrade {
+		t.Fatalf("same commit upgrade=%v err=%v", upgrade, err)
+	}
+}

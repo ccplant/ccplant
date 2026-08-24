@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -337,15 +338,11 @@ func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, cli
 	if !cfg.SessionManager.AutoUpgrade || desired == "" || cfg.SessionManager.CurrentVersion == "" {
 		return nil
 	}
-	desiredVersion, err := utilversion.ParseSemantic(desired)
+	upgrade, err := sessionManagerUpgradeRequired(cfg.SessionManager.CurrentVersion, desired)
 	if err != nil {
-		return fmt.Errorf("invalid upstream version %q: %w", desired, err)
+		return err
 	}
-	currentVersion, err := utilversion.ParseSemantic(cfg.SessionManager.CurrentVersion)
-	if err != nil {
-		return fmt.Errorf("invalid current version %q: %w", cfg.SessionManager.CurrentVersion, err)
-	}
-	if !currentVersion.LessThan(desiredVersion) {
+	if !upgrade {
 		return nil
 	}
 	if cfg.SessionManager.DeploymentName == "" || cfg.SessionManager.ImageRepository == "" {
@@ -380,6 +377,33 @@ func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, cli
 		_, updateErr := client.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 		return updateErr
 	})
+}
+
+func sessionManagerUpgradeRequired(current, desired string) (bool, error) {
+	// Development charts use immutable commit-addressed tags. Git commit order
+	// is not encoded in the tag, so the authenticated parent is authoritative.
+	if strings.HasPrefix(desired, "dev.ccplant.") {
+		sha := strings.TrimPrefix(desired, "dev.ccplant.")
+		if len(sha) != 40 {
+			return false, fmt.Errorf("invalid upstream development version %q", desired)
+		}
+		if _, err := hex.DecodeString(sha); err != nil {
+			return false, fmt.Errorf("invalid upstream development version %q", desired)
+		}
+		return current != desired, nil
+	}
+	desiredVersion, err := utilversion.ParseSemantic(desired)
+	if err != nil {
+		return false, fmt.Errorf("invalid upstream version %q: %w", desired, err)
+	}
+	currentVersion, err := utilversion.ParseSemantic(current)
+	if err != nil {
+		if strings.HasPrefix(current, "dev.ccplant.") {
+			return true, nil
+		}
+		return false, fmt.Errorf("invalid current version %q: %w", current, err)
+	}
+	return currentVersion.LessThan(desiredVersion), nil
 }
 
 func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, upstream, managerID, token, currentRevision string, manager *services.KubernetesSessionManager) (string, error) {
