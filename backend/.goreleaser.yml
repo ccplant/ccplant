@@ -18,7 +18,7 @@ builds:
     main: ./main.go
     binary: ccplant
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Version=v{{.Version}}
 
 archives:
   - formats:
