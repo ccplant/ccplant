@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: ccplant
-  text: Your agents, always within reach.
-  tagline: AI coding agentsの実行環境、セッション、UIをひとつに。ローカルからKubernetesまで、チームの開発を止めずに育てるオープンソース基盤です。
+  text: AIエージェントを、どこからでも動かす。
+  tagline: セッションをリモートで実行し、多彩なトリガーから起動。好きなエージェントを、セルフホストした実行基盤で動かせます。
   image:
     src: /brand/ccplant-app-icon-approved.png
     alt: ccplant
@@ -17,33 +17,34 @@ hero:
       link: /guide/what-is-ccplant
 
 features:
-  - icon: 🌱
-    title: エージェントを育てる
-    details: CodexやClaude Codeなどの実行セッションを作成し、状態・ログ・会話を一か所で管理します。
-  - icon: 🧭
-    title: どこからでも操作
-    details: Web UIとネイティブアプリから、稼働中のセッションへリアルタイムにアクセスできます。
-  - icon: 🛡️
-    title: チームで安全に運用
-    details: 認証、権限、永続化、監視を備え、Docker ComposeからKubernetesへ段階的に展開できます。
+  - icon: 🌐
+    title: リモートでセッション実行
+    details: エージェントをリモート環境で起動し、ブラウザやデスクトップから接続。場所や端末に縛られず作業を継続できます。
   - icon: ⚡
-    title: APIファースト
-    details: セッション作成・検索・ルーティングをAPIとして提供。既存の自動化や開発フローにも組み込めます。
-  - icon: 📦
-    title: ひとつのモノレポ
-    details: Goバックエンド、Next.js UI、Tauriアプリ、Helm Chartを同じリリースサイクルで管理します。
-  - icon: 🔓
-    title: オープンソース
-    details: 自分たちのインフラで実行でき、ワークロードや成長に合わせて構成を選べます。
+    title: 多彩なトリガー
+    details: Web UIやAPIに加え、スケジュール、Webhook、Slackなどを起点にセッションを自動実行できます。
+  - icon: 🔀
+    title: エージェントを自由に選択
+    details: Codex、Claude Codeなどから用途に合うエージェントを選択。特定ベンダーへロックインされません。
+  - icon: 🏠
+    title: 実行基盤をセルフホスト
+    details: エージェントとコードを自分たちの管理下で実行。ローカル環境からKubernetesまで、要件に合う基盤を選べます。
 ---
 
-## 植えて、つないで、育てる
+## エージェントの実行を、手元の端末から解放する
 
-ccplantは、AI coding agentを単発のローカルプロセスから、継続して使えるチームの基盤へ変えます。Proxyがセッションのライフサイクルを担い、Web UIが人とエージェントをつなぎ、Session Managerが実行場所を拡張します。
+ccplantは、AI coding agentのセッションをリモートで作成・実行・再接続できるオープンソース基盤です。人がUIから開始する作業も、イベントやスケジュールから始まる自動処理も、同じセッション基盤で扱えます。
 
 ```text
-Developer → Web / Native UI → ccplant API → Agent session
-                                      └──→ Local / Kubernetes
+UI / API / Schedule / Webhook / Slack
+                  ↓
+              ccplant API
+                  ↓
+     Codex / Claude Code / other agents
+                  ↓
+      Your infrastructure / Kubernetes
 ```
+
+エージェントと実行場所は交換可能です。使いたいエージェントを選び、コードや認証情報を自分たちの管理するインフラに置いたまま運用できます。
 
 [クイックスタートへ進む →](/guide/getting-started)
