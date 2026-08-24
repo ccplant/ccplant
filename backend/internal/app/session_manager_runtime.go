@@ -105,11 +105,13 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 	settingsRepo := repositories.NewKubernetesSettingsRepository(persistence, applicationNamespace, registry)
 	credentialsRepo := repositories.NewKubernetesCredentialsRepository(persistence, applicationNamespace)
+	userFileRepo := repositories.NewKubernetesUserFileRepository(persistence, applicationNamespace)
 	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace)
 	personalKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace)
 	sandboxPolicyRepo := repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace)
 	manager.SetSettingsRepository(settingsRepo)
 	manager.SetCredentialsRepository(credentialsRepo)
+	manager.SetUserFileRepository(userFileRepo)
 	manager.SetTeamConfigRepository(teamConfigRepo)
 	manager.SetPersonalAPIKeyRepository(personalKeyRepo)
 	manager.SetSandboxPolicyRepository(sandboxPolicyRepo)
