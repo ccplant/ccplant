@@ -149,6 +149,33 @@ func TestResolverReturnsLogicalPoolOnceForMultipleSuppliers(t *testing.T) {
 	require.Equal(t, "linux", pools[0].Name)
 }
 
+func TestResolverExcludesManagerUntilHeartbeatAndRestoresItsPoolAfterRecovery(t *testing.T) {
+	now := time.Now().UTC()
+	manager := &Manager{ID: "manager-a", Enabled: true}
+	store := &resolverStore{
+		managers:  []*Manager{manager},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings:  []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 100}},
+	}
+	resolver := NewResolver(store, 90*time.Second)
+	resolver.now = func() time.Time { return now }
+
+	resolved, err := resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved, "manager without a heartbeat must not be scheduled")
+
+	manager.LastHeartbeatAt = now.Add(-91 * time.Second)
+	resolved, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved, "manager with a stale heartbeat must not be scheduled")
+
+	manager.LastHeartbeatAt = now
+	resolved, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "linux", resolved.Pool.Name, "healthy heartbeat must restore the original pool priority")
+}
+
 func TestResolverPrefersExactBindingOverAll(t *testing.T) {
 	store := &resolverStore{
 		managers:  []*Manager{{ID: "manager-a", Enabled: true}},

@@ -110,13 +110,23 @@ func firstPoolByPriority(pools []*ResolvedPool) *ResolvedPool {
 }
 
 func (r *Resolver) managerAvailable(manager *Manager) bool {
+	return ManagerAvailable(manager, r.heartbeatTTL, r.now())
+}
+
+// ManagerAvailable reports whether a manager may participate in scheduling.
+// Heartbeat health is derived at scheduling time so a recovered manager becomes
+// eligible again without mutating its configured priority or enabled state.
+func ManagerAvailable(manager *Manager, heartbeatTTL time.Duration, now time.Time) bool {
 	if manager == nil || !manager.Enabled || manager.Draining {
 		return false
 	}
-	if r.heartbeatTTL <= 0 || manager.LastHeartbeatAt.IsZero() {
+	if heartbeatTTL <= 0 {
 		return true
 	}
-	return r.now().Sub(manager.LastHeartbeatAt) <= r.heartbeatTTL
+	if manager.LastHeartbeatAt.IsZero() {
+		return false
+	}
+	return now.Sub(manager.LastHeartbeatAt) <= heartbeatTTL
 }
 
 func effectiveBinding(bindings []*Binding, pool string, subject Subject) *Binding {

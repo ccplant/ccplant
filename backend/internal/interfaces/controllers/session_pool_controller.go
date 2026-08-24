@@ -34,10 +34,12 @@ type SessionPoolController struct {
 	now func() time.Time
 }
 
+const sessionManagerHeartbeatTTL = 90 * time.Second
+
 func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
 	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
 }) *SessionPoolController {
-	c := &SessionPoolController{store: store, resolver: core.NewResolver(store, 90*time.Second), routes: routes, now: func() time.Time { return time.Now().UTC() }}
+	c := &SessionPoolController{store: store, resolver: core.NewResolver(store, sessionManagerHeartbeatTTL), routes: routes, now: func() time.Time { return time.Now().UTC() }}
 	if len(providers) > 0 {
 		c.profile = providers[0]
 	}
@@ -640,6 +642,10 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 	runner, err := c.authenticateRunner(ctx)
 	if err != nil {
 		return err
+	}
+	manager, err := c.store.GetManager(ctx.Request().Context(), runner.ManagerID)
+	if err != nil || !core.ManagerAvailable(manager, sessionManagerHeartbeatTTL, c.now()) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager heartbeat is stale")
 	}
 	wait := parseRunnerWait(ctx.QueryParam("wait"))
 	deadline := c.now().Add(wait)
