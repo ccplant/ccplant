@@ -275,7 +275,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			_ = manager.Shutdown(5 * time.Second)
 			return nil, fmt.Errorf("create Kubernetes session-manager lease: %w", lockErr)
 		}
-		go leaderelection.RunOrDie(runtimeCtx, leaderelection.LeaderElectionConfig{
+		electionConfig := leaderelection.LeaderElectionConfig{
 			Lock: lock, LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry, ReleaseOnCancel: true,
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(leaderCtx context.Context) {
@@ -291,10 +291,34 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
 				OnNewLeader:      func(identity string) { log.Printf("[SESSION_MANAGER] Remote execution leader is %s", identity) },
 			},
+		}
+		go runLeaderElectionUntilCanceled(runtimeCtx, retry, func(ctx context.Context) {
+			leaderelection.RunOrDie(ctx, electionConfig)
 		})
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+// runLeaderElectionUntilCanceled starts a fresh election after leadership is
+// lost. client-go's leader election loop returns permanently when it cannot
+// renew its lease, but a transient Kubernetes API outage must not leave a
+// healthy session-manager Pod running without its allocation worker.
+func runLeaderElectionUntilCanceled(ctx context.Context, retryPeriod time.Duration, run func(context.Context)) {
+	for ctx.Err() == nil {
+		run(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		log.Printf("[SESSION_MANAGER] Leader election stopped; retrying in %s", retryPeriod)
+		timer := time.NewTimer(retryPeriod)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 func runSessionManagerVersionPoller(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace string) {
