@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -93,13 +94,14 @@ type Server struct {
 	httpClient   *http.Client
 	filterURL    string
 
-	mu        sync.RWMutex
-	status    Status
-	message   string
-	phase     string
-	phaseTime time.Time
-	serverCtx context.Context // long-lived context for provisioning goroutines
-	reporter  func(Status, string)
+	mu          sync.RWMutex
+	status      Status
+	message     string
+	phase       string
+	phaseTime   time.Time
+	serverCtx   context.Context // long-lived context for provisioning goroutines
+	reporter    func(Status, string)
+	startupDone chan struct{}
 }
 
 // New creates a new Server.
@@ -116,6 +118,7 @@ func New(port int, settingsFile string) *Server {
 		status:       StatusPending,
 		phase:        "starting",
 		phaseTime:    time.Now(),
+		startupDone:  make(chan struct{}),
 	}
 }
 
@@ -133,7 +136,10 @@ func (s *Server) Start(ctx context.Context) error {
 	// Run the common startup pre-script immediately in the background.
 	// This pre-fetches ACP packages while the Pod is idle (stock inventory or
 	// Pod restart), so provisioning does not have to wait for network downloads.
-	go s.runStartupScript(ctx)
+	go func() {
+		defer close(s.startupDone)
+		s.runStartupScript(ctx)
+	}()
 
 	// Auto-provision from Secret volume if available (Pod restart case). Give
 	// the pull client time to claim an initial provision request first: the
@@ -348,6 +354,9 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	if os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED") == "true" {
 		waitForSciaProxy(ctx, "http://127.0.0.1:18081", 15*time.Second)
 	}
+	if localNetworkFilterConfigured() {
+		waitForTCP(ctx, "127.0.0.1:3128", 15*time.Second)
+	}
 	log.Printf("[PROVISIONER] Running startup pre-script")
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	cmd.Env = withoutProxyEnv(os.Environ())
@@ -358,6 +367,32 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	} else {
 		log.Printf("[PROVISIONER] Startup pre-script complete")
 	}
+}
+
+func localNetworkFilterConfigured() bool {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+		if strings.Contains(os.Getenv(key), "127.0.0.1:3128") {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForTCP(ctx context.Context, address string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := (&net.Dialer{Timeout: 250 * time.Millisecond}).DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	log.Printf("[PROVISIONER] Warning: network filter did not become ready before timeout: %s", address)
 }
 
 func withoutProxyEnv(env []string) []string {

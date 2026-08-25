@@ -1,12 +1,52 @@
 package provisioner
 
 import (
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestWaitForTCPReturnsWhenListenerIsReady(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	waitForTCP(ctx, listener.Addr().String(), time.Second)
+	if ctx.Err() != nil {
+		t.Fatalf("waitForTCP did not return while listener was ready: %v", ctx.Err())
+	}
+}
+
+func TestWaitForStartupPreloadBlocksUntilCompletion(t *testing.T) {
+	done := make(chan struct{})
+	server := &Server{startupDone: done}
+	result := make(chan bool, 1)
+	go func() { result <- server.waitForStartupPreload(context.Background()) }()
+
+	select {
+	case <-result:
+		t.Fatal("waitForStartupPreload returned before startup completion")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(done)
+	select {
+	case ok := <-result:
+		if !ok {
+			t.Fatal("waitForStartupPreload returned false after startup completion")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitForStartupPreload did not return after startup completion")
+	}
+}
 
 func TestHandleSandboxPolicyForwardsToNetworkFilter(t *testing.T) {
 	var gotMethod, gotContentType, gotBody string
