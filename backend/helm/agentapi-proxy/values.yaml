@@ -184,6 +184,9 @@ cloudRun:
   startupCpuBoost: true
   containerConcurrency: 80
   timeoutSeconds: 300
+  # Cloud Run should route sessions through an outbound session-manager pool;
+  # it cannot serve cluster-local session workload addresses itself.
+  localSessionFallbackEnabled: false
   imageDigest: ""
   # Optional Secret Manager secret mounted as the application's auth config.
   # Keep environment-specific mappings in Secret Manager, not chart values.

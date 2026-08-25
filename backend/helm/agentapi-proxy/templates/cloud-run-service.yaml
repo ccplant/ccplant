@@ -106,6 +106,7 @@ spec:
             - {name: AGENTAPI_SCIA_ENABLED, value: {{ .Values.scia.enabled | quote }}}
             - {name: SESSION_CONTROL_LONG_POLL_ENABLED, value: {{ .Values.sessionControl.enabled | quote }}}
             - {name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED, value: {{ .Values.sessionControl.directRuntimeEnabled | quote }}}
+            - {name: AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED, value: {{ $cloudRun.localSessionFallbackEnabled | quote }}}
             {{- with .Values.config.vapid.publicKey }}
             - {name: VAPID_PUBLIC_KEY, value: {{ . | quote }}}
             {{- end }}
