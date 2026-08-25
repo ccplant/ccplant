@@ -149,6 +149,13 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	injectUsageReportingHook(settings)
 	injectSessionPersistenceHook(settings)
 	startedAt := time.Now()
+	if s.startupDone != nil {
+		s.setPhase("provision:wait-startup-preload")
+		log.Printf("[PROVISIONER] Waiting for startup pre-script before provisioning session %s", settings.Session.ID)
+		if !s.waitForStartupPreload(ctx) {
+			return
+		}
+	}
 	s.setPhase("provision:start")
 	log.Printf("[PROVISIONER] Starting provisioning for session %s", settings.Session.ID)
 	defer func() {
@@ -399,6 +406,18 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, "agent process exited with code 0")
 		}
 	}()
+}
+
+func (s *Server) waitForStartupPreload(ctx context.Context) bool {
+	if s.startupDone == nil {
+		return true
+	}
+	select {
+	case <-s.startupDone:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {
