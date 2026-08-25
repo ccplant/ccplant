@@ -58,8 +58,7 @@ bun run size:cloudflare
 
 Cloudflare 側には少なくとも以下の環境変数・secretを設定してください。
 
-- `AGENTAPI_PROXY_URL`: Worker から到達可能な agentapi-proxy の HTTPS URL。
-  Cloudflare Workers にデプロイする値は `wrangler.jsonc` で管理します。
+- `AGENTAPI_PROXY_URL`: Worker から到達可能な agentapi-proxy の HTTPS URL
 - `COOKIE_ENCRYPTION_SECRET`: 64文字の16進数で表した32バイトの暗号鍵
 - `NEXT_PUBLIC_BASE_URL`: Worker またはカスタムドメインの公開URL
 
