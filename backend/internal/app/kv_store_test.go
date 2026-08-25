@@ -15,6 +15,12 @@ func TestBuildApplicationKVStoreLegacyKubernetes(t *testing.T) {
 	}
 }
 
+func TestBuildESMControlStoreRequiresRedis(t *testing.T) {
+	if store := buildESMControlStore(&config.Config{}); store != nil {
+		t.Fatalf("ESM control store without Redis = %T, want nil", store)
+	}
+}
+
 func TestBuildApplicationKVStoreReplicated(t *testing.T) {
 	cfg := config.KVStoreConfig{
 		Primary:   &config.KVStoreBackendConfig{Backend: "kubernetes"},
