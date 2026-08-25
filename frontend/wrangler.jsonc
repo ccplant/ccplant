@@ -4,6 +4,9 @@
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-08-17",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AGENTAPI_PROXY_URL": "https://ccplant-api-dev-47070521843.asia-northeast1.run.app"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
