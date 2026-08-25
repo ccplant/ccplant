@@ -51,6 +51,20 @@ describe('API proxy route transport', () => {
     expect(await response.text()).toBe(': connected\n\ndata: {"ok":true}\n\n')
   })
 
+  it('routes requests to the API mapped to the request subdomain', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    vi.stubEnv('AGENTAPI_PROXY_SUBDOMAIN_MAP', '{"alpha":"http://alpha-backend:8080"}')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ ok: true }))
+    const request = new NextRequest('https://alpha.ui.example.test/api/proxy/health')
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ['health'] }),
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://alpha-backend:8080/health')
+    expect(response.status).toBe(200)
+  })
+
   it('opens the downstream SSE response before the upstream fetch resolves', async () => {
     vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
     let resolveUpstream: ((response: Response) => void) | undefined

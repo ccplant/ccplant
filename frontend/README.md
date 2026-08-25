@@ -31,6 +31,9 @@ COOKIE_ENCRYPTION_SECRET=your_64_character_hex_string_here
 # AgentAPI Proxy Configuration
 AGENTAPI_PROXY_URL=http://localhost:8080
 
+# Optional: route each UI subdomain to a different AgentAPI Proxy
+AGENTAPI_PROXY_SUBDOMAIN_MAP={"team-a":"https://team-a-api.example.com","team-b":"https://team-b-api.example.com"}
+
 # Push Notification Configuration (オプション)
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key_here
 ```
@@ -59,6 +62,7 @@ bun run size:cloudflare
 Cloudflare 側には少なくとも以下の環境変数・secretを設定してください。
 
 - `AGENTAPI_PROXY_URL`: Worker から到達可能な agentapi-proxy の HTTPS URL
+- `AGENTAPI_PROXY_SUBDOMAIN_MAP`: サブドメインを agentapi-proxy URL に対応付ける JSON オブジェクト（任意）
 - `COOKIE_ENCRYPTION_SECRET`: 64文字の16進数で表した32バイトの暗号鍵
 - `NEXT_PUBLIC_BASE_URL`: Worker またはカスタムドメインの公開URL
 
@@ -73,6 +77,11 @@ APIクライアントは `/api/v1/*` を使って、`agentapi-proxy` APIへア�
 https://app.example.com/api/v1/sessions?limit=10
   -> https://<AGENTAPI_PROXY_URL>/sessions?limit=10
 ```
+
+`AGENTAPI_PROXY_SUBDOMAIN_MAP` を設定すると、リクエストのホスト名の先頭ラベルで転送先を
+切り替えられます。たとえば上記の設定では `team-a.ui.example.com` へのアクセスは
+`https://team-a-api.example.com` に転送されます。マッピングにないサブドメインは
+`AGENTAPI_PROXY_URL` にフォールバックします。
 
 `/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを

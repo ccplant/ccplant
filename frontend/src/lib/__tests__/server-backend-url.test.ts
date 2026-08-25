@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  getBackendBaseUrl,
   getBackendUrl,
   normalizeBackendBaseUrl,
+  resolveMappedBackendUrl,
 } from '../server-backend-url'
 
 describe('server backend URL resolution', () => {
@@ -22,5 +24,30 @@ describe('server backend URL resolution', () => {
 
   it('rejects an empty backend URL', () => {
     expect(() => normalizeBackendBaseUrl('  ')).toThrow('AGENTAPI_PROXY_URL is required')
+  })
+
+  it('selects a backend by the request subdomain', () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    vi.stubEnv('AGENTAPI_PROXY_SUBDOMAIN_MAP', JSON.stringify({
+      alpha: 'https://alpha-api.example.test/api/proxy/',
+      beta: 'https://beta-api.example.test',
+    }))
+
+    expect(getBackendBaseUrl('alpha.ui.example.test')).toBe('https://alpha-api.example.test')
+    expect(getBackendUrl('/sessions', 'beta.ui.example.test')).toBe('https://beta-api.example.test/sessions')
+  })
+
+  it('falls back to the default backend when the subdomain is not mapped', () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    vi.stubEnv('AGENTAPI_PROXY_SUBDOMAIN_MAP', '{"alpha":"https://alpha-api.example.test"}')
+
+    expect(getBackendBaseUrl('unknown.ui.example.test')).toBe('http://default-backend:8080')
+  })
+
+  it('rejects an invalid subdomain map', () => {
+    expect(() => resolveMappedBackendUrl('alpha.ui.example.test', '[]'))
+      .toThrow('AGENTAPI_PROXY_SUBDOMAIN_MAP must be a JSON object')
+    expect(() => resolveMappedBackendUrl('alpha.ui.example.test', '{invalid'))
+      .toThrow('AGENTAPI_PROXY_SUBDOMAIN_MAP must be a valid JSON object')
   })
 })

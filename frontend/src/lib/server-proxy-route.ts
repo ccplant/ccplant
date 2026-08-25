@@ -299,7 +299,7 @@ async function handleProxyRequest(
       apiKey,
       options.passThroughAuthorization,
     )
-    const targetUrl = `${getBackendBaseUrl()}/${path}${request.nextUrl.search}`
+    const targetUrl = `${getBackendBaseUrl(request.nextUrl.hostname)}/${path}${request.nextUrl.search}`
     const isSSE = isServerSentEventsRequest(headers)
     const isMessageEndpoint = pathParts.includes('message')
       || (pathParts.includes('messages') && pathParts.includes('wait'))
