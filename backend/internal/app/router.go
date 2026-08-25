@@ -78,6 +78,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	} else {
 		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
 	}
+	if server.esmControlStore != nil {
+		sessionPoolController.WithManagerLiveness(server.esmControlStore)
+	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController

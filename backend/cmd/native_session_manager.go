@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -143,9 +142,6 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	go worker.Start(ctx)
 	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
 	go controlWorker.Start(ctx)
-	if o.managerID != "" {
-		go runNativeHeartbeat(ctx, o.upstreamURL, o.managerID, o.connectionToken, manager)
-	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -168,40 +164,6 @@ func nativeSessionManagerLocalURL(listen string) (string, error) {
 		host = "127.0.0.1"
 	}
 	return "http://" + net.JoinHostPort(host, port), nil
-}
-
-func runNativeHeartbeat(ctx context.Context, upstreamURL, managerID, token string, manager *services.NativeSessionManager) {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	send := func() {
-		body, _ := json.Marshal(map[string]interface{}{
-			"version": nativeBuildVersion(), "active_sessions": manager.ActiveSessionCount(),
-		})
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstreamURL, "/")+"/external-session-managers/"+url.PathEscape(managerID)+"/heartbeat", bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			log.Printf("[NATIVE_ESM] heartbeat failed: %v", err)
-			return
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			log.Printf("[NATIVE_ESM] heartbeat returned HTTP %d", resp.StatusCode)
-		}
-	}
-	send()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			send()
-		}
-	}
 }
 
 func nativeBuildVersion() string {
