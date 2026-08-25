@@ -280,8 +280,12 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(leaderCtx context.Context) {
 					log.Printf("[SESSION_MANAGER] Became remote execution leader")
-					control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
-					go control.Start(leaderCtx)
+					// Runner-pool managers use the direct runtime channel and do not
+					// participate in the legacy ESM reverse-proxy control protocol.
+					if cfg.SessionManager.RunnerPool == "" {
+						control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
+						go control.Start(leaderCtx)
+					}
 					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg, manager)
 				},
 				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
