@@ -140,6 +140,8 @@ api:
   # key only controls the optional bundled Redis workload.
   redis:
     addr: ""
+    # For Cloud Run this names a Google Secret Manager secret. For Kubernetes
+    # it names a Secret in the release namespace.
     existingSecret: ""
     existingSecretPasswordKey: redis-password
     db: 0
