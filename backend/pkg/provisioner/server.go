@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -93,13 +94,14 @@ type Server struct {
 	httpClient   *http.Client
 	filterURL    string
 
-	mu        sync.RWMutex
-	status    Status
-	message   string
-	phase     string
-	phaseTime time.Time
-	serverCtx context.Context // long-lived context for provisioning goroutines
-	reporter  func(Status, string)
+	mu          sync.RWMutex
+	status      Status
+	message     string
+	phase       string
+	phaseTime   time.Time
+	serverCtx   context.Context // long-lived context for provisioning goroutines
+	reporter    func(Status, string)
+	startupDone chan struct{}
 }
 
 // New creates a new Server.
@@ -116,6 +118,7 @@ func New(port int, settingsFile string) *Server {
 		status:       StatusPending,
 		phase:        "starting",
 		phaseTime:    time.Now(),
+		startupDone:  make(chan struct{}),
 	}
 }
 
@@ -193,9 +196,19 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// handleHealthz returns 200 OK unconditionally (used by liveness/readiness probes).
+// handleHealthz keeps stock runners out of the allocator until their startup
+// prefetch has finished. Without this gate a runner can be claimed while the
+// network-filter sidecar is still starting, causing ACP package installation
+// to fail and the allocated session to time out.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	select {
+	case <-s.startupDone:
+	default:
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"ok":false,"reason":"startup prefetch in progress"}`))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
@@ -341,6 +354,7 @@ func (s *Server) controlURL() string {
 // starts. It uses PROVISIONER_PRE_SCRIPT if set, otherwise defaultStartupScript.
 // Failure is non-fatal: a warning is logged and the server continues normally.
 func (s *Server) runStartupScript(ctx context.Context) {
+	defer close(s.startupDone)
 	script := os.Getenv("PROVISIONER_PRE_SCRIPT")
 	if script == "" {
 		script = defaultStartupScript
@@ -348,6 +362,7 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	if os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED") == "true" {
 		waitForSciaProxy(ctx, "http://127.0.0.1:18081", 15*time.Second)
 	}
+	waitForLocalTCP(ctx, "127.0.0.1:3128", 30*time.Second)
 	log.Printf("[PROVISIONER] Running startup pre-script")
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	cmd.Env = withoutProxyEnv(os.Environ())
@@ -358,6 +373,24 @@ func (s *Server) runStartupScript(ctx context.Context) {
 	} else {
 		log.Printf("[PROVISIONER] Startup pre-script complete")
 	}
+}
+
+func waitForLocalTCP(ctx context.Context, address string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := (&net.Dialer{Timeout: 500 * time.Millisecond}).DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			log.Printf("[PROVISIONER] local network proxy is ready at %s", address)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	log.Printf("[PROVISIONER] Warning: local network proxy did not become ready before timeout: %s", address)
 }
 
 func withoutProxyEnv(env []string) []string {
