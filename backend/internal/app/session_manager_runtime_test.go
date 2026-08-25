@@ -7,10 +7,42 @@ import (
 	"time"
 
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+type fakeRunnerInfrastructure struct {
+	idle, total int
+	created     int
+}
+
+func (f *fakeRunnerInfrastructure) CountStockSessionsForPool(context.Context, string, bool) (int, error) {
+	return f.idle, nil
+}
+
+func (f *fakeRunnerInfrastructure) CountRunnerSessionsForPool(context.Context, string) (int, error) {
+	return f.total, nil
+}
+
+func (f *fakeRunnerInfrastructure) CreateStockSessionForPool(context.Context, string, bool) error {
+	f.created++
+	return nil
+}
+
+func TestReconcileSessionRunnerPoolsUsesInfrastructureInventory(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 3, MaxRunners: 20,
+		// The upstream registry is deliberately stale. Local infrastructure is
+		// authoritative for capacity reconciliation.
+		IdleRunners: 3, TotalRunners: 3,
+	}})
+	if manager.created != 3 {
+		t.Fatalf("created %d runners, want 3", manager.created)
+	}
+}
 
 type durableAllocationQueue struct {
 	allocation *coreallocation.AllocationRequest
