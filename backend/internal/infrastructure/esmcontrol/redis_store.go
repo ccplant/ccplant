@@ -11,8 +11,12 @@ import (
 )
 
 const (
-	maxLen        = int64(10000)
-	streamTTL     = 5 * time.Minute
+	maxLen = int64(10000)
+	// A direct-runtime request may legitimately run without producing frames
+	// for longer than the manager heartbeat window. Keep its command, response,
+	// and ownership records long enough to survive Cloud Run SSE reconnects and
+	// long-running tools. The bounded streams and TTL still provide cleanup.
+	streamTTL     = 24 * time.Hour
 	connectionTTL = 75 * time.Second
 )
 
@@ -157,14 +161,24 @@ func (s *RedisStore) ReadFrames(ctx context.Context, requestID, after string, wa
 }
 
 func (s *RedisStore) RequestBelongsToManager(ctx context.Context, requestID, managerID string) (bool, error) {
-	owner, err := s.client.Get(ctx, requestOwnerKey(requestID)).Result()
+	key := requestOwnerKey(requestID)
+	owner, err := s.client.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return owner == managerID, nil
+	if owner != managerID {
+		return false, nil
+	}
+	// A successful upload proves that the request is still active. Refresh its
+	// lease so a long-running request cannot start returning 403 midway through
+	// execution.
+	if err := s.client.Expire(ctx, key, streamTTL).Err(); err != nil {
+		return false, fmt.Errorf("refresh ESM request owner: %w", err)
+	}
+	return true, nil
 }
 
 func (s *RedisStore) read(ctx context.Context, key, after string, wait time.Duration, count int64) ([]redis.XMessage, error) {
