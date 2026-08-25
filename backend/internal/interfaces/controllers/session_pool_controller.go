@@ -40,7 +40,13 @@ type managerLiveness interface {
 	IsManagerConnected(context.Context, string) (bool, error)
 }
 
-const sessionManagerHeartbeatTTL = 90 * time.Second
+const (
+	sessionManagerHeartbeatTTL = 90 * time.Second
+	// Idle runners continuously long-poll for allocations. Their authenticated
+	// polls refresh LastSeen, so records older than this no longer represent a
+	// live workload and must not suppress stock-runner reconciliation.
+	sessionRunnerHeartbeatTTL = 3 * time.Minute
+)
 
 func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
 	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
@@ -763,6 +769,12 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
 				}
+				if runner.Status == core.RunnerIdle && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
+					if err := c.store.DeleteRunner(ctx.Request().Context(), runner.ID); err != nil {
+						return sessionRunnerStoreError(err)
+					}
+					continue
+				}
 				copy.TotalRunners++
 				if runner.Status == core.RunnerIdle {
 					copy.IdleRunners++
@@ -792,6 +804,9 @@ func (c *SessionPoolController) authenticateRunner(ctx echo.Context) (*core.Runn
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid runner token")
 	}
 	runner.LastSeen = c.now()
+	if err := c.store.UpdateRunner(ctx.Request().Context(), runner); err != nil {
+		return nil, sessionRunnerStoreError(err)
+	}
 	return runner, nil
 }
 
