@@ -74,6 +74,8 @@ func (w *RunnerWorker) Start(ctx context.Context) {
 }
 
 func (w *RunnerWorker) reconcile(ctx context.Context) {
+	// Native managers communicate only with the backend. The backend owns the
+	// shared Redis connection used for liveness, pool state, and control traffic.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", nil)
 	req.Header.Set("Authorization", "Bearer "+w.token)
 	resp, err := w.client.Do(req)
@@ -81,7 +83,7 @@ func (w *RunnerWorker) reconcile(ctx context.Context) {
 		log.Printf("[SESSION_RUNNER] heartbeat failed: %v", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		log.Printf("[SESSION_RUNNER] heartbeat returned HTTP %d", resp.StatusCode)
 		return

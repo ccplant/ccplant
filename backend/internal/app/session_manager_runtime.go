@@ -486,12 +486,22 @@ func syncSessionRunnerRuntimeProfile(ctx context.Context, client *http.Client, u
 	return snapshot.Revision, nil
 }
 
-func reconcileSessionRunnerPools(ctx context.Context, manager *services.KubernetesSessionManager, pools []*sessionrunnercore.PoolSupplier) {
+type sessionRunnerInfrastructure interface {
+	CountStockSessionsForPool(context.Context, string, bool) (int, error)
+	CountRunnerSessionsForPool(context.Context, string) (int, error)
+	CreateStockSessionForPool(context.Context, string, bool) error
+}
+
+func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier) {
 	for _, pool := range pools {
 		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
 			continue
 		}
-		idle := pool.IdleRunners
+		idle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
+		if err != nil {
+			log.Printf("[SESSION_MANAGER] Count pool %s idle runners: %v", pool.Pool, err)
+			continue
+		}
 		total, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)

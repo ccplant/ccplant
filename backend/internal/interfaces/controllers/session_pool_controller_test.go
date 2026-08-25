@@ -19,6 +19,119 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+type testManagerLiveness struct {
+	connected map[string]bool
+}
+
+func (l *testManagerLiveness) TouchManager(_ context.Context, managerID, _ string) error {
+	l.connected[managerID] = true
+	return nil
+}
+
+func (l *testManagerLiveness) IsManagerConnected(_ context.Context, managerID string) (bool, error) {
+	return l.connected[managerID], nil
+}
+
+func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(context.Background(), manager); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.GetManager(context.Background(), manager.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveness := &testManagerLiveness{connected: map[string]bool{}}
+	controller := NewSessionPoolController(store, nil).WithManagerLiveness(liveness)
+
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	after, err := store.GetManager(context.Background(), manager.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !liveness.connected[manager.ID] {
+		t.Fatal("manager liveness was not refreshed")
+	}
+	if after.UpdatedAt != before.UpdatedAt || !after.LastHeartbeatAt.IsZero() {
+		t.Fatalf("manager was unexpectedly persisted: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRunner(ctx, &core.Runner{ID: "stale", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle}); err != nil {
+		t.Fatal(err)
+	}
+	controller := NewSessionPoolController(store, nil)
+	controller.now = func() time.Time { return time.Now().UTC().Add(sessionRunnerHeartbeatTTL + time.Minute) }
+
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	if runners, err := store.ListRunners(ctx, "linux"); err != nil || len(runners) != 0 {
+		t.Fatalf("stale runners remain: runners=%+v err=%v", runners, err)
+	}
+	var heartbeat struct {
+		Pools []*core.PoolSupplier `json:"pools"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if len(heartbeat.Pools) != 1 || heartbeat.Pools[0].TotalRunners != 0 || heartbeat.Pools[0].IdleRunners != 0 {
+		t.Fatalf("unexpected heartbeat pools: %+v", heartbeat.Pools)
+	}
+}
+
+func TestRunnerPollRefreshesLastSeen(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	now := time.Now().UTC().Add(time.Hour)
+	controller.now = func() time.Time { return now }
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", TokenHash: tokenHash, Status: core.RunnerIdle}); err != nil {
+		t.Fatal(err)
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Session-Runner-ID", "runner-a")
+	if _, err := controller.authenticateRunner(e.NewContext(req, httptest.NewRecorder())); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := store.GetRunner(ctx, "runner-a")
+	if err != nil || !runner.LastSeen.Equal(now) {
+		t.Fatalf("runner last seen was not refreshed: runner=%+v err=%v", runner, err)
+	}
+}
+
 func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)

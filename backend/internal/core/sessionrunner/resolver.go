@@ -10,12 +10,22 @@ import (
 
 type Resolver struct {
 	store        Store
+	liveness     ManagerLiveness
 	heartbeatTTL time.Duration
 	now          func() time.Time
 }
 
+type ManagerLiveness interface {
+	IsManagerConnected(context.Context, string) (bool, error)
+}
+
 func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
+}
+
+func (r *Resolver) WithManagerLiveness(liveness ManagerLiveness) *Resolver {
+	r.liveness = liveness
+	return r
 }
 
 func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*ResolvedPool, error) {
@@ -35,13 +45,17 @@ func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*Reso
 	if err != nil {
 		return nil, err
 	}
-	managerByID := make(map[string]*Manager, len(managers))
+	healthyManagers := make(map[string]bool, len(managers))
 	for _, manager := range managers {
-		managerByID[manager.ID] = manager
+		available, err := r.managerAvailable(ctx, manager)
+		if err != nil {
+			return nil, err
+		}
+		healthyManagers[manager.ID] = available
 	}
 	healthy := make(map[string]bool)
 	for _, supplier := range suppliers {
-		if supplier.Enabled && !supplier.Draining && r.managerAvailable(managerByID[supplier.ManagerID]) {
+		if supplier.Enabled && !supplier.Draining && healthyManagers[supplier.ManagerID] {
 			healthy[supplier.Pool] = true
 		}
 	}
@@ -109,8 +123,14 @@ func firstPoolByPriority(pools []*ResolvedPool) *ResolvedPool {
 	return pools[0]
 }
 
-func (r *Resolver) managerAvailable(manager *Manager) bool {
-	return ManagerAvailable(manager, r.heartbeatTTL, r.now())
+func (r *Resolver) managerAvailable(ctx context.Context, manager *Manager) (bool, error) {
+	if manager == nil || !manager.Enabled || manager.Draining {
+		return false, nil
+	}
+	if r.liveness != nil {
+		return r.liveness.IsManagerConnected(ctx, manager.ID)
+	}
+	return ManagerAvailable(manager, r.heartbeatTTL, r.now()), nil
 }
 
 // ManagerAvailable reports whether a manager may participate in scheduling.

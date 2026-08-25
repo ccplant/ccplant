@@ -500,7 +500,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		if sessionControlStore != nil && k8sSessionManager != nil {
 			k8sSessionManager.SetSessionControlStore(sessionControlStore)
 		}
-		esmControlStore = buildESMControlStore(cfg, applicationKVStore, namespace)
+		esmControlStore = buildESMControlStore(cfg)
 		if esmControlStore != nil {
 			esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
 		}
@@ -757,12 +757,9 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 	return infrasessioncontrol.NewRedisStore(client)
 }
 
-func buildESMControlStore(cfg *config.Config, applicationStore kvstore.Store, namespace string) esmcontrol.Store {
+func buildESMControlStore(cfg *config.Config) esmcontrol.Store {
 	if cfg.Redis.Addr == "" {
-		if applicationStore != nil {
-			log.Printf("[ESM_CONTROL] Shared KV control channel enabled")
-			return infraesmcontrol.NewKVStore(applicationStore, namespace)
-		}
+		log.Printf("[ESM_CONTROL] Disabled: Redis is required")
 		return nil
 	}
 	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
@@ -779,11 +776,6 @@ func buildESMControlStore(cfg *config.Config, applicationStore kvstore.Store, na
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		if applicationStore != nil {
-			log.Printf("[ESM_CONTROL] Redis unavailable, using shared KV control channel: %v", err)
-			_ = client.Close()
-			return infraesmcontrol.NewKVStore(applicationStore, namespace)
-		}
 		log.Printf("[ESM_CONTROL] Disabled: Redis ping failed: %v", err)
 		_ = client.Close()
 		return nil

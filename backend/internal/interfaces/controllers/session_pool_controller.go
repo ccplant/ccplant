@@ -27,6 +27,7 @@ import (
 type SessionPoolController struct {
 	store    core.Store
 	resolver *core.Resolver
+	liveness managerLiveness
 	routes   portrepos.SessionRouteRepository
 	profile  interface {
 		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
@@ -34,7 +35,18 @@ type SessionPoolController struct {
 	now func() time.Time
 }
 
-const sessionManagerHeartbeatTTL = 90 * time.Second
+type managerLiveness interface {
+	TouchManager(context.Context, string, string) error
+	IsManagerConnected(context.Context, string) (bool, error)
+}
+
+const (
+	sessionManagerHeartbeatTTL = 90 * time.Second
+	// Idle runners continuously long-poll for allocations. Their authenticated
+	// polls refresh LastSeen, so records older than this no longer represent a
+	// live workload and must not suppress stock-runner reconciliation.
+	sessionRunnerHeartbeatTTL = 3 * time.Minute
+)
 
 func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
 	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
@@ -43,6 +55,12 @@ func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRep
 	if len(providers) > 0 {
 		c.profile = providers[0]
 	}
+	return c
+}
+
+func (c *SessionPoolController) WithManagerLiveness(liveness managerLiveness) *SessionPoolController {
+	c.liveness = liveness
+	c.resolver.WithManagerLiveness(liveness)
 	return c
 }
 
@@ -644,7 +662,14 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 		return err
 	}
 	manager, err := c.store.GetManager(ctx.Request().Context(), runner.ManagerID)
-	if err != nil || !core.ManagerAvailable(manager, sessionManagerHeartbeatTTL, c.now()) {
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager is unavailable")
+	}
+	available := core.ManagerAvailable(manager, sessionManagerHeartbeatTTL, c.now())
+	if c.liveness != nil {
+		available, err = c.liveness.IsManagerConnected(ctx.Request().Context(), manager.ID)
+	}
+	if err != nil || !available {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager heartbeat is stale")
 	}
 	wait := parseRunnerWait(ctx.QueryParam("wait"))
@@ -718,9 +743,15 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return err
 	}
-	manager.LastHeartbeatAt = c.now()
-	if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
-		return sessionRunnerStoreError(err)
+	if c.liveness != nil {
+		if err := c.liveness.TouchManager(ctx.Request().Context(), manager.ID, "runner"); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
+		}
+	} else {
+		manager.LastHeartbeatAt = c.now()
+		if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
+			return sessionRunnerStoreError(err)
+		}
 	}
 	pools, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
@@ -738,6 +769,12 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
 				}
+				if runner.Status == core.RunnerIdle && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
+					if err := c.store.DeleteRunner(ctx.Request().Context(), runner.ID); err != nil {
+						return sessionRunnerStoreError(err)
+					}
+					continue
+				}
 				copy.TotalRunners++
 				if runner.Status == core.RunnerIdle {
 					copy.IdleRunners++
@@ -747,7 +784,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		}
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok": true, "at": manager.LastHeartbeatAt, "pools": owned,
+		"ok": true, "at": c.now(), "pools": owned,
 		"upstream_version": buildinfo.Version,
 	})
 }
@@ -767,6 +804,9 @@ func (c *SessionPoolController) authenticateRunner(ctx echo.Context) (*core.Runn
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid runner token")
 	}
 	runner.LastSeen = c.now()
+	if err := c.store.UpdateRunner(ctx.Request().Context(), runner); err != nil {
+		return nil, sessionRunnerStoreError(err)
+	}
 	return runner, nil
 }
 

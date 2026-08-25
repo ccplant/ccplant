@@ -3,6 +3,7 @@
 {{- $service := $cloudRun.service }}
 {{- $api := .Values.api }}
 {{- $kv := $api.kvStore }}
+{{- $redis := $api.redis | default dict }}
 {{- $oauth := .Values.config.auth.github.oauth }}
 {{- $asset := .Values.asset }}
 {{- $authConfigSecretRef := $cloudRun.authConfigSecretRef }}
@@ -55,6 +56,18 @@ spec:
             {{- if $kv.authToken }}
             - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
             {{- end }}
+            {{- end }}
+            {{- with $redis.addr }}
+            - {name: AGENTAPI_REDIS_ADDR, value: {{ . | quote }}}
+            {{- with $redis.existingSecret }}
+            - name: AGENTAPI_REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $redis.existingSecretPasswordKey | default "redis-password" | quote }}}}
+            {{- end }}
+            - {name: AGENTAPI_REDIS_DB, value: {{ $redis.db | default 0 | quote }}}
+            - {name: AGENTAPI_REDIS_TLS_ENABLED, value: {{ $redis.tlsEnabled | default false | quote }}}
+            - {name: AGENTAPI_REDIS_DIAL_TIMEOUT, value: {{ $redis.dialTimeout | default "5s" | quote }}}
+            - {name: AGENTAPI_REDIS_READ_TIMEOUT, value: {{ $redis.readTimeout | default "3s" | quote }}}
+            - {name: AGENTAPI_REDIS_WRITE_TIMEOUT, value: {{ $redis.writeTimeout | default "3s" | quote }}}
             {{- end }}
             - {name: AGENTAPI_USAGE_ENABLED, value: {{ .Values.config.usage.enabled | quote }}}
             - {name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_ENABLED, value: {{ .Values.config.auth.bootstrapAdmin.enabled | quote }}}
