@@ -4,7 +4,7 @@
   "properties": {
     "cloudRun": {
       "type": "object",
-      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest"],
+      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "localSessionFallbackEnabled", "imageDigest"],
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
@@ -31,6 +31,7 @@
         "startupCpuBoost": { "type": "boolean" },
         "containerConcurrency": { "type": "integer", "minimum": 1 },
         "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "localSessionFallbackEnabled": { "type": "boolean" },
         "imageDigest": { "type": "string" },
         "authConfigSecretRef": {
           "type": "object",

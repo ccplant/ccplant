@@ -92,6 +92,7 @@ type Server struct {
 	esmControlStore             esmcontrol.Store
 	esmControlTunnel            *infraesmcontrol.Tunnel
 	directSessionRuntimeEnabled bool
+	localSessionFallbackEnabled bool
 	namespace                   string
 	personalAPIKeyRepo          portrepos.PersonalAPIKeyRepository
 	router                      *Router // Router for custom handler registration
@@ -511,6 +512,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("[DIRECT_RUNTIME] Disabled: session control Redis store is unavailable")
 		directRuntimeEnabled = false
 	}
+	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
 
 	s := &Server{
 		config:                      cfg,
@@ -544,6 +546,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		esmControlStore:             esmControlStore,
 		esmControlTunnel:            esmControlTunnel,
 		directSessionRuntimeEnabled: directRuntimeEnabled,
+		localSessionFallbackEnabled: localSessionFallbackEnabled,
 	}
 
 	// Add logging middleware if verbose
@@ -1103,7 +1106,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		if startReq.Scope == entities.ScopeTeam {
 			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
 		}
-		resolved, err := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second).Resolve(context.Background(), subject, startReq.Tags)
+		resolved, err := s.resolveSessionPool(context.Background(), subject, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
@@ -1137,6 +1140,9 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		if hasAllocatorSelector {
 			return nil, fmt.Errorf("no external session manager matches allocator.* tags")
 		}
+	}
+	if !s.localSessionFallbackEnabled {
+		return nil, fmt.Errorf("no authorized and healthy session pool is available")
 	}
 
 	// Get auth team env file from user context if available
@@ -1274,6 +1280,14 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return nil, err
 	}
 	return result.Session, nil
+}
+
+func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnercore.Subject, tags map[string]string) (*sessionrunnercore.ResolvedPool, error) {
+	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
+	if s.esmControlStore != nil {
+		resolver.WithManagerLiveness(s.esmControlStore)
+	}
+	return resolver.Resolve(ctx, subject, tags)
 }
 
 func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnercore.ResolvedPool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
