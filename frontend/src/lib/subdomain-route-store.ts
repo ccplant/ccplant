@@ -37,7 +37,11 @@ export class D1SubdomainRouteStore implements SubdomainRouteStore {
 
   async findBySubdomain(subdomain: string): Promise<SubdomainRoute | null> {
     const row = await this.database.prepare(
-      'SELECT subdomain, api_url, enabled FROM api_routes WHERE subdomain = ?1',
+      `SELECT subdomain, api_url, enabled
+       FROM api_route_events
+       WHERE subdomain = ?1
+       ORDER BY id DESC
+       LIMIT 1`,
     ).bind(subdomain).first<D1Row>()
     return fromRow(row)
   }

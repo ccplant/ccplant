@@ -81,30 +81,36 @@ D1を設定すると、リクエストホストの先頭ラベルを使ってAge
 行います。D1は任意であり、未設定時や読み取りエラー時は`AGENTAPI_PROXY_URL`に
 フォールバックします。
 
+このリポジトリでは、productionの`ccplant-production-ui-routes`とdevの
+`ccplant-dev-ui-routes`を`SUBDOMAIN_ROUTES_DB`へ環境別にバインドしています。
+マイグレーションは次のコマンドで適用します。
+
 ```bash
-wrangler d1 create agentapi-ui-routes
-wrangler d1 migrations apply agentapi-ui-routes --remote
+# production（デフォルト環境）
+wrangler d1 migrations apply SUBDOMAIN_ROUTES_DB --remote
+
+# dev
+wrangler d1 migrations apply SUBDOMAIN_ROUTES_DB --remote --env dev
 ```
 
-作成後、`wrangler.jsonc` にバインディングを追加します。
-
-```jsonc
-"d1_databases": [
-  {
-    "binding": "SUBDOMAIN_ROUTES_DB",
-    "database_name": "agentapi-ui-routes",
-    "database_id": "<created database id>",
-    "migrations_dir": "migrations"
-  }
-]
-```
-
-外部の管理経路では、次の形式でルートを登録します。
+ルートは監査可能な追記専用イベントとして保存します。外部の管理経路では、変更のたびに
+既存行を更新せず、次の形式でイベントを追加します。
 
 ```sql
-INSERT INTO api_routes (subdomain, api_url, enabled)
-VALUES ('team-a', 'https://team-a-api.example.com', 1);
+INSERT INTO api_route_events (subdomain, api_url, enabled, actor_id, change_reason)
+VALUES (
+  'team-a',
+  'https://team-a-api.example.com',
+  1,
+  'admin@example.com',
+  'Initial route registration'
+);
 ```
+
+ルート変更も同じサブドメインで新しいイベントを追加します。無効化するときは最新URLを
+指定して`enabled = 0`のイベントを追加します。Workerはサブドメインごとに`id`が最大の
+イベントだけを採用します。DBトリガーが`UPDATE`と`DELETE`を拒否するため、過去の変更履歴は
+変更・削除されません。
 
 転送先の優先順位は、D1のルート、`AGENTAPI_PROXY_URL`の順です。
 
