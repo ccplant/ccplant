@@ -1,20 +1,15 @@
 export interface SubdomainRoute {
   subdomain: string
-  ownerId: string
   apiUrl: string
   enabled: boolean
 }
 
 export interface SubdomainRouteStore {
   findBySubdomain(subdomain: string): Promise<SubdomainRoute | null>
-  findByOwner(ownerId: string): Promise<SubdomainRoute | null>
-  upsert(route: SubdomainRoute): Promise<void>
-  deleteByOwner(ownerId: string): Promise<void>
 }
 
 interface D1Row {
   subdomain: string
-  owner_id: string
   api_url: string
   enabled: number
 }
@@ -32,7 +27,6 @@ export interface D1DatabaseLike {
 function fromRow(row: D1Row | null): SubdomainRoute | null {
   return row && {
     subdomain: row.subdomain,
-    ownerId: row.owner_id,
     apiUrl: row.api_url,
     enabled: row.enabled === 1,
   }
@@ -43,33 +37,11 @@ export class D1SubdomainRouteStore implements SubdomainRouteStore {
 
   async findBySubdomain(subdomain: string): Promise<SubdomainRoute | null> {
     const row = await this.database.prepare(
-      'SELECT subdomain, owner_id, api_url, enabled FROM api_routes WHERE subdomain = ?1',
+      'SELECT subdomain, api_url, enabled FROM api_routes WHERE subdomain = ?1',
     ).bind(subdomain).first<D1Row>()
     return fromRow(row)
   }
 
-  async findByOwner(ownerId: string): Promise<SubdomainRoute | null> {
-    const row = await this.database.prepare(
-      'SELECT subdomain, owner_id, api_url, enabled FROM api_routes WHERE owner_id = ?1',
-    ).bind(ownerId).first<D1Row>()
-    return fromRow(row)
-  }
-
-  async upsert(route: SubdomainRoute): Promise<void> {
-    await this.database.prepare(`
-      INSERT INTO api_routes (subdomain, owner_id, api_url, enabled, created_at, updated_at)
-      VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT(owner_id) DO UPDATE SET
-        subdomain = excluded.subdomain,
-        api_url = excluded.api_url,
-        enabled = excluded.enabled,
-        updated_at = CURRENT_TIMESTAMP
-    `).bind(route.subdomain, route.ownerId, route.apiUrl, route.enabled ? 1 : 0).run()
-  }
-
-  async deleteByOwner(ownerId: string): Promise<void> {
-    await this.database.prepare('DELETE FROM api_routes WHERE owner_id = ?1').bind(ownerId).run()
-  }
 }
 
 export async function getOptionalSubdomainRouteStore(): Promise<SubdomainRouteStore | null> {

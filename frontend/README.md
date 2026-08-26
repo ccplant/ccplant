@@ -31,9 +31,6 @@ COOKIE_ENCRYPTION_SECRET=your_64_character_hex_string_here
 # AgentAPI Proxy Configuration
 AGENTAPI_PROXY_URL=http://localhost:8080
 
-# Optional: route each UI subdomain to a different AgentAPI Proxy
-AGENTAPI_PROXY_SUBDOMAIN_MAP={"team-a":"https://team-a-api.example.com","team-b":"https://team-b-api.example.com"}
-
 # Push Notification Configuration (オプション)
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key_here
 ```
@@ -62,7 +59,6 @@ bun run size:cloudflare
 Cloudflare 側には少なくとも以下の環境変数・secretを設定してください。
 
 - `AGENTAPI_PROXY_URL`: Worker から到達可能な agentapi-proxy の HTTPS URL
-- `AGENTAPI_PROXY_SUBDOMAIN_MAP`: サブドメインを agentapi-proxy URL に対応付ける JSON オブジェクト（任意）
 - `COOKIE_ENCRYPTION_SECRET`: 64文字の16進数で表した32バイトの暗号鍵
 - `NEXT_PUBLIC_BASE_URL`: Worker またはカスタムドメインの公開URL
 
@@ -78,16 +74,12 @@ https://app.example.com/api/v1/sessions?limit=10
   -> https://<AGENTAPI_PROXY_URL>/sessions?limit=10
 ```
 
-`AGENTAPI_PROXY_SUBDOMAIN_MAP` を設定すると、リクエストのホスト名の先頭ラベルで転送先を
-切り替えられます。たとえば上記の設定では `team-a.ui.example.com` へのアクセスは
-`https://team-a-api.example.com` に転送されます。マッピングにないサブドメインは
-`AGENTAPI_PROXY_URL` にフォールバックします。
+### サブドメイン別APIルーティング（Cloudflare D1、任意）
 
-### ユーザー設定可能なAPIルーティング（Cloudflare D1、任意）
-
-D1を設定すると、ユーザーは「設定 → API ルーティング」から自分のサブドメインと
-AgentAPI Proxy URLを登録できます。D1は任意であり、未設定時や読み取りエラー時は
-`AGENTAPI_PROXY_SUBDOMAIN_MAP`、続いて `AGENTAPI_PROXY_URL` にフォールバックします。
+D1を設定すると、リクエストホストの先頭ラベルを使ってAgentAPI Proxy URLを解決できます。
+このフロントエンドはルーティング設定を読み取るだけで、登録・更新は外部の管理経路から
+行います。D1は任意であり、未設定時や読み取りエラー時は`AGENTAPI_PROXY_URL`に
+フォールバックします。
 
 ```bash
 wrangler d1 create agentapi-ui-routes
@@ -107,8 +99,14 @@ wrangler d1 migrations apply agentapi-ui-routes --remote
 ]
 ```
 
-転送先の優先順位は、D1のユーザー設定、`AGENTAPI_PROXY_SUBDOMAIN_MAP`、
-`AGENTAPI_PROXY_URL` の順です。ユーザーが登録できる転送先は公開HTTPS URLに限定されます。
+外部の管理経路では、次の形式でルートを登録します。
+
+```sql
+INSERT INTO api_routes (subdomain, api_url, enabled)
+VALUES ('team-a', 'https://team-a-api.example.com', 1);
+```
+
+転送先の優先順位は、D1のルート、`AGENTAPI_PROXY_URL`の順です。
 
 `/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを

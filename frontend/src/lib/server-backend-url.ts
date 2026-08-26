@@ -23,8 +23,6 @@ export function normalizeBackendBaseUrl(configuredUrl: string): string {
   return url.toString().replace(/\/$/, '')
 }
 
-const SUBDOMAIN_MAP_ENV = 'AGENTAPI_PROXY_SUBDOMAIN_MAP'
-
 export function getSubdomain(hostname: string): string | undefined {
   const normalizedHostname = hostname.trim().toLowerCase().replace(/\.$/, '')
   if (!normalizedHostname || normalizedHostname === 'localhost') return undefined
@@ -33,39 +31,7 @@ export function getSubdomain(hostname: string): string | undefined {
   return rest.length > 0 ? subdomain : undefined
 }
 
-export function resolveMappedBackendUrl(
-  hostname: string,
-  configuredMap = process.env.AGENTAPI_PROXY_SUBDOMAIN_MAP,
-): string | undefined {
-  if (!configuredMap?.trim()) return undefined
-
-  let mapping: unknown
-  try {
-    mapping = JSON.parse(configuredMap)
-  } catch {
-    throw new Error(`${SUBDOMAIN_MAP_ENV} must be a valid JSON object`)
-  }
-
-  if (!mapping || Array.isArray(mapping) || typeof mapping !== 'object') {
-    throw new Error(`${SUBDOMAIN_MAP_ENV} must be a JSON object`)
-  }
-
-  const subdomain = getSubdomain(hostname)
-  if (!subdomain) return undefined
-
-  const configuredUrl = (mapping as Record<string, unknown>)[subdomain]
-  if (configuredUrl === undefined) return undefined
-  if (typeof configuredUrl !== 'string') {
-    throw new Error(`${SUBDOMAIN_MAP_ENV}.${subdomain} must be a URL string`)
-  }
-
-  return normalizeBackendBaseUrl(configuredUrl)
-}
-
-export function getBackendBaseUrl(hostname?: string): string {
-  const mappedUrl = hostname ? resolveMappedBackendUrl(hostname) : undefined
-  if (mappedUrl) return mappedUrl
-
+export function getBackendBaseUrl(): string {
   const configuredUrl = process.env.AGENTAPI_PROXY_URL || process.env.AGENTAPI_PROXY_ENDPOINT
   if (!configuredUrl) {
     throw new Error('AGENTAPI_PROXY_URL is required')
@@ -89,10 +55,10 @@ export async function getRequestBackendBaseUrl(
     }
   }
 
-  return getBackendBaseUrl(hostname)
+  return getBackendBaseUrl()
 }
 
-export function getBackendUrl(path: string, hostname?: string): string {
+export function getBackendUrl(path: string): string {
   const normalizedPath = path.replace(/^\/+/, '')
-  return new URL(normalizedPath, `${getBackendBaseUrl(hostname)}/`).toString()
+  return new URL(normalizedPath, `${getBackendBaseUrl()}/`).toString()
 }

@@ -136,8 +136,6 @@ env: []
 #   value: "production"
 # - name: API_URL
 #   value: "https://api.example.com"
-# - name: AGENTAPI_PROXY_SUBDOMAIN_MAP
-#   value: '{"team-a":"https://team-a-api.example.com"}'
 
 envFrom: []
 # - secretRef:
