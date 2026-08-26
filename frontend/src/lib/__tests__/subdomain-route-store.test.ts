@@ -1,0 +1,25 @@
+import { describe, expect, it, vi } from 'vitest'
+import { D1DatabaseLike, D1SubdomainRouteStore } from '../subdomain-route-store'
+
+describe('D1 subdomain route store', () => {
+  it('selects the newest event for a subdomain', async () => {
+    const first = vi.fn().mockResolvedValue({
+      subdomain: 'team-a',
+      api_url: 'https://new-api.example.test',
+      enabled: 1,
+    })
+    const bind = vi.fn().mockReturnValue({ first })
+    const prepare = vi.fn().mockReturnValue({ bind })
+    const store = new D1SubdomainRouteStore({ prepare } as unknown as D1DatabaseLike)
+
+    await expect(store.findBySubdomain('team-a')).resolves.toEqual({
+      subdomain: 'team-a',
+      apiUrl: 'https://new-api.example.test',
+      enabled: true,
+    })
+
+    expect(prepare.mock.calls[0][0]).toContain('ORDER BY id DESC')
+    expect(prepare.mock.calls[0][0]).toContain('LIMIT 1')
+    expect(bind).toHaveBeenCalledWith('team-a')
+  })
+})

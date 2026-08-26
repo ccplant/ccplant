@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Always validate against an authenticated backend endpoint and fail closed.
-    const validation = await validateLoginToken(apiKey);
+    const validation = await validateLoginToken(apiKey, fetch, request.nextUrl.hostname);
     if (!validation.ok) {
       const error = validation.status === 401
         ? 'Invalid or unauthorized API key'

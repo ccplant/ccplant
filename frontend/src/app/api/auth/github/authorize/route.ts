@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getBackendUrl } from '@/lib/server-backend-url'
+import { getRequestBackendBaseUrl } from '@/lib/server-backend-url'
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +13,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const response = await fetch(getBackendUrl('/oauth/authorize'), {
+    const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
+    const response = await fetch(`${backendBaseUrl}/oauth/authorize`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -5,7 +5,7 @@ import {
   encryptOAuthSession,
 } from '@/lib/cookie-auth'
 import { getPublicBaseUrl, getPublicUrl } from '@/lib/public-url'
-import { getBackendUrl } from '@/lib/server-backend-url'
+import { getRequestBackendBaseUrl } from '@/lib/server-backend-url'
 
 function redirectToError(request: NextRequest, error: string) {
   const url = getPublicUrl(request, '/login/github/error')
@@ -31,7 +31,8 @@ export async function GET(request: NextRequest) {
       return redirectToError(request, 'invalid_state')
     }
 
-    const callbackUrl = new URL(getBackendUrl('/oauth/callback'))
+    const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
+    const callbackUrl = new URL(`${backendBaseUrl}/oauth/callback`)
     callbackUrl.searchParams.set('code', code)
     callbackUrl.searchParams.set('state', state)
     const response = await fetch(callbackUrl, {

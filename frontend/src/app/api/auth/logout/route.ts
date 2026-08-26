@@ -1,13 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { deleteApiKeyCookie, getAuthSessionFromCookie } from '@/lib/cookie-auth';
-import { getBackendUrl } from '@/lib/server-backend-url';
+import { getRequestBackendBaseUrl } from '@/lib/server-backend-url';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
     const authSession = await getAuthSessionFromCookie();
     if (authSession?.type === 'github_oauth') {
       try {
-        const response = await fetch(getBackendUrl('/oauth/logout'), {
+        const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname);
+        const response = await fetch(`${backendBaseUrl}/oauth/logout`, {
           method: 'POST',
           headers: {
             'X-Session-ID': authSession.session_id,

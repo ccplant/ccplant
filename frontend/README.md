@@ -74,6 +74,27 @@ https://app.example.com/api/v1/sessions?limit=10
   -> https://<AGENTAPI_PROXY_URL>/sessions?limit=10
 ```
 
+### サブドメイン別APIルーティング（Cloudflare D1、任意）
+
+D1を設定すると、リクエストホストの先頭ラベルを使ってAgentAPI Proxy URLを解決できます。
+このフロントエンドはルーティング設定を読み取るだけで、登録・更新は外部の管理経路から
+行います。D1は任意であり、未設定時や読み取りエラー時は`AGENTAPI_PROXY_URL`に
+フォールバックします。
+
+CloudflareのD1 binding、database ID、マイグレーションは`ccplant-deploy`リポジトリで
+管理します。このアプリケーションは`SUBDOMAIN_ROUTES_DB`というbindingだけを契約として
+参照し、環境固有のデプロイ設定を保持しません。
+
+ルートは監査可能な追記専用イベントとして保存します。外部の管理経路では、変更のたびに
+既存行を更新せずイベントを追加します。スキーマと運用コマンドは`ccplant-deploy`を参照してください。
+
+ルート変更も同じサブドメインで新しいイベントを追加します。無効化するときは最新URLを
+指定して`enabled = 0`のイベントを追加します。Workerはサブドメインごとに`id`が最大の
+イベントだけを採用します。DBトリガーが`UPDATE`と`DELETE`を拒否するため、過去の変更履歴は
+変更・削除されません。
+
+転送先の優先順位は、D1のルート、`AGENTAPI_PROXY_URL`の順です。
+
 `/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを
 復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。

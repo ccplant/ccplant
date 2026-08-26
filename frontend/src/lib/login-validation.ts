@@ -1,4 +1,4 @@
-import { getBackendUrl } from './server-backend-url'
+import { getRequestBackendBaseUrl } from './server-backend-url'
 
 export interface LoginValidationResult {
   ok: boolean
@@ -9,9 +9,13 @@ export interface LoginValidationResult {
 export async function validateLoginToken(
   apiKey: string,
   fetchImpl: typeof fetch = fetch,
+  hostname?: string,
 ): Promise<LoginValidationResult> {
   try {
-    const response = await fetchImpl(getBackendUrl('/user/info'), {
+    const baseUrl = hostname
+      ? await getRequestBackendBaseUrl(hostname)
+      : await getRequestBackendBaseUrl('localhost')
+    const response = await fetchImpl(`${baseUrl}/user/info`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${apiKey}`,

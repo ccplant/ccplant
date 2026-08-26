@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   getBackendUrl,
+  getRequestBackendBaseUrl,
   normalizeBackendBaseUrl,
 } from '../server-backend-url'
 
@@ -22,5 +23,27 @@ describe('server backend URL resolution', () => {
 
   it('rejects an empty backend URL', () => {
     expect(() => normalizeBackendBaseUrl('  ')).toThrow('AGENTAPI_PROXY_URL is required')
+  })
+
+  it('prefers a persisted route over the default backend', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    const store = {
+      findBySubdomain: vi.fn().mockResolvedValue({
+        subdomain: 'alpha', apiUrl: 'https://stored-api.example.test', enabled: true,
+      }),
+    }
+
+    await expect(getRequestBackendBaseUrl('alpha.ui.example.test', store))
+      .resolves.toBe('https://stored-api.example.test')
+  })
+
+  it('falls back to the default backend when persistent storage fails', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    const store = {
+      findBySubdomain: vi.fn().mockRejectedValue(new Error('D1 unavailable')),
+    }
+
+    await expect(getRequestBackendBaseUrl('alpha.ui.example.test', store))
+      .resolves.toBe('http://default-backend:8080')
   })
 })

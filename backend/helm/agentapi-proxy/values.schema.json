@@ -4,7 +4,7 @@
   "properties": {
     "cloudRun": {
       "type": "object",
-      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "localSessionFallbackEnabled", "imageDigest"],
+      "required": ["enabled", "service", "ingress", "scaling", "startupCpuBoost", "containerConcurrency", "timeoutSeconds", "imageDigest"],
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
