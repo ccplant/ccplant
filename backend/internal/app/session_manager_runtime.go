@@ -497,16 +497,22 @@ func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfra
 		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
 			continue
 		}
-		idle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
+		localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER] Count pool %s idle runners: %v", pool.Pool, err)
 			continue
 		}
-		total, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
+		localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
 			continue
 		}
+		// A stock Service can survive after its runner registration has gone
+		// stale. Conversely, the parent registry can briefly outlive a deleted
+		// Service. Treat capacity as idle only when both inventories agree so a
+		// stale record on either side cannot permanently suppress replenishment.
+		idle := min(localIdle, pool.IdleRunners)
+		total := max(localTotal, pool.TotalRunners)
 		for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
 			if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
 				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)

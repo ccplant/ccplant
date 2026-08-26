@@ -44,6 +44,17 @@ func TestReconcileSessionRunnerPoolsUsesInfrastructureInventory(t *testing.T) {
 	}
 }
 
+func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{idle: 1, total: 1}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 1, MaxRunners: 20,
+		IdleRunners: 0, TotalRunners: 0,
+	}})
+	if manager.created != 1 {
+		t.Fatalf("created %d runners, want 1", manager.created)
+	}
+}
+
 type durableAllocationQueue struct {
 	allocation *coreallocation.AllocationRequest
 	getErr     error
