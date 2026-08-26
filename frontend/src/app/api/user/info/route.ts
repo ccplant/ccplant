@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getAuthSessionFromCookie } from '@/lib/cookie-auth'
-import { getBackendUrl } from '@/lib/server-backend-url'
+import { getRequestBackendBaseUrl } from '@/lib/server-backend-url'
 import { UserInfo, ProxyUserInfo } from '@/types/user'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const authSession = await getAuthSessionFromCookie()
     if (!authSession) {
@@ -13,7 +13,8 @@ export async function GET() {
       )
     }
 
-    const response = await fetch(getBackendUrl('/user/info'), {
+    const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
+    const response = await fetch(`${backendBaseUrl}/user/info`, {
       headers: {
         Authorization: `Bearer ${authSession.access_token}`,
         Accept: 'application/json',

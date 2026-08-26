@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getApiKeyFromCookie, renewApiKeyCookie } from '@/lib/cookie-auth'
-import { getBackendBaseUrl } from '@/lib/server-backend-url'
+import { getRequestBackendBaseUrl } from '@/lib/server-backend-url'
 import {
   buildDownstreamResponseHeaders,
   buildUpstreamRequestHeaders,
@@ -299,7 +299,8 @@ async function handleProxyRequest(
       apiKey,
       options.passThroughAuthorization,
     )
-    const targetUrl = `${getBackendBaseUrl(request.nextUrl.hostname)}/${path}${request.nextUrl.search}`
+    const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
+    const targetUrl = `${backendBaseUrl}/${path}${request.nextUrl.search}`
     const isSSE = isServerSentEventsRequest(headers)
     const isMessageEndpoint = pathParts.includes('message')
       || (pathParts.includes('messages') && pathParts.includes('wait'))

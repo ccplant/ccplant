@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   getBackendBaseUrl,
   getBackendUrl,
+  getRequestBackendBaseUrl,
   normalizeBackendBaseUrl,
   resolveMappedBackendUrl,
 } from '../server-backend-url'
@@ -49,5 +50,35 @@ describe('server backend URL resolution', () => {
       .toThrow('AGENTAPI_PROXY_SUBDOMAIN_MAP must be a JSON object')
     expect(() => resolveMappedBackendUrl('alpha.ui.example.test', '{invalid'))
       .toThrow('AGENTAPI_PROXY_SUBDOMAIN_MAP must be a valid JSON object')
+  })
+
+  it('prefers a persisted route over environment configuration', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    vi.stubEnv('AGENTAPI_PROXY_SUBDOMAIN_MAP', '{"alpha":"https://env-api.example.test"}')
+    const store = {
+      findBySubdomain: vi.fn().mockResolvedValue({
+        subdomain: 'alpha', ownerId: 'alice', apiUrl: 'https://stored-api.example.test', enabled: true,
+      }),
+      findByOwner: vi.fn(),
+      upsert: vi.fn(),
+      deleteByOwner: vi.fn(),
+    }
+
+    await expect(getRequestBackendBaseUrl('alpha.ui.example.test', store))
+      .resolves.toBe('https://stored-api.example.test')
+  })
+
+  it('falls back to environment configuration when persistent storage fails', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
+    vi.stubEnv('AGENTAPI_PROXY_SUBDOMAIN_MAP', '{"alpha":"https://env-api.example.test"}')
+    const store = {
+      findBySubdomain: vi.fn().mockRejectedValue(new Error('D1 unavailable')),
+      findByOwner: vi.fn(),
+      upsert: vi.fn(),
+      deleteByOwner: vi.fn(),
+    }
+
+    await expect(getRequestBackendBaseUrl('alpha.ui.example.test', store))
+      .resolves.toBe('https://env-api.example.test')
   })
 })

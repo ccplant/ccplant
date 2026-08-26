@@ -2,6 +2,7 @@ import {
   Bell,
   Blocks,
   Bot,
+  CloudCog,
   FolderKey,
   Github,
   KeyRound,
@@ -108,6 +109,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     group: '拡張機能',
     scopes: ['personal', 'team'],
     fields: ['enabled_plugins'],
+  },
+  {
+    slug: 'api-routing',
+    label: 'API ルーティング',
+    icon: CloudCog,
+    group: 'アクセス',
+    scopes: ['personal'],
+    fields: [],
   },
   {
     slug: 'api-tokens',

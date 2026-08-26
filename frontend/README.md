@@ -83,6 +83,33 @@ https://app.example.com/api/v1/sessions?limit=10
 `https://team-a-api.example.com` に転送されます。マッピングにないサブドメインは
 `AGENTAPI_PROXY_URL` にフォールバックします。
 
+### ユーザー設定可能なAPIルーティング（Cloudflare D1、任意）
+
+D1を設定すると、ユーザーは「設定 → API ルーティング」から自分のサブドメインと
+AgentAPI Proxy URLを登録できます。D1は任意であり、未設定時や読み取りエラー時は
+`AGENTAPI_PROXY_SUBDOMAIN_MAP`、続いて `AGENTAPI_PROXY_URL` にフォールバックします。
+
+```bash
+wrangler d1 create agentapi-ui-routes
+wrangler d1 migrations apply agentapi-ui-routes --remote
+```
+
+作成後、`wrangler.jsonc` にバインディングを追加します。
+
+```jsonc
+"d1_databases": [
+  {
+    "binding": "SUBDOMAIN_ROUTES_DB",
+    "database_name": "agentapi-ui-routes",
+    "database_id": "<created database id>",
+    "migrations_dir": "migrations"
+  }
+]
+```
+
+転送先の優先順位は、D1のユーザー設定、`AGENTAPI_PROXY_SUBDOMAIN_MAP`、
+`AGENTAPI_PROXY_URL` の順です。ユーザーが登録できる転送先は公開HTTPS URLに限定されます。
+
 `/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを
 復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。
