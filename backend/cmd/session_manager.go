@@ -28,6 +28,7 @@ var SessionManagerCmd = &cobra.Command{
 }
 
 func init() {
+	SessionManagerCmd.AddCommand(newSessionManagerInstallCommand())
 	SessionManagerCmd.Flags().StringVarP(&sessionManagerPort, "port", "p", "8080", "Port to listen on")
 	SessionManagerCmd.Flags().StringVarP(&sessionManagerConfigPath, "config", "c", "config.json", "Configuration file path")
 	SessionManagerCmd.Flags().BoolVarP(&sessionManagerVerbose, "verbose", "v", false, "Enable verbose logging")

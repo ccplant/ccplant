@@ -33,7 +33,7 @@ export function isUnauthenticatedProxyPath(path: string): boolean {
     // Enrollment is authenticated by a short-lived, single-use registration
     // token in the request body. Requiring a UI session here prevents new
     // external session managers from enrolling through the BFF.
-    || path === 'external-session-managers/enroll'
+    || path === 'session-managers/enroll'
     || path === 's'
     || path.startsWith('s/')
     || path.startsWith('oauth/')

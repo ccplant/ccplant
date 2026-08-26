@@ -40,7 +40,7 @@ describe('/api/v1 authentication', () => {
       Response.json({ id: 'manager-1', connection_token: 'connection-token' }),
     )
     const request = new NextRequest(
-      'https://ui.example.test/api/v1/external-session-managers/enroll',
+      'https://ui.example.test/api/v1/session-managers/enroll',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -49,11 +49,11 @@ describe('/api/v1 authentication', () => {
     )
 
     const response = await POST(request, {
-      params: Promise.resolve({ path: ['external-session-managers', 'enroll'] }),
+      params: Promise.resolve({ path: ['session-managers', 'enroll'] }),
     })
 
     const [url, options] = fetchMock.mock.calls[0]
-    expect(url).toBe('http://backend:8080/external-session-managers/enroll')
+    expect(url).toBe('http://backend:8080/session-managers/enroll')
     expect(new Headers(options?.headers).has('authorization')).toBe(false)
     expect(response.status).toBe(200)
   })

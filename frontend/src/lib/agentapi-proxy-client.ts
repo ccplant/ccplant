@@ -1644,10 +1644,11 @@ export class AgentAPIProxyClient {
     scope: 'user' | 'team' = 'user',
     teamId?: string,
   ): Promise<ExternalSessionManagerRegistrationToken> {
-    return await this.makeRequest<ExternalSessionManagerRegistrationToken>('/external-session-managers/registration-tokens', {
+	const result = await this.makeRequest<{ manager: { id: string }, registration_token: string, expires_at: string }>('/session-managers/registration-tokens', {
       method: 'POST',
-      body: JSON.stringify({ scope, ...(teamId ? { team_id: teamId } : {}) }),
+      body: JSON.stringify({ name: `session-manager-${Date.now()}`, scope, ...(teamId ? { team_id: teamId } : {}) }),
     });
+	return { manager_id: result.manager.id, registration_token: result.registration_token, expires_at: result.expires_at }
   }
 
   async rotateExternalSessionManagerToken(
@@ -1655,34 +1656,32 @@ export class AgentAPIProxyClient {
     scope: 'user' | 'team' = 'user',
     teamId?: string,
   ): Promise<ExternalSessionManagerConfig> {
-    const query = new URLSearchParams({ scope })
-    if (teamId) query.set('team_id', teamId)
-    return await this.makeRequest<ExternalSessionManagerConfig>(`/external-session-managers/${encodeURIComponent(managerId)}/rotate-token?${query}`, {
+	void scope
+	void teamId
+	const result = await this.makeRequest<{ registration_token: string }>(`/session-managers/${encodeURIComponent(managerId)}/registration-token`, {
       method: 'POST',
     });
-  }
-
-  private externalSessionManagerOperationPath(managerId: string, operation: string, scope: 'user' | 'team', teamId?: string): string {
-    const query = new URLSearchParams({ scope })
-    if (teamId) query.set('team_id', teamId)
-    return `/external-session-managers/${encodeURIComponent(managerId)}/operations/${operation}?${query}`
+	return { id: managerId, name: managerId, connection_token: result.registration_token } as ExternalSessionManagerConfig
   }
 
   async getExternalSessionManagerOperationalStatus(managerId: string, scope: 'user' | 'team' = 'user', teamId?: string): Promise<ExternalSessionManagerOperationalStatus> {
-    return this.makeRequest(this.externalSessionManagerOperationPath(managerId, 'status', scope, teamId))
+	void managerId; void scope; void teamId
+	throw new Error('Session Manager operational controls are not available through the unified manager API')
   }
 
   async getExternalSessionManagerLogs(managerId: string, scope: 'user' | 'team' = 'user', teamId?: string, tail = 200): Promise<ExternalSessionManagerLogs> {
-    const path = this.externalSessionManagerOperationPath(managerId, 'logs', scope, teamId)
-    return this.makeRequest(`${path}&tail=${tail}`)
+	void managerId; void scope; void teamId; void tail
+	throw new Error('Session Manager logs are not available through the unified manager API')
   }
 
   async restartExternalSessionManager(managerId: string, scope: 'user' | 'team' = 'user', teamId?: string): Promise<void> {
-    await this.makeRequest(this.externalSessionManagerOperationPath(managerId, 'restart', scope, teamId), { method: 'POST', body: '{}' })
+	void managerId; void scope; void teamId
+	throw new Error('Session Manager restart is not available through the unified manager API')
   }
 
   async upgradeExternalSessionManager(managerId: string, version: string, scope: 'user' | 'team' = 'user', teamId?: string): Promise<void> {
-    await this.makeRequest(this.externalSessionManagerOperationPath(managerId, 'upgrade', scope, teamId), { method: 'POST', body: JSON.stringify({ version }) })
+	void managerId; void version; void scope; void teamId
+	throw new Error('Session Manager upgrade is managed by ccplant session-manager install')
   }
 
   /**
@@ -2982,51 +2981,55 @@ export class AgentAPIProxyClient {
   }
 
   async listClusterSessionManagers(): Promise<ClusterSessionManager[]> {
-    const result = await this.makeRequest<{ session_managers: ClusterSessionManager[] }>('/admin/session-managers');
+    const result = await this.makeRequest<{ session_managers: ClusterSessionManager[] }>('/session-managers');
     return result.session_managers ?? [];
   }
 
-  async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; connection_token: string }> {
-    return this.makeRequest('/admin/session-managers', { method: 'POST', body: JSON.stringify({ name }) });
+  async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; registration_token: string; expires_at: string }> {
+    return this.makeRequest('/session-managers/registration-tokens', { method: 'POST', body: JSON.stringify({ name, scope: 'system', pool: 'default', default: true }) });
   }
 
   async deleteClusterSessionManager(managerID: string): Promise<void> {
-    await this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
+    await this.makeRequest(`/session-managers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
   }
 
   async listSessionPools(): Promise<LogicalSessionPool[]> {
-    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/admin/session-pools');
+    const result = await this.makeRequest<{ session_pools: LogicalSessionPool[] }>('/session-pools');
     return result.session_pools ?? [];
   }
 
   async createSessionPool(input: Pick<LogicalSessionPool, 'name'> & Partial<Pick<LogicalSessionPool, 'labels'>>): Promise<LogicalSessionPool> {
-    return this.makeRequest('/admin/session-pools', { method: 'POST', body: JSON.stringify(input) });
+    return this.makeRequest('/session-pools', { method: 'POST', body: JSON.stringify(input) });
   }
 
   async deleteSessionPool(pool: string): Promise<void> {
-    await this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
   }
 
   async listSessionPoolSuppliers(managerID: string): Promise<SessionPoolSupplier[]> {
-    const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`);
-    return result.pool_suppliers ?? [];
+    const pools = await this.listSessionPools();
+    const suppliers = await Promise.all(pools.map(async (pool) => {
+      const result = await this.makeRequest<{ pool_suppliers: SessionPoolSupplier[] }>(`/session-pools/${encodeURIComponent(pool.name)}/suppliers`);
+      return result.pool_suppliers ?? [];
+    }));
+    return suppliers.flat().filter((supplier) => supplier.manager_id === managerID);
   }
 
   async createSessionPoolSupplier(managerID: string, input: Pick<SessionPoolSupplier, 'pool' | 'min_idle' | 'max_runners'>): Promise<SessionPoolSupplier> {
-    return this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}/pools`, { method: 'POST', body: JSON.stringify(input) });
+    return this.makeRequest(`/session-pools/${encodeURIComponent(input.pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'POST', body: JSON.stringify(input) });
   }
 
   async deleteSessionPoolSupplier(managerID: string, pool: string): Promise<void> {
-    await this.makeRequest(`/admin/session-managers/${encodeURIComponent(managerID)}/pools/${encodeURIComponent(pool)}`, { method: 'DELETE' });
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
   }
 
   async listSessionPoolBindings(pool: string): Promise<SessionPoolBinding[]> {
-    const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`);
+    const result = await this.makeRequest<{ pool_bindings: SessionPoolBinding[] }>(`/session-pools/${encodeURIComponent(pool)}/bindings`);
     return result.pool_bindings ?? [];
   }
 
   async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' = 'use', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
-    return this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
   }
 
   async listManagedSessionPools(): Promise<LogicalSessionPool[]> {
@@ -3081,7 +3084,7 @@ export class AgentAPIProxyClient {
   }
 
   async deleteSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
-    await this.makeRequest(`/admin/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
+    await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
   }
 }
 

@@ -23,6 +23,63 @@ type testManagerLiveness struct {
 	connected map[string]bool
 }
 
+func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	admin := entities.NewUser("admin-1", entities.UserTypeAdmin, "admin")
+	requireNoError(t, admin.SetRoles([]entities.Role{entities.RoleAdmin}))
+
+	issued := callSessionPoolHandlerAs(t, controller.IssueManagerRegistrationToken, http.MethodPost, "/session-managers/registration-tokens",
+		map[string]any{"name": "kubernetes-dev", "scope": "system", "pool": "default", "default": true}, nil, nil, admin)
+	if issued.Code != http.StatusCreated {
+		t.Fatalf("issue status=%d body=%s", issued.Code, issued.Body.String())
+	}
+	var registration struct {
+		Manager struct {
+			ID string `json:"id"`
+		} `json:"manager"`
+		Token string `json:"registration_token"`
+	}
+	decodeRecorder(t, issued, &registration)
+	if registration.Manager.ID == "" || registration.Token == "" {
+		t.Fatalf("invalid registration response: %s", issued.Body.String())
+	}
+
+	enrolled := callSessionPoolHandler(t, controller.EnrollManager, http.MethodPost, "/session-managers/enroll",
+		map[string]any{"registration_token": registration.Token, "instance_id": "dev/session-manager"}, nil, nil)
+	if enrolled.Code != http.StatusOK {
+		t.Fatalf("enroll status=%d body=%s", enrolled.Code, enrolled.Body.String())
+	}
+	var credentials struct {
+		ID              string `json:"id"`
+		ConnectionToken string `json:"connection_token"`
+	}
+	decodeRecorder(t, enrolled, &credentials)
+	if credentials.ID != registration.Manager.ID || credentials.ConnectionToken == "" {
+		t.Fatalf("invalid enrollment response: %s", enrolled.Body.String())
+	}
+	if _, err := store.GetPoolSupplier(context.Background(), credentials.ID, "default"); err != nil {
+		t.Fatalf("default pool supplier was not created: %v", err)
+	}
+	bindings, err := store.ListBindings(context.Background(), "default")
+	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectAll {
+		t.Fatalf("default binding was not created: bindings=%+v err=%v", bindings, err)
+	}
+
+	reused := callSessionPoolHandler(t, controller.EnrollManager, http.MethodPost, "/session-managers/enroll",
+		map[string]any{"registration_token": registration.Token, "instance_id": "dev/session-manager"}, nil, nil)
+	if reused.Code != http.StatusUnauthorized {
+		t.Fatalf("registration token reuse status=%d body=%s", reused.Code, reused.Body.String())
+	}
+}
+
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (l *testManagerLiveness) TouchManager(_ context.Context, managerID, _ string) error {
 	l.connected[managerID] = true
 	return nil

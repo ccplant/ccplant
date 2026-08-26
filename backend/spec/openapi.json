@@ -20,13 +20,17 @@
         "summary": "Coordinate a background-worker lease",
         "description": "Acquires, renews, or releases a Redis-backed leader-election lease through the authenticated worker control plane.",
         "operationId": "coordinateWorkerLease",
-        "tags": ["Worker Control"],
+        "tags": [
+          "Worker Control"
+        ],
         "parameters": [
           {
             "name": "leaseName",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -35,11 +39,27 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["action", "identity"],
+                "required": [
+                  "action",
+                  "identity"
+                ],
                 "properties": {
-                  "action": {"type": "string", "enum": ["acquire", "renew", "release"]},
-                  "identity": {"type": "string"},
-                  "duration_ms": {"type": "integer", "format": "int64", "minimum": 1}
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "acquire",
+                      "renew",
+                      "release"
+                    ]
+                  },
+                  "identity": {
+                    "type": "string"
+                  },
+                  "duration_ms": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  }
                 }
               }
             }
@@ -52,15 +72,27 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["acquired"],
-                  "properties": {"acquired": {"type": "boolean"}}
+                  "required": [
+                    "acquired"
+                  ],
+                  "properties": {
+                    "acquired": {
+                      "type": "boolean"
+                    }
+                  }
                 }
               }
             }
           },
-          "400": {"description": "Invalid lease operation"},
-          "401": {"description": "Invalid worker control token"},
-          "503": {"description": "API Redis is not configured"}
+          "400": {
+            "description": "Invalid lease operation"
+          },
+          "401": {
+            "description": "Invalid worker control token"
+          },
+          "503": {
+            "description": "API Redis is not configured"
+          }
         }
       }
     },
@@ -418,13 +450,31 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "error": {"type": "string"},
-                    "pool": {"type": "string"},
-                    "binding_id": {"type": "string"},
-                    "max_concurrent": {"type": "integer", "minimum": 1},
-                    "active": {"type": "integer", "minimum": 0}
+                    "error": {
+                      "type": "string"
+                    },
+                    "pool": {
+                      "type": "string"
+                    },
+                    "binding_id": {
+                      "type": "string"
+                    },
+                    "max_concurrent": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "active": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
                   },
-                  "required": ["error", "pool", "binding_id", "max_concurrent", "active"]
+                  "required": [
+                    "error",
+                    "pool",
+                    "binding_id",
+                    "max_concurrent",
+                    "active"
+                  ]
                 }
               }
             }
@@ -3066,282 +3116,78 @@
         }
       }
     },
-    "/external-session-managers": {
-      "get": {
-        "summary": "List External Session Managers",
-        "operationId": "listExternalSessionManagers",
-        "tags": [
-          "External Session Managers"
-        ],
-        "parameters": [
-          {
-            "name": "scope",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "user",
-                "team"
-              ]
-            }
-          },
-          {
-            "name": "team_id",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Registered managers"
-          }
-        }
-      }
-    },
-    "/external-session-managers/registration-tokens": {
-      "post": {
-        "summary": "Issue a short-lived one-time External Session Manager registration token",
-        "operationId": "issueExternalSessionManagerRegistrationToken",
-        "tags": [
-          "External Session Managers"
-        ],
-        "responses": {
-          "201": {
-            "description": "Registration token issued; registration_token is returned once"
-          }
-        }
-      }
-    },
-    "/external-session-managers/enroll": {
-      "post": {
-        "summary": "Enroll an External Session Manager with a one-time registration token",
-        "operationId": "enrollExternalSessionManager",
-        "tags": [
-          "External Session Managers"
-        ],
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Manager enrolled; connection_token is returned once"
-          },
-          "401": {
-            "description": "Invalid, expired, or already-used registration token"
-          }
-        }
-      }
-    },
-    "/external-session-managers/{id}": {
-      "parameters": [
-        {
-          "name": "id",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "get": {
-        "summary": "Get an External Session Manager",
-        "operationId": "getExternalSessionManager",
-        "tags": [
-          "External Session Managers"
-        ],
-        "responses": {
-          "200": {
-            "description": "Manager",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExternalSessionManager"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "summary": "Update an External Session Manager",
-        "operationId": "updateExternalSessionManager",
-        "tags": [
-          "External Session Managers"
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExternalSessionManagerUpdateRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated manager"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an External Session Manager",
-        "operationId": "deleteExternalSessionManager",
-        "tags": [
-          "External Session Managers"
-        ],
-        "responses": {
-          "204": {
-            "description": "Deleted"
-          }
-        }
-      }
-    },
-    "/external-session-managers/{id}/rotate-token": {
-      "post": {
-        "summary": "Rotate an External Session Manager connection token",
-        "operationId": "rotateExternalSessionManagerToken",
-        "tags": [
-          "External Session Managers"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Token rotated; connection_token is returned once"
-          }
-        }
-      }
-    },
-    "/external-session-managers/{id}/heartbeat": {
-      "post": {
-        "summary": "Report native daemon health",
-        "description": "Authenticated with the External Session Manager connection token. The parent verifies that public_url/healthz is reachable before accepting the heartbeat.",
-        "operationId": "heartbeatExternalSessionManager",
-        "tags": [
-          "External Session Managers"
-        ],
-        "security": [],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExternalSessionManagerHeartbeat"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Heartbeat accepted"
-          },
-          "401": {
-            "description": "Invalid connection token"
-          },
-          "424": {
-            "description": "public_url is unreachable"
-          }
-        }
-      }
-    },
-    "/external-session-managers/{id}/operations/status": {
-      "get": {
-        "summary": "Get External Session Manager operational status",
-        "description": "Reads live daemon status through the outbound control channel.",
-        "operationId": "getExternalSessionManagerOperationalStatus",
-        "tags": ["External Session Managers"],
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
-        "responses": {"200":{"description":"Live daemon status"},"503":{"description":"Control channel is offline"}}
-      }
-    },
-    "/external-session-managers/{id}/operations/logs": {
-      "get": {
-        "summary": "Read External Session Manager daemon logs",
-        "operationId": "getExternalSessionManagerLogs",
-        "tags": ["External Session Managers"],
-        "parameters": [
-          {"name":"id","in":"path","required":true,"schema":{"type":"string"}},
-          {"name":"tail","in":"query","schema":{"type":"integer","minimum":1,"maximum":5000,"default":200}}
-        ],
-        "responses": {"200":{"description":"Recent daemon log lines"},"503":{"description":"Control channel is offline"}}
-      }
-    },
-    "/external-session-managers/{id}/operations/restart": {
-      "post": {
-        "summary": "Restart an External Session Manager",
-        "operationId": "restartExternalSessionManager",
-        "tags": ["External Session Managers"],
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
-        "responses": {"202":{"description":"Restart accepted"},"503":{"description":"Control channel is offline"}}
-      }
-    },
-    "/external-session-managers/{id}/operations/upgrade": {
-      "post": {
-        "summary": "Upgrade an External Session Manager",
-        "description": "Downloads a checksummed ccplant release, replaces the managed binary, and restarts. Active sessions must be drained first.",
-        "operationId": "upgradeExternalSessionManager",
-        "tags": ["External Session Managers"],
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
-        "requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object","required":["version"],"properties":{"version":{"type":"string","example":"v1.20.0"}}}}}},
-        "responses": {"202":{"description":"Upgrade accepted"},"409":{"description":"Active sessions must be drained"},"503":{"description":"Control channel is offline"}}
-      }
-    },
     "/admin/system-settings": {
       "get": {
         "summary": "Get the current or a historical admin settings snapshot",
         "description": "Returns the complete versioned system settings document. Secret values are omitted and represented in secret_configured. Requires admin permission.",
         "operationId": "getAdminSystemSettings",
-        "tags": ["Admin Settings"],
-        "parameters": [{
-          "name": "version",
-          "in": "query",
-          "required": false,
-          "schema": {"type": "integer", "minimum": 1}
-        }],
+        "tags": [
+          "Admin Settings"
+        ],
+        "parameters": [
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Admin settings snapshot",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminSettingsDocument"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSettingsDocument"
+                }
+              }
+            }
           },
-          "403": {"description": "Admin permission required"}
+          "403": {
+            "description": "Admin permission required"
+          }
         }
       },
       "put": {
         "summary": "Create a new admin settings version",
         "description": "Stores one immutable, complete settings.json snapshot and atomically advances the current head. base_version provides optimistic concurrency control. Omitted secret fields retain their current values.",
         "operationId": "updateAdminSystemSettings",
-        "tags": ["Admin Settings"],
+        "tags": [
+          "Admin Settings"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminSettingsUpdate"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSettingsUpdate"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
             "description": "New settings version",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminSettingsDocument"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSettingsDocument"
+                }
+              }
+            }
           },
-          "400": {"description": "Invalid settings document"},
-          "403": {"description": "Admin permission required"},
-          "409": {"description": "base_version is stale"}
+          "400": {
+            "description": "Invalid settings document"
+          },
+          "403": {
+            "description": "Admin permission required"
+          },
+          "409": {
+            "description": "base_version is stale"
+          }
         }
       }
     },
@@ -3350,13 +3196,31 @@
         "summary": "List admin settings versions",
         "description": "Lists immutable settings snapshots newest first. Requires admin permission.",
         "operationId": "listAdminSystemSettingsVersions",
-        "tags": ["Admin Settings"],
+        "tags": [
+          "Admin Settings"
+        ],
         "responses": {
           "200": {
             "description": "Settings version metadata",
-            "content": {"application/json": {"schema": {"type": "object", "properties": {"versions": {"type": "array", "items": {"$ref": "#/components/schemas/AdminSettingsVersion"}}}}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AdminSettingsVersion"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
-          "403": {"description": "Admin permission required"}
+          "403": {
+            "description": "Admin permission required"
+          }
         }
       }
     },
@@ -5365,119 +5229,720 @@
       "get": {
         "summary": "List session pools available to the authenticated user",
         "operationId": "listAvailableSessionPools",
-        "tags": ["Session Pools"],
-        "responses": {"200": {"description": "Authorized and healthy logical pools", "content": {"application/json": {"schema": {"type": "object", "properties": {"session_pools": {"type": "array", "items": {"$ref": "#/components/schemas/SessionPool"}}}}}}}}
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized and healthy logical pools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_pools": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionPool"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/session-pools": {
-      "get": {"summary": "List logical pools manageable by the authenticated subject", "operationId": "listManagedSessionPools", "tags": ["Session Pools"], "responses": {"200": {"description": "Manageable pools"}}},
-      "post": {"summary": "Create a logical pool and grant its creator manage access", "operationId": "createManagedSessionPool", "tags": ["Session Pools"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"allOf": [{"$ref": "#/components/schemas/SessionPool"}, {"type": "object", "properties": {"team_id": {"type": "string"}}}]}}}}, "responses": {"201": {"description": "Pool created"}}}
-    },
-    "/session-pools/{pool}": {
-      "patch": {"summary": "Update a pool with manage access", "operationId": "patchManagedSessionPool", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Pool updated"}}},
-      "delete": {"summary": "Delete a pool with manage access", "operationId": "deleteManagedSessionPool", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"204": {"description": "Pool deleted"}}}
-    },
-    "/session-pools/{pool}/bindings": {
-      "get": {"summary": "List bindings with manage access", "operationId": "listManagedSessionPoolBindings", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Pool bindings"}}},
-      "post": {"summary": "Grant pool use or manage access", "operationId": "createManagedSessionPoolBinding", "tags": ["Session Pools"], "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPoolBinding"}}}}, "responses": {"201": {"description": "Binding created"}, "409": {"description": "Subject is already bound"}}}
-    },
-    "/admin/session-managers": {
-      "get": {"summary": "List cluster-wide session managers", "operationId": "listSessionManagers", "tags": ["Session Pools"], "responses": {"200": {"description": "Manager registry"}}},
-      "post": {
-        "summary": "Register a cluster-wide session manager",
-        "description": "Returns the manager connection token once. Store it in the manager's Secret.",
-        "operationId": "createSessionManager", "tags": ["Session Pools"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionManagerCreate"}}}},
-        "responses": {"201": {"description": "Manager and one-time connection token"}}
-      }
-    },
-    "/admin/session-managers/{id}": {
-      "patch": {
-        "summary": "Enable, disable, or drain a session manager", "operationId": "patchSessionManager", "tags": ["Session Pools"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}},
-        "responses": {"200": {"description": "Updated manager"}}
-      }
-    },
-    "/admin/session-managers/{id}/pools": {
-      "post": {
-        "summary": "Declare a logical pool supplied by a manager", "operationId": "createSessionPool", "tags": ["Session Pools"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPool"}}}},
-        "responses": {"201": {"description": "Pool created"}}
-      }
-    },
-    "/admin/session-managers/{id}/pools/{pool}": {
-      "patch": {
-        "summary": "Update pool inventory or drain settings", "operationId": "patchSessionPool", "tags": ["Session Pools"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}},
-        "responses": {"200": {"description": "Pool updated"}}
-      }
-    },
-    "/admin/session-pools": {
-      "get": {"summary": "List pool suppliers", "operationId": "listSessionPools", "tags": ["Session Pools"], "responses": {"200": {"description": "Pools grouped by logical name"}}}
-    },
-    "/admin/session-pools/{pool}/bindings": {
       "get": {
-        "summary": "List user/team bindings for a logical pool", "operationId": "listSessionPoolBindings", "tags": ["Session Pools"],
-        "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Pool bindings"}}
+        "summary": "List logical pools manageable by the authenticated subject",
+        "operationId": "listManagedSessionPools",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "200": {
+            "description": "Manageable pools"
+          }
+        }
       },
       "post": {
-        "summary": "Bind a logical pool to a user or team", "operationId": "createSessionPoolBinding", "tags": ["Session Pools"],
-        "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SessionPoolBinding"}}}},
-        "responses": {"201": {"description": "Binding created"}}
+        "summary": "Create a logical pool and grant its creator manage access",
+        "operationId": "createManagedSessionPool",
+        "tags": [
+          "Session Pools"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SessionPool"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "team_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pool created"
+          }
+        }
       }
     },
-    "/admin/session-pools/{pool}/bindings/{bindingId}": {
+    "/session-pools/{pool}": {
+      "patch": {
+        "summary": "Update a pool with manage access",
+        "operationId": "patchManagedSessionPool",
+        "tags": [
+          "Session Pools"
+        ],
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool updated"
+          }
+        }
+      },
       "delete": {
-        "summary": "Remove a pool binding", "operationId": "deleteSessionPoolBinding", "tags": ["Session Pools"],
-        "parameters": [{"name": "pool", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "bindingId", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "responses": {"204": {"description": "Binding removed"}}
+        "summary": "Delete a pool with manage access",
+        "operationId": "deleteManagedSessionPool",
+        "tags": [
+          "Session Pools"
+        ],
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Pool deleted"
+          }
+        }
+      }
+    },
+    "/session-pools/{pool}/bindings": {
+      "get": {
+        "summary": "List bindings with manage access",
+        "operationId": "listManagedSessionPoolBindings",
+        "tags": [
+          "Session Pools"
+        ],
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool bindings"
+          }
+        }
+      },
+      "post": {
+        "summary": "Grant pool use or manage access",
+        "operationId": "createManagedSessionPoolBinding",
+        "tags": [
+          "Session Pools"
+        ],
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionPoolBinding"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Binding created"
+          },
+          "409": {
+            "description": "Subject is already bound"
+          }
+        }
+      }
+    },
+    "/session-managers/registration-tokens": {
+      "post": {
+        "summary": "Issue a one-time session manager registration token",
+        "operationId": "issueSessionManagerRegistrationToken",
+        "tags": [
+          "Session Pools"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "team",
+                      "system"
+                    ],
+                    "default": "user"
+                  },
+                  "team_id": {
+                    "type": "string"
+                  },
+                  "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "pool": {
+                    "type": "string"
+                  },
+                  "default": {
+                    "type": "boolean",
+                    "description": "System scope only; create an all-subject default binding during enrollment"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pending manager and one-time registration token"
+          }
+        }
+      }
+    },
+    "/session-managers/enroll": {
+      "post": {
+        "summary": "Exchange a registration token for manager credentials",
+        "operationId": "enrollSessionManager",
+        "tags": [
+          "Session Pools"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "registration_token",
+                  "instance_id"
+                ],
+                "properties": {
+                  "registration_token": {
+                    "type": "string"
+                  },
+                  "instance_id": {
+                    "type": "string"
+                  },
+                  "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "pool": {
+                    "type": "string"
+                  },
+                  "default": {
+                    "type": "boolean",
+                    "description": "Create an all-subject binding so the pool is selected by default"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Manager ID and one-time connection token"
+          },
+          "401": {
+            "description": "Invalid, expired, or used registration token"
+          }
+        }
+      }
+    },
+    "/session-managers": {
+      "get": {
+        "summary": "List session managers visible to the authenticated subject",
+        "operationId": "listSessionManagers",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "200": {
+            "description": "Manager registry"
+          }
+        }
+      }
+    },
+    "/session-managers/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Get a visible session manager",
+        "operationId": "getSessionManager",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "200": {
+            "description": "Manager"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a session manager",
+        "operationId": "patchSessionManager",
+        "tags": [
+          "Session Pools"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated manager"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a session manager",
+        "operationId": "deleteSessionManager",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "204": {
+            "description": "Manager deleted"
+          }
+        }
+      }
+    },
+    "/session-managers/{id}/registration-token": {
+      "post": {
+        "summary": "Replace manager credentials through a new registration token",
+        "operationId": "rotateSessionManagerRegistrationToken",
+        "tags": [
+          "Session Pools"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One-time registration token"
+          }
+        }
+      }
+    },
+    "/session-pools/{pool}/bindings/{bindingId}": {
+      "parameters": [
+        {
+          "name": "pool",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "bindingId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "summary": "Update a pool binding",
+        "operationId": "patchSessionPoolBinding",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated binding"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a pool binding",
+        "operationId": "deleteSessionPoolBinding",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "204": {
+            "description": "Binding deleted"
+          }
+        }
+      }
+    },
+    "/session-pools/{pool}/suppliers": {
+      "get": {
+        "summary": "List pool suppliers",
+        "operationId": "listSessionPoolSuppliers",
+        "tags": [
+          "Session Pools"
+        ],
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool suppliers"
+          }
+        }
+      }
+    },
+    "/session-pools/{pool}/suppliers/{id}": {
+      "parameters": [
+        {
+          "name": "pool",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Add a manager as a pool supplier",
+        "operationId": "createSessionPoolSupplier",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "201": {
+            "description": "Supplier created"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a pool supplier",
+        "operationId": "patchSessionPoolSupplier",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "200": {
+            "description": "Supplier updated"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a pool supplier",
+        "operationId": "deleteSessionPoolSupplier",
+        "tags": [
+          "Session Pools"
+        ],
+        "responses": {
+          "204": {
+            "description": "Supplier deleted"
+          }
+        }
       }
     }
   },
   "components": {
     "schemas": {
       "SessionManagerCreate": {
-        "type": "object", "required": ["name"],
-        "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "capabilities": {"type": "array", "items": {"type": "string"}}, "enabled": {"type": "boolean", "default": true}}
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
       },
       "SessionPool": {
-        "type": "object", "required": ["name"],
-        "properties": {"name": {"type": "string", "description": "Logical pool name shared by one or more managers"}, "manager_id": {"type": "string"}, "labels": {"type": "object", "additionalProperties": {"type": "string"}}, "min_idle": {"type": "integer", "minimum": 0}, "max_runners": {"type": "integer", "minimum": 0}, "enabled": {"type": "boolean", "default": true}, "draining": {"type": "boolean"}}
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Logical pool name shared by one or more managers"
+          },
+          "manager_id": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "min_idle": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_runners": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "draining": {
+            "type": "boolean"
+          }
+        }
       },
       "SessionPoolBinding": {
-        "type": "object", "required": ["subject_type"],
-        "properties": {"id": {"type": "string"}, "pool": {"type": "string"}, "subject_type": {"type": "string", "enum": ["user", "team", "all"]}, "subject_id": {"type": "string", "description": "Required for user/team bindings and empty for all."}, "role": {"type": "string", "enum": ["use", "manage"], "default": "use"}, "enabled": {"type": "boolean", "default": true}, "explicit_only": {"type": "boolean", "default": false, "description": "Expose the pool for explicit selection but exclude it from automatic resolution."}, "priority": {"type": "integer"}, "max_concurrent": {"type": "integer", "minimum": 0, "default": 0, "description": "Best-effort maximum active allocations attributed to this binding; zero is unlimited."}}
+        "type": "object",
+        "required": [
+          "subject_type"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "subject_type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "team",
+              "all"
+            ]
+          },
+          "subject_id": {
+            "type": "string",
+            "description": "Required for user/team bindings and empty for all."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "use",
+              "manage"
+            ],
+            "default": "use"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "explicit_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Expose the pool for explicit selection but exclude it from automatic resolution."
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "max_concurrent": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Best-effort maximum active allocations attributed to this binding; zero is unlimited."
+          }
+        }
       },
       "AdminSettingsDocument": {
         "type": "object",
-        "required": ["schema_version", "version", "sections", "secret_configured"],
+        "required": [
+          "schema_version",
+          "version",
+          "sections",
+          "secret_configured"
+        ],
         "properties": {
-          "schema_version": {"type": "integer", "example": 1},
-          "version": {"type": "integer", "format": "int64", "description": "Immutable snapshot revision"},
-          "sections": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": true}, "description": "Complete system settings structure"},
-          "secret_configured": {"type": "object", "additionalProperties": {"type": "boolean"}, "description": "Secret field paths with stored values"},
-          "updated_at": {"type": "string", "format": "date-time"}
+          "schema_version": {
+            "type": "integer",
+            "example": 1
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Immutable snapshot revision"
+          },
+          "sections": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "description": "Complete system settings structure"
+          },
+          "secret_configured": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "Secret field paths with stored values"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "AdminSettingsUpdate": {
         "type": "object",
-        "required": ["base_version", "sections"],
+        "required": [
+          "base_version",
+          "sections"
+        ],
         "properties": {
-          "base_version": {"type": "integer", "format": "int64", "minimum": 0, "description": "Current version observed by the editor; zero creates the first version"},
-          "sections": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": true, "description": "Complete system settings structure"}}
+          "base_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Current version observed by the editor; zero creates the first version"
+          },
+          "sections": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Complete system settings structure"
+            }
+          }
         },
         "additionalProperties": false
       },
       "AdminSettingsVersion": {
         "type": "object",
-        "required": ["version", "updated_at"],
+        "required": [
+          "version",
+          "updated_at"
+        ],
         "properties": {
-          "version": {"type": "integer", "format": "int64"},
-          "updated_at": {"type": "string", "format": "date-time"}
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "Memory": {
@@ -7069,7 +7534,14 @@
           },
           "default_agent_type": {
             "type": "string",
-            "enum": ["", "auto", "claude-acp", "codex-acp", "pi-ollama", "cursor"],
+            "enum": [
+              "",
+              "auto",
+              "claude-acp",
+              "codex-acp",
+              "pi-ollama",
+              "cursor"
+            ],
             "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
           }
         }
@@ -7253,7 +7725,13 @@
           },
           "default_agent_type": {
             "type": "string",
-            "enum": ["auto", "claude-acp", "codex-acp", "pi-ollama", "cursor"],
+            "enum": [
+              "auto",
+              "claude-acp",
+              "codex-acp",
+              "pi-ollama",
+              "cursor"
+            ],
             "description": "Default agent type for sessions in this settings scope."
           },
           "created_at": {
@@ -7727,13 +8205,13 @@
               "type": "string"
             }
           },
-		  "automatic_assignment_enabled": {
+          "automatic_assignment_enabled": {
             "type": "boolean",
-			"description": "Whether automatic assignment may select this manager pool"
-		  },
-		  "pool_enabled": {
+            "description": "Whether automatic assignment may select this manager pool"
+          },
+          "pool_enabled": {
             "type": "boolean",
-			"description": "Whether this manager pool is available for explicit selection"
+            "description": "Whether this manager pool is available for explicit selection"
           },
           "public_url": {
             "type": "string",
@@ -7769,13 +8247,13 @@
               "type": "string"
             }
           },
-		  "automatic_assignment_enabled": {
+          "automatic_assignment_enabled": {
             "type": "boolean",
-			"description": "Whether automatic assignment may select this manager pool"
-		  },
-		  "pool_enabled": {
+            "description": "Whether automatic assignment may select this manager pool"
+          },
+          "pool_enabled": {
             "type": "boolean",
-			"description": "Whether this manager pool is available for explicit selection"
+            "description": "Whether this manager pool is available for explicit selection"
           },
           "public_url": {
             "type": "string",

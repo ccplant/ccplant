@@ -91,10 +91,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			if isInternalTokenEndpoint(path) {
 				return next(c)
 			}
-			if strings.HasPrefix(path, "/external-session-managers/") && strings.HasSuffix(path, "/heartbeat") {
-				return next(c)
-			}
-			if path == "/external-session-managers/enroll" {
+			if path == "/session-managers/enroll" {
 				return next(c)
 			}
 
