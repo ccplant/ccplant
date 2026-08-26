@@ -1008,6 +1008,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		return sessionRunnerStoreError(err)
 	}
 	owned := make([]*core.PoolSupplier, 0)
+	registeredRunnerIDs := make([]string, 0)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -1026,6 +1027,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 					continue
 				}
 				copy.TotalRunners++
+				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
 				if runner.Status == core.RunnerIdle {
 					copy.IdleRunners++
 				}
@@ -1035,7 +1037,8 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "pools": owned,
-		"upstream_version": buildinfo.Version,
+		"registered_runner_ids": registeredRunnerIDs,
+		"upstream_version":      buildinfo.Version,
 	})
 }
 

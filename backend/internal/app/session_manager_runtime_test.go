@@ -16,6 +16,12 @@ import (
 type fakeRunnerInfrastructure struct {
 	idle, total int
 	created     int
+	registered  map[string]struct{}
+}
+
+func (f *fakeRunnerInfrastructure) DeleteRunnerSessionsNotRegistered(_ context.Context, registered map[string]struct{}) error {
+	f.registered = registered
+	return nil
 }
 
 func (f *fakeRunnerInfrastructure) CountStockSessionsForPool(context.Context, string, bool) (int, error) {
@@ -52,6 +58,17 @@ func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
 	}})
 	if manager.created != 1 {
 		t.Fatalf("created %d runners, want 1", manager.created)
+	}
+}
+
+func TestReconcileOrphanedSessionRunnersUsesParentInventory(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileOrphanedSessionRunners(context.Background(), manager, []string{"runner-a", "runner-b"})
+	if len(manager.registered) != 2 {
+		t.Fatalf("registered runner count = %d, want 2", len(manager.registered))
+	}
+	if _, ok := manager.registered["runner-a"]; !ok {
+		t.Fatal("runner-a missing from registered inventory")
 	}
 }
 
