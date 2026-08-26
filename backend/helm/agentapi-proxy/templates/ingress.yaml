@@ -88,6 +88,22 @@ spec:
               {{- end }}
           {{- end }}
           {{- if $sciaEnabled }}
+          {{- range list "/oauth/authorize" "/oauth/callback" "/oauth/logout" "/oauth/refresh" }}
+          - path: {{ . }}
+            {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" $ }}
+              servicePort: {{ $.Values.service.port }}
+              {{- end }}
+          {{- end }}
           - path: /oauth
             {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
             pathType: Prefix
@@ -171,6 +187,22 @@ spec:
               {{- end }}
           {{- end }}
           {{- if $sciaEnabled }}
+          {{- range list "/oauth/authorize" "/oauth/callback" "/oauth/logout" "/oauth/refresh" }}
+          - path: {{ . }}
+            {{- if semverCompare ">=1.18-0" $.Capabilities.KubeVersion.GitVersion }}
+            pathType: Prefix
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "agentapi-proxy.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+              {{- else }}
+              serviceName: {{ include "agentapi-proxy.fullname" $ }}
+              servicePort: {{ $.Values.service.port }}
+              {{- end }}
+          {{- end }}
           - path: /oauth
             {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
             pathType: Prefix
