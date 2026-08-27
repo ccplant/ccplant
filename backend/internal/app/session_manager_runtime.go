@@ -366,10 +366,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
-					reconcileSessionRunnerPools(ctx, manager, result.Pools)
-					if result.RegisteredRunnerIDs != nil {
-						reconcileOrphanedSessionRunners(ctx, manager, *result.RegisteredRunnerIDs)
-					}
+					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
 					}
@@ -382,6 +379,22 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		case <-ticker.C:
 		}
 	}
+}
+
+type sessionRunnerHeartbeatInfrastructure interface {
+	sessionRunnerInfrastructure
+	orphanedSessionRunnerCleaner
+}
+
+func reconcileSessionRunnerHeartbeat(ctx context.Context, manager sessionRunnerHeartbeatInfrastructure, pools []*sessionrunnercore.PoolSupplier, registeredRunnerIDs *[]string) {
+	// The heartbeat inventory is a snapshot taken before this reconciliation.
+	// Remove runners missing from that snapshot before creating replacement
+	// capacity; otherwise the orphan cleanup can delete a runner that was just
+	// registered by reconcileSessionRunnerPools.
+	if registeredRunnerIDs != nil {
+		reconcileOrphanedSessionRunners(ctx, manager, *registeredRunnerIDs)
+	}
+	reconcileSessionRunnerPools(ctx, manager, pools)
 }
 
 type orphanedSessionRunnerCleaner interface {
