@@ -829,10 +829,17 @@ func buildApplicationKVStore(cfg config.KVStoreConfig, kubeClient kubernetes.Int
 }
 
 func resolveApplicationNamespace(configured string) string {
-	if configured != "" {
-		return configured
+	// Explicit runtime configuration must win over stale config snapshots.
+	// Non-Kubernetes API runtimes have no service-account namespace fallback,
+	// so honoring this override prevents application data from silently landing
+	// in the "default" logical namespace.
+	if namespace := strings.TrimSpace(os.Getenv("AGENTAPI_KV_STORE_NAMESPACE")); namespace != "" {
+		return namespace
 	}
-	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
+	if namespace := strings.TrimSpace(configured); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); namespace != "" {
 		return namespace
 	}
 	return "default"
