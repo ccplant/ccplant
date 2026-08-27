@@ -27,7 +27,7 @@ func (t *Tunnel) IsConnected(ctx context.Context, managerID string) bool {
 
 func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID string, req *http.Request) (*http.Response, error) {
 	if !t.IsConnected(ctx, managerID) {
-		return nil, fmt.Errorf("external session manager %s has no outbound control lease", managerID)
+		return nil, fmt.Errorf("session runtime %s is not connected", managerID)
 	}
 	var body []byte
 	if req.Body != nil {

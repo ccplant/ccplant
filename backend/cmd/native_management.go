@@ -28,9 +28,7 @@ var nativeManagementExit = os.Exit
 var nativeManagementStartedAt = time.Now().UTC()
 var nativeReleaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
 
-// The operation response must be uploaded through the outbound control tunnel
-// before the daemon exits. Exiting immediately leaves the command unacked and
-// causes it to be replayed after systemd/launchd starts the daemon again.
+// Give the direct HTTP response enough time to be flushed before the daemon exits.
 const nativeManagementRestartDelay = 3 * time.Second
 
 func registerNativeManagementRoutes(e *echo.Echo, options struct {

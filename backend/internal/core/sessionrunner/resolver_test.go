@@ -16,12 +16,6 @@ type resolverStore struct {
 	bindings  []*Binding
 }
 
-type resolverLiveness map[string]bool
-
-func (l resolverLiveness) IsManagerConnected(_ context.Context, managerID string) (bool, error) {
-	return l[managerID], nil
-}
-
 func (s *resolverStore) ListManagers(context.Context) ([]*Manager, error) { return s.managers, nil }
 func (s *resolverStore) ListLogicalPools(context.Context) ([]*LogicalPool, error) {
 	return s.pools, nil
@@ -180,27 +174,6 @@ func TestResolverExcludesManagerUntilHeartbeatAndRestoresItsPoolAfterRecovery(t 
 	resolved, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "linux", resolved.Pool.Name, "healthy heartbeat must restore the original pool priority")
-}
-
-func TestResolverUsesSharedManagerLivenessInsteadOfPersistedHeartbeat(t *testing.T) {
-	manager := &Manager{ID: "manager-a", Enabled: true}
-	store := &resolverStore{
-		managers:  []*Manager{manager},
-		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
-		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: manager.ID, Enabled: true}},
-		bindings:  []*Binding{{Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
-	}
-	liveness := resolverLiveness{"manager-a": true}
-	resolver := NewResolver(store, 90*time.Second).WithManagerLiveness(liveness)
-
-	resolved, err := resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
-	require.NoError(t, err)
-	require.Equal(t, "linux", resolved.Pool.Name)
-
-	liveness["manager-a"] = false
-	resolved, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
-	require.NoError(t, err)
-	require.Nil(t, resolved)
 }
 
 func TestResolverPrefersExactBindingOverAll(t *testing.T) {

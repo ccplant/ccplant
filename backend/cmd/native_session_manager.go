@@ -140,15 +140,13 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	defer cancel()
 	worker := sessionmanager.NewRunnerWorker(manager, o.upstreamURL, o.managerID, o.connectionToken)
 	go worker.Start(ctx)
-	controlWorker := sessionmanager.NewControlWorker(o.upstreamURL, o.connectionToken, o.upstreamAuthToken, localURL, o.managerID, o.connectionToken)
-	go controlWorker.Start(ctx)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer shutdownCancel()
 		_ = e.Shutdown(shutdownCtx)
 	}()
-	log.Printf("[NATIVE_ESM] listening on %s, upstream=%s, transport=outbound-control", o.listen, o.upstreamURL)
+	log.Printf("[NATIVE_ESM] listening on %s, upstream=%s", o.listen, o.upstreamURL)
 	if err := e.Start(o.listen); err != nil && err != http.ErrServerClosed {
 		return err
 	}

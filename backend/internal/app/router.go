@@ -51,7 +51,6 @@ type HandlerRegistry struct {
 	workerControlController        *controllers.WorkerControlController
 	sessionControlController       *controllers.SessionControlController
 	sessionControlReaderController *controllers.SessionControlReaderController
-	esmControlController           *controllers.ESMControlController
 	sessionRuntimeController       *controllers.SessionRuntimeController
 	sessionPoolController          *controllers.SessionPoolController
 	usageController                *controllers.UsageController
@@ -68,7 +67,6 @@ type CustomHandler interface {
 func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create settings controller
 	settingsController := controllers.NewSettingsController(server.settingsRepo, server.notificationSvc)
-	settingsController.SetESMControlTunnel(server.esmControlTunnel)
 	settingsController.SetSessionRunnerStore(server.sessionRunnerStore)
 	var sessionPoolController *controllers.SessionPoolController
 	if provider, ok := server.sessionManager.(interface {
@@ -77,9 +75,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo, provider)
 	} else {
 		sessionPoolController = controllers.NewSessionPoolController(server.sessionRunnerStore, server.sessionRouteRepo)
-	}
-	if server.esmControlStore != nil {
-		sessionPoolController.WithManagerLiveness(server.esmControlStore)
 	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
@@ -225,7 +220,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var workerControlController *controllers.WorkerControlController
 	var sessionControlController *controllers.SessionControlController
 	var sessionControlReaderController *controllers.SessionControlReaderController
-	var esmControlController *controllers.ESMControlController
 	var sessionRuntimeController *controllers.SessionRuntimeController
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
@@ -233,7 +227,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionControlController = controllers.NewSessionControlController(server.sessionControlStore, k8sManager)
 		}
 		if server.esmControlStore != nil {
-			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController)
 			if server.sessionRouteRepo != nil {
 				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
@@ -247,7 +240,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			externalAllocationController = controllers.NewProvisionerController(nil, queue, server.settingsRepo, server.sessionRouteRepo)
 		}
 		if server.esmControlStore != nil {
-			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController)
 			if server.sessionRouteRepo != nil {
 				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
@@ -296,7 +288,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			workerControlController:        workerControlController,
 			sessionControlController:       sessionControlController,
 			sessionControlReaderController: sessionControlReaderController,
-			esmControlController:           esmControlController,
 			sessionRuntimeController:       sessionRuntimeController,
 			sessionPoolController:          sessionPoolController,
 			usageController:                usageController,
@@ -442,13 +433,6 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionControlReaderController != nil {
 		r.echo.GET("/sessions/:sessionId/control/events/wait", r.handlers.sessionControlReaderController.WaitEvents,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-	}
-	if r.handlers.esmControlController != nil {
-		r.echo.GET("/internal/external-session-manager/control/commands", r.handlers.esmControlController.WaitCommands)
-		r.echo.POST("/internal/external-session-manager/control/frames", r.handlers.esmControlController.AppendFrames)
-		r.echo.GET("/internal/external-session-managers/:managerId/control/commands", r.handlers.esmControlController.WaitCommands)
-		r.echo.POST("/internal/external-session-managers/:managerId/control/frames", r.handlers.esmControlController.AppendFrames)
-		log.Printf("[ROUTES] Internal outbound ESM control endpoints registered")
 	}
 	if r.handlers.sessionRuntimeController != nil {
 		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)

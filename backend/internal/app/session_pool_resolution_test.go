@@ -5,29 +5,18 @@ import (
 	"testing"
 	"time"
 
-	coreesm "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	infrasessionrunner "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-type connectedManagerStore struct {
-	coreesm.Store
-	connected bool
-}
-
-func (s connectedManagerStore) IsManagerConnected(context.Context, string) (bool, error) {
-	return s.connected, nil
-}
-
-func TestResolveSessionPoolUsesControlStoreLiveness(t *testing.T) {
+func TestResolveSessionPoolUsesPersistedHeartbeatLiveness(t *testing.T) {
 	ctx := context.Background()
 	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	manager := &sessionrunnercore.Manager{
 		ID: "manager-a", Enabled: true,
-		// Deliberately stale: Redis liveness must override persisted heartbeat.
-		LastHeartbeatAt: time.Now().Add(-time.Hour),
+		LastHeartbeatAt: time.Now(),
 	}
 	if err := store.CreateManager(ctx, manager); err != nil {
 		t.Fatal(err)
@@ -43,7 +32,7 @@ func TestResolveSessionPoolUsesControlStoreLiveness(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server := &Server{sessionRunnerStore: store, esmControlStore: connectedManagerStore{connected: true}}
+	server := &Server{sessionRunnerStore: store}
 	resolved, err := server.resolveSessionPool(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: "alice"}, nil)
 	if err != nil {
 		t.Fatal(err)

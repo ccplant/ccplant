@@ -17,13 +17,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-type connectedESMTunnel struct{}
-
-func (connectedESMTunnel) IsConnected(context.Context, string) bool { return true }
-func (connectedESMTunnel) Do(context.Context, string, string, string, *http.Request) (*http.Response, error) {
-	return nil, nil
-}
-
 func esmTestContext(e *echo.Echo, method, path string, body interface{}, userID string) (echo.Context, *httptest.ResponseRecorder) {
 	data, _ := json.Marshal(body)
 	req := httptest.NewRequest(method, path, bytes.NewReader(data))
@@ -157,29 +150,6 @@ func TestExternalSessionManagerHeartbeatRejectsUnreachablePublicURL(t *testing.T
 	ctx.Request().Header.Set("Authorization", "Bearer "+created.ConnectionToken)
 	err := controller.HeartbeatExternalSessionManager(ctx)
 	require.Error(t, err)
-}
-
-func TestExternalSessionManagerHeartbeatSkipsPublicProbeWithOutboundLease(t *testing.T) {
-	repo := newMockSettingsRepository()
-	controller := NewSettingsController(repo, nil)
-	controller.SetESMControlTunnel(connectedESMTunnel{})
-	e := echo.New()
-	ctx, rec := esmTestContext(e, http.MethodPost, "/external-session-managers/registration-tokens", ESMEnrollmentTokenRequest{}, "user1")
-	require.NoError(t, controller.IssueExternalSessionManagerEnrollmentToken(ctx))
-	var issued esmEnrollmentTokenResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issued))
-	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/enroll", ESMEnrollmentRequest{RegistrationToken: issued.RegistrationToken, InstanceID: "machine-outbound", Name: "outbound"}, "")
-	require.NoError(t, controller.EnrollExternalSessionManager(ctx))
-	var created esmRegistrationResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-
-	ctx, rec = esmTestContext(e, http.MethodPost, "/external-session-managers/:id/heartbeat", ESMHeartbeatRequest{PublicURL: "http://127.0.0.1:1"}, "")
-	ctx.SetParamNames("id")
-	ctx.SetParamValues(created.ID)
-	ctx.Request().Header.Set("Authorization", "Bearer "+created.ConnectionToken)
-	require.NoError(t, controller.HeartbeatExternalSessionManager(ctx))
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"transport":"outbound_control"`)
 }
 
 func TestExternalSessionManagerEnrollmentTokenIsOneTime(t *testing.T) {

@@ -455,12 +455,11 @@ type SessionManagerConfig struct {
 	ID string `json:"id" mapstructure:"id"`
 	// RunnerPool enables GitHub Actions-style runner claim mode for stock pods.
 	RunnerPool string `json:"runner_pool" mapstructure:"runner_pool"`
-	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
-	// to this manager when the outbound control lease is unavailable.
+	// PublicURL is the URL 親プロキシ uses to route requests to this manager.
 	PublicURL string `json:"public_url" mapstructure:"public_url"`
 	// APIURL is the private peer API URL. The public API process uses it to call
 	// the isolated session manager, while an external session-manager process
-	// uses it as the local target for outbound control-tunnel requests.
+	// uses it as its private listening endpoint.
 	// It is intentionally distinct from UpstreamURL, which identifies the parent
 	// control plane.
 	APIURL string `json:"api_url" mapstructure:"api_url"`

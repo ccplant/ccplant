@@ -10,7 +10,6 @@ import (
 
 const (
 	SessionRouteTransportDirectRuntime = "direct_session_runtime"
-	SessionRouteTransportESMTunnel     = "esm_control_tunnel"
 	SessionRouteTransportDirectHTTP    = "direct_http"
 )
 
@@ -22,7 +21,7 @@ type SessionRoute struct {
 	ManagerID        string // External Session Manager registration ID
 	ProxyURL         string // Base URL of External Session Manager (e.g. "http://esm:8080")
 	HMACSecret       string // HMAC secret for authenticating requests to External Session Manager
-	Transport        string // direct_session_runtime, esm_control_tunnel, or direct_http
+	Transport        string // direct_session_runtime or direct_http
 	RuntimeTokenHash string // SHA-256 hash of the per-generation runtime bearer token
 	Generation       int64  // Fences stale Session Pods after replacement
 	// Metadata for session listing

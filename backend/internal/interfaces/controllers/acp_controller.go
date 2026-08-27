@@ -863,19 +863,11 @@ func (c *ACPController) dialRemoteBridgeSSE(
 	eventCh := make(chan sseEvent, 8)
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/" + route.RemoteSessionID + "/sse"
 	directRuntime := route.Transport == portrepos.SessionRouteTransportDirectRuntime
-	tunnelKey := route.ManagerID
-	if directRuntime {
-		tunnelKey = route.SessionID
-	}
-	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx, tunnelKey)
+	useTunnel := directRuntime && c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx, route.SessionID)
 	if useTunnel {
-		if directRuntime {
-			targetURL = "http://session.local/sse"
-		} else {
-			targetURL = "http://esm.local/" + route.RemoteSessionID + "/sse"
-		}
+		targetURL = "http://session.local/sse"
 	} else if route.ProxyURL == "" {
-		log.Printf("[ACP] SSE: outbound ESM control connection is unavailable")
+		log.Printf("[ACP] SSE: session endpoint is unavailable")
 		close(eventCh)
 		return eventCh, func() {}
 	}
@@ -896,7 +888,7 @@ func (c *ACPController) dialRemoteBridgeSSE(
 
 	var resp *http.Response
 	if useTunnel {
-		resp, err = c.esmControlTunnel.Do(ctx, tunnelKey, route.SessionID, route.RemoteSessionID, req)
+		resp, err = c.esmControlTunnel.Do(ctx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
 	} else {
 		resp, err = http.DefaultClient.Do(req)
 	}

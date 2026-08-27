@@ -28,16 +28,11 @@ type SettingsController struct {
 	repo               repositories.SettingsRepository
 	notificationSvc    *notification.Service // Optional
 	esmMu              sync.Mutex
-	esmControlTunnel   ESMControlTunnel
 	sessionRunnerStore sessionrunnercore.Store
 }
 
 func (c *SettingsController) SetSessionRunnerStore(store sessionrunnercore.Store) {
 	c.sessionRunnerStore = store
-}
-
-func (c *SettingsController) SetESMControlTunnel(tunnel ESMControlTunnel) {
-	c.esmControlTunnel = tunnel
 }
 
 // NewSettingsController creates new settings controller
