@@ -15,7 +15,7 @@ import (
 
 func TestEnrollNativeManager(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/external-session-managers/enroll", r.URL.Path)
+		require.Equal(t, "/session-managers/enroll", r.URL.Path)
 		require.Empty(t, r.Header.Get("Authorization"))
 		_ = json.NewEncoder(w).Encode(nativeRegistrationResponse{ID: "manager-1", ConnectionToken: "connection-token", Created: true})
 	}))

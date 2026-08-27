@@ -69,7 +69,7 @@ export default function SessionPoolsAdminPage() {
     event.preventDefault()
     try {
       const result = await client.createClusterSessionManager(managerName)
-      setConnectionToken(result.connection_token)
+      setConnectionToken(result.registration_token)
       setManagerName('')
       setManagerID(result.manager.id)
       await reload()
@@ -180,7 +180,7 @@ export default function SessionPoolsAdminPage() {
       {connectionToken && (
         <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
           <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-            Connection token は今だけ表示されます
+            Registration token は今だけ表示されます
           </p>
           <code className="mt-2 block break-all font-mono text-xs text-amber-900 dark:text-amber-200">
             {connectionToken}

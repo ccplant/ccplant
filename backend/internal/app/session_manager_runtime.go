@@ -364,14 +364,18 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
-						Pools           []*sessionrunnercore.PoolSupplier `json:"pools"`
-						UpstreamVersion string                            `json:"upstream_version"`
+						Pools               []*sessionrunnercore.PoolSupplier `json:"pools"`
+						RegisteredRunnerIDs *[]string                         `json:"registered_runner_ids"`
+						UpstreamVersion     string                            `json:"upstream_version"`
 					}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
 					reconcileSessionRunnerPools(ctx, manager, result.Pools)
+					if result.RegisteredRunnerIDs != nil {
+						reconcileOrphanedSessionRunners(ctx, manager, *result.RegisteredRunnerIDs)
+					}
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
 					}
@@ -383,6 +387,26 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+type orphanedSessionRunnerCleaner interface {
+	DeleteRunnerSessionsNotRegistered(context.Context, map[string]struct{}) error
+}
+
+func reconcileOrphanedSessionRunners(ctx context.Context, manager sessionRunnerInfrastructure, registeredIDs []string) {
+	cleaner, ok := manager.(orphanedSessionRunnerCleaner)
+	if !ok {
+		return
+	}
+	registered := make(map[string]struct{}, len(registeredIDs))
+	for _, id := range registeredIDs {
+		if id != "" {
+			registered[id] = struct{}{}
+		}
+	}
+	if err := cleaner.DeleteRunnerSessionsNotRegistered(ctx, registered); err != nil {
+		log.Printf("[SESSION_MANAGER] Delete orphaned runner sessions: %v", err)
 	}
 }
 
@@ -497,16 +521,22 @@ func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfra
 		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
 			continue
 		}
-		idle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
+		localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER] Count pool %s idle runners: %v", pool.Pool, err)
 			continue
 		}
-		total, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
+		localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
 			continue
 		}
+		// A stock Service can survive after its runner registration has gone
+		// stale. Conversely, the parent registry can briefly outlive a deleted
+		// Service. Treat capacity as idle only when both inventories agree so a
+		// stale record on either side cannot permanently suppress replenishment.
+		idle := min(localIdle, pool.IdleRunners)
+		total := max(localTotal, pool.TotalRunners)
 		for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
 			if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
 				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)

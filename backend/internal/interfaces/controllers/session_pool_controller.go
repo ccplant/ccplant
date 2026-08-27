@@ -88,6 +88,256 @@ type managerCreateRequest struct {
 	Enabled      *bool             `json:"enabled,omitempty"`
 }
 
+type managerRegistrationRequest struct {
+	Name    string            `json:"name"`
+	Scope   core.ManagerScope `json:"scope"`
+	TeamID  string            `json:"team_id,omitempty"`
+	Pool    string            `json:"pool,omitempty"`
+	Default bool              `json:"default,omitempty"`
+	Labels  map[string]string `json:"labels,omitempty"`
+}
+
+type managerEnrollRequest struct {
+	RegistrationToken string            `json:"registration_token"`
+	InstanceID        string            `json:"instance_id"`
+	Pool              string            `json:"pool,omitempty"`
+	Default           bool              `json:"default,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Capabilities      []string          `json:"capabilities,omitempty"`
+}
+
+// IssueManagerRegistrationToken creates a pending manager in the unified
+// user/team/system ownership model.
+func (c *SessionPoolController) IssueManagerRegistrationToken(ctx echo.Context) error {
+	var input managerRegistrationRequest
+	if err := ctx.Bind(&input); err != nil || strings.TrimSpace(input.Name) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
+	}
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	if input.Scope == "" {
+		input.Scope = core.ManagerScopeUser
+	}
+	ownerID := string(user.ID())
+	switch input.Scope {
+	case core.ManagerScopeUser:
+	case core.ManagerScopeTeam:
+		if input.TeamID == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "team_id is required")
+		}
+		if !user.IsAdmin() && !user.IsMemberOfTeam(input.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "access denied")
+		}
+		ownerID = input.TeamID
+	case core.ManagerScopeSystem:
+		if !user.IsAdmin() {
+			return echo.NewHTTPError(http.StatusForbidden, "admin permission is required for system scope")
+		}
+		ownerID = ""
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "scope must be user, team or system")
+	}
+	if input.Default && input.Scope != core.ManagerScopeSystem {
+		return echo.NewHTTPError(http.StatusForbidden, "only system-scoped managers can install a default binding")
+	}
+	if input.Pool != "" {
+		if problems := validation.IsValidLabelValue(input.Pool); len(problems) > 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
+		}
+	}
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create registration token")
+	}
+	manager := &core.Manager{
+		Name: input.Name, Scope: input.Scope, OwnerID: ownerID, InstallPool: input.Pool, Default: input.Default, Labels: input.Labels,
+		Enabled: false, RegistrationTokenHash: tokenHash,
+		RegistrationExpiresAt: c.now().Add(15 * time.Minute),
+	}
+	if err := c.store.CreateManager(ctx.Request().Context(), manager); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.JSON(http.StatusCreated, map[string]any{
+		"manager": redactManager(manager), "registration_token": token,
+		"expires_at": manager.RegistrationExpiresAt,
+	})
+}
+
+// EnrollManager exchanges a short-lived registration token for the durable
+// connection credential used by heartbeat and allocation APIs.
+func (c *SessionPoolController) EnrollManager(ctx echo.Context) error {
+	var input managerEnrollRequest
+	if err := ctx.Bind(&input); err != nil || strings.TrimSpace(input.RegistrationToken) == "" || strings.TrimSpace(input.InstanceID) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "registration_token and instance_id are required")
+	}
+	managers, err := c.store.ListManagers(ctx.Request().Context())
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	now := c.now()
+	for _, manager := range managers {
+		if manager.RegistrationTokenHash == "" || !verifySessionRunnerToken(manager.RegistrationTokenHash, input.RegistrationToken) {
+			continue
+		}
+		if manager.RegistrationExpiresAt.IsZero() || now.After(manager.RegistrationExpiresAt) {
+			return echo.NewHTTPError(http.StatusUnauthorized, "registration token has expired")
+		}
+		connectionToken, connectionHash, generateErr := newSessionRunnerToken()
+		if generateErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to create connection token")
+		}
+		manager.ConnectionTokenHash = connectionHash
+		manager.RegistrationTokenHash = ""
+		manager.RegistrationExpiresAt = time.Time{}
+		manager.Enabled = true
+		if input.Labels != nil {
+			manager.Labels = input.Labels
+		}
+		manager.Capabilities = input.Capabilities
+		if len(manager.Capabilities) == 0 {
+			manager.Capabilities = []string{core.CapabilityRunnerClaimV1, core.CapabilityDirectRuntimeV1}
+		}
+		if input.Pool != "" && manager.InstallPool != "" && input.Pool != manager.InstallPool {
+			return echo.NewHTTPError(http.StatusBadRequest, "pool does not match the registration")
+		}
+		pool := manager.InstallPool
+		if pool == "" {
+			pool = input.Pool
+		}
+		if pool != "" {
+			if _, getErr := c.store.GetLogicalPool(ctx.Request().Context(), pool); errors.Is(getErr, core.ErrNotFound) {
+				if createErr := c.store.CreateLogicalPool(ctx.Request().Context(), &core.LogicalPool{Name: pool, Enabled: true}); createErr != nil {
+					return sessionRunnerStoreError(createErr)
+				}
+			} else if getErr != nil {
+				return sessionRunnerStoreError(getErr)
+			}
+			if _, getErr := c.store.GetPoolSupplier(ctx.Request().Context(), manager.ID, pool); errors.Is(getErr, core.ErrNotFound) {
+				if createErr := c.store.CreatePoolSupplier(ctx.Request().Context(), &core.PoolSupplier{Pool: pool, ManagerID: manager.ID, Enabled: true}); createErr != nil {
+					return sessionRunnerStoreError(createErr)
+				}
+			} else if getErr != nil {
+				return sessionRunnerStoreError(getErr)
+			}
+			if manager.Default {
+				bindings, listErr := c.store.ListBindings(ctx.Request().Context(), pool)
+				if listErr != nil {
+					return sessionRunnerStoreError(listErr)
+				}
+				hasDefault := false
+				for _, binding := range bindings {
+					hasDefault = hasDefault || (binding.SubjectType == core.SubjectAll && binding.SubjectID == "" && binding.Enabled)
+				}
+				if !hasDefault {
+					if createErr := c.store.CreateBinding(ctx.Request().Context(), &core.Binding{Pool: pool, SubjectType: core.SubjectAll, Role: core.BindingRoleUse, Enabled: true}); createErr != nil {
+						return sessionRunnerStoreError(createErr)
+					}
+				}
+			}
+		}
+		if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+		return ctx.JSON(http.StatusOK, map[string]any{
+			"id": manager.ID, "name": manager.Name, "scope": manager.Scope,
+			"owner_id": manager.OwnerID, "labels": manager.Labels,
+			"instance_id": input.InstanceID, "connection_token": connectionToken,
+			"created": true,
+		})
+	}
+	return echo.NewHTTPError(http.StatusUnauthorized, "invalid or already used registration token")
+}
+
+func (c *SessionPoolController) managerAuthorized(user *entities.User, manager *core.Manager) bool {
+	if user == nil || manager == nil {
+		return false
+	}
+	switch manager.Scope {
+	case core.ManagerScopeSystem:
+		return user.IsAdmin()
+	case core.ManagerScopeTeam:
+		return user.IsAdmin() || user.IsMemberOfTeam(manager.OwnerID)
+	case core.ManagerScopeUser:
+		return manager.OwnerID == string(user.ID())
+	default:
+		return user.IsAdmin()
+	}
+}
+
+func (c *SessionPoolController) ListOwnedManagers(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	managers, err := c.store.ListManagers(ctx.Request().Context())
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	result := make([]*core.Manager, 0, len(managers))
+	for _, manager := range managers {
+		if c.managerAuthorized(user, manager) {
+			result = append(result, redactManager(manager))
+		}
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"session_managers": result})
+}
+
+func (c *SessionPoolController) GetOwnedManager(ctx echo.Context) error {
+	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	if !c.managerAuthorized(auth.GetUserFromContext(ctx), manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	return ctx.JSON(http.StatusOK, redactManager(manager))
+}
+
+func (c *SessionPoolController) PatchOwnedManager(ctx echo.Context) error {
+	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	if !c.managerAuthorized(auth.GetUserFromContext(ctx), manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	return c.PatchManager(ctx)
+}
+
+func (c *SessionPoolController) DeleteOwnedManager(ctx echo.Context) error {
+	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	if !c.managerAuthorized(auth.GetUserFromContext(ctx), manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	return c.DeleteManager(ctx)
+}
+
+func (c *SessionPoolController) RotateManagerRegistrationToken(ctx echo.Context) error {
+	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	if !c.managerAuthorized(auth.GetUserFromContext(ctx), manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create registration token")
+	}
+	manager.Enabled = false
+	manager.RegistrationTokenHash = tokenHash
+	manager.RegistrationExpiresAt = c.now().Add(15 * time.Minute)
+	if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"manager": redactManager(manager), "registration_token": token,
+		"expires_at": manager.RegistrationExpiresAt,
+	})
+}
+
 func (c *SessionPoolController) CreateManager(ctx echo.Context) error {
 	var input managerCreateRequest
 	if err := ctx.Bind(&input); err != nil || strings.TrimSpace(input.Name) == "" {
@@ -758,6 +1008,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		return sessionRunnerStoreError(err)
 	}
 	owned := make([]*core.PoolSupplier, 0)
+	registeredRunnerIDs := make([]string, 0)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -776,6 +1027,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 					continue
 				}
 				copy.TotalRunners++
+				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
 				if runner.Status == core.RunnerIdle {
 					copy.IdleRunners++
 				}
@@ -785,7 +1037,8 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "pools": owned,
-		"upstream_version": buildinfo.Version,
+		"registered_runner_ids": registeredRunnerIDs,
+		"upstream_version":      buildinfo.Version,
 	})
 }
 
@@ -844,6 +1097,7 @@ func runnerClaimResponse(allocation *core.Allocation, runner *core.Runner) map[s
 func redactManager(manager *core.Manager) *core.Manager {
 	copy := *manager
 	copy.ConnectionTokenHash = ""
+	copy.RegistrationTokenHash = ""
 	return &copy
 }
 

@@ -184,7 +184,7 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "autoUpgrade": { "type": "boolean" },
-        "replicaCount": { "type": "integer", "minimum": 1 },
+        "replicaCount": { "type": "integer", "minimum": 0 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "apiUrl": { "type": "string" },
         "image": { "$ref": "#/definitions/image" },

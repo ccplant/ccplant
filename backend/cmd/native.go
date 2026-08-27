@@ -771,7 +771,7 @@ func runNativeRotateToken(_ *cobra.Command, _ []string) error {
 	if cfg.TeamID != "" {
 		query.Set("team_id", cfg.TeamID)
 	}
-	endpoint := strings.TrimRight(cfg.UpstreamURL, "/") + "/external-session-managers/" + url.PathEscape(cfg.ManagerID) + "/rotate-token"
+	endpoint := strings.TrimRight(cfg.UpstreamURL, "/") + "/session-managers/" + url.PathEscape(cfg.ManagerID) + "/registration-token"
 	if encoded := query.Encode(); encoded != "" {
 		endpoint += "?" + encoded
 	}
@@ -785,8 +785,18 @@ func runNativeRotateToken(_ *cobra.Command, _ []string) error {
 	if resp.StatusCode != http.StatusOK {
 		return responseError(resp)
 	}
-	var registration nativeRegistrationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&registration); err != nil {
+	var issued struct {
+		RegistrationToken string `json:"registration_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issued); err != nil {
+		return err
+	}
+	registration, err := enrollNativeManager(cfg.UpstreamURL, map[string]interface{}{
+		"registration_token": issued.RegistrationToken,
+		"instance_id":        cfg.InstanceID,
+		"name":               cfg.ManagerID,
+	})
+	if err != nil {
 		return err
 	}
 	cfg.ConnectionToken = registration.ConnectionToken
@@ -855,7 +865,7 @@ func runNativeUninstall(_ *cobra.Command, _ []string) error {
 		if cfg.TeamID != "" {
 			query.Set("team_id", cfg.TeamID)
 		}
-		endpoint := strings.TrimRight(cfg.UpstreamURL, "/") + "/external-session-managers/" + url.PathEscape(cfg.ManagerID)
+		endpoint := strings.TrimRight(cfg.UpstreamURL, "/") + "/session-managers/" + url.PathEscape(cfg.ManagerID)
 		if encoded := query.Encode(); encoded != "" {
 			endpoint += "?" + encoded
 		}
@@ -931,7 +941,7 @@ func binarySharedWith(entries []nativeInstanceListEntry, currentInstance, binary
 
 func enrollNativeManager(upstream string, payload interface{}) (*nativeRegistrationResponse, error) {
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(upstream, "/")+"/external-session-managers/enroll", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(upstream, "/")+"/session-managers/enroll", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -953,7 +963,7 @@ func enrollNativeManager(upstream string, payload interface{}) (*nativeRegistrat
 
 func sendNativeHeartbeat(cfg nativeDaemonConfig) error {
 	body, _ := json.Marshal(map[string]interface{}{"version": nativeBuildVersion()})
-	req, _ := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.UpstreamURL, "/")+"/external-session-managers/"+cfg.ManagerID+"/heartbeat", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.UpstreamURL, "/")+"/internal/session-managers/"+cfg.ManagerID+"/heartbeat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+cfg.ConnectionToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)

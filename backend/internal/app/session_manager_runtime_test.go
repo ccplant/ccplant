@@ -16,6 +16,12 @@ import (
 type fakeRunnerInfrastructure struct {
 	idle, total int
 	created     int
+	registered  map[string]struct{}
+}
+
+func (f *fakeRunnerInfrastructure) DeleteRunnerSessionsNotRegistered(_ context.Context, registered map[string]struct{}) error {
+	f.registered = registered
+	return nil
 }
 
 func (f *fakeRunnerInfrastructure) CountStockSessionsForPool(context.Context, string, bool) (int, error) {
@@ -41,6 +47,28 @@ func TestReconcileSessionRunnerPoolsUsesInfrastructureInventory(t *testing.T) {
 	}})
 	if manager.created != 3 {
 		t.Fatalf("created %d runners, want 3", manager.created)
+	}
+}
+
+func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{idle: 1, total: 1}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 1, MaxRunners: 20,
+		IdleRunners: 0, TotalRunners: 0,
+	}})
+	if manager.created != 1 {
+		t.Fatalf("created %d runners, want 1", manager.created)
+	}
+}
+
+func TestReconcileOrphanedSessionRunnersUsesParentInventory(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileOrphanedSessionRunners(context.Background(), manager, []string{"runner-a", "runner-b"})
+	if len(manager.registered) != 2 {
+		t.Fatalf("registered runner count = %d, want 2", len(manager.registered))
+	}
+	if _, ok := manager.registered["runner-a"]; !ok {
+		t.Fatal("runner-a missing from registered inventory")
 	}
 }
 

@@ -35,7 +35,7 @@ metadata:
     {{- include "agentapi-proxy.labels" . | nindent 4 }}
     app.kubernetes.io/component: session-manager
 spec:
-  replicas: {{ $manager.replicaCount | default 1 }}
+  replicas: {{ ternary $manager.replicaCount 1 (hasKey $manager "replicaCount") }}
   selector:
     matchLabels:
       {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}

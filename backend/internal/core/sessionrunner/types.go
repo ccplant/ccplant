@@ -7,6 +7,14 @@ const (
 	CapabilityDirectRuntimeV1 = "direct_session_runtime_v1"
 )
 
+type ManagerScope string
+
+const (
+	ManagerScopeUser   ManagerScope = "user"
+	ManagerScopeTeam   ManagerScope = "team"
+	ManagerScopeSystem ManagerScope = "system"
+)
+
 type SubjectType string
 type BindingRole string
 
@@ -19,16 +27,22 @@ const (
 )
 
 type Manager struct {
-	ID                  string            `json:"id"`
-	Name                string            `json:"name"`
-	ConnectionTokenHash string            `json:"connection_token_hash,omitempty"`
-	Labels              map[string]string `json:"labels,omitempty"`
-	Capabilities        []string          `json:"capabilities,omitempty"`
-	Enabled             bool              `json:"enabled"`
-	Draining            bool              `json:"draining,omitempty"`
-	LastHeartbeatAt     time.Time         `json:"last_heartbeat_at,omitempty"`
-	CreatedAt           time.Time         `json:"created_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	Scope                 ManagerScope      `json:"scope"`
+	OwnerID               string            `json:"owner_id,omitempty"`
+	InstallPool           string            `json:"install_pool,omitempty"`
+	Default               bool              `json:"default,omitempty"`
+	ConnectionTokenHash   string            `json:"connection_token_hash,omitempty"`
+	RegistrationTokenHash string            `json:"registration_token_hash,omitempty"`
+	RegistrationExpiresAt time.Time         `json:"registration_expires_at,omitempty"`
+	Labels                map[string]string `json:"labels,omitempty"`
+	Capabilities          []string          `json:"capabilities,omitempty"`
+	Enabled               bool              `json:"enabled"`
+	Draining              bool              `json:"draining,omitempty"`
+	LastHeartbeatAt       time.Time         `json:"last_heartbeat_at,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 type LogicalPool struct {

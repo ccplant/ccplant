@@ -996,6 +996,35 @@ func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Contex
 	return count, nil
 }
 
+// DeleteRunnerSessionsNotRegistered removes local runner workloads whose
+// durable registration no longer exists on the parent. A runner is registered
+// before its Service is created, so a newly-created workload cannot be removed
+// by this reconciliation window.
+func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context.Context, registered map[string]struct{}) error {
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return fmt.Errorf("failed to list runner services for orphan cleanup: %w", err)
+	}
+	var cleanupErrs []string
+	for i := range svcs.Items {
+		id := svcs.Items[i].Labels["agentapi.proxy/session-id"]
+		if id == "" {
+			continue
+		}
+		if _, ok := registered[id]; ok {
+			continue
+		}
+		if err := m.DeleteSession(id); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("%s: %v", id, err))
+		}
+	}
+	if len(cleanupErrs) > 0 {
+		return fmt.Errorf("delete orphaned runner sessions: %s", strings.Join(cleanupErrs, "; "))
+	}
+	return nil
+}
+
 // PurgeStockSessions deletes all existing pre-warmed stock sessions (Service,
 // Deployment, PVC). Called by the stock inventory worker on startup to ensure
 // that stale pods built from an old image are replaced with fresh ones.
