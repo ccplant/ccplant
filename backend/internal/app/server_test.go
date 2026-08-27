@@ -41,3 +41,36 @@ func TestExtractRepoFullNameFromURL(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveApplicationNamespace(t *testing.T) {
+	t.Run("runtime override wins over configured value", func(t *testing.T) {
+		t.Setenv("AGENTAPI_KV_STORE_NAMESPACE", "agentapi-ui")
+		t.Setenv("POD_NAMESPACE", "pod-namespace")
+
+		if got := resolveApplicationNamespace("default"); got != "agentapi-ui" {
+			t.Fatalf("namespace = %q, want agentapi-ui", got)
+		}
+	})
+
+	t.Run("configured value wins over pod fallback", func(t *testing.T) {
+		t.Setenv("AGENTAPI_KV_STORE_NAMESPACE", "")
+		t.Setenv("POD_NAMESPACE", "pod-namespace")
+
+		if got := resolveApplicationNamespace(" configured "); got != "configured" {
+			t.Fatalf("namespace = %q, want configured", got)
+		}
+	})
+
+	t.Run("falls back to pod namespace and default", func(t *testing.T) {
+		t.Setenv("AGENTAPI_KV_STORE_NAMESPACE", "")
+		t.Setenv("POD_NAMESPACE", " pod-namespace ")
+		if got := resolveApplicationNamespace(""); got != "pod-namespace" {
+			t.Fatalf("namespace = %q, want pod-namespace", got)
+		}
+
+		t.Setenv("POD_NAMESPACE", "")
+		if got := resolveApplicationNamespace(""); got != "default" {
+			t.Fatalf("namespace = %q, want default", got)
+		}
+	})
+}
