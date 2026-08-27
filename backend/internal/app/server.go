@@ -268,7 +268,10 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			}
 		}
 		sessionManager = k8sSessionManager
-		namespace = k8sSessionManager.GetNamespace()
+		// The session manager namespace is only a fallback for application data.
+		// Keep an explicit runtime KV namespace authoritative in legacy/native
+		// composition as well as in the isolated session-manager composition.
+		namespace = resolveApplicationNamespace(k8sSessionManager.GetNamespace())
 		persistenceClient = k8sSessionManager.GetClient()
 		var wrapPersistence bool
 		applicationKVStore, wrapPersistence, err = buildApplicationKVStore(cfg.KVStore, persistenceClient)
