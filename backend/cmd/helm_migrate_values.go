@@ -144,7 +144,6 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 		"redis":              cloneMap(legacyRedis),
 		"kubernetesSession":  cloneMap(nestedMap(values, "kubernetesSession")),
 		"sessionPersistence": cloneMap(nestedMap(values, "sessionPersistence")),
-		"sessionControl":     cloneMap(nestedMap(values, "sessionControl")),
 		"scia":               migratedManagerSCIA(values),
 		"github":             cloneMap(nestedMap(values, "github")),
 	}

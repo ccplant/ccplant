@@ -27,7 +27,7 @@ worker-control Secret shared only with the API.
 The same application values can render the API as a Google Cloud Run Knative
 Service by setting `cloudRun.enabled=true` and selecting
 `templates/cloud-run-service.yaml`. Settings under `api`, `config`, `github`,
-`asset`, `scia`, and `sessionControl` are shared with the Kubernetes Deployment;
+`asset` and `scia` are shared with the Kubernetes Deployment;
 `cloudRun` contains platform-only service and scaling settings. For Cloud Run,
 an optional `cloudRun.authConfigSecretRef` can mount an auth configuration file
 from Google Cloud Secret Manager. The secret contents remain environment-owned
@@ -624,13 +624,13 @@ helm upgrade agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy \
   --set redis.enabled=true
 ```
 
-To route runtime prompts, cancellation, and session events through outbound-only
-session HTTPS long polling, enable session control together with Redis:
+Runtime prompts, cancellation, and session events automatically use outbound-only
+session HTTPS long polling when Redis is configured:
 
 ```bash
 helm upgrade agentapi-proxy ./helm/agentapi-proxy \
   --set redis.enabled=true \
-  --set sessionManager.sessionControl.enabled=true
+  --set sessionManager.redis.addr=redis.example:6379
 ```
 
 Only backend pods connect to Redis. Session pods receive the backend control-plane
@@ -638,9 +638,8 @@ URL and provisioner token, but no Redis address or credentials. See
 [`docs/session-control-long-poll.md`](../../docs/session-control-long-poll.md) for
 the transport and retention model.
 
-For ESM sessions, enable the direct Session Pod-to-parent runtime transport with
-`--set sessionManager.sessionControl.directRuntimeEnabled=true`. This requires
-`sessionManager.sessionControl.enabled=true` and Redis. See
+ESM sessions automatically use the direct Session Pod-to-parent runtime transport
+when Redis is configured. See
 [`docs/direct-session-runtime.md`](../../docs/direct-session-runtime.md).
 
 ## Troubleshooting

@@ -499,22 +499,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var sessionControlStore sessioncontrol.Store
 	var esmControlStore esmcontrol.Store
 	var esmControlTunnel *infraesmcontrol.Tunnel
-	if runtimeTunnelEnabled(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), cfg.Redis.Addr) {
-		sessionControlStore = buildSessionControlStore(cfg)
-		if sessionControlStore != nil && k8sSessionManager != nil {
-			k8sSessionManager.SetSessionControlStore(sessionControlStore)
-		}
-		esmControlStore = buildESMControlStore(cfg)
-		if esmControlStore != nil {
-			esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
-		}
+	sessionControlStore = buildSessionControlStore(cfg)
+	if sessionControlStore != nil && k8sSessionManager != nil {
+		k8sSessionManager.SetSessionControlStore(sessionControlStore)
+	}
+	esmControlStore = buildESMControlStore(cfg)
+	if esmControlStore != nil {
+		esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
 	}
 
-	directRuntimeEnabled := runtimeTunnelEnabled(os.Getenv("AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED"), cfg.Redis.Addr)
-	if directRuntimeEnabled && esmControlTunnel == nil {
-		log.Printf("[DIRECT_RUNTIME] Disabled: session control Redis store is unavailable")
-		directRuntimeEnabled = false
-	}
 	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
 
 	s := &Server{
@@ -548,7 +541,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionControlStore:         sessionControlStore,
 		esmControlStore:             esmControlStore,
 		esmControlTunnel:            esmControlTunnel,
-		directSessionRuntimeEnabled: directRuntimeEnabled,
+		directSessionRuntimeEnabled: true,
 		localSessionFallbackEnabled: localSessionFallbackEnabled,
 	}
 
@@ -736,24 +729,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	return s
 }
 
-// runtimeTunnelEnabled keeps the runner-pool data plane available whenever its
-// required Redis backend is configured. Operators can still explicitly disable
-// either component with "false". Requiring an opt-in flag here leaves claimed
-// allocations stuck forever: runners can claim them, but the reverse-RPC routes
-// needed to report status and serve requests are never registered.
-func runtimeTunnelEnabled(configured, redisAddr string) bool {
-	configured = strings.TrimSpace(configured)
-	if configured != "" {
-		return strings.EqualFold(configured, "true")
-	}
-	return strings.TrimSpace(redisAddr) != ""
-}
-
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
-	if cfg.Redis.Addr == "" {
-		log.Printf("[SESSION_CONTROL] Disabled: Redis is required")
-		return nil
-	}
 	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
 	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
 		opts.DialTimeout = d
@@ -777,10 +753,6 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 }
 
 func buildESMControlStore(cfg *config.Config) esmcontrol.Store {
-	if cfg.Redis.Addr == "" {
-		log.Printf("[ESM_CONTROL] Disabled: Redis is required")
-		return nil
-	}
 	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
 	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
 		opts.DialTimeout = d

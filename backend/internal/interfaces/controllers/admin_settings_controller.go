@@ -280,11 +280,6 @@ func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
 			put(path, value)
 		}
 	}
-	if value, ok := os.LookupEnv("SESSION_CONTROL_LONG_POLL_ENABLED"); ok {
-		if enabled, err := strconv.ParseBool(value); err == nil {
-			put("security.session_control_enabled", enabled)
-		}
-	}
 	return sections
 }
 

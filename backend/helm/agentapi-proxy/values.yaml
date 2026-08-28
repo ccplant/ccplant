@@ -168,7 +168,7 @@ api:
       key: token
 
 # Optional Google Cloud Run output. The application configuration continues to
-# come from this chart's existing api/config/github/asset/scia/sessionControl
+# come from this chart's existing api/config/github/asset/scia
 # values; this section contains only Cloud Run platform settings.
 cloudRun:
   enabled: false
@@ -426,9 +426,6 @@ sessionManager:
       region: garage
       prefix: agentapi-sessions/
       endpoint: ""
-  sessionControl:
-    enabled: false
-    directRuntimeEnabled: false
   # GitHub material copied into Session Pod Secrets. API OAuth/application
   # credentials remain independently configured at the root github key.
   github:
@@ -1263,15 +1260,13 @@ kubernetesSession:
 # =============================================================================
 # Redis – 複数Pod間のセッションステータス同期
 # =============================================================================
-# replicaCount > 1 の場合は redis.enabled=true にすることを強く推奨します。
-# Redis が無効の場合はノーオペレーション実装が使われ、ステータス同期は各Podのメモリ内
-# のみになります（単一レプリカ運用では問題ありません）。
+# Redis はセッション制御とPod間のステータス同期に必須です。
 #
 # enabled=true のとき Bitnami Redis サブチャートが一緒にデプロイされます。
 # 外部 Redis を使いたい場合は enabled=false にして externalRedis を設定してください。
 redis:
   # enabled=true: Bitnami Redis サブチャートをデプロイする
-  enabled: false
+  enabled: true
 
   # Bitnami Redis サブチャートの設定
   # https://github.com/bitnami/charts/tree/main/bitnami/redis
@@ -1294,14 +1289,6 @@ redis:
       limits:
         memory: "256Mi"
         cpu: "200m"
-
-# Session-to-backend runtime control over authenticated HTTPS long polling.
-# Redis is only accessed by backend pods; session pods never receive Redis credentials.
-sessionControl:
-  enabled: false
-  # Route newly allocated ESM sessions through a per-session outbound channel
-  # from the Session Pod directly to the parent proxy.
-  directRuntimeEnabled: false
 
 # Ephemeral libSQL Server for development trials only.
 libsqlTrial:

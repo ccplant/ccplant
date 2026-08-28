@@ -147,10 +147,6 @@ all_role_args=(
   --set sessionManager.redis.addr=redis.example:6380
   --set sessionManager.sessionPersistence.backend=s3
   --set sessionManager.sessionPersistence.s3.bucket=manager-sessions
-  --set sessionManager.sessionControl.enabled=true
-  --set sessionManager.sessionControl.directRuntimeEnabled=true
-  --set sessionControl.enabled=true
-  --set sessionControl.directRuntimeEnabled=true
   --set sessionManager.scia.enabled=true
   --set scia.enabled=true
   --set sessionManager.scia.publicBaseUrl=https://api.example
@@ -197,8 +193,6 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_TOKEN' "$TMP_DIR/backend-dep
 assert_contains 'replicas: 2' "$TMP_DIR/backend-remote-manager-no-redis.yaml"
 assert_not_contains 'name: AGENTAPI_REDIS_ADDR' "$TMP_DIR/backend-remote-manager-no-redis.yaml"
 assert_contains 'resources: \["leases"\]' "$TMP_DIR/backend-all-roles.yaml"
-assert_contains 'name: SESSION_CONTROL_LONG_POLL_ENABLED' "$TMP_DIR/backend-deployment.yaml"
-assert_contains 'name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'value: "true"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: "worker-control"' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: "manager-internal"' "$TMP_DIR/backend-deployment.yaml"
@@ -248,8 +242,6 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION' "$TMP
 assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains 'name: SESSION_CONTROL_LONG_POLL_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains 'name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SCIA_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
@@ -353,14 +345,13 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET' "$TMP_DIR/backend-m
   --set hostname=agentapi.example.com >"$TMP_DIR/frontend-tls.yaml"
 assert_contains 'value: "https://agentapi.example.com"' "$TMP_DIR/frontend-tls.yaml"
 
-# Multiple proxy replicas require shared Redis state.
+# Redis is required even for a single API replica.
 if "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set api.replicaCount=2 >"$TMP_DIR/backend-invalid-replicas.yaml" 2>/dev/null; then
-  echo "api.replicaCount=2 without Redis unexpectedly passed schema validation" >&2
+  --set redis.enabled=false >"$TMP_DIR/backend-no-redis.yaml" 2>/dev/null; then
+  echo "API without Redis unexpectedly passed schema validation" >&2
   exit 1
 fi
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set api.replicaCount=2 \
-  --set redis.enabled=true >"$TMP_DIR/backend-replicas.yaml"
+  --set api.replicaCount=2 >"$TMP_DIR/backend-replicas.yaml"
 
 echo "Helm render assertions passed"

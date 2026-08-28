@@ -180,7 +180,7 @@
     },
     "sessionManager": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "sessionControl", "github", "kubernetesSession"],
+      "required": ["enabled", "replicaCount", "port", "image", "serviceAccount", "externalRegistration", "internalApi", "encryption", "allocation", "kvStore", "redis", "sessionPersistence", "github", "kubernetesSession"],
       "properties": {
         "enabled": { "type": "boolean" },
         "autoUpgrade": { "type": "boolean" },
@@ -206,7 +206,6 @@
         "kvStore": { "$ref": "#/definitions/kvStore" },
         "redis": { "$ref": "#/definitions/redisClient" },
         "sessionPersistence": { "$ref": "#/definitions/sessionPersistence" },
-        "sessionControl": { "$ref": "#/definitions/sessionControl" },
         "github": { "$ref": "#/definitions/sessionManagerGitHub" },
         "kubernetesSession": {
           "type": "object",
@@ -240,6 +239,12 @@
     }
   },
   "allOf": [
+    {
+      "anyOf": [
+        { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+        { "properties": { "api": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+      ]
+    },
     {
       "if": { "properties": { "worker": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
       "then": {
@@ -285,6 +290,10 @@
             }
           }
         },
+        "anyOf": [
+          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
+          { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
+        ],
         "if": {
           "properties": {
             "sessionManager": {
@@ -565,14 +574,6 @@
             "endpoint": { "type": "string" }
           }
         }
-      }
-    },
-    "sessionControl": {
-      "type": "object",
-      "required": ["enabled", "directRuntimeEnabled"],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "directRuntimeEnabled": { "type": "boolean" }
       }
     },
     "sessionManagerScia": {

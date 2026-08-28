@@ -60,7 +60,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	}); err != nil {
 		log.Printf("[PROVISIONER] Initial connect failed: %v", err)
 	}
-	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") && cfg.SessionControlToken != "" {
+	if cfg.SessionControlToken != "" {
 		go runSessionControlClient(ctx, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
 	}
 

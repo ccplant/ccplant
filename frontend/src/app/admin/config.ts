@@ -170,8 +170,6 @@ export const adminSections: AdminSection[] = [
     fields: [
       { path: 'encryption_key', label: 'Encryption Key', type: 'secret' },
       { path: 'network_filter_image', label: 'Network Filter Image', type: 'text' },
-      { path: 'session_control_enabled', label: 'Session Control', type: 'toggle' },
-      { path: 'direct_runtime_enabled', label: 'Direct Session Runtime', type: 'toggle' },
     ],
   },
 ]

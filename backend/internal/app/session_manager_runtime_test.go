@@ -10,8 +10,16 @@ import (
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+func TestNewSessionManagerRuntimeRequiresRedis(t *testing.T) {
+	_, err := NewSessionManagerRuntime(context.Background(), &config.Config{}, false)
+	if err == nil || err.Error() != "session-manager Redis is required" {
+		t.Fatalf("error = %v, want Redis required", err)
+	}
+}
 
 type fakeRunnerInfrastructure struct {
 	idle, total int
