@@ -171,6 +171,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/livez", s.handleLivez)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
@@ -194,6 +195,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) handleLivez(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 // handleHealthz keeps stock runners out of the allocator until their startup

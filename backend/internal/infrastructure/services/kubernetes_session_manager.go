@@ -2869,14 +2869,12 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			"-g", "--", "/bin/sh", "-c",
 			"exec " + proxybinary.ShellReference() + " agent-provisioner",
 		},
-		// Probes target /healthz on the provisioner port (always-200) so that
-		// the pod becomes Ready as soon as agent-provisioner is listening.
-		// The proxy's watchSession goroutine handles waiting for the actual
-		// provisioning completion (GET /status → "ready").
+		// Liveness only verifies that the provisioner is serving. Readiness stays
+		// false until startup prefetch completes so runners cannot be claimed early.
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/healthz",
+					Path: "/livez",
 					Port: intstr.FromInt(provisionerPort),
 				},
 			},
