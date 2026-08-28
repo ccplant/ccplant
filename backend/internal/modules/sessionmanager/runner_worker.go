@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -34,12 +35,19 @@ type directSessionManager interface {
 	CreateSessionDirect(context.Context, string, *entities.RunServerRequest, []byte) (entities.Session, error)
 }
 
+type activeSessionCounter interface {
+	ActiveSessionCount() int
+}
+
+var errRunnerRegistrationGone = errors.New("runner registration no longer exists")
+
 type runnerPool struct {
-	Pool       string `json:"pool"`
-	MinIdle    int    `json:"min_idle"`
-	MaxRunners int    `json:"max_runners"`
-	Enabled    bool   `json:"enabled"`
-	Draining   bool   `json:"draining"`
+	Pool               string `json:"pool"`
+	MinIdle            int    `json:"min_idle"`
+	MaxRunners         int    `json:"max_runners"`
+	Enabled            bool   `json:"enabled"`
+	Draining           bool   `json:"draining"`
+	PendingAllocations int    `json:"pending_allocations"`
 }
 type nativeClaim struct {
 	Allocation struct {
@@ -95,14 +103,14 @@ func (w *RunnerWorker) reconcile(ctx context.Context) {
 		return
 	}
 	active := len(w.manager.ListSessions(entities.SessionFilter{}))
+	if counter, ok := w.manager.(activeSessionCounter); ok {
+		active = counter.ActiveSessionCount()
+	}
 	for _, p := range result.Pools {
 		if !p.Enabled || p.Draining {
 			continue
 		}
-		desired := p.MinIdle
-		if desired < 1 {
-			desired = 1
-		}
+		desired := max(p.MinIdle, p.PendingAllocations)
 		if p.MaxRunners > 0 && desired > p.MaxRunners-active {
 			desired = p.MaxRunners - active
 		}
@@ -130,6 +138,10 @@ func (w *RunnerWorker) runSlot(ctx context.Context, pool string) {
 	for ctx.Err() == nil {
 		claim, ok, err := w.claim(ctx, runnerID, runnerToken, pool)
 		if err != nil {
+			if errors.Is(err, errRunnerRegistrationGone) {
+				log.Printf("[SESSION_RUNNER] registration %s was removed; replacing slot", runnerID)
+				return
+			}
 			log.Printf("[SESSION_RUNNER] claim pool %s: %v", pool, err)
 			sleepOrDone(ctx, 3*time.Second)
 			continue
@@ -176,9 +188,12 @@ func (w *RunnerWorker) claim(ctx context.Context, id, token, pool string) (*nati
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, false, nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
+		return nil, false, fmt.Errorf("%w: HTTP %d", errRunnerRegistrationGone, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -197,7 +212,7 @@ func (w *RunnerWorker) complete(ctx context.Context, id, token, sessionID, lease
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -213,7 +228,7 @@ func (w *RunnerWorker) managerRequest(ctx context.Context, method, path string, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}

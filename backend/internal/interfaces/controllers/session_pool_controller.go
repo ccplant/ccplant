@@ -1013,9 +1013,18 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	allocations, err := c.store.ListAllocations(ctx.Request().Context(), "")
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
 	for _, pool := range pools {
 		if pool.ManagerID == manager.ID {
 			copy := *pool
+			for _, allocation := range allocations {
+				if allocation.Pool == pool.Pool && allocation.Status == core.AllocationPending {
+					copy.PendingAllocations++
+				}
+			}
 			for _, runner := range runners {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue

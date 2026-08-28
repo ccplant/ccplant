@@ -163,6 +163,45 @@ func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	}
 }
 
+func TestSessionManagerHeartbeatReportsPendingPoolDemand(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "pending", Pool: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "other-pool", Pool: "windows"}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		Pools []*core.PoolSupplier `json:"pools"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if len(heartbeat.Pools) != 1 || heartbeat.Pools[0].PendingAllocations != 1 {
+		t.Fatalf("unexpected heartbeat pools: %+v", heartbeat.Pools)
+	}
+}
+
 func TestRunnerPollRefreshesLastSeen(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")

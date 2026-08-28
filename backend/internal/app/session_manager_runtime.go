@@ -519,7 +519,11 @@ type sessionRunnerInfrastructure interface {
 
 func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier) {
 	for _, pool := range pools {
-		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
+		if pool == nil || !pool.Enabled || pool.Draining {
+			continue
+		}
+		targetIdle := max(pool.MinIdle, pool.PendingAllocations)
+		if targetIdle <= 0 {
 			continue
 		}
 		localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
@@ -538,7 +542,7 @@ func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfra
 		// stale record on either side cannot permanently suppress replenishment.
 		idle := min(localIdle, pool.IdleRunners)
 		total := max(localTotal, pool.TotalRunners)
-		for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
+		for idle < targetIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
 			if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
 				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)
 				break

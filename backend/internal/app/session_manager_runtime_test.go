@@ -69,6 +69,27 @@ func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
 	}
 }
 
+func TestReconcileSessionRunnerPoolsScalesFromZeroForPendingAllocation(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 0, MaxRunners: 20,
+		PendingAllocations: 2,
+	}})
+	if manager.created != 2 {
+		t.Fatalf("created %d runners, want 2", manager.created)
+	}
+}
+
+func TestReconcileSessionRunnerPoolsKeepsZeroWithoutDemand(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 0, MaxRunners: 20,
+	}})
+	if manager.created != 0 {
+		t.Fatalf("created %d runners, want 0", manager.created)
+	}
+}
+
 func TestReconcileOrphanedSessionRunnersUsesParentInventory(t *testing.T) {
 	manager := &fakeRunnerInfrastructure{}
 	reconcileOrphanedSessionRunners(context.Background(), manager, []string{"runner-a", "runner-b"})
