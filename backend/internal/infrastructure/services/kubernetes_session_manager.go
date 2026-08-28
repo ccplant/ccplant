@@ -6086,7 +6086,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"acp-server",
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
 				"--",
-				"bunx", "@agentclientprotocol/claude-agent-acp",
+				"claude-agent-acp",
 			},
 		}
 		// Bypass permission prompts for claude-acp sessions so tool calls
@@ -6108,7 +6108,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
 				"--auto-approve",
 				"--",
-				"npx", "-y", "@agentclientprotocol/codex-acp",
+				"codex-acp",
 			},
 		}
 	case "pi-ollama":
@@ -6121,7 +6121,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--port", fmt.Sprintf("%d", m.k8sConfig.BasePort),
 				"--auto-approve",
 				"--",
-				"npx", "-y", "pi-acp",
+				"pi-acp",
 			},
 			PreScript: piOllamaInstallPreScript,
 		}

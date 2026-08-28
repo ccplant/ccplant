@@ -576,26 +576,26 @@ func buildStartupConfig(agentType string, env map[string]string) sessionsettings
 	case "claude-acp":
 		// acp-server bridges claude-agent-acp (ACP over stdio) to the agentapi HTTP interface.
 		// Port is determined at runtime via AGENTAPI_PORT env var.
-		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- bunx @agentclientprotocol/claude-agent-acp]")
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- claude-agent-acp]")
 		return sessionsettings.StartupConfig{
 			Command: []string{proxyBinary},
-			Args:    []string{"acp-server", "--", "bunx", "@agentclientprotocol/claude-agent-acp"},
+			Args:    []string{"acp-server", "--", "claude-agent-acp"},
 		}
 	case "codex-acp":
 		// acp-server bridges codex-acp (ACP adapter for OpenAI Codex) to the agentapi HTTP interface.
 		// https://github.com/agentclientprotocol/codex-acp
-		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y @agentclientprotocol/codex-acp]")
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- codex-acp]")
 		return sessionsettings.StartupConfig{
 			Command: []string{proxyBinary},
-			Args:    []string{"acp-server", "--", "npx", "-y", "@agentclientprotocol/codex-acp"},
+			Args:    []string{"acp-server", "--", "codex-acp"},
 		}
 	case "pi-ollama":
 		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
 		// https://github.com/svkozak/pi-acp
-		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- npx -y pi-acp]")
+		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- pi-acp]")
 		return sessionsettings.StartupConfig{
 			Command:   []string{proxyBinary},
-			Args:      []string{"acp-server", "--", "npx", "-y", "pi-acp"},
+			Args:      []string{"acp-server", "--", "pi-acp"},
 			PreScript: piOllamaInstallPreScript,
 		}
 	case "cursor":

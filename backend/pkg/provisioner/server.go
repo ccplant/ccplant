@@ -20,51 +20,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
-// defaultStartupScript is run on every Pod start regardless of agent type.
-// It pre-fetches the latest ACP package binaries so that agent startup does
-// not incur a network download when a provision request arrives.
-// Override with the PROVISIONER_PRE_SCRIPT environment variable.
-const defaultStartupScript = `bun install --global @agentclientprotocol/claude-agent-acp@latest
-npm install --global @agentclientprotocol/codex-acp@latest
-bun install --global @earendil-works/pi-coding-agent@latest
-npm install --global pi-acp@latest
-mkdir -p "$HOME/.pi/agent/npm"
-test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ] && [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
-  echo "Pi extensions already installed, skipping install"
-else
-  NPM_SHIM_DIR="$(mktemp -d)"
-  trap 'rm -rf "$NPM_SHIM_DIR"' EXIT
-  cat > "$NPM_SHIM_DIR/npm" <<'EOF'
-#!/bin/sh
-set -e
-prefix=""
-packages=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    install) shift ;;
-    --prefix) prefix="$2"; shift 2 ;;
-    --legacy-peer-deps) shift ;;
-    *) packages="$packages $1"; shift ;;
-  esac
-done
-if [ -z "$prefix" ]; then prefix="$PWD"; fi
-mkdir -p "$prefix"
-test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":{}}' > "$prefix/package.json"
-exec bun add --cwd "$prefix" $packages
-EOF
-  chmod +x "$NPM_SHIM_DIR/npm"
-  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
-    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
-  fi
-  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
-    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-mcp-adapter
-  fi
-  rm -rf "$NPM_SHIM_DIR"
-  trap - EXIT
-fi
-`
-
 const restartAutoProvisionDelay = 15 * time.Second
 
 // Status represents the provisioning lifecycle state.
@@ -133,9 +88,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// beyond the HTTP request that triggered them.
 	s.serverCtx = ctx
 
-	// Run the common startup pre-script immediately in the background.
-	// This pre-fetches ACP packages while the Pod is idle (stock inventory or
-	// Pod restart), so provisioning does not have to wait for network downloads.
+	// Run an explicitly configured startup pre-script in the background. Agent
+	// packages are part of the image, so the default startup path stays offline.
 	go s.runStartupScript(ctx)
 
 	// Auto-provision from Secret volume if available (Pod restart case). Give
@@ -357,14 +311,16 @@ func (s *Server) controlURL() string {
 	return "http://127.0.0.1:3129"
 }
 
-// runStartupScript executes the common startup pre-script as soon as the Pod
-// starts. It uses PROVISIONER_PRE_SCRIPT if set, otherwise defaultStartupScript.
+// runStartupScript executes PROVISIONER_PRE_SCRIPT, when explicitly configured,
+// as soon as the Pod starts. Agent packages are baked into the image; an empty
+// value therefore completes immediately without contacting a package registry.
 // Failure is non-fatal: a warning is logged and the server continues normally.
 func (s *Server) runStartupScript(ctx context.Context) {
 	defer close(s.startupDone)
-	script := os.Getenv("PROVISIONER_PRE_SCRIPT")
+	script := strings.TrimSpace(os.Getenv("PROVISIONER_PRE_SCRIPT"))
 	if script == "" {
-		script = defaultStartupScript
+		log.Printf("[PROVISIONER] Agent packages are preinstalled; skipping startup pre-script")
+		return
 	}
 	if os.Getenv("AGENTAPI_SCIA_SESSION_SIDECAR_ENABLED") == "true" {
 		waitForSciaProxy(ctx, "http://127.0.0.1:18081", 15*time.Second)

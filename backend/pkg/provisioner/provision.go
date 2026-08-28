@@ -1223,7 +1223,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"--port", agentapiPort,
 			"--output-file", acpHistoryPath,
 			"--",
-			"bunx", "@agentclientprotocol/claude-agent-acp",
+			"claude-agent-acp",
 		}
 
 	case "codex-acp":
@@ -1235,7 +1235,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--",
-			"npx", "-y", "@agentclientprotocol/codex-acp",
+			"codex-acp",
 		}
 
 	case "pi-ollama":
@@ -1249,7 +1249,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			"--port", agentapiPort,
 			"--auto-approve",
 			"--",
-			"npx", "-y", "pi-acp",
+			"pi-acp",
 		}
 
 	case "cursor":

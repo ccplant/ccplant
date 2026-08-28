@@ -121,7 +121,7 @@ func TestBuildAgentCommandPiOllama(t *testing.T) {
 	if cmd != "ccplant" {
 		t.Fatalf("command = %q, want ccplant", cmd)
 	}
-	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "npx", "-y", "pi-acp"}
+	want := []string{"acp-server", "--port", "9000", "--auto-approve", "--", "pi-acp"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
