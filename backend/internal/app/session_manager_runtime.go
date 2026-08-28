@@ -344,17 +344,20 @@ func fetchSessionManagerDesiredVersion(ctx context.Context, client *http.Client,
 }
 
 func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, token string, cfg *config.Config, manager *services.KubernetesSessionManager) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	client := &http.Client{Timeout: 6 * time.Minute}
 	appliedRevision := ""
+	reconcileRevision := ""
 	for {
 		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
 			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
 		} else if revision != "" {
 			appliedRevision = revision
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", nil)
+		heartbeatURL := strings.TrimRight(upstream, "/") + "/internal/session-managers/" + url.PathEscape(managerID) + "/heartbeat"
+		if reconcileRevision != "" {
+			heartbeatURL += "?since_revision=" + url.QueryEscape(reconcileRevision) + "&wait=5m"
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, heartbeatURL, nil)
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token)
 			if resp, doErr := client.Do(req); doErr != nil {
@@ -368,12 +371,16 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						Pools               []*sessionrunnercore.PoolSupplier `json:"pools"`
 						RegisteredRunnerIDs *[]string                         `json:"registered_runner_ids"`
 						UpstreamVersion     string                            `json:"upstream_version"`
+						Revision            string                            `json:"revision"`
 					}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
 					reconcileSessionRunnerPools(ctx, manager, result.Pools)
+					if result.Revision != "" {
+						reconcileRevision = result.Revision
+					}
 					if result.RegisteredRunnerIDs != nil {
 						reconcileOrphanedSessionRunners(ctx, manager, *result.RegisteredRunnerIDs)
 					}
@@ -383,10 +390,17 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 				}
 			}
 		}
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case <-ticker.C:
+		}
+		if reconcileRevision == "" {
+			timer := time.NewTimer(30 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
 	}
 }

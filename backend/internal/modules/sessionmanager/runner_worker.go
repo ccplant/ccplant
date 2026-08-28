@@ -29,6 +29,7 @@ type RunnerWorker struct {
 	client                     *http.Client
 	mu                         sync.Mutex
 	idle                       map[string]int
+	reconcileRevision          string
 }
 
 type directSessionManager interface {
@@ -61,7 +62,7 @@ type nativeClaim struct {
 }
 
 func NewRunnerWorker(manager repositories.SessionManager, upstream, managerID, token string) *RunnerWorker {
-	return &RunnerWorker{manager: manager, upstream: strings.TrimRight(upstream, "/"), managerID: managerID, token: token, client: &http.Client{Timeout: 35 * time.Second}, idle: map[string]int{}}
+	return &RunnerWorker{manager: manager, upstream: strings.TrimRight(upstream, "/"), managerID: managerID, token: token, client: &http.Client{Timeout: 6 * time.Minute}, idle: map[string]int{}}
 }
 
 func (w *RunnerWorker) Start(ctx context.Context) {
@@ -69,14 +70,13 @@ func (w *RunnerWorker) Start(ctx context.Context) {
 		log.Printf("[SESSION_RUNNER] manager ID is required")
 		return
 	}
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
 	for {
 		w.reconcile(ctx)
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		case <-ticker.C:
+		}
+		if w.reconcileRevision == "" {
+			sleepOrDone(ctx, 5*time.Second)
 		}
 	}
 }
@@ -84,7 +84,11 @@ func (w *RunnerWorker) Start(ctx context.Context) {
 func (w *RunnerWorker) reconcile(ctx context.Context) {
 	// Native managers communicate only with the backend. The backend owns the
 	// shared Redis connection used for liveness, pool state, and control traffic.
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", nil)
+	heartbeatURL := w.upstream + "/internal/session-managers/" + url.PathEscape(w.managerID) + "/heartbeat"
+	if w.reconcileRevision != "" {
+		heartbeatURL += "?since_revision=" + url.QueryEscape(w.reconcileRevision) + "&wait=5m"
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, heartbeatURL, nil)
 	req.Header.Set("Authorization", "Bearer "+w.token)
 	resp, err := w.client.Do(req)
 	if err != nil {
@@ -97,10 +101,14 @@ func (w *RunnerWorker) reconcile(ctx context.Context) {
 		return
 	}
 	var result struct {
-		Pools []runnerPool `json:"pools"`
+		Pools    []runnerPool `json:"pools"`
+		Revision string       `json:"revision"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) != nil {
 		return
+	}
+	if result.Revision != "" {
+		w.reconcileRevision = result.Revision
 	}
 	active := len(w.manager.ListSessions(entities.SessionFilter{}))
 	if counter, ok := w.manager.(activeSessionCounter); ok {

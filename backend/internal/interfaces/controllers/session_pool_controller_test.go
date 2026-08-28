@@ -23,6 +23,28 @@ type testManagerLiveness struct {
 	connected map[string]bool
 }
 
+type testManagerReconciler struct {
+	testManagerLiveness
+	waitedAfter string
+	waitedFor   time.Duration
+	touchedFor  time.Duration
+}
+
+func (r *testManagerReconciler) TouchManagerFor(_ context.Context, managerID, _ string, ttl time.Duration) error {
+	r.connected[managerID] = true
+	r.touchedFor = ttl
+	return nil
+}
+
+func (r *testManagerReconciler) CurrentManagerReconcileRevision(context.Context, string) (string, error) {
+	return "1-0", nil
+}
+
+func (r *testManagerReconciler) WaitManagerReconcile(_ context.Context, _ string, after string, wait time.Duration) (string, error) {
+	r.waitedAfter, r.waitedFor = after, wait
+	return "2-0", nil
+}
+
 func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
@@ -120,6 +142,37 @@ func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *te
 	}
 	if after.UpdatedAt != before.UpdatedAt || !after.LastHeartbeatAt.IsZero() {
 		t.Fatalf("manager was unexpectedly persisted: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestSessionManagerHeartbeatLongPollsFromRevision(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(context.Background(), manager); err != nil {
+		t.Fatal(err)
+	}
+	reconciler := &testManagerReconciler{testManagerLiveness: testManagerLiveness{connected: map[string]bool{}}}
+	controller := NewSessionPoolController(store, nil).WithManagerLiveness(reconciler)
+
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost,
+		"/internal/session-managers/manager-a/heartbeat?since_revision=1-0&wait=10m", nil,
+		map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		Revision string `json:"revision"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if heartbeat.Revision != "2-0" || reconciler.waitedAfter != "1-0" || reconciler.waitedFor != 5*time.Minute {
+		t.Fatalf("revision=%q after=%q wait=%s", heartbeat.Revision, reconciler.waitedAfter, reconciler.waitedFor)
+	}
+	if reconciler.touchedFor < 5*time.Minute {
+		t.Fatalf("liveness TTL = %s, want long-poll coverage", reconciler.touchedFor)
 	}
 }
 
