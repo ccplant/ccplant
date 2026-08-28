@@ -1121,33 +1121,8 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 		return streamTunnelResponse(ctx, resp)
 	}
 
-	if c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
-		requestURL := &url.URL{Scheme: "http", Host: "esm.local", Path: targetPath, RawQuery: ctx.Request().URL.RawQuery}
-		req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), ctx.Request().Method, requestURL.String(), bytes.NewReader(body))
-		if reqErr != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build outbound ESM request")
-		}
-		req.Header = ctx.Request().Header.Clone()
-		authzCtx := auth.GetAuthorizationContext(ctx)
-		if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
-			req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)
-		}
-		if route.TeamID != "" {
-			req.Header.Set("X-Forwarded-Team", route.TeamID)
-		}
-		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
-		if tunnelErr != nil {
-			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if suffix == "/status" && ctx.Request().Method == http.MethodGet {
-			c.rememberRemoteSessionStatus(ctx.Request().Context(), route, resp)
-		}
-		copyResponseHeaders(ctx.Response().Header(), resp.Header)
-		return streamTunnelResponse(ctx, resp)
-	}
 	if route.ProxyURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager public URL is unavailable")
 	}
 
 	target, err := url.Parse(route.ProxyURL)
@@ -1206,11 +1181,8 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
 	}
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/sessions/" + route.RemoteSessionID + "/resume"
-	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
-	if useTunnel {
-		targetURL = "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"
-	} else if route.ProxyURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	if route.ProxyURL == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager public URL is unavailable")
 	}
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
 	if err != nil {
@@ -1230,12 +1202,7 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	if route.TeamID != "" {
 		req.Header.Set("X-Forwarded-Team", route.TeamID)
 	}
-	var resp *http.Response
-	if useTunnel {
-		resp, err = c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
-	} else {
-		resp, err = http.DefaultClient.Do(req)
-	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
@@ -1266,11 +1233,8 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	}
 
 	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/api/v1/sessions/" + route.RemoteSessionID
-	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
-	if useTunnel {
-		targetURL = "http://esm.local/api/v1/sessions/" + route.RemoteSessionID
-	} else if route.ProxyURL == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	if route.ProxyURL == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager public URL is unavailable")
 	}
 
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodDelete, targetURL, nil)
@@ -1293,12 +1257,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	}
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	var resp *http.Response
-	if useTunnel {
-		resp, err = c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
-	} else {
-		resp, err = httpClient.Do(req)
-	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("[REMOTE_DELETE] Failed to delete remote session %s on %s: %v", route.RemoteSessionID, route.ProxyURL, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")

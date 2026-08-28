@@ -10,22 +10,12 @@ import (
 
 type Resolver struct {
 	store        Store
-	liveness     ManagerLiveness
 	heartbeatTTL time.Duration
 	now          func() time.Time
 }
 
-type ManagerLiveness interface {
-	IsManagerConnected(context.Context, string) (bool, error)
-}
-
 func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
-}
-
-func (r *Resolver) WithManagerLiveness(liveness ManagerLiveness) *Resolver {
-	r.liveness = liveness
-	return r
 }
 
 func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*ResolvedPool, error) {
@@ -126,9 +116,6 @@ func firstPoolByPriority(pools []*ResolvedPool) *ResolvedPool {
 func (r *Resolver) managerAvailable(ctx context.Context, manager *Manager) (bool, error) {
 	if manager == nil || !manager.Enabled || manager.Draining {
 		return false, nil
-	}
-	if r.liveness != nil {
-		return r.liveness.IsManagerConnected(ctx, manager.ID)
 	}
 	return ManagerAvailable(manager, r.heartbeatTTL, r.now()), nil
 }

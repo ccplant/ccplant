@@ -1294,9 +1294,6 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 
 func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnercore.Subject, tags map[string]string) (*sessionrunnercore.ResolvedPool, error) {
 	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
-	if s.esmControlStore != nil {
-		resolver.WithManagerLiveness(s.esmControlStore)
-	}
 	return resolver.Resolve(ctx, subject, tags)
 }
 

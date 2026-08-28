@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 func (c *SettingsController) GetExternalSessionManagerOperationalStatus(ctx echo.Context) error {
@@ -40,15 +42,20 @@ func (c *SettingsController) proxyExternalSessionManagerOperation(ctx echo.Conte
 	if err != nil {
 		return err
 	}
-	if c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), manager.ID) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager control channel is offline")
+	if manager.PublicURL == "" {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager public URL is unavailable")
 	}
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), method, "http://esm"+path, bytes.NewReader(body))
+	target := strings.TrimRight(manager.PublicURL, "/") + path
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), method, target, bytes.NewReader(body))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create operation request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), manager.ID, "", "", req)
+	ts := hmacutil.NowTimestamp()
+	message := hmacutil.BuildMessage(method, req.URL.RequestURI(), ts, body)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(manager.HMACSecret), message))
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "session manager operation failed").SetInternal(err)
 	}

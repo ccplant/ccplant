@@ -332,7 +332,7 @@ sessionManager:
   versionUrl: ""
   replicaCount: 1
   port: 8080
-  # Public API used by the manager for outbound control commands. Leave empty
+  # Parent API used by the manager for allocations and heartbeat. Leave empty
   # to use the in-cluster agentapi-proxy Service.
   apiUrl: ""
   image:

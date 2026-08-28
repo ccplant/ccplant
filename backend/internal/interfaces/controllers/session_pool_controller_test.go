@@ -19,10 +19,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-type testManagerLiveness struct {
-	connected map[string]bool
-}
-
 func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
@@ -80,16 +76,7 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
-func (l *testManagerLiveness) TouchManager(_ context.Context, managerID, _ string) error {
-	l.connected[managerID] = true
-	return nil
-}
-
-func (l *testManagerLiveness) IsManagerConnected(_ context.Context, managerID string) (bool, error) {
-	return l.connected[managerID], nil
-}
-
-func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *testing.T) {
+func TestSessionManagerHeartbeatPersistsManagerLiveness(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
 	if err != nil {
@@ -99,12 +86,7 @@ func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *te
 	if err := store.CreateManager(context.Background(), manager); err != nil {
 		t.Fatal(err)
 	}
-	before, err := store.GetManager(context.Background(), manager.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	liveness := &testManagerLiveness{connected: map[string]bool{}}
-	controller := NewSessionPoolController(store, nil).WithManagerLiveness(liveness)
+	controller := NewSessionPoolController(store, nil)
 
 	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
 		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
@@ -115,11 +97,8 @@ func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !liveness.connected[manager.ID] {
-		t.Fatal("manager liveness was not refreshed")
-	}
-	if after.UpdatedAt != before.UpdatedAt || !after.LastHeartbeatAt.IsZero() {
-		t.Fatalf("manager was unexpectedly persisted: before=%+v after=%+v", before, after)
+	if after.LastHeartbeatAt.IsZero() {
+		t.Fatal("manager heartbeat was not persisted")
 	}
 }
 

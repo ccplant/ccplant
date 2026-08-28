@@ -4,9 +4,8 @@
 
 The direct request/frame data path, per-generation authentication, ESM allocation bootstrap, and
 stock/non-stock Pod worker are implemented behind
-`AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED=true`. The typed lifecycle operation queue and explicit
-event/snapshot endpoints remain later migration phases; delete and resume therefore continue to
-use the ESM control tunnel for now.
+`AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED=true`. Session traffic uses only the per-session runtime
+channel. Manager lifecycle calls use its registered public URL.
 
 ## Summary
 
@@ -27,7 +26,7 @@ client -> parent proxy -> allocation queue -> ESM -> Kubernetes
                     outbound HTTPS only
 ```
 
-The ESM data-plane control tunnel is retained only during migration. In the target state:
+The manager-level ESM control tunnel has been removed. In the current design:
 
 - the parent proxy owns public session IDs, authorization, routing, runtime command/event queues,
   and user-visible session state;
@@ -35,7 +34,8 @@ The ESM data-plane control tunnel is retained only during migration. In the targ
   reconciliation;
 - the Session Pod owns execution against its loopback agentapi runtime and connects directly to
   the parent;
-- the parent never needs inbound network access to the ESM or Session Pod.
+- the parent uses the ESM public URL only for manager lifecycle calls and never needs inbound
+  network access to a Session Pod.
 
 ## Goals
 
@@ -309,10 +309,9 @@ GET  /internal/external-session-managers/{managerId}/operations
 POST /internal/external-session-managers/{managerId}/operations/{operationId}/result
 ```
 
-Operations are typed and limited to `delete`, `reconcile`, and future lifecycle actions. During
-migration, delete may continue over the existing ESM control tunnel. If the ESM is offline, the
-parent keeps a tombstone and retries deletion when it reconnects; existing direct-runtime sessions
-are otherwise unaffected by ESM availability.
+Operations are typed and limited to `delete`, `reconcile`, and future lifecycle actions. Until this
+queue is implemented, delete and resume use the manager's registered public URL; existing
+direct-runtime session traffic is otherwise unaffected by ESM availability.
 
 ## Storage model
 
@@ -338,8 +337,7 @@ ESM registration and heartbeat advertise capabilities, including
 `direct_session_runtime_v1`. A session route stores one explicit transport:
 
 - `direct_session_runtime`: target state;
-- `esm_control_tunnel`: migration fallback;
-- `direct_http`: legacy public URL fallback.
+- `direct_http`: manager public URL routing for sessions without the runtime protocol.
 
 Transport is selected once per generation and never changes silently while a request is active.
 Suggested feature flags are:
@@ -350,7 +348,7 @@ AGENTAPI_DIRECT_SESSION_RUNTIME_REQUIRED=false
 ```
 
 When `REQUIRED=true`, allocation to an ESM without the capability fails before Pod creation. There
-is no fallback to the ESM tunnel or local Session Manager. This flag is also the enforcement point
+is no fallback to a manager tunnel or local Session Manager. This flag is also the enforcement point
 for a future external-only parent mode.
 
 ## Availability properties
@@ -381,13 +379,13 @@ Logs include session ID, manager ID, generation, request ID, and cursor, but nev
 request bodies. The session status API should expose transport, runtime connection state, last
 heartbeat, and owning manager without exposing credentials.
 
-## Migration plan
+## Migration history
 
 ### Phase 1: Introduce the per-session protocol
 
 - Generalize the current ESM command/frame store and tunnel into reusable reverse-RPC components.
 - Add per-session runtime controllers, authentication, generation fencing, snapshots, and tests.
-- Keep all existing routing on `esm_control_tunnel`.
+- Keep existing manager-routed sessions unchanged during the initial protocol rollout.
 
 ### Phase 2: Add the Pod worker
 
@@ -400,20 +398,20 @@ heartbeat, and owning manager without exposing credentials.
 
 - Create new capable sessions with `transport=direct_session_runtime` behind the enabled flag.
 - Keep existing sessions on their original transport until deletion.
-- Compare success rate, latency, reconnects, and stream completion with the ESM tunnel.
+- Compare success rate, latency, reconnects, and stream completion with manager-routed traffic.
 
 ### Phase 4: Make direct runtime required
 
 - Enable `REQUIRED=true` after all active ESM versions support the protocol.
 - Add the typed manager lifecycle operation queue.
-- Stop creating new `esm_control_tunnel` routes.
+- Stop creating manager-tunnel routes.
 
 ### Phase 5: Remove the ESM data plane
 
 - Drain or delete all legacy routes.
 - Remove generic request/frame forwarding from the ESM worker.
 - Retain only allocation, lifecycle operations, heartbeat, and registration.
-- Remove `SESSION_MANAGER_PUBLIC_URL` after the supported downgrade window.
+- Retain `SESSION_MANAGER_PUBLIC_URL` for direct lifecycle calls until the typed operation queue is available.
 
 Rollback before Phase 4 is generation-based: create a replacement generation using the previous
 transport. Never switch transport in-place for a live generation.
