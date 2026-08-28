@@ -21,6 +21,27 @@ func TestBuildESMControlStoreRequiresRedis(t *testing.T) {
 	}
 }
 
+func TestRuntimeTunnelEnabled(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		redisAddr  string
+		want       bool
+	}{
+		{name: "defaults on with redis", redisAddr: "redis:6379", want: true},
+		{name: "defaults off without redis"},
+		{name: "explicit true", configured: "true", want: true},
+		{name: "explicit false overrides redis", configured: "false", redisAddr: "redis:6379"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runtimeTunnelEnabled(tt.configured, tt.redisAddr); got != tt.want {
+				t.Fatalf("runtimeTunnelEnabled(%q, %q) = %v, want %v", tt.configured, tt.redisAddr, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildApplicationKVStoreReplicated(t *testing.T) {
 	cfg := config.KVStoreConfig{
 		Primary:   &config.KVStoreBackendConfig{Backend: "kubernetes"},

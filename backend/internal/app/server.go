@@ -499,7 +499,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var sessionControlStore sessioncontrol.Store
 	var esmControlStore esmcontrol.Store
 	var esmControlTunnel *infraesmcontrol.Tunnel
-	if strings.EqualFold(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), "true") {
+	if runtimeTunnelEnabled(os.Getenv("SESSION_CONTROL_LONG_POLL_ENABLED"), cfg.Redis.Addr) {
 		sessionControlStore = buildSessionControlStore(cfg)
 		if sessionControlStore != nil && k8sSessionManager != nil {
 			k8sSessionManager.SetSessionControlStore(sessionControlStore)
@@ -510,7 +510,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		}
 	}
 
-	directRuntimeEnabled := strings.EqualFold(os.Getenv("AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED"), "true")
+	directRuntimeEnabled := runtimeTunnelEnabled(os.Getenv("AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED"), cfg.Redis.Addr)
 	if directRuntimeEnabled && esmControlTunnel == nil {
 		log.Printf("[DIRECT_RUNTIME] Disabled: session control Redis store is unavailable")
 		directRuntimeEnabled = false
@@ -734,6 +734,19 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	s.setupRoutes()
 
 	return s
+}
+
+// runtimeTunnelEnabled keeps the runner-pool data plane available whenever its
+// required Redis backend is configured. Operators can still explicitly disable
+// either component with "false". Requiring an opt-in flag here leaves claimed
+// allocations stuck forever: runners can claim them, but the reverse-RPC routes
+// needed to report status and serve requests are never registered.
+func runtimeTunnelEnabled(configured, redisAddr string) bool {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		return strings.EqualFold(configured, "true")
+	}
+	return strings.TrimSpace(redisAddr) != ""
 }
 
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
