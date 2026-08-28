@@ -4,9 +4,8 @@ Session control replaces proxy-to-session runtime requests with outbound-only HT
 the session pod. Redis Streams are an internal backend implementation detail: session pods never
 connect to Redis and never receive Redis addresses or credentials.
 
-Enable the feature with `sessionControl.enabled=true` in the Helm values. Redis must also be
-configured. If Redis is unavailable at backend startup, or the feature is disabled, the existing
-direct session HTTP/SSE path remains active.
+The feature is enabled automatically when Redis is configured. If Redis is unavailable at backend
+startup, the existing direct session HTTP/SSE path remains active.
 
 Compatibility is selected per session, not per deployment. A session provisioner renews a
 75-second capability lease whenever it opens a command poll or uploads events. The backend only

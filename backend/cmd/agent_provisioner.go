@@ -28,7 +28,8 @@ var AgentProvisionerCmd = &cobra.Command{
 	Long: `Starts the session Pod provisioner.
 
 Endpoints:
-  GET  /healthz   – liveness/readiness probe (always 200)
+  GET  /livez     – liveness probe (always 200)
+  GET  /healthz   – readiness probe (200 after startup prefetch)
   GET  /status    – current provisioning state as JSON
 
 Provision requests are pulled from the proxy internal provisioner API.`,

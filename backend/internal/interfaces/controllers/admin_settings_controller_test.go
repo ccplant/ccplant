@@ -24,7 +24,6 @@ func newAdminSettingsTestController() (*AdminSettingsController, kvstore.Store) 
 
 func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
 	t.Setenv("NOTIFICATION_BASE_URL", "https://helm.example")
-	t.Setenv("SESSION_CONTROL_LONG_POLL_ENABLED", "false")
 	store := kvstore.NewKubernetesStore(fake.NewSimpleClientset())
 	pvcEnabled := true
 	cfg := &proxyconfig.Config{
@@ -49,7 +48,6 @@ func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
 	require.Equal(t, "helm-client", clientID)
 	require.Equal(t, "session:helm", response.Sections["sessions"].(map[string]interface{})["image"])
 	require.Equal(t, "https://helm.example", response.Sections["notifications"].(map[string]interface{})["base_url"])
-	require.Equal(t, false, response.Sections["security"].(map[string]interface{})["session_control_enabled"])
 	mapping := response.Sections["authentication"].(map[string]interface{})["team_role_mapping"].(map[string]interface{})
 	rule := mapping["example/admins"].(map[string]interface{})
 	require.Equal(t, "admin", rule["role"])

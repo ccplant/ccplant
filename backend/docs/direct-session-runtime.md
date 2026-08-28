@@ -3,8 +3,7 @@
 ## Status
 
 The direct request/frame data path, per-generation authentication, ESM allocation bootstrap, and
-stock/non-stock Pod worker are implemented behind
-`AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED=true`. The typed lifecycle operation queue and explicit
+stock/non-stock Pod worker are enabled whenever Redis is configured. The typed lifecycle operation queue and explicit
 event/snapshot endpoints remain later migration phases; delete and resume therefore continue to
 use the ESM control tunnel for now.
 
@@ -342,10 +341,9 @@ ESM registration and heartbeat advertise capabilities, including
 - `direct_http`: legacy public URL fallback.
 
 Transport is selected once per generation and never changes silently while a request is active.
-Suggested feature flags are:
+The remaining enforcement flag is:
 
 ```text
-AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED=true
 AGENTAPI_DIRECT_SESSION_RUNTIME_REQUIRED=false
 ```
 

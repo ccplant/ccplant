@@ -12,7 +12,6 @@
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
 {{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
-{{- $sessionControl := $manager.sessionControl | default dict }}
 {{- /* SCIA is a release-wide session runtime. Keep the API, the standalone
       broker and the session manager on one source of truth so externally
       allocated sessions inherit the same sidecar configuration. */}}
@@ -184,8 +183,6 @@ spec:
             - {name: AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX, value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT, value: {{ $sessionPersistenceS3.endpoint | default "" | quote }}}
             {{- end }}
-            - {name: SESSION_CONTROL_LONG_POLL_ENABLED, value: {{ dig "enabled" false $sessionControl | quote }}}
-            - {name: AGENTAPI_DIRECT_SESSION_RUNTIME_ENABLED, value: {{ dig "directRuntimeEnabled" false $sessionControl | quote }}}
             - {name: AGENTAPI_SCIA_ENABLED, value: {{ dig "enabled" false $scia | quote }}}
             - {name: AGENTAPI_SCIA_PUBLIC_BASE_URL, value: {{ dig "publicBaseUrl" "" $scia | quote }}}
             - {name: AGENTAPI_SCIA_OAUTH_INTERNAL_URL, value: {{ dig "oauthInternalUrl" (printf "http://%s.%s.svc.cluster.local:8081" (include "agentapi-proxy.sciaServiceName" .) .Release.Namespace) $scia | quote }}}

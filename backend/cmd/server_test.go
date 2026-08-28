@@ -141,6 +141,7 @@ func TestBuildStockInventoryPoolsAllowsZeroTargetCount(t *testing.T) {
 }
 
 func TestRunProxyWithInvalidConfig(t *testing.T) {
+	t.Setenv("AGENTAPI_REDIS_ADDR", "redis.test:6379")
 	// Create a temporary invalid config file
 	tmpFile, err := os.CreateTemp("", "invalid-config-*.json")
 	require.NoError(t, err)
@@ -185,7 +186,14 @@ func TestRunProxyWithInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestValidateServerRedis(t *testing.T) {
+	require.Error(t, validateServerRedis(nil))
+	require.Error(t, validateServerRedis(&config.Config{}))
+	require.NoError(t, validateServerRedis(&config.Config{Redis: config.RedisConfig{Addr: "redis:6379"}}))
+}
+
 func TestRunProxyGracefulShutdown(t *testing.T) {
+	t.Setenv("AGENTAPI_REDIS_ADDR", "redis.test:6379")
 	// Use a valid config or create a temporary one
 	cfg = "config.json"
 	port = "0" // Use port 0 to let the system assign a port

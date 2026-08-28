@@ -590,7 +590,7 @@ type Config struct {
 	// Kubernetes workload credentials and talks to the API over this endpoint.
 	Worker WorkerConfig `json:"worker" mapstructure:"worker"`
 	// Redis holds optional Redis configuration for cross-pod status synchronisation.
-	// When Redis.Addr is empty the feature is disabled and a no-op fallback is used.
+	// Redis is required by the API and session manager runtime.
 	Redis RedisConfig `json:"redis" mapstructure:"redis"`
 	// KVStore controls storage for application KV data currently backed by
 	// Kubernetes Secrets and ConfigMaps.

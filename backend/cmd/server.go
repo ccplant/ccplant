@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -125,6 +126,9 @@ func runProxy(cmd *cobra.Command, args []string) {
 			configData = config.DefaultConfig()
 		}
 	}
+	if err := validateServerRedis(configData); err != nil {
+		log.Fatal(err)
+	}
 
 	proxyServer := app.NewServer(configData, verbose)
 	// From this point onward every subsystem is initialized from the effective
@@ -216,6 +220,13 @@ func runProxy(cmd *cobra.Command, args []string) {
 	}
 
 	log.Printf("Server shutdown complete")
+}
+
+func validateServerRedis(cfg *config.Config) error {
+	if cfg == nil || strings.TrimSpace(cfg.Redis.Addr) == "" {
+		return errors.New("Redis is required; configure redis.addr or AGENTAPI_REDIS_ADDR")
+	}
+	return nil
 }
 
 // registerScheduleHandlers registers schedule REST API handlers

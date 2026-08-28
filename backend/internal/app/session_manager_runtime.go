@@ -59,6 +59,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if cfg == nil {
 		return nil, errors.New("session-manager config is required")
 	}
+	if strings.TrimSpace(cfg.Redis.Addr) == "" {
+		return nil, errors.New("session-manager Redis is required")
+	}
 	if cfg.SessionManager.InternalAPIToken == "" {
 		return nil, errors.New("session-manager internal API token is required")
 	}
@@ -145,21 +148,19 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	// A manager registered with a parent is an execution plane only: the parent
-	// owns allocations and their claim leases.  Redis is needed only by the
-	// standalone/local allocator.  Remote replicas coordinate their single
-	// upstream poller with a Kubernetes Lease below.
+	// owns allocations and their claim leases. Remote replicas coordinate their
+	// single upstream poller with a Kubernetes Lease below.
 	remoteMode := cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != ""
-	var redisClient *redis.Client
-	if !remoteMode {
-		redisClient, err = newSessionManagerRedis(cfg)
-		if err != nil {
-			runtimeCancel()
-			if applicationStore != nil {
-				_ = applicationStore.Close()
-			}
-			_ = manager.Shutdown(5 * time.Second)
-			return nil, err
+	redisClient, err := newSessionManagerRedis(cfg)
+	if err != nil {
+		runtimeCancel()
+		if applicationStore != nil {
+			_ = applicationStore.Close()
 		}
+		_ = manager.Shutdown(5 * time.Second)
+		return nil, err
+	}
+	if !remoteMode {
 		manager.SetSessionAllocationNotifier(infraallocation.NewRedisNotifier(redisClient))
 		manager.SetSessionAllocatorEnabled(true)
 	}
