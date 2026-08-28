@@ -50,8 +50,10 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           docker build --build-arg RELEASE_VERSION=test --target api --tag ccplant-api:test ./backend
-          container_id=$(docker run --detach --publish 127.0.0.1::8080 ccplant-api:test)
-          trap 'docker rm --force "$container_id" >/dev/null' EXIT
+          network=$(docker network create ccplant-api-test)
+          redis_id=$(docker run --detach --network "$network" --name ccplant-api-test-redis redis:7-alpine)
+          container_id=$(docker run --detach --network "$network" --env AGENTAPI_REDIS_ADDR=ccplant-api-test-redis:6379 --publish 127.0.0.1::8080 ccplant-api:test)
+          trap 'docker rm --force "$container_id" "$redis_id" >/dev/null; docker network rm "$network" >/dev/null' EXIT
           host_port=$(docker port "$container_id" 8080/tcp | sed 's/.*://')
           for attempt in {1..30}; do
             if test "$(curl --fail --silent "http://127.0.0.1:${host_port}/health" | jq -r .version)" = test; then
