@@ -217,9 +217,9 @@ RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI and /opt/cursor/bin for Cursor CLI)
 ENV PATH="/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo/bin:/home/agentapi/.local/bin:/home/agentapi/.local/share/mise/shims:/home/agentapi/.bun/bin:/home/agentapi/.bun/bin:$PATH"
 
-# Resolve agent CLIs and ACP adapters when the image is built. These defaults
-# intentionally track the newest release at build time; session Pods use the
-# resulting image contents and never update packages during startup.
+# Resolve agent CLIs and ACP adapters when the image is built. Build arguments
+# make upgrades explicit; session Pods use the resulting image contents and
+# never update packages during startup.
 ARG CODEX_VERSION=latest
 ARG CLAUDE_AGENT_ACP_VERSION=latest
 ARG CODEX_ACP_VERSION=latest
@@ -240,7 +240,9 @@ RUN printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
 # pi-acp starts `pi --mode rpc`, and pi-ollama-cloud connects directly to
 # https://ollama.com/v1 using OLLAMA_API_KEY/OLLAMA_API_KEYS. pi-mcp-adapter
 # lets Pi read MCP servers from ~/.config/mcp/mcp.json.
-ARG PI_CODING_AGENT_VERSION=latest
+# Pi 0.84.3 crashes under the Bun 1.3.5 runtime while installing extensions
+# (webidl.util.markAsUncloneable is unavailable), so retain the tested release.
+ARG PI_CODING_AGENT_VERSION=0.84.2
 ARG PI_ACP_VERSION=latest
 RUN bun install -g \
       "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
