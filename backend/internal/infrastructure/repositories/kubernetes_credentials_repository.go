@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -94,62 +95,58 @@ func (r *KubernetesCredentialsRepository) Save(ctx context.Context, creds *entit
 	secretName := r.secretName(creds.Name())
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Load existing files to preserve other file types.
-	existing, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	var currentFiles []sessionsettings.ManagedFile
-	createdAt := now
-	if err == nil {
-		currentFiles = sessionsettings.SecretDataToFiles(existing.Data)
-		if v, ok := existing.Annotations[AnnotationCredentialsCreatedAt]; ok && v != "" {
-			createdAt = v
-		}
-	}
-
-	// Update or append the entry for this file type.
 	filePath, ok := sessionsettings.ManagedFileTypes[creds.FileType()]
 	if !ok {
 		return fmt.Errorf("unknown file type: %s", creds.FileType())
 	}
-	updated := false
-	for i, f := range currentFiles {
-		if f.Path == filePath {
-			currentFiles[i].Content = string(creds.Data())
-			updated = true
-			break
-		}
-	}
-	if !updated {
-		currentFiles = append(currentFiles, sessionsettings.ManagedFile{
-			Path:    filePath,
-			Content: string(creds.Data()),
-		})
-	}
-
-	secretData := sessionsettings.FilesToSecretData(currentFiles)
 	labelValue := sanitizeLabelValue(creds.Name())
 
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: r.namespace,
-			Labels: map[string]string{
-				LabelCredentials:     "true",
-				LabelCredentialsName: labelValue,
+	buildSecret := func(existing *corev1.Secret) *corev1.Secret {
+		var currentFiles []sessionsettings.ManagedFile
+		createdAt := now
+		resourceVersion := ""
+		if existing != nil {
+			currentFiles = sessionsettings.SecretDataToFiles(existing.Data)
+			resourceVersion = existing.ResourceVersion
+			if v := existing.Annotations[AnnotationCredentialsCreatedAt]; v != "" {
+				createdAt = v
+			}
+		}
+		updated := false
+		for i, f := range currentFiles {
+			if f.Path == filePath {
+				currentFiles[i].Content = string(creds.Data())
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			currentFiles = append(currentFiles, sessionsettings.ManagedFile{Path: filePath, Content: string(creds.Data())})
+		}
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: secretName, Namespace: r.namespace, ResourceVersion: resourceVersion,
+				Labels: map[string]string{LabelCredentials: "true", LabelCredentialsName: labelValue},
+				Annotations: map[string]string{
+					AnnotationCredentialsName: creds.Name(), AnnotationCredentialsCreatedAt: createdAt, AnnotationCredentialsUpdatedAt: now,
+				},
 			},
-			Annotations: map[string]string{
-				AnnotationCredentialsName:      creds.Name(),
-				AnnotationCredentialsCreatedAt: createdAt,
-				AnnotationCredentialsUpdatedAt: now,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: secretData,
+			Type: corev1.SecretTypeOpaque,
+			Data: sessionsettings.FilesToSecretData(currentFiles),
+		}
 	}
 
-	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	_, err := r.client.CoreV1().Secrets(r.namespace).Create(ctx, buildSecret(nil), metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				existing, getErr := r.client.CoreV1().Secrets(r.namespace).Get(ctx, secretName, metav1.GetOptions{})
+				if getErr != nil {
+					return getErr
+				}
+				_, updateErr := r.client.CoreV1().Secrets(r.namespace).Update(ctx, buildSecret(existing), metav1.UpdateOptions{})
+				return updateErr
+			})
 			if err != nil {
 				return fmt.Errorf("failed to update credentials secret: %w", err)
 			}
