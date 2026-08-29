@@ -60,12 +60,51 @@ func TestPrincipalIsStableAndRandom(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
 
-	first, err := controller.getOrCreatePrincipal(context.Background(), "alice")
+	first, err := controller.getOrCreatePrincipal(context.Background(), "alice", "alice")
 	require.NoError(t, err)
-	second, err := controller.getOrCreatePrincipal(context.Background(), "alice")
+	second, err := controller.getOrCreatePrincipal(context.Background(), "alice", "alice")
 	require.NoError(t, err)
 	require.Equal(t, first.ID, second.ID)
 	require.NotEqual(t, "alice", first.ID)
+	require.Equal(t, "alice", first.CanonicalUserID)
+}
+
+func TestResolveLoginPrincipalUsesLinkedCanonicalUserID(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github:1", "alice")
+	require.NoError(t, err)
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
+	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice-enterprise"}
+	_, err = controller.linkIdentity(context.Background(), identity, "token", nil)
+	require.NoError(t, err)
+
+	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "token", nil)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, resolved.ID)
+	require.Equal(t, "alice", resolved.CanonicalUserID)
+}
+
+func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	legacy := githubPrincipal{ID: "principal-1", InternalUserID: "github:1", CreatedAt: time.Now().UTC()}
+	require.NoError(t, controller.createObject(context.Background(), principalSecretName(legacy.InternalUserID), githubPrincipalLabel, legacy, nil))
+	publicConnection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
+	enterpriseConnection := githubConnection{ID: "enterprise", Name: "GHEC", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
+	require.NoError(t, controller.saveConnection(context.Background(), publicConnection, "", ""))
+	require.NoError(t, controller.saveConnection(context.Background(), enterpriseConnection, "", ""))
+	_, err := controller.linkIdentity(context.Background(), githubIdentity{ID: "public-identity", PrincipalID: legacy.ID, ConnectionID: publicConnection.ID, GitHubUserID: 1, Login: "alice"}, "public-token", nil)
+	require.NoError(t, err)
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "enterprise-identity", PrincipalID: legacy.ID, ConnectionID: enterpriseConnection.ID, GitHubUserID: 42, Login: "alice-enterprise"}, "enterprise-token", nil)
+	require.NoError(t, err)
+
+	resolved, err := controller.resolveLoginPrincipal(context.Background(), enterpriseConnection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "enterprise-token", nil)
+	require.NoError(t, err)
+	require.Equal(t, "alice", resolved.CanonicalUserID)
+	persisted, err := controller.loadPrincipal(context.Background(), legacy.InternalUserID)
+	require.NoError(t, err)
+	require.Equal(t, "alice", persisted.CanonicalUserID)
 }
 
 func TestLinkIdentityIsIdempotentAndRejectsAnotherPrincipal(t *testing.T) {
@@ -93,7 +132,7 @@ func TestResolveAccessTokenChecksOwnershipAndExpiry(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice", "alice")
 	require.NoError(t, err)
 	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "connection-1", GitHubUserID: 42, Login: "alice"}
 	expiresAt := time.Now().UTC().Add(time.Hour)

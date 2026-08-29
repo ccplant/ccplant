@@ -78,9 +78,10 @@ type githubSecretUpdate struct {
 }
 
 type githubPrincipal struct {
-	ID             string    `json:"id"`
-	InternalUserID string    `json:"internal_user_id"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	InternalUserID  string    `json:"internal_user_id"`
+	CanonicalUserID string    `json:"canonical_user_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type githubIdentity struct {
@@ -117,6 +118,7 @@ type githubOAuthState struct {
 type GitHubConnectionLoginResult struct {
 	AccessToken string
 	APIURL      string
+	UserID      string
 }
 
 type githubOAuthUser struct {
@@ -418,11 +420,19 @@ func (c *GitHubConnectionsController) CompleteLogin(ctx context.Context, stateID
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub connection secret is unavailable")
 	}
-	token, _, err := c.exchangeCode(ctx, connection, clientSecret, code, state.CallbackURL)
+	token, expiresAt, err := c.exchangeCode(ctx, connection, clientSecret, code, state.CallbackURL)
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "OAuth authentication failed").SetInternal(err)
 	}
-	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL}, nil
+	githubUser, err := c.fetchGitHubUser(ctx, connection, token)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub user lookup failed").SetInternal(err)
+	}
+	principal, err := c.resolveLoginPrincipal(ctx, connection, githubUser, token, expiresAt)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub identity could not be resolved").SetInternal(err)
+	}
+	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL, UserID: principal.CanonicalUserID}, nil
 }
 
 func (c *GitHubConnectionsController) OAuthStateMode(ctx context.Context, stateID string) (string, error) {
@@ -439,7 +449,7 @@ func (c *GitHubConnectionsController) ListIdentities(ctx echo.Context) error {
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	principal, err := c.loadPrincipal(ctx.Request().Context(), principalSubject(user))
+	principal, err := c.loadPrincipalForUser(ctx.Request().Context(), user)
 	if apierrors.IsNotFound(err) {
 		return ctx.JSON(http.StatusOK, map[string]any{"principal_id": nil, "identities": []any{}})
 	}
@@ -487,7 +497,7 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "GitHub connection is unavailable")
 	}
 	internalSubject := principalSubject(user)
-	principal, err := c.getOrCreatePrincipal(ctx.Request().Context(), internalSubject)
+	principal, err := c.getOrCreatePrincipal(ctx.Request().Context(), internalSubject, string(user.ID()))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve principal").SetInternal(err)
 	}
@@ -562,7 +572,7 @@ func (c *GitHubConnectionsController) Unlink(ctx echo.Context) error {
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	principal, err := c.loadPrincipal(ctx.Request().Context(), principalSubject(user))
+	principal, err := c.loadPrincipalForUser(ctx.Request().Context(), user)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "principal not found")
 	}
@@ -621,7 +631,7 @@ func (c *GitHubConnectionsController) linkIdentity(ctx context.Context, identity
 
 // ResolveAccessToken returns the selected linked credential for the authenticated user.
 func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, user *entities.User, connectionID string) (string, error) {
-	principal, err := c.loadPrincipal(ctx, principalSubject(user))
+	principal, err := c.loadPrincipalForUser(ctx, user)
 	if err != nil {
 		return "", errors.New("GitHub principal not found")
 	}
@@ -652,20 +662,124 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
-func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID string) (githubPrincipal, error) {
+func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID, canonicalUserID string) (githubPrincipal, error) {
 	principal, err := c.loadPrincipal(ctx, internalUserID)
 	if err == nil {
+		if principal.CanonicalUserID == "" {
+			principal.CanonicalUserID = canonicalUserID
+			err = c.savePrincipal(ctx, principal)
+		}
 		return principal, nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return githubPrincipal{}, err
 	}
-	principal = githubPrincipal{ID: uuid.NewString(), InternalUserID: internalUserID, CreatedAt: time.Now().UTC()}
+	principal = githubPrincipal{ID: uuid.NewString(), InternalUserID: internalUserID, CanonicalUserID: canonicalUserID, CreatedAt: time.Now().UTC()}
 	err = c.createObject(ctx, principalSecretName(internalUserID), githubPrincipalLabel, principal, nil)
 	if apierrors.IsAlreadyExists(err) {
-		return c.loadPrincipal(ctx, internalUserID)
+		return c.getOrCreatePrincipal(ctx, internalUserID, canonicalUserID)
 	}
 	return principal, err
+}
+
+func (c *GitHubConnectionsController) savePrincipal(ctx context.Context, principal githubPrincipal) error {
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, principalSecretName(principal.InternalUserID), metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	record, err := json.Marshal(principal)
+	if err != nil {
+		return err
+	}
+	secret.Data["record.json"] = record
+	_, err = c.client.CoreV1().Secrets(c.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	return err
+}
+
+func (c *GitHubConnectionsController) listPrincipals(ctx context.Context) ([]githubPrincipal, error) {
+	secrets, err := c.client.CoreV1().Secrets(c.namespace).List(ctx, metav1.ListOptions{LabelSelector: githubPrincipalLabel + "=true"})
+	if err != nil {
+		return nil, err
+	}
+	principals := make([]githubPrincipal, 0, len(secrets.Items))
+	for i := range secrets.Items {
+		var principal githubPrincipal
+		if json.Unmarshal(secrets.Items[i].Data["record.json"], &principal) == nil {
+			principals = append(principals, principal)
+		}
+	}
+	return principals, nil
+}
+
+func (c *GitHubConnectionsController) loadPrincipalForUser(ctx context.Context, user *entities.User) (githubPrincipal, error) {
+	principal, err := c.loadPrincipal(ctx, principalSubject(user))
+	if err == nil || !apierrors.IsNotFound(err) {
+		return principal, err
+	}
+	principals, err := c.listPrincipals(ctx)
+	if err != nil {
+		return githubPrincipal{}, err
+	}
+	for _, candidate := range principals {
+		if candidate.CanonicalUserID == string(user.ID()) {
+			return candidate, nil
+		}
+	}
+	return githubPrincipal{}, apierrors.NewNotFound(corev1.Resource("secrets"), principalSecretName(principalSubject(user)))
+}
+
+func (c *GitHubConnectionsController) resolveLoginPrincipal(ctx context.Context, connection githubConnection, user githubOAuthUser, token string, expiresAt *time.Time) (githubPrincipal, error) {
+	var identity githubIdentity
+	_, err := c.loadObject(ctx, identitySecretName(connection.ID, user.ID), &identity)
+	if apierrors.IsNotFound(err) {
+		principal, createErr := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github-connection:%s:%d", connection.ID, user.ID), user.Login)
+		if createErr != nil {
+			return githubPrincipal{}, createErr
+		}
+		identity = githubIdentity{ID: uuid.NewString(), PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: user.ID, Login: user.Login, AvatarURL: user.AvatarURL, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		_, linkErr := c.linkIdentity(ctx, identity, token, expiresAt)
+		return principal, linkErr
+	}
+	if err != nil {
+		return githubPrincipal{}, err
+	}
+	if _, err := c.linkIdentity(ctx, identity, token, expiresAt); err != nil {
+		return githubPrincipal{}, err
+	}
+	principals, err := c.listPrincipals(ctx)
+	if err != nil {
+		return githubPrincipal{}, err
+	}
+	for _, principal := range principals {
+		if principal.ID != identity.PrincipalID {
+			continue
+		}
+		if principal.CanonicalUserID == "" {
+			principal.CanonicalUserID = c.inferCanonicalUserID(ctx, principal.ID, user.Login)
+			if err := c.savePrincipal(ctx, principal); err != nil {
+				return githubPrincipal{}, err
+			}
+		}
+		return principal, nil
+	}
+	return githubPrincipal{}, errors.New("principal for GitHub identity not found")
+}
+
+func (c *GitHubConnectionsController) inferCanonicalUserID(ctx context.Context, principalID, fallback string) string {
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return fallback
+	}
+	for _, identity := range identities {
+		if identity.PrincipalID != principalID {
+			continue
+		}
+		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
+		if err == nil && connection.BaseURL == "https://github.com" {
+			return identity.Login
+		}
+	}
+	return fallback
 }
 
 func (c *GitHubConnectionsController) loadPrincipal(ctx context.Context, internalUserID string) (githubPrincipal, error) {

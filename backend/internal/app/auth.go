@@ -104,6 +104,7 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed").SetInternal(err)
 	}
+	userContext.UserID = result.UserID
 	userContext.AuthType = "github_oauth"
 	userContext.AccessToken = result.AccessToken
 	sessionID := uuid.NewString()
