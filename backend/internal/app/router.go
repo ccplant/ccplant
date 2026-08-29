@@ -587,9 +587,6 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/users/me/github-identities", controller.ListIdentities, read)
 		r.echo.POST("/users/me/github-identities/link", controller.StartLink, write)
 		r.echo.DELETE("/users/me/github-identities/:identity_id", controller.Unlink, write)
-		// The callback validates a short-lived, single-use server-side state and
-		// therefore intentionally does not require an existing API session.
-		r.echo.GET("/auth/github-connections/callback", controller.Callback)
 	}
 	if r.handlers.sessionPoolController != nil {
 		poolRead := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)

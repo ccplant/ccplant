@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
     if (connection_id) {
       const publicBaseUrl = getPublicBaseUrl(request)
-      redirect_uri = new URL('/api/auth/github/callback', publicBaseUrl).toString()
+      redirect_uri = new URL('/api/proxy/auth/github-connections/callback', publicBaseUrl).toString()
       redirectOrigin = new URL(publicBaseUrl).origin
     }
 

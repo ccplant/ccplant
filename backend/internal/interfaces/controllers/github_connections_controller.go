@@ -425,6 +425,15 @@ func (c *GitHubConnectionsController) CompleteLogin(ctx context.Context, stateID
 	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL}, nil
 }
 
+func (c *GitHubConnectionsController) OAuthStateMode(ctx context.Context, stateID string) (string, error) {
+	var state githubOAuthState
+	_, err := c.loadObject(ctx, stateSecretName(stateID), &state)
+	if err != nil || state.ID != stateID || time.Now().UTC().After(state.ExpiresAt) {
+		return "", errors.New("OAuth state is invalid or expired")
+	}
+	return state.Mode, nil
+}
+
 func (c *GitHubConnectionsController) ListIdentities(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {

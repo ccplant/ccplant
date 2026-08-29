@@ -77,12 +77,20 @@ func (s *Server) setupAuthRoutes() {
 		log.Printf("[ROUTES] OAuth endpoints not registered - OAuth provider not configured")
 	}
 	if s.router != nil && s.router.handlers.githubConnectionsController != nil {
-		s.echo.GET("/oauth/github-connections/callback", s.handleGitHubConnectionOAuthCallback)
+		s.echo.GET("/auth/github-connections/callback", s.handleGitHubConnectionOAuthCallback)
 	}
 }
 
 func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
-	result, err := s.router.handlers.githubConnectionsController.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"))
+	controller := s.router.handlers.githubConnectionsController
+	mode, err := controller.OAuthStateMode(c.Request().Context(), c.QueryParam("state"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if mode != "login" {
+		return controller.Callback(c)
+	}
+	result, err := controller.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"))
 	if err != nil {
 		return err
 	}
