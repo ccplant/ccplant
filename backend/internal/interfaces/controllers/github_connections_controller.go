@@ -864,7 +864,7 @@ func (c *GitHubConnectionsController) resolveCallbackURL(ctx echo.Context, reque
 func (c *GitHubConnectionsController) resolveLoginCallbackURL(ctx echo.Context, requested string) (string, error) {
 	callback, err := url.Parse(requested)
 	origin, originErr := url.Parse(ctx.Request().Header.Get("Origin"))
-	allowedPath := callback != nil && callback.Path == "/api/auth/github/callback"
+	allowedPath := callback != nil && callback.Path == "/api/proxy/auth/github-connections/callback"
 	if err != nil || originErr != nil || callback.Scheme != origin.Scheme || callback.Host != origin.Host || !allowedPath || callback.RawQuery != "" || callback.Fragment != "" {
 		return "", errors.New("callback URL must use the request origin and the GitHub login callback path")
 	}
