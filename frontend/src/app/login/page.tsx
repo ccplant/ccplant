@@ -48,7 +48,7 @@ export default function LoginPage() {
   }, [router])
 
   useEffect(() => {
-    fetch('/api/proxy/github-connections/login-options', { cache: 'no-store' })
+    fetch('/api/auth/github/connections', { cache: 'no-store' })
       .then(response => response.ok ? response.json() : Promise.reject())
       .then(data => setLoginConnections(Array.isArray(data.connections) ? data.connections : []))
       .catch(() => setLoginConnections([]))
