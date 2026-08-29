@@ -6399,6 +6399,10 @@
             "type": "string",
             "description": "GitHub token to use for authentication instead of GitHub App"
           },
+          "connection_id": {
+            "type": "string",
+            "description": "Linked external account connection to use for this session. The selected connection must belong to the authenticated principal."
+          },
           "agent_type": {
             "type": "string",
             "description": "Agent type for the session. Supported values include 'auto', 'claude-acp', 'codex-acp', and 'cursor'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If not specified, uses default agentapi.",

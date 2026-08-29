@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -70,16 +73,43 @@ func TestLinkIdentityIsIdempotentAndRejectsAnotherPrincipal(t *testing.T) {
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
 	identity := githubIdentity{ID: "identity-1", PrincipalID: "principal-1", ConnectionID: "connection-1", GitHubUserID: 42, Login: "alice"}
 
-	created, err := controller.linkIdentity(context.Background(), identity)
+	created, err := controller.linkIdentity(context.Background(), identity, "token-1", nil)
 	require.NoError(t, err)
 	require.True(t, created)
-	created, err = controller.linkIdentity(context.Background(), identity)
+	created, err = controller.linkIdentity(context.Background(), identity, "token-2", nil)
 	require.NoError(t, err)
 	require.False(t, created)
+	secret, err := controller.client.CoreV1().Secrets("test").Get(context.Background(), identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "token-2", string(secret.Data[githubAccessTokenKey]))
+	require.NotContains(t, string(secret.Data["record.json"]), "token-2")
 
 	identity.PrincipalID = "principal-2"
-	_, err = controller.linkIdentity(context.Background(), identity)
+	_, err = controller.linkIdentity(context.Background(), identity, "token-3", nil)
 	require.ErrorIs(t, err, errIdentityConflict)
+}
+
+func TestResolveAccessTokenChecksOwnershipAndExpiry(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
+	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
+	require.NoError(t, err)
+	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "connection-1", GitHubUserID: 42, Login: "alice"}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	_, err = controller.linkIdentity(context.Background(), identity, "oauth-token", &expiresAt)
+	require.NoError(t, err)
+	token, err := controller.ResolveAccessToken(context.Background(), user, "connection-1")
+	require.NoError(t, err)
+	require.Equal(t, "oauth-token", token)
+
+	_, err = controller.ResolveAccessToken(context.Background(), user, "connection-2")
+	require.ErrorContains(t, err, "not linked")
+	expiresAt = time.Now().UTC().Add(-time.Minute)
+	_, err = controller.linkIdentity(context.Background(), identity, "expired-token", &expiresAt)
+	require.NoError(t, err)
+	_, err = controller.ResolveAccessToken(context.Background(), user, "connection-1")
+	require.ErrorContains(t, err, "expired")
 }
 
 func TestSanitizeReturnTo(t *testing.T) {

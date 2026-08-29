@@ -127,13 +127,19 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// server implements SessionManagerProvider interface via GetSessionManager()
 	// Note: ServiceAccount creation for team-scoped sessions is now handled in
 	// KubernetesSessionManager.CreateSession() via the injected ServiceAccountEnsurer.
-	sessionController := controllers.NewSessionController(
-		server, // Server implements SessionManagerProvider interface
-		server, // Server implements SessionCreator interface
+	sessionControllerOptions := []controllers.SessionControllerOption{
 		controllers.WithSessionRouteRepository(server.GetSessionRouteRepository()),
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
+	}
+	if githubConnectionsController != nil {
+		sessionControllerOptions = append(sessionControllerOptions, controllers.WithGitHubTokenResolver(githubConnectionsController))
+	}
+	sessionController := controllers.NewSessionController(
+		server, // Server implements SessionManagerProvider interface
+		server, // Server implements SessionCreator interface
+		sessionControllerOptions...,
 	)
 
 	// Create share controller if share repository is available

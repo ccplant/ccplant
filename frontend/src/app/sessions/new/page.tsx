@@ -11,6 +11,7 @@ import { recentMessagesManager } from '../../../utils/recentMessagesManager'
 import { OrganizationHistory } from '../../../utils/organizationHistory'
 import { addRepositoryToHistory, AgentApiType, getACPServerEnabled } from '../../../types/settings'
 import type { LogicalSessionPool } from '../../../types/session_pool'
+import type { GitHubIdentity } from '../../../types/github-connection'
 import { createAgentAPIProxyClientFromStorage } from '../../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage } from '../../../lib/acp-server-client'
 import TopBar from '../../components/TopBar'
@@ -96,6 +97,8 @@ export default function NewSessionPage() {
   const [dockerEnabled, setDockerEnabled] = useState(false)
   const [dockerRegistries, setDockerRegistries] = useState<Array<{ server: string; username: string; password: string; secretName: string; insecure: boolean }>>([])
   const [sessionTTL, setSessionTTL] = useState('')
+  const [linkedConnections, setLinkedConnections] = useState<GitHubIdentity[]>([])
+  const [connectionId, setConnectionId] = useState('')
 
   const addDockerRegistry = () => {
     setDockerRegistries(prev => [...prev, { server: '', username: '', password: '', secretName: '', insecure: false }])
@@ -111,6 +114,7 @@ export default function NewSessionPage() {
     loadTemplates()
     loadRecentMessages()
     loadAvailablePools()
+    loadLinkedConnections()
   }, [])
 
   // ESCキーで戻る
@@ -157,6 +161,17 @@ export default function NewSessionPage() {
     }
   }
 
+  const loadLinkedConnections = async () => {
+    try {
+      const client = createAgentAPIProxyClientFromStorage()
+      const result = await client.listGitHubIdentities()
+      setLinkedConnections(result.identities)
+    } catch (error) {
+      console.error('Failed to load linked connections:', error)
+      setLinkedConnections([])
+    }
+  }
+
   // 進捗状態を更新するヘルパー関数
   const updateProgress = (status: SessionCreationStatus, errorMessage?: string) => {
     setCreationProgress(prev => {
@@ -197,6 +212,10 @@ export default function NewSessionPage() {
       // Build params object
       const params: Record<string, unknown> = {
         message: message
+      }
+
+      if (connectionId) {
+        params.connection_id = connectionId
       }
 
       // agent_type はデフォルト以外の場合のみ送信
@@ -643,6 +662,30 @@ export default function NewSessionPage() {
               />
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                 プロファイルを選択すると、環境変数・タグ・テンプレートなどの設定を適用します
+              </p>
+            </div>
+
+            {/* 外部アカウント接続 */}
+            <div>
+              <label htmlFor="connection-id" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                アカウント接続
+              </label>
+              <select
+                id="connection-id"
+                value={connectionId}
+                onChange={(event) => setConnectionId(event.target.value)}
+                disabled={isCreating}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-sm"
+              >
+                <option value="">指定なし</option>
+                {linkedConnections.map((identity) => (
+                  <option key={identity.id} value={identity.connection_id}>
+                    {identity.connection_name} ({identity.login})
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                連携済みアカウントの認証情報をこのセッションで使用します
               </p>
             </div>
 

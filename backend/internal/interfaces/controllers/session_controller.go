@@ -76,6 +76,15 @@ type SessionController struct {
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
 	nextStatusSubscriberID uint64
+	githubTokenResolver    interface {
+		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
+	}
+}
+
+func WithGitHubTokenResolver(resolver interface {
+	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
+}) SessionControllerOption {
+	return func(c *SessionController) { c.githubTokenResolver = resolver }
 }
 
 // NewSessionController creates a new SessionController instance
@@ -195,7 +204,18 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		startReq.Scope = entities.ResourceScope(resolvedScope)
 		startReq.TeamID = resolvedTeamID
 	}
-	populateGitHubTokenFromAuthHeader(ctx, &startReq)
+	if startReq.Params != nil && startReq.Params.ConnectionID != "" {
+		if c.githubTokenResolver == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection credentials are unavailable")
+		}
+		token, err := c.githubTokenResolver.ResolveAccessToken(ctx.Request().Context(), user, startReq.Params.ConnectionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		startReq.Params.GithubToken = token
+	} else {
+		populateGitHubTokenFromAuthHeader(ctx, &startReq)
+	}
 
 	// Validate team scope authorization
 	if startReq.Scope == entities.ScopeTeam {

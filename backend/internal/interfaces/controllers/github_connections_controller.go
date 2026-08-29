@@ -92,6 +92,9 @@ type githubIdentity struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+const githubAccessTokenKey = "access_token"
+const githubExpiresAtKey = "expires_at"
+
 type githubIdentityResponse struct {
 	githubIdentity
 	ConnectionName string `json:"connection_name"`
@@ -375,6 +378,9 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 	if user == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
+	if !c.encryptedStorage {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account linking requires the libsql-encrypted KV backend")
+	}
 	var request struct {
 		ConnectionID string `json:"connection_id"`
 		ReturnTo     string `json:"return_to"`
@@ -432,7 +438,7 @@ func (c *GitHubConnectionsController) Callback(ctx echo.Context) error {
 	if err != nil {
 		return c.redirectOAuthResult(ctx, state.ReturnTo, "error", "secret_unavailable")
 	}
-	token, err := c.exchangeCode(ctx.Request().Context(), connection, clientSecret, code, state.CallbackURL)
+	token, expiresAt, err := c.exchangeCode(ctx.Request().Context(), connection, clientSecret, code, state.CallbackURL)
 	if err != nil {
 		return c.redirectOAuthResult(ctx, state.ReturnTo, "error", "token_exchange_failed")
 	}
@@ -441,7 +447,7 @@ func (c *GitHubConnectionsController) Callback(ctx echo.Context) error {
 		return c.redirectOAuthResult(ctx, state.ReturnTo, "error", "user_lookup_failed")
 	}
 	identity := githubIdentity{ID: uuid.NewString(), PrincipalID: state.PrincipalID, ConnectionID: connection.ID, GitHubUserID: githubUser.ID, Login: githubUser.Login, AvatarURL: githubUser.AvatarURL, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-	created, err := c.linkIdentity(ctx.Request().Context(), identity)
+	created, err := c.linkIdentity(ctx.Request().Context(), identity, token, expiresAt)
 	if errors.Is(err, errIdentityConflict) {
 		return c.redirectOAuthResult(ctx, state.ReturnTo, "error", "identity_linked_to_another_principal")
 	}
@@ -481,24 +487,72 @@ func (c *GitHubConnectionsController) Unlink(ctx echo.Context) error {
 
 var errIdentityConflict = errors.New("GitHub identity belongs to another principal")
 
-func (c *GitHubConnectionsController) linkIdentity(ctx context.Context, identity githubIdentity) (bool, error) {
+func (c *GitHubConnectionsController) linkIdentity(ctx context.Context, identity githubIdentity, accessToken string, expiresAt *time.Time) (bool, error) {
 	name := identitySecretName(identity.ConnectionID, identity.GitHubUserID)
 	var existing githubIdentity
-	_, err := c.loadObject(ctx, name, &existing)
+	secret, err := c.loadObject(ctx, name, &existing)
 	if err == nil {
 		if existing.PrincipalID == identity.PrincipalID {
-			return false, nil
+			secret.Data[githubAccessTokenKey] = []byte(accessToken)
+			if expiresAt != nil {
+				secret.Data[githubExpiresAtKey] = []byte(expiresAt.UTC().Format(time.RFC3339))
+			} else {
+				delete(secret.Data, githubExpiresAtKey)
+			}
+			_, err = c.client.CoreV1().Secrets(c.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+			return false, err
 		}
 		return false, errIdentityConflict
 	}
 	if !apierrors.IsNotFound(err) {
 		return false, err
 	}
-	err = c.createObject(ctx, name, githubIdentityLabel, identity, map[string]string{"agentapi.ccplant.io/connection-id": identity.ConnectionID})
+	record, err := json.Marshal(identity)
+	if err != nil {
+		return false, err
+	}
+	data := map[string][]byte{"record.json": record, githubAccessTokenKey: []byte(accessToken)}
+	if expiresAt != nil {
+		data[githubExpiresAtKey] = []byte(expiresAt.UTC().Format(time.RFC3339))
+	}
+	_, err = c.client.CoreV1().Secrets(c.namespace).Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.namespace, Labels: map[string]string{githubIdentityLabel: "true", "agentapi.ccplant.io/connection-id": identity.ConnectionID}}, Data: data}, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
-		return c.linkIdentity(ctx, identity)
+		return c.linkIdentity(ctx, identity, accessToken, expiresAt)
 	}
 	return err == nil, err
+}
+
+// ResolveAccessToken returns the selected linked credential for the authenticated user.
+func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, user *entities.User, connectionID string) (string, error) {
+	principal, err := c.loadPrincipal(ctx, principalSubject(user))
+	if err != nil {
+		return "", errors.New("GitHub principal not found")
+	}
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, identity := range identities {
+		if identity.PrincipalID != principal.ID || identity.ConnectionID != connectionID {
+			continue
+		}
+		secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		if raw := string(secret.Data[githubExpiresAtKey]); raw != "" {
+			expiresAt, parseErr := time.Parse(time.RFC3339, raw)
+			if parseErr != nil || !expiresAt.After(time.Now().UTC()) {
+				return "", errors.New("GitHub access token has expired")
+			}
+		}
+		token := string(secret.Data[githubAccessTokenKey])
+		if token == "" {
+			return "", errors.New("GitHub access token is not stored; reconnect the account")
+		}
+		return token, nil
+	}
+	return "", errors.New("GitHub connection is not linked to this user")
 }
 
 func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID string) (githubPrincipal, error) {
@@ -652,33 +706,38 @@ func (c *GitHubConnectionsController) connectionResponse(ctx context.Context, co
 	return githubConnectionResponse{githubConnection: connection, SecretConfigured: configured, CallbackURL: callbackURL, LinkedIdentities: c.identityCount(ctx, connection.ID)}
 }
 
-func (c *GitHubConnectionsController) exchangeCode(ctx context.Context, connection githubConnection, clientSecret, code, callbackURL string) (string, error) {
+func (c *GitHubConnectionsController) exchangeCode(ctx context.Context, connection githubConnection, clientSecret, code, callbackURL string) (string, *time.Time, error) {
 	values := url.Values{"client_id": {connection.OAuthClientID}, "client_secret": {clientSecret}, "code": {code}, "redirect_uri": {callbackURL}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, connection.BaseURL+"/login/oauth/access_token", strings.NewReader(values.Encode()))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer utils.SafeCloseResponse(resp)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("GitHub token endpoint returned %d", resp.StatusCode)
+		return "", nil, fmt.Errorf("GitHub token endpoint returned %d", resp.StatusCode)
 	}
 	var payload struct {
 		AccessToken string `json:"access_token"`
 		Error       string `json:"error"`
+		ExpiresIn   int64  `json:"expires_in"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if payload.AccessToken == "" {
-		return "", fmt.Errorf("GitHub token exchange failed: %s", payload.Error)
+		return "", nil, fmt.Errorf("GitHub token exchange failed: %s", payload.Error)
 	}
-	return payload.AccessToken, nil
+	if payload.ExpiresIn > 0 {
+		expiresAt := time.Now().UTC().Add(time.Duration(payload.ExpiresIn) * time.Second)
+		return payload.AccessToken, &expiresAt, nil
+	}
+	return payload.AccessToken, nil, nil
 }
 
 func (c *GitHubConnectionsController) resolveCallbackURL(ctx echo.Context, requested string) (string, error) {
