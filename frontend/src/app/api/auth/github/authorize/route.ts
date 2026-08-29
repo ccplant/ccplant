@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getRequestBackendBaseUrl } from '@/lib/server-backend-url'
+import { getPublicBaseUrl } from '@/lib/public-url'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { redirect_uri, connection_id } = body
+    let { redirect_uri } = body
+    const { connection_id } = body
 
     if (!redirect_uri) {
       return NextResponse.json(
@@ -13,11 +15,27 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    let redirectOrigin: string
+    try {
+      redirectOrigin = new URL(redirect_uri).origin
+    } catch {
+      return NextResponse.json(
+        { error: 'redirect_uri must be an absolute URL' },
+        { status: 400 }
+      )
+    }
+    if (connection_id) {
+      const publicBaseUrl = getPublicBaseUrl(request)
+      redirect_uri = new URL('/api/auth/github/callback', publicBaseUrl).toString()
+      redirectOrigin = new URL(publicBaseUrl).origin
+    }
+
     const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
     const response = await fetch(`${backendBaseUrl}${connection_id ? '/github-connections/login' : '/oauth/authorize'}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(connection_id ? { Origin: redirectOrigin } : {}),
       },
       body: JSON.stringify({
         ...(connection_id ? { connection_id, callback_url: redirect_uri } : { redirect_uri }),
