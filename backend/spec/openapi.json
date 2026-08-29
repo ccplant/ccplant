@@ -332,6 +332,55 @@
         }
       }
     },
+    "/admin/github-connections": {
+      "get": {
+        "summary": "List GitHub OAuth connections",
+        "operationId": "listGitHubConnections",
+        "tags": ["GitHub Connections"],
+        "responses": {"200": {"description": "GitHub connections with masked secret status"}}
+      },
+      "post": {
+        "summary": "Create a GitHub OAuth connection",
+        "operationId": "createGitHubConnection",
+        "tags": ["GitHub Connections"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitHubConnectionInput"}}}},
+        "responses": {"201": {"description": "Connection created"}}
+      }
+    },
+    "/admin/github-connections/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "get": {"summary": "Get a GitHub OAuth connection", "operationId": "getGitHubConnection", "tags": ["GitHub Connections"], "responses": {"200": {"description": "Connection"}}},
+      "patch": {"summary": "Update a GitHub OAuth connection", "operationId": "updateGitHubConnection", "tags": ["GitHub Connections"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitHubConnectionInput"}}}}, "responses": {"200": {"description": "Connection updated"}}},
+      "delete": {"summary": "Delete an unused GitHub OAuth connection", "operationId": "deleteGitHubConnection", "tags": ["GitHub Connections"], "responses": {"204": {"description": "Connection deleted"}, "409": {"description": "Connection has linked identities"}}}
+    },
+    "/admin/github-connections/{id}/secret": {
+      "put": {
+        "summary": "Replace a GitHub OAuth client secret",
+        "operationId": "updateGitHubConnectionSecret",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+        "responses": {"200": {"description": "Secret replaced; plaintext is never returned"}}
+      },
+      "delete": {"summary": "Remove a GitHub OAuth client secret", "operationId": "deleteGitHubConnectionSecret", "tags": ["GitHub Connections"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}], "responses": {"204": {"description": "Secret removed"}}}
+    },
+    "/admin/github-connections/{id}/test": {
+      "post": {"summary": "Test GitHub API reachability and secret resolution", "operationId": "testGitHubConnection", "tags": ["GitHub Connections"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}], "responses": {"200": {"description": "Connection test result"}}}
+    },
+    "/github-connections": {
+      "get": {"summary": "List enabled GitHub connections", "operationId": "listAvailableGitHubConnections", "tags": ["GitHub Connections"], "responses": {"200": {"description": "Enabled connections"}}}
+    },
+    "/users/me/github-identities": {
+      "get": {"summary": "List the current principal's GitHub identities", "operationId": "listMyGitHubIdentities", "tags": ["GitHub Connections"], "responses": {"200": {"description": "Principal and linked identities"}}}
+    },
+    "/users/me/github-identities/link": {
+      "post": {"summary": "Start linking a GitHub identity", "operationId": "startGitHubIdentityLink", "tags": ["GitHub Connections"], "responses": {"200": {"description": "GitHub authorization URL"}}}
+    },
+    "/users/me/github-identities/{identity_id}": {
+      "delete": {"summary": "Unlink a GitHub identity", "operationId": "unlinkGitHubIdentity", "tags": ["GitHub Connections"], "parameters": [{"name": "identity_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}], "responses": {"204": {"description": "Identity unlinked"}}}
+    },
+    "/auth/github-connections/callback": {
+      "get": {"summary": "Complete GitHub identity linking", "operationId": "completeGitHubIdentityLink", "tags": ["GitHub Connections"], "responses": {"302": {"description": "Redirect to the user settings page"}}}
+    },
     "/health": {
       "get": {
         "summary": "Health check",
@@ -5747,6 +5796,25 @@
   },
   "components": {
     "schemas": {
+      "GitHubConnectionInput": {
+        "type": "object",
+        "required": ["name", "base_url", "api_url", "oauth_client_id"],
+        "properties": {
+          "name": {"type": "string"},
+          "base_url": {"type": "string", "format": "uri"},
+          "api_url": {"type": "string", "format": "uri"},
+          "oauth_client_id": {"type": "string"},
+          "enabled": {"type": "boolean", "default": true},
+          "oauth_client_secret": {
+            "type": "object",
+            "properties": {
+              "source": {"type": "string", "enum": ["encrypted", "environment"]},
+              "value": {"type": "string", "format": "password", "writeOnly": true},
+              "environment": {"type": "string"}
+            }
+          }
+        }
+      },
       "SessionManagerCreate": {
         "type": "object",
         "required": [

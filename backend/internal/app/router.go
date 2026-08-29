@@ -33,6 +33,7 @@ type HandlerRegistry struct {
 	acpController                  *controllers.ACPController
 	settingsController             *controllers.SettingsController
 	adminSettingsController        *controllers.AdminSettingsController
+	githubConnectionsController    *controllers.GitHubConnectionsController
 	googleOAuthController          *controllers.GoogleOAuthController
 	credentialsController          *controllers.CredentialsController
 	codexDeviceAuthController      *controllers.CodexDeviceAuthController
@@ -84,6 +85,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
+	var githubConnectionsController *controllers.GitHubConnectionsController
 	if server.persistenceClient != nil {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
 			server.GetPersistenceClient(),
@@ -92,6 +94,11 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.kvStore != nil {
 			adminSettingsController = controllers.NewAdminSettingsController(server.kvStore, server.namespace, server.GetConfig()).WithRuntimeConfigProvider(server.GetConfigProvider())
 		}
+		encryptedStorage := false
+		if cfg := server.GetConfig(); cfg != nil {
+			encryptedStorage = cfg.KVStore.Backend == "libsql-encrypted" || (cfg.KVStore.Primary != nil && cfg.KVStore.Primary.Backend == "libsql-encrypted")
+		}
+		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
 	}
 
 	var googleOAuthController *controllers.GoogleOAuthController
@@ -278,6 +285,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			acpController:                  acpController,
 			settingsController:             settingsController,
 			adminSettingsController:        adminSettingsController,
+			githubConnectionsController:    githubConnectionsController,
 			googleOAuthController:          googleOAuthController,
 			credentialsController:          credentialsController,
 			codexDeviceAuthController:      codexDeviceAuthController,
@@ -553,6 +561,27 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/admin/system-settings", r.handlers.adminSettingsController.Get, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 		r.echo.GET("/admin/system-settings/versions", r.handlers.adminSettingsController.ListVersions, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 		r.echo.PUT("/admin/system-settings", r.handlers.adminSettingsController.Put, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
+	}
+	if r.handlers.githubConnectionsController != nil {
+		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
+		read := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
+		write := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
+		controller := r.handlers.githubConnectionsController
+		r.echo.GET("/admin/github-connections", controller.List, admin)
+		r.echo.POST("/admin/github-connections", controller.Create, admin)
+		r.echo.GET("/admin/github-connections/:id", controller.Get, admin)
+		r.echo.PATCH("/admin/github-connections/:id", controller.Update, admin)
+		r.echo.DELETE("/admin/github-connections/:id", controller.Delete, admin)
+		r.echo.PUT("/admin/github-connections/:id/secret", controller.UpdateSecret, admin)
+		r.echo.DELETE("/admin/github-connections/:id/secret", controller.DeleteSecret, admin)
+		r.echo.POST("/admin/github-connections/:id/test", controller.Test, admin)
+		r.echo.GET("/github-connections", controller.ListAvailable, read)
+		r.echo.GET("/users/me/github-identities", controller.ListIdentities, read)
+		r.echo.POST("/users/me/github-identities/link", controller.StartLink, write)
+		r.echo.DELETE("/users/me/github-identities/:identity_id", controller.Unlink, write)
+		// The callback validates a short-lived, single-use server-side state and
+		// therefore intentionally does not require an existing API session.
+		r.echo.GET("/auth/github-connections/callback", controller.Callback)
 	}
 	if r.handlers.sessionPoolController != nil {
 		poolRead := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
