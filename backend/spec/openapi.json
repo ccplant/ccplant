@@ -5804,6 +5804,7 @@
           "base_url": {"type": "string", "format": "uri"},
           "api_url": {"type": "string", "format": "uri"},
           "oauth_client_id": {"type": "string"},
+          "oauth_scope": {"type": "string", "default": "read:user read:org project"},
           "enabled": {"type": "boolean", "default": true},
           "oauth_client_secret": {
             "type": "object",

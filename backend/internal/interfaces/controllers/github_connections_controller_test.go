@@ -118,3 +118,9 @@ func TestSanitizeReturnTo(t *testing.T) {
 	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("https://evil.example.com"))
 	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("//evil.example.com"))
 }
+
+func TestNormalizeOAuthScope(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "read:user read:org project", normalizeOAuthScope(""))
+	require.Equal(t, "read:user repo", normalizeOAuthScope("  read:user   repo  "))
+}

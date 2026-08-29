@@ -42,6 +42,7 @@ type githubConnection struct {
 	BaseURL           string    `json:"base_url"`
 	APIURL            string    `json:"api_url"`
 	OAuthClientID     string    `json:"oauth_client_id"`
+	OAuthScope        string    `json:"oauth_scope"`
 	SecretSource      string    `json:"secret_source"`
 	SecretEnvironment string    `json:"secret_environment,omitempty"`
 	Enabled           bool      `json:"enabled"`
@@ -61,6 +62,7 @@ type githubConnectionRequest struct {
 	BaseURL       string `json:"base_url"`
 	APIURL        string `json:"api_url"`
 	OAuthClientID string `json:"oauth_client_id"`
+	OAuthScope    string `json:"oauth_scope"`
 	Enabled       *bool  `json:"enabled,omitempty"`
 	Secret        struct {
 		Source      string `json:"source"`
@@ -108,7 +110,13 @@ type githubOAuthState struct {
 	InternalUserID string    `json:"internal_user_id"`
 	ReturnTo       string    `json:"return_to"`
 	CallbackURL    string    `json:"callback_url"`
+	Mode           string    `json:"mode,omitempty"`
 	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+type GitHubConnectionLoginResult struct {
+	AccessToken string
+	APIURL      string
 }
 
 type githubOAuthUser struct {
@@ -172,7 +180,7 @@ func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
 	}
 	connection := githubConnection{
 		ID: uuid.NewString(), Name: strings.TrimSpace(request.Name), BaseURL: baseURL, APIURL: apiURL,
-		OAuthClientID: strings.TrimSpace(request.OAuthClientID), SecretSource: request.Secret.Source,
+		OAuthClientID: strings.TrimSpace(request.OAuthClientID), OAuthScope: normalizeOAuthScope(request.OAuthScope), SecretSource: request.Secret.Source,
 		SecretEnvironment: request.Secret.Environment, Enabled: enabled, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := c.saveConnection(ctx.Request().Context(), connection, request.Secret.Value, ""); err != nil {
@@ -233,6 +241,9 @@ func (c *GitHubConnectionsController) Update(ctx echo.Context) error {
 	}
 	if request.OAuthClientID != "" {
 		connection.OAuthClientID = strings.TrimSpace(request.OAuthClientID)
+	}
+	if request.OAuthScope != "" {
+		connection.OAuthScope = normalizeOAuthScope(request.OAuthScope)
 	}
 	if request.Enabled != nil {
 		connection.Enabled = *request.Enabled
@@ -344,6 +355,76 @@ func (c *GitHubConnectionsController) ListAvailable(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]any{"connections": result})
 }
 
+// ListLoginOptions returns only the non-sensitive fields required to render
+// the unauthenticated login screen.
+func (c *GitHubConnectionsController) ListLoginOptions(ctx echo.Context) error {
+	connections, err := c.listConnections(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list GitHub connections").SetInternal(err)
+	}
+	result := make([]map[string]any, 0, len(connections))
+	for _, connection := range connections {
+		if connection.Enabled && c.secretConfigured(ctx.Request().Context(), connection) {
+			result = append(result, map[string]any{"id": connection.ID, "name": connection.Name, "base_url": connection.BaseURL})
+		}
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"connections": result})
+}
+
+// StartLogin initiates an unauthenticated OAuth login using an administrator
+// configured connection. State is kept server-side so the callback does not
+// need to expose or separately carry the connection ID.
+func (c *GitHubConnectionsController) StartLogin(ctx echo.Context) error {
+	var request struct {
+		ConnectionID string `json:"connection_id"`
+		CallbackURL  string `json:"callback_url"`
+	}
+	if err := ctx.Bind(&request); err != nil || request.ConnectionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "connection_id is required")
+	}
+	connection, _, _, err := c.loadConnection(ctx.Request().Context(), request.ConnectionID)
+	if err != nil || !connection.Enabled || !c.secretConfigured(ctx.Request().Context(), connection) {
+		return echo.NewHTTPError(http.StatusBadRequest, "GitHub connection is unavailable")
+	}
+	callbackURL, err := c.resolveLoginCallbackURL(ctx, request.CallbackURL)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid callback_url")
+	}
+	state := githubOAuthState{ID: uuid.NewString(), ConnectionID: connection.ID, CallbackURL: callbackURL, Mode: "login", ExpiresAt: time.Now().UTC().Add(githubOAuthStateTTL)}
+	if err := c.createObject(ctx.Request().Context(), stateSecretName(state.ID), githubOAuthStateLabel, state, nil); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create OAuth state").SetInternal(err)
+	}
+	params := url.Values{"client_id": {connection.OAuthClientID}, "redirect_uri": {callbackURL}, "state": {state.ID}, "scope": {normalizeOAuthScope(connection.OAuthScope)}}
+	return ctx.JSON(http.StatusOK, map[string]string{"auth_url": connection.BaseURL + "/login/oauth/authorize?" + params.Encode(), "state": state.ID})
+}
+
+func (c *GitHubConnectionsController) CompleteLogin(ctx context.Context, stateID, code string) (*GitHubConnectionLoginResult, error) {
+	if stateID == "" || code == "" {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "code and state are required")
+	}
+	var state githubOAuthState
+	secret, err := c.loadObject(ctx, stateSecretName(stateID), &state)
+	if err != nil || state.ID != stateID || state.Mode != "login" || time.Now().UTC().After(state.ExpiresAt) {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "OAuth state is invalid or expired")
+	}
+	if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
+		return nil, echo.NewHTTPError(http.StatusConflict, "OAuth state has already been used")
+	}
+	connection, _, _, err := c.loadConnection(ctx, state.ConnectionID)
+	if err != nil || !connection.Enabled {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub connection is unavailable")
+	}
+	clientSecret, err := c.resolveClientSecret(ctx, connection)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub connection secret is unavailable")
+	}
+	token, _, err := c.exchangeCode(ctx, connection, clientSecret, code, state.CallbackURL)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "OAuth authentication failed").SetInternal(err)
+	}
+	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL}, nil
+}
+
 func (c *GitHubConnectionsController) ListIdentities(ctx echo.Context) error {
 	user := auth.GetUserFromContext(ctx)
 	if user == nil {
@@ -410,8 +491,15 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 	if err := c.createObject(ctx.Request().Context(), stateSecretName(state.ID), githubOAuthStateLabel, state, nil); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create OAuth state").SetInternal(err)
 	}
-	params := url.Values{"client_id": {connection.OAuthClientID}, "redirect_uri": {callbackURL}, "state": {state.ID}, "scope": {"read:user"}}
+	params := url.Values{"client_id": {connection.OAuthClientID}, "redirect_uri": {callbackURL}, "state": {state.ID}, "scope": {normalizeOAuthScope(connection.OAuthScope)}}
 	return ctx.JSON(http.StatusOK, map[string]string{"authorization_url": connection.BaseURL + "/login/oauth/authorize?" + params.Encode()})
+}
+
+func normalizeOAuthScope(scope string) string {
+	if scope = strings.TrimSpace(scope); scope != "" {
+		return strings.Join(strings.Fields(scope), " ")
+	}
+	return "read:user read:org project"
 }
 
 func (c *GitHubConnectionsController) Callback(ctx echo.Context) error {
@@ -762,6 +850,16 @@ func (c *GitHubConnectionsController) resolveCallbackURL(ctx echo.Context, reque
 		host = ctx.Request().Host
 	}
 	return scheme + "://" + host + "/auth/github-connections/callback", nil
+}
+
+func (c *GitHubConnectionsController) resolveLoginCallbackURL(ctx echo.Context, requested string) (string, error) {
+	callback, err := url.Parse(requested)
+	origin, originErr := url.Parse(ctx.Request().Header.Get("Origin"))
+	allowedPath := callback != nil && callback.Path == "/api/auth/github/callback"
+	if err != nil || originErr != nil || callback.Scheme != origin.Scheme || callback.Host != origin.Host || !allowedPath || callback.RawQuery != "" || callback.Fragment != "" {
+		return "", errors.New("callback URL must use the request origin and the GitHub login callback path")
+	}
+	return callback.String(), nil
 }
 
 func (c *GitHubConnectionsController) fetchGitHubUser(ctx context.Context, connection githubConnection, token string) (githubOAuthUser, error) {

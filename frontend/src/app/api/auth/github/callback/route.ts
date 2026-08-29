@@ -32,7 +32,8 @@ export async function GET(request: NextRequest) {
     }
 
     const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
-    const callbackUrl = new URL(`${backendBaseUrl}/oauth/callback`)
+    const connectionLogin = cookies.get('oauth_connection_login')?.value === '1'
+    const callbackUrl = new URL(`${backendBaseUrl}${connectionLogin ? '/oauth/github-connections/callback' : '/oauth/callback'}`)
     callbackUrl.searchParams.set('code', code)
     callbackUrl.searchParams.set('state', state)
     const response = await fetch(callbackUrl, {
@@ -65,6 +66,13 @@ export async function GET(request: NextRequest) {
       AUTH_COOKIE_OPTIONS,
     )
     redirectResponse.cookies.set('oauth_state', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 0,
+      path: '/',
+    })
+    redirectResponse.cookies.set('oauth_connection_login', '', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',

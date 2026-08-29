@@ -76,6 +76,32 @@ func (s *Server) setupAuthRoutes() {
 	} else {
 		log.Printf("[ROUTES] OAuth endpoints not registered - OAuth provider not configured")
 	}
+	if s.router != nil && s.router.handlers.githubConnectionsController != nil {
+		s.echo.GET("/oauth/github-connections/callback", s.handleGitHubConnectionOAuthCallback)
+	}
+}
+
+func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
+	result, err := s.router.handlers.githubConnectionsController.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"))
+	if err != nil {
+		return err
+	}
+	if s.config.Auth.GitHub == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication is not configured")
+	}
+	authConfig := *s.config.Auth.GitHub
+	authConfig.BaseURL = result.APIURL
+	provider := auth.NewGitHubAuthProvider(&authConfig)
+	userContext, err := provider.Authenticate(c.Request().Context(), result.AccessToken)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed").SetInternal(err)
+	}
+	userContext.AuthType = "github_oauth"
+	userContext.AccessToken = result.AccessToken
+	sessionID := uuid.NewString()
+	expiresAt := time.Now().Add(24 * time.Hour)
+	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
+	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: result.AccessToken, TokenType: "Bearer", ExpiresAt: expiresAt, User: userContext})
 }
 
 // handleOAuthLogin initiates the OAuth flow

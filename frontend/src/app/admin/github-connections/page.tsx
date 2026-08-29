@@ -8,7 +8,7 @@ import { GitHubConnection, GitHubConnectionInput, GitHubSecretSource } from '@/t
 import { useToast } from '@/contexts/ToastContext'
 
 const emptyForm: GitHubConnectionInput = {
-  name: '', base_url: 'https://github.com', api_url: 'https://api.github.com', oauth_client_id: '', enabled: true,
+  name: '', base_url: 'https://github.com', api_url: 'https://api.github.com', oauth_client_id: '', oauth_scope: 'read:user read:org project', enabled: true,
   oauth_client_secret: { source: 'encrypted', value: '' },
 }
 
@@ -33,7 +33,7 @@ export default function GitHubConnectionsAdminPage() {
   const startCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true) }
   const startEdit = (item: GitHubConnection) => {
     setEditing(item)
-    setForm({ name: item.name, base_url: item.base_url, api_url: item.api_url || '', oauth_client_id: item.oauth_client_id || '', enabled: item.enabled,
+    setForm({ name: item.name, base_url: item.base_url, api_url: item.api_url || '', oauth_client_id: item.oauth_client_id || '', oauth_scope: item.oauth_scope || 'read:user read:org project', enabled: item.enabled,
       oauth_client_secret: { source: item.secret_source || 'encrypted', environment: item.secret_environment || '', value: '' } })
     setOpen(true)
   }
@@ -45,7 +45,7 @@ export default function GitHubConnectionsAdminPage() {
       if (!editing) {
         await client.createGitHubConnection(form)
       } else {
-        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, enabled: form.enabled })
+        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled })
         const secret = form.oauth_client_secret
         if (secret && ((secret.source === 'encrypted' && secret.value) || (secret.source === 'environment' && secret.environment !== editing.secret_environment))) {
           await client.updateGitHubConnectionSecret(editing.id, secret)
@@ -92,6 +92,7 @@ export default function GitHubConnectionsAdminPage() {
         <label className="block text-sm dark:text-white">Base URL<input required type="url" className={`${input} mt-1`} value={form.base_url} onChange={e => setForm({...form, base_url:e.target.value})} /></label>
         <label className="block text-sm dark:text-white">API URL<input required type="url" className={`${input} mt-1`} value={form.api_url} onChange={e => setForm({...form, api_url:e.target.value})} /></label>
         <label className="block text-sm dark:text-white">OAuth Client ID<input required className={`${input} mt-1`} value={form.oauth_client_id} onChange={e => setForm({...form, oauth_client_id:e.target.value})} /></label>
+        <label className="block text-sm dark:text-white">OAuth Scope<input required className={`${input} mt-1`} placeholder="read:user read:org project" value={form.oauth_scope} onChange={e => setForm({...form, oauth_scope:e.target.value})} /><span className="mt-1 block text-xs text-gray-500">スペース区切りで指定します。</span></label>
         <label className="block text-sm dark:text-white">Secret保存方式<select className={`${input} mt-1`} value={form.oauth_client_secret?.source} onChange={e => setSecretSource(e.target.value as GitHubSecretSource)}><option value="encrypted">暗号化して保存</option><option value="environment">環境変数を参照</option></select></label>
         {form.oauth_client_secret?.source === 'encrypted' ? <label className="block text-sm dark:text-white">OAuth Client Secret<input required={!editing || !editing.secret_configured} type="password" autoComplete="new-password" placeholder={editing?.secret_configured ? '変更する場合のみ入力' : ''} className={`${input} mt-1`} value={form.oauth_client_secret.value || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'encrypted', value:e.target.value}})} /></label> : <label className="block text-sm dark:text-white">環境変数名<input required className={`${input} mt-1`} placeholder="GITHUB_OAUTH_CORP_CLIENT_SECRET" value={form.oauth_client_secret?.environment || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'environment', environment:e.target.value}})} /></label>}
         <label className="flex items-center gap-2 text-sm dark:text-white"><input type="checkbox" checked={form.enabled} onChange={e => setForm({...form, enabled:e.target.checked})} />有効</label>

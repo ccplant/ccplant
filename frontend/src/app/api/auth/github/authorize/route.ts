@@ -4,7 +4,7 @@ import { getRequestBackendBaseUrl } from '@/lib/server-backend-url'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { redirect_uri } = body
+    const { redirect_uri, connection_id } = body
 
     if (!redirect_uri) {
       return NextResponse.json(
@@ -14,13 +14,13 @@ export async function POST(request: NextRequest) {
     }
 
     const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
-    const response = await fetch(`${backendBaseUrl}/oauth/authorize`, {
+    const response = await fetch(`${backendBaseUrl}${connection_id ? '/github-connections/login' : '/oauth/authorize'}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        redirect_uri,
+        ...(connection_id ? { connection_id, callback_url: redirect_uri } : { redirect_uri }),
       }),
     })
 
@@ -43,6 +43,13 @@ export async function POST(request: NextRequest) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 900,
+      path: '/',
+    })
+    result.cookies.set('oauth_connection_login', connection_id ? '1' : '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: connection_id ? 900 : 0,
       path: '/',
     })
     return result

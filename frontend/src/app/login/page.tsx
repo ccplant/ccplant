@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { Github } from 'lucide-react'
 import { getRedirectUri } from '@/lib/oauth-utils'
 import { useConfig } from '@/hooks/useConfig'
+import type { GitHubConnection } from '@/types/github-connection'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -14,6 +15,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [isGitHubLoading, setIsGitHubLoading] = useState(false)
+  const [loadingConnectionId, setLoadingConnectionId] = useState<string | null>(null)
+  const [loginConnections, setLoginConnections] = useState<GitHubConnection[]>([])
   const [checkingAuth, setCheckingAuth] = useState(true)
 
   // 設定から値を取得
@@ -44,6 +47,13 @@ export default function LoginPage() {
     checkAuthStatus()
   }, [router])
 
+  useEffect(() => {
+    fetch('/api/proxy/github-connections/login-options', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : Promise.reject())
+      .then(data => setLoginConnections(Array.isArray(data.connections) ? data.connections : []))
+      .catch(() => setLoginConnections([]))
+  }, [])
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -72,8 +82,9 @@ export default function LoginPage() {
     }
   }
 
-  const handleGitHubLogin = async () => {
-    setIsGitHubLoading(true)
+  const handleGitHubLogin = async (connectionId?: string) => {
+    if (connectionId) setLoadingConnectionId(connectionId)
+    else setIsGitHubLoading(true)
     setError('')
 
     try {
@@ -83,7 +94,8 @@ export default function LoginPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          redirect_uri: getRedirectUri()
+          redirect_uri: getRedirectUri(),
+          ...(connectionId ? { connection_id: connectionId } : {}),
         }),
       })
 
@@ -99,6 +111,7 @@ export default function LoginPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '予期しないエラーが発生しました')
       setIsGitHubLoading(false)
+      setLoadingConnectionId(null)
     }
   }
 
@@ -143,13 +156,22 @@ export default function LoginPage() {
 
         <div className="mt-8">
           <button
-            onClick={handleGitHubLogin}
+            onClick={() => void handleGitHubLogin()}
             disabled={isGitHubLoading}
             className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Github className="w-5 h-5 mr-2" />
             {isGitHubLoading ? 'Redirecting...' : 'Continue with GitHub'}
           </button>
+          {loginConnections.map(connection => <button
+            key={connection.id}
+            onClick={() => void handleGitHubLogin(connection.id)}
+            disabled={loadingConnectionId !== null || isGitHubLoading}
+            className="mt-3 w-full flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Github className="w-5 h-5 mr-2" />
+            {loadingConnectionId === connection.id ? 'Redirecting...' : `Login with ${connection.name}`}
+          </button>)}
         </div>
 
         <div className="mt-6">

@@ -408,6 +408,9 @@ func isOAuthEndpoint(path string) bool {
 		"/oauth/logout",
 		"/oauth/refresh",
 		"/auth/github-connections/callback",
+		"/github-connections/login-options",
+		"/github-connections/login",
+		"/oauth/github-connections/callback",
 	}
 
 	for _, oauthPath := range oauthPaths {

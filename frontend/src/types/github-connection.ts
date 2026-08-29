@@ -6,6 +6,7 @@ export interface GitHubConnection {
   base_url: string
   api_url?: string
   oauth_client_id?: string
+  oauth_scope?: string
   secret_source?: GitHubSecretSource
   secret_environment?: string
   secret_configured?: boolean
@@ -21,6 +22,7 @@ export interface GitHubConnectionInput {
   base_url: string
   api_url: string
   oauth_client_id: string
+  oauth_scope: string
   enabled?: boolean
   oauth_client_secret?: {
     source: GitHubSecretSource

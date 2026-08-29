@@ -573,6 +573,8 @@ func (r *Router) registerConditionalRoutes() error {
 		read := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
 		write := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
 		controller := r.handlers.githubConnectionsController
+		r.echo.GET("/github-connections/login-options", controller.ListLoginOptions)
+		r.echo.POST("/github-connections/login", controller.StartLogin)
 		r.echo.GET("/admin/github-connections", controller.List, admin)
 		r.echo.POST("/admin/github-connections", controller.Create, admin)
 		r.echo.GET("/admin/github-connections/:id", controller.Get, admin)
