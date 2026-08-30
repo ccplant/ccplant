@@ -163,3 +163,12 @@ func TestNormalizeOAuthScope(t *testing.T) {
 	require.Equal(t, "read:user read:org project", normalizeOAuthScope(""))
 	require.Equal(t, "read:user repo", normalizeOAuthScope("  read:user   repo  "))
 }
+
+func TestShowConnectionOnLoginDefaultsToTrue(t *testing.T) {
+	t.Parallel()
+	require.True(t, showConnectionOnLogin(githubConnection{}))
+	visible := true
+	hidden := false
+	require.True(t, showConnectionOnLogin(githubConnection{ShowOnLogin: &visible}))
+	require.False(t, showConnectionOnLogin(githubConnection{ShowOnLogin: &hidden}))
+}

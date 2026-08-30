@@ -13,6 +13,7 @@ export interface GitHubConnection {
   callback_url?: string
   linked_identities?: number
   enabled?: boolean
+  show_on_login?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -24,6 +25,7 @@ export interface GitHubConnectionInput {
   oauth_client_id: string
   oauth_scope: string
   enabled?: boolean
+  show_on_login?: boolean
   oauth_client_secret?: {
     source: GitHubSecretSource
     value?: string

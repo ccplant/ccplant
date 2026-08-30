@@ -8,7 +8,7 @@ import { GitHubConnection, GitHubConnectionInput, GitHubSecretSource } from '@/t
 import { useToast } from '@/contexts/ToastContext'
 
 const emptyForm: GitHubConnectionInput = {
-  name: '', base_url: 'https://github.com', api_url: 'https://api.github.com', oauth_client_id: '', oauth_scope: 'read:user read:org project', enabled: true,
+  name: '', base_url: 'https://github.com', api_url: 'https://api.github.com', oauth_client_id: '', oauth_scope: 'read:user read:org project', enabled: true, show_on_login: true,
   oauth_client_secret: { source: 'encrypted', value: '' },
 }
 
@@ -33,7 +33,7 @@ export default function GitHubConnectionsAdminPage() {
   const startCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true) }
   const startEdit = (item: GitHubConnection) => {
     setEditing(item)
-    setForm({ name: item.name, base_url: item.base_url, api_url: item.api_url || '', oauth_client_id: item.oauth_client_id || '', oauth_scope: item.oauth_scope || 'read:user read:org project', enabled: item.enabled,
+    setForm({ name: item.name, base_url: item.base_url, api_url: item.api_url || '', oauth_client_id: item.oauth_client_id || '', oauth_scope: item.oauth_scope || 'read:user read:org project', enabled: item.enabled, show_on_login: item.show_on_login !== false,
       oauth_client_secret: { source: item.secret_source || 'encrypted', environment: item.secret_environment || '', value: '' } })
     setOpen(true)
   }
@@ -45,7 +45,7 @@ export default function GitHubConnectionsAdminPage() {
       if (!editing) {
         await client.createGitHubConnection(form)
       } else {
-        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled })
+        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled, show_on_login: form.show_on_login })
         const secret = form.oauth_client_secret
         if (secret && ((secret.source === 'encrypted' && secret.value) || (secret.source === 'environment' && secret.environment !== editing.secret_environment))) {
           await client.updateGitHubConnectionSecret(editing.id, secret)
@@ -79,7 +79,7 @@ export default function GitHubConnectionsAdminPage() {
       {connections.map((item) => <div key={item.id} className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-start justify-between gap-4"><div className="flex min-w-0 gap-3"><Github className="mt-0.5 h-5 w-5 shrink-0" /><div><h2 className="font-semibold dark:text-white">{item.name}</h2><p className="mt-1 break-all text-sm text-gray-500">{item.base_url}</p></div></div>
           <div className="flex gap-2"><button onClick={() => void testConnection(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">接続テスト</button><button onClick={() => startEdit(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">編集</button><button onClick={() => void remove(item)} aria-label="削除" className="rounded-md border border-red-200 p-2 text-red-600 dark:border-red-800"><Trash2 className="h-4 w-4" /></button></div></div>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className={`rounded-full px-2 py-1 ${item.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{item.enabled ? 'Enabled' : 'Disabled'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.secret_source} / {item.secret_configured ? '設定済み' : '未設定'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.linked_identities || 0} identities</span></div>
+        <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className={`rounded-full px-2 py-1 ${item.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{item.enabled ? 'Enabled' : 'Disabled'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.show_on_login !== false ? 'ログインに表示' : 'ログインでは非表示'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.secret_source} / {item.secret_configured ? '設定済み' : '未設定'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.linked_identities || 0} identities</span></div>
         <button onClick={() => { const callback = `${window.location.origin}/api/proxy/auth/github-connections/callback`; void navigator.clipboard.writeText(callback); showToast('Callback URLをコピーしました', 'success') }} className="mt-4 inline-flex items-center gap-1 text-xs text-blue-600"><Copy className="h-3.5 w-3.5" />Callback URLをコピー</button>
       </div>)}
       {!connections.length && <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">Connectionはまだありません。</div>}
@@ -96,6 +96,7 @@ export default function GitHubConnectionsAdminPage() {
         <label className="block text-sm dark:text-white">Secret保存方式<select className={`${input} mt-1`} value={form.oauth_client_secret?.source} onChange={e => setSecretSource(e.target.value as GitHubSecretSource)}><option value="encrypted">暗号化して保存</option><option value="environment">環境変数を参照</option></select></label>
         {form.oauth_client_secret?.source === 'encrypted' ? <label className="block text-sm dark:text-white">OAuth Client Secret<input required={!editing || !editing.secret_configured} type="password" autoComplete="new-password" placeholder={editing?.secret_configured ? '変更する場合のみ入力' : ''} className={`${input} mt-1`} value={form.oauth_client_secret.value || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'encrypted', value:e.target.value}})} /></label> : <label className="block text-sm dark:text-white">環境変数名<input required className={`${input} mt-1`} placeholder="GITHUB_OAUTH_CORP_CLIENT_SECRET" value={form.oauth_client_secret?.environment || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'environment', environment:e.target.value}})} /></label>}
         <label className="flex items-center gap-2 text-sm dark:text-white"><input type="checkbox" checked={form.enabled} onChange={e => setForm({...form, enabled:e.target.checked})} />有効</label>
+        <label className="flex items-center gap-2 text-sm dark:text-white"><input type="checkbox" checked={form.show_on_login !== false} onChange={e => setForm({...form, show_on_login:e.target.checked})} />ログイン画面に表示</label>
       </div>
       <div className="mt-6 flex justify-end gap-3"><button type="button" onClick={() => setOpen(false)} className="rounded-md border px-4 py-2 text-sm dark:border-gray-600">キャンセル</button><button disabled={saving} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{saving ? '保存中...' : '保存'}</button></div>
     </form></div>}

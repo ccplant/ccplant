@@ -46,6 +46,7 @@ type githubConnection struct {
 	SecretSource      string    `json:"secret_source"`
 	SecretEnvironment string    `json:"secret_environment,omitempty"`
 	Enabled           bool      `json:"enabled"`
+	ShowOnLogin       *bool     `json:"show_on_login"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -64,6 +65,7 @@ type githubConnectionRequest struct {
 	OAuthClientID string `json:"oauth_client_id"`
 	OAuthScope    string `json:"oauth_scope"`
 	Enabled       *bool  `json:"enabled,omitempty"`
+	ShowOnLogin   *bool  `json:"show_on_login,omitempty"`
 	Secret        struct {
 		Source      string `json:"source"`
 		Value       string `json:"value,omitempty"`
@@ -180,10 +182,14 @@ func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
 	if request.Enabled != nil {
 		enabled = *request.Enabled
 	}
+	showOnLogin := true
+	if request.ShowOnLogin != nil {
+		showOnLogin = *request.ShowOnLogin
+	}
 	connection := githubConnection{
 		ID: uuid.NewString(), Name: strings.TrimSpace(request.Name), BaseURL: baseURL, APIURL: apiURL,
 		OAuthClientID: strings.TrimSpace(request.OAuthClientID), OAuthScope: normalizeOAuthScope(request.OAuthScope), SecretSource: request.Secret.Source,
-		SecretEnvironment: request.Secret.Environment, Enabled: enabled, CreatedAt: now, UpdatedAt: now,
+		SecretEnvironment: request.Secret.Environment, Enabled: enabled, ShowOnLogin: &showOnLogin, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := c.saveConnection(ctx.Request().Context(), connection, request.Secret.Value, ""); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create GitHub connection").SetInternal(err)
@@ -249,6 +255,9 @@ func (c *GitHubConnectionsController) Update(ctx echo.Context) error {
 	}
 	if request.Enabled != nil {
 		connection.Enabled = *request.Enabled
+	}
+	if request.ShowOnLogin != nil {
+		connection.ShowOnLogin = request.ShowOnLogin
 	}
 	connection.UpdatedAt = time.Now().UTC()
 	if err := c.saveConnection(ctx.Request().Context(), connection, secret, resourceVersion); err != nil {
@@ -366,7 +375,7 @@ func (c *GitHubConnectionsController) ListLoginOptions(ctx echo.Context) error {
 	}
 	result := make([]map[string]any, 0, len(connections))
 	for _, connection := range connections {
-		if connection.Enabled && c.secretConfigured(ctx.Request().Context(), connection) {
+		if connection.Enabled && showConnectionOnLogin(connection) && c.secretConfigured(ctx.Request().Context(), connection) {
 			result = append(result, map[string]any{"id": connection.ID, "name": connection.Name, "base_url": connection.BaseURL})
 		}
 	}
@@ -797,6 +806,7 @@ func (c *GitHubConnectionsController) listConnections(ctx context.Context) ([]gi
 	for i := range secrets.Items {
 		var connection githubConnection
 		if err := json.Unmarshal(secrets.Items[i].Data["record.json"], &connection); err == nil {
+			normalizeConnectionDefaults(&connection)
 			connections = append(connections, connection)
 		}
 	}
@@ -859,7 +869,19 @@ func (c *GitHubConnectionsController) loadConnection(ctx context.Context, id str
 	if err := json.Unmarshal(secret.Data["record.json"], &connection); err != nil {
 		return githubConnection{}, "", "", err
 	}
+	normalizeConnectionDefaults(&connection)
 	return connection, string(secret.Data["client_secret"]), secret.ResourceVersion, nil
+}
+
+func normalizeConnectionDefaults(connection *githubConnection) {
+	if connection.ShowOnLogin == nil {
+		show := true
+		connection.ShowOnLogin = &show
+	}
+}
+
+func showConnectionOnLogin(connection githubConnection) bool {
+	return connection.ShowOnLogin == nil || *connection.ShowOnLogin
 }
 
 func (c *GitHubConnectionsController) createObject(ctx context.Context, name, label string, value any, labels map[string]string) error {
