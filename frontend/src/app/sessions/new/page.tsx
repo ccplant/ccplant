@@ -665,30 +665,6 @@ export default function NewSessionPage() {
               </p>
             </div>
 
-            {/* 外部アカウント接続 */}
-            <div>
-              <label htmlFor="connection-id" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                アカウント接続
-              </label>
-              <select
-                id="connection-id"
-                value={connectionId}
-                onChange={(event) => setConnectionId(event.target.value)}
-                disabled={isCreating}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-sm"
-              >
-                <option value="">自動選択</option>
-                {linkedConnections.map((identity) => (
-                  <option key={identity.id} value={identity.connection_id}>
-                    {identity.connection_name} ({identity.login})
-                  </option>
-                ))}
-              </select>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                連携済みアカウントの認証情報をこのセッションで使用します
-              </p>
-            </div>
-
             {/* その他の設定 */}
             <div>
               <button
@@ -716,6 +692,11 @@ export default function NewSessionPage() {
                     {availablePools.find((pool) => pool.name === selectedManagerId)?.name ?? 'カスタム'}
                   </span>
                 )}
+                {connectionId !== '' && (
+                  <span className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs rounded-full">
+                    {linkedConnections.find((identity) => identity.connection_id === connectionId)?.connection_name ?? 'アカウント接続'}
+                  </span>
+                )}
                 {cycleEnabled && cycleMessage.trim() && (
                   <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 text-xs rounded-full">
                     サイクル{cycleMaxCount > 0 ? ` (${cycleMaxCount}回)` : ''}
@@ -725,6 +706,30 @@ export default function NewSessionPage() {
 
               {showAdvancedSettings && (
                 <div className="mt-3 pl-1 space-y-4">
+                  {/* 外部アカウント接続 */}
+                  <div>
+                    <label htmlFor="connection-id" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      アカウント接続
+                    </label>
+                    <select
+                      id="connection-id"
+                      value={connectionId}
+                      onChange={(event) => setConnectionId(event.target.value)}
+                      disabled={isCreating}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-sm"
+                    >
+                      <option value="">自動選択</option>
+                      {linkedConnections.map((identity) => (
+                        <option key={identity.id} value={identity.connection_id}>
+                          {identity.connection_name} ({identity.login})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+                      通常はrepository organizationに応じて自動選択されます
+                    </p>
+                  </div>
+
                   {/* 実行Pool選択 */}
                   {availablePools.length > 0 && (
                     <div>
