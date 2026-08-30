@@ -1,7 +1,9 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,34 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
+
+func TestSessionTokenDebugLogging(t *testing.T) {
+	var output bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
+
+	controller := NewSessionController(nil, nil)
+	controller.logSessionTokenRouting("session-disabled", "explicit", "connection-a", "secret-token-a")
+	if output.Len() != 0 {
+		t.Fatalf("disabled debug logging produced output: %q", output.String())
+	}
+
+	controller.sessionTokenDebug = true
+	controller.logSessionTokenRouting("session-enabled", "organization", "connection-b", "secret-token-b")
+	got := output.String()
+	if !strings.Contains(got, "session_id=session-enabled") || !strings.Contains(got, `connection_id="connection-b"`) || !strings.Contains(got, "token_fingerprint=35ef9b2c10f6") {
+		t.Fatalf("unexpected debug output: %q", got)
+	}
+	if strings.Contains(got, "secret-token-b") {
+		t.Fatalf("debug output leaked token: %q", got)
+	}
+}
 
 type quotaErrorSessionCreator struct{}
 

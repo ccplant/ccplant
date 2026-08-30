@@ -597,6 +597,8 @@ type Config struct {
 	KVStore KVStoreConfig `json:"kv_store" mapstructure:"kv_store"`
 	// Usage controls response-level token usage collection.
 	Usage UsageConfig `json:"usage" mapstructure:"usage"`
+	// SessionTokenDebug enables non-secret token-routing diagnostics for session creation.
+	SessionTokenDebug bool `json:"session_token_debug" mapstructure:"session_token_debug"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -1067,6 +1069,7 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
+	_ = v.BindEnv("session_token_debug", "AGENTAPI_SESSION_TOKEN_DEBUG_ENABLED")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")

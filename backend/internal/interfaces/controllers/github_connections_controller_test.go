@@ -197,11 +197,13 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "corp-token", nil)
 	require.NoError(t, err)
 
-	token, matched, err := controller.ResolveAccessTokenForOrganization(context.Background(), user, "Example-Org")
+	token, connectionID, matched, err := controller.ResolveAccessTokenForOrganization(context.Background(), user, "Example-Org")
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, "corp-token", token)
-	_, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
+	require.Equal(t, "corp", connectionID)
+	_, connectionID, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
 	require.NoError(t, err)
 	require.False(t, matched)
+	require.Empty(t, connectionID)
 }

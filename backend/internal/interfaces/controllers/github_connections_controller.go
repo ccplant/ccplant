@@ -685,26 +685,26 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 
 // ResolveAccessTokenForOrganization returns the credential mapped to an organization.
 // The boolean is false when no connection mapping exists for the organization.
-func (c *GitHubConnectionsController) ResolveAccessTokenForOrganization(ctx context.Context, user *entities.User, organization string) (string, bool, error) {
+func (c *GitHubConnectionsController) ResolveAccessTokenForOrganization(ctx context.Context, user *entities.User, organization string) (string, string, bool, error) {
 	organization = strings.ToLower(strings.TrimSpace(organization))
 	if organization == "" {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	connections, err := c.listConnections(ctx)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	for _, connection := range connections {
 		if !containsOrganization(connection.Organizations, organization) {
 			continue
 		}
 		if !connection.Enabled {
-			return "", true, fmt.Errorf("GitHub connection %q mapped to organization %q is disabled", connection.Name, organization)
+			return "", connection.ID, true, fmt.Errorf("GitHub connection %q mapped to organization %q is disabled", connection.Name, organization)
 		}
 		token, err := c.ResolveAccessToken(ctx, user, connection.ID)
-		return token, true, err
+		return token, connection.ID, true, err
 	}
-	return "", false, nil
+	return "", "", false, nil
 }
 
 func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID, canonicalUserID string) (githubPrincipal, error) {

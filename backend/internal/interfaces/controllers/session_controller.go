@@ -3,6 +3,7 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,15 +79,21 @@ type SessionController struct {
 	nextStatusSubscriberID uint64
 	githubTokenResolver    interface {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
-		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, bool, error)
+		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 	}
+	sessionTokenDebug bool
 }
 
 func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
-	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, bool, error)
+	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 }) SessionControllerOption {
 	return func(c *SessionController) { c.githubTokenResolver = resolver }
+}
+
+// WithSessionTokenDebug enables safe token-routing diagnostics. Token values are never logged.
+func WithSessionTokenDebug(enabled bool) SessionControllerOption {
+	return func(c *SessionController) { c.sessionTokenDebug = enabled }
 }
 
 // NewSessionController creates a new SessionController instance
@@ -215,18 +222,24 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		startReq.Params.GithubToken = token
+		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
 	} else if startReq.Params != nil && startReq.Params.GithubToken == "" && repositoryOwner(startReq.Params.RepoFullName) != "" && c.githubTokenResolver != nil {
-		token, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(startReq.Params.RepoFullName))
+		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(startReq.Params.RepoFullName))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		if matched {
 			startReq.Params.GithubToken = token
+			c.logSessionTokenRouting(sessionID, "organization", connectionID, token)
 		} else {
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)
+			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
 		}
 	} else {
 		populateGitHubTokenFromAuthHeader(ctx, &startReq)
+		if startReq.Params != nil {
+			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
+		}
 	}
 
 	// Validate team scope authorization
@@ -374,6 +387,18 @@ func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.Star
 	if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
 		startReq.Params.GithubToken = token
 	}
+}
+
+func (c *SessionController) logSessionTokenRouting(sessionID, source, connectionID, token string) {
+	if !c.sessionTokenDebug {
+		return
+	}
+	fingerprint := "none"
+	if token != "" {
+		sum := sha256.Sum256([]byte(token))
+		fingerprint = fmt.Sprintf("%x", sum[:6])
+	}
+	log.Printf("[SESSION_TOKEN_DEBUG] session_id=%s source=%s connection_id=%q token_fingerprint=%s token_present=%t", sessionID, source, connectionID, fingerprint, token != "")
 }
 
 func repositoryOwner(repoFullName string) string {
