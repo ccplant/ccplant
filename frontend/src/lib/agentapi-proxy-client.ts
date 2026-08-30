@@ -79,6 +79,7 @@ import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
+import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 function defaultClientDebugEnabled(): boolean {
@@ -2978,6 +2979,45 @@ export class AgentAPIProxyClient {
 
   async listAdminSettingsVersions(): Promise<AdminSettingsVersionsResponse> {
     return this.makeRequest<AdminSettingsVersionsResponse>('/admin/system-settings/versions');
+  }
+
+  async listGitHubConnections(admin = false): Promise<GitHubConnection[]> {
+    const response = await this.makeRequest<{ connections: GitHubConnection[] }>(admin ? '/admin/github-connections' : '/github-connections');
+    return response.connections;
+  }
+
+  async createGitHubConnection(request: GitHubConnectionInput): Promise<GitHubConnection> {
+    return this.makeRequest<GitHubConnection>('/admin/github-connections', { method: 'POST', body: JSON.stringify(request) });
+  }
+
+  async updateGitHubConnection(id: string, request: Partial<GitHubConnectionInput>): Promise<GitHubConnection> {
+    return this.makeRequest<GitHubConnection>(`/admin/github-connections/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(request) });
+  }
+
+  async updateGitHubConnectionSecret(id: string, secret: NonNullable<GitHubConnectionInput['oauth_client_secret']>): Promise<GitHubConnection> {
+    return this.makeRequest<GitHubConnection>(`/admin/github-connections/${encodeURIComponent(id)}/secret`, { method: 'PUT', body: JSON.stringify(secret) });
+  }
+
+  async deleteGitHubConnection(id: string): Promise<void> {
+    await this.makeRequest(`/admin/github-connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async testGitHubConnection(id: string): Promise<{ api_reachable: boolean; secret_resolvable: boolean }> {
+    return this.makeRequest(`/admin/github-connections/${encodeURIComponent(id)}/test`, { method: 'POST' });
+  }
+
+  async listGitHubIdentities(): Promise<GitHubIdentitiesResponse> {
+    return this.makeRequest<GitHubIdentitiesResponse>('/users/me/github-identities');
+  }
+
+  async startGitHubIdentityLink(connectionId: string, returnTo: string, callbackUrl?: string): Promise<{ authorization_url: string }> {
+    return this.makeRequest<{ authorization_url: string }>('/users/me/github-identities/link', {
+      method: 'POST', body: JSON.stringify({ connection_id: connectionId, return_to: returnTo, callback_url: callbackUrl }),
+    });
+  }
+
+  async unlinkGitHubIdentity(identityId: string): Promise<void> {
+    await this.makeRequest(`/users/me/github-identities/${encodeURIComponent(identityId)}`, { method: 'DELETE' });
   }
 
   async listClusterSessionManagers(): Promise<ClusterSessionManager[]> {

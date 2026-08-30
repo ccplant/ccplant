@@ -110,6 +110,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     fields: ['enabled_plugins'],
   },
   {
+    slug: 'account-connections',
+    label: 'アカウント連携',
+    icon: Github,
+    group: 'アクセス',
+    scopes: ['personal'],
+    fields: [],
+  },
+  {
     slug: 'api-tokens',
     label: 'API トークン',
     icon: Ticket,

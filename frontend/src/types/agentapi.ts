@@ -233,6 +233,7 @@ export interface CreateSessionRequest {
   params?: {
     message?: string;
     github_token?: string;
+    connection_id?: string;
     oneshot?: boolean;
     sandbox?: SandboxConfig;
     docker?: DockerConfig;

@@ -117,10 +117,11 @@ func (c *Client) applyMiddlewares(req *http.Request) error {
 
 // StartParams contains optional session startup parameters.
 type StartParams struct {
-	Message   string `json:"message,omitempty"`
-	Oneshot   bool   `json:"oneshot,omitempty"`
-	AgentType string `json:"agent_type,omitempty"`
-	AuthProxy *bool  `json:"auth_proxy,omitempty"`
+	Message      string `json:"message,omitempty"`
+	Oneshot      bool   `json:"oneshot,omitempty"`
+	AgentType    string `json:"agent_type,omitempty"`
+	AuthProxy    *bool  `json:"auth_proxy,omitempty"`
+	ConnectionID string `json:"connection_id,omitempty"`
 }
 
 // StartRequest represents the request body for starting a new agentapi server

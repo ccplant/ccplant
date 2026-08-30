@@ -81,6 +81,8 @@ type SessionParams struct {
 	Message string `json:"message,omitempty"`
 	// GithubToken is a GitHub token to use for authentication instead of GitHub App
 	GithubToken string `json:"github_token,omitempty"`
+	// ConnectionID selects a linked external account connection for this session.
+	ConnectionID string `json:"connection_id,omitempty"`
 	// AgentType specifies the type of agent to use for the session
 	AgentType string `json:"agent_type,omitempty"`
 	// Slack contains Slack integration parameters
