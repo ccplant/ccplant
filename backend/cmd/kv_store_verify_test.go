@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -17,6 +18,33 @@ func TestVerifyKVStoresMatch(t *testing.T) {
 	record := kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: value}
 	_, _ = primary.Create(ctx, record)
 	_, _ = secondary.Create(ctx, record)
+	result, err := verifyKVStores(ctx, primary, secondary, "test")
+	if err != nil || result.Matched != 1 || result.mismatchCount() != 0 {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
+
+func TestVerifyKVStoresDecryptsEncryptedSecondary(t *testing.T) {
+	ctx := context.Background()
+	primary, secondaryBackend := newMemoryKVStore(), newMemoryKVStore()
+	encodedKey := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	keyring, err := kvstore.NewLocalKeyring("test-key", map[string]string{"test-key": encodedKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondary, err := kvstore.NewEncryptedStore(secondaryBackend, keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := []byte(`{"metadata":{"name":"memory","namespace":"test","labels":{"agentapi.proxy/type":"memory"}}}`)
+	record := kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: value}
+	if _, err := primary.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secondary.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+
 	result, err := verifyKVStores(ctx, primary, secondary, "test")
 	if err != nil || result.Matched != 1 || result.mismatchCount() != 0 {
 		t.Fatalf("result=%#v err=%v", result, err)

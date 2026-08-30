@@ -134,6 +134,24 @@ agentapi-proxy kv-store verify \
   --output text
 ```
 
+When either side uses encrypted libSQL values, provide that store's keyring. The
+command decrypts records before comparing them, so encrypted and plaintext
+stores can be verified directly:
+
+```bash
+agentapi-proxy kv-store verify \
+  --namespace agentapi-ui \
+  --primary-backend libsql \
+  --primary-database-url "$PRIMARY_DATABASE_URL" \
+  --primary-auth-token "$PRIMARY_DATABASE_TOKEN" \
+  --secondary-backend libsql \
+  --secondary-database-url "$SECONDARY_DATABASE_URL" \
+  --secondary-auth-token "$SECONDARY_DATABASE_TOKEN" \
+  --secondary-encryption-active-key-id "$KV_ACTIVE_KEY_ID" \
+  --secondary-encryption-keys-json "$KV_KEYRING" \
+  --output json
+```
+
 The command compares application-owned record values while ignoring backend
 versions. It reports `matched`, `missing-primary`, `missing-secondary`, and
 `different` records, and exits non-zero when any mismatch exists. Use
