@@ -132,6 +132,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
+		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
 	}
 	if githubConnectionsController != nil {
 		sessionControllerOptions = append(sessionControllerOptions, controllers.WithGitHubTokenResolver(githubConnectionsController))

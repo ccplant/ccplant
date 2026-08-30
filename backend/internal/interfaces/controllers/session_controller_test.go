@@ -1,7 +1,9 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,34 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
+
+func TestSessionTokenDebugLogging(t *testing.T) {
+	var output bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
+
+	controller := NewSessionController(nil, nil)
+	controller.logSessionTokenRouting("session-disabled", "explicit", "connection-a", "secret-token-a")
+	if output.Len() != 0 {
+		t.Fatalf("disabled debug logging produced output: %q", output.String())
+	}
+
+	controller.sessionTokenDebug = true
+	controller.logSessionTokenRouting("session-enabled", "organization", "connection-b", "secret-token-b")
+	got := output.String()
+	if !strings.Contains(got, "session_id=session-enabled") || !strings.Contains(got, `connection_id="connection-b"`) || !strings.Contains(got, "token_fingerprint=35ef9b2c10f6") {
+		t.Fatalf("unexpected debug output: %q", got)
+	}
+	if strings.Contains(got, "secret-token-b") {
+		t.Fatalf("debug output leaked token: %q", got)
+	}
+}
 
 type quotaErrorSessionCreator struct{}
 
@@ -82,6 +112,38 @@ func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 
 			if startReq.Params.GithubToken != tt.wantToken {
 				t.Fatalf("GithubToken = %q, want %q", startReq.Params.GithubToken, tt.wantToken)
+			}
+		})
+	}
+}
+
+func TestRepositoryOwner(t *testing.T) {
+	t.Parallel()
+	if got := repositoryOwner(" Example-Org/repository "); got != "example-org" {
+		t.Fatalf("repositoryOwner() = %q", got)
+	}
+	for _, value := range []string{"", "repository", "/repository", "org/"} {
+		if got := repositoryOwner(value); got != "" {
+			t.Fatalf("repositoryOwner(%q) = %q, want empty", value, got)
+		}
+	}
+}
+
+func TestSessionRepository(t *testing.T) {
+	tests := []struct {
+		name  string
+		input entities.StartRequest
+		want  string
+	}{
+		{name: "params takes precedence", input: entities.StartRequest{Params: &entities.SessionParams{RepoFullName: "params/repo"}, Tags: map[string]string{"repository": "tags/repo"}}, want: "params/repo"},
+		{name: "falls back to repository tag", input: entities.StartRequest{Params: &entities.SessionParams{}, Tags: map[string]string{"repository": "tags/repo"}}, want: "tags/repo"},
+		{name: "supports nil params", input: entities.StartRequest{Tags: map[string]string{"repository": "tags/repo"}}, want: "tags/repo"},
+		{name: "empty when unspecified", input: entities.StartRequest{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sessionRepository(tt.input); got != tt.want {
+				t.Fatalf("sessionRepository() = %q, want %q", got, tt.want)
 			}
 		})
 	}

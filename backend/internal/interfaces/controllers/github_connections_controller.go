@@ -47,6 +47,7 @@ type githubConnection struct {
 	SecretEnvironment string    `json:"secret_environment,omitempty"`
 	Enabled           bool      `json:"enabled"`
 	ShowOnLogin       *bool     `json:"show_on_login"`
+	Organizations     []string  `json:"organizations,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -59,13 +60,14 @@ type githubConnectionResponse struct {
 }
 
 type githubConnectionRequest struct {
-	Name          string `json:"name"`
-	BaseURL       string `json:"base_url"`
-	APIURL        string `json:"api_url"`
-	OAuthClientID string `json:"oauth_client_id"`
-	OAuthScope    string `json:"oauth_scope"`
-	Enabled       *bool  `json:"enabled,omitempty"`
-	ShowOnLogin   *bool  `json:"show_on_login,omitempty"`
+	Name          string   `json:"name"`
+	BaseURL       string   `json:"base_url"`
+	APIURL        string   `json:"api_url"`
+	OAuthClientID string   `json:"oauth_client_id"`
+	OAuthScope    string   `json:"oauth_scope"`
+	Enabled       *bool    `json:"enabled,omitempty"`
+	ShowOnLogin   *bool    `json:"show_on_login,omitempty"`
+	Organizations []string `json:"organizations,omitempty"`
 	Secret        struct {
 		Source      string `json:"source"`
 		Value       string `json:"value,omitempty"`
@@ -189,7 +191,11 @@ func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
 	connection := githubConnection{
 		ID: uuid.NewString(), Name: strings.TrimSpace(request.Name), BaseURL: baseURL, APIURL: apiURL,
 		OAuthClientID: strings.TrimSpace(request.OAuthClientID), OAuthScope: normalizeOAuthScope(request.OAuthScope), SecretSource: request.Secret.Source,
-		SecretEnvironment: request.Secret.Environment, Enabled: enabled, ShowOnLogin: &showOnLogin, CreatedAt: now, UpdatedAt: now,
+		SecretEnvironment: request.Secret.Environment, Enabled: enabled, ShowOnLogin: &showOnLogin,
+		Organizations: normalizeOrganizations(request.Organizations), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := c.validateOrganizationAssignments(ctx.Request().Context(), connection.ID, connection.Organizations); err != nil {
+		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	}
 	if err := c.saveConnection(ctx.Request().Context(), connection, request.Secret.Value, ""); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create GitHub connection").SetInternal(err)
@@ -258,6 +264,12 @@ func (c *GitHubConnectionsController) Update(ctx echo.Context) error {
 	}
 	if request.ShowOnLogin != nil {
 		connection.ShowOnLogin = request.ShowOnLogin
+	}
+	if request.Organizations != nil {
+		connection.Organizations = normalizeOrganizations(request.Organizations)
+		if err := c.validateOrganizationAssignments(ctx.Request().Context(), connection.ID, connection.Organizations); err != nil {
+			return echo.NewHTTPError(http.StatusConflict, err.Error())
+		}
 	}
 	connection.UpdatedAt = time.Now().UTC()
 	if err := c.saveConnection(ctx.Request().Context(), connection, secret, resourceVersion); err != nil {
@@ -671,6 +683,30 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
+// ResolveAccessTokenForOrganization returns the credential mapped to an organization.
+// The boolean is false when no connection mapping exists for the organization.
+func (c *GitHubConnectionsController) ResolveAccessTokenForOrganization(ctx context.Context, user *entities.User, organization string) (string, string, bool, error) {
+	organization = strings.ToLower(strings.TrimSpace(organization))
+	if organization == "" {
+		return "", "", false, nil
+	}
+	connections, err := c.listConnections(ctx)
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, connection := range connections {
+		if !containsOrganization(connection.Organizations, organization) {
+			continue
+		}
+		if !connection.Enabled {
+			return "", connection.ID, true, fmt.Errorf("GitHub connection %q mapped to organization %q is disabled", connection.Name, organization)
+		}
+		token, err := c.ResolveAccessToken(ctx, user, connection.ID)
+		return token, connection.ID, true, err
+	}
+	return "", "", false, nil
+}
+
 func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID, canonicalUserID string) (githubPrincipal, error) {
 	principal, err := c.loadPrincipal(ctx, internalUserID)
 	if err == nil {
@@ -878,6 +914,53 @@ func normalizeConnectionDefaults(connection *githubConnection) {
 		show := true
 		connection.ShowOnLogin = &show
 	}
+	connection.Organizations = normalizeOrganizations(connection.Organizations)
+}
+
+func normalizeOrganizations(organizations []string) []string {
+	seen := make(map[string]struct{}, len(organizations))
+	result := make([]string, 0, len(organizations))
+	for _, organization := range organizations {
+		organization = strings.ToLower(strings.TrimSpace(organization))
+		if organization == "" {
+			continue
+		}
+		if _, ok := seen[organization]; ok {
+			continue
+		}
+		seen[organization] = struct{}{}
+		result = append(result, organization)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func containsOrganization(organizations []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, organization := range organizations {
+		if strings.EqualFold(organization, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *GitHubConnectionsController) validateOrganizationAssignments(ctx context.Context, connectionID string, organizations []string) error {
+	connections, err := c.listConnections(ctx)
+	if err != nil {
+		return err
+	}
+	for _, connection := range connections {
+		if connection.ID == connectionID {
+			continue
+		}
+		for _, organization := range organizations {
+			if containsOrganization(connection.Organizations, organization) {
+				return fmt.Errorf("organization %q is already assigned to connection %q", organization, connection.Name)
+			}
+		}
+	}
+	return nil
 }
 
 func showConnectionOnLogin(connection githubConnection) bool {

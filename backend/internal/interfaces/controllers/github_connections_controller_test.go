@@ -172,3 +172,38 @@ func TestShowConnectionOnLoginDefaultsToTrue(t *testing.T) {
 	require.True(t, showConnectionOnLogin(githubConnection{ShowOnLogin: &visible}))
 	require.False(t, showConnectionOnLogin(githubConnection{ShowOnLogin: &hidden}))
 }
+
+func TestNormalizeOrganizations(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, []string{"another-org", "example-org"}, normalizeOrganizations([]string{" Example-Org ", "example-org", "another-org", ""}))
+}
+
+func TestOrganizationAssignmentMustBeUnique(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	require.NoError(t, controller.saveConnection(context.Background(), githubConnection{ID: "first", Name: "First", Organizations: []string{"example-org"}}, "", ""))
+	require.ErrorContains(t, controller.validateOrganizationAssignments(context.Background(), "second", []string{"EXAMPLE-ORG"}), "already assigned")
+	require.NoError(t, controller.validateOrganizationAssignments(context.Background(), "first", []string{"example-org"}))
+}
+
+func TestResolveAccessTokenForOrganization(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
+	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice", "alice")
+	require.NoError(t, err)
+	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, Organizations: []string{"example-org"}}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "corp-token", nil)
+	require.NoError(t, err)
+
+	token, connectionID, matched, err := controller.ResolveAccessTokenForOrganization(context.Background(), user, "Example-Org")
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, "corp-token", token)
+	require.Equal(t, "corp", connectionID)
+	_, connectionID, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
+	require.NoError(t, err)
+	require.False(t, matched)
+	require.Empty(t, connectionID)
+}
