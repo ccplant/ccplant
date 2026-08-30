@@ -778,6 +778,22 @@ func TestGitHubAuthProvider_HasWildcardPatterns(t *testing.T) {
 	}
 }
 
+func TestMergeTeamMembershipsDeduplicates(t *testing.T) {
+	first := []GitHubTeamMembership{{Organization: "takutaka-lab", TeamSlug: "admin", TeamName: "Admin"}}
+	second := []GitHubTeamMembership{
+		{Organization: "TAKUTAKA-LAB", TeamSlug: "ADMIN", TeamName: "duplicate"},
+		{Organization: "takutaka-lab", TeamSlug: "developers", TeamName: "Developers"},
+	}
+
+	merged := mergeTeamMemberships(first, second)
+	if len(merged) != 2 {
+		t.Fatalf("len(merged) = %d, want 2", len(merged))
+	}
+	if merged[0].TeamName != "Admin" || merged[1].TeamSlug != "developers" {
+		t.Fatalf("merged = %#v", merged)
+	}
+}
+
 func TestMatchWildcard(t *testing.T) {
 	tests := []struct {
 		name     string

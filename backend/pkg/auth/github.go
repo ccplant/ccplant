@@ -254,15 +254,19 @@ func (p *GitHubAuthProvider) getUser(ctx context.Context, token string) (*GitHub
 func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
 	// Layer 1: 30-second in-memory cache
 	if cached, ok := p.teamCache.Get(username); ok {
-		log.Printf("[TEAM_CACHE] in-memory cache hit for user %s", username)
-		return cached.([]GitHubTeamMembership), nil
+		teams := cached.([]GitHubTeamMembership)
+		if len(teams) > 0 {
+			log.Printf("[TEAM_CACHE] in-memory cache hit for user %s", username)
+			return teams, nil
+		}
+		log.Printf("[TEAM_CACHE] ignoring empty in-memory cache for user %s", username)
 	}
 
 	// Layer 2: ConfigMap persistent cache
 	if p.teamMappingRepo != nil {
 		if teams, found, err := p.teamMappingRepo.Get(ctx, username); err != nil {
 			log.Printf("[TEAM_CACHE] Warning: failed to read ConfigMap cache for user %s: %v", username, err)
-		} else if found {
+		} else if found && len(teams) > 0 {
 			log.Printf("[TEAM_CACHE] ConfigMap cache hit for user %s (%d teams)", username, len(teams))
 			// Warm up the in-memory cache so subsequent requests within 30s are free
 			p.teamCache.Set(username, teams)
@@ -277,6 +281,11 @@ func (p *GitHubAuthProvider) getUserTeamsOptimized(ctx context.Context, token, u
 	)
 	if p.hasWildcardPatterns() {
 		teams, err = p.getUserTeamsWithWildcard(ctx, token)
+		if err == nil {
+			var exactTeams []GitHubTeamMembership
+			exactTeams, err = p.getUserTeamsExactMatch(ctx, token, username)
+			teams = mergeTeamMemberships(teams, exactTeams)
+		}
 	} else {
 		teams, err = p.getUserTeamsExactMatch(ctx, token, username)
 	}
@@ -337,6 +346,9 @@ func (p *GitHubAuthProvider) getUserTeamsExactMatch(ctx context.Context, token, 
 	// Extract unique organizations from configured team mappings
 	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
 	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+		if strings.Contains(teamKey, "*") {
+			continue
+		}
 		parts := strings.Split(teamKey, "/")
 		if len(parts) == 2 {
 			org, teamSlug := parts[0], parts[1]
@@ -408,6 +420,22 @@ func (p *GitHubAuthProvider) getUserTeamsExactMatch(ctx context.Context, token, 
 
 	log.Printf("[AUTH_DEBUG] Found %d matching teams for user %s", len(userTeams), username)
 	return userTeams, nil
+}
+
+func mergeTeamMemberships(groups ...[]GitHubTeamMembership) []GitHubTeamMembership {
+	merged := make([]GitHubTeamMembership, 0)
+	seen := make(map[string]struct{})
+	for _, teams := range groups {
+		for _, team := range teams {
+			key := strings.ToLower(team.Organization + "/" + team.TeamSlug)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, team)
+		}
+	}
+	return merged
 }
 
 // checkTeamMembership checks if user is a member of a specific team without caching
