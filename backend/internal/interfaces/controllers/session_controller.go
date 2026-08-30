@@ -223,8 +223,8 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		}
 		startReq.Params.GithubToken = token
 		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
-	} else if startReq.Params != nil && startReq.Params.GithubToken == "" && repositoryOwner(startReq.Params.RepoFullName) != "" && c.githubTokenResolver != nil {
-		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(startReq.Params.RepoFullName))
+	} else if (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
+		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(sessionRepository(startReq)))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
@@ -407,6 +407,13 @@ func repositoryOwner(repoFullName string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(parts[0]))
+}
+
+func sessionRepository(startReq entities.StartRequest) string {
+	if startReq.Params != nil && strings.TrimSpace(startReq.Params.RepoFullName) != "" {
+		return startReq.Params.RepoFullName
+	}
+	return startReq.Tags["repository"]
 }
 
 func containsAllocatorSelector(tags map[string]string) bool {

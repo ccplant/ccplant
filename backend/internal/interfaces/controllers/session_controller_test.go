@@ -129,6 +129,26 @@ func TestRepositoryOwner(t *testing.T) {
 	}
 }
 
+func TestSessionRepository(t *testing.T) {
+	tests := []struct {
+		name  string
+		input entities.StartRequest
+		want  string
+	}{
+		{name: "params takes precedence", input: entities.StartRequest{Params: &entities.SessionParams{RepoFullName: "params/repo"}, Tags: map[string]string{"repository": "tags/repo"}}, want: "params/repo"},
+		{name: "falls back to repository tag", input: entities.StartRequest{Params: &entities.SessionParams{}, Tags: map[string]string{"repository": "tags/repo"}}, want: "tags/repo"},
+		{name: "supports nil params", input: entities.StartRequest{Tags: map[string]string{"repository": "tags/repo"}}, want: "tags/repo"},
+		{name: "empty when unspecified", input: entities.StartRequest{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sessionRepository(tt.input); got != tt.want {
+				t.Fatalf("sessionRepository() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 type sessionListTestSession struct {
 	id     string
 	status string
