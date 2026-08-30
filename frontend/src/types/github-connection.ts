@@ -14,6 +14,7 @@ export interface GitHubConnection {
   linked_identities?: number
   enabled?: boolean
   show_on_login?: boolean
+  organizations?: string[]
   created_at?: string
   updated_at?: string
 }
@@ -26,6 +27,7 @@ export interface GitHubConnectionInput {
   oauth_scope: string
   enabled?: boolean
   show_on_login?: boolean
+  organizations?: string[]
   oauth_client_secret?: {
     source: GitHubSecretSource
     value?: string

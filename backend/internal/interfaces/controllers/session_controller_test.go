@@ -87,6 +87,18 @@ func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 	}
 }
 
+func TestRepositoryOwner(t *testing.T) {
+	t.Parallel()
+	if got := repositoryOwner(" Example-Org/repository "); got != "example-org" {
+		t.Fatalf("repositoryOwner() = %q", got)
+	}
+	for _, value := range []string{"", "repository", "/repository", "org/"} {
+		if got := repositoryOwner(value); got != "" {
+			t.Fatalf("repositoryOwner(%q) = %q, want empty", value, got)
+		}
+	}
+}
+
 type sessionListTestSession struct {
 	id     string
 	status string

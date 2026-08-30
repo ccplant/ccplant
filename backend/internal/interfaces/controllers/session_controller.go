@@ -78,11 +78,13 @@ type SessionController struct {
 	nextStatusSubscriberID uint64
 	githubTokenResolver    interface {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
+		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, bool, error)
 	}
 }
 
 func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
+	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, bool, error)
 }) SessionControllerOption {
 	return func(c *SessionController) { c.githubTokenResolver = resolver }
 }
@@ -213,6 +215,16 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		startReq.Params.GithubToken = token
+	} else if startReq.Params != nil && startReq.Params.GithubToken == "" && repositoryOwner(startReq.Params.RepoFullName) != "" && c.githubTokenResolver != nil {
+		token, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(startReq.Params.RepoFullName))
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if matched {
+			startReq.Params.GithubToken = token
+		} else {
+			populateGitHubTokenFromAuthHeader(ctx, &startReq)
+		}
 	} else {
 		populateGitHubTokenFromAuthHeader(ctx, &startReq)
 	}
@@ -362,6 +374,14 @@ func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.Star
 	if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
 		startReq.Params.GithubToken = token
 	}
+}
+
+func repositoryOwner(repoFullName string) string {
+	parts := strings.SplitN(strings.TrimSpace(repoFullName), "/", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(parts[0]))
 }
 
 func containsAllocatorSelector(tags map[string]string) bool {
