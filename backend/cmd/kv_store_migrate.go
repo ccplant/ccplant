@@ -312,36 +312,21 @@ func collectApplicationKVStoreRecords(ctx context.Context, source kvstore.Store,
 	return records, nil
 }
 
-var applicationSecretLabels = []string{
-	"agentapi.proxy/api-token",
-	"agentapi.proxy/credentials",
-	"agentapi.proxy/personal-api-key",
-	"agentapi.proxy/schedule",
-	"agentapi.proxy/session-profile",
-	"agentapi.proxy/session-route",
-	"agentapi.proxy/settings",
-	"agentapi.proxy/slackbot",
-	"agentapi.proxy/team-config",
-	"agentapi.proxy/user-files",
-	"agentapi.proxy/webhook",
-}
-
 func isApplicationKVSecret(secret *corev1.Secret) bool {
-	for _, key := range applicationSecretLabels {
-		if secret.Labels[key] == "true" {
-			return true
-		}
+	if hasAgentAPILabel(secret.Labels) {
+		return true
 	}
 	// The pre-v2 schedule store was a fixed-name Secret without labels.
 	return secret.Name == "agentapi-schedules"
 }
 
-var applicationConfigMapTypes = map[string]struct{}{
-	"memory":              {},
-	"sandbox-domains":     {},
-	"sandbox-policy":      {},
-	"slack-channel-cache": {},
-	"user-team-mapping":   {},
+func hasAgentAPILabel(labels map[string]string) bool {
+	for key := range labels {
+		if strings.HasPrefix(key, "agentapi.proxy/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isApplicationKVConfigMap(configMap *corev1.ConfigMap) bool {
@@ -351,11 +336,7 @@ func isApplicationKVConfigMap(configMap *corev1.ConfigMap) bool {
 		// introduced or repaired by a subsequent write.
 		return true
 	}
-	if configMap.Labels["agentapi.proxy/shares"] == "true" || configMap.Labels["agentapi.proxy/oauth-state"] == "true" {
-		return true
-	}
-	_, ok := applicationConfigMapTypes[configMap.Labels["agentapi.proxy/type"]]
-	return ok
+	return hasAgentAPILabel(configMap.Labels)
 }
 
 func writeKVStoreMigrationResult(w io.Writer, result kvStoreMigrationResult, output string) error {
