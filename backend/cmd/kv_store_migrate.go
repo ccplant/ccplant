@@ -224,6 +224,9 @@ func migrateKVStores(ctx context.Context, source, destination kvstore.Store, opt
 		}
 		entry := kvStoreMigrationEntry{Kind: source.Kind, Namespace: source.Namespace, Key: source.Key}
 		existing, getErr := destination.Get(ctx, source.Kind, source.Namespace, source.Key)
+		// Labels are denormalized metadata and older stores can contain stale
+		// values. Destinations derive the canonical labels from the document.
+		source.Labels = nil
 		switch {
 		case errors.Is(getErr, kvstore.ErrNotFound):
 			if options.dryRun {
