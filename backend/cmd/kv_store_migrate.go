@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -31,6 +32,8 @@ type kvStoreMigrateOptions struct {
 	legacyAuthToken       string
 	encryptionActiveKeyID string
 	encryptionKeysJSON    string
+	encryptionProvider    string
+	encryptionKMSRegion   string
 	dryRun                bool
 	overwrite             bool
 	output                string
@@ -82,11 +85,13 @@ without writing anything.`,
 			if err != nil {
 				return err
 			}
-			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
-			secondary, err = encryptedMigrationDestination(secondary, o.encryptionActiveKeyID, o.encryptionKeysJSON)
+			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, o.encryptionProvider, o.encryptionActiveKeyID, o.encryptionKMSRegion, o.encryptionKeysJSON)
 			if err != nil {
-				return err
+				_ = errors.Join(primary.Close(), secondary.Close())
+				return fmt.Errorf("configure secondary encryption: %w", err)
 			}
+			secondary = wrappedSecondary
+			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
 
 			result, migrateErr := migrateKVStores(cmd.Context(), primary, secondary, *o)
 			if err := writeKVStoreMigrationResult(cmd.OutOrStdout(), result, o.output); err != nil {
@@ -108,13 +113,15 @@ without writing anything.`,
 	flags.StringVar(&o.legacyAuthToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "deprecated: destination libSQL authentication token")
 	flags.StringVar(&o.encryptionActiveKeyID, "encryption-active-key-id", os.Getenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID"), "active key ID used to encrypt destination values")
 	flags.StringVar(&o.encryptionKeysJSON, "encryption-keys-json", os.Getenv("AGENTAPI_KV_ENCRYPTION_KEYS"), "JSON object mapping destination key IDs to base64-encoded 32-byte keys")
+	flags.StringVar(&o.encryptionProvider, "encryption-provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "destination encryption provider (local, aws-kms, aws-kms-branch, or cloud-kms-branch)")
+	flags.StringVar(&o.encryptionKMSRegion, "encryption-kms-region", os.Getenv("AGENTAPI_KV_ENCRYPTION_KMS_REGION"), "AWS region for a destination AWS KMS provider")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "inspect records and conflicts without writing to the secondary store")
 	flags.BoolVar(&o.overwrite, "overwrite", false, "replace different records that already exist in the secondary store")
 	flags.StringVarP(&o.output, "output", "o", "text", "output format: text or json")
 	return command
 }
 
-func encryptedMigrationDestination(store kvstore.Store, activeKeyID, keysJSON string) (kvstore.Store, error) {
+func encryptedMigrationDestination(ctx context.Context, store kvstore.Store, provider, activeKeyID, kmsRegion, keysJSON string) (kvstore.Store, error) {
 	if activeKeyID == "" && strings.TrimSpace(keysJSON) == "" {
 		return store, nil
 	}
@@ -125,7 +132,26 @@ func encryptedMigrationDestination(store kvstore.Store, activeKeyID, keysJSON st
 	if err := json.Unmarshal([]byte(keysJSON), &keys); err != nil {
 		return nil, fmt.Errorf("decode encryption keys JSON: %w", err)
 	}
-	keyring, err := kvstore.NewLocalKeyring(activeKeyID, keys)
+	var keyring kvstore.EnvelopeKeyring
+	var err error
+	switch provider {
+	case "", "local":
+		keyring, err = kvstore.NewLocalKeyring(activeKeyID, keys)
+	case "aws-kms":
+		keyring, err = kvstore.NewKMSKeyring(ctx, activeKeyID, kmsRegion, keys)
+	case "aws-kms-branch", "cloud-kms-branch":
+		registry, ok := store.(kvstore.BranchKeyRegistry)
+		if !ok {
+			return nil, fmt.Errorf("encryption provider %q requires a branch key registry", provider)
+		}
+		if provider == "aws-kms-branch" {
+			keyring, err = kvstore.NewBranchKMSKeyring(ctx, activeKeyID, kmsRegion, keys, registry, 15*time.Minute, 128)
+		} else {
+			keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, activeKeyID, keys, registry, 15*time.Minute, 128)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported KV encryption provider %q", provider)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +200,7 @@ func buildMigrationStore(ctx context.Context, config migrationStoreConfig, clien
 	switch config.backend {
 	case "kubernetes":
 		return kvstore.NewKubernetesStore(client), nil
-	case "libsql":
+	case "libsql", "libsql-encrypted":
 		if strings.TrimSpace(config.databaseURL) == "" {
 			return nil, errors.New("database URL is required for libsql")
 		}
@@ -198,6 +224,9 @@ func migrateKVStores(ctx context.Context, source, destination kvstore.Store, opt
 		}
 		entry := kvStoreMigrationEntry{Kind: source.Kind, Namespace: source.Namespace, Key: source.Key}
 		existing, getErr := destination.Get(ctx, source.Kind, source.Namespace, source.Key)
+		// Labels are denormalized metadata and older stores can contain stale
+		// values. Destinations derive the canonical labels from the document.
+		source.Labels = nil
 		switch {
 		case errors.Is(getErr, kvstore.ErrNotFound):
 			if options.dryRun {
@@ -288,36 +317,21 @@ func collectApplicationKVStoreRecords(ctx context.Context, source kvstore.Store,
 	return records, nil
 }
 
-var applicationSecretLabels = []string{
-	"agentapi.proxy/api-token",
-	"agentapi.proxy/credentials",
-	"agentapi.proxy/personal-api-key",
-	"agentapi.proxy/schedule",
-	"agentapi.proxy/session-profile",
-	"agentapi.proxy/session-route",
-	"agentapi.proxy/settings",
-	"agentapi.proxy/slackbot",
-	"agentapi.proxy/team-config",
-	"agentapi.proxy/user-files",
-	"agentapi.proxy/webhook",
-}
-
 func isApplicationKVSecret(secret *corev1.Secret) bool {
-	for _, key := range applicationSecretLabels {
-		if secret.Labels[key] == "true" {
-			return true
-		}
+	if hasAgentAPILabel(secret.Labels) {
+		return true
 	}
 	// The pre-v2 schedule store was a fixed-name Secret without labels.
 	return secret.Name == "agentapi-schedules"
 }
 
-var applicationConfigMapTypes = map[string]struct{}{
-	"memory":              {},
-	"sandbox-domains":     {},
-	"sandbox-policy":      {},
-	"slack-channel-cache": {},
-	"user-team-mapping":   {},
+func hasAgentAPILabel(labels map[string]string) bool {
+	for key := range labels {
+		if strings.HasPrefix(key, "agentapi.proxy/") {
+			return true
+		}
+	}
+	return false
 }
 
 func isApplicationKVConfigMap(configMap *corev1.ConfigMap) bool {
@@ -327,11 +341,7 @@ func isApplicationKVConfigMap(configMap *corev1.ConfigMap) bool {
 		// introduced or repaired by a subsequent write.
 		return true
 	}
-	if configMap.Labels["agentapi.proxy/shares"] == "true" || configMap.Labels["agentapi.proxy/oauth-state"] == "true" {
-		return true
-	}
-	_, ok := applicationConfigMapTypes[configMap.Labels["agentapi.proxy/type"]]
-	return ok
+	return hasAgentAPILabel(configMap.Labels)
 }
 
 func writeKVStoreMigrationResult(w io.Writer, result kvStoreMigrationResult, output string) error {

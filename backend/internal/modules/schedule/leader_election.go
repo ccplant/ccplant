@@ -28,7 +28,7 @@ type LeaderElectionConfig struct {
 }
 
 func DefaultLeaderElectionConfig(namespace string) LeaderElectionConfig {
-	return LeaderElectionConfig{LeaseDuration: 15 * time.Second, RenewDeadline: 10 * time.Second, RetryPeriod: 2 * time.Second, LeaseName: ScheduleWorkerLeaseName, Namespace: namespace}
+	return LeaderElectionConfig{LeaseDuration: 9 * time.Minute, RenewDeadline: 6 * time.Minute, RetryPeriod: time.Minute, LeaseName: ScheduleWorkerLeaseName, Namespace: namespace}
 }
 
 // LeaderElector delegates atomic lease operations to its client. Workers use the

@@ -59,7 +59,8 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if cfg == nil {
 		return nil, errors.New("session-manager config is required")
 	}
-	if strings.TrimSpace(cfg.Redis.Addr) == "" {
+	remoteMode := cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != ""
+	if !remoteMode && strings.TrimSpace(cfg.Redis.Addr) == "" {
 		return nil, errors.New("session-manager Redis is required")
 	}
 	if cfg.SessionManager.InternalAPIToken == "" {
@@ -150,15 +151,17 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	// A manager registered with a parent is an execution plane only: the parent
 	// owns allocations and their claim leases. Remote replicas coordinate their
 	// single upstream poller with a Kubernetes Lease below.
-	remoteMode := cfg.SessionManager.UpstreamURL != "" && cfg.SessionManager.ConnectionToken != ""
-	redisClient, err := newSessionManagerRedis(cfg)
-	if err != nil {
-		runtimeCancel()
-		if applicationStore != nil {
-			_ = applicationStore.Close()
+	var redisClient *redis.Client
+	if !remoteMode {
+		redisClient, err = newSessionManagerRedis(cfg)
+		if err != nil {
+			runtimeCancel()
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, err
 		}
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, err
 	}
 	if !remoteMode {
 		manager.SetSessionAllocationNotifier(infraallocation.NewRedisNotifier(redisClient))
@@ -374,10 +377,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
-					reconcileSessionRunnerPools(ctx, manager, result.Pools)
-					if result.RegisteredRunnerIDs != nil {
-						reconcileOrphanedSessionRunners(ctx, manager, *result.RegisteredRunnerIDs)
-					}
+					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
 					}
@@ -390,6 +390,17 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func reconcileSessionRunnerHeartbeat(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier, registeredRunnerIDs *[]string) {
+	// The parent inventory was captured before this heartbeat response. Remove
+	// orphaned local runners before replenishing stock so a runner registered by
+	// this reconciliation is not immediately deleted as absent from that stale
+	// snapshot.
+	if registeredRunnerIDs != nil {
+		reconcileOrphanedSessionRunners(ctx, manager, *registeredRunnerIDs)
+	}
+	reconcileSessionRunnerPools(ctx, manager, pools)
 }
 
 type orphanedSessionRunnerCleaner interface {
