@@ -505,12 +505,6 @@ func (m *KubernetesSessionManager) ReloadSessionSettings(ctx context.Context, se
 	return nil
 }
 
-// RefreshSessionCredentials is kept as a compatibility alias for clients that
-// adopted the initial Codex-specific endpoint.
-func (m *KubernetesSessionManager) RefreshSessionCredentials(ctx context.Context, sessionID string) error {
-	return m.ReloadSessionSettings(ctx, sessionID)
-}
-
 // GetSessionProvisionSettings returns the settings snapshot currently mounted
 // for restart recovery. Session provisioners use it to reload files without
 // receiving credential contents through the command queue.

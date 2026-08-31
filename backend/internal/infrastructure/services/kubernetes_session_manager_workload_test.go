@@ -164,7 +164,7 @@ func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testin
 	}
 }
 
-func TestRefreshSessionCredentialsUpdatesOnlyRequestedSessionAndRequestsInContainerReload(t *testing.T) {
+func TestReloadSessionSettingsUpdatesOnlyRequestedSessionAndRequestsInContainerReload(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	controlStore := &compatibilityControlStore{connected: true}
 	manager.sessionControlStore = controlStore
@@ -195,8 +195,8 @@ func TestRefreshSessionCredentialsUpdatesOnlyRequestedSessionAndRequestsInContai
 		t.Fatal(err)
 	}
 
-	if err := manager.RefreshSessionCredentials(ctx, session.ID()); err != nil {
-		t.Fatalf("RefreshSessionCredentials() error = %v", err)
+	if err := manager.ReloadSessionSettings(ctx, session.ID()); err != nil {
+		t.Fatalf("ReloadSessionSettings() error = %v", err)
 	}
 	secret, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, "agentapi-session-test-session-settings", metav1.GetOptions{})
 	if err != nil {

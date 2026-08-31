@@ -387,7 +387,6 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
-	r.echo.POST("/sessions/:sessionId/refresh-credentials", r.handlers.sessionController.RefreshSessionCredentials)
 	r.echo.POST("/sessions/:sessionId/reload-settings", r.handlers.sessionController.ReloadSessionSettings)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionPoolController != nil {

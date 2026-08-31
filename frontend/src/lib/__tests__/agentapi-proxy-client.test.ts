@@ -53,25 +53,6 @@ describe('AgentAPIProxyClient ACP message history', () => {
     );
   });
 
-  it('refreshes credentials only for the requested session', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      new Response(JSON.stringify({ session_id: 'session-1', status: 'reloading' }), {
-        status: 202,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
-    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
-
-    await expect(client.refreshSessionCredentials('session-1')).resolves.toEqual({
-      session_id: 'session-1',
-      status: 'reloading',
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://proxy.example.test/sessions/session-1/refresh-credentials',
-      expect.objectContaining({ method: 'POST' }),
-    );
-  });
-
   it('reloads settings only for the requested session', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ session_id: 'session-1', status: 'reloading' }), {

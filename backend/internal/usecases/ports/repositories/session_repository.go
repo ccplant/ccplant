@@ -68,12 +68,6 @@ type SessionWorkloadEnsurer interface {
 	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
 }
 
-// SessionCredentialRefresher updates the managed credentials embedded in a
-// session and requests an in-container agent-process reload for that session.
-type SessionCredentialRefresher interface {
-	RefreshSessionCredentials(ctx context.Context, id string) error
-}
-
 // SessionSettingsReloader refreshes persisted settings and files, then reloads
 // the agent subprocess inside the existing session container.
 type SessionSettingsReloader interface {

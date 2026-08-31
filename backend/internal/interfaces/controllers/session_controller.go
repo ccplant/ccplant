@@ -159,7 +159,6 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
 	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
-	e.POST("/sessions/:sessionId/refresh-credentials", c.RefreshSessionCredentials)
 	e.POST("/sessions/:sessionId/reload-settings", c.ReloadSessionSettings)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
@@ -190,32 +189,6 @@ func (c *SessionController) ReloadSessionSettings(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to reload session settings: %v", err))
 	}
 	return ctx.JSON(http.StatusAccepted, map[string]interface{}{"session_id": sessionID, "status": "reloading"})
-}
-
-// RefreshSessionCredentials updates only the requested session with the latest
-// managed credentials and asks its in-container provisioner to restart the
-// agent subprocess with the refreshed settings.
-func (c *SessionController) RefreshSessionCredentials(ctx echo.Context) error {
-	sessionID := ctx.Param("sessionId")
-	session := c.getSessionManager().GetSession(sessionID)
-	if session == nil {
-		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
-	}
-	authzCtx := auth.GetAuthorizationContext(ctx)
-	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
-		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
-	}
-	refresher, ok := c.getSessionManager().(repositories.SessionCredentialRefresher)
-	if !ok {
-		return echo.NewHTTPError(http.StatusNotImplemented, "Credential refresh is not supported by this session manager")
-	}
-	if err := refresher.RefreshSessionCredentials(ctx.Request().Context(), sessionID); err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to refresh session credentials: %v", err))
-	}
-	return ctx.JSON(http.StatusAccepted, map[string]interface{}{
-		"session_id": sessionID,
-		"status":     "reloading",
-	})
 }
 
 // StartSession handles POST /start requests to start a new agentapi server
