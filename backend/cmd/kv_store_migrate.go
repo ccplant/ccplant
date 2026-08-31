@@ -319,7 +319,6 @@ var applicationSecretLabels = []string{
 	"agentapi.proxy/schedule",
 	"agentapi.proxy/session-profile",
 	"agentapi.proxy/session-route",
-	"agentapi.proxy/session-runner-resource",
 	"agentapi.proxy/settings",
 	"agentapi.proxy/slackbot",
 	"agentapi.proxy/team-config",
@@ -328,6 +327,9 @@ var applicationSecretLabels = []string{
 }
 
 func isApplicationKVSecret(secret *corev1.Secret) bool {
+	if secret.Labels["agentapi.proxy/session-runner-resource"] != "" {
+		return true
+	}
 	for _, key := range applicationSecretLabels {
 		if secret.Labels[key] == "true" {
 			return true
