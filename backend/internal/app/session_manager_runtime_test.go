@@ -21,6 +21,19 @@ func TestNewSessionManagerRuntimeRequiresRedis(t *testing.T) {
 	}
 }
 
+func TestNewSessionManagerRuntimeRemoteModeDoesNotRequireRedis(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.SessionManager.UpstreamURL = "https://parent.example.com"
+	cfg.SessionManager.ConnectionToken = "connection-token"
+	cfg.SessionManager.ID = "manager-id"
+	cfg.SessionManager.RunnerPool = "managed"
+
+	_, err := NewSessionManagerRuntime(context.Background(), cfg, false)
+	if err == nil || err.Error() != "session-manager internal API token is required" {
+		t.Fatalf("error = %v, want internal API token required after Redis validation is skipped", err)
+	}
+}
+
 type fakeRunnerInfrastructure struct {
 	idle, total int
 	created     int
