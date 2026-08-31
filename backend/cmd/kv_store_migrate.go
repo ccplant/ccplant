@@ -85,11 +85,13 @@ without writing anything.`,
 			if err != nil {
 				return err
 			}
-			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
-			secondary, err = encryptedMigrationDestination(cmd.Context(), secondary, o.encryptionProvider, o.encryptionActiveKeyID, o.encryptionKMSRegion, o.encryptionKeysJSON)
+			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, o.encryptionProvider, o.encryptionActiveKeyID, o.encryptionKMSRegion, o.encryptionKeysJSON)
 			if err != nil {
-				return err
+				_ = errors.Join(primary.Close(), secondary.Close())
+				return fmt.Errorf("configure secondary encryption: %w", err)
 			}
+			secondary = wrappedSecondary
+			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
 
 			result, migrateErr := migrateKVStores(cmd.Context(), primary, secondary, *o)
 			if err := writeKVStoreMigrationResult(cmd.OutOrStdout(), result, o.output); err != nil {
