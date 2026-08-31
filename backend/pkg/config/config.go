@@ -1347,9 +1347,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("schedule_worker.enabled", true)
 	v.SetDefault("schedule_worker.check_interval", "30s")
 	v.SetDefault("schedule_worker.namespace", "")
-	v.SetDefault("schedule_worker.lease_duration", "15s")
-	v.SetDefault("schedule_worker.renew_deadline", "10s")
-	v.SetDefault("schedule_worker.retry_period", "2s")
+	v.SetDefault("schedule_worker.lease_duration", "9m")
+	v.SetDefault("schedule_worker.renew_deadline", "6m")
+	v.SetDefault("schedule_worker.retry_period", "1m")
 
 	// Slackbot cleanup worker defaults
 	v.SetDefault("slackbot_cleanup_worker.enabled", false)
@@ -1357,9 +1357,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.session_ttl", "72h")
 	v.SetDefault("slackbot_cleanup_worker.session_ttl_check_interval", "1m")
 	v.SetDefault("slackbot_cleanup_worker.namespace", "")
-	v.SetDefault("slackbot_cleanup_worker.lease_duration", "15s")
-	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "10s")
-	v.SetDefault("slackbot_cleanup_worker.retry_period", "2s")
+	v.SetDefault("slackbot_cleanup_worker.lease_duration", "9m")
+	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "6m")
+	v.SetDefault("slackbot_cleanup_worker.retry_period", "1m")
 
 	// Stock inventory worker defaults
 	v.SetDefault("stock_inventory_worker.enabled", false)
@@ -1367,9 +1367,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stock_inventory_worker.target_count", 2)
 	v.SetDefault("stock_inventory_worker.docker_enabled", false)
 	v.SetDefault("stock_inventory_worker.namespace", "")
-	v.SetDefault("stock_inventory_worker.lease_duration", "15s")
-	v.SetDefault("stock_inventory_worker.renew_deadline", "10s")
-	v.SetDefault("stock_inventory_worker.retry_period", "2s")
+	v.SetDefault("stock_inventory_worker.lease_duration", "9m")
+	v.SetDefault("stock_inventory_worker.renew_deadline", "6m")
+	v.SetDefault("stock_inventory_worker.retry_period", "1m")
 
 	// Webhook defaults
 	v.SetDefault("webhook.base_url", "")
@@ -1610,9 +1610,9 @@ func DefaultConfig() *Config {
 			CheckInterval: "30s",
 			TargetCount:   2,
 			DockerEnabled: false,
-			LeaseDuration: "15s",
-			RenewDeadline: "10s",
-			RetryPeriod:   "2s",
+			LeaseDuration: "9m",
+			RenewDeadline: "6m",
+			RetryPeriod:   "1m",
 		},
 		Asset: AssetConfig{
 			Backend:     "nginx",

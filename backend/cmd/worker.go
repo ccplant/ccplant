@@ -262,13 +262,13 @@ func workerElection(lease, renew, retry, name, namespace string) schedule.Leader
 	r, _ := time.ParseDuration(renew)
 	p, _ := time.ParseDuration(retry)
 	if l <= 0 {
-		l = 15 * time.Second
+		l = 9 * time.Minute
 	}
 	if r <= 0 {
-		r = 10 * time.Second
+		r = 6 * time.Minute
 	}
 	if p <= 0 {
-		p = 2 * time.Second
+		p = time.Minute
 	}
 	return schedule.LeaderElectionConfig{LeaseDuration: l, RenewDeadline: r, RetryPeriod: p, LeaseName: name, Namespace: namespace}
 }
