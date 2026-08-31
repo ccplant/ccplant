@@ -74,6 +74,12 @@ type SessionCredentialRefresher interface {
 	RefreshSessionCredentials(ctx context.Context, id string) error
 }
 
+// SessionSettingsReloader refreshes persisted settings and files, then reloads
+// the agent subprocess inside the existing session container.
+type SessionSettingsReloader interface {
+	ReloadSessionSettings(ctx context.Context, id string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`

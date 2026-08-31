@@ -289,9 +289,10 @@ type SessionMeta struct {
 	// CredentialOwner records the user or team whose managed credentials were
 	// embedded in this session. It lets an existing session refresh only the
 	// credentials it originally selected after a re-authentication.
-	CredentialOwner    string `yaml:"credential_owner,omitempty" json:"credential_owner,omitempty"`
-	InContainerReload  bool   `yaml:"-" json:"in_container_reload,omitempty"`
-	PersistenceEnabled bool   `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
+	CredentialOwner    string   `yaml:"credential_owner,omitempty" json:"credential_owner,omitempty"`
+	UserFilePaths      []string `yaml:"user_file_paths,omitempty" json:"user_file_paths,omitempty"`
+	InContainerReload  bool     `yaml:"-" json:"in_container_reload,omitempty"`
+	PersistenceEnabled bool     `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.
