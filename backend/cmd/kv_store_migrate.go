@@ -319,6 +319,7 @@ var applicationSecretLabels = []string{
 	"agentapi.proxy/schedule",
 	"agentapi.proxy/session-profile",
 	"agentapi.proxy/session-route",
+	"agentapi.proxy/session-runner-resource",
 	"agentapi.proxy/settings",
 	"agentapi.proxy/slackbot",
 	"agentapi.proxy/team-config",
