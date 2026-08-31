@@ -30,6 +30,9 @@ func commandKey(managerID string) string {
 func connectionKey(managerID string) string {
 	return "agentapi:esm:{" + managerID + "}:control-connection"
 }
+func reconcileKey(managerID string) string {
+	return "agentapi:session-manager:{" + managerID + "}:reconcile"
+}
 func commandAckKey(managerID string) string {
 	return "agentapi:esm:{" + managerID + "}:command-ack"
 }
@@ -53,13 +56,61 @@ return ''
 `)
 
 func (s *RedisStore) TouchManager(ctx context.Context, managerID, instanceID string) error {
+	return s.TouchManagerFor(ctx, managerID, instanceID, connectionTTL)
+}
+
+func (s *RedisStore) TouchManagerFor(ctx context.Context, managerID, instanceID string, ttl time.Duration) error {
 	if managerID == "" {
 		return fmt.Errorf("manager id is required")
 	}
-	if err := s.client.Set(ctx, connectionKey(managerID), instanceID, connectionTTL).Err(); err != nil {
+	if ttl < connectionTTL {
+		ttl = connectionTTL
+	}
+	if err := s.client.Set(ctx, connectionKey(managerID), instanceID, ttl).Err(); err != nil {
 		return fmt.Errorf("touch ESM connection: %w", err)
 	}
 	return nil
+}
+
+// SignalManagerReconcile advances the durable revision observed by a manager
+// long poll. Redis Streams avoid lost wakeups between reading a snapshot and
+// opening the next request.
+func (s *RedisStore) SignalManagerReconcile(ctx context.Context, managerID string) (string, error) {
+	key := reconcileKey(managerID)
+	id, err := s.client.XAdd(ctx, &redis.XAddArgs{Stream: key, MaxLen: 100, Approx: true, Values: map[string]interface{}{"changed": "1"}}).Result()
+	if err != nil {
+		return "", fmt.Errorf("signal manager reconcile: %w", err)
+	}
+	_ = s.client.Expire(ctx, key, streamTTL).Err()
+	return id, nil
+}
+
+func (s *RedisStore) CurrentManagerReconcileRevision(ctx context.Context, managerID string) (string, error) {
+	items, err := s.client.XRevRangeN(ctx, reconcileKey(managerID), "+", "-", 1).Result()
+	if err != nil {
+		return "", fmt.Errorf("read manager reconcile revision: %w", err)
+	}
+	if len(items) == 0 {
+		return "0-0", nil
+	}
+	return items[0].ID, nil
+}
+
+func (s *RedisStore) WaitManagerReconcile(ctx context.Context, managerID, after string, wait time.Duration) (string, error) {
+	if after == "" {
+		after = "0-0"
+	}
+	streams, err := s.client.XRead(ctx, &redis.XReadArgs{Streams: []string{reconcileKey(managerID), after}, Count: 1, Block: wait}).Result()
+	if err == redis.Nil {
+		return s.CurrentManagerReconcileRevision(ctx, managerID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("wait for manager reconcile: %w", err)
+	}
+	if len(streams) == 0 || len(streams[0].Messages) == 0 {
+		return s.CurrentManagerReconcileRevision(ctx, managerID)
+	}
+	return streams[0].Messages[0].ID, nil
 }
 
 func (s *RedisStore) IsManagerConnected(ctx context.Context, managerID string) (bool, error) {

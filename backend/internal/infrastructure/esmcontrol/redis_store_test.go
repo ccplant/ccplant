@@ -45,6 +45,29 @@ func TestRedisStoreConcurrentManagerTouches(t *testing.T) {
 	require.True(t, connected)
 }
 
+func TestRedisStoreManagerReconcileRevisionIsDurable(t *testing.T) {
+	store, _ := newTestRedisStore(t)
+	ctx := context.Background()
+
+	initial, err := store.CurrentManagerReconcileRevision(ctx, "manager-a")
+	require.NoError(t, err)
+	require.Equal(t, "0-0", initial)
+
+	signaled, err := store.SignalManagerReconcile(ctx, "manager-a")
+	require.NoError(t, err)
+	require.NotEqual(t, initial, signaled)
+
+	observed, err := store.WaitManagerReconcile(ctx, "manager-a", initial, time.Second)
+	require.NoError(t, err)
+	require.Equal(t, signaled, observed)
+}
+
+func TestRedisStoreTouchManagerForCoversLongPoll(t *testing.T) {
+	store, server := newTestRedisStore(t)
+	require.NoError(t, store.TouchManagerFor(context.Background(), "manager-a", "runner", 5*time.Minute+30*time.Second))
+	require.GreaterOrEqual(t, server.TTL(connectionKey("manager-a")), 5*time.Minute)
+}
+
 func TestRedisStoreKeepsLongRunningRequestOwnership(t *testing.T) {
 	store, server := newTestRedisStore(t)
 	ctx := context.Background()

@@ -66,6 +66,9 @@ type PoolSupplier struct {
 	UpdatedAt    time.Time         `json:"updated_at"`
 	IdleRunners  int               `json:"idle_runners,omitempty"`
 	TotalRunners int               `json:"total_runners,omitempty"`
+	// PendingAllocations is the current pool demand that has not acquired a
+	// runner yet. Managers use it to scale from zero when MinIdle is zero.
+	PendingAllocations int `json:"pending_allocations,omitempty"`
 }
 
 type Binding struct {

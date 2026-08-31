@@ -1337,6 +1337,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	if err := s.sessionRunnerStore.Enqueue(ctx, allocation); err != nil {
 		return nil, fmt.Errorf("enqueue session pool allocation: %w", err)
 	}
+	s.signalSessionPoolManagers(ctx, pool, "")
 	startedAt := time.Now().UTC()
 	tags := startReq.Tags
 	if tags == nil {
@@ -1584,7 +1585,43 @@ func (s *Server) DeleteSessionPoolAllocation(ctx context.Context, sessionID stri
 	if err == nil && allocation.RunnerID != "" {
 		_ = s.sessionRunnerStore.DeleteRunner(ctx, allocation.RunnerID)
 	}
-	return s.sessionRunnerStore.DeleteAllocation(ctx, sessionID)
+	if err := s.sessionRunnerStore.DeleteAllocation(ctx, sessionID); err != nil {
+		return err
+	}
+	if allocation != nil {
+		s.signalSessionPoolManagers(ctx, allocation.Pool, allocation.ManagerID)
+	}
+	return nil
+}
+
+type sessionManagerReconcileSignaler interface {
+	SignalManagerReconcile(context.Context, string) (string, error)
+}
+
+func (s *Server) signalSessionPoolManagers(ctx context.Context, pool, assignedManagerID string) {
+	signaler, ok := s.esmControlStore.(sessionManagerReconcileSignaler)
+	if !ok || s.sessionRunnerStore == nil {
+		return
+	}
+	managerIDs := map[string]struct{}{}
+	if assignedManagerID != "" {
+		managerIDs[assignedManagerID] = struct{}{}
+	}
+	suppliers, err := s.sessionRunnerStore.ListPoolSuppliers(ctx)
+	if err != nil {
+		log.Printf("[SESSION_RUNNER] List pool suppliers for reconcile signal: %v", err)
+		return
+	}
+	for _, supplier := range suppliers {
+		if supplier != nil && supplier.Pool == pool && supplier.Enabled && !supplier.Draining {
+			managerIDs[supplier.ManagerID] = struct{}{}
+		}
+	}
+	for managerID := range managerIDs {
+		if _, err := signaler.SignalManagerReconcile(ctx, managerID); err != nil {
+			log.Printf("[SESSION_RUNNER] Signal manager %s reconcile: %v", managerID, err)
+		}
+	}
 }
 
 // dumpSessionToMemory fetches messages from the session, stores them as a draft memory,

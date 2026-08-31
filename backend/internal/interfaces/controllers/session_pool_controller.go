@@ -40,6 +40,16 @@ type managerLiveness interface {
 	IsManagerConnected(context.Context, string) (bool, error)
 }
 
+type managerReconciler interface {
+	CurrentManagerReconcileRevision(context.Context, string) (string, error)
+	WaitManagerReconcile(context.Context, string, string, time.Duration) (string, error)
+	TouchManagerFor(context.Context, string, string, time.Duration) error
+}
+
+type managerReconcileSignaler interface {
+	SignalManagerReconcile(context.Context, string) (string, error)
+}
+
 const (
 	sessionManagerHeartbeatTTL = 90 * time.Second
 	// Idle runners continuously long-poll for allocations. Their authenticated
@@ -486,6 +496,7 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 	if err := c.store.CreatePoolSupplier(ctx.Request().Context(), &supplier); err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	c.signalManagerReconcile(ctx.Request().Context(), manager.ID)
 	return ctx.JSON(http.StatusCreated, &supplier)
 }
 
@@ -697,6 +708,7 @@ func (c *SessionPoolController) PatchPoolSupplier(ctx echo.Context) error {
 	if err := c.store.UpdatePoolSupplier(ctx.Request().Context(), pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	c.signalManagerReconcile(ctx.Request().Context(), pool.ManagerID)
 	return ctx.JSON(http.StatusOK, pool)
 }
 
@@ -728,7 +740,14 @@ func (c *SessionPoolController) DeletePoolSupplier(ctx echo.Context) error {
 	if err := c.store.DeletePoolSupplier(requestCtx, managerID, poolName); err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	c.signalManagerReconcile(requestCtx, managerID)
 	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (c *SessionPoolController) signalManagerReconcile(ctx context.Context, managerID string) {
+	if signaler, ok := c.liveness.(managerReconcileSignaler); ok {
+		_, _ = signaler.SignalManagerReconcile(ctx, managerID)
+	}
 }
 
 func runnerIsActive(runner *core.Runner) bool {
@@ -993,7 +1012,30 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if c.liveness != nil {
+	wait := parseManagerReconcileWait(ctx.QueryParam("wait"))
+	sinceRevision := strings.TrimSpace(ctx.QueryParam("since_revision"))
+	revision := ""
+	if reconciler, ok := c.liveness.(managerReconciler); ok {
+		if err := reconciler.TouchManagerFor(ctx.Request().Context(), manager.ID, "runner", wait+30*time.Second); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
+		}
+		// A long poll needs a lease longer than the ordinary heartbeat TTL, but
+		// once it returns (including disconnects) restore the short failure
+		// detection window rather than leaving a crashed manager healthy for 5m.
+		defer func() {
+			resetCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = c.liveness.TouchManager(resetCtx, manager.ID, "runner")
+		}()
+		if sinceRevision != "" && wait > 0 {
+			revision, err = reconciler.WaitManagerReconcile(ctx.Request().Context(), manager.ID, sinceRevision, wait)
+		} else {
+			revision, err = reconciler.CurrentManagerReconcileRevision(ctx.Request().Context(), manager.ID)
+		}
+		if err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to wait for session manager changes").SetInternal(err)
+		}
+	} else if c.liveness != nil {
 		if err := c.liveness.TouchManager(ctx.Request().Context(), manager.ID, "runner"); err != nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh session manager liveness").SetInternal(err)
 		}
@@ -1013,9 +1055,18 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	allocations, err := c.store.ListAllocations(ctx.Request().Context(), "")
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
 	for _, pool := range pools {
 		if pool.ManagerID == manager.ID {
 			copy := *pool
+			for _, allocation := range allocations {
+				if allocation.Pool == pool.Pool && allocation.Status == core.AllocationPending {
+					copy.PendingAllocations++
+				}
+			}
 			for _, runner := range runners {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
@@ -1039,7 +1090,19 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		"ok": true, "at": c.now(), "pools": owned,
 		"registered_runner_ids": registeredRunnerIDs,
 		"upstream_version":      buildinfo.Version,
+		"revision":              revision,
 	})
+}
+
+func parseManagerReconcileWait(raw string) time.Duration {
+	wait, err := time.ParseDuration(raw)
+	if err != nil || wait <= 0 {
+		return 0
+	}
+	if wait > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return wait
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {
