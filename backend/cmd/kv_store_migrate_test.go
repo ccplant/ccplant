@@ -13,14 +13,16 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestCollectApplicationKVRecordsExcludesOperationalResources(t *testing.T) {
+func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "test", Labels: map[string]string{"agentapi.proxy/settings": "true"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "logical-pool", Namespace: "test", Labels: map[string]string{"agentapi.proxy/session-runner-resource": "logical-pool"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "subscriptions", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/component": "notification-subscription", "agentapi.proxy/user-id": "user"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "future-secret", Namespace: "test", Labels: map[string]string{"agentapi.proxy/future-resource": "v1"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "helm-release", Namespace: "test", Labels: map[string]string{"owner": "helm"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-shares", Namespace: "test"}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "future-config", Namespace: "test", Labels: map[string]string{"agentapi.proxy/future-resource": "v1"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "server-config", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/name": "agentapi-proxy"}}},
 	)
 
@@ -28,20 +30,25 @@ func TestCollectApplicationKVRecordsExcludesOperationalResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 4 {
-		t.Fatalf("got %d records, want 4: %#v", len(records), records)
+	if len(records) != 7 {
+		t.Fatalf("got %d records, want 7: %#v", len(records), records)
 	}
-	if records[0].Kind != kvstore.KindConfigMap || records[0].Key != "agentapi-session-shares" {
-		t.Fatalf("unexpected first record: %#v", records[0])
+	got := make(map[string]bool, len(records))
+	for _, record := range records {
+		got[string(record.Kind)+"/"+record.Key] = true
 	}
-	if records[1].Kind != kvstore.KindConfigMap || records[1].Key != "memory" {
-		t.Fatalf("unexpected second record: %#v", records[1])
+	for _, identity := range []string{
+		"configmap/agentapi-session-shares", "configmap/future-config", "configmap/memory",
+		"secret/future-secret", "secret/logical-pool", "secret/settings", "secret/subscriptions",
+	} {
+		if !got[identity] {
+			t.Errorf("missing application record %s: %#v", identity, records)
+		}
 	}
-	if records[2].Kind != kvstore.KindSecret || records[2].Key != "logical-pool" {
-		t.Fatalf("unexpected third record: %#v", records[2])
-	}
-	if records[3].Kind != kvstore.KindSecret || records[3].Key != "settings" {
-		t.Fatalf("unexpected fourth record: %#v", records[3])
+	for _, identity := range []string{"secret/helm-release", "configmap/server-config"} {
+		if got[identity] {
+			t.Errorf("included non-application record %s", identity)
+		}
 	}
 }
 
@@ -126,26 +133,22 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Selected != 2 || result.Copied != 2 {
+	if result.Selected != 3 || result.Copied != 3 {
 		t.Fatalf("unexpected migration result: %#v", result)
 	}
 	for _, identity := range []struct {
 		kind kvstore.Kind
 		key  string
-	}{{kvstore.KindSecret, "settings"}, {kvstore.KindConfigMap, "memory"}} {
+	}{{kvstore.KindSecret, "settings"}, {kvstore.KindSecret, "notification-subscriptions-user"}, {kvstore.KindConfigMap, "memory"}} {
 		if _, err := store.Get(ctx, identity.kind, "test", identity.key); err != nil {
 			t.Fatalf("read migrated %s/%s: %v", identity.kind, identity.key, err)
 		}
 	}
-	if _, err := store.Get(ctx, kvstore.KindSecret, "test", "notification-subscriptions-user"); !errors.Is(err, kvstore.ErrNotFound) {
-		t.Fatalf("operational Secret was migrated: %v", err)
-	}
-
 	second, err := migrateKubernetesKV(ctx, client, store, kvStoreMigrateOptions{namespace: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Skipped != 2 {
+	if second.Skipped != 3 {
 		t.Fatalf("expected idempotent skips, got %#v", second)
 	}
 }
