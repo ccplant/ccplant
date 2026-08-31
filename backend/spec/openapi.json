@@ -717,7 +717,7 @@
     "/sessions/{sessionId}/refresh-credentials": {
       "post": {
         "summary": "Refresh credentials for one session",
-        "description": "Replaces the requested session's persisted managed credential files with the latest files from its original credential owner, then suspends only that session so it can be explicitly resumed.",
+        "description": "Replaces the requested session's persisted managed credential files with the latest files from its original credential owner, then asks that session's in-container provisioner to fetch the settings and restart only the agent subprocess.",
         "operationId": "refreshSessionCredentials",
         "tags": [
           "Sessions"
@@ -735,7 +735,7 @@
         ],
         "responses": {
           "202": {
-            "description": "Credentials were refreshed and the session was suspended for explicit resume"
+            "description": "Credentials were refreshed and an in-container settings reload was requested"
           },
           "403": {
             "description": "Forbidden"
@@ -747,7 +747,7 @@
             "description": "Credential refresh is not supported by the configured session manager"
           },
           "503": {
-            "description": "Failed to refresh credentials or suspend the session"
+            "description": "Failed to refresh credentials or request the settings reload"
           }
         }
       }

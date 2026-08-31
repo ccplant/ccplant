@@ -61,7 +61,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		log.Printf("[PROVISIONER] Initial connect failed: %v", err)
 	}
 	if cfg.SessionControlToken != "" {
-		go runSessionControlClient(ctx, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
+		go runSessionControlClient(ctx, srv, client, cfg, os.Getenv("AGENTAPI_AGENT_TYPE"))
 	}
 
 	for {
@@ -100,7 +100,7 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			<-ctx.Done()
 			return ctx.Err()
 		}
-		srv.runProvision(ctx, provisionReq.Settings)
+		srv.startProvision(provisionReq.Settings)
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -146,7 +146,7 @@ func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client,
 		if !srv.claimProvisioning() {
 			return fmt.Errorf("runner provisioning is already %s", srv.GetStatus())
 		}
-		srv.runProvision(ctx, claim.Settings)
+		srv.startProvision(claim.Settings)
 		<-ctx.Done()
 		return ctx.Err()
 	}

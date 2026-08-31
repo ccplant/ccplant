@@ -389,8 +389,8 @@ func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, s
 
 // RefreshSessionCredentials replaces the credential files persisted in a
 // session's restart settings with the latest files for the same credential
-// owner. The workload is then suspended; callers explicitly resume it through
-// the regular resume endpoint, which preserves the logical session and PVC.
+// owner, then asks only that session's provisioner to reload the settings and
+// restart its agent subprocess. The Pod, container and PVC stay running.
 func (m *KubernetesSessionManager) RefreshSessionCredentials(ctx context.Context, sessionID string) error {
 	session := m.GetSession(sessionID)
 	if session == nil {
@@ -453,15 +453,35 @@ func (m *KubernetesSessionManager) RefreshSessionCredentials(ctx context.Context
 	}
 	ks.SetProvisionSettings(settings)
 
-	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("get canonical service: %w", err)
+	store := m.connectedSessionControlStore(ctx, sessionID)
+	if store == nil {
+		return fmt.Errorf("session control channel is not connected")
 	}
-	if err := m.suspendSessionWorkload(ctx, sessionID, svc); err != nil {
-		return fmt.Errorf("suspend session for credential refresh: %w", err)
+	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{
+		ID:        uuid.NewString(),
+		Type:      "reload_settings",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("enqueue settings reload: %w", err)
 	}
-	log.Printf("[K8S_SESSION] Refreshed managed credentials for session %s from owner %s", sessionID, credentialOwner)
+	log.Printf("[K8S_SESSION] Refreshed managed credentials and requested in-container reload for session %s from owner %s", sessionID, credentialOwner)
 	return nil
+}
+
+// GetSessionProvisionSettings returns the settings snapshot currently mounted
+// for restart recovery. Session provisioners use it to reload files without
+// receiving credential contents through the command queue.
+func (m *KubernetesSessionManager) GetSessionProvisionSettings(ctx context.Context, sessionID string) (*sessionsettings.SessionSettings, error) {
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get restart settings secret %s: %w", secretName, err)
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(secret.Data["settings.yaml"])
+	if err != nil {
+		return nil, fmt.Errorf("parse restart settings: %w", err)
+	}
+	return settings, nil
 }
 
 func resolveKubernetesNamespace(candidates ...string) string {

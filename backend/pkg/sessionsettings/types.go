@@ -290,6 +290,7 @@ type SessionMeta struct {
 	// embedded in this session. It lets an existing session refresh only the
 	// credentials it originally selected after a re-authentication.
 	CredentialOwner    string `yaml:"credential_owner,omitempty" json:"credential_owner,omitempty"`
+	InContainerReload  bool   `yaml:"-" json:"in_container_reload,omitempty"`
 	PersistenceEnabled bool   `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
 }
 

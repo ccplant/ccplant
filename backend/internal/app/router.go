@@ -452,6 +452,7 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	if r.handlers.sessionControlController != nil {
 		r.echo.GET("/internal/session-control/:sessionId/commands", r.handlers.sessionControlController.WaitCommands)
+		r.echo.GET("/internal/session-control/:sessionId/provision-settings", r.handlers.sessionControlController.GetProvisionSettings)
 		r.echo.POST("/internal/session-control/:sessionId/events", r.handlers.sessionControlController.AppendEvents)
 		log.Printf("[ROUTES] Internal session control long-poll endpoints registered")
 	}

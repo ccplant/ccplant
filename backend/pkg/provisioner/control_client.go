@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type controlCommand struct {
@@ -39,7 +40,7 @@ type controlEvent struct {
 	CreatedAt       time.Time   `json:"created_at"`
 }
 
-func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullClientConfig, agentType string) {
+func runSessionControlClient(ctx context.Context, srv *Server, client *http.Client, cfg PullClientConfig, agentType string) {
 	cursorPath := os.Getenv("SESSION_CONTROL_CURSOR_FILE")
 	if cursorPath == "" {
 		cursorPath = "/workspace/.agentapi-session-control-cursor"
@@ -59,7 +60,7 @@ func runSessionControlClient(ctx context.Context, client *http.Client, cfg PullC
 			continue
 		}
 		for _, command := range commands {
-			err := executeControlCommand(ctx, client, agentType, command)
+			err := executeControlCommand(ctx, srv, client, cfg, agentType, command)
 			eventType := "command_completed"
 			payload := map[string]string{}
 			if err != nil {
@@ -115,11 +116,17 @@ func pollControlCommands(ctx context.Context, client *http.Client, cfg PullClien
 	return body.Commands, nil
 }
 
-func executeControlCommand(ctx context.Context, client *http.Client, agentType string, command controlCommand) error {
+func executeControlCommand(ctx context.Context, srv *Server, client *http.Client, cfg PullClientConfig, agentType string, command controlCommand) error {
 	localBase := "http://127.0.0.1:9000"
 	var endpoint string
 	var payload interface{}
 	switch command.Type {
+	case "reload_settings":
+		settings, err := fetchProvisionSettings(ctx, client, cfg)
+		if err != nil {
+			return err
+		}
+		return srv.ReloadProvision(settings)
 	case "prompt":
 		var prompt struct {
 			Content string `json:"content"`
@@ -170,6 +177,29 @@ func executeControlCommand(ctx context.Context, client *http.Client, agentType s
 		return fmt.Errorf("local command returned HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func fetchProvisionSettings(ctx context.Context, client *http.Client, cfg PullClientConfig) (*sessionsettings.SessionSettings, error) {
+	path := "/internal/session-control/" + url.PathEscape(cfg.SessionID) + "/provision-settings"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.ProxyURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	authorizeControlRequest(req, cfg)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("settings reload returned HTTP %d", resp.StatusCode)
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.NewDecoder(resp.Body).Decode(&settings); err != nil {
+		return nil, err
+	}
+	settings.Session.InContainerReload = true
+	return &settings, nil
 }
 
 func localACPSessionID(ctx context.Context, client *http.Client, base string) (string, error) {

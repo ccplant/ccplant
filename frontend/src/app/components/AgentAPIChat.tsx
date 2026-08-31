@@ -20,7 +20,6 @@ import ToolExecutionPane from './ToolExecutionPane';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
 import { mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
-import { waitForSessionResume } from '../../lib/session-resume';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -1820,7 +1819,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     try {
       const client = createAgentAPIProxyClientFromStorage();
       await client.refreshSessionCredentials(sessionId);
-      await waitForSessionResume(client, sessionId);
       window.location.reload();
     } catch (err) {
       console.error('Failed to refresh session credentials:', err);

@@ -164,8 +164,10 @@ func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testin
 	}
 }
 
-func TestRefreshSessionCredentialsUpdatesOnlyRequestedSessionAndSuspendsIt(t *testing.T) {
+func TestRefreshSessionCredentialsUpdatesOnlyRequestedSessionAndRequestsInContainerReload(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
+	controlStore := &compatibilityControlStore{connected: true}
+	manager.sessionControlStore = controlStore
 	manager.credentialsRepo = &fakeCredentialsRepository{filesByName: map[string][]sessionsettings.ManagedFile{
 		"test-user": {{
 			Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
@@ -214,11 +216,11 @@ func TestRefreshSessionCredentialsUpdatesOnlyRequestedSessionAndSuspendsIt(t *te
 	if files["/home/agentapi/.config/kept"] != "keep-me" {
 		t.Fatalf("non-credential file was not preserved: %#v", files)
 	}
-	if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, session.DeploymentName(), metav1.GetOptions{}); !errors.IsNotFound(err) {
-		t.Fatalf("session pod still exists after refresh: %v", err)
+	if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, session.DeploymentName(), metav1.GetOptions{}); err != nil {
+		t.Fatalf("session pod was restarted during in-container reload: %v", err)
 	}
-	if session.Status() != "suspended" {
-		t.Fatalf("session status = %q, want suspended", session.Status())
+	if len(controlStore.commands) != 1 || controlStore.commands[0].Type != "reload_settings" {
+		t.Fatalf("control commands = %#v, want one reload_settings command", controlStore.commands)
 	}
 }
 

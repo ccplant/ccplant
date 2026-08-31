@@ -170,8 +170,8 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 }
 
 // RefreshSessionCredentials updates only the requested session with the latest
-// managed credentials and suspends its workload. The UI follows this call with
-// ResumeSession so the same logical session is restored with the new auth file.
+// managed credentials and asks its in-container provisioner to restart the
+// agent subprocess with the refreshed settings.
 func (c *SessionController) RefreshSessionCredentials(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
 	session := c.getSessionManager().GetSession(sessionID)
@@ -191,7 +191,7 @@ func (c *SessionController) RefreshSessionCredentials(ctx echo.Context) error {
 	}
 	return ctx.JSON(http.StatusAccepted, map[string]interface{}{
 		"session_id": sessionID,
-		"status":     "suspended",
+		"status":     "reloading",
 	})
 }
 

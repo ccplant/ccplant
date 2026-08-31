@@ -69,8 +69,7 @@ type SessionWorkloadEnsurer interface {
 }
 
 // SessionCredentialRefresher updates the managed credentials embedded in a
-// session and suspends only that session so it can be explicitly resumed with
-// the refreshed files.
+// session and requests an in-container agent-process reload for that session.
 type SessionCredentialRefresher interface {
 	RefreshSessionCredentials(ctx context.Context, id string) error
 }

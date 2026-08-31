@@ -215,6 +215,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if controlStore != nil {
 		control := controllers.NewSessionControlController(controlStore, manager)
 		e.GET("/internal/session-control/:sessionId/commands", control.WaitCommands)
+		e.GET("/internal/session-control/:sessionId/provision-settings", control.GetProvisionSettings)
 		e.POST("/internal/session-control/:sessionId/events", control.AppendEvents)
 	}
 	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
