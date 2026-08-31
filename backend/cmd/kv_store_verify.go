@@ -21,11 +21,15 @@ type kvStoreVerifyOptions struct {
 	primaryAuthToken               string
 	primaryEncryptionActiveKeyID   string
 	primaryEncryptionKeysJSON      string
+	primaryEncryptionProvider      string
+	primaryEncryptionKMSRegion     string
 	secondaryBackend               string
 	secondaryDatabaseURL           string
 	secondaryAuthToken             string
 	secondaryEncryptionActiveKeyID string
 	secondaryEncryptionKeysJSON    string
+	secondaryEncryptionProvider    string
+	secondaryEncryptionKMSRegion   string
 	output                         string
 }
 
@@ -66,13 +70,13 @@ func newKVStoreVerifyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			wrappedPrimary, err := encryptedMigrationDestination(primary, o.primaryEncryptionActiveKeyID, o.primaryEncryptionKeysJSON)
+			wrappedPrimary, err := encryptedMigrationDestination(cmd.Context(), primary, o.primaryEncryptionProvider, o.primaryEncryptionActiveKeyID, o.primaryEncryptionKMSRegion, o.primaryEncryptionKeysJSON)
 			if err != nil {
 				_ = errors.Join(primary.Close(), secondary.Close())
 				return fmt.Errorf("configure primary encryption: %w", err)
 			}
 			primary = wrappedPrimary
-			wrappedSecondary, err := encryptedMigrationDestination(secondary, o.secondaryEncryptionActiveKeyID, o.secondaryEncryptionKeysJSON)
+			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, o.secondaryEncryptionProvider, o.secondaryEncryptionActiveKeyID, o.secondaryEncryptionKMSRegion, o.secondaryEncryptionKeysJSON)
 			if err != nil {
 				_ = errors.Join(primary.Close(), secondary.Close())
 				return fmt.Errorf("configure secondary encryption: %w", err)
@@ -94,11 +98,15 @@ func newKVStoreVerifyCommand() *cobra.Command {
 	flags.StringVar(&o.primaryAuthToken, "primary-auth-token", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_AUTH_TOKEN"), "primary libSQL authentication token")
 	flags.StringVar(&o.primaryEncryptionActiveKeyID, "primary-encryption-active-key-id", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_ACTIVE_KEY_ID"), "active key ID used to decrypt primary values")
 	flags.StringVar(&o.primaryEncryptionKeysJSON, "primary-encryption-keys-json", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KEYS"), "JSON object mapping primary key IDs to base64-encoded 32-byte keys")
+	flags.StringVar(&o.primaryEncryptionProvider, "primary-encryption-provider", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_PROVIDER"), "primary encryption provider")
+	flags.StringVar(&o.primaryEncryptionKMSRegion, "primary-encryption-kms-region", os.Getenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KMS_REGION"), "AWS region for a primary AWS KMS provider")
 	flags.StringVar(&o.secondaryBackend, "secondary-backend", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_BACKEND"), "secondary backend (kubernetes or libsql)")
 	flags.StringVar(&o.secondaryDatabaseURL, "secondary-database-url", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_DATABASE_URL"), "secondary libSQL database URL")
 	flags.StringVar(&o.secondaryAuthToken, "secondary-auth-token", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN"), "secondary libSQL authentication token")
 	flags.StringVar(&o.secondaryEncryptionActiveKeyID, "secondary-encryption-active-key-id", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_ACTIVE_KEY_ID"), "active key ID used to decrypt secondary values")
 	flags.StringVar(&o.secondaryEncryptionKeysJSON, "secondary-encryption-keys-json", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_KEYS"), "JSON object mapping secondary key IDs to base64-encoded 32-byte keys")
+	flags.StringVar(&o.secondaryEncryptionProvider, "secondary-encryption-provider", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_PROVIDER"), "secondary encryption provider")
+	flags.StringVar(&o.secondaryEncryptionKMSRegion, "secondary-encryption-kms-region", os.Getenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_KMS_REGION"), "AWS region for a secondary AWS KMS provider")
 	flags.StringVarP(&o.output, "output", "o", "text", "output format: text or json")
 	return command
 }

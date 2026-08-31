@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -31,6 +32,8 @@ type kvStoreMigrateOptions struct {
 	legacyAuthToken       string
 	encryptionActiveKeyID string
 	encryptionKeysJSON    string
+	encryptionProvider    string
+	encryptionKMSRegion   string
 	dryRun                bool
 	overwrite             bool
 	output                string
@@ -83,7 +86,7 @@ without writing anything.`,
 				return err
 			}
 			defer func() { _ = errors.Join(primary.Close(), secondary.Close()) }()
-			secondary, err = encryptedMigrationDestination(secondary, o.encryptionActiveKeyID, o.encryptionKeysJSON)
+			secondary, err = encryptedMigrationDestination(cmd.Context(), secondary, o.encryptionProvider, o.encryptionActiveKeyID, o.encryptionKMSRegion, o.encryptionKeysJSON)
 			if err != nil {
 				return err
 			}
@@ -108,13 +111,15 @@ without writing anything.`,
 	flags.StringVar(&o.legacyAuthToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "deprecated: destination libSQL authentication token")
 	flags.StringVar(&o.encryptionActiveKeyID, "encryption-active-key-id", os.Getenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID"), "active key ID used to encrypt destination values")
 	flags.StringVar(&o.encryptionKeysJSON, "encryption-keys-json", os.Getenv("AGENTAPI_KV_ENCRYPTION_KEYS"), "JSON object mapping destination key IDs to base64-encoded 32-byte keys")
+	flags.StringVar(&o.encryptionProvider, "encryption-provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "destination encryption provider (local, aws-kms, aws-kms-branch, or cloud-kms-branch)")
+	flags.StringVar(&o.encryptionKMSRegion, "encryption-kms-region", os.Getenv("AGENTAPI_KV_ENCRYPTION_KMS_REGION"), "AWS region for a destination AWS KMS provider")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "inspect records and conflicts without writing to the secondary store")
 	flags.BoolVar(&o.overwrite, "overwrite", false, "replace different records that already exist in the secondary store")
 	flags.StringVarP(&o.output, "output", "o", "text", "output format: text or json")
 	return command
 }
 
-func encryptedMigrationDestination(store kvstore.Store, activeKeyID, keysJSON string) (kvstore.Store, error) {
+func encryptedMigrationDestination(ctx context.Context, store kvstore.Store, provider, activeKeyID, kmsRegion, keysJSON string) (kvstore.Store, error) {
 	if activeKeyID == "" && strings.TrimSpace(keysJSON) == "" {
 		return store, nil
 	}
@@ -125,7 +130,26 @@ func encryptedMigrationDestination(store kvstore.Store, activeKeyID, keysJSON st
 	if err := json.Unmarshal([]byte(keysJSON), &keys); err != nil {
 		return nil, fmt.Errorf("decode encryption keys JSON: %w", err)
 	}
-	keyring, err := kvstore.NewLocalKeyring(activeKeyID, keys)
+	var keyring kvstore.EnvelopeKeyring
+	var err error
+	switch provider {
+	case "", "local":
+		keyring, err = kvstore.NewLocalKeyring(activeKeyID, keys)
+	case "aws-kms":
+		keyring, err = kvstore.NewKMSKeyring(ctx, activeKeyID, kmsRegion, keys)
+	case "aws-kms-branch", "cloud-kms-branch":
+		registry, ok := store.(kvstore.BranchKeyRegistry)
+		if !ok {
+			return nil, fmt.Errorf("encryption provider %q requires a branch key registry", provider)
+		}
+		if provider == "aws-kms-branch" {
+			keyring, err = kvstore.NewBranchKMSKeyring(ctx, activeKeyID, kmsRegion, keys, registry, 15*time.Minute, 128)
+		} else {
+			keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, activeKeyID, keys, registry, 15*time.Minute, 128)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported KV encryption provider %q", provider)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +198,7 @@ func buildMigrationStore(ctx context.Context, config migrationStoreConfig, clien
 	switch config.backend {
 	case "kubernetes":
 		return kvstore.NewKubernetesStore(client), nil
-	case "libsql":
+	case "libsql", "libsql-encrypted":
 		if strings.TrimSpace(config.databaseURL) == "" {
 			return nil, errors.New("database URL is required for libsql")
 		}
