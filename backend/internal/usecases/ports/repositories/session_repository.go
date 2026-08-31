@@ -68,6 +68,13 @@ type SessionWorkloadEnsurer interface {
 	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
 }
 
+// SessionCredentialRefresher updates the managed credentials embedded in a
+// session and suspends only that session so it can be explicitly resumed with
+// the refreshed files.
+type SessionCredentialRefresher interface {
+	RefreshSessionCredentials(ctx context.Context, id string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`

@@ -714,6 +714,44 @@
         }
       }
     },
+    "/sessions/{sessionId}/refresh-credentials": {
+      "post": {
+        "summary": "Refresh credentials for one session",
+        "description": "Replaces the requested session's persisted managed credential files with the latest files from its original credential owner, then suspends only that session so it can be explicitly resumed.",
+        "operationId": "refreshSessionCredentials",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Credentials were refreshed and the session was suspended for explicit resume"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "501": {
+            "description": "Credential refresh is not supported by the configured session manager"
+          },
+          "503": {
+            "description": "Failed to refresh credentials or suspend the session"
+          }
+        }
+      }
+    },
     "/sessions/status/stream": {
       "get": {
         "summary": "Stream all session status changes (SSE)",

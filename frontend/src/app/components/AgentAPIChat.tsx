@@ -20,6 +20,7 @@ import ToolExecutionPane from './ToolExecutionPane';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
 import { mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
+import { waitForSessionResume } from '../../lib/session-resume';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -723,6 +724,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRefreshingCredentials, setIsRefreshingCredentials] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
 
   // Restore sidebar visibility from localStorage after mount
@@ -1811,6 +1813,24 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     }
   }, [sessionId, router]);
 
+  const refreshCredentialsAndResume = useCallback(async () => {
+    if (!sessionId || isRefreshingCredentials) return;
+    setIsRefreshingCredentials(true);
+    setError(null);
+    try {
+      const client = createAgentAPIProxyClientFromStorage();
+      await client.refreshSessionCredentials(sessionId);
+      await waitForSessionResume(client, sessionId);
+      window.location.reload();
+    } catch (err) {
+      console.error('Failed to refresh session credentials:', err);
+      setError(err instanceof Error
+        ? `認証情報を反映して再開できませんでした: ${err.message}`
+        : '認証情報を反映して再開できませんでした');
+      setIsRefreshingCredentials(false);
+    }
+  }, [sessionId, isRefreshingCredentials]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       const enterKeyBehavior = getEnterKeyBehavior();
@@ -1978,8 +1998,23 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           </div>
         </div>
         {error && (
-          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-sm">
-            {error}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-sm">
+            <span>{error}</span>
+            {sessionId && (
+              <div className="flex items-center gap-2">
+                <Link href="/settings/codex-auth" target="_blank" rel="noopener noreferrer" className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium hover:bg-red-100 dark:border-red-700 dark:hover:bg-red-900/40">
+                  Codex を再認証
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void refreshCredentialsAndResume()}
+                  disabled={isRefreshingCredentials}
+                  className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isRefreshingCredentials ? '再開中...' : '最新の認証情報で再開'}
+                </button>
+              </div>
+            )}
           </div>
         )}
         
@@ -2068,7 +2103,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 {agentStatus.message}
               </p>
             )}
-            <p className="mt-4 text-xs text-gray-400 dark:text-gray-500">セッションを削除して再作成してください</p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Link href="/settings/codex-auth" target="_blank" rel="noopener noreferrer" className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                Codex を再認証
+              </Link>
+              <button
+                type="button"
+                onClick={() => void refreshCredentialsAndResume()}
+                disabled={isRefreshingCredentials}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isRefreshingCredentials ? '再開中...' : '最新の認証情報で再開'}
+              </button>
+            </div>
           </div>
         )}
 

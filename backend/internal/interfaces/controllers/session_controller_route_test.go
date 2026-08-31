@@ -23,6 +23,16 @@ type ensuringSessionManager struct {
 	restoring  bool
 }
 
+type credentialRefreshingSessionManager struct {
+	*fakeSessionManager
+	refreshedIDs []string
+}
+
+func (m *credentialRefreshingSessionManager) RefreshSessionCredentials(_ context.Context, id string) error {
+	m.refreshedIDs = append(m.refreshedIDs, id)
+	return nil
+}
+
 func (m *ensuringSessionManager) EnsureSessionWorkload(_ context.Context, id string) (entities.Session, bool, error) {
 	m.ensuredIDs = append(m.ensuredIDs, id)
 	return m.GetSession(id), m.restoring, nil
@@ -163,6 +173,25 @@ func TestResumeSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
 	}
 	if len(manager.ensuredIDs) != 1 || manager.ensuredIDs[0] != "remote-id" {
 		t.Fatalf("ensured IDs = %v, want [remote-id]", manager.ensuredIDs)
+	}
+}
+
+func TestRefreshSessionCredentialsTargetsOnlyRequestedSession(t *testing.T) {
+	manager := &credentialRefreshingSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{
+		"session-1": {id: "session-1", userID: "user-1", scope: entities.ScopeUser},
+		"session-2": {id: "session-2", userID: "user-1", scope: entities.ScopeUser},
+	}}}
+	controller := controllers.NewSessionController(&routeSessionManagerProvider{manager: manager}, nil)
+	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/session-1/refresh-credentials", "session-1")
+
+	if err := controller.RefreshSessionCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("response status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(manager.refreshedIDs) != 1 || manager.refreshedIDs[0] != "session-1" {
+		t.Fatalf("refreshed IDs = %v, want [session-1]", manager.refreshedIDs)
 	}
 }
 

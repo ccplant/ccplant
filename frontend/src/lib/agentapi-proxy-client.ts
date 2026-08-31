@@ -1044,6 +1044,12 @@ export class AgentAPIProxyClient {
     });
   }
 
+  async refreshSessionCredentials(sessionId: string): Promise<{ session_id: string; status: string }> {
+    return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/refresh-credentials`, {
+      method: 'POST',
+    });
+  }
+
 
   // Session message operations
 

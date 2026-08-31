@@ -159,6 +159,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
 	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
+	e.POST("/sessions/:sessionId/refresh-credentials", c.RefreshSessionCredentials)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -166,6 +167,32 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("Registered session management routes")
 	return nil
+}
+
+// RefreshSessionCredentials updates only the requested session with the latest
+// managed credentials and suspends its workload. The UI follows this call with
+// ResumeSession so the same logical session is restored with the new auth file.
+func (c *SessionController) RefreshSessionCredentials(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	refresher, ok := c.getSessionManager().(repositories.SessionCredentialRefresher)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Credential refresh is not supported by this session manager")
+	}
+	if err := refresher.RefreshSessionCredentials(ctx.Request().Context(), sessionID); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to refresh session credentials: %v", err))
+	}
+	return ctx.JSON(http.StatusAccepted, map[string]interface{}{
+		"session_id": sessionID,
+		"status":     "suspended",
+	})
 }
 
 // StartSession handles POST /start requests to start a new agentapi server

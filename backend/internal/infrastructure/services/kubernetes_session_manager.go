@@ -387,6 +387,83 @@ func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, s
 	return nil
 }
 
+// RefreshSessionCredentials replaces the credential files persisted in a
+// session's restart settings with the latest files for the same credential
+// owner. The workload is then suspended; callers explicitly resume it through
+// the regular resume endpoint, which preserves the logical session and PVC.
+func (m *KubernetesSessionManager) RefreshSessionCredentials(ctx context.Context, sessionID string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("credential refresh is only supported by the Kubernetes session manager")
+	}
+
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get restart settings secret %s: %w", secretName, err)
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(secret.Data["settings.yaml"])
+	if err != nil {
+		return fmt.Errorf("parse restart settings: %w", err)
+	}
+
+	credentialOwner := settings.Session.CredentialOwner
+	if credentialOwner == "" {
+		// Backward compatibility for sessions created before credential_owner was
+		// persisted. The in-memory request still retains the original selector.
+		owners := credentialOwnersForRequest(ks.Request())
+		if len(owners) > 0 {
+			credentialOwner = owners[0]
+		}
+	}
+	if credentialOwner == "" {
+		return fmt.Errorf("session has no managed credential owner")
+	}
+
+	credentialFiles, _ := m.loadCredentialFiles(ctx, credentialOwner)
+	if len(credentialFiles) == 0 {
+		return fmt.Errorf("no managed credentials found for %s", credentialOwner)
+	}
+	managedPaths := make(map[string]struct{}, len(sessionsettings.ManagedFileTypes))
+	for _, path := range sessionsettings.ManagedFileTypes {
+		managedPaths[path] = struct{}{}
+	}
+	refreshed := make([]sessionsettings.ManagedFile, 0, len(settings.Files)+len(credentialFiles))
+	for _, file := range settings.Files {
+		if _, managed := managedPaths[file.Path]; !managed {
+			refreshed = append(refreshed, file)
+		}
+	}
+	refreshed = append(refreshed, credentialFiles...)
+	settings.Files = refreshed
+	settings.Credentials = ""
+	settings.Session.CredentialOwner = credentialOwner
+
+	yamlData, err := sessionsettings.MarshalYAML(settings)
+	if err != nil {
+		return fmt.Errorf("marshal refreshed settings: %w", err)
+	}
+	secret.Data["settings.yaml"] = yamlData
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update restart settings secret: %w", err)
+	}
+	ks.SetProvisionSettings(settings)
+
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get canonical service: %w", err)
+	}
+	if err := m.suspendSessionWorkload(ctx, sessionID, svc); err != nil {
+		return fmt.Errorf("suspend session for credential refresh: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Refreshed managed credentials for session %s from owner %s", sessionID, credentialOwner)
+	return nil
+}
+
 func resolveKubernetesNamespace(candidates ...string) string {
 	for _, candidate := range candidates {
 		if namespace := strings.TrimSpace(candidate); namespace != "" {
@@ -6260,6 +6337,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			continue
 		}
 		settings.Files = files
+		settings.Session.CredentialOwner = credentialOwner
 		log.Printf("[K8S_SESSION] Embedded %d managed file(s) for credential owner %s (Secret %s) for session %s",
 			len(settings.Files), credentialOwner, filesSecretName, session.id)
 		break
