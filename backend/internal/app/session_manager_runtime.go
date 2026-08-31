@@ -373,10 +373,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
-					reconcileSessionRunnerPools(ctx, manager, result.Pools)
-					if result.RegisteredRunnerIDs != nil {
-						reconcileOrphanedSessionRunners(ctx, manager, *result.RegisteredRunnerIDs)
-					}
+					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
 					}
@@ -389,6 +386,17 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		case <-ticker.C:
 		}
 	}
+}
+
+func reconcileSessionRunnerHeartbeat(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier, registeredRunnerIDs *[]string) {
+	// The parent inventory was captured before this heartbeat response. Remove
+	// orphaned local runners before replenishing stock so a runner registered by
+	// this reconciliation is not immediately deleted as absent from that stale
+	// snapshot.
+	if registeredRunnerIDs != nil {
+		reconcileOrphanedSessionRunners(ctx, manager, *registeredRunnerIDs)
+	}
+	reconcileSessionRunnerPools(ctx, manager, pools)
 }
 
 type orphanedSessionRunnerCleaner interface {

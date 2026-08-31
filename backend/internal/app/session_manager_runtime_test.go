@@ -25,10 +25,12 @@ type fakeRunnerInfrastructure struct {
 	idle, total int
 	created     int
 	registered  map[string]struct{}
+	operations  []string
 }
 
 func (f *fakeRunnerInfrastructure) DeleteRunnerSessionsNotRegistered(_ context.Context, registered map[string]struct{}) error {
 	f.registered = registered
+	f.operations = append(f.operations, "cleanup")
 	return nil
 }
 
@@ -42,7 +44,23 @@ func (f *fakeRunnerInfrastructure) CountRunnerSessionsForPool(context.Context, s
 
 func (f *fakeRunnerInfrastructure) CreateStockSessionForPool(context.Context, string, bool) error {
 	f.created++
+	f.operations = append(f.operations, "create")
 	return nil
+}
+
+func TestReconcileSessionRunnerHeartbeatCleansBeforeReplenishing(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	registered := []string{"existing-runner"}
+	reconcileSessionRunnerHeartbeat(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
+		Pool: "managed", Enabled: true, MinIdle: 1, MaxRunners: 20,
+	}}, &registered)
+
+	if len(manager.operations) != 2 || manager.operations[0] != "cleanup" || manager.operations[1] != "create" {
+		t.Fatalf("operations = %v, want [cleanup create]", manager.operations)
+	}
+	if manager.created != 1 {
+		t.Fatalf("created %d runners, want 1", manager.created)
+	}
 }
 
 func TestReconcileSessionRunnerPoolsUsesInfrastructureInventory(t *testing.T) {
