@@ -9,6 +9,22 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func TestDefaultLeaderElectionConfigUsesThreeMinuteRenewals(t *testing.T) {
+	config := DefaultLeaderElectionConfig("test")
+	if config.LeaseDuration != 9*time.Minute {
+		t.Fatalf("LeaseDuration = %s, want 9m", config.LeaseDuration)
+	}
+	if config.RenewDeadline != 6*time.Minute {
+		t.Fatalf("RenewDeadline = %s, want 6m", config.RenewDeadline)
+	}
+	if config.RenewDeadline/2 != 3*time.Minute {
+		t.Fatalf("renew interval = %s, want 3m", config.RenewDeadline/2)
+	}
+	if config.RetryPeriod != time.Minute {
+		t.Fatalf("RetryPeriod = %s, want 1m", config.RetryPeriod)
+	}
+}
+
 func TestLeaderElectorAcquiresAndReleasesRedisLease(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})

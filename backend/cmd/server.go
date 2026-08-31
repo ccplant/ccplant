@@ -281,20 +281,20 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 	// Parse leader election config durations
 	leaseDuration, err := time.ParseDuration(configData.ScheduleWorker.LeaseDuration)
 	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Invalid lease_duration, using default 15s: %v", err)
-		leaseDuration = 15 * time.Second
+		log.Printf("[SCHEDULE_WORKER] Invalid lease_duration, using default 9m: %v", err)
+		leaseDuration = 9 * time.Minute
 	}
 
 	renewDeadline, err := time.ParseDuration(configData.ScheduleWorker.RenewDeadline)
 	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Invalid renew_deadline, using default 10s: %v", err)
-		renewDeadline = 10 * time.Second
+		log.Printf("[SCHEDULE_WORKER] Invalid renew_deadline, using default 6m: %v", err)
+		renewDeadline = 6 * time.Minute
 	}
 
 	retryPeriod, err := time.ParseDuration(configData.ScheduleWorker.RetryPeriod)
 	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] Invalid retry_period, using default 2s: %v", err)
-		retryPeriod = 2 * time.Second
+		log.Printf("[SCHEDULE_WORKER] Invalid retry_period, using default 1m: %v", err)
+		retryPeriod = time.Minute
 	}
 
 	electionConfig := schedule.LeaderElectionConfig{
@@ -367,20 +367,20 @@ func startSlackbotCleanupWorker(configData *config.Config, proxyServer *app.Serv
 
 	leaseDuration, err := time.ParseDuration(configData.SlackbotCleanupWorker.LeaseDuration)
 	if err != nil || leaseDuration <= 0 {
-		log.Printf("[SLACKBOT_CLEANUP] Invalid lease_duration, using default 15s: %v", err)
-		leaseDuration = 15 * time.Second
+		log.Printf("[SLACKBOT_CLEANUP] Invalid lease_duration, using default 9m: %v", err)
+		leaseDuration = 9 * time.Minute
 	}
 
 	renewDeadline, err := time.ParseDuration(configData.SlackbotCleanupWorker.RenewDeadline)
 	if err != nil || renewDeadline <= 0 {
-		log.Printf("[SLACKBOT_CLEANUP] Invalid renew_deadline, using default 10s: %v", err)
-		renewDeadline = 10 * time.Second
+		log.Printf("[SLACKBOT_CLEANUP] Invalid renew_deadline, using default 6m: %v", err)
+		renewDeadline = 6 * time.Minute
 	}
 
 	retryPeriod, err := time.ParseDuration(configData.SlackbotCleanupWorker.RetryPeriod)
 	if err != nil || retryPeriod <= 0 {
-		log.Printf("[SLACKBOT_CLEANUP] Invalid retry_period, using default 2s: %v", err)
-		retryPeriod = 2 * time.Second
+		log.Printf("[SLACKBOT_CLEANUP] Invalid retry_period, using default 1m: %v", err)
+		retryPeriod = time.Minute
 	}
 
 	electionConfig := schedule.LeaderElectionConfig{
@@ -453,15 +453,15 @@ func startStockInventoryWorker(configData *config.Config, proxyServer *app.Serve
 
 	leaseDuration, err := time.ParseDuration(configData.StockInventoryWorker.LeaseDuration)
 	if err != nil {
-		leaseDuration = 15 * time.Second
+		leaseDuration = 9 * time.Minute
 	}
 	renewDeadline, err := time.ParseDuration(configData.StockInventoryWorker.RenewDeadline)
 	if err != nil {
-		renewDeadline = 10 * time.Second
+		renewDeadline = 6 * time.Minute
 	}
 	retryPeriod, err := time.ParseDuration(configData.StockInventoryWorker.RetryPeriod)
 	if err != nil {
-		retryPeriod = 2 * time.Second
+		retryPeriod = time.Minute
 	}
 
 	electionConfig := schedule.LeaderElectionConfig{
@@ -636,15 +636,15 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 	// Parse leader election config durations
 	leaseDuration, err := time.ParseDuration(configData.ScheduleWorker.LeaseDuration)
 	if err != nil {
-		leaseDuration = 15 * time.Second
+		leaseDuration = 9 * time.Minute
 	}
 	renewDeadline, err := time.ParseDuration(configData.ScheduleWorker.RenewDeadline)
 	if err != nil {
-		renewDeadline = 10 * time.Second
+		renewDeadline = 6 * time.Minute
 	}
 	retryPeriod, err := time.ParseDuration(configData.ScheduleWorker.RetryPeriod)
 	if err != nil {
-		retryPeriod = 2 * time.Second
+		retryPeriod = time.Minute
 	}
 
 	electionConfig := schedule.LeaderElectionConfig{

@@ -294,9 +294,9 @@ worker:
     enabled: false
     checkInterval: "30s"
     leaderElection:
-      leaseDuration: "15s"
-      renewDeadline: "10s"
-      retryPeriod: "2s"
+      leaseDuration: "9m"
+      renewDeadline: "6m"
+      retryPeriod: "1m"
 
   slackbotCleanup:
     enabled: false
@@ -305,9 +305,9 @@ worker:
     sessionTTLCheckInterval: "1m"
     dryRun: false
     leaderElection:
-      leaseDuration: "15s"
-      renewDeadline: "10s"
-      retryPeriod: "2s"
+      leaseDuration: "9m"
+      renewDeadline: "6m"
+      retryPeriod: "1m"
 
   stockInventory:
     enabled: false
@@ -316,9 +316,9 @@ worker:
     dockerEnabled: false
     pools: []
     leaderElection:
-      leaseDuration: "15s"
-      renewDeadline: "10s"
-      retryPeriod: "2s"
+      leaseDuration: "9m"
+      renewDeadline: "6m"
+      retryPeriod: "1m"
 
 # The forwarding session manager is an independent HTTP workload.
 sessionManager:
