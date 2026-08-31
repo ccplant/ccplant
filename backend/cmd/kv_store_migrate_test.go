@@ -133,22 +133,25 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Selected != 3 || result.Copied != 3 {
+	if result.Selected != 2 || result.Copied != 2 {
 		t.Fatalf("unexpected migration result: %#v", result)
 	}
 	for _, identity := range []struct {
 		kind kvstore.Kind
 		key  string
-	}{{kvstore.KindSecret, "settings"}, {kvstore.KindSecret, "notification-subscriptions-user"}, {kvstore.KindConfigMap, "memory"}} {
+	}{{kvstore.KindSecret, "settings"}, {kvstore.KindConfigMap, "memory"}} {
 		if _, err := store.Get(ctx, identity.kind, "test", identity.key); err != nil {
 			t.Fatalf("read migrated %s/%s: %v", identity.kind, identity.key, err)
 		}
+	}
+	if _, err := store.Get(ctx, kvstore.KindSecret, "test", "notification-subscriptions-user"); !errors.Is(err, kvstore.ErrNotFound) {
+		t.Fatalf("non-AgentAPI-owned Secret was migrated: %v", err)
 	}
 	second, err := migrateKubernetesKV(ctx, client, store, kvStoreMigrateOptions{namespace: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Skipped != 3 {
+	if second.Skipped != 2 {
 		t.Fatalf("expected idempotent skips, got %#v", second)
 	}
 }
