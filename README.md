@@ -6,6 +6,7 @@
 
 - `backend/` — Go製のAgentAPI proxyとCLI
 - `frontend/` — Next.js製のWeb UI
+- `docs/` — MarkdownとVitePressで構築する公開ドキュメントサイト
 - `backend/helm/agentapi-proxy/` — `backend` Helm Chart
 - `frontend/helm/agentapi-ui/` — `frontend` Helm Chart
 - `chart/ccplant/` — backend/frontendをまとめて配布するHelm Chart
@@ -15,6 +16,7 @@
 ```bash
 make backend-test
 make frontend-test
+make docs-build
 make chart-test
 ```
 
@@ -23,6 +25,17 @@ make chart-test
 ```bash
 docker compose up --build
 ```
+
+ドキュメントを編集・プレビューする場合は次を実行します。
+
+```bash
+cd docs
+bun install
+bun run dev
+```
+
+`main`ブランチへ反映されたドキュメントはGitHub Actionsにより
+[GitHub Pages](https://ccplant.github.io/ccplant/)へデプロイされます。
 
 ## Release
 

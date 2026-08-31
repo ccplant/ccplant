@@ -1,4 +1,4 @@
-.PHONY: backend-build backend-test frontend-install frontend-test frontend-build chart-deps chart-test test
+.PHONY: backend-build backend-test frontend-install frontend-test frontend-build docs-install docs-dev docs-build chart-deps chart-test test
 
 HELM ?= helm
 
@@ -16,6 +16,15 @@ frontend-test:
 
 frontend-build:
 	cd frontend && bun run build
+
+docs-install:
+	cd docs && bun install --frozen-lockfile
+
+docs-dev:
+	cd docs && bun run dev
+
+docs-build:
+	cd docs && bun run build
 
 chart-deps:
 	$(HELM) dependency build backend/helm/agentapi-proxy
