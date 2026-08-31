@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -143,6 +144,24 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	if second.Skipped != 2 {
 		t.Fatalf("expected idempotent skips, got %#v", second)
 	}
+}
+
+func TestEncryptedMigrationDestinationRejectsUnsupportedProvider(t *testing.T) {
+	store := newMemoryKVStore()
+	_, err := encryptedMigrationDestination(context.Background(), store, "unknown-kms", "active", "", `{"active":"key-ref"}`)
+	if err == nil || !strings.Contains(err.Error(), "unsupported KV encryption provider") {
+		t.Fatalf("expected unsupported provider error, got %v", err)
+	}
+}
+
+func TestBuildMigrationStoreAcceptsEncryptedLibSQLBackend(t *testing.T) {
+	store, err := buildMigrationStore(context.Background(), migrationStoreConfig{
+		backend: "libsql-encrypted", databaseURL: "file://" + filepath.Join(t.TempDir(), "encrypted.db"),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
 }
 
 func TestMigrateConfiguredStorePair(t *testing.T) {
