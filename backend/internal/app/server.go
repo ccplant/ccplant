@@ -1087,7 +1087,11 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 			}
 		}
 	}
-	if startReq.Scope != entities.ScopeTeam {
+	// Kubernetes-backed pool sessions resolve and embed the personal API key in
+	// BuildRemoteProvisionSettings. Doing the same repository lookup here makes
+	// /start pay twice for an external Kubernetes/libSQL round trip.
+	_, settingsBuilderWillEnsureKey := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder)
+	if startReq.Scope != entities.ScopeTeam && !settingsBuilderWillEnsureKey {
 		if err := s.EnsurePersonalAPIKey(context.Background(), userID); err != nil {
 			return nil, fmt.Errorf("ensure personal API key: %w", err)
 		}
