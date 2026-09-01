@@ -426,6 +426,12 @@ sessionManager:
       region: garage
       prefix: agentapi-sessions/
       endpoint: ""
+      accessKeyIdSecretRef:
+        name: ""
+        key: access-key-id
+      secretAccessKeySecretRef:
+        name: ""
+        key: secret-access-key
   # GitHub material copied into Session Pod Secrets. API OAuth/application
   # credentials remain independently configured at the root github key.
   github:
@@ -760,6 +766,14 @@ sessionPersistence:
     region: garage
     prefix: agentapi-sessions/
     endpoint: ""
+    # Optional static credentials. Cloudflare R2 users can point these at an
+    # R2 API token Secret; workload identity remains available when omitted.
+    accessKeyIdSecretRef:
+      name: ""
+      key: access-key-id
+    secretAccessKeySecretRef:
+      name: ""
+      key: secret-access-key
 
 ingress:
   enabled: false

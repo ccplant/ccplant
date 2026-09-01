@@ -584,6 +584,42 @@ kubectl create secret generic agentapi-s3-credentials \
   --from-literal=secret-key=your-secret-key
 ```
 
+### Cloudflare R2 for session suspend/resume
+
+Session checkpoints can be stored in Cloudflare R2 through its S3-compatible
+API. Create an R2 API token with Object Read & Write access to the bucket, then
+store its credentials in Kubernetes:
+
+```bash
+kubectl create secret generic agentapi-r2-credentials \
+  --from-literal=access-key-id='<R2_ACCESS_KEY_ID>' \
+  --from-literal=secret-access-key='<R2_SECRET_ACCESS_KEY>'
+```
+
+Configure the API role, or use the same block under
+`sessionManager.sessionPersistence` when `sessionManager.enabled=true`:
+
+```yaml
+sessionPersistence:
+  backend: s3
+  suspendAfter: 1h
+  s3:
+    bucket: agentapi-sessions
+    region: auto
+    endpoint: https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com
+    prefix: agentapi-sessions/
+    accessKeyIdSecretRef:
+      name: agentapi-r2-credentials
+      key: access-key-id
+    secretAccessKeySecretRef:
+      name: agentapi-r2-credentials
+      key: secret-access-key
+```
+
+The endpoint enables path-style S3 requests, which are supported by R2. The
+credentials are injected only into the API or session-manager process that
+owns checkpoint persistence, not into agent session Pods.
+
 ## Health Checks
 
 The API probes default to `/health`; session-manager probes use `/livez` and
