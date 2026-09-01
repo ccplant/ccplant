@@ -16,8 +16,42 @@ func newTestRedisStore(t *testing.T) (*RedisStore, *miniredis.Miniredis) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	return NewRedisStore(client), server
+	store := NewRedisStore(client)
+	t.Cleanup(func() {
+		require.NoError(t, store.blockingClient.Close())
+		require.NoError(t, client.Close())
+	})
+	return store, server
+}
+
+func TestRedisStoreBlockingReadsDoNotStarveFrameWrites(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr(), PoolSize: 1})
+	store := NewRedisStore(client)
+	t.Cleanup(func() {
+		require.NoError(t, store.blockingClient.Close())
+		require.NoError(t, client.Close())
+	})
+
+	readCtx, cancelRead := context.WithCancel(context.Background())
+	defer cancelRead()
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := store.ReadFrames(readCtx, "waiting-request", "0-0", 100*time.Millisecond, 1)
+		readDone <- err
+	}()
+
+	// Give XREAD time to occupy the sole connection in the blocking pool.
+	time.Sleep(25 * time.Millisecond)
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+	defer cancelWrite()
+	_, err := store.AppendFrames(writeCtx, "other-request", []core.ResponseFrame{{
+		ID: "frame-a", RequestID: "other-request", Done: true,
+	}})
+	require.NoError(t, err)
+
+	cancelRead()
+	require.NoError(t, <-readDone)
 }
 
 func TestRedisStoreConcurrentManagerTouches(t *testing.T) {
