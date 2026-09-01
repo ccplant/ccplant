@@ -43,6 +43,20 @@ export async function getRequestBackendBaseUrl(
   hostname: string,
   store?: SubdomainRouteStore | null,
 ): Promise<string> {
+  const publicBaseUrl = process.env.NEXT_PUBLIC_BASE_URL?.trim()
+  if (publicBaseUrl) {
+    try {
+      // The canonical UI hostname always uses the configured default backend.
+      // Avoid a D1 lookup on every API request; D1 routing is only needed for
+      // tenant/custom subdomains whose backend can differ from the default.
+      if (new URL(publicBaseUrl).hostname.toLowerCase() === hostname.trim().toLowerCase()) {
+        return getBackendBaseUrl()
+      }
+    } catch {
+      // Invalid public URL configuration should not disable subdomain routing.
+    }
+  }
+
   const subdomain = getSubdomain(hostname)
   const routeStore = store === undefined ? await getOptionalSubdomainRouteStore() : store
 

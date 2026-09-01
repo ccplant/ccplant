@@ -37,6 +37,20 @@ describe('server backend URL resolution', () => {
       .resolves.toBe('https://stored-api.example.test')
   })
 
+  it('bypasses persistent routing for the canonical public hostname', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'https://default-backend.example.test')
+    vi.stubEnv('NEXT_PUBLIC_BASE_URL', 'https://app.example.test/')
+    const store = {
+      findBySubdomain: vi.fn().mockResolvedValue({
+        subdomain: 'app', apiUrl: 'https://stored-api.example.test', enabled: true,
+      }),
+    }
+
+    await expect(getRequestBackendBaseUrl('APP.EXAMPLE.TEST', store))
+      .resolves.toBe('https://default-backend.example.test')
+    expect(store.findBySubdomain).not.toHaveBeenCalled()
+  })
+
   it('falls back to the default backend when persistent storage fails', async () => {
     vi.stubEnv('AGENTAPI_PROXY_URL', 'http://default-backend:8080')
     const store = {
