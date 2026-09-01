@@ -20,6 +20,7 @@ import ToolExecutionPane from './ToolExecutionPane';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
 import { mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
+import { readCachedSessionMessages, writeCachedSessionMessages } from '../../lib/session-message-cache';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -380,11 +381,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   useEffect(() => {
     if (agentAPI && sessionId) {
       // Reset initial load flag when session changes
-      setIsInitialLoadComplete(false);
+      const cachedMessages = readCachedSessionMessages(sessionId);
+      setIsInitialLoadComplete(cachedMessages !== null);
       setIsStarting(true);
       setIsConnected(false);
       setAgentStatus(null);
-      setMessages([]);
+      setMessages(cachedMessages ?? []);
       setACPInfo(null);
       setACPUserPrompts([]);
       setLoadedACPStartPromptIndex(null);
@@ -488,7 +490,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   },
               };
 
-              const info = await agentAPIRef.current.getACPSessionInfo(sessionId);
+              // Every request to an outbound-only session crosses the direct-runtime
+              // tunnel. Start bridge detection, history, and status together so
+              // reconnect does not pay one full tunnel round trip before issuing the
+              // other two requests.
+              const infoPromise = agentAPIRef.current.getACPSessionInfo(sessionId);
+              const historyPromise = agentAPIRef.current
+                .getACPMessageHistory(sessionId, '')
+                .catch(() => null);
+              const statusPromise = agentAPIRef.current
+                .getSessionStatus(sessionId)
+                .catch(() => null);
+
+              const info = await infoPromise;
               if (info) {
                 console.log(`[ACP] initializeChat: ACP session detected (acpSessionId=${info.sessionId}), previous acpInfo=${JSON.stringify(acpInfo)}`);
                 setACPInfo(info);
@@ -500,10 +514,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // History and status are independent remote calls. External session
                 // managers may add noticeable tunnel latency to each request, so do
                 // not make chat bootstrap pay for them serially.
-                const [historyResult, currentStatus] = await Promise.all([
-                  agentAPIRef.current!.getACPMessageHistory(sessionId, info.sessionId),
-                  agentAPIRef.current!.getSessionStatus(sessionId).catch(() => null),
-                ]);
+                const historyResult = await historyPromise;
+                if (!historyResult) {
+                  throw new Error('Failed to restore ACP message history');
+                }
                 setMessages(historyResult.messages);
                 setACPUserPrompts(historyResult.userPrompts);
                 setLoadedACPStartPromptIndex(historyResult.userPromptIndex ?? getLatestACPUserPromptIndex(historyResult.userPrompts));
@@ -516,14 +530,15 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // Fetch current status immediately so the UI reflects running/stable
                 // on reconnect (e.g. user navigated away then came back while the
                 // agent was still processing the provisioner's initial prompt).
-                if (currentStatus) {
+                void statusPromise.then(currentStatus => {
+                  if (!currentStatus) return;
                   setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
                   // Update agentType so markdown renders for ACP sessions.
                   // getACPSessionInfo hardcodes 'acp', but agent_type from status is authoritative.
                   if (currentStatus.agent_type) {
                     setAgentType(currentStatus.agent_type);
                   }
-                }
+                });
 
                 // Subscribe to ACP SSE stream.
                 if (acpEventSourceRef.current) {
@@ -576,7 +591,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // getACPSessionInfo returned null, but the session might be an ACP
                 // session whose bridge is still starting. Check agent_type via session status.
                 try {
-                  const statusResult = await agentAPIRef.current!.getSessionStatus(sessionId);
+                  const statusResult = await statusPromise;
+                  if (!statusResult) throw new Error('Session status is unavailable');
                   setAgentStatus({ ...statusResult, status: normalizeAgentStatus(statusResult.status) });
                   if (isACPAgentType(statusResult.agent_type)) {
                     if (statusResult.status === 'error') {
@@ -724,6 +740,15 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [showControlPanel, setShowControlPanel] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
+
+  // Reopening a chat in the same browser tab should not wait for an outbound
+  // runtime round trip before showing content. Persist a small, short-lived
+  // snapshot and refresh it from the bridge in the background.
+  useEffect(() => {
+    if (!sessionId || !isInitialLoadComplete || messages.length === 0) return;
+    const timeout = setTimeout(() => writeCachedSessionMessages(sessionId, messages), 250);
+    return () => clearTimeout(timeout);
+  }, [sessionId, messages, isInitialLoadComplete]);
 
   // Restore sidebar visibility from localStorage after mount
   useEffect(() => {

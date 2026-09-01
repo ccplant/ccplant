@@ -237,11 +237,17 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 
 	sequence := int64(0)
 	start := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, Sequence: sequence, Status: resp.StatusCode, Headers: map[string][]string(resp.Header.Clone()), CreatedAt: time.Now().UTC()}
-	if acceptsRuntimeEventStream(command.Headers) || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+	isEventStream := acceptsRuntimeEventStream(command.Headers) || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
+	if isEventStream {
 		start.CommandStreamID = command.StreamID
 	}
-	if err := w.postFrames(ctx, []core.ResponseFrame{start}); err != nil {
-		return
+	frames := []core.ResponseFrame{start}
+	batchBytes := 0
+	if isEventStream {
+		if err := w.postFrames(ctx, frames); err != nil {
+			return
+		}
+		frames = nil
 	}
 	buffer := make([]byte, 64*1024)
 	for {
@@ -249,9 +255,8 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 		if n > 0 {
 			sequence++
 			frame := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, Sequence: sequence, Body: append([]byte(nil), buffer[:n]...), CreatedAt: time.Now().UTC()}
-			if err := w.postFrames(ctx, []core.ResponseFrame{frame}); err != nil {
-				return
-			}
+			frames = append(frames, frame)
+			batchBytes += n
 		}
 		if readErr != nil {
 			sequence++
@@ -259,10 +264,21 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 			if readErr != io.EOF {
 				frame.Error = readErr.Error()
 			}
+			frames = append(frames, frame)
 			uploadCtx, uploadCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			_ = w.postFrames(uploadCtx, []core.ResponseFrame{frame})
+			_ = w.postFrames(uploadCtx, frames)
 			uploadCancel()
 			return
+		}
+		// Ordinary JSON responses are normally one small read. Send their status,
+		// body, and completion frames in one upstream request instead of paying
+		// three outbound round trips. Bound batches for unusually large bodies.
+		if isEventStream || batchBytes >= 512*1024 {
+			if err := w.postFrames(ctx, frames); err != nil {
+				return
+			}
+			frames = nil
+			batchBytes = 0
 		}
 	}
 }

@@ -161,11 +161,17 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 
 	sequence := int64(0)
 	start := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, Sequence: sequence, Status: resp.StatusCode, Headers: map[string][]string(resp.Header.Clone()), CreatedAt: time.Now().UTC()}
-	if acceptsEventStream(command.Headers) || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+	isEventStream := acceptsEventStream(command.Headers) || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
+	if isEventStream {
 		start.CommandStreamID = command.StreamID
 	}
-	if err := w.postFrames(ctx, []core.ResponseFrame{start}); err != nil {
-		return
+	frames := []core.ResponseFrame{start}
+	batchBytes := 0
+	if isEventStream {
+		if err := w.postFrames(ctx, frames); err != nil {
+			return
+		}
+		frames = nil
 	}
 	buffer := make([]byte, 64*1024)
 	for {
@@ -173,9 +179,8 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 		if n > 0 {
 			sequence++
 			frame := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, Sequence: sequence, Body: append([]byte(nil), buffer[:n]...), CreatedAt: time.Now().UTC()}
-			if err := w.postFrames(ctx, []core.ResponseFrame{frame}); err != nil {
-				return
-			}
+			frames = append(frames, frame)
+			batchBytes += n
 		}
 		if readErr != nil {
 			sequence++
@@ -183,8 +188,16 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 			if readErr != io.EOF {
 				frame.Error = readErr.Error()
 			}
-			_ = w.postFrames(context.Background(), []core.ResponseFrame{frame})
+			frames = append(frames, frame)
+			_ = w.postFrames(context.Background(), frames)
 			return
+		}
+		if isEventStream || batchBytes >= 512*1024 {
+			if err := w.postFrames(ctx, frames); err != nil {
+				return
+			}
+			frames = nil
+			batchBytes = 0
 		}
 	}
 }
