@@ -566,7 +566,7 @@
         },
         "s3": {
           "type": "object",
-          "required": ["bucket", "region", "prefix", "endpoint", "accessKeyIdSecretRef", "secretAccessKeySecretRef"],
+          "required": ["bucket", "region", "prefix", "endpoint"],
           "properties": {
             "bucket": { "type": "string" },
             "region": { "type": "string" },
