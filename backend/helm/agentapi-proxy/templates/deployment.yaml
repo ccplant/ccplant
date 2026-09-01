@@ -566,6 +566,22 @@ spec:
               value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}
             - name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT
               value: {{ $sessionPersistenceS3.endpoint | quote }}
+            {{- $sessionPersistenceAccessKeyRef := $sessionPersistenceS3.accessKeyIdSecretRef | default dict }}
+            {{- if $sessionPersistenceAccessKeyRef.name }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $sessionPersistenceAccessKeyRef.name | quote }}
+                  key: {{ $sessionPersistenceAccessKeyRef.key | default "access-key-id" | quote }}
+            {{- end }}
+            {{- $sessionPersistenceSecretKeyRef := $sessionPersistenceS3.secretAccessKeySecretRef | default dict }}
+            {{- if $sessionPersistenceSecretKeyRef.name }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $sessionPersistenceSecretKeyRef.name | quote }}
+                  key: {{ $sessionPersistenceSecretKeyRef.key | default "secret-access-key" | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- if .Values.config.webhook.githubEnterpriseHost }}

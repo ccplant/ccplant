@@ -571,7 +571,9 @@
             "bucket": { "type": "string" },
             "region": { "type": "string" },
             "prefix": { "type": "string" },
-            "endpoint": { "type": "string" }
+            "endpoint": { "type": "string" },
+            "accessKeyIdSecretRef": { "$ref": "#/definitions/secretRef" },
+            "secretAccessKeySecretRef": { "$ref": "#/definitions/secretRef" }
           }
         }
       }

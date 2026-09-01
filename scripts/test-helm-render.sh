@@ -52,6 +52,22 @@ assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
 
+# Cloudflare R2 session persistence injects credentials only into the API role
+# when the in-process session manager owns suspend/resume checkpoints.
+"$HELM_BIN" template backend-r2 "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set sessionPersistence.backend=s3 \
+  --set sessionPersistence.s3.bucket=api-sessions \
+  --set sessionPersistence.s3.region=auto \
+  --set sessionPersistence.s3.endpoint=https://account-id.r2.cloudflarestorage.com \
+  --set sessionPersistence.s3.accessKeyIdSecretRef.name=r2-credentials \
+  --set sessionPersistence.s3.secretAccessKeySecretRef.name=r2-credentials \
+  >"$TMP_DIR/backend-r2.yaml"
+assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION' "$TMP_DIR/backend-r2.yaml"
+assert_contains 'value: "auto"' "$TMP_DIR/backend-r2.yaml"
+assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/backend-r2.yaml"
+assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/backend-r2.yaml"
+assert_not_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/backend-r2.yaml"
+
 # The umbrella chart keeps the full image as the session/runtime fallback while
 # selecting the lightweight image only for the API Deployment.
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant-default.yaml"
@@ -147,6 +163,10 @@ all_role_args=(
   --set sessionManager.redis.addr=redis.example:6380
   --set sessionManager.sessionPersistence.backend=s3
   --set sessionManager.sessionPersistence.s3.bucket=manager-sessions
+  --set sessionManager.sessionPersistence.s3.region=auto
+  --set sessionManager.sessionPersistence.s3.endpoint=https://account-id.r2.cloudflarestorage.com
+  --set sessionManager.sessionPersistence.s3.accessKeyIdSecretRef.name=r2-credentials
+  --set sessionManager.sessionPersistence.s3.secretAccessKeySecretRef.name=r2-credentials
   --set sessionManager.scia.enabled=true
   --set scia.enabled=true
   --set sessionManager.scia.publicBaseUrl=https://api.example
@@ -242,6 +262,9 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION' "$TMP
 assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: "r2-credentials"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SCIA_ENABLED, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
