@@ -76,6 +76,7 @@ func TestControlWorkerPollsAndReturnsResponseFrames(t *testing.T) {
 
 	var mu sync.Mutex
 	var received []core.ResponseFrame
+	var frameUploads atomic.Int32
 	done := make(chan struct{})
 	var once sync.Once
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +91,7 @@ func TestControlWorkerPollsAndReturnsResponseFrames(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"commands": []core.Command{{ID: "request-1", StreamID: "1-0", ManagerID: "manager-a", SessionID: "public", RemoteSessionID: "remote", Method: http.MethodGet, Path: "/remote/status", Deadline: time.Now().Add(time.Minute)}}, "next_cursor": "1-0"})
 		case "/internal/external-session-manager/control/frames":
+			frameUploads.Add(1)
 			var body struct {
 				Frames []core.ResponseFrame `json:"frames"`
 			}
@@ -118,6 +120,9 @@ func TestControlWorkerPollsAndReturnsResponseFrames(t *testing.T) {
 		t.Fatal("timed out waiting for frames")
 	}
 	cancel()
+	if got := frameUploads.Load(); got != 1 {
+		t.Fatalf("frame uploads = %d, want 1", got)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(received) < 3 || received[0].Status != http.StatusOK || string(received[1].Body) != `{"status":"active"}` || !received[len(received)-1].Done {

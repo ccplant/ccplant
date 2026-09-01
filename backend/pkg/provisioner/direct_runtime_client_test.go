@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 	defer local.Close()
 
 	framesCh := make(chan []core.ResponseFrame, 4)
+	var frameUploads atomic.Int32
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer runtime-secret" || r.URL.Query().Get("generation") != "4" {
 			t.Errorf("missing runtime authentication: %s %s", r.Header.Get("Authorization"), r.URL.RawQuery)
@@ -35,6 +37,7 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 				"next_cursor": "1-0",
 			})
 		case http.MethodPost + " /internal/session-runtime/public-session/frames":
+			frameUploads.Add(1)
 			var body struct {
 				Frames []core.ResponseFrame `json:"frames"`
 			}
@@ -73,5 +76,8 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 	}
 	if all[0].Status != http.StatusCreated || string(all[1].Body) != `{"ok":true}` || !all[2].Done || all[2].CommandStreamID != "1-0" {
 		t.Fatalf("unexpected frames: %#v", all)
+	}
+	if got := frameUploads.Load(); got != 1 {
+		t.Fatalf("frame uploads = %d, want 1", got)
 	}
 }
