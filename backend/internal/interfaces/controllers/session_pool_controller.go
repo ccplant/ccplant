@@ -1013,6 +1013,9 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	if err := c.repairManagerRoutes(ctx.Request().Context(), manager.ID); err != nil {
+		return sessionRunnerStoreError(err)
+	}
 	for _, pool := range pools {
 		if pool.ManagerID == manager.ID {
 			copy := *pool
@@ -1077,8 +1080,39 @@ func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocatio
 		return err
 	}
 	route.ManagerID = runner.ManagerID
+	route.RemoteSessionID = runner.ID
 	route.Generation = allocation.Generation
 	return c.routes.Save(ctx, route)
+}
+
+func (c *SessionPoolController) repairManagerRoutes(ctx context.Context, managerID string) error {
+	if c.routes == nil {
+		return nil
+	}
+	allocations, err := c.store.ListAllocations(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, allocation := range allocations {
+		if allocation.ManagerID != managerID || allocation.RunnerID == "" ||
+			(allocation.Status != core.AllocationClaimed && allocation.Status != core.AllocationRunning) {
+			continue
+		}
+		route, err := c.routes.Get(ctx, allocation.SessionID)
+		if err != nil {
+			return err
+		}
+		if route == nil || route.RemoteSessionID != "" {
+			continue
+		}
+		route.ManagerID = managerID
+		route.RemoteSessionID = allocation.RunnerID
+		route.Generation = allocation.Generation
+		if err := c.routes.Save(ctx, route); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runnerClaimResponse(allocation *core.Allocation, runner *core.Runner) map[string]any {
