@@ -158,7 +158,6 @@ type ExternalSessionManagerResponse struct {
 	HasConnectionToken bool              `json:"has_connection_token"`       // true if a connection token is configured
 	ConnectionToken    string            `json:"connection_token,omitempty"` // returned only immediately after generation or rotation
 	Labels             map[string]string `json:"labels,omitempty"`
-	PublicURL          string            `json:"public_url,omitempty"`
 	Version            string            `json:"version,omitempty"`
 	ActiveSessions     int               `json:"active_sessions,omitempty"`
 	LastHeartbeatAt    *time.Time        `json:"last_heartbeat_at,omitempty"`
@@ -492,7 +491,6 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 			retained[m.ID] = true
 			// These fields are owned by the daemon registration/heartbeat API and
 			// must survive a legacy settings update.
-			entry.PublicURL = prev.PublicURL
 			entry.Version = prev.Version
 			entry.ActiveSessions = prev.ActiveSessions
 			entry.LastHeartbeatAt = prev.LastHeartbeatAt
@@ -811,7 +809,6 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 				Name:               m.Name,
 				HasConnectionToken: m.HMACSecret != "",
 				Labels:             m.Labels,
-				PublicURL:          m.PublicURL,
 				Version:            m.Version,
 				ActiveSessions:     m.ActiveSessions,
 				LastHeartbeatAt:    timePtrUnlessZero(m.LastHeartbeatAt),

@@ -359,10 +359,9 @@
     },
     "externalRegistration": {
       "type": "object",
-      "required": ["enabled", "publicUrl", "upstreamUrl", "connectionTokenSecretRef", "hmacSecretRef"],
+      "required": ["enabled", "upstreamUrl", "connectionTokenSecretRef", "hmacSecretRef"],
       "properties": {
         "enabled": { "type": "boolean" },
-        "publicUrl": { "type": "string" },
         "upstreamUrl": { "type": "string" },
         "connectionTokenSecretRef": { "$ref": "#/definitions/secretRef" },
         "hmacSecretRef": { "$ref": "#/definitions/secretRef" }

@@ -455,9 +455,6 @@ type SessionManagerConfig struct {
 	ID string `json:"id" mapstructure:"id"`
 	// RunnerPool enables GitHub Actions-style runner claim mode for stock pods.
 	RunnerPool string `json:"runner_pool" mapstructure:"runner_pool"`
-	// PublicURL is the optional legacy URL 親プロキシ can use to route requests back
-	// to this manager when the outbound control lease is unavailable.
-	PublicURL string `json:"public_url" mapstructure:"public_url"`
 	// APIURL is the private peer API URL. The public API process uses it to call
 	// the isolated session manager, while an external session-manager process
 	// uses it as the local target for outbound control-tunnel requests.
@@ -1208,7 +1205,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.connection_token", "AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN", "SESSION_MANAGER_CONNECTION_TOKEN")
 	_ = v.BindEnv("session_manager.id", "AGENTAPI_SESSION_MANAGER_ID", "SESSION_MANAGER_ID")
 	_ = v.BindEnv("session_manager.runner_pool", "AGENTAPI_SESSION_MANAGER_RUNNER_POOL", "SESSION_MANAGER_RUNNER_POOL")
-	_ = v.BindEnv("session_manager.public_url", "AGENTAPI_SESSION_MANAGER_PUBLIC_URL", "SESSION_MANAGER_PUBLIC_URL")
 	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
 	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
 	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")

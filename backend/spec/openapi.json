@@ -8293,10 +8293,6 @@
             "type": "boolean",
             "description": "Whether this manager pool is available for explicit selection"
           },
-          "public_url": {
-            "type": "string",
-            "format": "uri"
-          },
           "version": {
             "type": "string"
           }
@@ -8335,10 +8331,6 @@
             "type": "boolean",
             "description": "Whether this manager pool is available for explicit selection"
           },
-          "public_url": {
-            "type": "string",
-            "format": "uri"
-          },
           "version": {
             "type": "string"
           },
@@ -8357,10 +8349,6 @@
       "ExternalSessionManagerHeartbeat": {
         "type": "object",
         "properties": {
-          "public_url": {
-            "type": "string",
-            "format": "uri"
-          },
           "version": {
             "type": "string"
           },

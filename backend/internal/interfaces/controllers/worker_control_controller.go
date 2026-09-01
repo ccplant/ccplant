@@ -120,7 +120,7 @@ func (wc *WorkerControlController) runtimeID(ctx context.Context, publicID strin
 		return publicID
 	}
 	route, err := wc.routes.Get(ctx, publicID)
-	if err == nil && route != nil && route.ProxyURL == "" && route.RemoteSessionID != "" {
+	if err == nil && route != nil && route.ManagerID == "" && route.RemoteSessionID != "" {
 		return route.RemoteSessionID
 	}
 	return publicID
@@ -184,7 +184,7 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 		}
 		aliasedRuntime := make(map[string]bool)
 		for _, route := range routes {
-			if route.ProxyURL != "" || route.RemoteSessionID == "" {
+			if route.ManagerID != "" || route.RemoteSessionID == "" {
 				continue
 			}
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {

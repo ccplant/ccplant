@@ -49,9 +49,8 @@ cluster-wide default binding when that intent was included in the registration t
 so requests without an explicit pool can use it. The admin Session Pools page issues
 system tokens with the `default` pool and this binding enabled.
 
-The default `public-url` is the manager's cluster-local Service address, suitable when
-the parent runs in the same cluster. For a different cluster, pass `--public-url` with
-an ingress or private-network URL reachable by the parent.
+All manager and Session Pod connections are outbound-only. The parent never connects
+to a manager Service, so no ingress or parent-reachable manager URL is required.
 
 To intentionally replace credentials, issue a token with
 `POST /session-managers/{id}/registration-token`, remove or replace the local

@@ -916,7 +916,7 @@ func cleanupLocalSessionRoutes(ctx context.Context, repo portrepos.SessionRouteR
 		return
 	}
 	for _, route := range routes {
-		if route.ProxyURL != "" || route.RemoteSessionID != runtimeSessionID {
+		if route.ManagerID != "" || route.RemoteSessionID != runtimeSessionID {
 			continue
 		}
 		if err := repo.Delete(ctx, route.SessionID); err != nil {

@@ -94,7 +94,6 @@ spec:
             # not by this reduced session-manager HTTP server.
             - {name: AGENTAPI_SESSION_MANAGER_API_URL, value: {{ default (printf "http://%s:%v" (include "agentapi-proxy.fullname" .) .Values.service.port) $manager.apiUrl | quote }} }
             {{- if (dig "enabled" false $registration) }}
-            - {name: AGENTAPI_SESSION_MANAGER_PUBLIC_URL, value: {{ dig "publicUrl" "" $registration | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "sessionManager.externalRegistration.upstreamUrl is required when external registration is enabled" (dig "upstreamUrl" "" $registration) | quote }}}
             - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
               valueFrom:

@@ -589,7 +589,7 @@ func (c *ACPController) HandleSessionSSE(ctx echo.Context) error {
 				log.Printf("[ACP] HandleSessionSSE: route lookup failed (sessionId=%s): %v", sessionId, err)
 				return ctx.JSON(http.StatusInternalServerError, map[string]string{"message": "session route lookup failed"})
 			}
-			if route != nil && (route.ProxyURL != "" || route.ManagerID != "") && route.RemoteSessionID != "" {
+			if route != nil && route.ManagerID != "" && route.RemoteSessionID != "" {
 				if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
 					return ctx.JSON(http.StatusForbidden, map[string]string{"message": "permission denied"})
 				}
@@ -861,7 +861,7 @@ func (c *ACPController) dialRemoteBridgeSSE(
 	lastEventID string,
 ) (<-chan sseEvent, func()) {
 	eventCh := make(chan sseEvent, 8)
-	targetURL := strings.TrimRight(route.ProxyURL, "/") + "/" + route.RemoteSessionID + "/sse"
+	targetURL := ""
 	directRuntime := route.Transport == portrepos.SessionRouteTransportDirectRuntime
 	tunnelKey := route.ManagerID
 	if directRuntime {
@@ -874,7 +874,7 @@ func (c *ACPController) dialRemoteBridgeSSE(
 		} else {
 			targetURL = "http://esm.local/" + route.RemoteSessionID + "/sse"
 		}
-	} else if route.ProxyURL == "" {
+	} else {
 		log.Printf("[ACP] SSE: outbound ESM control connection is unavailable")
 		close(eventCh)
 		return eventCh, func() {}
@@ -894,12 +894,7 @@ func (c *ACPController) dialRemoteBridgeSSE(
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
 	req.Header.Set(hmacutil.TimestampHeader, ts)
 
-	var resp *http.Response
-	if useTunnel {
-		resp, err = c.esmControlTunnel.Do(ctx, tunnelKey, route.SessionID, route.RemoteSessionID, req)
-	} else {
-		resp, err = http.DefaultClient.Do(req)
-	}
+	resp, err := c.esmControlTunnel.Do(ctx, tunnelKey, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
 		log.Printf("[ACP] SSE: failed to connect to remote bridge: %v", err)
 		close(eventCh)

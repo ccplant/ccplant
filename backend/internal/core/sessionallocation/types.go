@@ -50,7 +50,6 @@ type AllocationResult struct {
 	Status             Status `json:"status"`
 	Message            string `json:"message,omitempty"`
 	AllocatedSessionID string `json:"allocated_session_id,omitempty"`
-	ProxyURL           string `json:"proxy_url,omitempty"`
 }
 
 // Requirements captures pod capabilities used for stock matching.

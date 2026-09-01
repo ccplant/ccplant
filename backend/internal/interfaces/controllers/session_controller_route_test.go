@@ -186,30 +186,20 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRouteToSessionExternalRouteBypassesLocalEnsurer(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/remote-id/status" {
-			t.Errorf("upstream path = %q, want /remote-id/status", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-
+func TestRouteToSessionRequiresOutboundManagerConnection(t *testing.T) {
 	manager := &ensuringSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager},
 		nil,
 		controllers.WithSessionRouteRepository(&fakeACPRouteRepo{route: &repositories.SessionRoute{
-			SessionID: "public-id", RemoteSessionID: "remote-id", ProxyURL: upstream.URL,
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
 		}}),
 	)
-	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+	ctx, _ := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
 
-	if err := controller.RouteToSession(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	err := controller.RouteToSession(ctx)
+	if err == nil {
+		t.Fatal("expected manager route without outbound connection to be rejected")
 	}
 	if len(manager.ensuredIDs) != 0 {
 		t.Fatalf("external route unexpectedly ensured local IDs %v", manager.ensuredIDs)

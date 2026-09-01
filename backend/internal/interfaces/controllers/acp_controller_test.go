@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -488,7 +489,16 @@ func TestACPController_InvalidJsonrpcVersion(t *testing.T) {
 	}
 }
 
-func TestACPController_RemoteSessionSSEStreamsAndSignsRequest(t *testing.T) {
+type outboundACPTestTunnel struct{ target *url.URL }
+
+func (t outboundACPTestTunnel) IsConnected(context.Context, string) bool { return true }
+func (t outboundACPTestTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+	req.URL.Scheme = t.target.Scheme
+	req.URL.Host = t.target.Host
+	return http.DefaultClient.Do(req)
+}
+
+func TestACPController_RemoteSessionSSEUsesOutboundTunnel(t *testing.T) {
 	const secret = "remote-sse-secret"
 	requestSeen := make(chan struct{}, 1)
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -519,9 +529,14 @@ func TestACPController_RemoteSessionSSEStreamsAndSignsRequest(t *testing.T) {
 	mgr := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	creator := &fakeSessionCreator{}
 	ctrl := controllers.NewACPController(&testSessionManagerProvider{mgr: mgr}, creator, &fakeACPRouteRepo{route: &repositories.SessionRoute{
-		SessionID: "proxy-session", RemoteSessionID: "remote-session", ProxyURL: remote.URL,
+		SessionID: "proxy-session", RemoteSessionID: "remote-session", ManagerID: "manager-a",
 		HMACSecret: secret, UserID: "user1", Scope: string(entities.ScopeUser),
 	}})
+	remoteURL, err := url.Parse(remote.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl.SetESMControlTunnel(outboundACPTestTunnel{target: remoteURL})
 	e := echo.New()
 	e.GET("/acp", func(c echo.Context) error {
 		c.Set("authz_context", &auth.AuthorizationContext{PersonalScope: auth.PersonalScopeAuth{UserID: "user1", CanRead: true}})

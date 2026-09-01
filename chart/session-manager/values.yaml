@@ -36,7 +36,6 @@ ingress:
 parent:
   # Replace these example values before installing.
   url: https://parent.example.invalid
-  publicUrl: https://session-manager.example.invalid
   connectionTokenSecretRef:
     name: session-manager-parent
     key: connection-token

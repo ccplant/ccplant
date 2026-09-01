@@ -348,7 +348,6 @@ sessionManager:
   # session-manager does not need any of these credentials.
   externalRegistration:
     enabled: false
-    publicUrl: ""
     upstreamUrl: ""
     connectionTokenSecretRef:
       name: ""

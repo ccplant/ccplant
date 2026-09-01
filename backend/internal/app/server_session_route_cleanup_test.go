@@ -28,7 +28,7 @@ func TestCleanupLocalSessionRoutes(t *testing.T) {
 	repo := &cleanupRouteRepository{routes: []*portrepos.SessionRoute{
 		{SessionID: "public-local", RemoteSessionID: "runtime-id"},
 		{SessionID: "other-local", RemoteSessionID: "other-runtime"},
-		{SessionID: "public-external", RemoteSessionID: "runtime-id", ProxyURL: "https://esm.example"},
+		{SessionID: "public-external", RemoteSessionID: "runtime-id", ManagerID: "manager-a"},
 	}}
 
 	cleanupLocalSessionRoutes(context.Background(), repo, "runtime-id")

@@ -414,7 +414,6 @@ func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Contex
 		}
 		route.ManagerID = managerID
 		route.RemoteSessionID = result.AllocatedSessionID
-		route.ProxyURL = result.ProxyURL
 		if route.HMACSecret == "" {
 			route.HMACSecret = managerSecret
 		}
