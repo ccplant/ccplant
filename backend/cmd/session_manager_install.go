@@ -25,12 +25,12 @@ import (
 )
 
 type sessionManagerInstallOptions struct {
-	targetType, upstream, publicURL, registrationToken, registrationTokenFile string
-	apiKeyEnv, apiKeyFile, scope, teamID                                      string
-	namespace, release, chart, version, pool, name, instanceID                string
-	connectionSecret, internalSecret, provisionerSecret                       string
-	createNamespace, wait                                                     bool
-	timeout                                                                   string
+	targetType, upstream, registrationToken, registrationTokenFile string
+	apiKeyEnv, apiKeyFile, scope, teamID                           string
+	namespace, release, chart, version, pool, name, instanceID     string
+	connectionSecret, internalSecret, provisionerSecret            string
+	createNamespace, wait                                          bool
+	timeout                                                        string
 }
 
 type installedManagerCredentials struct {
@@ -50,7 +50,6 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags := command.Flags()
 	flags.StringVar(&opts.targetType, "type", "kubernetes", "installation type (kubernetes)")
 	flags.StringVar(&opts.upstream, "upstream", "", "parent API base URL (for example https://dev.ccplant.com/api/v1)")
-	flags.StringVar(&opts.publicURL, "public-url", "", "manager URL reachable by the parent (defaults to the in-cluster Service URL)")
 	flags.StringVar(&opts.registrationToken, "registration-token", "", "one-time registration token (initial install only)")
 	flags.StringVar(&opts.registrationTokenFile, "registration-token-file", "", "file containing a one-time registration token")
 	flags.StringVar(&opts.apiKeyEnv, "api-key-env", "AGENTAPI_KEY", "environment variable containing the parent API key")
@@ -138,13 +137,9 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return err
 	}
 
-	publicURL := opts.publicURL
-	if publicURL == "" {
-		publicURL = fmt.Sprintf("http://%s.%s.svc.cluster.local:8080", opts.release, opts.namespace)
-	}
 	values := map[string]any{
 		"fullnameOverride": opts.release,
-		"parent": map[string]any{"url": apiBaseURL(opts.upstream), "publicUrl": publicURL,
+		"parent": map[string]any{"url": apiBaseURL(opts.upstream),
 			"connectionTokenSecretRef": map[string]any{"name": opts.connectionSecret, "key": "connection-token"},
 			"hmacSecretRef":            map[string]any{"name": opts.connectionSecret, "key": "hmac-secret"}},
 		"runner":      map[string]any{"managerId": credentials.ManagerID, "pool": opts.pool},

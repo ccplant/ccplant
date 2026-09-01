@@ -98,7 +98,6 @@ type ExternalSessionManagerEntry struct {
 	Name                string            `json:"name"`
 	HMACSecret          string            `json:"hmac_secret,omitempty"`
 	Labels              map[string]string `json:"labels,omitempty"`
-	PublicURL           string            `json:"public_url,omitempty"`
 	Version             string            `json:"version,omitempty"`
 	ActiveSessions      int               `json:"active_sessions,omitempty"`
 	LastHeartbeatAt     time.Time         `json:"last_heartbeat_at,omitempty"`

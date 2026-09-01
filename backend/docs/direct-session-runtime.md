@@ -411,7 +411,6 @@ heartbeat, and owning manager without exposing credentials.
 - Drain or delete all legacy routes.
 - Remove generic request/frame forwarding from the ESM worker.
 - Retain only allocation, lifecycle operations, heartbeat, and registration.
-- Remove `SESSION_MANAGER_PUBLIC_URL` after the supported downgrade window.
 
 Rollback before Phase 4 is generation-based: create a replacement generation using the previous
 transport. Never switch transport in-place for a live generation.

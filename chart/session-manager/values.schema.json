@@ -15,10 +15,9 @@
     },
     "parent": {
       "type": "object",
-      "required": ["url", "publicUrl", "connectionTokenSecretRef", "hmacSecretRef"],
+      "required": ["url", "connectionTokenSecretRef", "hmacSecretRef"],
       "properties": {
         "url": {"type": "string", "minLength": 1},
-        "publicUrl": {"type": "string", "minLength": 1},
         "connectionTokenSecretRef": {"$ref": "#/$defs/namedSecretRef"},
         "hmacSecretRef": {"$ref": "#/$defs/namedSecretRef"}
       }

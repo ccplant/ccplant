@@ -13,7 +13,7 @@ The `control` compatibility Service is enabled by default so session Pods
 created by an earlier combined-chart installation keep their callback URL
 during migration.
 
-Required values are `parent.url`, `parent.publicUrl`, the parent connection/HMAC
+Required values are `parent.url`, the parent connection/HMAC
 Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRef.name`, and
 `session.provisioner.tokenSecretRef.name`.
 

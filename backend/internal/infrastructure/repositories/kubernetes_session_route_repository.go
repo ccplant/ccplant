@@ -25,7 +25,6 @@ type routeJSON struct {
 	SessionID        string            `json:"session_id"`
 	RemoteSessionID  string            `json:"remote_session_id"`
 	ManagerID        string            `json:"manager_id,omitempty"`
-	ProxyURL         string            `json:"proxy_url"`
 	HMACSecret       string            `json:"hmac_secret"`
 	Transport        string            `json:"transport,omitempty"`
 	RuntimeTokenHash string            `json:"runtime_token_hash,omitempty"`
@@ -65,7 +64,6 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		SessionID:        route.SessionID,
 		RemoteSessionID:  route.RemoteSessionID,
 		ManagerID:        route.ManagerID,
-		ProxyURL:         route.ProxyURL,
 		HMACSecret:       route.HMACSecret,
 		Transport:        route.Transport,
 		RuntimeTokenHash: route.RuntimeTokenHash,
@@ -144,7 +142,6 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 		SessionID:        rj.SessionID,
 		RemoteSessionID:  rj.RemoteSessionID,
 		ManagerID:        rj.ManagerID,
-		ProxyURL:         rj.ProxyURL,
 		HMACSecret:       rj.HMACSecret,
 		Transport:        rj.Transport,
 		RuntimeTokenHash: rj.RuntimeTokenHash,
@@ -187,7 +184,6 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			SessionID:        rj.SessionID,
 			RemoteSessionID:  rj.RemoteSessionID,
 			ManagerID:        rj.ManagerID,
-			ProxyURL:         rj.ProxyURL,
 			HMACSecret:       rj.HMACSecret,
 			Transport:        rj.Transport,
 			RuntimeTokenHash: rj.RuntimeTokenHash,

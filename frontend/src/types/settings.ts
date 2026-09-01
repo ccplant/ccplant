@@ -131,7 +131,6 @@ export interface ExternalSessionManagerConfig {
   has_connection_token?: boolean; // Response flag for allocator connection token
   connection_token?: string; // Returned only immediately after token generation
   labels?: Record<string, string>; // Matches allocator.* session tags
-  public_url?: string;
   version?: string;
   active_sessions?: number;
   last_heartbeat_at?: string;

@@ -21,12 +21,10 @@ type ESMUpdateRequest struct {
 	InstanceID string            `json:"instance_id"`
 	Name       string            `json:"name"`
 	Labels     map[string]string `json:"labels,omitempty"`
-	PublicURL  string            `json:"public_url,omitempty"`
 	Version    string            `json:"version,omitempty"`
 }
 
 type ESMHeartbeatRequest struct {
-	PublicURL      string `json:"public_url,omitempty"`
 	Version        string `json:"version,omitempty"`
 	ActiveSessions int    `json:"active_sessions,omitempty"`
 }
@@ -52,7 +50,6 @@ type ESMEnrollmentRequest struct {
 	InstanceID        string            `json:"instance_id"`
 	Name              string            `json:"name"`
 	Labels            map[string]string `json:"labels,omitempty"`
-	PublicURL         string            `json:"public_url,omitempty"`
 	Version           string            `json:"version,omitempty"`
 }
 
@@ -143,7 +140,6 @@ func (c *SettingsController) EnrollExternalSessionManager(ctx echo.Context) erro
 			manager.Labels = req.Labels
 			manager.LegacySchedulable = false
 			manager.LegacyDefault = false
-			manager.PublicURL = req.PublicURL
 			manager.Version = req.Version
 			manager.EnrollmentTokenHash = ""
 			manager.EnrollmentExpiresAt = time.Time{}
@@ -217,9 +213,6 @@ func (c *SettingsController) PatchExternalSessionManager(ctx echo.Context) error
 		}
 		if req.Labels != nil {
 			managers[i].Labels = req.Labels
-		}
-		if req.PublicURL != "" {
-			managers[i].PublicURL = req.PublicURL
 		}
 		if req.Version != "" {
 			managers[i].Version = req.Version
@@ -359,27 +352,10 @@ func (c *SettingsController) HeartbeatExternalSessionManager(ctx echo.Context) e
 		for i := range managers {
 			if managers[i].ID == ctx.Param("id") && subtle.ConstantTimeCompare([]byte(managers[i].HMACSecret), []byte(token)) == 1 {
 				managers[i].LastHeartbeatAt = time.Now().UTC()
-				if req.PublicURL != "" {
-					managers[i].PublicURL = req.PublicURL
-				}
 				if req.Version != "" {
 					managers[i].Version = req.Version
 				}
 				managers[i].ActiveSessions = req.ActiveSessions
-				outboundConnected := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), managers[i].ID)
-				if managers[i].PublicURL != "" && !outboundConnected {
-					probeCtx, cancel := context.WithTimeout(ctx.Request().Context(), 3*time.Second)
-					probeReq, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, strings.TrimRight(managers[i].PublicURL, "/")+"/healthz", nil)
-					probeResp, probeErr := http.DefaultClient.Do(probeReq)
-					cancel()
-					if probeErr != nil || probeResp.StatusCode != http.StatusOK {
-						if probeResp != nil {
-							_ = probeResp.Body.Close()
-						}
-						return echo.NewHTTPError(http.StatusFailedDependency, "public_url is not reachable from parent proxy")
-					}
-					_ = probeResp.Body.Close()
-				}
 				settings.SetExternalSessionManagers(managers)
 				if err := c.repo.Save(ctx.Request().Context(), settings); err != nil {
 					return echo.NewHTTPError(http.StatusInternalServerError, "failed to save heartbeat")
@@ -391,11 +367,7 @@ func (c *SettingsController) HeartbeatExternalSessionManager(ctx echo.Context) e
 						_ = c.sessionRunnerStore.UpdateManager(ctx.Request().Context(), registered)
 					}
 				}
-				transport := "public_url"
-				if outboundConnected {
-					transport = "outbound_control"
-				}
-				return ctx.JSON(http.StatusOK, map[string]interface{}{"status": "ok", "manager_id": managers[i].ID, "server_time": managers[i].LastHeartbeatAt, "transport": transport})
+				return ctx.JSON(http.StatusOK, map[string]interface{}{"status": "ok", "manager_id": managers[i].ID, "server_time": managers[i].LastHeartbeatAt, "transport": "outbound_only"})
 			}
 		}
 	}
@@ -466,7 +438,7 @@ func (c *SettingsController) findAuthorizedESM(ctx echo.Context, modify bool) (*
 func esmResponse(manager entities.ExternalSessionManagerEntry, token string) ExternalSessionManagerResponse {
 	return ExternalSessionManagerResponse{ID: manager.ID, InstanceID: manager.InstanceID, Name: manager.Name,
 		HasConnectionToken: manager.HMACSecret != "", ConnectionToken: token,
-		Labels: manager.Labels, PublicURL: manager.PublicURL, Version: manager.Version,
+		Labels: manager.Labels, Version: manager.Version,
 		ActiveSessions:  manager.ActiveSessions,
 		LastHeartbeatAt: timePtrUnlessZero(manager.LastHeartbeatAt)}
 }
