@@ -20,9 +20,22 @@ const (
 	connectionTTL = 75 * time.Second
 )
 
-type RedisStore struct{ client *redis.Client }
+type RedisStore struct {
+	client         *redis.Client
+	blockingClient *redis.Client
+}
 
-func NewRedisStore(client *redis.Client) *RedisStore { return &RedisStore{client: client} }
+func NewRedisStore(client *redis.Client) *RedisStore {
+	// XREAD BLOCK must not share a pool with command and response writes. A
+	// browser opens several session endpoints concurrently; if each waiter holds
+	// a pooled connection, the runtime cannot upload the frames that would wake
+	// those waiters and the tunnel deadlocks until requests time out.
+	options := *client.Options()
+	return &RedisStore{
+		client:         client,
+		blockingClient: redis.NewClient(&options),
+	}
+}
 
 func commandKey(managerID string) string {
 	return "agentapi:esm:{" + managerID + "}:commands"
@@ -188,7 +201,7 @@ func (s *RedisStore) read(ctx context.Context, key, after string, wait time.Dura
 	if count <= 0 || count > 100 {
 		count = 100
 	}
-	streams, err := s.client.XRead(ctx, &redis.XReadArgs{Streams: []string{key, after}, Count: count, Block: wait}).Result()
+	streams, err := s.blockingClient.XRead(ctx, &redis.XReadArgs{Streams: []string{key, after}, Count: count, Block: wait}).Result()
 	if err == redis.Nil {
 		return nil, nil
 	}
