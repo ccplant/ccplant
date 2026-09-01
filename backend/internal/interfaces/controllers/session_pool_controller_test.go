@@ -15,7 +15,9 @@ import (
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	infra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -160,6 +162,54 @@ func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	decodeRecorder(t, result, &heartbeat)
 	if len(heartbeat.Pools) != 1 || heartbeat.Pools[0].TotalRunners != 0 || heartbeat.Pools[0].IdleRunners != 0 {
 		t.Fatalf("unexpected heartbeat pools: %+v", heartbeat.Pools)
+	}
+}
+
+func TestSessionManagerHeartbeatRepairsMissingRunnerRoute(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	allocation, found, err := store.ClaimNext(ctx, "linux", "runner-a", time.Minute)
+	if err != nil || !found {
+		t.Fatalf("claim allocation: found=%v err=%v", found, err)
+	}
+	if _, err := store.Acknowledge(ctx, allocation.SessionID, "runner-a", allocation.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if err := routes.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", ManagerID: "manager-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewSessionPoolController(store, routes)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	route, err := routes.Get(ctx, "session-a")
+	if err != nil || route.RemoteSessionID != "runner-a" {
+		t.Fatalf("route was not repaired: route=%+v err=%v", route, err)
 	}
 }
 
