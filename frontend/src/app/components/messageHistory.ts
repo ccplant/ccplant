@@ -6,6 +6,13 @@ function messageKey(message: MessageWithID): string {
   return `${typeof message.id}:${String(message.id)}`
 }
 
+export function canRebuildCompleteHistoryWindow(
+  loadedStartIndex: number | null,
+  latestIndex: number,
+): loadedStartIndex is number {
+  return loadedStartIndex !== null && loadedStartIndex <= latestIndex
+}
+
 /**
  * Merge a refreshed tail/history window into the messages already rendered.
  *
