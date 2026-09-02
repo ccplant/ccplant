@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canRebuildCompleteHistoryWindow,
   mergeRefreshedMessageHistory,
   replaceRebuiltMessageHistory,
 } from '../messageHistory'
 
 type Message = { id: string | number; content: string }
+
+describe('canRebuildCompleteHistoryWindow', () => {
+  it('includes a window containing only the latest turn', () => {
+    expect(canRebuildCompleteHistoryWindow(4, 4)).toBe(true)
+  })
+
+  it('rejects an unknown or invalid loaded window', () => {
+    expect(canRebuildCompleteHistoryWindow(null, 4)).toBe(false)
+    expect(canRebuildCompleteHistoryWindow(5, 4)).toBe(false)
+  })
+})
 
 describe('mergeRefreshedMessageHistory', () => {
   it('keeps older messages outside a refreshed tail window', () => {

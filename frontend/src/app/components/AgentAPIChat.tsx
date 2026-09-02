@@ -19,7 +19,7 @@ import MessageItem from './MessageItem';
 import ToolExecutionPane from './ToolExecutionPane';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
-import { mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
+import { canRebuildCompleteHistoryWindow, mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -1478,7 +1478,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         const latestPromptIndex = latestResult.userPromptIndex ?? getLatestACPUserPromptIndex(latestResult.userPrompts);
         const currentStartIndex = loadedACPStartPromptIndexRef.current;
 
-        if (currentStartIndex !== null && latestPromptIndex !== null && currentStartIndex < latestPromptIndex) {
+        if (latestPromptIndex !== null && canRebuildCompleteHistoryWindow(currentStartIndex, latestPromptIndex)) {
           const historicalTurns = await Promise.all(
             Array.from({ length: latestPromptIndex - currentStartIndex }, (_, offset) => {
               const promptIndex = currentStartIndex + offset;
@@ -1487,10 +1487,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
             })
           );
           const refreshedMessages = [...historicalTurns.flat(), ...latestResult.messages];
-          // Every loaded turn was rebuilt above. Replace this complete window
-          // instead of merging by local ID: live SSE messages use positive IDs,
-          // while restored historical turns are namespaced with negative IDs.
-          // Merging those representations retains duplicate copies.
+          // Every loaded turn was rebuilt above, including the common case where
+          // only the latest turn is loaded. Replace this complete window instead
+          // of merging by local ID: bridge history can assign different IDs from
+          // the live SSE stream (and from an earlier refresh), so merging retains
+          // another copy each time the page becomes visible.
           setMessages(currentMessages => replaceRebuiltMessageHistory(currentMessages, refreshedMessages));
           setLoadedACPStartPromptIndex(currentStartIndex);
         } else {
