@@ -2582,6 +2582,36 @@ export class AgentAPIProxyClient {
   }
 
   /**
+   * Quickly detect an ACP bridge by opening its SSE endpoint.
+   *
+   * The SSE endpoint is served directly by the proxy and normally completes its
+   * handshake much faster than GET /session, which may cross an external runtime
+   * tunnel. The connection is closed immediately; callers create the real
+   * subscription after restoring history.
+   */
+  async probeACPSessionEvents(sessionId: string, timeoutMs = 1000): Promise<boolean> {
+    const isUsingProxy = this.baseURL.includes('/api/proxy');
+    const sseUrl = isUsingProxy
+      ? `/api/proxy/${sessionId}/sse`
+      : `${this.baseURL}/${sessionId}/sse`;
+
+    return new Promise(resolve => {
+      const source = new EventSource(sseUrl);
+      let settled = false;
+      const finish = (available: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        source.close();
+        resolve(available);
+      };
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      source.onopen = () => finish(true);
+      source.onerror = () => finish(false);
+    });
+  }
+
+  /**
    * Fetch message history from the ACP bridge's in-memory store.
    * When userPromptIndex is omitted, returns the current turn (latest user prompt onward).
    */
