@@ -15,6 +15,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
+	"golang.org/x/sync/singleflight"
 )
 
 // hashToken creates a hash of the token for use as cache key
@@ -62,6 +63,7 @@ type GitHubAuthProvider struct {
 	userCache       *utils.TTLCache       // token hash → UserCache, TTL 30s
 	teamCache       *utils.TTLCache       // username → []GitHubTeamMembership, TTL 30s
 	teamMappingRepo TeamMappingRepository // ConfigMap persistent cache (optional, may be nil)
+	authGroup       singleflight.Group    // coalesces concurrent requests for the same token
 }
 
 // NewGitHubAuthProvider creates a new GitHub authentication provider
@@ -152,7 +154,37 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 		}
 	}
 
-	// Get user information from GitHub API
+	// A page load issues several authenticated API requests in parallel. On a
+	// cold cache they would all perform the same GitHub user and team lookups,
+	// multiplying both latency and rate-limit usage. Let one request populate
+	// the caches while the others wait for its result.
+	result, err, _ := p.authGroup.Do(hashToken(token), func() (interface{}, error) {
+		return p.authenticateUncached(ctx, token)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*UserContext), nil
+}
+
+func (p *GitHubAuthProvider) authenticateUncached(ctx context.Context, token string) (*UserContext, error) {
+	// Another request may have populated the cache while this request waited to
+	// enter the singleflight function.
+	if !isTestEnvironment() {
+		cacheKey := fmt.Sprintf("user:%s", hashToken(token))
+		if cached, found := p.userCache.Get(cacheKey); found {
+			cachedUser := cached.(*UserCache)
+			return &UserContext{
+				UserID:      cachedUser.User.Login,
+				Role:        cachedUser.Role,
+				Permissions: cachedUser.Permissions,
+				AuthType:    "github_oauth",
+				GitHubUser:  cachedUser.User,
+				EnvFile:     cachedUser.EnvFile,
+			}, nil
+		}
+	}
+
 	user, err := p.getUser(ctx, token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
