@@ -57,6 +57,10 @@ type esmControlEnqueuer interface {
 	Enqueue(context.Context, string, string, string, *http.Request) (string, error)
 }
 
+type esmControlCommandReader interface {
+	CommandResult(context.Context, string) (bool, int, error)
+}
+
 type sessionAnnotationUpdater interface {
 	UpdateSessionAnnotations(ctx context.Context, sessionID string, patch entities.UpdateSessionAnnotationsRequest) (entities.SessionAnnotations, error)
 }
@@ -531,6 +535,14 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			log.Printf("[SEARCH] Failed to list session routes: %v", err)
 			routes = nil
 		} else {
+			activeRoutes := routes[:0]
+			for _, route := range routes {
+				if c.reconcileQueuedDeletion(ctx.Request().Context(), route) {
+					continue
+				}
+				activeRoutes = append(activeRoutes, route)
+			}
+			routes = activeRoutes
 			allocatedSessions = indexAllocatedSessions(matchingSessions, routes)
 			matchingSessions = excludeAllocatedSessions(matchingSessions, routes)
 		}
@@ -666,6 +678,10 @@ func routedSessionStatus(route *repositories.SessionRoute, allocatedSessions map
 // immediately fans it out to the proxy-wide SSE subscribers.
 func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, runtimeStatus string) error {
 	if route == nil || runtimeStatus == "" {
+		return nil
+	}
+	if route.DeletionRequestID != "" {
+		// A late status push from a terminating Pod must not resurrect the route.
 		return nil
 	}
 	status := publicSessionStatus(runtimeStatus)
@@ -1320,16 +1336,30 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		if !ok {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager lifecycle queue is unavailable")
 		}
-		if _, err := enqueuer.Enqueue(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req); err != nil {
+		if route.DeletionRequestID != "" {
+			if c.reconcileQueuedDeletion(ctx.Request().Context(), route) {
+				return ctx.JSON(http.StatusOK, map[string]interface{}{
+					"message": "Session terminated successfully", "session_id": sessionID, "status": "terminated",
+				})
+			}
+			return ctx.JSON(http.StatusAccepted, map[string]interface{}{
+				"message": "Session deletion is still pending", "session_id": sessionID, "status": "terminating",
+			})
+		}
+		requestID, err := enqueuer.Enqueue(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+		if err != nil {
 			log.Printf("[REMOTE_DELETE] Failed to enqueue direct-runtime deletion %s: %v", sessionID, err)
 			return echo.NewHTTPError(http.StatusBadGateway, "Failed to queue external session deletion")
 		}
-		if c.sessionRouteRepo != nil {
-			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session route")
-			}
+		route.DeletionRequestID = requestID
+		route.Status = "terminating"
+		route.StatusUpdatedAt = time.Now()
+		if c.sessionRouteRepo == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Session route repository is unavailable")
 		}
-		c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
+		if err := c.sessionRouteRepo.Save(ctx.Request().Context(), route); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist session deletion state")
+		}
 		return ctx.JSON(http.StatusAccepted, map[string]interface{}{
 			"message": "Session deletion queued", "session_id": sessionID, "status": "terminating",
 		})
@@ -1369,6 +1399,38 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+// reconcileQueuedDeletion removes a route only after the manager has durably
+// reported completion. It is intentionally called from both DELETE and search,
+// making progress after API restarts without relying on in-memory goroutines.
+func (c *SessionController) reconcileQueuedDeletion(ctx context.Context, route *repositories.SessionRoute) bool {
+	if route == nil || route.DeletionRequestID == "" || c.sessionRouteRepo == nil {
+		return false
+	}
+	reader, ok := c.esmControlTunnel.(esmControlCommandReader)
+	if !ok {
+		return false
+	}
+	done, status, err := reader.CommandResult(ctx, route.DeletionRequestID)
+	if !done {
+		return false
+	}
+	if err != nil || (status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotFound) {
+		log.Printf("[REMOTE_DELETE] Manager deletion %s failed (status=%d): %v", route.DeletionRequestID, status, err)
+		route.DeletionRequestID = ""
+		route.Status = "delete_failed"
+		route.StatusUpdatedAt = time.Now()
+		_ = c.sessionRouteRepo.Save(ctx, route)
+		return false
+	}
+	if err := c.sessionRouteRepo.Delete(ctx, route.SessionID); err != nil {
+		log.Printf("[REMOTE_DELETE] Failed to finalize route %s: %v", route.SessionID, err)
+		return false
+	}
+	c.cleanupRemoteProvisionRequest(ctx, route.SessionID)
+	log.Printf("[REMOTE_DELETE] Finalized queued deletion for session %s", route.SessionID)
+	return true
 }
 
 func copyResponseHeaders(target, source http.Header) {

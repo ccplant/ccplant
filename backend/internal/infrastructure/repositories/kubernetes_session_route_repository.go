@@ -37,6 +37,7 @@ type routeJSON struct {
 	InitialMessage   string            `json:"initial_message,omitempty"`
 	Status           string            `json:"status,omitempty"`
 	StatusUpdatedAt  time.Time         `json:"status_updated_at,omitempty"`
+	DeletionRequestID string           `json:"deletion_request_id,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -76,6 +77,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		InitialMessage:   route.InitialMessage,
 		Status:           route.Status,
 		StatusUpdatedAt:  route.StatusUpdatedAt,
+		DeletionRequestID: route.DeletionRequestID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -154,6 +156,7 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 		InitialMessage:   rj.InitialMessage,
 		Status:           rj.Status,
 		StatusUpdatedAt:  rj.StatusUpdatedAt,
+		DeletionRequestID: rj.DeletionRequestID,
 	}, nil
 }
 
@@ -196,6 +199,7 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			InitialMessage:   rj.InitialMessage,
 			Status:           rj.Status,
 			StatusUpdatedAt:  rj.StatusUpdatedAt,
+			DeletionRequestID: rj.DeletionRequestID,
 		})
 	}
 	return routes, nil

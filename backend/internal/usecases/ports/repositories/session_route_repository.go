@@ -32,6 +32,9 @@ type SessionRoute struct {
 	InitialMessage  string // The initial message/prompt for the session (shown as description)
 	Status          string // Last status confirmed by the allocated session runtime
 	StatusUpdatedAt time.Time
+	// DeletionRequestID identifies the durable manager command that must finish
+	// before this route can be removed from the user-visible session list.
+	DeletionRequestID string
 }
 
 // RemoteProvisionSettingsBuilder is an optional interface that SessionManager implementations
