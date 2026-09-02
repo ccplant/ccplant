@@ -384,6 +384,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       setIsStarting(true);
       setIsConnected(false);
       setAgentStatus(null);
+      setAgentType(null);
       setMessages([]);
       setACPInfo(null);
       setACPUserPrompts([]);
@@ -493,6 +494,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 .getSessionStatus(sessionId)
                 .catch(() => null);
 
+              // Status is useful independently of transport detection and message
+              // history. Attach the single status request immediately so the loading
+              // screen can reflect running/error while either slower tunnel request
+              // is still in flight. Reuse statusPromise below instead of issuing a
+              // second request from a separate effect.
+              void statusPromise.then(currentStatus => {
+                if (!currentStatus) return;
+                setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
+                if (currentStatus.agent_type) {
+                  setAgentType(currentStatus.agent_type);
+                }
+              });
+
               const info = await infoPromise;
               if (info) {
                 console.log(`[ACP] initializeChat: ACP session detected (acpSessionId=${info.sessionId}), previous acpInfo=${JSON.stringify(acpInfo)}`);
@@ -517,19 +531,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 setHasMoreMessages(false);
                 setIsInitialLoadComplete(true);
                 setIsStarting(false);
-
-                // Fetch current status immediately so the UI reflects running/stable
-                // on reconnect (e.g. user navigated away then came back while the
-                // agent was still processing the provisioner's initial prompt).
-                void statusPromise.then(currentStatus => {
-                  if (!currentStatus) return;
-                  setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
-                  // Update agentType so markdown renders for ACP sessions.
-                  // getACPSessionInfo hardcodes 'acp', but agent_type from status is authoritative.
-                  if (currentStatus.agent_type) {
-                    setAgentType(currentStatus.agent_type);
-                  }
-                });
 
                 // Subscribe to ACP SSE stream.
                 if (acpEventSourceRef.current) {
@@ -1601,28 +1602,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
 
     reconnectACP();
   }, [isPageVisible, acpInfo, sessionId, acpServerEnabled, applyACPConfigOptions]);
-
-  // Seed agent type and status independently from message-history bootstrap.
-  // This lets the loading screen reflect running/error even while history is slow.
-  useEffect(() => {
-    const fetchAgentStatus = async () => {
-      if (!sessionId || !agentAPIRef.current) {
-        return;
-      }
-
-      try {
-        const status = await agentAPIRef.current.getSessionStatus(sessionId);
-        setAgentType(status.agent_type || null);
-        setAgentStatus({ ...status, status: normalizeAgentStatus(status.status) });
-      } catch (error) {
-        console.error('Failed to get agent type:', error);
-        // If we can't get the agent type, assume it's not claude
-        setAgentType(null);
-      }
-    };
-
-    fetchAgentStatus();
-  }, [sessionId]);
 
   // Handle new messages and auto-scroll
   useEffect(() => {
