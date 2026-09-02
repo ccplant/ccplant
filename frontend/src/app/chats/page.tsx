@@ -68,27 +68,6 @@ function ChatsPageInner() {
     setRefreshKey(prev => prev + 1)
   }, [])
 
-  // Load user info and repositories on mount
-  useEffect(() => {
-    const loadUserInfo = async () => {
-      try {
-        const response = await fetch('/api/user/info')
-        if (response.ok) {
-          const data = await response.json()
-
-          // Store repositories from proxy info in sessionStorage for access by new session page
-          if (typeof window !== 'undefined' && data.proxy?.repositories) {
-            sessionStorage.setItem('user_repositories', JSON.stringify(data.proxy.repositories))
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load user info:', error)
-      }
-    }
-
-    loadUserInfo()
-  }, [])
-
   return (
     <main className="min-h-dvh bg-gray-50 dark:bg-gray-900">
       <TopBar

@@ -42,6 +42,9 @@ export default function TopBar({
           if (userInfo.proxy?.teams && Array.isArray(userInfo.proxy.teams)) {
             setAvailableTeams(userInfo.proxy.teams)
           }
+          if (userInfo.proxy?.repositories && Array.isArray(userInfo.proxy.repositories)) {
+            sessionStorage.setItem('user_repositories', JSON.stringify(userInfo.proxy.repositories))
+          }
         }
       } catch (error) {
         console.error('Failed to fetch user info for teams:', error)

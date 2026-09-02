@@ -28,6 +28,34 @@ describe('AgentAPIProxyClient Session Runner Pools', () => {
   });
 });
 
+describe('AgentAPIProxyClient concurrent reads', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shares an identical in-flight GET across client instances', async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      new Promise<Response>(resolve => { resolveFetch = resolve; })
+    );
+    const firstClient = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    const secondClient = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    const first = firstClient.search({ limit: 1000, scope: 'user' });
+    const second = secondClient.search({ limit: 1000, scope: 'user' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolveFetch(new Response(JSON.stringify({ sessions: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { sessions: [] },
+      { sessions: [] },
+    ]);
+  });
+});
+
 describe('AgentAPIProxyClient ACP message history', () => {
   afterEach(() => {
     vi.restoreAllMocks();

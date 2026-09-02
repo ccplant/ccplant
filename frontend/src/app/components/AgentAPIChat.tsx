@@ -402,13 +402,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           setIsConnected(true); // Set connected immediately for better UX
 
           if (sessionId) {
-            void agentAPIRef.current.search({ limit: 100 })
-              .then(response => {
-                setSessionAnnotations(getSessionFromList(response.sessions, sessionId)?.annotations);
-                lastSessionAnnotationLoadTimeRef.current = Date.now();
-              })
-              .catch(err => console.warn('Failed to load session annotations:', err));
-
             // ── ACP session detection ───────────────────────────────────────
             // Try GET /{sessionId}/session first. If it succeeds, this is an
             // ACP-transport session – use SSE + JSON-RPC instead of polling.
@@ -758,6 +751,23 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showPRLinks, setShowPRLinks] = useState(false);
   const [sessionAnnotations, setSessionAnnotations] = useState<SessionAnnotations | undefined>();
+
+  // Annotations decorate the header but are not needed to display the chat.
+  // Defer their full session search until message history is visible so the
+  // critical content request does not compete for the backend's single CPU.
+  useEffect(() => {
+    if (!isInitialLoadComplete || !sessionId) return;
+    const timeoutId = setTimeout(() => {
+      void agentAPIRef.current.search({ limit: 100 })
+        .then(response => {
+          setSessionAnnotations(getSessionFromList(response.sessions, sessionId)?.annotations);
+          lastSessionAnnotationLoadTimeRef.current = Date.now();
+        })
+        .catch(err => console.warn('Failed to load session annotations:', err));
+    }, 500);
+    return () => clearTimeout(timeoutId);
+  }, [isInitialLoadComplete, sessionId]);
+
   const [showFontSettings, setShowFontSettings] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [agentType, setAgentType] = useState<string | null>(null);

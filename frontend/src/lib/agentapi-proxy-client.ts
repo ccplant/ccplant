@@ -82,6 +82,13 @@ import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionP
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
+// React trees can mount multiple consumers of the same read endpoint at once
+// (for example the conversation list and its tag sidebar). Share only the
+// in-flight GET promise so a page bootstrap does not send duplicate expensive
+// searches. The entry is removed immediately after completion; this is not a
+// response cache and therefore cannot serve stale data after a mutation.
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+
 function defaultClientDebugEnabled(): boolean {
   return process.env.NODE_ENV !== 'production'
     && (process.env.NEXT_PUBLIC_DEBUG_LOGS === 'true' || process.env.DEBUG_LOGS === 'true');
@@ -764,7 +771,31 @@ export class AgentAPIProxyClient {
     };
   }
 
-  private async makeRequest<T>(
+  private makeRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    attempt = 1
+  ): Promise<T> {
+    const method = (options.method || 'GET').toUpperCase();
+    if (method !== 'GET' || attempt !== 1) {
+      return this.makeRequestUncached<T>(endpoint, options, attempt);
+    }
+
+    const key = `${this.baseURL}|${this.apiKey || 'cookie'}|${endpoint}`;
+    const existing = inFlightGetRequests.get(key);
+    if (existing) return existing as Promise<T>;
+
+    const request = this.makeRequestUncached<T>(endpoint, options, attempt);
+    inFlightGetRequests.set(key, request);
+    void request.finally(() => {
+      if (inFlightGetRequests.get(key) === request) {
+        inFlightGetRequests.delete(key);
+      }
+    }).catch(() => undefined);
+    return request;
+  }
+
+  private async makeRequestUncached<T>(
     endpoint: string,
     options: RequestInit = {},
     attempt = 1

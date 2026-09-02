@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createAgentAPIProxyClientFromStorage, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { Session, SessionStatus } from '../../types/agentapi'
@@ -71,6 +71,7 @@ export default function SessionListSidebar({
   const { selectedTeam } = useTeamScope()
   const [client] = useState(() => createAgentAPIProxyClientFromStorage())
   const [sessions, setSessions] = useState<Session[]>([])
+  const sessionsRef = useRef<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
 
@@ -84,6 +85,7 @@ export default function SessionListSidebar({
         new Date(b.updated_at || b.started_at).getTime() -
         new Date(a.updated_at || a.started_at).getTime()
       )
+      sessionsRef.current = sorted
       setSessions(sorted)
     } catch (err) {
       console.error('[SessionListSidebar] Failed to fetch sessions:', err)
@@ -94,6 +96,15 @@ export default function SessionListSidebar({
 
   // SSE でリアルタイム更新: ステータス変化をインプレース反映し、active になったらフルリフレッシュ
   const handleProxyStatusEvent = useCallback((event: ProxySessionStatusEvent) => {
+    const current = sessionsRef.current.find(s => s.session_id === event.session_id)
+    const statusChanged = current !== undefined && current.status !== event.status
+    if (current) {
+      sessionsRef.current = sessionsRef.current.map(session =>
+        session.session_id === event.session_id
+          ? { ...session, status: event.status as SessionStatus }
+          : session
+      )
+    }
     setSessions(prev => {
       const idx = prev.findIndex(s => s.session_id === event.session_id)
       if (idx === -1) return prev
@@ -101,8 +112,8 @@ export default function SessionListSidebar({
       updated[idx] = { ...updated[idx], status: event.status as SessionStatus }
       return updated
     })
-    if (event.status === 'active' || event.status === 'stopped' || event.status === 'error' || event.status === 'timeout') {
-      fetchSessions()
+    if (statusChanged && (event.status === 'active' || event.status === 'stopped' || event.status === 'error' || event.status === 'timeout')) {
+      void fetchSessions()
     }
   }, [fetchSessions])
 

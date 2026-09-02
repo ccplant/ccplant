@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
@@ -107,6 +107,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [acpMode] = useState(() => getACPServerEnabled())
   
   const [sessions, setSessions] = useState<Session[]>([])
+  const sessionsRef = useRef<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -153,6 +154,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
         sessionList = response.sessions || []
       }
 
+      sessionsRef.current = sessionList
       setSessions(sessionList)
       setSessionAgentStatus(createAgentStatusMapFromSessions(sessionList))
     } catch (err) {
@@ -172,6 +174,15 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
 
   // SSE でセッションステータス変化を受信したときの処理
   const handleProxyStatusEvent = useCallback((event: ProxySessionStatusEvent) => {
+    const current = sessionsRef.current.find(s => s.session_id === event.session_id)
+    const statusChanged = current !== undefined && current.status !== event.status
+    if (current) {
+      sessionsRef.current = sessionsRef.current.map(session =>
+        session.session_id === event.session_id
+          ? { ...session, status: event.status as Session['status'] }
+          : session
+      )
+    }
     setSessions(prev => {
       const idx = prev.findIndex(s => s.session_id === event.session_id)
       if (idx === -1) return prev
@@ -188,8 +199,8 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }))
 
     // セッションが active になったタイミングでフルリフレッシュ（メタデータ取得のため）
-    if (event.status === 'active' || event.status === 'error' || event.status === 'timeout') {
-      fetchSessions()
+    if (statusChanged && (event.status === 'active' || event.status === 'error' || event.status === 'timeout')) {
+      void fetchSessions(true)
     }
   }, [fetchSessions])
 
