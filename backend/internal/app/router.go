@@ -247,7 +247,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionControlController = controllers.NewSessionControlController(server.sessionControlStore, k8sManager)
 		}
 		if server.esmControlStore != nil {
-			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController)
+			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController, server.sessionRunnerStore)
 			if server.sessionRouteRepo != nil {
 				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}
@@ -261,7 +261,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			externalAllocationController = controllers.NewProvisionerController(nil, queue, server.settingsRepo, server.sessionRouteRepo)
 		}
 		if server.esmControlStore != nil {
-			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController)
+			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController, server.sessionRunnerStore)
 			if server.sessionRouteRepo != nil {
 				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 			}

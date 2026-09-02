@@ -6,23 +6,45 @@ import (
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
+	sessionrunner "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 )
 
 type ESMControlController struct {
 	store       core.Store
 	provisioner *ProvisionerController
+	managers    sessionrunner.Store
 }
 
-func NewESMControlController(store core.Store, provisioner *ProvisionerController) *ESMControlController {
-	return &ESMControlController{store: store, provisioner: provisioner}
+func NewESMControlController(store core.Store, provisioner *ProvisionerController, managerStores ...sessionrunner.Store) *ESMControlController {
+	controller := &ESMControlController{store: store, provisioner: provisioner}
+	if len(managerStores) > 0 {
+		controller.managers = managerStores[0]
+	}
+	return controller
 }
 
 func (c *ESMControlController) authorize(ctx echo.Context) (string, bool) {
-	if c == nil || c.provisioner == nil {
+	if c == nil {
+		return "", false
+	}
+	pathManagerID := ctx.Param("managerId")
+	if c.managers != nil {
+		managers, err := c.managers.ListManagers(ctx.Request().Context())
+		if err == nil {
+			token := bearerToken(ctx.Request())
+			for _, manager := range managers {
+				if (pathManagerID == "" || manager.ID == pathManagerID) && verifySessionRunnerToken(manager.ConnectionTokenHash, token) {
+					return manager.ID, true
+				}
+			}
+		}
+	}
+	// Preserve authentication for legacy settings-based managers while they
+	// migrate to the unified session-manager registry.
+	if c.provisioner == nil {
 		return "", false
 	}
 	managerID, _, ok := c.provisioner.authorizedExternalManager(ctx)
-	pathManagerID := ctx.Param("managerId")
 	return managerID, ok && (pathManagerID == "" || managerID == pathManagerID)
 }
 
