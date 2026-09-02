@@ -130,10 +130,15 @@ func (w *directRuntimeWorker) run(ctx context.Context) {
 	for ctx.Err() == nil {
 		requests, next, err := w.poll(ctx, cursor)
 		if err != nil {
-			if errors.Is(err, errDirectRuntimeFenced) || errors.Is(err, errDirectRuntimeUnauthorized) {
+			if errors.Is(err, errDirectRuntimeFenced) {
 				log.Printf("[DIRECT_RUNTIME] stopping runtime worker: %v", err)
 				return
 			}
+			// Authentication can fail briefly while the parent proxy is rolling out
+			// and its route/settings repositories are not ready yet.  The runtime
+			// token is still fenced by generation, so retrying a rejected credential
+			// is safe; a genuinely stale runtime will eventually receive Conflict
+			// once the authoritative route is available.
 			log.Printf("[DIRECT_RUNTIME] request poll failed: %v", err)
 			w.sleepWithJitter(ctx, backoff)
 			backoff = minDuration(backoff*2, 30*time.Second)

@@ -81,3 +81,56 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 		t.Fatalf("frame uploads = %d, want 1", got)
 	}
 }
+
+func TestDirectRuntimeRetriesTemporaryUnauthorizedResponse(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	var polls atomic.Int32
+	ready := make(chan struct{})
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/session-runtime/public-session/requests" {
+			http.NotFound(w, r)
+			return
+		}
+		if polls.Add(1) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		select {
+		case <-ready:
+		default:
+			close(ready)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer parent.Close()
+
+	worker := &directRuntimeWorker{
+		cfg: &sessionsettings.ParentRuntimeConfig{
+			Enabled: true, Endpoint: parent.URL, SessionID: "public-session",
+			Token: "runtime-secret", Generation: 4,
+		},
+		client: parent.Client(), instanceID: "pod-a",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		worker.run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-ready:
+		cancel()
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("runtime worker did not reconnect after temporary unauthorized response")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runtime worker did not stop after cancellation")
+	}
+	if polls.Load() < 2 {
+		t.Fatalf("polls = %d, want at least 2", polls.Load())
+	}
+}
