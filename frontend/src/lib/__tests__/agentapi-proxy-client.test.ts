@@ -215,6 +215,33 @@ describe('AgentAPIProxyClient ACP message history', () => {
     ]);
   });
 
+  it('restores a running turn from ACP history even when the status endpoint is stale', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        messages: [
+          { jsonrpc: '2.0', id: 1, result: { stopReason: 'end_turn' } },
+          {
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: { update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'next turn' } } },
+          },
+          {
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: { update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'working' } } },
+          },
+        ],
+        userPromptCount: 2,
+        userPrompts: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    const history = await client.getACPMessageHistory('session-1', 'acp-session-1');
+
+    expect(history.isTurnRunning).toBe(true);
+  });
+
   it('does not ask the BFF to inject the login token into a session body', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ session_id: 'session-1' }), {
@@ -331,6 +358,58 @@ describe('AgentAPIProxyClient ACP SSE cursor', () => {
     source.onmessage?.(new MessageEvent('message', { data: payload, lastEventId: '8' }));
 
     expect(onMessage).toHaveBeenCalledTimes(1);
+    subscription.close();
+  });
+
+  it('stays running for intermediate RPC results and becomes stable only when the turn ends', () => {
+    class FakeEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      static instances: FakeEventSource[] = [];
+      readyState = FakeEventSource.OPEN;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor() {
+        FakeEventSource.instances.push(this);
+      }
+
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const onStatus = vi.fn();
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    const subscription = client.subscribeToACPSessionEvents('session-1', 'acp-1', {
+      onMessage: vi.fn(),
+      onChunk: vi.fn(),
+      onThoughtChunk: vi.fn(),
+      onStatus,
+      onPermission: vi.fn(),
+      onError: vi.fn(),
+    });
+    const source = FakeEventSource.instances[0];
+
+    source.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } } },
+    }) }));
+    source.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+      jsonrpc: '2.0', id: 10, result: {},
+    }) }));
+
+    expect(onStatus).toHaveBeenLastCalledWith({ status: 'running' });
+    expect(onStatus).toHaveBeenCalledTimes(1);
+
+    source.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+      jsonrpc: '2.0', id: 11, result: { stopReason: 'max_tokens' },
+    }) }));
+
+    expect(onStatus).toHaveBeenLastCalledWith({ status: 'stable' });
+    expect(onStatus).toHaveBeenCalledTimes(2);
     subscription.close();
   });
 });

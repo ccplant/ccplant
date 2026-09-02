@@ -336,10 +336,34 @@ export interface ACPUserPromptInfo {
 
 export interface ACPMessageHistoryResult {
   messages: SessionMessage[];
+  /** Whether the latest prompt has activity after the most recent terminal event. */
+  isTurnRunning: boolean;
   lastEventId?: number;
   userPromptCount: number;
   userPromptIndex?: number;
   userPrompts: ACPUserPromptInfo[];
+}
+
+function isACPTurnRunning(messages: ACPJSONRPCMessage[]): boolean {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const result = message.result as { stopReason?: unknown } | undefined;
+    if (typeof result?.stopReason === 'string' && result.stopReason.length > 0) return false;
+    if (message.error && message.id != null) return false;
+    if (message.method !== 'session/update') continue;
+
+    const update = (message.params as { update?: { sessionUpdate?: string } } | undefined)?.update;
+    if (update?.sessionUpdate === 'agent_turn_end') return false;
+    if (
+      update?.sessionUpdate === 'user_message_chunk' ||
+      update?.sessionUpdate === 'agent_message_chunk' ||
+      update?.sessionUpdate === 'agent_thought_chunk' ||
+      update?.sessionUpdate === 'tool_call' ||
+      update?.sessionUpdate === 'tool_call_update' ||
+      update?.sessionUpdate === 'plan'
+    ) return true;
+  }
+  return false;
 }
 
 export interface EventSubscription {
@@ -2575,13 +2599,15 @@ export class AgentAPIProxyClient {
       userPrompts?: ACPUserPromptInfo[];
     }>(`/${sessionId}/messages${query}`);
 
-    const messages = parseACPJSONRPCMessages(resp?.messages ?? []);
+    const rawMessages = resp?.messages ?? [];
+    const messages = parseACPJSONRPCMessages(rawMessages);
     if (this.debug) {
       console.log(`[ACP] getACPMessageHistory: ${messages.length} messages restored (userPromptIndex=${userPromptIndex ?? 'latest'})`);
     }
 
     return {
       messages,
+      isTurnRunning: isACPTurnRunning(rawMessages),
       lastEventId: resp?.lastEventId,
       userPromptCount: resp?.userPromptCount ?? 0,
       userPromptIndex: resp?.userPromptIndex,
@@ -2682,6 +2708,8 @@ export class AgentAPIProxyClient {
             case 'agent_thought_chunk': {
               const thought = acpExtractText(update.content);
               if (!thought) return;
+
+              callbacks.onStatus({ status: 'running' });
 
               // Thought chunks always belong to the current streaming message.
               // If there is none yet, start one (content can be filled later).
@@ -2831,6 +2859,13 @@ export class AgentAPIProxyClient {
               }
               break;
             }
+
+            case 'agent_turn_end': {
+              streamingMsgId = null;
+              streamingUserMsgId = null;
+              callbacks.onStatus({ status: 'stable' });
+              break;
+            }
           }
           return;
         }
@@ -2859,9 +2894,16 @@ export class AgentAPIProxyClient {
         }
 
         // ── Result of session/prompt (turn finished) ──────────────────────
+        // Only a prompt result carries stopReason. Other RPC results (notably
+        // permission replies) can arrive while the agent is still working and
+        // must not make the UI look idle mid-turn.
         if (msg.result != null && msg.id != null) {
-          streamingMsgId = null;
-          callbacks.onStatus({ status: 'stable' });
+          const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
+          if (typeof stopReason === 'string' && stopReason.length > 0) {
+            streamingMsgId = null;
+            streamingUserMsgId = null;
+            callbacks.onStatus({ status: 'stable' });
+          }
           return;
         }
 
