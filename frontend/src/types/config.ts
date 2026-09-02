@@ -4,6 +4,8 @@
  */
 
 export interface AppConfig {
+  /** ブラウザおよびPWAに表示するアプリ名 */
+  appTitle: string;
   /** ログインページのタイトル */
   loginTitle: string;
   /** ログインページの説明文 */
@@ -18,6 +20,7 @@ export interface AppConfig {
 
 /** デフォルト設定 */
 export const DEFAULT_CONFIG: AppConfig = {
+  appTitle: 'ccplant',
   loginTitle: 'ccplant',
   loginDescription: 'Enter an access token or sign in with GitHub to continue.',
   loginSubDescription: 'Use any valid authentication token for your AgentAPI service.',

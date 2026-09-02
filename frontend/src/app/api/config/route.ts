@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { DEFAULT_CONFIG } from '@/types/config'
+import { getRequestAppBranding } from '@/lib/server-app-branding'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   // VAPIDパブリックキーを取得（プライベートキーは絶対に公開しない）
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -20,18 +21,18 @@ export async function GET() {
     || process.env.NEXT_PUBLIC_LOGIN_SUB_DESCRIPTION
     || DEFAULT_CONFIG.loginSubDescription;
 
-  // カスタム favicon URL を取得
-  const faviconUrl = process.env.FAVICON_URL || null;
+  const branding = await getRequestAppBranding(request.nextUrl.hostname);
 
   return NextResponse.json({
     loginTitle,
     loginDescription,
     loginSubDescription,
+    appTitle: branding.appTitle,
     oauthProviders: DEFAULT_CONFIG.oauthProviders,
     // Push通知設定
     vapidPublicKey: (vapidPublicKey && /^[A-Za-z0-9_-]+$/.test(vapidPublicKey)) ? vapidPublicKey : null,
     // カスタマイズ設定
-    faviconUrl,
+    faviconUrl: branding.iconUrl,
   }, {
     headers: {
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',

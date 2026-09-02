@@ -8,10 +8,26 @@ export interface SubdomainRouteStore {
   findBySubdomain(subdomain: string): Promise<SubdomainRoute | null>
 }
 
+export interface SubdomainBranding {
+  appTitle: string | null
+  appIcon: ArrayBuffer | null
+  appIconContentType: string | null
+}
+
+export interface SubdomainBrandingStore {
+  findBrandingBySubdomain(subdomain: string): Promise<SubdomainBranding | null>
+}
+
 interface D1Row {
   subdomain: string
   api_url: string
   enabled: number
+}
+
+interface D1BrandingRow {
+  app_title: string | null
+  app_icon: ArrayBuffer | null
+  app_icon_content_type: string | null
 }
 
 interface D1Statement {
@@ -32,7 +48,7 @@ function fromRow(row: D1Row | null): SubdomainRoute | null {
   }
 }
 
-export class D1SubdomainRouteStore implements SubdomainRouteStore {
+export class D1SubdomainRouteStore implements SubdomainRouteStore, SubdomainBrandingStore {
   constructor(private readonly database: D1DatabaseLike) {}
 
   async findBySubdomain(subdomain: string): Promise<SubdomainRoute | null> {
@@ -46,9 +62,25 @@ export class D1SubdomainRouteStore implements SubdomainRouteStore {
     return fromRow(row)
   }
 
+  async findBrandingBySubdomain(subdomain: string): Promise<SubdomainBranding | null> {
+    const row = await this.database.prepare(
+      `SELECT app_title, app_icon, app_icon_content_type
+       FROM api_route_events
+       WHERE subdomain = ?1
+       ORDER BY id DESC
+       LIMIT 1`,
+    ).bind(subdomain).first<D1BrandingRow>()
+
+    return row && {
+      appTitle: row.app_title,
+      appIcon: row.app_icon,
+      appIconContentType: row.app_icon_content_type,
+    }
+  }
+
 }
 
-export async function getOptionalSubdomainRouteStore(): Promise<SubdomainRouteStore | null> {
+export async function getOptionalSubdomainRouteStore(): Promise<(SubdomainRouteStore & SubdomainBrandingStore) | null> {
   try {
     const { getCloudflareContext } = await import('@opennextjs/cloudflare')
     // OpenNext installs the context globally for each production Worker request.

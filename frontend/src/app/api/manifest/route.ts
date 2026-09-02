@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { getRequestAppBranding } from '@/lib/server-app-branding'
 
 /**
  * PWA マニフェストを動的に生成する API ルート
@@ -8,21 +9,20 @@ import { NextResponse } from 'next/server'
  * - PWA_DESCRIPTION: 説明
  * - PWA_ICON_URL: カスタムアイコン URL (設定時はすべてのサイズでこの URL を使用)
  */
-export async function GET() {
-  const appName = process.env.PWA_APP_NAME
-    || process.env.NEXT_PUBLIC_PWA_APP_NAME
-    || 'ccplant'
+export async function GET(request: NextRequest) {
+  const branding = await getRequestAppBranding(request.nextUrl.hostname)
+  const appName = branding.appTitle
 
   const shortName = process.env.PWA_SHORT_NAME
     || process.env.NEXT_PUBLIC_PWA_SHORT_NAME
-    || 'ccplant'
+    || appName
 
   const description = process.env.PWA_DESCRIPTION
     || process.env.NEXT_PUBLIC_PWA_DESCRIPTION
     || 'Launch, connect, and manage AI agent sessions with ccplant.'
 
   // カスタムアイコン URL が設定されている場合はそれを使用
-  const customIconUrl = process.env.PWA_ICON_URL
+  const customIconUrl = branding.iconUrl
 
   // アイコン設定を生成
   const icons = customIconUrl
