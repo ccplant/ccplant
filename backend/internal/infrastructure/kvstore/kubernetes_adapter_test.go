@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -129,5 +130,41 @@ func TestAdapterListUsesStoreOnly(t *testing.T) {
 	}
 	if len(list.Items) != 1 {
 		t.Fatalf("listed %d records, want 1", len(list.Items))
+	}
+}
+
+func TestAdapterConfigMapMergePatchUsesStore(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	kube := fake.NewSimpleClientset()
+	client := NewKubernetesAdapter(kube, store)
+	configMaps := client.CoreV1().ConfigMaps("ns")
+
+	_, err := configMaps.Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "team-cache", Labels: map[string]string{"type": "cache"}},
+		Data:       map[string]string{"alice": "old", "bob": "keep"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patched, err := configMaps.Patch(
+		ctx,
+		"team-cache",
+		types.MergePatchType,
+		[]byte(`{"data":{"alice":"new","carol":"add"}}`),
+		metav1.PatchOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patched.Data["alice"] != "new" || patched.Data["bob"] != "keep" || patched.Data["carol"] != "add" {
+		t.Fatalf("unexpected patched data: %v", patched.Data)
+	}
+	if patched.ResourceVersion != "2" {
+		t.Fatalf("resourceVersion = %q, want 2", patched.ResourceVersion)
+	}
+	if _, err := kube.CoreV1().ConfigMaps("ns").Get(ctx, "team-cache", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("ConfigMap must remain in KV store only: %v", err)
 	}
 }

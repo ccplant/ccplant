@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
@@ -185,6 +188,62 @@ func (a *configMapAdapter) Update(ctx context.Context, object *corev1.ConfigMap,
 	result := object.DeepCopy()
 	result.ResourceVersion = strconv.FormatInt(record.Version, 10)
 	return result, nil
+}
+
+func (a *configMapAdapter) Patch(ctx context.Context, name string, patchType types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (*corev1.ConfigMap, error) {
+	if len(subresources) > 0 {
+		return nil, apierrors.NewBadRequest("ConfigMap subresource patches are not supported")
+	}
+	if patchType != types.MergePatchType {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("unsupported ConfigMap patch type %q", patchType))
+	}
+
+	// Store.Update provides optimistic concurrency through Record.Version.
+	// Retry conflicts so independent merge patches retain Kubernetes' atomic
+	// patch behavior instead of losing one of the updates.
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		record, err := a.store.Get(ctx, KindConfigMap, a.namespace, name)
+		if err != nil {
+			return nil, storageError(configMapResource, name, err)
+		}
+		merged, err := jsonpatch.MergePatch(record.Value, data)
+		if err != nil {
+			return nil, apierrors.NewBadRequest(err.Error())
+		}
+
+		var object corev1.ConfigMap
+		if err := json.Unmarshal(merged, &object); err != nil {
+			return nil, apierrors.NewBadRequest(err.Error())
+		}
+		if object.Name != "" && object.Name != name {
+			return nil, apierrors.NewBadRequest("metadata.name cannot be changed by a patch")
+		}
+		object.Name = name
+		object.Namespace = a.namespace
+
+		value, err := json.Marshal(&object)
+		if err != nil {
+			return nil, err
+		}
+		updated, err := a.store.Update(ctx, Record{
+			Kind:      KindConfigMap,
+			Namespace: a.namespace,
+			Key:       name,
+			Labels:    object.Labels,
+			Value:     value,
+			Version:   record.Version,
+		})
+		if err == nil {
+			object.ResourceVersion = strconv.FormatInt(updated.Version, 10)
+			return &object, nil
+		}
+		if !errors.Is(err, ErrConflict) {
+			return nil, storageError(configMapResource, name, err)
+		}
+	}
+
+	return nil, apierrors.NewConflict(configMapResource, name, ErrConflict)
 }
 
 func (a *configMapAdapter) Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.ConfigMap, error) {

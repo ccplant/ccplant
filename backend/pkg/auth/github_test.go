@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -149,6 +152,55 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitHubAuthProvider_AuthenticateCoalescesConcurrentRequests(t *testing.T) {
+	var userRequests atomic.Int32
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/user":
+			userRequests.Add(1)
+			time.Sleep(50 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(&GitHubUserInfo{Login: "testuser", ID: 12345})
+		case "/orgs/test-org/teams/developers/memberships/testuser":
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "active", "role": "member"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockServer.Close()
+
+	provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{
+		BaseURL: mockServer.URL,
+		UserMapping: config.GitHubUserMapping{
+			DefaultRole: "user",
+			TeamRoleMapping: map[string]config.TeamRoleRule{
+				"test-org/developers": {Role: "user"},
+			},
+		},
+	})
+
+	const callers = 8
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := provider.Authenticate(context.Background(), "same-token")
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int32(1), userRequests.Load())
 }
 
 func TestGitHubAuthProvider_AuthenticateRejectsUserOutsideConfiguredTeams(t *testing.T) {
