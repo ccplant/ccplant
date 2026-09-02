@@ -20,7 +20,6 @@ import ToolExecutionPane from './ToolExecutionPane';
 import AskUserQuestionModal from './AskUserQuestionModal';
 import SessionListSidebar from './SessionListSidebar';
 import { mergeRefreshedMessageHistory, replaceRebuiltMessageHistory } from './messageHistory';
-import { readCachedSessionMessages, writeCachedSessionMessages } from '../../lib/session-message-cache';
 
 const SIDEBAR_VISIBLE_KEY = 'session_list_sidebar_visible';
 
@@ -381,12 +380,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   useEffect(() => {
     if (agentAPI && sessionId) {
       // Reset initial load flag when session changes
-      const cachedMessages = readCachedSessionMessages(sessionId);
-      setIsInitialLoadComplete(cachedMessages !== null);
+      setIsInitialLoadComplete(false);
       setIsStarting(true);
       setIsConnected(false);
       setAgentStatus(null);
-      setMessages(cachedMessages ?? []);
+      setMessages([]);
       setACPInfo(null);
       setACPUserPrompts([]);
       setLoadedACPStartPromptIndex(null);
@@ -740,15 +738,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [showControlPanel, setShowControlPanel] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
-
-  // Reopening a chat in the same browser tab should not wait for an outbound
-  // runtime round trip before showing content. Persist a small, short-lived
-  // snapshot and refresh it from the bridge in the background.
-  useEffect(() => {
-    if (!sessionId || !isInitialLoadComplete || messages.length === 0) return;
-    const timeout = setTimeout(() => writeCachedSessionMessages(sessionId, messages), 250);
-    return () => clearTimeout(timeout);
-  }, [sessionId, messages, isInitialLoadComplete]);
 
   // Restore sidebar visibility from localStorage after mount
   useEffect(() => {
