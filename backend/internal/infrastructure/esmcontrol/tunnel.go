@@ -26,15 +26,47 @@ func (t *Tunnel) IsConnected(ctx context.Context, managerID string) bool {
 }
 
 func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID string, req *http.Request) (*http.Response, error) {
+	requestID, err := t.Enqueue(ctx, managerID, sessionID, remoteSessionID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	frames, cursor, err := t.waitForFirstFrame(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	first := frames[0]
+	if first.Error != "" {
+		return nil, fmt.Errorf("external session manager: %s", first.Error)
+	}
+	pipeReader, pipeWriter := io.Pipe()
+	go t.streamBody(ctx, requestID, cursor, frames, pipeWriter)
+	return &http.Response{
+		StatusCode: first.Status, Status: fmt.Sprintf("%d %s", first.Status, http.StatusText(first.Status)),
+		Header: http.Header(first.Headers), Body: &cancelBody{ReadCloser: pipeReader, cancel: func() {
+			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = t.store.EnqueueCommand(cancelCtx, managerID, core.Command{
+				ID: uuid.NewString(), CancelRequestID: requestID, ManagerID: managerID,
+				Deadline: time.Now().Add(30 * time.Second), CreatedAt: time.Now().UTC(),
+			})
+		}}, ContentLength: -1, Request: req,
+	}, nil
+}
+
+// Enqueue persists a manager command without waiting for its response. Lifecycle
+// operations use this so slow Kubernetes termination cannot be cut off by an HTTP
+// proxy timeout; the manager resumes the durable command after reconnecting.
+func (t *Tunnel) Enqueue(ctx context.Context, managerID, sessionID, remoteSessionID string, req *http.Request) (string, error) {
 	if !t.IsConnected(ctx, managerID) {
-		return nil, fmt.Errorf("external session manager %s has no outbound control lease", managerID)
+		return "", fmt.Errorf("external session manager %s has no outbound control lease", managerID)
 	}
 	var body []byte
 	if req.Body != nil {
 		var err error
 		body, err = io.ReadAll(req.Body)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	deadline := time.Now().Add(30 * time.Minute)
@@ -48,30 +80,9 @@ func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID s
 		Deadline: deadline, CreatedAt: time.Now().UTC(),
 	}
 	if _, err := t.store.EnqueueCommand(ctx, managerID, command); err != nil {
-		return nil, err
+		return "", err
 	}
-
-	frames, cursor, err := t.waitForFirstFrame(ctx, command.ID)
-	if err != nil {
-		return nil, err
-	}
-	first := frames[0]
-	if first.Error != "" {
-		return nil, fmt.Errorf("external session manager: %s", first.Error)
-	}
-	pipeReader, pipeWriter := io.Pipe()
-	go t.streamBody(ctx, command.ID, cursor, frames, pipeWriter)
-	return &http.Response{
-		StatusCode: first.Status, Status: fmt.Sprintf("%d %s", first.Status, http.StatusText(first.Status)),
-		Header: http.Header(first.Headers), Body: &cancelBody{ReadCloser: pipeReader, cancel: func() {
-			cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_, _ = t.store.EnqueueCommand(cancelCtx, managerID, core.Command{
-				ID: uuid.NewString(), CancelRequestID: command.ID, ManagerID: managerID,
-				Deadline: time.Now().Add(30 * time.Second), CreatedAt: time.Now().UTC(),
-			})
-		}}, ContentLength: -1, Request: req,
-	}, nil
+	return command.ID, nil
 }
 
 type cancelBody struct {

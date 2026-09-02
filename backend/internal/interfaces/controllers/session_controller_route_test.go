@@ -47,7 +47,8 @@ type directRuntimeTunnel struct {
 }
 
 type lifecycleTunnel struct {
-	path string
+	path     string
+	enqueued bool
 }
 
 func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool {
@@ -57,6 +58,12 @@ func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool 
 func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
 	t.path = req.URL.Path
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+}
+
+func (t *lifecycleTunnel) Enqueue(_ context.Context, _, _, _ string, req *http.Request) (string, error) {
+	t.path = req.URL.Path
+	t.enqueued = true
+	return "request-id", nil
 }
 
 func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) bool {
@@ -215,11 +222,14 @@ func TestDeleteDirectRuntimeUsesPublicSessionID(t *testing.T) {
 	if err := controller.DeleteSession(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("response status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
 	if tunnel.path != "/api/v1/sessions/public-id" {
 		t.Fatalf("delete path = %q, want public session ID", tunnel.path)
+	}
+	if !tunnel.enqueued {
+		t.Fatal("direct-runtime deletion was not durably enqueued")
 	}
 }
 
