@@ -284,12 +284,13 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(leaderCtx context.Context) {
 					log.Printf("[SESSION_MANAGER] Became remote execution leader")
-					// Runner-pool managers use the direct runtime channel and do not
-					// participate in the legacy ESM reverse-proxy control protocol.
-					if cfg.SessionManager.RunnerPool == "" {
-						control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
-						go control.Start(leaderCtx)
-					}
+					// Session traffic for runner-pool workloads uses the per-session direct
+					// runtime channel, but manager-level lifecycle operations (notably
+					// deletion) still use outbound control during the migration to typed
+					// manager operations. Keep this reconnecting worker alive for every
+					// remote manager so a proxy rollout cannot permanently strand sessions.
+					control := externalmanager.NewControlWorker(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ConnectionToken, "", cfg.SessionManager.APIURL, instanceID, cfg.SessionManager.HMACSecret)
+					go control.Start(leaderCtx)
 					runSessionRunnerManagerHeartbeat(leaderCtx, cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg, manager)
 				},
 				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
