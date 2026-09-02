@@ -1471,10 +1471,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
 
     const reconnectACP = async () => {
       console.log('[ACP] Page became visible, refreshing messages and checking SSE connection...');
+      let refreshedLastEventId: number | undefined;
 
       // 1. Fetch fresh message history from the bridge
       try {
         const latestResult = await agentAPIRef.current!.getACPMessageHistory(sessionId, acpInfo.sessionId);
+        refreshedLastEventId = latestResult.lastEventId;
         const latestPromptIndex = latestResult.userPromptIndex ?? getLatestACPUserPromptIndex(latestResult.userPrompts);
         const currentStartIndex = loadedACPStartPromptIndexRef.current;
 
@@ -1494,7 +1496,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           setMessages(currentMessages => replaceRebuiltMessageHistory(currentMessages, refreshedMessages));
           setLoadedACPStartPromptIndex(currentStartIndex);
         } else {
-          setMessages(currentMessages => mergeRefreshedMessageHistory(currentMessages, latestResult.messages));
+          // The latest history response completely rebuilds the loaded turn.
+          // Live SSE messages use locally generated IDs, so merging this response
+          // by ID would retain the live copy and append the restored copy.
+          setMessages(currentMessages => replaceRebuiltMessageHistory(currentMessages, latestResult.messages));
           setLoadedACPStartPromptIndex(latestPromptIndex);
         }
         setACPUserPrompts(latestResult.userPrompts);
@@ -1598,7 +1603,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       if (acpServerEnabled && acpServerClientRef.current) {
         acpEventSourceRef.current = acpServerClientRef.current.subscribeToEvents(
           sessionId,
-          reconnectCallbacks
+          reconnectCallbacks,
+          refreshedLastEventId
         );
       } else {
         acpEventSourceRef.current = agentAPIRef.current!.subscribeToACPSessionEvents(
@@ -1609,7 +1615,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
             onCommandsUpdate: (commands) => {
               console.log('[ACP] available_commands_update:', commands);
             },
-          }
+          },
+          refreshedLastEventId
         );
       }
       console.log('[ACP] SSE reconnected after visibility change');
