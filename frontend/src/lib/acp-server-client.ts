@@ -472,6 +472,7 @@ export class ACPServerClient {
             case 'agent_thought_chunk': {
               const thought = acpExtractText(update.content);
               if (!thought) return;
+              callbacks.onStatus?.({ status: 'running' });
               if (streamingThoughtId === null) {
                 streamingThoughtId = nextId();
                 callbacks.onMessage({ id: streamingThoughtId, role: 'agent', content: '', thought, time: now, type: 'normal' });
@@ -484,6 +485,7 @@ export class ACPServerClient {
             case 'tool_call': {
               streamingMsgId = null;
               streamingThoughtId = null;
+              callbacks.onStatus?.({ status: 'running' });
               const toolObj = {
                 type: 'tool_use',
                 name: acpToolNameFromRawInput(update.rawInput) || acpToolDisplayName(update.kind, update.title),
@@ -623,11 +625,11 @@ export class ACPServerClient {
         }
 
         // ── Result of session/prompt (turn finished) ───────────────────────
-        // Only call stable for end_turn; ignore permission ACKs and other
-        // result messages that arrive mid-turn (e.g. {"result":{}} with no stopReason).
+        // Only prompt results carry stopReason. Ignore permission ACKs and
+        // other result messages that arrive mid-turn (e.g. {"result":{}}).
         if (msg.result != null && msg.id != null) {
-          const stopReason = (msg.result as { stopReason?: string })?.stopReason;
-          if (stopReason === 'end_turn') {
+          const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
+          if (typeof stopReason === 'string' && stopReason.length > 0) {
             streamingMsgId = null;
             streamingThoughtId = null;
             callbacks.onStatus?.({ status: 'stable' });
