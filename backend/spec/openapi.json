@@ -15,29 +15,23 @@
     }
   ],
   "paths": {
-    "/internal/worker/schedules/process-due": {
+    "/internal/worker/schedules/claim-due": {
       "post": {
-        "summary": "Process due schedules",
-        "description": "Processes schedules due in API-owned persistence. Remote workers use this endpoint instead of connecting to the application KV store directly.",
-        "operationId": "processDueSchedules",
+        "summary": "Claim due schedule jobs",
+        "description": "Atomically claims due schedules and returns short-lived credentials for calling the normal session creation API.",
+        "operationId": "claimDueSchedules",
         "tags": [
           "Worker Control"
         ],
         "responses": {
           "200": {
-            "description": "Schedule processing result",
+            "description": "Claimed schedule jobs",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": [
-                    "processed"
-                  ],
                   "properties": {
-                    "processed": {
-                      "type": "integer",
-                      "minimum": 0
-                    }
+                    "jobs": {"type": "array", "items": {"type": "object"}}
                   }
                 }
               }
@@ -46,13 +40,19 @@
           "401": {
             "description": "Invalid worker control token"
           },
-          "502": {
-            "description": "Schedule processing failed"
-          },
           "503": {
-            "description": "Schedule processor is not configured"
+            "description": "Schedule manager is not configured"
           }
         }
+      }
+    },
+    "/internal/worker/schedules/{scheduleId}/finalize": {
+      "post": {
+        "summary": "Finalize a claimed schedule execution",
+        "operationId": "finalizeScheduleExecution",
+        "tags": ["Worker Control"],
+        "parameters": [{"name":"scheduleId","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {"204":{"description":"Execution finalized"},"401":{"description":"Invalid worker control token"},"409":{"description":"Claim mismatch"}}
       }
     },
     "/internal/worker/leases/{leaseName}": {

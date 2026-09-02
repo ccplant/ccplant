@@ -34,6 +34,59 @@ type sessionInfo struct {
 	LastMessageAt time.Time              `json:"last_message_at"`
 }
 
+type ScheduleJob struct {
+	ScheduleID     string                `json:"schedule_id"`
+	ExecutionID    string                `json:"execution_id"`
+	SessionID      string                `json:"session_id"`
+	ExecutionToken string                `json:"execution_token"`
+	StartRequest   entities.StartRequest `json:"start_request"`
+}
+
+func (m *SessionManager) ClaimDueSchedules(ctx context.Context) ([]ScheduleJob, error) {
+	var result struct {
+		Jobs []ScheduleJob `json:"jobs"`
+	}
+	err := m.do(ctx, http.MethodPost, "/internal/worker/schedules/claim-due", nil, &result)
+	return result.Jobs, err
+}
+
+func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL string, job ScheduleJob) (string, error) {
+	body, err := json.Marshal(job.StartRequest)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(apiURL, "/")+"/start", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+job.ExecutionToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", job.ExecutionID)
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("session creation API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var result struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", err
+	}
+	if result.SessionID == "" {
+		return "", fmt.Errorf("session creation API returned no session_id")
+	}
+	return result.SessionID, nil
+}
+
+func (m *SessionManager) FinalizeSchedule(ctx context.Context, job ScheduleJob, status, sessionID, message string) error {
+	return m.do(ctx, http.MethodPost, "/internal/worker/schedules/"+url.PathEscape(job.ScheduleID)+"/finalize", map[string]string{"execution_id": job.ExecutionID, "session_id": sessionID, "status": status, "error": message}, nil)
+}
+
 func NewSessionManager(baseURL, token string) *SessionManager {
 	// Stock creation waits for a Kubernetes workload to become ready. Keep the
 	// transport timeout above the session manager's 120-second pod start timeout
@@ -100,16 +153,6 @@ func (m *SessionManager) CountStockSessions(ctx context.Context, dind bool) (int
 }
 func (m *SessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	return m.do(ctx, http.MethodDelete, "/internal/worker/stock", nil, nil)
-}
-
-// ProcessDueSchedules asks the API process to read and update schedules using
-// its own persistence configuration. The remote worker never needs KV access.
-func (m *SessionManager) ProcessDueSchedules(ctx context.Context) (int, error) {
-	var result struct {
-		Processed int `json:"processed"`
-	}
-	err := m.do(ctx, http.MethodPost, "/internal/worker/schedules/process-due", nil, &result)
-	return result.Processed, err
 }
 
 type leaseRequest struct {

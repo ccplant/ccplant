@@ -72,6 +72,45 @@ func TestKubernetesManager_Get(t *testing.T) {
 	}
 }
 
+func TestKubernetesManagerClaimAndFinalizeAreIdempotent(t *testing.T) {
+	ctx := context.Background()
+	manager := NewKubernetesManager(fake.NewSimpleClientset(), "default")
+	now := time.Now().Add(-time.Minute)
+	item := &Schedule{ID: "claimed", Name: "claimed", UserID: "alice", Status: ScheduleStatusActive, ScheduledAt: &now, NextExecutionAt: &now}
+	if err := manager.Create(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := manager.ClaimDueSchedules(ctx, time.Now(), time.Minute)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claimed=%d err=%v", len(claimed), err)
+	}
+	if again, err := manager.ClaimDueSchedules(ctx, time.Now(), time.Minute); err != nil || len(again) != 0 {
+		t.Fatalf("second claim=%d err=%v", len(again), err)
+	}
+	pending := claimed[0].PendingExecution
+	expired, err := manager.ClaimDueSchedules(ctx, pending.ExpiresAt.Add(time.Second), time.Minute)
+	if err != nil || len(expired) != 1 {
+		t.Fatalf("expired claim=%d err=%v", len(expired), err)
+	}
+	if expired[0].PendingExecution.ExecutionID != pending.ExecutionID || expired[0].PendingExecution.SessionID != pending.SessionID {
+		t.Fatal("expired claim changed idempotency IDs")
+	}
+	record := ExecutionRecord{ExecutedAt: time.Now(), SessionID: pending.SessionID, Status: "success"}
+	if err := manager.FinalizeClaim(ctx, item.ID, pending.ExecutionID, record, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.FinalizeClaim(ctx, item.ID, pending.ExecutionID, record, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.Get(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExecutionCount != 1 || got.Status != ScheduleStatusCompleted || got.PendingExecution != nil {
+		t.Fatalf("got=%#v", got)
+	}
+}
+
 func TestKubernetesManager_List(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()

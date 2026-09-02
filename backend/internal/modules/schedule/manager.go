@@ -40,6 +40,8 @@ type Manager interface {
 
 	// GetDueSchedules returns schedules that are due for execution
 	GetDueSchedules(ctx context.Context, now time.Time) ([]*Schedule, error)
+	ClaimDueSchedules(ctx context.Context, now time.Time, lease time.Duration) ([]*Schedule, error)
+	FinalizeClaim(ctx context.Context, id, executionID string, record ExecutionRecord, nextAt *time.Time, completed bool) error
 
 	// RecordExecution records an execution attempt
 	RecordExecution(ctx context.Context, id string, record ExecutionRecord) error

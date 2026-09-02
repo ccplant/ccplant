@@ -25,6 +25,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
@@ -181,6 +182,12 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
 	sessionID := uuid.New().String()
+	if claims, ok := ctx.Get("schedule_execution_claims").(executiontoken.ExecutionClaims); ok {
+		sessionID = claims.SessionID
+		if existing := c.getSessionManager().GetSession(sessionID); existing != nil {
+			return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID})
+		}
+	}
 
 	var startReq entities.StartRequest
 	if err := ctx.Bind(&startReq); err != nil {

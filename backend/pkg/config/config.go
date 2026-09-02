@@ -488,6 +488,7 @@ type SessionManagerAllocationConfig struct {
 type WorkerConfig struct {
 	ControlAPIURL   string `json:"control_api_url" mapstructure:"control_api_url"`
 	ControlAPIToken string `json:"control_api_token" mapstructure:"control_api_token"`
+	SessionAPIURL   string `json:"session_api_url" mapstructure:"session_api_url"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -1221,6 +1222,7 @@ func bindEnvVars(v *viper.Viper) {
 	// of kubernetes_session: the worker must never receive a provisioner token.
 	_ = v.BindEnv("worker.control_api_url", "AGENTAPI_WORKER_CONTROL_API_URL", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
 	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
+	_ = v.BindEnv("worker.session_api_url", "AGENTAPI_WORKER_SESSION_API_URL")
 
 	// Memory backend configuration
 	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
@@ -1328,6 +1330,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.github_secret_name", "")
 	v.SetDefault("worker.control_api_url", "")
 	v.SetDefault("worker.control_api_token", "")
+	v.SetDefault("worker.session_api_url", "")
 	v.SetDefault("session_manager.api_url", "")
 	v.SetDefault("session_manager.api_token", "")
 	v.SetDefault("session_manager.internal_api_token", "")

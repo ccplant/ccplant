@@ -244,6 +244,9 @@ worker:
     tokenSecretRef:
       name: ""
       key: token
+  # Normal session creation API used by scheduled jobs. Defaults to controlApi.url.
+  sessionApi:
+    url: ""
 
   # Worker persistence is deliberately independent from API values.
   kvStore:

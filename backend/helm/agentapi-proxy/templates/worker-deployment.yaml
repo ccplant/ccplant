@@ -2,6 +2,7 @@
 {{- if (dig "enabled" false $worker) }}
 {{- $control := $worker.controlApi | default dict }}
 {{- $controlToken := $control.tokenSecretRef | default dict }}
+{{- $sessionApi := $worker.sessionApi | default dict }}
 {{- $kv := $worker.kvStore | default dict }}
 {{- $workerImage := $worker.image | default dict }}
 {{- $slack := $worker.slack | default dict }}
@@ -56,6 +57,8 @@ spec:
           env:
             - name: AGENTAPI_WORKER_CONTROL_API_URL
               value: {{ $controlURL | quote }}
+            - name: AGENTAPI_WORKER_SESSION_API_URL
+              value: {{ $sessionApi.url | default $controlURL | quote }}
             # Compatibility for binaries that predate the role-specific key.
             - name: AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL
               value: {{ $controlURL | quote }}

@@ -56,6 +56,9 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if controlURL == "" || cfg.Worker.ControlAPIToken == "" {
 		return errors.New("worker control API URL and worker control token are required")
 	}
+	if cfg.Worker.SessionAPIURL == "" {
+		cfg.Worker.SessionAPIURL = controlURL
+	}
 	store, err := newWorkerKVStore(cfg.KVStore)
 	if err != nil {
 		return err
@@ -230,14 +233,11 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	return encrypted, nil
 }
 
-type dueScheduleProcessor interface {
-	ProcessDueSchedules(context.Context) (int, error)
-}
-
 type remoteScheduleWorker struct {
-	processor dueScheduleProcessor
-	elector   *schedule.LeaderElector
-	interval  time.Duration
+	client        *controlapi.SessionManager
+	sessionAPIURL string
+	elector       *schedule.LeaderElector
+	interval      time.Duration
 }
 
 func newRemoteScheduleWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *remoteScheduleWorker {
@@ -246,7 +246,7 @@ func newRemoteScheduleWorker(cfg *config.Config, remote *controlapi.SessionManag
 		interval = 30 * time.Second
 	}
 	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, schedule.ScheduleWorkerLeaseName, namespace)
-	return &remoteScheduleWorker{processor: remote, elector: schedule.NewLeaderElector(leaseClient, election), interval: interval}
+	return &remoteScheduleWorker{client: remote, sessionAPIURL: cfg.Worker.SessionAPIURL, elector: schedule.NewLeaderElector(leaseClient, election), interval: interval}
 }
 
 func (w *remoteScheduleWorker) Run(ctx context.Context) {
@@ -267,13 +267,36 @@ func (w *remoteScheduleWorker) Run(ctx context.Context) {
 }
 
 func (w *remoteScheduleWorker) process(ctx context.Context) {
-	processed, err := w.processor.ProcessDueSchedules(ctx)
+	jobs, err := w.client.ClaimDueSchedules(ctx)
 	if err != nil {
-		log.Printf("[SCHEDULE_WORKER] API processing failed: %v", err)
+		log.Printf("[SCHEDULE_WORKER] Claim API failed: %v", err)
 		return
 	}
-	if processed > 0 {
-		log.Printf("[SCHEDULE_WORKER] API processed %d due schedule(s)", processed)
+	for _, job := range jobs {
+		var sessionID string
+		var createErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			sessionID, createErr = w.client.StartScheduledSession(ctx, w.sessionAPIURL, job)
+			if createErr == nil {
+				break
+			}
+			if attempt < 3 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(attempt) * time.Second):
+				}
+			}
+		}
+		status, message := "success", ""
+		if createErr != nil {
+			status, message = "failed", createErr.Error()
+		}
+		if err := w.client.FinalizeSchedule(ctx, job, status, sessionID, message); err != nil {
+			log.Printf("[SCHEDULE_WORKER] Finalize failed for %s: %v", job.ScheduleID, err)
+			continue
+		}
+		log.Printf("[SCHEDULE_WORKER] schedule=%s execution=%s status=%s session=%s", job.ScheduleID, job.ExecutionID, status, sessionID)
 	}
 }
 

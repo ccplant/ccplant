@@ -11,22 +11,103 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
+	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 )
 
 // WorkerControlController is the deliberately small API surface available to
 // background workers. Its credential is not accepted by provisioner or
 // session-manager endpoints.
 type WorkerControlController struct {
-	manager   repositories.SessionManager
-	token     string
-	teams     workerTeamEnsurer
-	routes    repositories.SessionRouteRepository
-	leases    schedule.LeaseClient
-	schedules workerScheduleProcessor
+	manager         repositories.SessionManager
+	token           string
+	teams           workerTeamEnsurer
+	routes          repositories.SessionRouteRepository
+	leases          schedule.LeaseClient
+	scheduleManager schedule.Manager
 }
 
-type workerScheduleProcessor interface {
-	ProcessDueSchedules(context.Context) (int, error)
+func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
+	wc.scheduleManager = manager
+	return wc
+}
+
+type scheduleJob struct {
+	ScheduleID     string                `json:"schedule_id"`
+	ExecutionID    string                `json:"execution_id"`
+	SessionID      string                `json:"session_id"`
+	ExecutionToken string                `json:"execution_token"`
+	StartRequest   entities.StartRequest `json:"start_request"`
+}
+
+func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
+	if !wc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if wc.scheduleManager == nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	items, err := wc.scheduleManager.ClaimDueSchedules(c.Request().Context(), time.Now(), 5*time.Minute)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+	jobs := make([]scheduleJob, 0, len(items))
+	for _, item := range items {
+		claims := executiontoken.ExecutionClaims{ScheduleID: item.ID, ExecutionID: item.PendingExecution.ExecutionID, SessionID: item.PendingExecution.SessionID, UserID: item.UserID, Scope: item.GetScope(), TeamID: item.TeamID, Teams: sessionuc.ResolveTeams(item.GetScope(), item.TeamID, item.UserTeams), ExpiresAt: item.PendingExecution.ExpiresAt.Unix()}
+		token, err := executiontoken.SignExecutionToken([]byte(wc.token), claims)
+		if err != nil {
+			return err
+		}
+		tags := make(map[string]string, len(item.SessionConfig.Tags)+1)
+		for k, v := range item.SessionConfig.Tags {
+			tags[k] = v
+		}
+		tags["schedule_id"] = item.ID
+		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, MemoryKey: item.SessionConfig.MemoryKey, SessionProfileID: item.SessionConfig.SessionProfileID}})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"jobs": jobs})
+}
+
+func (wc *WorkerControlController) FinalizeSchedule(c echo.Context) error {
+	if !wc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	var req struct {
+		ExecutionID string `json:"execution_id"`
+		SessionID   string `json:"session_id"`
+		Status      string `json:"status"`
+		Error       string `json:"error"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	if req.ExecutionID == "" || (req.Status != "success" && req.Status != "failed") {
+		return echo.NewHTTPError(http.StatusBadRequest, "execution_id and a valid status are required")
+	}
+	if req.Status == "success" && req.SessionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "session_id is required for successful execution")
+	}
+	item, err := wc.scheduleManager.Get(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return err
+	}
+	var next *time.Time
+	completed := item.IsOneTime() && req.Status == "success"
+	if item.IsOneTime() && !completed {
+		retryAt := time.Now().Add(time.Minute)
+		next = &retryAt
+	} else if !completed {
+		value, calcErr := schedule.CalculateNextExecution(item, time.Now())
+		if calcErr != nil {
+			return calcErr
+		}
+		next = value
+	}
+	record := schedule.ExecutionRecord{ExecutionID: req.ExecutionID, SessionID: req.SessionID, Status: req.Status, Error: req.Error, ExecutedAt: time.Now()}
+	if err := wc.scheduleManager.FinalizeClaim(c.Request().Context(), item.ID, req.ExecutionID, record, next, completed); err != nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 type workerTeamEnsurer interface {
@@ -78,25 +159,6 @@ func NewWorkerControlController(manager repositories.SessionManager, token strin
 func (wc *WorkerControlController) WithLeases(client schedule.LeaseClient) *WorkerControlController {
 	wc.leases = client
 	return wc
-}
-
-func (wc *WorkerControlController) WithScheduleProcessor(processor workerScheduleProcessor) *WorkerControlController {
-	wc.schedules = processor
-	return wc
-}
-
-func (wc *WorkerControlController) ProcessDueSchedules(c echo.Context) error {
-	if !wc.authorized(c) {
-		return c.NoContent(http.StatusUnauthorized)
-	}
-	if wc.schedules == nil {
-		return c.NoContent(http.StatusServiceUnavailable)
-	}
-	processed, err := wc.schedules.ProcessDueSchedules(c.Request().Context())
-	if err != nil {
-		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, map[string]int{"processed": processed})
 }
 
 type workerLeaseRequest struct {

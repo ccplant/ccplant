@@ -55,7 +55,8 @@ type Schedule struct {
 	SessionConfig SessionConfig `json:"session_config"`
 
 	// LastExecution contains the most recent execution record
-	LastExecution *ExecutionRecord `json:"last_execution,omitempty"`
+	LastExecution    *ExecutionRecord  `json:"last_execution,omitempty"`
+	PendingExecution *PendingExecution `json:"pending_execution,omitempty"`
 
 	// NextExecutionAt is the calculated next execution time
 	NextExecutionAt *time.Time `json:"next_execution_at,omitempty"`
@@ -68,6 +69,13 @@ type Schedule struct {
 
 	// UpdatedAt is when the schedule was last updated
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type PendingExecution struct {
+	ExecutionID string    `json:"execution_id"`
+	SessionID   string    `json:"session_id"`
+	ClaimedAt   time.Time `json:"claimed_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // SessionConfig contains session creation parameters
@@ -95,6 +103,7 @@ type SessionConfig struct {
 
 // ExecutionRecord represents a single execution attempt
 type ExecutionRecord struct {
+	ExecutionID string `json:"execution_id,omitempty"`
 	// ExecutedAt is when the execution was attempted
 	ExecutedAt time.Time `json:"executed_at"`
 	// SessionID is the ID of the created or reused session (if successful)

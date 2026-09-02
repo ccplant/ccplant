@@ -70,24 +70,41 @@ func TestSessionManagerDelegatesLeaseToControlAPI(t *testing.T) {
 	}
 }
 
-func TestSessionManagerProcessesDueSchedulesThroughControlAPI(t *testing.T) {
+func TestScheduleClientClaimsStartsAndFinalizes(t *testing.T) {
+	var finalized bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/internal/worker/schedules/process-due" {
+		switch r.URL.Path {
+		case "/internal/worker/schedules/claim-due":
+			if r.Header.Get("Authorization") != "Bearer control" {
+				t.Fatal("missing control token")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []ScheduleJob{{ScheduleID: "s", ExecutionID: "e", SessionID: "session", ExecutionToken: "execution", StartRequest: entities.StartRequest{}}}})
+		case "/start":
+			if r.Header.Get("Authorization") != "Bearer execution" || r.Header.Get("Idempotency-Key") != "e" {
+				t.Fatal("missing execution authentication")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": "session"})
+		case "/internal/worker/schedules/s/finalize":
+			finalized = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if r.Header.Get("Authorization") != "Bearer token" {
-			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
-		}
-		_ = json.NewEncoder(w).Encode(map[string]int{"processed": 3})
 	}))
 	defer server.Close()
-
-	processed, err := NewSessionManager(server.URL, "token").ProcessDueSchedules(context.Background())
-	if err != nil {
+	client := NewSessionManager(server.URL, "control")
+	jobs, err := client.ClaimDueSchedules(context.Background())
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs=%v err=%v", jobs, err)
+	}
+	id, err := client.StartScheduledSession(context.Background(), server.URL, jobs[0])
+	if err != nil || id != "session" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+	if err := client.FinalizeSchedule(context.Background(), jobs[0], "success", id, ""); err != nil {
 		t.Fatal(err)
 	}
-	if processed != 3 {
-		t.Fatalf("processed = %d, want 3", processed)
+	if !finalized {
+		t.Fatal("execution was not finalized")
 	}
 }
