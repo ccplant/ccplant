@@ -413,3 +413,46 @@ describe('AgentAPIProxyClient ACP SSE cursor', () => {
     subscription.close();
   });
 });
+
+describe('AgentAPIProxyClient ACP SSE probe', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('detects ACP from a successful SSE handshake and closes the probe', async () => {
+    const close = vi.fn();
+    class FakeEventSource {
+      static instance: FakeEventSource;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(readonly url: string) { FakeEventSource.instance = this; }
+      close = close;
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const client = new AgentAPIProxyClient({ baseURL: '/api/proxy' });
+    const result = client.probeACPSessionEvents('session-1');
+    expect(FakeEventSource.instance.url).toBe('/api/proxy/session-1/sse');
+    FakeEventSource.instance.onopen?.();
+
+    await expect(result).resolves.toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects ACP detection when the SSE endpoint errors', async () => {
+    class FakeEventSource {
+      static instance: FakeEventSource;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(readonly url: string) { FakeEventSource.instance = this; }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const client = new AgentAPIProxyClient({ baseURL: '/api/proxy' });
+    const result = client.probeACPSessionEvents('session-1');
+    FakeEventSource.instance.onerror?.();
+
+    await expect(result).resolves.toBe(false);
+  });
+});

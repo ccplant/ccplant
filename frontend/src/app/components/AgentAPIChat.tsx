@@ -485,43 +485,38 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               };
 
               // Every request to an outbound-only session crosses the direct-runtime
-              // tunnel. Start bridge detection, history, and status together so
-              // reconnect does not pay one full tunnel round trip before issuing the
-              // other two requests.
+              // tunnel. Start bridge detection and history together, but defer the
+              // legacy status request until we know there is no ACP bridge. A status
+              // request is redundant for ACP and otherwise competes with the much
+              // larger history response.
               const infoPromise = agentAPIRef.current.getACPSessionInfo(sessionId);
               const historyPromise = agentAPIRef.current
                 .getACPMessageHistory(sessionId, '')
                 .catch(() => null);
-              const statusPromise = agentAPIRef.current
-                .getSessionStatus(sessionId)
-                .catch(() => null);
+              const acpProbePromise = agentAPIRef.current.probeACPSessionEvents(sessionId);
 
-              // Status is useful independently of transport detection and message
-              // history. Attach the single status request immediately so the loading
-              // screen can reflect running/error while either slower tunnel request
-              // is still in flight. Reuse statusPromise below instead of issuing a
-              // second request from a separate effect.
-              void statusPromise.then(currentStatus => {
-                if (!currentStatus) return;
-                if (normalizeAgentStatus(currentStatus.status) === 'stable' && acpTurnRunningRef.current) return;
-                setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
-                if (currentStatus.agent_type) {
-                  setAgentType(currentStatus.agent_type);
-                }
-              });
-
-              const info = await infoPromise;
+              // The proxy-local SSE handshake is usually much faster than asking
+              // the remote bridge for session metadata. Use it as the fast path,
+              // while retaining GET /session as the compatibility fallback and to
+              // hydrate the full ACP session information.
+              const acpAvailable = await acpProbePromise;
+              const info = acpAvailable
+                ? { sessionId: '', status: 'running' as const }
+                : await infoPromise;
               if (info) {
                 console.log(`[ACP] initializeChat: ACP session detected (acpSessionId=${info.sessionId}), previous acpInfo=${JSON.stringify(acpInfo)}`);
                 setACPInfo(info);
                 setAgentType('acp');
-
+                if (acpAvailable) {
+                  void infoPromise.then(fullInfo => {
+                    if (fullInfo) setACPInfo(fullInfo);
+                  });
+                }
                 // Always fetch history from the per-session bridge.
                 // We always use the per-session SSE (which does NOT replay history),
                 // so there is no risk of duplicates from SSE replay.
-                // History and status are independent remote calls. External session
-                // managers may add noticeable tunnel latency to each request, so do
-                // not make chat bootstrap pay for them serially.
+                // External session managers may add noticeable tunnel latency, so
+                // bridge detection and history were started in parallel above.
                 const historyResult = await historyPromise;
                 if (!historyResult) {
                   throw new Error('Failed to restore ACP message history');
@@ -590,6 +585,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // getACPSessionInfo returned null, but the session might be an ACP
                 // session whose bridge is still starting. Check agent_type via session status.
                 try {
+                  // Only legacy/non-ready sessions need a separate status request.
+                  // For an established ACP bridge it is redundant and competes with
+                  // the (often much larger) history response over the runtime tunnel.
+                  const statusPromise = agentAPIRef.current
+                    .getSessionStatus(sessionId)
+                    .catch(() => null);
                   const statusResult = await statusPromise;
                   if (!statusResult) throw new Error('Session status is unavailable');
                   setAgentStatus({ ...statusResult, status: normalizeAgentStatus(statusResult.status) });
@@ -2095,7 +2096,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
             </div>
             <p className="text-lg font-medium">処理中...</p>
-            <p className="text-sm mt-1">セッションへの接続を待機しています</p>
+            <p className="text-sm mt-1">
+              {acpInfo ? 'メッセージ履歴を読み込んでいます' : 'セッションへの接続を待機しています'}
+            </p>
           </div>
         )}
 
