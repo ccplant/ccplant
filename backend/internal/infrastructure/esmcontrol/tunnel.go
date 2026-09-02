@@ -26,6 +26,9 @@ func (t *Tunnel) IsConnected(ctx context.Context, managerID string) bool {
 }
 
 func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID string, req *http.Request) (*http.Response, error) {
+	if !t.IsConnected(ctx, managerID) {
+		return nil, fmt.Errorf("external session manager %s has no outbound control lease", managerID)
+	}
 	requestID, err := t.Enqueue(ctx, managerID, sessionID, remoteSessionID, req)
 	if err != nil {
 		return nil, err
@@ -58,9 +61,6 @@ func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID s
 // operations use this so slow Kubernetes termination cannot be cut off by an HTTP
 // proxy timeout; the manager resumes the durable command after reconnecting.
 func (t *Tunnel) Enqueue(ctx context.Context, managerID, sessionID, remoteSessionID string, req *http.Request) (string, error) {
-	if !t.IsConnected(ctx, managerID) {
-		return "", fmt.Errorf("external session manager %s has no outbound control lease", managerID)
-	}
 	var body []byte
 	if req.Body != nil {
 		var err error
