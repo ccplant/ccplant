@@ -489,7 +489,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               // legacy status request until we know there is no ACP bridge. A status
               // request is redundant for ACP and otherwise competes with the much
               // larger history response.
-              const infoPromise = agentAPIRef.current.getACPSessionInfo(sessionId);
               const historyPromise = agentAPIRef.current
                 .getACPMessageHistory(sessionId, '')
                 .catch(() => null);
@@ -502,13 +501,16 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               const acpAvailable = await acpProbePromise;
               const info = acpAvailable
                 ? { sessionId: '', status: 'running' as const }
-                : await infoPromise;
+                : await agentAPIRef.current.getACPSessionInfo(sessionId);
               if (info) {
                 console.log(`[ACP] initializeChat: ACP session detected (acpSessionId=${info.sessionId}), previous acpInfo=${JSON.stringify(acpInfo)}`);
                 setACPInfo(info);
                 setAgentType('acp');
                 if (acpAvailable) {
-                  void infoPromise.then(fullInfo => {
+                  // The probe already established that this is an ACP session.
+                  // Fetch metadata only after history has finished so it cannot
+                  // contend with the request that unblocks the initial render.
+                  void historyPromise.then(() => agentAPIRef.current?.getACPSessionInfo(sessionId)).then(fullInfo => {
                     if (fullInfo) setACPInfo(fullInfo);
                   });
                 }
