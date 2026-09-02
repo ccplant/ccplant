@@ -1278,6 +1278,42 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		})
 	}
 
+	// Runner-pool sessions are owned by the parent-side allocation store. Their
+	// session managers intentionally do not run the legacy ESM control worker;
+	// deleting the allocation and runner registration causes the manager's next
+	// heartbeat to reclaim the now-orphaned local workload. Trying the legacy
+	// control tunnel first would leave DELETE hanging forever waiting for a
+	// worker that does not exist.
+	if deleter, ok := c.sessionCreator.(interface {
+		DeleteSessionPoolAllocation(context.Context, string) error
+	}); ok {
+		err := deleter.DeleteSessionPoolAllocation(ctx.Request().Context(), sessionID)
+		switch {
+		case err == nil:
+			if c.sessionRouteRepo != nil {
+				if deleteErr := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); deleteErr != nil {
+					log.Printf("[REMOTE_DELETE] Warning: failed to delete pooled route entry for session %s: %v", sessionID, deleteErr)
+				}
+			}
+			if cleaner, supported := c.sessionCreator.(interface {
+				DeleteProvisionRequest(context.Context, string) error
+			}); supported {
+				if deleteErr := cleaner.DeleteProvisionRequest(ctx.Request().Context(), sessionID); deleteErr != nil {
+					log.Printf("[REMOTE_DELETE] Warning: failed to delete provision request for pooled session %s: %v", sessionID, deleteErr)
+				}
+			}
+			log.Printf("[REMOTE_DELETE] Deleted pooled session %s (runner ID: %s)", sessionID, route.RemoteSessionID)
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"message":    "Session terminated successfully",
+				"session_id": sessionID,
+				"status":     "terminated",
+			})
+		case !errors.Is(err, sessionrunnercore.ErrNotFound):
+			log.Printf("[REMOTE_DELETE] Failed to delete pool allocation for session %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session allocation")
+		}
+	}
+
 	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
 	if !useTunnel {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")

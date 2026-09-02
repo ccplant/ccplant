@@ -46,6 +46,24 @@ type directRuntimeTunnel struct {
 	path      string
 }
 
+type pooledSessionCreator struct {
+	fakeSessionCreator
+	deletedAllocation string
+}
+
+func (c *pooledSessionCreator) DeleteSessionPoolAllocation(_ context.Context, sessionID string) error {
+	c.deletedAllocation = sessionID
+	return nil
+}
+
+type unexpectedDeleteTunnel struct{ called bool }
+
+func (t *unexpectedDeleteTunnel) IsConnected(context.Context, string) bool { return true }
+func (t *unexpectedDeleteTunnel) Do(context.Context, string, string, string, *http.Request) (*http.Response, error) {
+	t.called = true
+	return nil, nil
+}
+
 func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) bool {
 	return managerID == "public-id"
 }
@@ -183,6 +201,34 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	}
 	if response["session_id"] != "missing-id" || response["status"] != "terminated" {
 		t.Fatalf("response = %#v, want missing-id terminated", response)
+	}
+}
+
+func TestDeletePooledRemoteSessionDoesNotUseLegacyControlTunnel(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	creator := &pooledSessionCreator{}
+	tunnel := &unexpectedDeleteTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager},
+		creator,
+		controllers.WithSessionRouteRepository(&fakeACPRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-a",
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
+
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if creator.deletedAllocation != "public-id" {
+		t.Fatalf("deleted allocation = %q, want public-id", creator.deletedAllocation)
+	}
+	if tunnel.called {
+		t.Fatal("pooled deletion unexpectedly used the legacy control tunnel")
 	}
 }
 
