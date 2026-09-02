@@ -24,11 +24,21 @@ function OpenedSession({ sessionId }: { sessionId: string }) {
     let cancelled = false
     const client = createAgentAPIProxyClientFromStorage()
     const options = { cancelled: () => cancelled }
-    waitForSessionResume(client, sessionId, options)
-      .catch((err) => {
-        if (!cancelled) console.error('[SessionPage] Failed to resume session:', err)
-      })
-    return () => { cancelled = true }
+
+    // Opening an active session immediately starts the bridge probe and history
+    // request in AgentAPIChat. Resume is only useful for suspended workloads, so
+    // keep it off that critical path (and away from constrained session tunnels).
+    const resumeTimer = setTimeout(() => {
+      waitForSessionResume(client, sessionId, options)
+        .catch((err) => {
+          if (!cancelled) console.error('[SessionPage] Failed to resume session:', err)
+        })
+    }, 3000)
+
+    return () => {
+      cancelled = true
+      clearTimeout(resumeTimer)
+    }
   }, [sessionId])
 
   return (
