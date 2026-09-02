@@ -46,6 +46,19 @@ type directRuntimeTunnel struct {
 	path      string
 }
 
+type lifecycleTunnel struct {
+	path string
+}
+
+func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool {
+	return managerID == "manager-a"
+}
+
+func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+	t.path = req.URL.Path
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+}
+
 func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) bool {
 	return managerID == "public-id"
 }
@@ -183,6 +196,30 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	}
 	if response["session_id"] != "missing-id" || response["status"] != "terminated" {
 		t.Fatalf("response = %#v, want missing-id terminated", response)
+	}
+}
+
+func TestDeleteDirectRuntimeUsesPublicSessionID(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(&fakeACPRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "allocator-claim-id", ManagerID: "manager-a",
+			Transport: repositories.SessionRouteTransportDirectRuntime,
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
+
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.path != "/api/v1/sessions/public-id" {
+		t.Fatalf("delete path = %q, want public session ID", tunnel.path)
 	}
 }
 
