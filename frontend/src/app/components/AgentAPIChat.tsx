@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo, type ClipboardEvent, type TouchEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ClipboardEvent } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createAgentAPIProxyClientFromStorage, ACPSessionInfo, ACPConfigOption, ACPUserPromptInfo } from '../../lib/agentapi-proxy-client';
@@ -814,14 +814,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [acpUserPrompts, setACPUserPrompts] = useState<ACPUserPromptInfo[]>([]);
   const [isLoadingACPPromptHistory, setIsLoadingACPPromptHistory] = useState(false);
   const [loadedACPStartPromptIndex, setLoadedACPStartPromptIndex] = useState<number | null>(null);
-  const [acpPullDistance, setACPPullDistance] = useState(0);
   const acpNextPromptId = useRef(1);
   const acpEventSourceRef = useRef<{ close: () => void } | null>(null);
   const acpTurnRunningRef = useRef(false);
   const loadedACPStartPromptIndexRef = useRef<number | null>(null);
-  const acpPullStartYRef = useRef<number | null>(null);
-  const acpPullTrackingRef = useRef(false);
-  const acpPullDistanceRef = useRef(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -830,7 +826,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const prevAgentStatusRef = useRef<AgentStatus | null>(null);
   const lastLoadTimeRef = useRef<number>(0);
   const lastSessionAnnotationLoadTimeRef = useRef<number>(0);
-  const acpPullThreshold = 72;
 
   useEffect(() => {
     loadedACPStartPromptIndexRef.current = loadedACPStartPromptIndex;
@@ -911,50 +906,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     const currentStartIndex = loadedACPStartPromptIndexRef.current ?? getLatestACPUserPromptIndex(acpUserPrompts);
     return currentStartIndex !== null && currentStartIndex > 0;
   }, [isACPSession, acpUserPrompts, isLoadingACPPromptHistory]);
-
-  const handleMessagesTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
-    const container = messagesContainerRef.current;
-    if (!container || container.scrollTop > 0 || !canLoadPreviousACPTurn()) {
-      acpPullTrackingRef.current = false;
-      acpPullStartYRef.current = null;
-      return;
-    }
-    acpPullTrackingRef.current = true;
-    acpPullStartYRef.current = event.touches[0]?.clientY ?? null;
-  }, [canLoadPreviousACPTurn]);
-
-  const handleMessagesTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
-    if (!acpPullTrackingRef.current || acpPullStartYRef.current === null) return;
-    const container = messagesContainerRef.current;
-    if (!container || container.scrollTop > 0) return;
-
-    const currentY = event.touches[0]?.clientY;
-    if (currentY === undefined) return;
-    const delta = currentY - acpPullStartYRef.current;
-    if (delta <= 0) {
-      acpPullDistanceRef.current = 0;
-      setACPPullDistance(0);
-      return;
-    }
-
-    const distance = Math.min(delta * 0.55, 96);
-    acpPullDistanceRef.current = distance;
-    setACPPullDistance(distance);
-    if (distance > 8) {
-      event.preventDefault();
-    }
-  }, []);
-
-  const finishMessagesPull = useCallback(() => {
-    const shouldLoad = acpPullTrackingRef.current && acpPullDistanceRef.current >= acpPullThreshold;
-    acpPullTrackingRef.current = false;
-    acpPullStartYRef.current = null;
-    acpPullDistanceRef.current = 0;
-    setACPPullDistance(0);
-    if (shouldLoad) {
-      void loadPreviousACPTurn();
-    }
-  }, [loadPreviousACPTurn]);
 
   const handleSetACPModel = useCallback(async () => {
     if (!sessionId || !acpModelConfigId || !selectedACPModel) return;
@@ -2023,10 +1974,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        onTouchStart={handleMessagesTouchStart}
-        onTouchMove={handleMessagesTouchMove}
-        onTouchEnd={finishMessagesPull}
-        onTouchCancel={finishMessagesPull}
         className="flex-1 overflow-y-auto bg-white dark:bg-gray-900 mobile-scroll min-h-0 relative"
         style={{ 
           overscrollBehavior: 'contain',
@@ -2034,26 +1981,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           transform: 'translateZ(0)' // GPU acceleration
         }}
       >
-        {(acpPullDistance > 0 || isLoadingACPPromptHistory) && (
-          <div
-            className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-9 items-center justify-center border-b border-blue-100 bg-blue-50/95 text-xs text-blue-700 shadow-sm dark:border-blue-900/40 dark:bg-blue-950/80 dark:text-blue-200"
-            style={{ transform: isLoadingACPPromptHistory ? 'translateY(0)' : `translateY(${Math.max(0, Math.min(acpPullDistance, 36)) - 36}px)` }}
-          >
-            {isLoadingACPPromptHistory ? (
-              <span className="inline-flex items-center gap-2">
-                <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700 dark:border-blue-700 dark:border-t-blue-200" />
-                読み込み中...
-              </span>
-            ) : acpPullDistance >= acpPullThreshold ? (
-              '離して読み込み'
-            ) : (
-              '前のターン'
-            )}
-          </div>
-        )}
-
         {canLoadPreviousACPTurn() && (
-          <div className="hidden justify-center border-b border-gray-100 bg-white px-4 py-3 md:flex dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex justify-center border-b border-gray-100 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
             <button
               type="button"
               onClick={() => void loadPreviousACPTurn()}

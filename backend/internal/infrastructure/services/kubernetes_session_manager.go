@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -6727,57 +6728,114 @@ func (m *KubernetesSessionManager) resolveSettings(
 	req *entities.RunServerRequest,
 ) settingspatch.MaterializedSettings {
 	m.refreshConfig()
+
+	// Settings live behind the parent API's Kubernetes/libSQL repositories. When
+	// that API runs outside the cluster, each lookup can cost a full network round
+	// trip. These layers are independent, so fetch them concurrently and preserve
+	// priority only when assembling the result. This also avoids reading the user
+	// patch twice (once for preferred_team_id and again for the user layer).
+	var basePatch, userPatch, oneshotPatch, senderPatch *settingspatch.SettingsPatch
+	teamNames := append([]string(nil), req.Teams...)
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && !slices.Contains(teamNames, req.TeamID) {
+		teamNames = append(teamNames, req.TeamID)
+	}
+	teamPatches := make([]*settingspatch.SettingsPatch, len(teamNames))
+	var wg sync.WaitGroup
+	fetch := func(target **settingspatch.SettingsPatch, load func() *settingspatch.SettingsPatch) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			*target = load()
+		}()
+	}
+	if m.k8sConfig.SettingsBaseSecret != "" {
+		fetch(&basePatch, func() *settingspatch.SettingsPatch {
+			return m.readSettingsPatch(ctx, m.k8sConfig.SettingsBaseSecret)
+		})
+	}
+	for i, team := range teamNames {
+		i, team := i, team
+		fetch(&teamPatches[i], func() *settingspatch.SettingsPatch {
+			return m.readSettingsPatchByName(ctx, team)
+		})
+	}
+	if req.UserID != "" && req.Scope != entities.ScopeTeam {
+		fetch(&userPatch, func() *settingspatch.SettingsPatch {
+			return m.readSettingsPatchByName(ctx, req.UserID)
+		})
+	}
+	if req.Scope == entities.ScopeTeam && req.CredentialSource == "github_sender" && req.TriggeredUserID != "" {
+		fetch(&senderPatch, func() *settingspatch.SettingsPatch {
+			return m.readSettingsPatchByName(ctx, req.TriggeredUserID)
+		})
+	}
+	if req.Oneshot {
+		fetch(&oneshotPatch, func() *settingspatch.SettingsPatch {
+			return m.readSettingsPatch(ctx, fmt.Sprintf("%s-oneshot-settings", session.ServiceName()))
+		})
+	}
+	wg.Wait()
+
 	var layers []settingspatch.SettingsPatch
 	if m.configProvider != nil {
 		layers = append(layers, m.configProvider.AgentDefaults())
 	}
-
-	appendIfExists := func(secretName string) {
-		if p := m.readSettingsPatch(ctx, secretName); p != nil {
-			layers = append(layers, *p)
-		}
-	}
-	appendSettingsIfExists := func(settingsName string) {
-		if p := m.readSettingsPatchByName(ctx, settingsName); p != nil {
+	appendPatch := func(p *settingspatch.SettingsPatch) {
+		if p != nil {
 			layers = append(layers, *p)
 		}
 	}
 
 	// 1. base (lowest priority)
-	if m.k8sConfig.SettingsBaseSecret != "" {
-		appendIfExists(m.k8sConfig.SettingsBaseSecret)
-	}
+	appendPatch(basePatch)
 
 	// 2. teams (in order)
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
-		appendSettingsIfExists(req.TeamID)
-		if req.CredentialSource == "github_sender" && req.TriggeredUserID != "" {
-			if senderSettings := m.readSettingsPatchByName(ctx, req.TriggeredUserID); senderSettings != nil {
-				layers = append(layers, settingspatch.SettingsPatch{
-					AuthMode:   senderSettings.AuthMode,
-					OAuthToken: senderSettings.OAuthToken,
-					EnvVars:    cloneStringMap(senderSettings.EnvVars),
-				})
+		for i, team := range teamNames {
+			if team == req.TeamID {
+				appendPatch(teamPatches[i])
+				break
 			}
+		}
+		if senderPatch != nil {
+			layers = append(layers, settingspatch.SettingsPatch{
+				AuthMode:   senderPatch.AuthMode,
+				OAuthToken: senderPatch.OAuthToken,
+				EnvVars:    cloneStringMap(senderPatch.EnvVars),
+			})
 		}
 	} else {
 		// User-scoped session: check if the user has a preferred team set
-		preferredTeamID := m.resolvePreferredTeamID(ctx, req)
+		preferredTeamID := ""
+		if userPatch != nil && userPatch.PreferredTeamID != "" {
+			for _, team := range teamNames {
+				if team == userPatch.PreferredTeamID {
+					preferredTeamID = team
+					break
+				}
+			}
+			if preferredTeamID == "" {
+				log.Printf("[K8S_SESSION] Warning: preferred_team_id %q is not in user's team list, falling back to all teams", userPatch.PreferredTeamID)
+			}
+		}
 		if preferredTeamID != "" {
 			// Use only the preferred team's settings
 			log.Printf("[K8S_SESSION] Using preferred team settings: %s", preferredTeamID)
-			appendSettingsIfExists(preferredTeamID)
+			for i, team := range teamNames {
+				if team == preferredTeamID {
+					appendPatch(teamPatches[i])
+					break
+				}
+			}
 		} else {
 			// Default: apply all teams in order
-			for _, team := range req.Teams {
-				appendSettingsIfExists(team)
+			for _, patch := range teamPatches {
+				appendPatch(patch)
 			}
 		}
 		// 3. user
-		if req.UserID != "" {
-			appendSettingsIfExists(req.UserID)
-		}
+		appendPatch(userPatch)
 	}
 
 	// 4. session profile
@@ -6786,9 +6844,7 @@ func (m *KubernetesSessionManager) resolveSettings(
 	}
 
 	// 5. oneshot (highest priority)
-	if req.Oneshot {
-		appendIfExists(fmt.Sprintf("%s-oneshot-settings", session.ServiceName()))
-	}
+	appendPatch(oneshotPatch)
 
 	resolved := settingspatch.Resolve(layers...)
 	materialized, err := settingspatch.Materialize(resolved)
