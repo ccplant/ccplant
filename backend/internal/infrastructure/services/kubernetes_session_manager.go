@@ -1729,20 +1729,28 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 	labelSelector := m.buildLabelSelector(filter)
 	ctx := context.Background()
 
+	// Allocation records live independently from the canonical session list.
+	// Start their remote KV lookup immediately so cache/Kubernetes latency is
+	// not added to allocation lookup latency on every /search request.
+	allocationSessionsCh := make(chan []entities.Session, 1)
+	go func() {
+		allocationSessionsCh <- m.fetchSessionAllocationsFromK8s(ctx, filter)
+	}()
+
 	// --- cache-first path ---------------------------------------------------
 	if m.sessionListCacheRepo != nil {
 		cacheKey := m.buildSessionListCacheKey(labelSelector)
 		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
 			sessions := m.filterSessionsFromCache(cached, filter)
 			m.hydrateSessionStatusMessages(ctx, sessions)
-			return m.withSessionAllocations(ctx, sessions, filter)
+			return mergeSessionAllocations(sessions, <-allocationSessionsCh)
 		}
 	}
 
 	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
 	m.hydrateSessionStatusMessages(ctx, allSessions)
-	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
+	allocationSessions := <-allocationSessionsCh
 
 	// Populate the cache with the full result set (before in-memory filters)
 	// so that different filter combinations that share the same labelSelector
@@ -1774,10 +1782,6 @@ func (m *KubernetesSessionManager) hydrateSessionStatusMessages(ctx context.Cont
 		}
 		ks.SetStatusMessage(request.Message)
 	}
-}
-
-func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
-	return mergeSessionAllocations(sessions, m.fetchSessionAllocationsFromK8s(ctx, filter))
 }
 
 func mergeSessionAllocations(sessions []entities.Session, allocationSessions []entities.Session) []entities.Session {
