@@ -49,6 +49,8 @@ type directRuntimeTunnel struct {
 type lifecycleTunnel struct {
 	path     string
 	enqueued bool
+	done     bool
+	status   int
 }
 
 func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool {
@@ -64,6 +66,39 @@ func (t *lifecycleTunnel) Enqueue(_ context.Context, _, _, _ string, req *http.R
 	t.path = req.URL.Path
 	t.enqueued = true
 	return "request-id", nil
+}
+
+func (t *lifecycleTunnel) CommandResult(_ context.Context, _ string) (bool, int, error) {
+	return t.done, t.status, nil
+}
+
+type deletionRouteRepo struct {
+	route   *repositories.SessionRoute
+	saved   bool
+	deleted bool
+}
+
+func (r *deletionRouteRepo) Save(_ context.Context, route *repositories.SessionRoute) error {
+	r.route = route
+	r.saved = true
+	return nil
+}
+func (r *deletionRouteRepo) Get(_ context.Context, sessionID string) (*repositories.SessionRoute, error) {
+	if r.route != nil && r.route.SessionID == sessionID {
+		return r.route, nil
+	}
+	return nil, nil
+}
+func (r *deletionRouteRepo) List(context.Context, string) ([]*repositories.SessionRoute, error) {
+	if r.route == nil {
+		return nil, nil
+	}
+	return []*repositories.SessionRoute{r.route}, nil
+}
+func (r *deletionRouteRepo) Delete(context.Context, string) error {
+	r.deleted = true
+	r.route = nil
+	return nil
 }
 
 func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) bool {
@@ -209,12 +244,13 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 func TestDeleteDirectRuntimeUsesPublicSessionID(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "allocator-claim-id", ManagerID: "manager-a",
+		Transport: repositories.SessionRouteTransportDirectRuntime,
+	}}
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager}, nil,
-		controllers.WithSessionRouteRepository(&fakeACPRouteRepo{route: &repositories.SessionRoute{
-			SessionID: "public-id", RemoteSessionID: "allocator-claim-id", ManagerID: "manager-a",
-			Transport: repositories.SessionRouteTransportDirectRuntime,
-		}}),
+		controllers.WithSessionRouteRepository(routeRepo),
 		controllers.WithESMControlTunnel(tunnel),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
@@ -230,6 +266,19 @@ func TestDeleteDirectRuntimeUsesPublicSessionID(t *testing.T) {
 	}
 	if !tunnel.enqueued {
 		t.Fatal("direct-runtime deletion was not durably enqueued")
+	}
+	if !routeRepo.saved || routeRepo.deleted || routeRepo.route.Status != "terminating" || routeRepo.route.DeletionRequestID == "" {
+		t.Fatalf("route must remain terminating until manager completion: %#v", routeRepo)
+	}
+
+	tunnel.done = true
+	tunnel.status = http.StatusNoContent
+	ctx, rec = routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !routeRepo.deleted {
+		t.Fatalf("completed deletion was not finalized: status=%d repo=%#v", rec.Code, routeRepo)
 	}
 }
 

@@ -85,6 +85,29 @@ func (t *Tunnel) Enqueue(ctx context.Context, managerID, sessionID, remoteSessio
 	return command.ID, nil
 }
 
+// CommandResult reports whether an asynchronously enqueued command has reached
+// a terminal response. Response frames are durable, so callers can resume this
+// check after a proxy restart.
+func (t *Tunnel) CommandResult(ctx context.Context, requestID string) (bool, int, error) {
+	frames, err := t.store.ReadFrames(ctx, requestID, "0-0", 0, 100)
+	if err != nil {
+		return false, 0, err
+	}
+	status := 0
+	for _, frame := range frames {
+		if frame.Status != 0 {
+			status = frame.Status
+		}
+		if frame.Error != "" {
+			return true, status, fmt.Errorf("external session manager: %s", frame.Error)
+		}
+		if frame.Done {
+			return true, status, nil
+		}
+	}
+	return false, status, nil
+}
+
 type cancelBody struct {
 	io.ReadCloser
 	once   sync.Once
