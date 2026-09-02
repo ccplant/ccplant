@@ -6,11 +6,13 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
@@ -91,6 +93,11 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			if isInternalTokenEndpoint(path) {
 				return next(c)
 			}
+			if path == "/start" && cfg.Worker.ControlAPIToken != "" {
+				if authenticateScheduleExecution(c, cfg.Worker.ControlAPIToken, time.Now()) {
+					return next(c)
+				}
+			}
 			if path == "/session-managers/enroll" {
 				return next(c)
 			}
@@ -163,6 +170,24 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}
+}
+
+func authenticateScheduleExecution(c echo.Context, secret string, now time.Time) bool {
+	token := ExtractTokenFromHeader(c.Request().Header.Get(echo.HeaderAuthorization))
+	claims, err := executiontoken.VerifyExecutionToken([]byte(secret), token, now)
+	if err != nil {
+		return false
+	}
+	user := entities.NewUser(entities.UserID(claims.UserID), entities.UserTypeRegular, claims.UserID)
+	authzCtx := buildAuthorizationContext(user)
+	authzCtx.TeamScope.Teams = append([]string(nil), claims.Teams...)
+	for _, teamID := range claims.Teams {
+		authzCtx.TeamScope.TeamPermissions[teamID] = TeamPermissions{TeamID: teamID, CanCreate: true, CanRead: true}
+	}
+	c.Set("internal_user", user)
+	c.Set("authz_context", authzCtx)
+	c.Set("schedule_execution_claims", claims)
+	return true
 }
 
 func isInternalTokenEndpoint(path string) bool {

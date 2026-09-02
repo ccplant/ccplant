@@ -56,6 +56,9 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if controlURL == "" || cfg.Worker.ControlAPIToken == "" {
 		return errors.New("worker control API URL and worker control token are required")
 	}
+	if cfg.Worker.SessionAPIURL == "" {
+		cfg.Worker.SessionAPIURL = controlURL
+	}
 	store, err := newWorkerKVStore(cfg.KVStore)
 	if err != nil {
 		return err
@@ -71,7 +74,6 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken)
-	scheduleManager := schedule.NewKubernetesManager(persistence, persistenceNamespace)
 	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, persistenceNamespace)
 	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, persistenceNamespace)
 	leaseClient := remote
@@ -79,11 +81,11 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var mu sync.Mutex
-	var scheduleWorker *schedule.LeaderWorker
+	var scheduleWorker *remoteScheduleWorker
 	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
 	var stockWorker *stockinventory.LeaderWorker
 	if cfg.ScheduleWorker.Enabled {
-		scheduleWorker = newRemoteScheduleWorker(cfg, scheduleManager, remote, memoryRepo, profileRepo, leaseClient, runtimeNamespace)
+		scheduleWorker = newRemoteScheduleWorker(cfg, remote, leaseClient, runtimeNamespace)
 		go scheduleWorker.Run(ctx)
 	}
 	if cfg.SlackbotCleanupWorker.Enabled {
@@ -231,14 +233,74 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	return encrypted, nil
 }
 
-func newRemoteScheduleWorker(cfg *config.Config, manager schedule.Manager, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient, namespace string) *schedule.LeaderWorker {
+type remoteScheduleWorker struct {
+	client        *controlapi.SessionManager
+	sessionAPIURL string
+	elector       *schedule.LeaderElector
+	interval      time.Duration
+}
+
+func newRemoteScheduleWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *remoteScheduleWorker {
 	interval, _ := time.ParseDuration(cfg.ScheduleWorker.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
 	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, schedule.ScheduleWorkerLeaseName, namespace)
-	return schedule.NewLeaderWorker(manager, remote, leaseClient, schedule.WorkerConfig{CheckInterval: interval, Enabled: true}, election, memory, profiles)
+	return &remoteScheduleWorker{client: remote, sessionAPIURL: cfg.Worker.SessionAPIURL, elector: schedule.NewLeaderElector(leaseClient, election), interval: interval}
 }
+
+func (w *remoteScheduleWorker) Run(ctx context.Context) {
+	w.elector.Run(ctx, func(leaderCtx context.Context) {
+		log.Printf("[SCHEDULE_WORKER] Started API polling with check interval %v", w.interval)
+		w.process(leaderCtx)
+		ticker := time.NewTicker(w.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaderCtx.Done():
+				return
+			case <-ticker.C:
+				w.process(leaderCtx)
+			}
+		}
+	}, nil)
+}
+
+func (w *remoteScheduleWorker) process(ctx context.Context) {
+	jobs, err := w.client.ClaimDueSchedules(ctx)
+	if err != nil {
+		log.Printf("[SCHEDULE_WORKER] Claim API failed: %v", err)
+		return
+	}
+	for _, job := range jobs {
+		var sessionID string
+		var createErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			sessionID, createErr = w.client.StartScheduledSession(ctx, w.sessionAPIURL, job)
+			if createErr == nil {
+				break
+			}
+			if attempt < 3 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(attempt) * time.Second):
+				}
+			}
+		}
+		status, message := "success", ""
+		if createErr != nil {
+			status, message = "failed", createErr.Error()
+		}
+		if err := w.client.FinalizeSchedule(ctx, job, status, sessionID, message); err != nil {
+			log.Printf("[SCHEDULE_WORKER] Finalize failed for %s: %v", job.ScheduleID, err)
+			continue
+		}
+		log.Printf("[SCHEDULE_WORKER] schedule=%s execution=%s status=%s session=%s", job.ScheduleID, job.ExecutionID, status, sessionID)
+	}
+}
+
+func (w *remoteScheduleWorker) Stop() {}
 
 func newRemoteCleanupWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *slackbotcleanup.LeaderCleanupWorker {
 	check, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.CheckInterval)

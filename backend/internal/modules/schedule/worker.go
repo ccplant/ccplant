@@ -98,7 +98,7 @@ func (w *Worker) run(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Run immediately on start
-	w.processSchedules(ctx)
+	_, _ = w.ProcessDueSchedules(ctx)
 
 	for {
 		select {
@@ -109,23 +109,25 @@ func (w *Worker) run(ctx context.Context) {
 			log.Printf("[SCHEDULE_WORKER] Stop signal received")
 			return
 		case <-ticker.C:
-			w.processSchedules(ctx)
+			_, _ = w.ProcessDueSchedules(ctx)
 		}
 	}
 }
 
-// processSchedules checks and executes due schedules
-func (w *Worker) processSchedules(ctx context.Context) {
+// ProcessDueSchedules executes every schedule due at the current time. It is
+// exported so the API can own schedule persistence and expose a narrow,
+// authenticated processing operation to remote workers.
+func (w *Worker) ProcessDueSchedules(ctx context.Context) (int, error) {
 	now := time.Now()
 
 	schedules, err := w.manager.GetDueSchedules(ctx, now)
 	if err != nil {
 		log.Printf("[SCHEDULE_WORKER] Failed to get due schedules: %v", err)
-		return
+		return 0, err
 	}
 
 	if len(schedules) == 0 {
-		return
+		return 0, nil
 	}
 
 	log.Printf("[SCHEDULE_WORKER] Found %d due schedules", len(schedules))
@@ -133,6 +135,12 @@ func (w *Worker) processSchedules(ctx context.Context) {
 	for _, schedule := range schedules {
 		w.executeSchedule(ctx, schedule)
 	}
+	return len(schedules), nil
+}
+
+// processSchedules is kept for package-local callers and tests.
+func (w *Worker) processSchedules(ctx context.Context) {
+	_, _ = w.ProcessDueSchedules(ctx)
 }
 
 // executeSchedule executes a single schedule

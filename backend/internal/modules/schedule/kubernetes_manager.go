@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -202,6 +203,59 @@ func (m *KubernetesManager) GetDueSchedules(ctx context.Context, now time.Time) 
 	}
 
 	return due, nil
+}
+
+func (m *KubernetesManager) ClaimDueSchedules(ctx context.Context, now time.Time, lease time.Duration) ([]*Schedule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	schedules, err := m.loadAllSchedules(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load schedules: %w", err)
+	}
+	claimed := make([]*Schedule, 0)
+	for _, item := range schedules {
+		if !item.IsDue(now) || (item.PendingExecution != nil && item.PendingExecution.ExpiresAt.After(now)) {
+			continue
+		}
+		if item.PendingExecution == nil {
+			item.PendingExecution = &PendingExecution{ExecutionID: uuid.NewString(), SessionID: uuid.NewString()}
+		}
+		// An expired claim keeps its stable IDs. If session creation succeeded but
+		// finalize was interrupted, retrying /start remains idempotent.
+		item.PendingExecution.ClaimedAt = now
+		item.PendingExecution.ExpiresAt = now.Add(lease)
+		item.UpdatedAt = now
+		if err := m.saveSchedule(ctx, item); err != nil {
+			return nil, err
+		}
+		claimed = append(claimed, item)
+	}
+	return claimed, nil
+}
+
+func (m *KubernetesManager) FinalizeClaim(ctx context.Context, id, executionID string, record ExecutionRecord, nextAt *time.Time, completed bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, err := m.loadSchedule(ctx, id)
+	if err != nil {
+		return err
+	}
+	if item.LastExecution != nil && item.LastExecution.ExecutionID == executionID {
+		return nil
+	}
+	if item.PendingExecution == nil || item.PendingExecution.ExecutionID != executionID {
+		return fmt.Errorf("schedule execution claim does not match")
+	}
+	record.ExecutionID = executionID
+	item.LastExecution = &record
+	item.ExecutionCount++
+	item.PendingExecution = nil
+	item.NextExecutionAt = nextAt
+	if completed {
+		item.Status = ScheduleStatusCompleted
+	}
+	item.UpdatedAt = time.Now()
+	return m.saveSchedule(ctx, item)
 }
 
 // RecordExecution records an execution attempt

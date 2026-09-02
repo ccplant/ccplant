@@ -15,6 +15,46 @@
     }
   ],
   "paths": {
+    "/internal/worker/schedules/claim-due": {
+      "post": {
+        "summary": "Claim due schedule jobs",
+        "description": "Atomically claims due schedules and returns short-lived credentials for calling the normal session creation API.",
+        "operationId": "claimDueSchedules",
+        "tags": [
+          "Worker Control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Claimed schedule jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobs": {"type": "array", "items": {"type": "object"}}
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid worker control token"
+          },
+          "503": {
+            "description": "Schedule manager is not configured"
+          }
+        }
+      }
+    },
+    "/internal/worker/schedules/{scheduleId}/finalize": {
+      "post": {
+        "summary": "Finalize a claimed schedule execution",
+        "operationId": "finalizeScheduleExecution",
+        "tags": ["Worker Control"],
+        "parameters": [{"name":"scheduleId","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {"204":{"description":"Execution finalized"},"401":{"description":"Invalid worker control token"},"409":{"description":"Claim mismatch"}}
+      }
+    },
     "/internal/worker/leases/{leaseName}": {
       "post": {
         "summary": "Coordinate a background-worker lease",

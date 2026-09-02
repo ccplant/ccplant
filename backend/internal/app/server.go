@@ -84,9 +84,10 @@ type Server struct {
 	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
 	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
-	apiTokenRepo                portrepos.APITokenRepository                    // Named API token repository
-	apiTokenDeps                *apiTokenInitDeps                               // Wiring for bootstrap/reconcile
-	assetStore                  services.AssetStore                             // Static asset storage backend
+	scheduleManager             schedule.Manager
+	apiTokenRepo                portrepos.APITokenRepository // Named API token repository
+	apiTokenDeps                *apiTokenInitDeps            // Wiring for bootstrap/reconcile
+	assetStore                  services.AssetStore          // Static asset storage backend
 	sessionStateStore           services.SessionStateStore
 	sessionControlStore         sessioncontrol.Store
 	esmControlStore             esmcontrol.Store
@@ -509,6 +510,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 
 	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
+	scheduleManager := schedule.NewKubernetesManager(persistenceClient, namespace)
 
 	s := &Server{
 		config:                      cfg,
@@ -533,6 +535,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionRunnerStore:          sessionRunnerStore,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
+		scheduleManager:             scheduleManager,
 		apiTokenRepo:                apiTokenRepo,
 		namespace:                   namespace,
 		personalAPIKeyRepo:          personalAPIKeyRepo,
@@ -1041,6 +1044,11 @@ func (s *Server) AddCustomHandler(handler CustomHandler) {
 // GetSessionManager returns the session manager
 func (s *Server) GetSessionManager() portrepos.SessionManager {
 	return s.sessionManager
+}
+
+// GetScheduleManager returns the API-owned schedule persistence manager.
+func (s *Server) GetScheduleManager() schedule.Manager {
+	return s.scheduleManager
 }
 
 // GetPersistenceClient returns the Secret/ConfigMap client used by all
