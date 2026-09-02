@@ -12,13 +12,16 @@ import (
 type compatibilityControlStore struct {
 	connected bool
 	err       error
+	commands  []coresessioncontrol.Command
 }
 
 func (s *compatibilityControlStore) TouchConnection(context.Context, string) error { return s.err }
 func (s *compatibilityControlStore) IsConnected(context.Context, string) (bool, error) {
 	return s.connected, s.err
 }
-func (s *compatibilityControlStore) EnqueueCommand(context.Context, string, coresessioncontrol.Command) (string, error) {
+
+func (s *compatibilityControlStore) EnqueueCommand(_ context.Context, _ string, command coresessioncontrol.Command) (string, error) {
+	s.commands = append(s.commands, command)
 	return "", nil
 }
 func (s *compatibilityControlStore) ReadCommands(context.Context, string, string, time.Duration, int64) ([]coresessioncontrol.Command, error) {

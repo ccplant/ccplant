@@ -187,9 +187,13 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
-	restoreSource := settings.Session.ResumeFrom
-	restoreRequired := restoreSource != ""
-	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
+	restoreSource := ""
+	restoreRequired := false
+	if !settings.Session.InContainerReload {
+		restoreSource = settings.Session.ResumeFrom
+		restoreRequired = restoreSource != ""
+	}
+	if restoreSource == "" && !settings.Session.InContainerReload && shouldImplicitlyRestoreSessionState(settings) {
 		// Pod replacement keeps the proxy session ID. Use that stable ID as the
 		// implicit snapshot key so restart recovery needs no API parameter.
 		restoreSource = settings.Session.ID
@@ -391,14 +395,20 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// (stock pool pods have empty UserID at pod creation time).
 	go s.runFilesSync(ctx, settings.Session.UserID, settings.UnsyncedFilePaths)
 
-	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
-	go func() {
-		if err := <-agentDone; err != nil {
-			s.setStatus(StatusError, fmt.Sprintf("agent process exited: %v", err))
-		} else {
-			s.setStatus(StatusError, "agent process exited with code 0")
-		}
-	}()
+	// Supervise this agent generation synchronously. ReloadProvision cancels the
+	// generation context, waits for the subprocess and generation-scoped
+	// goroutines to stop, then starts the replacement without restarting the
+	// provisioner or container.
+	err := <-agentDone
+	if ctx.Err() != nil {
+		log.Printf("[PROVISIONER] Agent process stopped for settings reload or shutdown")
+		return
+	}
+	if err != nil {
+		s.setStatus(StatusError, fmt.Sprintf("agent process exited: %v", err))
+	} else {
+		s.setStatus(StatusError, "agent process exited with code 0")
+	}
 }
 
 func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {

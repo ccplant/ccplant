@@ -387,6 +387,140 @@ func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, s
 	return nil
 }
 
+// ReloadSessionSettings refreshes managed credentials and user files in the
+// persisted session settings, then asks only that session's provisioner to
+// fetch the snapshot and restart its agent subprocess. The Pod, container and
+// PVC stay running. This is agent-agnostic.
+func (m *KubernetesSessionManager) ReloadSessionSettings(ctx context.Context, sessionID string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("credential refresh is only supported by the Kubernetes session manager")
+	}
+
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get restart settings secret %s: %w", secretName, err)
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(secret.Data["settings.yaml"])
+	if err != nil {
+		return fmt.Errorf("parse restart settings: %w", err)
+	}
+
+	credentialOwner := settings.Session.CredentialOwner
+	if credentialOwner == "" {
+		// Backward compatibility for sessions created before credential_owner was
+		// persisted. The in-memory request still retains the original selector.
+		owners := credentialOwnersForRequest(ks.Request())
+		if len(owners) > 0 {
+			credentialOwner = owners[0]
+		}
+	}
+	managedPaths := make(map[string]struct{}, len(sessionsettings.ManagedFileTypes))
+	for _, path := range sessionsettings.ManagedFileTypes {
+		managedPaths[path] = struct{}{}
+	}
+	refreshed := make([]sessionsettings.ManagedFile, 0, len(settings.Files))
+	for _, file := range settings.Files {
+		_, managedCredential := managedPaths[file.Path]
+		if !managedCredential {
+			refreshed = append(refreshed, file)
+		}
+	}
+	if credentialOwner != "" {
+		credentialFiles, _ := m.loadCredentialFiles(ctx, credentialOwner)
+		refreshed = append(refreshed, credentialFiles...)
+		settings.Session.CredentialOwner = credentialOwner
+	}
+
+	// Replace user-managed files from their canonical repository. Persisting
+	// their paths lets later reloads also remove files deleted from settings.
+	oldUserPaths := make(map[string]struct{}, len(settings.Session.UserFilePaths))
+	for _, path := range settings.Session.UserFilePaths {
+		oldUserPaths[path] = struct{}{}
+	}
+	withoutOldUserFiles := refreshed[:0]
+	for _, file := range refreshed {
+		if _, wasUserFile := oldUserPaths[file.Path]; !wasUserFile {
+			withoutOldUserFiles = append(withoutOldUserFiles, file)
+		}
+	}
+	refreshed = withoutOldUserFiles
+	settings.Session.UserFilePaths = nil
+	if settings.Session.Scope == string(entities.ScopeUser) && settings.Session.UserID != "" && m.userFileRepo != nil {
+		userFiles, userFilesErr := m.userFileRepo.List(ctx, settings.Session.UserID)
+		if userFilesErr != nil {
+			return fmt.Errorf("load user files: %w", userFilesErr)
+		}
+		currentUserPaths := make(map[string]struct{}, len(userFiles))
+		for _, file := range userFiles {
+			if file != nil && file.Path() != "" {
+				currentUserPaths[file.Path()] = struct{}{}
+			}
+		}
+		withoutCurrentUserFiles := refreshed[:0]
+		for _, file := range refreshed {
+			if _, isCurrentUserFile := currentUserPaths[file.Path]; !isCurrentUserFile {
+				withoutCurrentUserFiles = append(withoutCurrentUserFiles, file)
+			}
+		}
+		refreshed = withoutCurrentUserFiles
+		for _, file := range userFiles {
+			if file == nil || file.Path() == "" {
+				continue
+			}
+			refreshed = append(refreshed, sessionsettings.ManagedFile{Path: file.Path(), Content: file.Content(), Permissions: file.Permissions()})
+			settings.Session.UserFilePaths = append(settings.Session.UserFilePaths, file.Path())
+		}
+	}
+	settings.Files = refreshed
+	settings.Credentials = ""
+
+	yamlData, err := sessionsettings.MarshalYAML(settings)
+	if err != nil {
+		return fmt.Errorf("marshal refreshed settings: %w", err)
+	}
+	secret.Data["settings.yaml"] = yamlData
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update restart settings secret: %w", err)
+	}
+	ks.SetProvisionSettings(settings)
+
+	store := m.connectedSessionControlStore(ctx, sessionID)
+	if store == nil {
+		return fmt.Errorf("session control channel is not connected")
+	}
+	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{
+		ID:        uuid.NewString(),
+		Type:      "reload_settings",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("enqueue settings reload: %w", err)
+	}
+	log.Printf("[K8S_SESSION] Refreshed settings/files and requested in-container reload for session %s", sessionID)
+	return nil
+}
+
+// GetSessionProvisionSettings returns the settings snapshot currently mounted
+// for restart recovery. Session provisioners use it to reload files without
+// receiving credential contents through the command queue.
+func (m *KubernetesSessionManager) GetSessionProvisionSettings(ctx context.Context, sessionID string) (*sessionsettings.SessionSettings, error) {
+	secretName := fmt.Sprintf("agentapi-session-%s-settings", sessionID)
+	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get restart settings secret %s: %w", secretName, err)
+	}
+	settings, err := sessionsettings.LoadSettingsFromBytes(secret.Data["settings.yaml"])
+	if err != nil {
+		return nil, fmt.Errorf("parse restart settings: %w", err)
+	}
+	return settings, nil
+}
+
 func resolveKubernetesNamespace(candidates ...string) string {
 	for _, candidate := range candidates {
 		if namespace := strings.TrimSpace(candidate); namespace != "" {
@@ -6260,6 +6394,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			continue
 		}
 		settings.Files = files
+		settings.Session.CredentialOwner = credentialOwner
 		log.Printf("[K8S_SESSION] Embedded %d managed file(s) for credential owner %s (Secret %s) for session %s",
 			len(settings.Files), credentialOwner, filesSecretName, session.id)
 		break
@@ -6287,6 +6422,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			}
 			if len(userManagedFiles) > 0 {
 				settings.Files = append(settings.Files, userManagedFiles...)
+				for _, file := range userManagedFiles {
+					settings.Session.UserFilePaths = append(settings.Session.UserFilePaths, file.Path)
+				}
 				log.Printf("[K8S_SESSION] Embedded %d user file(s) from application KV store for session %s",
 					len(userManagedFiles), session.id)
 			}

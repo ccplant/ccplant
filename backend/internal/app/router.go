@@ -397,6 +397,7 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
+	r.echo.POST("/sessions/:sessionId/reload-settings", r.handlers.sessionController.ReloadSessionSettings)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
@@ -463,6 +464,7 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	if r.handlers.sessionControlController != nil {
 		r.echo.GET("/internal/session-control/:sessionId/commands", r.handlers.sessionControlController.WaitCommands)
+		r.echo.GET("/internal/session-control/:sessionId/provision-settings", r.handlers.sessionControlController.GetProvisionSettings)
 		r.echo.POST("/internal/session-control/:sessionId/events", r.handlers.sessionControlController.AppendEvents)
 		log.Printf("[ROUTES] Internal session control long-poll endpoints registered")
 	}

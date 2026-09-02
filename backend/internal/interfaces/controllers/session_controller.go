@@ -168,6 +168,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
 	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
+	e.POST("/sessions/:sessionId/reload-settings", c.ReloadSessionSettings)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -175,6 +176,28 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("Registered session management routes")
 	return nil
+}
+
+// ReloadSessionSettings refreshes the selected session's settings and managed
+// files, then reloads its agent subprocess inside the existing container.
+func (c *SessionController) ReloadSessionSettings(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	reloader, ok := c.getSessionManager().(repositories.SessionSettingsReloader)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session settings reload is not supported by this session manager")
+	}
+	if err := reloader.ReloadSessionSettings(ctx.Request().Context(), sessionID); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to reload session settings: %v", err))
+	}
+	return ctx.JSON(http.StatusAccepted, map[string]interface{}{"session_id": sessionID, "status": "reloading"})
 }
 
 // StartSession handles POST /start requests to start a new agentapi server

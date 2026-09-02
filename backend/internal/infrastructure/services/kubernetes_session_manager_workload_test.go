@@ -164,6 +164,66 @@ func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testin
 	}
 }
 
+func TestReloadSessionSettingsUpdatesOnlyRequestedSessionAndRequestsInContainerReload(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	controlStore := &compatibilityControlStore{connected: true}
+	manager.sessionControlStore = controlStore
+	manager.credentialsRepo = &fakeCredentialsRepository{filesByName: map[string][]sessionsettings.ManagedFile{
+		"test-user": {{
+			Path:    sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth],
+			Content: `{"token":"new"}`,
+		}},
+	}}
+	session := newWorkloadTestSession()
+	manager.sessions[session.ID()] = session
+	ctx := context.Background()
+
+	if err := manager.createService(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.createSessionWorkload(ctx, session, session.Request()); err != nil {
+		t.Fatal(err)
+	}
+	settings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: session.ID(), UserID: "test-user", Scope: "user", CredentialOwner: "test-user"},
+		Files: []sessionsettings.ManagedFile{
+			{Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: `{"token":"old"}`},
+			{Path: "/home/agentapi/.config/kept", Content: "keep-me"},
+		},
+	}
+	if err := manager.createSessionSettingsSecretFromSettings(ctx, session, session.Request(), settings); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.ReloadSessionSettings(ctx, session.ID()); err != nil {
+		t.Fatalf("ReloadSessionSettings() error = %v", err)
+	}
+	secret, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, "agentapi-session-test-session-settings", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := sessionsettings.LoadSettingsFromBytes(secret.Data["settings.yaml"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, file := range got.Files {
+		files[file.Path] = file.Content
+	}
+	if files[sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth]] != `{"token":"new"}` {
+		t.Fatalf("Codex auth was not refreshed: %#v", files)
+	}
+	if files["/home/agentapi/.config/kept"] != "keep-me" {
+		t.Fatalf("non-credential file was not preserved: %#v", files)
+	}
+	if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, session.DeploymentName(), metav1.GetOptions{}); err != nil {
+		t.Fatalf("session pod was restarted during in-container reload: %v", err)
+	}
+	if len(controlStore.commands) != 1 || controlStore.commands[0].Type != "reload_settings" {
+		t.Fatalf("control commands = %#v, want one reload_settings command", controlStore.commands)
+	}
+}
+
 func TestSessionResourcesUseServiceOwnerReferenceWithoutPVC(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	session := newWorkloadTestSession()

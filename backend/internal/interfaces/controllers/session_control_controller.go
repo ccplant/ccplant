@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type SessionControlController struct {
@@ -29,6 +31,10 @@ func NewSessionControlReaderController(store core.Store, manager sessionControlS
 
 type sessionControlSessionReader interface {
 	GetSession(string) entities.Session
+}
+
+type sessionProvisionSettingsReader interface {
+	GetSessionProvisionSettings(context.Context, string) (*sessionsettings.SessionSettings, error)
 }
 
 func NewSessionControlController(store core.Store, manager ProvisionerManager) *SessionControlController {
@@ -65,6 +71,24 @@ func (sc *SessionControlController) WaitCommands(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}
 	return c.JSON(http.StatusOK, map[string]interface{}{"commands": commands, "next_cursor": commands[len(commands)-1].StreamID})
+}
+
+// GetProvisionSettings returns the current settings snapshot to the session's
+// own provisioner. The session-control token keeps credential contents out of
+// the Redis command stream and unavailable to user-facing APIs.
+func (sc *SessionControlController) GetProvisionSettings(c echo.Context) error {
+	if !sc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	reader, ok := sc.manager.(sessionProvisionSettingsReader)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session settings reload is unavailable")
+	}
+	settings, err := reader.GetSessionProvisionSettings(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, settings)
 }
 
 func (sc *SessionControlController) AppendEvents(c echo.Context) error {

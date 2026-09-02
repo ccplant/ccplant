@@ -57,6 +57,10 @@ type Server struct {
 	serverCtx   context.Context // long-lived context for provisioning goroutines
 	reporter    func(Status, string)
 	startupDone chan struct{}
+
+	provisionMu     sync.Mutex
+	provisionCancel context.CancelFunc
+	provisionDone   chan struct{}
 }
 
 // New creates a new Server.
@@ -118,7 +122,7 @@ func (s *Server) Start(ctx context.Context) error {
 						return
 					}
 					log.Printf("[PROVISIONER] No initial provision request claimed; auto-provisioning from %s", s.settingsFile)
-					s.runProvision(ctx, settings)
+					s.startProvision(settings)
 				}()
 			}
 		}
@@ -148,6 +152,48 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
+	return nil
+}
+
+// startProvision starts a new agent generation. Callers must stop the previous
+// generation first when reloading an already provisioned session.
+func (s *Server) startProvision(settings *sessionsettings.SessionSettings) {
+	s.provisionMu.Lock()
+	ctx, cancel := context.WithCancel(s.serverCtx)
+	done := make(chan struct{})
+	s.provisionCancel = cancel
+	s.provisionDone = done
+	s.provisionMu.Unlock()
+
+	go func() {
+		defer close(done)
+		s.runProvision(ctx, settings)
+	}()
+}
+
+// ReloadProvision stops the current agent subprocess generation and starts a
+// new one from settings fetched through the authenticated session-control API.
+// The provisioner, container, Pod and persistent workspace remain alive.
+func (s *Server) ReloadProvision(settings *sessionsettings.SessionSettings) error {
+	if settings == nil {
+		return fmt.Errorf("reload settings are required")
+	}
+	s.provisionMu.Lock()
+	cancel := s.provisionCancel
+	done := s.provisionDone
+	s.provisionMu.Unlock()
+	if cancel == nil || done == nil {
+		return fmt.Errorf("agent process has not been provisioned")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		return fmt.Errorf("timed out stopping the current agent process")
+	}
+	s.setStatus(StatusProvisioning, "reloading session settings")
+	s.startProvision(settings)
 	return nil
 }
 

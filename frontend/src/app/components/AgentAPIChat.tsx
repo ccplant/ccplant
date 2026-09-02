@@ -739,6 +739,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isReloadingSettings, setIsReloadingSettings] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
 
   // Restore sidebar visibility from localStorage after mount
@@ -1829,6 +1830,23 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     }
   }, [sessionId, router]);
 
+  const reloadSessionSettings = useCallback(async () => {
+    if (!sessionId || isReloadingSettings) return;
+    setIsReloadingSettings(true);
+    setError(null);
+    try {
+      const client = createAgentAPIProxyClientFromStorage();
+      await client.reloadSessionSettings(sessionId);
+      window.location.reload();
+    } catch (err) {
+      console.error('Failed to reload session settings:', err);
+      setError(err instanceof Error
+        ? `セッション設定を再読み込みできませんでした: ${err.message}`
+        : 'セッション設定を再読み込みできませんでした');
+      setIsReloadingSettings(false);
+    }
+  }, [sessionId, isReloadingSettings]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       const enterKeyBehavior = getEnterKeyBehavior();
@@ -1930,6 +1948,21 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 <span className="hidden sm:inline">Stop</span>
               </button>
             )}
+
+            {/* Reload session settings/files without recreating the container. */}
+            {sessionId && (
+              <button
+                type="button"
+                onClick={() => void reloadSessionSettings()}
+                disabled={isReloadingSettings || agentStatus?.status === 'running'}
+                className="p-2 text-gray-500 hover:text-blue-700 dark:text-gray-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                title={agentStatus?.status === 'running' ? 'エージェント実行中は再読み込みできません' : 'セッション設定とファイルを再読み込み'}
+              >
+                <svg className={`w-5 h-5 ${isReloadingSettings ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            )}
             
             {/* Connection Status */}
             <div className="flex items-center space-x-1 sm:space-x-2">
@@ -1996,8 +2029,23 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           </div>
         </div>
         {error && (
-          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-sm">
-            {error}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-sm">
+            <span>{error}</span>
+            {sessionId && (
+              <div className="flex items-center gap-2">
+                <Link href="/settings" target="_blank" rel="noopener noreferrer" className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium hover:bg-red-100 dark:border-red-700 dark:hover:bg-red-900/40">
+                  設定を開く
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void reloadSessionSettings()}
+                  disabled={isReloadingSettings}
+                  className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isReloadingSettings ? '再読み込み中...' : '設定とファイルを再読み込み'}
+                </button>
+              </div>
+            )}
           </div>
         )}
         
@@ -2086,7 +2134,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 {agentStatus.message}
               </p>
             )}
-            <p className="mt-4 text-xs text-gray-400 dark:text-gray-500">セッションを削除して再作成してください</p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Link href="/settings" target="_blank" rel="noopener noreferrer" className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                設定を開く
+              </Link>
+              <button
+                type="button"
+                onClick={() => void reloadSessionSettings()}
+                disabled={isReloadingSettings}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isReloadingSettings ? '再読み込み中...' : '設定とファイルを再読み込み'}
+              </button>
+            </div>
           </div>
         )}
 

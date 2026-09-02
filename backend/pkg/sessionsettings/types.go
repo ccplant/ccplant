@@ -277,16 +277,22 @@ type SlackParams struct {
 
 // SessionMeta contains session identification metadata.
 type SessionMeta struct {
-	ID                 string            `yaml:"id"                  json:"id"`
-	UserID             string            `yaml:"user_id"             json:"user_id"`
-	Scope              string            `yaml:"scope"               json:"scope"`
-	TeamID             string            `yaml:"team_id,omitempty"   json:"team_id,omitempty"`
-	AgentType          string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
-	Oneshot            bool              `yaml:"oneshot,omitempty"   json:"oneshot,omitempty"`
-	Teams              []string          `yaml:"teams,omitempty"     json:"teams,omitempty"`
-	MemoryKey          map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
-	ResumeFrom         string            `yaml:"resume_from,omitempty" json:"resume_from,omitempty"`
-	PersistenceEnabled bool              `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
+	ID         string            `yaml:"id"                  json:"id"`
+	UserID     string            `yaml:"user_id"             json:"user_id"`
+	Scope      string            `yaml:"scope"               json:"scope"`
+	TeamID     string            `yaml:"team_id,omitempty"   json:"team_id,omitempty"`
+	AgentType  string            `yaml:"agent_type,omitempty" json:"agent_type,omitempty"`
+	Oneshot    bool              `yaml:"oneshot,omitempty"   json:"oneshot,omitempty"`
+	Teams      []string          `yaml:"teams,omitempty"     json:"teams,omitempty"`
+	MemoryKey  map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
+	ResumeFrom string            `yaml:"resume_from,omitempty" json:"resume_from,omitempty"`
+	// CredentialOwner records the user or team whose managed credentials were
+	// embedded in this session. It lets an existing session refresh only the
+	// credentials it originally selected after a re-authentication.
+	CredentialOwner    string   `yaml:"credential_owner,omitempty" json:"credential_owner,omitempty"`
+	UserFilePaths      []string `yaml:"user_file_paths,omitempty" json:"user_file_paths,omitempty"`
+	InContainerReload  bool     `yaml:"-" json:"in_container_reload,omitempty"`
+	PersistenceEnabled bool     `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.
