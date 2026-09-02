@@ -102,6 +102,16 @@ func (m *SessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	return m.do(ctx, http.MethodDelete, "/internal/worker/stock", nil, nil)
 }
 
+// ProcessDueSchedules asks the API process to read and update schedules using
+// its own persistence configuration. The remote worker never needs KV access.
+func (m *SessionManager) ProcessDueSchedules(ctx context.Context) (int, error) {
+	var result struct {
+		Processed int `json:"processed"`
+	}
+	err := m.do(ctx, http.MethodPost, "/internal/worker/schedules/process-due", nil, &result)
+	return result.Processed, err
+}
+
 type leaseRequest struct {
 	Action     string `json:"action"`
 	Identity   string `json:"identity"`

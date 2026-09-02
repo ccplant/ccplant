@@ -157,7 +157,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	proxyServer.StartMonitoring()
 
 	// Register schedule handlers (independent of worker status, but requires Kubernetes mode)
-	registerScheduleHandlers(configData, proxyServer)
+	registerScheduleHandlers(proxyServer)
 
 	// Register webhook handlers (requires Kubernetes mode)
 	registerWebhookHandlers(configData, proxyServer)
@@ -230,18 +230,11 @@ func validateServerRedis(cfg *config.Config) error {
 }
 
 // registerScheduleHandlers registers schedule REST API handlers
-func registerScheduleHandlers(configData *config.Config, proxyServer *app.Server) {
+func registerScheduleHandlers(proxyServer *app.Server) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
 
-	// KV resources use a stable logical namespace independent of the Pod's
-	// Kubernetes/leader-election namespace.
-	namespace := configData.KVStore.Namespace
-	if namespace == "" {
-		namespace = "default"
-	}
-
-	// Create schedule manager
-	scheduleManager := schedule.NewKubernetesManager(proxyServer.GetPersistenceClient(), namespace)
+	// Use the API-owned manager shared with the worker-control endpoint.
+	scheduleManager := proxyServer.GetScheduleManager()
 
 	// Create and register schedule handlers
 	scheduleHandlers := schedule.NewHandlers(scheduleManager, proxyServer.GetSessionManager(), proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())

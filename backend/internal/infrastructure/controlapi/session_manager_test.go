@@ -69,3 +69,25 @@ func TestSessionManagerDelegatesLeaseToControlAPI(t *testing.T) {
 		t.Fatal("lease was not acquired")
 	}
 }
+
+func TestSessionManagerProcessesDueSchedulesThroughControlAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/worker/schedules/process-due" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]int{"processed": 3})
+	}))
+	defer server.Close()
+
+	processed, err := NewSessionManager(server.URL, "token").ProcessDueSchedules(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 3 {
+		t.Fatalf("processed = %d, want 3", processed)
+	}
+}

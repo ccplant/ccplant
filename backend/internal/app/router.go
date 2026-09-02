@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	apitokenuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/api_token"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
@@ -276,6 +277,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
 		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg))
+		if server.scheduleManager != nil {
+			processor := schedule.NewWorker(server.scheduleManager, server.sessionManager, server.memoryRepo, schedule.DefaultWorkerConfig(), server.sessionProfileRepo)
+			workerControlController.WithScheduleProcessor(processor)
+		}
 		log.Printf("[ROUTER] Worker control controller initialized")
 	}
 	if server.sessionControlStore != nil {
@@ -454,6 +459,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/worker/stock", r.handlers.workerControlController.Stock)
 		r.echo.DELETE("/internal/worker/stock", r.handlers.workerControlController.Stock)
 		r.echo.POST("/internal/worker/leases/:leaseName", r.handlers.workerControlController.Lease)
+		r.echo.POST("/internal/worker/schedules/process-due", r.handlers.workerControlController.ProcessDueSchedules)
 		log.Printf("[ROUTES] Isolated worker-control endpoints registered")
 	}
 	if r.handlers.sessionControlController != nil {

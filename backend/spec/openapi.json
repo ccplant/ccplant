@@ -15,6 +15,46 @@
     }
   ],
   "paths": {
+    "/internal/worker/schedules/process-due": {
+      "post": {
+        "summary": "Process due schedules",
+        "description": "Processes schedules due in API-owned persistence. Remote workers use this endpoint instead of connecting to the application KV store directly.",
+        "operationId": "processDueSchedules",
+        "tags": [
+          "Worker Control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Schedule processing result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "processed"
+                  ],
+                  "properties": {
+                    "processed": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid worker control token"
+          },
+          "502": {
+            "description": "Schedule processing failed"
+          },
+          "503": {
+            "description": "Schedule processor is not configured"
+          }
+        }
+      }
+    },
     "/internal/worker/leases/{leaseName}": {
       "post": {
         "summary": "Coordinate a background-worker lease",

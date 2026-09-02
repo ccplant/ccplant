@@ -17,11 +17,16 @@ import (
 // background workers. Its credential is not accepted by provisioner or
 // session-manager endpoints.
 type WorkerControlController struct {
-	manager repositories.SessionManager
-	token   string
-	teams   workerTeamEnsurer
-	routes  repositories.SessionRouteRepository
-	leases  schedule.LeaseClient
+	manager   repositories.SessionManager
+	token     string
+	teams     workerTeamEnsurer
+	routes    repositories.SessionRouteRepository
+	leases    schedule.LeaseClient
+	schedules workerScheduleProcessor
+}
+
+type workerScheduleProcessor interface {
+	ProcessDueSchedules(context.Context) (int, error)
 }
 
 type workerTeamEnsurer interface {
@@ -73,6 +78,25 @@ func NewWorkerControlController(manager repositories.SessionManager, token strin
 func (wc *WorkerControlController) WithLeases(client schedule.LeaseClient) *WorkerControlController {
 	wc.leases = client
 	return wc
+}
+
+func (wc *WorkerControlController) WithScheduleProcessor(processor workerScheduleProcessor) *WorkerControlController {
+	wc.schedules = processor
+	return wc
+}
+
+func (wc *WorkerControlController) ProcessDueSchedules(c echo.Context) error {
+	if !wc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	if wc.schedules == nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	processed, err := wc.schedules.ProcessDueSchedules(c.Request().Context())
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]int{"processed": processed})
 }
 
 type workerLeaseRequest struct {
