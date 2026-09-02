@@ -484,7 +484,25 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		filter.UserID = userID
 	}
 
-	// Get sessions from session manager
+	// Session storage and ESM route storage are independent. Fetch them in
+	// parallel because production deployments may back both with remote KV
+	// stores, where paying the two network round trips serially dominates the
+	// otherwise small /search response.
+	type routeListResult struct {
+		routes []*repositories.SessionRoute
+		err    error
+	}
+	var routeResultCh chan routeListResult
+	if c.sessionRouteRepo != nil {
+		routeResultCh = make(chan routeListResult, 1)
+		requestCtx := ctx.Request().Context()
+		go func() {
+			routes, err := c.sessionRouteRepo.List(requestCtx, userID)
+			routeResultCh <- routeListResult{routes: routes, err: err}
+		}()
+	}
+
+	// Get sessions from session manager while the route lookup is in flight.
 	sessions := c.getSessionManager().ListSessions(filter)
 
 	// Filter by user authorization using authorization context
@@ -520,13 +538,13 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	// public; RemoteSessionID is an implementation detail used for routing.
 	var routes []*repositories.SessionRoute
 	allocatedSessions := make(map[string]entities.Session)
-	if c.sessionRouteRepo != nil {
-		var err error
-		routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), userID)
-		if err != nil {
-			log.Printf("[SEARCH] Failed to list session routes: %v", err)
+	if routeResultCh != nil {
+		result := <-routeResultCh
+		if result.err != nil {
+			log.Printf("[SEARCH] Failed to list session routes: %v", result.err)
 			routes = nil
 		} else {
+			routes = result.routes
 			allocatedSessions = indexAllocatedSessions(matchingSessions, routes)
 			matchingSessions = excludeAllocatedSessions(matchingSessions, routes)
 		}

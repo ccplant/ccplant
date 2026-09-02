@@ -37,6 +37,34 @@ type statusWatchingSessionManager struct {
 	events chan repositories.SessionStatusEvent
 }
 
+type blockingListSessionManager struct {
+	*fakeSessionManager
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (m *blockingListSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
+	close(m.started)
+	<-m.release
+	return m.fakeSessionManager.ListSessions(filter)
+}
+
+type blockingListRouteRepo struct {
+	*fakeACPRouteRepo
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (r *blockingListRouteRepo) List(ctx context.Context, userID string) ([]*repositories.SessionRoute, error) {
+	close(r.started)
+	select {
+	case <-r.release:
+		return r.fakeACPRouteRepo.List(ctx, userID)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (m *statusWatchingSessionManager) SubscribeStatusEvents() (<-chan repositories.SessionStatusEvent, func()) {
 	return m.events, func() {}
 }
@@ -74,6 +102,60 @@ func routeContext(e *echo.Echo, method, path, sessionID string) (echo.Context, *
 		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true},
 	})
 	return ctx, rec
+}
+
+func TestSearchSessionsListsSessionsAndRoutesConcurrently(t *testing.T) {
+	release := make(chan struct{})
+	managerStarted := make(chan struct{})
+	routesStarted := make(chan struct{})
+	manager := &blockingListSessionManager{
+		fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}},
+		started:            managerStarted,
+		release:            release,
+	}
+	routeRepo := &blockingListRouteRepo{
+		fakeACPRouteRepo: &fakeACPRouteRepo{},
+		started:          routesStarted,
+		release:          release,
+	}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager},
+		nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/search?scope=user", nil)
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true},
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- controller.SearchSessions(ctx) }()
+
+	for name, started := range map[string]<-chan struct{}{
+		"session list": managerStarted,
+		"route list":   routesStarted,
+	} {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatalf("%s did not start while the other lookup was blocked", name)
+		}
+	}
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SearchSessions did not complete after releasing lookups")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestRouteToSessionDoesNotWakeLocalAliasOnGet(t *testing.T) {
