@@ -1229,8 +1229,10 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	if route.RemoteSessionID == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
 	}
-	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
-	if !useTunnel {
+	if c.esmControlTunnel == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
+	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"

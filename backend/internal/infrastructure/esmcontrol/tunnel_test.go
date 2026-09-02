@@ -85,6 +85,18 @@ func TestTunnelRejectsDisconnectedManager(t *testing.T) {
 	}
 }
 
+func TestTunnelEnqueuesLifecycleCommandWhileManagerDisconnected(t *testing.T) {
+	store := &tunnelStore{}
+	req, _ := http.NewRequest(http.MethodDelete, "http://esm.local/api/v1/sessions/public", nil)
+	requestID, err := NewTunnel(store).Enqueue(context.Background(), "manager-a", "public", "remote", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestID == "" || len(store.commands) != 1 {
+		t.Fatalf("offline command was not persisted: requestID=%q commands=%#v", requestID, store.commands)
+	}
+}
+
 func TestTunnelCloseEnqueuesCancellation(t *testing.T) {
 	store := &tunnelStore{connected: true, frames: []core.ResponseFrame{{Status: http.StatusOK}}}
 	req, _ := http.NewRequest(http.MethodGet, "http://esm.local/events", nil)
