@@ -26,8 +26,26 @@ interface D1Row {
 
 interface D1BrandingRow {
   app_title: string | null
-  app_icon: ArrayBuffer | number[] | null
+  app_icon: unknown
   app_icon_content_type: string | null
+}
+
+function toArrayBuffer(value: unknown): ArrayBuffer | null {
+  if (value instanceof ArrayBuffer) return value
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice().buffer
+  }
+
+  const bytes = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' && Array.isArray((value as { data?: unknown }).data)
+      ? (value as { data: unknown[] }).data
+      : null
+
+  if (!bytes || !bytes.every(byte => Number.isInteger(byte) && Number(byte) >= 0 && Number(byte) <= 255)) {
+    return null
+  }
+  return Uint8Array.from(bytes as number[]).buffer
 }
 
 interface D1Statement {
@@ -73,9 +91,7 @@ export class D1SubdomainRouteStore implements SubdomainRouteStore, SubdomainBran
 
     return row && {
       appTitle: row.app_title,
-      appIcon: Array.isArray(row.app_icon)
-        ? Uint8Array.from(row.app_icon).buffer
-        : row.app_icon,
+      appIcon: toArrayBuffer(row.app_icon),
       appIconContentType: row.app_icon_content_type,
     }
   }

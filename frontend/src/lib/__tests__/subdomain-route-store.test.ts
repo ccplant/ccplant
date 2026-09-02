@@ -57,4 +57,18 @@ describe('D1 subdomain route store', () => {
     const branding = await store.findBrandingBySubdomain('team-a')
     expect(Array.from(new Uint8Array(branding!.appIcon!))).toEqual([137, 80, 78, 71])
   })
+
+  it('converts a Buffer-compatible D1 blob into an ArrayBuffer', async () => {
+    const first = vi.fn().mockResolvedValue({
+      app_title: 'Team A',
+      app_icon: { type: 'Buffer', data: [137, 80, 78, 71] },
+      app_icon_content_type: 'image/png',
+    })
+    const bind = vi.fn().mockReturnValue({ first })
+    const prepare = vi.fn().mockReturnValue({ bind })
+    const store = new D1SubdomainRouteStore({ prepare } as unknown as D1DatabaseLike)
+
+    const branding = await store.findBrandingBySubdomain('team-a')
+    expect(Array.from(new Uint8Array(branding!.appIcon!))).toEqual([137, 80, 78, 71])
+  })
 })
