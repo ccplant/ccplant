@@ -18,18 +18,16 @@ func newTestRedisStore(t *testing.T) (*RedisStore, *miniredis.Miniredis) {
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	store := NewRedisStore(client)
 	t.Cleanup(func() {
-		require.NoError(t, store.blockingClient.Close())
 		require.NoError(t, client.Close())
 	})
 	return store, server
 }
 
-func TestRedisStoreBlockingReadsDoNotStarveFrameWrites(t *testing.T) {
+func TestRedisStoreWaitingReadsDoNotStarveFrameWrites(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr(), PoolSize: 1})
 	store := NewRedisStore(client)
 	t.Cleanup(func() {
-		require.NoError(t, store.blockingClient.Close())
 		require.NoError(t, client.Close())
 	})
 
@@ -41,7 +39,7 @@ func TestRedisStoreBlockingReadsDoNotStarveFrameWrites(t *testing.T) {
 		readDone <- err
 	}()
 
-	// Give XREAD time to occupy the sole connection in the blocking pool.
+	// Let the waiter begin polling with the sole pooled connection.
 	time.Sleep(25 * time.Millisecond)
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
 	defer cancelWrite()
@@ -50,7 +48,6 @@ func TestRedisStoreBlockingReadsDoNotStarveFrameWrites(t *testing.T) {
 	}})
 	require.NoError(t, err)
 
-	cancelRead()
 	require.NoError(t, <-readDone)
 }
 
