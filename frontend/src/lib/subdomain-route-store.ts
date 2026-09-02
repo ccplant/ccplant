@@ -26,7 +26,7 @@ interface D1Row {
 
 interface D1BrandingRow {
   app_title: string | null
-  app_icon: ArrayBuffer | null
+  app_icon: ArrayBuffer | number[] | null
   app_icon_content_type: string | null
 }
 
@@ -73,7 +73,9 @@ export class D1SubdomainRouteStore implements SubdomainRouteStore, SubdomainBran
 
     return row && {
       appTitle: row.app_title,
-      appIcon: row.app_icon,
+      appIcon: Array.isArray(row.app_icon)
+        ? Uint8Array.from(row.app_icon).buffer
+        : row.app_icon,
       appIconContentType: row.app_icon_content_type,
     }
   }
