@@ -53,6 +53,10 @@ type ESMControlTunnel interface {
 	Do(context.Context, string, string, string, *http.Request) (*http.Response, error)
 }
 
+type esmControlEnqueuer interface {
+	Enqueue(context.Context, string, string, string, *http.Request) (string, error)
+}
+
 type sessionAnnotationUpdater interface {
 	UpdateSessionAnnotations(ctx context.Context, sessionID string, patch entities.UpdateSessionAnnotationsRequest) (entities.SessionAnnotations, error)
 }
@@ -1308,6 +1312,25 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	}
 	if route.TeamID != "" {
 		req.Header.Set("X-Forwarded-Team", route.TeamID)
+	}
+	if route.Transport == repositories.SessionRouteTransportDirectRuntime {
+		enqueuer, ok := c.esmControlTunnel.(esmControlEnqueuer)
+		if !ok {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager lifecycle queue is unavailable")
+		}
+		if _, err := enqueuer.Enqueue(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req); err != nil {
+			log.Printf("[REMOTE_DELETE] Failed to enqueue direct-runtime deletion %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusBadGateway, "Failed to queue external session deletion")
+		}
+		if c.sessionRouteRepo != nil {
+			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session route")
+			}
+		}
+		c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
+		return ctx.JSON(http.StatusAccepted, map[string]interface{}{
+			"message": "Session deletion queued", "session_id": sessionID, "status": "terminating",
+		})
 	}
 
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
