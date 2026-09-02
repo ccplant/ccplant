@@ -1,4 +1,6 @@
 import type { MetadataRoute } from 'next'
+import { headers } from 'next/headers'
+import { getRequestAppBranding } from '@/lib/server-app-branding'
 
 /**
  * PWA マニフェストを動的に生成
@@ -8,21 +10,23 @@ import type { MetadataRoute } from 'next'
  * - PWA_DESCRIPTION: 説明
  * - PWA_ICON_URL: カスタムアイコン URL (設定時はすべてのサイズでこの URL を使用)
  */
-export default function manifest(): MetadataRoute.Manifest {
-  const appName = process.env.PWA_APP_NAME
-    || process.env.NEXT_PUBLIC_PWA_APP_NAME
-    || 'ccplant'
+export default async function manifest(): Promise<MetadataRoute.Manifest> {
+  const requestHeaders = await headers()
+  const forwardedHost = requestHeaders.get('x-forwarded-host')?.split(',')[0]?.trim()
+  const host = forwardedHost || requestHeaders.get('host') || ''
+  const branding = await getRequestAppBranding(host.replace(/:\d+$/, ''))
+  const appName = branding.appTitle
 
   const shortName = process.env.PWA_SHORT_NAME
     || process.env.NEXT_PUBLIC_PWA_SHORT_NAME
-    || 'ccplant'
+    || appName
 
   const description = process.env.PWA_DESCRIPTION
     || process.env.NEXT_PUBLIC_PWA_DESCRIPTION
     || 'Launch, connect, and manage AI agent sessions with ccplant.'
 
   // カスタムアイコン URL が設定されている場合はそれを使用
-  const customIconUrl = process.env.PWA_ICON_URL
+  const customIconUrl = branding.iconUrl
 
   // アイコン設定を生成
   const icons: MetadataRoute.Manifest['icons'] = customIconUrl

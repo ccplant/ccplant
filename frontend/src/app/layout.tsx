@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { ThemeProvider } from '../contexts/ThemeContext'
@@ -8,31 +9,41 @@ import { ToastContainer } from '../components/Toast'
 import { Analytics } from '@vercel/analytics/react'
 import { PushNotificationAutoInit } from './components/PushNotificationAutoInit'
 import { DynamicFavicon } from './components/DynamicFavicon'
+import { getRequestAppBranding } from '@/lib/server-app-branding'
 
 const inter = Inter({ subsets: ['latin'] })
 
-export const metadata: Metadata = {
-  title: 'ccplant',
-  description: 'Launch, connect, and manage AI agent sessions with ccplant.',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'default',
-    title: 'ccplant',
-  },
-  formatDetection: {
-    telephone: false,
-  },
-  openGraph: {
-    type: 'website',
-    siteName: 'ccplant',
-    title: 'ccplant',
-    description: 'Launch, connect, and manage AI agent sessions with ccplant.',
-  },
-  twitter: {
-    card: 'summary',
-    title: 'ccplant',
-    description: 'Launch, connect, and manage AI agent sessions with ccplant.',
-  },
+export async function generateMetadata(): Promise<Metadata> {
+  const requestHeaders = await headers()
+  const forwardedHost = requestHeaders.get('x-forwarded-host')?.split(',')[0]?.trim()
+  const host = forwardedHost || requestHeaders.get('host') || ''
+  const hostname = host.replace(/:\d+$/, '')
+  const branding = await getRequestAppBranding(hostname)
+  const description = process.env.PWA_DESCRIPTION
+    || process.env.NEXT_PUBLIC_PWA_DESCRIPTION
+    || 'Launch, connect, and manage AI agent sessions with ccplant.'
+
+  return {
+    title: branding.appTitle,
+    description,
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: 'default',
+      title: branding.appTitle,
+    },
+    formatDetection: { telephone: false },
+    openGraph: {
+      type: 'website',
+      siteName: branding.appTitle,
+      title: branding.appTitle,
+      description,
+    },
+    twitter: {
+      card: 'summary',
+      title: branding.appTitle,
+      description,
+    },
+  }
 }
 
 export const viewport: Viewport = {

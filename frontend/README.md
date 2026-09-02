@@ -95,6 +95,19 @@ CloudflareのD1 binding、database ID、マイグレーションは`ccplant-depl
 
 転送先の優先順位は、D1のルート、`AGENTAPI_PROXY_URL`の順です。
 
+同じ最新イベントの `app_title`、`app_icon` (BLOB)、`app_icon_content_type` で
+サブドメインごとのブランドも設定できます。アイコンは PNG、JPEG、WebP、SVG、ICO を
+保存でき、favicon、Apple touch icon、PWA manifest のアイコンに反映されます。
+PWA向けには透過余白を含む正方形の512x512 PNGを推奨します。
+未設定時や、既存DBにこれらの列がまだない場合は環境変数および標準ブランドへ
+フォールバックします。D1側の追加列は次の形式です。
+
+```sql
+ALTER TABLE api_route_events ADD COLUMN app_title TEXT;
+ALTER TABLE api_route_events ADD COLUMN app_icon BLOB;
+ALTER TABLE api_route_events ADD COLUMN app_icon_content_type TEXT;
+```
+
 `/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを
 復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。

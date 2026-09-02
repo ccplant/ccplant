@@ -27,6 +27,7 @@ export function useConfig(): UseConfigReturn {
         }
         const data = await response.json();
         setConfig({
+          appTitle: data.appTitle ?? DEFAULT_CONFIG.appTitle,
           loginTitle: data.loginTitle ?? DEFAULT_CONFIG.loginTitle,
           loginDescription: data.loginDescription ?? DEFAULT_CONFIG.loginDescription,
           loginSubDescription: data.loginSubDescription ?? DEFAULT_CONFIG.loginSubDescription,
