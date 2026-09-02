@@ -267,6 +267,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			}
 		}
 	}
+	// A parent that delegates all execution through the unified session-manager
+	// registry has neither a local Kubernetes manager nor the legacy allocation
+	// queue. It still must expose the outbound lifecycle control endpoints used
+	// by those registered managers.
+	if esmControlController == nil && server.esmControlStore != nil && server.sessionRunnerStore != nil {
+		esmControlController = controllers.NewESMControlController(server.esmControlStore, nil, server.sessionRunnerStore)
+	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
 		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg))
 		log.Printf("[ROUTER] Worker control controller initialized")
