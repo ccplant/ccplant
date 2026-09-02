@@ -200,6 +200,41 @@ func TestLocalAllocationClientCompleteRestoresRouteFromDurableAllocation(t *test
 	}
 }
 
+func TestRunLeaderElectionUntilCanceledRetriesAfterElectionStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runs := make(chan int, 2)
+	runCount := 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runLeaderElectionUntilCanceled(ctx, time.Millisecond, func(context.Context) {
+			runCount++
+			runs <- runCount
+			if runCount == 2 {
+				cancel()
+			}
+		})
+	}()
+
+	for want := 1; want <= 2; want++ {
+		select {
+		case got := <-runs:
+			if got != want {
+				t.Fatalf("election run = %d, want %d", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for election run %d", want)
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("leader election retry loop did not stop after cancellation")
+	}
+}
+
 func TestLocalAllocationClientCompleteKeepsAllocationWhenRouteSaveFails(t *testing.T) {
 	queue := &durableAllocationQueue{allocation: &coreallocation.AllocationRequest{SessionID: "public-id"}}
 	routes := &recordingSessionRouteRepository{saveErr: errors.New("route unavailable")}
