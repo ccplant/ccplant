@@ -1420,18 +1420,21 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     setShowQuestionModal(false);
   }, []);
 
-  // 1秒インターバルポーリング（接続中かつ非ACPセッションのみ動作）
+  // 1秒インターバルポーリング（初期化済みの非ACPセッションのみ動作）
   const pollingControl = useBackgroundAwareInterval(pollMessages, 1000, false);
 
   useEffect(() => {
-    // Don't poll for ACP sessions
-    if (isConnected && sessionId && !acpInfo) {
+    // Transport detection and initial history can take several seconds through
+    // an external-session-manager tunnel. Starting the legacy poll before they
+    // finish duplicates messages/status/action requests and makes those critical
+    // bootstrap requests compete for the same tunnel.
+    if (isConnected && isInitialLoadComplete && sessionId && !acpInfo) {
       pollingControl.start();
     } else {
       pollingControl.stop();
     }
     return () => pollingControl.stop();
-  }, [isConnected, sessionId, acpInfo, pollingControl]);
+  }, [isConnected, isInitialLoadComplete, sessionId, acpInfo, pollingControl]);
 
   // ACP EventSource cleanup on unmount / session change.
   useEffect(() => {
@@ -2212,7 +2215,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       </div>
 
       {/* ツール実行確認ペーン */}
-      {sessionId && <ToolExecutionPane sessionId={sessionId} agentStatus={agentStatus?.status} />}
+      {/* tool_status is a legacy-agent endpoint. Waiting for bootstrap avoids an
+          unnecessary tunnel request while ACP transport/history is being detected. */}
+      {sessionId && isInitialLoadComplete && !acpInfo && (
+        <ToolExecutionPane sessionId={sessionId} agentStatus={agentStatus?.status} />
+      )}
 
       {/* Input */}
       <div className="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-3 flex-shrink-0">
