@@ -370,6 +370,13 @@ export interface EventSubscription {
   close: () => void;
 }
 
+export interface ACPInitializationSubscription extends EventSubscription {
+  /** Resolves after the initial SSE handshake succeeds, or false on error/timeout. */
+  opened: Promise<boolean>;
+  /** Delivers events buffered while history was loading, skipping history-covered IDs. */
+  resumeAfterHistory: (lastEventId?: number) => void;
+}
+
 /** Callbacks for subscribeToACPSessionEvents. */
 export interface ACPSessionCallbacks {
   /** Called for each complete or streaming agent message. */
@@ -704,13 +711,36 @@ export class AgentAPIProxyClient {
       onClosed?: (event: Event, state: number) => void;
     },
     options?: SessionEventsOptions,
-    initialLastEventId?: number
-  ): EventSubscription {
+    initialLastEventId?: number,
+    initialization?: {
+      deferMessages: boolean;
+      handshakeTimeoutMs: number;
+    }
+  ): ACPInitializationSubscription {
     let eventSource: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
     let reconnectAttempts = 0;
     let lastEventId = initialLastEventId;
+    let deferred = initialization?.deferMessages === true;
+    const deferredEvents: MessageEvent[] = [];
+    let settleOpened: ((opened: boolean) => void) | null = null;
+    const opened = new Promise<boolean>(resolve => {
+      settleOpened = resolve;
+    });
+    const handshakeTimer = initialization
+      ? setTimeout(() => {
+          settleOpened?.(false);
+          settleOpened = null;
+        }, initialization.handshakeTimeoutMs)
+      : null;
+
+    const settleHandshake = (value: boolean) => {
+      if (!settleOpened) return;
+      if (handshakeTimer) clearTimeout(handshakeTimer);
+      settleOpened(value);
+      settleOpened = null;
+    };
 
     const reconnectEnabled = options?.reconnect !== false;
     const baseDelayMs = options?.reconnectInterval ?? 1000;
@@ -753,6 +783,7 @@ export class AgentAPIProxyClient {
       source.onopen = () => {
         if (source !== eventSource || closed) return;
         reconnectAttempts = 0;
+        settleHandshake(true);
         handlers.onOpen?.();
       };
 
@@ -765,11 +796,17 @@ export class AgentAPIProxyClient {
             lastEventId = parsedEventId;
           }
         }
-        handlers.onMessage(event);
+        if (deferred) {
+          deferredEvents.push(event);
+        } else {
+          handlers.onMessage(event);
+        }
       };
 
       source.onerror = (event) => {
         if (source !== eventSource || closed) return;
+
+        settleHandshake(false);
 
         const state = source.readyState;
         if (state === EventSource.CLOSED) {
@@ -788,9 +825,26 @@ export class AgentAPIProxyClient {
     return {
       close: () => {
         closed = true;
+        settleHandshake(false);
         clearReconnectTimer();
         eventSource?.close();
         eventSource = null;
+      },
+      opened,
+      resumeAfterHistory: (historyLastEventId?: number) => {
+        if (!deferred) return;
+        deferred = false;
+        for (const event of deferredEvents.splice(0)) {
+          const eventId = Number(event.lastEventId);
+          if (
+            historyLastEventId !== undefined &&
+            Number.isSafeInteger(eventId) &&
+            eventId <= historyLastEventId
+          ) {
+            continue;
+          }
+          handlers.onMessage(event);
+        }
       },
     };
   }
@@ -2582,36 +2636,6 @@ export class AgentAPIProxyClient {
   }
 
   /**
-   * Quickly detect an ACP bridge by opening its SSE endpoint.
-   *
-   * The SSE endpoint is served directly by the proxy and normally completes its
-   * handshake much faster than GET /session, which may cross an external runtime
-   * tunnel. The connection is closed immediately; callers create the real
-   * subscription after restoring history.
-   */
-  async probeACPSessionEvents(sessionId: string, timeoutMs = 1000): Promise<boolean> {
-    const isUsingProxy = this.baseURL.includes('/api/proxy');
-    const sseUrl = isUsingProxy
-      ? `/api/proxy/${sessionId}/sse`
-      : `${this.baseURL}/${sessionId}/sse`;
-
-    return new Promise(resolve => {
-      const source = new EventSource(sseUrl);
-      let settled = false;
-      const finish = (available: boolean) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        source.close();
-        resolve(available);
-      };
-      const timer = setTimeout(() => finish(false), timeoutMs);
-      source.onopen = () => finish(true);
-      source.onerror = () => finish(false);
-    });
-  }
-
-  /**
    * Fetch message history from the ACP bridge's in-memory store.
    * When userPromptIndex is omitted, returns the current turn (latest user prompt onward).
    */
@@ -2659,7 +2683,8 @@ export class AgentAPIProxyClient {
     sessionId: string,
     acpSessionId: string,
     callbacks: ACPSessionCallbacks,
-    initialLastEventId?: number
+    initialLastEventId?: number,
+    deferUntilHistory = false
   ): EventSubscription {
     const isUsingProxy = this.baseURL.includes('/api/proxy');
     const sseUrl = isUsingProxy
@@ -2973,8 +2998,21 @@ export class AgentAPIProxyClient {
         },
       },
       { reconnect: true, reconnectInterval: 1000 },
-      initialLastEventId
+      initialLastEventId,
+      deferUntilHistory ? { deferMessages: true, handshakeTimeoutMs: 1000 } : undefined
     );
+  }
+
+  /**
+   * Opens the real ACP event subscription while history is fetched in parallel.
+   * Events are buffered until resumeAfterHistory() prevents the history response
+   * from overwriting updates received during bootstrap.
+   */
+  subscribeToACPSessionEventsForInitialization(
+    sessionId: string,
+    callbacks: ACPSessionCallbacks
+  ): ACPInitializationSubscription {
+    return this.subscribeToACPSessionEvents(sessionId, '', callbacks, undefined, true) as ACPInitializationSubscription;
   }
 
   /**
