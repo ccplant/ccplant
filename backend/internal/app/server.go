@@ -52,6 +52,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -116,6 +118,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			return false
 		}
 	})))
+	e.Use(cloudflareTraceAttributes)
 
 	// Rewrite %2F in URL paths before route matching so that settings names
 	// containing slashes (e.g. "org/team-slug") are routed correctly.
@@ -730,6 +733,23 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	s.setupRoutes()
 
 	return s
+}
+
+// cloudflareTraceAttributes preserves Cloudflare's request correlation data on
+// the server span created by otelecho. The traceparent header is extracted by
+// otelecho itself; CF-Ray remains useful when correlating with Cloudflare logs
+// or when edge and origin traces cannot share a trace ID.
+func cloudflareTraceAttributes(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if rayID := strings.TrimSpace(c.Request().Header.Get("CF-Ray")); rayID != "" {
+			span := trace.SpanFromContext(c.Request().Context())
+			span.SetAttributes(attribute.String("cloudflare.ray_id", rayID))
+			if _, colo, ok := strings.Cut(rayID, "-"); ok && colo != "" {
+				span.SetAttributes(attribute.String("cloudflare.colo", strings.ToUpper(colo)))
+			}
+		}
+		return next(c)
+	}
 }
 
 func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
