@@ -248,9 +248,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, provisionerController, server.sessionRunnerStore)
-			if server.sessionRouteRepo != nil {
-				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
-			}
 		}
 		log.Printf("[ROUTER] Provisioner controller initialized")
 	}
@@ -262,9 +259,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		if server.esmControlStore != nil {
 			esmControlController = controllers.NewESMControlController(server.esmControlStore, externalAllocationController, server.sessionRunnerStore)
-			if server.sessionRouteRepo != nil {
-				sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
-			}
 		}
 	}
 	// A parent that delegates all execution through the unified session-manager
@@ -273,6 +267,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// by those registered managers.
 	if esmControlController == nil && server.esmControlStore != nil && server.sessionRunnerStore != nil {
 		esmControlController = controllers.NewESMControlController(server.esmControlStore, nil, server.sessionRunnerStore)
+	}
+	// Direct Session Pod runtime transport only depends on the shared control
+	// store and durable session routes. Parent proxies using the unified
+	// session-manager registry have neither a local Kubernetes manager nor the
+	// legacy allocation queue, but must still expose the runtime endpoints.
+	if server.esmControlStore != nil && server.sessionRouteRepo != nil {
+		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
 		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg))
