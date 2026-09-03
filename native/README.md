@@ -149,6 +149,9 @@ on optional fields) so partial CLI output stays forward-compatible.
 - Go 1.25+ when building the app, so the sidecar can be compiled from
   `../backend`. End users do not need Go or a separately installed CLI.
 
+Official release bundles are published for Apple Silicon (`aarch64`) only.
+The x86_64 target remains available for local development builds.
+
 ## Scripts
 
 ```bash
