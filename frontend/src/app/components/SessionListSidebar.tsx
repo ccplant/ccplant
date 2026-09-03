@@ -6,6 +6,7 @@ import { createAgentAPIProxyClientFromStorage, ProxySessionStatusEvent } from '.
 import { Session, SessionStatus } from '../../types/agentapi'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import { useSessionsStatusStream } from '../hooks/useSessionsStatusStream'
+import { resumeSessionFromList } from '../../lib/session-resume'
 
 interface SessionListSidebarProps {
   currentSessionId: string
@@ -74,6 +75,7 @@ export default function SessionListSidebar({
   const sessionsRef = useRef<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
+  const resumingIdsRef = useRef<Set<string>>(new Set())
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -87,12 +89,20 @@ export default function SessionListSidebar({
       )
       sessionsRef.current = sorted
       setSessions(sorted)
+
+      const current = sorted.find(session => session.session_id === currentSessionId)
+      if (current?.status === 'suspended' && !resumingIdsRef.current.has(currentSessionId)) {
+        resumingIdsRef.current.add(currentSessionId)
+        void resumeSessionFromList(client, sorted, currentSessionId)
+          .catch((err) => console.error('[SessionListSidebar] Failed to resume session:', err))
+          .finally(() => resumingIdsRef.current.delete(currentSessionId))
+      }
     } catch (err) {
       console.error('[SessionListSidebar] Failed to fetch sessions:', err)
     } finally {
       setLoading(false)
     }
-  }, [client, selectedTeam])
+  }, [client, currentSessionId, selectedTeam])
 
   // SSE でリアルタイム更新: ステータス変化をインプレース反映し、active になったらフルリフレッシュ
   const handleProxyStatusEvent = useCallback((event: ProxySessionStatusEvent) => {
@@ -124,8 +134,8 @@ export default function SessionListSidebar({
   })
 
   useEffect(() => {
-    if (!isVisible) return
     fetchSessions()
+    if (!isVisible) return
     // SSE がリアルタイム更新を担うため、ポーリングは 30 秒に延長
     const interval = setInterval(fetchSessions, 30000)
     return () => clearInterval(interval)

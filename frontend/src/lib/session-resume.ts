@@ -11,6 +11,17 @@ interface ResumeOptions {
   cancelled?: () => boolean
 }
 
+export async function resumeSessionFromList(
+  client: SessionResumeClient,
+  sessions: Pick<Session, 'session_id' | 'status'>[],
+  sessionId: string,
+  options: ResumeOptions = {},
+): Promise<ResumeResult | null> {
+  const session = sessions.find(candidate => candidate.session_id === sessionId)
+  if (session?.status !== 'suspended') return null
+  return waitForSessionResume(client, sessionId, options)
+}
+
 function throwIfCancelled(cancelled?: () => boolean) {
   if (cancelled?.()) throw new Error('Session restoration cancelled')
 }
@@ -36,3 +47,4 @@ export async function waitForSessionResume(
 
   throw new Error('Timed out waiting for the session workload to resume')
 }
+import type { Session } from '../types/agentapi'
