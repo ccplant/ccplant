@@ -45,7 +45,7 @@ jobs:
               backend/helm/*|frontend/helm/*|chart/*)
                 charts=true ;;
               backend/*)
-                backend=true; native=true ;;
+                backend=true ;;
               frontend/*)
                 frontend=true ;;
               native/*)
