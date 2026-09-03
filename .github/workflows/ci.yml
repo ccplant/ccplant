@@ -243,44 +243,33 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - id: release
+        name: Resolve latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)" >> "$GITHUB_OUTPUT"
       - name: Carry forward unchanged backend images
         if: needs.changes.outputs.backend != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
           for package in ccplant-backend ccplant-api; do
-            versions=$(gh api "/orgs/ccplant/packages/container/${package}/versions?per_page=100")
-            source_tag=$(jq -r --arg current "dev.ccplant.${HEAD_SHA}" \
-              '[.[].metadata.container.tags[] | select(startswith("dev.ccplant.") and . != $current)][0] // empty' \
-              <<<"$versions")
-            if [ -z "$source_tag" ]; then
-              echo "No previous development tag found for ${package}" >&2
-              exit 1
-            fi
             docker buildx imagetools create \
               --tag "ghcr.io/ccplant/${package}:dev.ccplant.${HEAD_SHA}" \
-              "ghcr.io/ccplant/${package}:${source_tag}"
+              "ghcr.io/ccplant/${package}:${RELEASE_TAG}"
           done
       - name: Carry forward unchanged frontend image
         if: needs.changes.outputs.frontend != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          versions=$(gh api "/orgs/ccplant/packages/container/ccplant-frontend/versions?per_page=100")
-          source_tag=$(jq -r --arg current "dev.ccplant.${HEAD_SHA}" \
-            '[.[].metadata.container.tags[] | select(startswith("dev.ccplant.") and . != $current)][0] // empty' \
-            <<<"$versions")
-          if [ -z "$source_tag" ]; then
-            echo "No previous development tag found for ccplant-frontend" >&2
-            exit 1
-          fi
           docker buildx imagetools create \
             --tag "ghcr.io/ccplant/ccplant-frontend:dev.ccplant.${HEAD_SHA}" \
-            "ghcr.io/ccplant/ccplant-frontend:${source_tag}"
+            "ghcr.io/ccplant/ccplant-frontend:${RELEASE_TAG}"
 
   publish-dev-charts:
     needs: [changes, carry-forward-images]
