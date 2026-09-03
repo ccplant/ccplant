@@ -1,5 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
-import { waitForSessionResume } from '../session-resume'
+import { resumeSessionFromList, waitForSessionResume } from '../session-resume'
+
+describe('resumeSessionFromList', () => {
+  it('does not resume an active session already identified by the list', async () => {
+    const resumeSession = vi.fn()
+    const sessions = [{ session_id: 'session-1', status: 'active' as const }]
+
+    await expect(resumeSessionFromList({ resumeSession }, sessions, 'session-1')).resolves.toBeNull()
+    expect(resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('resumes a suspended session already identified by the list', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({ session_id: 'session-1', status: 'active' })
+    const sessions = [{ session_id: 'session-1', status: 'suspended' as const }]
+
+    await expect(resumeSessionFromList({ resumeSession }, sessions, 'session-1'))
+      .resolves.toEqual({ session_id: 'session-1', status: 'active' })
+    expect(resumeSession).toHaveBeenCalledOnce()
+  })
+})
 
 describe('waitForSessionResume', () => {
   it('waits until restoration completes before opening the chat', async () => {
