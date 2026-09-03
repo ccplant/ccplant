@@ -9,8 +9,58 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      native: ${{ steps.filter.outputs.native }}
+      charts: ${{ steps.filter.outputs.charts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Detect affected components
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          backend=false
+          frontend=false
+          native=false
+          charts=false
+
+          # A workflow change can affect every build, so exercise the complete CI.
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/ci.yml)
+                backend=true; frontend=true; native=true; charts=true ;;
+              backend/helm/*|frontend/helm/*|chart/*)
+                charts=true ;;
+              backend/*)
+                backend=true ;;
+              frontend/*)
+                frontend=true ;;
+              native/*)
+                native=true ;;
+            esac
+          done < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+          echo "native=$native" >> "$GITHUB_OUTPUT"
+          echo "charts=$charts" >> "$GITHUB_OUTPUT"
+
   backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +74,8 @@ jobs:
         working-directory: backend
 
   api-image:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -48,23 +100,28 @@ jobs:
         with:
           context: ./backend
           target: api
-          build-args: RELEASE_VERSION=test
+          build-args: RELEASE_VERSION=${{ github.event_name == 'pull_request' && format('dev.ccplant.{0}', github.event.pull_request.head.sha) || 'test' }}
           platforms: ${{ matrix.platform }}
           push: ${{ matrix.arch == 'amd64' && github.event_name == 'pull_request' }}
-          tags: ghcr.io/ccplant/ccplant-api:pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          tags: |
+            ghcr.io/ccplant/ccplant-api:pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+            ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
           cache-from: type=gha,scope=api-image-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=api-image-${{ matrix.arch }}
       - name: Smoke-test API-only image
-        if: matrix.arch == 'amd64'
+        if: matrix.arch == 'amd64' && github.event_name == 'pull_request'
+        env:
+          API_IMAGE: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
+          EXPECTED_VERSION: dev.ccplant.${{ github.event.pull_request.head.sha }}
         run: |
-          docker build --build-arg RELEASE_VERSION=test --target api --tag ccplant-api:test ./backend
+          docker pull "$API_IMAGE"
           network=$(docker network create ccplant-api-test)
           redis_id=$(docker run --detach --network "$network" --name ccplant-api-test-redis redis:7-alpine)
-          container_id=$(docker run --detach --network "$network" --env AGENTAPI_REDIS_ADDR=ccplant-api-test-redis:6379 --publish 127.0.0.1::8080 ccplant-api:test)
+          container_id=$(docker run --detach --network "$network" --env AGENTAPI_REDIS_ADDR=ccplant-api-test-redis:6379 --publish 127.0.0.1::8080 "$API_IMAGE")
           trap 'docker rm --force "$container_id" "$redis_id" >/dev/null; docker network rm "$network" >/dev/null' EXIT
           host_port=$(docker port "$container_id" 8080/tcp | sed 's/.*://')
           for attempt in {1..30}; do
-            if test "$(curl --fail --silent "http://127.0.0.1:${host_port}/health" | jq -r .version)" = test; then
+            if test "$(curl --fail --silent "http://127.0.0.1:${host_port}/health" | jq -r .version)" = "$EXPECTED_VERSION"; then
               break
             fi
             if [ "$attempt" -eq 30 ]; then
@@ -73,7 +130,7 @@ jobs:
             fi
             sleep 1
           done
-          docker run --rm ccplant-api:test worker --help >/dev/null
+          docker run --rm "$API_IMAGE" worker --help >/dev/null
           test "$(docker exec "$container_id" id -u)" = 999
           docker exec "$container_id" codex --version
           for command in claude cursor-agent docker git mise uv github-mcp-server otelcol node npm; do
@@ -84,6 +141,8 @@ jobs:
           done
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +159,8 @@ jobs:
         working-directory: frontend
 
   native:
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -124,6 +185,8 @@ jobs:
         working-directory: native
 
   charts:
+    needs: changes
+    if: needs.changes.outputs.charts == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -164,8 +227,62 @@ jobs:
             --set-string cloudRun.imageDigest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
             >/dev/null
 
+  carry-forward-images:
+    needs: changes
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.backend != 'true' || needs.changes.outputs.frontend != 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: release
+        name: Resolve latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)" >> "$GITHUB_OUTPUT"
+      - name: Carry forward unchanged backend images
+        if: needs.changes.outputs.backend != 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for package in ccplant-backend ccplant-api; do
+            docker buildx imagetools create \
+              --tag "ghcr.io/ccplant/${package}:dev.ccplant.${HEAD_SHA}" \
+              "ghcr.io/ccplant/${package}:${RELEASE_TAG}"
+          done
+      - name: Carry forward unchanged frontend image
+        if: needs.changes.outputs.frontend != 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "ghcr.io/ccplant/ccplant-frontend:dev.ccplant.${HEAD_SHA}" \
+            "ghcr.io/ccplant/ccplant-frontend:${RELEASE_TAG}"
+
   publish-dev-charts:
-    if: github.event_name == 'pull_request'
+    needs: [changes, carry-forward-images]
+    # carry-forward-images is skipped when every component is rebuilt.
+    # always() lets chart publishing proceed in that case, but not after a failure.
+    if: >-
+      always() &&
+      needs.changes.result == 'success' &&
+      (needs.carry-forward-images.result == 'success' || needs.carry-forward-images.result == 'skipped') &&
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.frontend == 'true' ||
+       needs.changes.outputs.charts == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -203,7 +320,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push development image
-        if: matrix.build_image
+        if: >-
+          matrix.build_image &&
+          ((matrix.component == 'backend' && needs.changes.outputs.backend == 'true') ||
+           (matrix.component == 'frontend' && needs.changes.outputs.frontend == 'true'))
         uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.component }}
@@ -212,17 +332,6 @@ jobs:
           tags: ghcr.io/${{ matrix.image }}:dev.ccplant.${{ github.event.pull_request.head.sha }}
           cache-from: type=gha,scope=dev-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=dev-${{ matrix.component }}
-      - name: Build and push development API image
-        if: matrix.build_image && matrix.component == 'backend'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          target: api
-          build-args: RELEASE_VERSION=dev.ccplant.${{ github.event.pull_request.head.sha }}
-          push: true
-          tags: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.pull_request.head.sha }}
-          cache-from: type=gha,scope=dev-api
-          cache-to: type=gha,mode=max,scope=dev-api
       - uses: azure/setup-helm@v4
         with:
           version: v3.18.4
