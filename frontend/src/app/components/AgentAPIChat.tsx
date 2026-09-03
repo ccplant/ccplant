@@ -492,13 +492,36 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               const historyPromise = agentAPIRef.current
                 .getACPMessageHistory(sessionId, '')
                 .catch(() => null);
-              const acpProbePromise = agentAPIRef.current.probeACPSessionEvents(sessionId);
+              // Open the real subscription as the ACP fast-path probe. Incoming
+              // events stay buffered until history is installed, so a concurrent
+              // history response cannot overwrite live updates.
+              const initializationSubscription = !acpServerEnabled
+                ? agentAPIRef.current.subscribeToACPSessionEventsForInitialization(
+                    sessionId,
+                    {
+                      ...acpCallbacks,
+                      onCommandsUpdate: (commands) => {
+                        console.log('[ACP] available_commands_update:', commands);
+                      },
+                    }
+                  )
+                : null;
+              if (initializationSubscription) {
+                acpEventSourceRef.current?.close();
+                acpEventSourceRef.current = initializationSubscription;
+              }
 
               // The proxy-local SSE handshake is usually much faster than asking
               // the remote bridge for session metadata. Use it as the fast path,
               // while retaining GET /session as the compatibility fallback and to
               // hydrate the full ACP session information.
-              const acpAvailable = await acpProbePromise;
+              const acpAvailable = await (initializationSubscription?.opened ?? Promise.resolve(false));
+              if (initializationSubscription && !acpAvailable) {
+                initializationSubscription.close();
+                if (acpEventSourceRef.current === initializationSubscription) {
+                  acpEventSourceRef.current = null;
+                }
+              }
               const info = acpAvailable
                 ? { sessionId: '', status: 'running' as const }
                 : await agentAPIRef.current.getACPSessionInfo(sessionId);
@@ -536,24 +559,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 setIsInitialLoadComplete(true);
                 setIsStarting(false);
 
-                // Subscribe to ACP SSE stream.
-                if (acpEventSourceRef.current) {
-                  console.log(`[ACP] initializeChat: closing existing SSE connection`);
-                  acpEventSourceRef.current.close();
-                }
-                setMessageSSEConnectionStatus('connecting');
-
-                // Subscribe to SSE. In acpServerEnabled mode, route through the proxy's
-                // GET /acp endpoint with Acp-Session-Id header. Otherwise connect directly
-                // to the per-session bridge SSE.
-                console.log(`[ACP] initializeChat: subscribing to SSE for sessionId=${sessionId} (acpServerEnabled=${acpServerEnabled})`);
-                if (acpServerEnabled && acpServerClientRef.current) {
+                // Keep the successful fast-path SSE as the real subscription and
+                // release only events newer than the history snapshot.
+                if (initializationSubscription && acpAvailable) {
+                  initializationSubscription.resumeAfterHistory(historyResult.lastEventId);
+                } else if (acpServerEnabled && acpServerClientRef.current) {
+                  setMessageSSEConnectionStatus('connecting');
                   acpEventSourceRef.current = acpServerClientRef.current.subscribeToEvents(
                     sessionId,
                     acpCallbacks,
                     historyResult.lastEventId
                   );
                 } else {
+                  setMessageSSEConnectionStatus('connecting');
                   acpEventSourceRef.current = agentAPIRef.current.subscribeToACPSessionEvents(
                     sessionId,
                     info.sessionId,
