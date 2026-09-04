@@ -32,6 +32,8 @@ type ResponseFrame struct {
 	Body            []byte              `json:"body,omitempty"`
 	Done            bool                `json:"done,omitempty"`
 	Error           string              `json:"error,omitempty"`
+	UpstreamTTFBMS  int64               `json:"upstream_ttfb_ms,omitempty"`
+	UpstreamReadMS  int64               `json:"upstream_read_ms,omitempty"`
 	CreatedAt       time.Time           `json:"created_at"`
 }
 
