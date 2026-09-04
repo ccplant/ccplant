@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type directRuntimeWorker struct {
@@ -223,21 +224,29 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 		w.active.Delete(command.ID)
 		cancel()
 	}()
+	commandCtx = telemetry.ExtractHTTP(commandCtx, http.Header(command.Headers))
+	w.executeRequest(commandCtx, command)
+}
+
+func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command core.Command) {
 	target := w.localURL + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
 	}
 	req, err := http.NewRequestWithContext(commandCtx, command.Method, target, bytes.NewReader(command.Body))
 	if err != nil {
-		w.postExecutionError(ctx, command, err)
+		w.postExecutionError(commandCtx, command, err)
 		return
 	}
 	req.Header = http.Header(command.Headers).Clone()
+	telemetry.InjectHTTP(commandCtx, req)
+	upstreamStartedAt := time.Now()
 	resp, err := w.client.Do(req)
 	if err != nil {
-		w.postExecutionError(ctx, command, err)
+		w.postExecutionError(commandCtx, command, err)
 		return
 	}
+	upstreamRespondedAt := time.Now()
 	defer func() { _ = resp.Body.Close() }()
 
 	sequence := int64(0)
@@ -249,7 +258,7 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 	frames := []core.ResponseFrame{start}
 	batchBytes := 0
 	if isEventStream {
-		if err := w.postFrames(ctx, frames); err != nil {
+		if err := w.postFrames(commandCtx, frames); err != nil {
 			return
 		}
 		frames = nil
@@ -264,13 +273,14 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 			batchBytes += n
 		}
 		if readErr != nil {
+			upstreamCompletedAt := time.Now()
 			sequence++
-			frame := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: sequence, Done: true, CreatedAt: time.Now().UTC()}
+			frame := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: sequence, Done: true, UpstreamTTFBMS: upstreamRespondedAt.Sub(upstreamStartedAt).Milliseconds(), UpstreamReadMS: upstreamCompletedAt.Sub(upstreamRespondedAt).Milliseconds(), CreatedAt: time.Now().UTC()}
 			if readErr != io.EOF {
 				frame.Error = readErr.Error()
 			}
 			frames = append(frames, frame)
-			uploadCtx, uploadCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			uploadCtx, uploadCancel := context.WithTimeout(context.WithoutCancel(commandCtx), 2*time.Minute)
 			_ = w.postFrames(uploadCtx, frames)
 			uploadCancel()
 			return
@@ -279,7 +289,7 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 		// body, and completion frames in one upstream request instead of paying
 		// three outbound round trips. Bound batches for unusually large bodies.
 		if isEventStream || batchBytes >= 512*1024 {
-			if err := w.postFrames(ctx, frames); err != nil {
+			if err := w.postFrames(commandCtx, frames); err != nil {
 				return
 			}
 			frames = nil
@@ -315,6 +325,7 @@ func (w *directRuntimeWorker) postFrames(ctx context.Context, frames []core.Resp
 		}
 		req.Header.Set("Content-Type", "application/json")
 		w.authorize(req)
+		telemetry.InjectHTTP(ctx, req)
 		resp, doErr := w.client.Do(req)
 		if doErr == nil {
 			_ = resp.Body.Close()

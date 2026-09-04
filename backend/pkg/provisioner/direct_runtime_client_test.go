@@ -14,9 +14,13 @@ import (
 )
 
 func TestDirectRuntimePollAndExecute(t *testing.T) {
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/message" || r.URL.Query().Get("mode") != "fast" {
 			t.Errorf("local request URI=%s", r.URL.RequestURI())
+		}
+		if got := r.Header.Get("Traceparent"); len(got) < 35 || got[3:35] != traceID {
+			t.Errorf("local traceparent = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -33,10 +37,15 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case http.MethodGet + " /internal/session-runtime/public-session/requests":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"requests":    []core.Command{{ID: "request-1", StreamID: "1-0", Method: http.MethodPost, Path: "/message", RawQuery: "mode=fast", Body: []byte(`{"content":"hello"}`), Deadline: time.Now().Add(time.Minute)}},
+				"requests": []core.Command{{ID: "request-1", StreamID: "1-0", Method: http.MethodPost, Path: "/message", RawQuery: "mode=fast", Body: []byte(`{"content":"hello"}`), Headers: map[string][]string{
+					"Traceparent": {"00-" + traceID + "-00f067aa0ba902b7-01"},
+				}, Deadline: time.Now().Add(time.Minute)}},
 				"next_cursor": "1-0",
 			})
 		case http.MethodPost + " /internal/session-runtime/public-session/frames":
+			if got := r.Header.Get("Traceparent"); len(got) < 35 || got[3:35] != traceID {
+				t.Errorf("frame traceparent = %q", got)
+			}
 			frameUploads.Add(1)
 			var body struct {
 				Frames []core.ResponseFrame `json:"frames"`

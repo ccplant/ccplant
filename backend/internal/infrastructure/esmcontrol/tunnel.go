@@ -153,8 +153,9 @@ func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initi
 	defer func() { _ = writer.Close() }()
 	frameCount := int64(len(initial))
 	byteCount := frameBytes(initial)
+	upstreamTTFBMS, upstreamReadMS := frameTimings(initial)
 	defer func() {
-		telemetry.SetAttributes(ctx, telemetry.Int64("esm.response.frame_count", frameCount), telemetry.Int64("esm.response.body.size", byteCount))
+		telemetry.SetAttributes(ctx, telemetry.Int64("esm.response.frame_count", frameCount), telemetry.Int64("esm.response.body.size", byteCount), telemetry.Int64("esm.upstream.ttfb_ms", upstreamTTFBMS), telemetry.Int64("esm.upstream.read_ms", upstreamReadMS))
 	}()
 	if writeFrames(writer, initial) {
 		return
@@ -170,6 +171,9 @@ func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initi
 		if len(frames) > 0 {
 			frameCount += int64(len(frames))
 			byteCount += frameBytes(frames)
+			batchTTFBMS, batchReadMS := frameTimings(frames)
+			upstreamTTFBMS = max(upstreamTTFBMS, batchTTFBMS)
+			upstreamReadMS = max(upstreamReadMS, batchReadMS)
 			cursor = frames[len(frames)-1].StreamID
 			if writeFrames(writer, frames) {
 				return
@@ -180,6 +184,15 @@ func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initi
 			return
 		}
 	}
+}
+
+func frameTimings(frames []core.ResponseFrame) (int64, int64) {
+	var ttfbMS, readMS int64
+	for _, frame := range frames {
+		ttfbMS = max(ttfbMS, frame.UpstreamTTFBMS)
+		readMS = max(readMS, frame.UpstreamReadMS)
+	}
+	return ttfbMS, readMS
 }
 
 func frameBytes(frames []core.ResponseFrame) int64 {

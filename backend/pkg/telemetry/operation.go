@@ -24,14 +24,20 @@ func Bool(key string, value bool) attribute.KeyValue { return attribute.Bool(key
 // InjectHTTP writes the configured trace propagation headers onto req. Use it
 // for HTTP-shaped requests sent through a tunnel instead of an http.Transport.
 func InjectHTTP(ctx context.Context, req *http.Request) {
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+	traceContextPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 }
 
 // ExtractHTTP restores trace propagation headers from an HTTP-shaped request.
 // It is intended for requests carried over transports that bypass net/http's
 // server instrumentation, such as the durable ESM control tunnel.
 func ExtractHTTP(ctx context.Context, header http.Header) context.Context {
-	return otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(header))
+	return traceContextPropagator().Extract(ctx, propagation.HeaderCarrier(header))
+}
+
+func traceContextPropagator() propagation.TextMapPropagator {
+	// W3C propagation must also work in lightweight processes such as
+	// agent-provisioner, where an OTLP exporter is intentionally not configured.
+	return propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
 }
 
 // Int64 creates an int64 span attribute without exposing the OpenTelemetry SDK
