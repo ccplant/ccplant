@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -107,6 +108,15 @@ func (c *SessionRuntimeController) AppendFrames(ctx echo.Context) error {
 	}
 	if err := c.store.TouchManager(ctx.Request().Context(), route.SessionID, ctx.QueryParam("instance_id")); err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
+	if ctx.Request().Header.Get("Content-Encoding") == "gzip" {
+		reader, err := gzip.NewReader(ctx.Request().Body)
+		if err != nil {
+			return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "invalid gzip request body"})
+		}
+		defer func() { _ = reader.Close() }()
+		ctx.Request().Body = reader
+		ctx.Request().Header.Del("Content-Encoding")
 	}
 	var request struct {
 		Frames []core.ResponseFrame `json:"frames"`

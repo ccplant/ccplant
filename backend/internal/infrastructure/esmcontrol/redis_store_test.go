@@ -92,6 +92,36 @@ func TestRedisStoreKeepsLongRunningRequestOwnership(t *testing.T) {
 	require.Greater(t, ttl, 23*time.Hour)
 }
 
+func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
+	store, _ := newTestRedisStore(t)
+	ctx := context.Background()
+	frames := []core.ResponseFrame{
+		{ID: "frame-a", RequestID: "request-a", Sequence: 1, Body: []byte("one")},
+		{ID: "frame-b", RequestID: "request-a", Sequence: 2, Body: []byte("two"), Done: true},
+	}
+	last, err := store.AppendFrames(ctx, "request-a", frames)
+	require.NoError(t, err)
+	require.NotEmpty(t, last)
+	_, err = store.AppendFrames(ctx, "request-a", frames)
+	require.NoError(t, err)
+
+	got, err := store.ReadFrames(ctx, "request-a", "0-0", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(1), got[0].Sequence)
+	require.Equal(t, int64(2), got[1].Sequence)
+}
+
+func TestRedisStoreAckDoesNotMoveBackward(t *testing.T) {
+	store, server := newTestRedisStore(t)
+	ctx := context.Background()
+	require.NoError(t, store.AckCommand(ctx, "manager-a", "10-2"))
+	require.NoError(t, store.AckCommand(ctx, "manager-a", "9-99"))
+	ack, err := server.Get(commandAckKey("manager-a"))
+	require.NoError(t, err)
+	require.Equal(t, "10-2", ack)
+}
+
 func TestRedisStoreDoesNotRefreshOwnershipForWrongManager(t *testing.T) {
 	store, server := newTestRedisStore(t)
 	ctx := context.Background()

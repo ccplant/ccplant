@@ -218,6 +218,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             - name: OTEL_SERVICE_NAME
               value: {{ dig "serviceName" "agentapi-proxy" $openTelemetry | quote }}
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
@@ -233,7 +237,7 @@ spec:
                   name: {{ dig "name" "" $openTelemetrySecret | quote }}
                   key: {{ dig "headersKey" "OTEL_EXPORTER_OTLP_HEADERS" $openTelemetrySecret | quote }}
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) .Chart.AppVersion | quote }}
+              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME),k8s.node.name=$(NODE_NAME)%s" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) .Chart.AppVersion (ternary (printf ",cloud.region=%s" (dig "cloudRegion" "" $openTelemetry)) "" (ne (dig "cloudRegion" "" $openTelemetry) "")) | quote }}
             - name: OTEL_TRACES_SAMPLER
               value: {{ dig "tracesSampler" "parentbased_traceidratio" $openTelemetry | quote }}
             - name: OTEL_TRACES_SAMPLER_ARG

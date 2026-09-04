@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -263,9 +264,23 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		}
 		frames = nil
 	}
-	buffer := make([]byte, 64*1024)
+	frameSize := 64 * 1024
+	if !isEventStream {
+		// Ordinary history responses benefit from fewer JSON/base64 frames and a
+		// single batched Redis append on the parent.
+		frameSize = 512 * 1024
+	}
+	buffer := make([]byte, frameSize)
 	for {
 		n, readErr := resp.Body.Read(buffer)
+		if !isEventStream && readErr == nil && n < len(buffer) {
+			additional, fillErr := io.ReadFull(resp.Body, buffer[n:])
+			n += additional
+			readErr = fillErr
+			if errors.Is(readErr, io.ErrUnexpectedEOF) {
+				readErr = io.EOF
+			}
+		}
 		if n > 0 {
 			sequence++
 			frame := core.ResponseFrame{ID: uuid.NewString(), RequestID: command.ID, Sequence: sequence, Body: append([]byte(nil), buffer[:n]...), CreatedAt: time.Now().UTC()}
@@ -315,6 +330,19 @@ func (w *directRuntimeWorker) postFrames(ctx context.Context, frames []core.Resp
 	q.Set("generation", fmt.Sprintf("%d", w.cfg.Generation))
 	q.Set("instance_id", w.instanceID)
 	u.RawQuery = q.Encode()
+	compressed := false
+	if len(body) >= 64*1024 {
+		var encoded bytes.Buffer
+		writer := gzip.NewWriter(&encoded)
+		if _, writeErr := writer.Write(body); writeErr == nil {
+			if closeErr := writer.Close(); closeErr == nil && encoded.Len() < len(body) {
+				body = encoded.Bytes()
+				compressed = true
+			}
+		} else {
+			_ = writer.Close()
+		}
+	}
 	backoff := time.Second
 	for ctx.Err() == nil {
 		attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -324,6 +352,9 @@ func (w *directRuntimeWorker) postFrames(ctx context.Context, frames []core.Resp
 			return reqErr
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if compressed {
+			req.Header.Set("Content-Encoding", "gzip")
+		}
 		w.authorize(req)
 		telemetry.InjectHTTP(ctx, req)
 		resp, doErr := w.client.Do(req)
@@ -332,6 +363,19 @@ func (w *directRuntimeWorker) postFrames(ctx context.Context, frames []core.Resp
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				cancel()
 				return nil
+			}
+			// During a rolling upgrade an old parent may not understand gzip yet.
+			// Re-encode once without compression; frame IDs make retries idempotent.
+			if compressed && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnsupportedMediaType) {
+				uncompressed, marshalErr := json.Marshal(map[string]interface{}{"frames": frames})
+				if marshalErr != nil {
+					cancel()
+					return marshalErr
+				}
+				body = uncompressed
+				compressed = false
+				cancel()
+				continue
 			}
 			doErr = fmt.Errorf("frame upload returned HTTP %d", resp.StatusCode)
 		}

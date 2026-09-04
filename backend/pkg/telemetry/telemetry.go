@@ -12,6 +12,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -41,7 +42,9 @@ func Setup(ctx context.Context) (func(context.Context) error, error) {
 	if serviceName == "" {
 		serviceName = defaultServiceName
 	}
-	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(), resource.WithHost(), resource.WithProcess(), resource.WithAttributes(semconv.ServiceName(serviceName)))
+	attributes := []attribute.KeyValue{semconv.ServiceName(serviceName)}
+	attributes = append(attributes, platformResourceAttributes()...)
+	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(), resource.WithHost(), resource.WithProcess(), resource.WithAttributes(attributes...))
 	if err != nil {
 		return nil, fmt.Errorf("create OpenTelemetry resource: %w", err)
 	}
@@ -67,6 +70,29 @@ func Setup(ctx context.Context) (func(context.Context) error, error) {
 	return func(shutdownCtx context.Context) error {
 		return errors.Join(meterProvider.Shutdown(shutdownCtx), tracerProvider.Shutdown(shutdownCtx))
 	}, nil
+}
+
+func platformResourceAttributes() []attribute.KeyValue {
+	region := firstNonEmpty(os.Getenv("OTEL_CLOUD_REGION"), os.Getenv("FLY_REGION"), os.Getenv("CLOUD_RUN_REGION"), os.Getenv("GOOGLE_CLOUD_REGION"), os.Getenv("AWS_REGION"), os.Getenv("AWS_DEFAULT_REGION"))
+	provider := ""
+	switch {
+	case os.Getenv("FLY_APP_NAME") != "":
+		provider = "fly_io"
+	case os.Getenv("K_SERVICE") != "":
+		provider = "gcp"
+	case os.Getenv("AWS_REGION") != "" || os.Getenv("AWS_EXECUTION_ENV") != "":
+		provider = "aws"
+	case os.Getenv("KUBERNETES_SERVICE_HOST") != "":
+		provider = "kubernetes"
+	}
+	result := make([]attribute.KeyValue, 0, 2)
+	if region != "" {
+		result = append(result, semconv.CloudRegion(region))
+	}
+	if provider != "" {
+		result = append(result, semconv.CloudProviderKey.String(provider))
+	}
+	return result
 }
 
 func samplerFromEnv() sdktrace.Sampler {
