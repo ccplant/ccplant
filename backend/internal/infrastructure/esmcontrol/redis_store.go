@@ -20,20 +20,10 @@ const (
 	connectionTTL = 75 * time.Second
 )
 
-type RedisStore struct {
-	client         *redis.Client
-	blockingClient *redis.Client
-}
+type RedisStore struct{ client *redis.Client }
 
 func NewRedisStore(client *redis.Client) *RedisStore {
-	// Blocking reads use a separate pool so persistent command/response waits can
-	// never consume the connections needed to enqueue commands or append frames.
-	options := *client.Options()
-	if options.MaintNotificationsConfig != nil {
-		config := *options.MaintNotificationsConfig
-		options.MaintNotificationsConfig = &config
-	}
-	return &RedisStore{client: client, blockingClient: redis.NewClient(&options)}
+	return &RedisStore{client: client}
 }
 
 func commandKey(managerID string) string {
@@ -215,25 +205,34 @@ func (s *RedisStore) read(ctx context.Context, key, after string, wait time.Dura
 	if count <= 0 || count > 100 {
 		count = 100
 	}
-	client := s.client
-	block := time.Duration(-1)
-	if wait > 0 {
-		client = s.blockingClient
-		block = wait
+	deadline := time.Now().Add(wait)
+	for {
+		// Keep reads non-blocking. A blocking XREAD per direct runtime consumes
+		// enough Redis connections to degrade enqueue and frame writes globally.
+		streams, err := s.client.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{key, after}, Count: count, Block: -1,
+		}).Result()
+		if err != nil && err != redis.Nil {
+			return nil, fmt.Errorf("read ESM control stream: %w", err)
+		}
+		if len(streams) > 0 {
+			return streams[0].Messages, nil
+		}
+		if wait <= 0 || !time.Now().Before(deadline) {
+			return nil, nil
+		}
+		delay := 50 * time.Millisecond
+		if remaining := time.Until(deadline); remaining < delay {
+			delay = remaining
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	streams, err := client.XRead(ctx, &redis.XReadArgs{
-		Streams: []string{key, after}, Count: count, Block: block,
-	}).Result()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read ESM control stream: %w", err)
-	}
-	if len(streams) == 0 {
-		return nil, nil
-	}
-	return streams[0].Messages, nil
 }
 
 func decode(msg redis.XMessage, field string, target interface{}) error {
