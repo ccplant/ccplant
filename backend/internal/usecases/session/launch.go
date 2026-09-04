@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 // LaunchRequest contains all parameters needed to create a session from any external
@@ -142,6 +143,15 @@ func (uc *LaunchUseCase) WithSessionProfileRepository(repo repositories.SessionP
 //  2. Check the session limit (when MaxSessions > 0).
 //  3. Create a new session.
 func (uc *LaunchUseCase) Launch(ctx context.Context, sessionID string, req LaunchRequest) (LaunchResult, error) {
+	return telemetry.Operation(ctx, "session.LaunchUseCase.Launch", func(ctx context.Context) (LaunchResult, error) {
+		return uc.launch(ctx, sessionID, req)
+	},
+		telemetry.String("session.scope", string(req.Scope)),
+		telemetry.Bool("session.reuse_requested", req.ReuseSession),
+	)
+}
+
+func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req LaunchRequest) (LaunchResult, error) {
 	// 0. Resolve session profile: merge profile config as base; explicit request fields override.
 	// When SessionProfileID is empty, fall back to the default profile for the user/team.
 	if uc.sessionProfileRepo != nil {

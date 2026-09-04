@@ -1,10 +1,17 @@
 package utils
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestDefaultHTTPClientConfig(t *testing.T) {
@@ -33,6 +40,31 @@ func TestNewDefaultHTTPClient(t *testing.T) {
 	if client.Timeout != 30*time.Second {
 		t.Errorf("Expected client timeout to be 30s, got %v", client.Timeout)
 	}
+}
+
+func TestNewHTTPClientCreatesOutboundSpan(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/resource/42", nil)
+	require.NoError(t, err)
+	resp, err := NewHTTPClient(HTTPClientConfig{Timeout: time.Second}).Do(req)
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	require.Equal(t, "HTTP GET", spans[0].Name())
 }
 
 func TestHTTPError(t *testing.T) {
