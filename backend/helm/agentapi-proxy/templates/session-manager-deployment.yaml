@@ -1,5 +1,7 @@
 {{- $manager := .Values.sessionManager | default dict }}
 {{- if (dig "enabled" false $manager) }}
+{{- $openTelemetry := .Values.observability.openTelemetry | default dict }}
+{{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 {{- $image := $manager.image | default dict }}
 {{- $internalToken := dig "internalApi" "tokenSecretRef" (dict) $manager }}
 {{- $encryptionToken := dig "encryption" "keySecretRef" (dict) $manager }}
@@ -77,6 +79,32 @@ spec:
               containerPort: {{ $manager.port }}
               protocol: TCP
           env:
+            {{- if (dig "enabled" false $openTelemetry) }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_SERVICE_NAME
+              value: {{ dig "sessionManagerServiceName" "agentapi-session-manager" $openTelemetry | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "observability.openTelemetry.secretRef.name is required when OpenTelemetry is enabled" (dig "name" "" $openTelemetrySecret) | quote }}
+                  key: {{ dig "endpointKey" "OTEL_EXPORTER_OTLP_ENDPOINT" $openTelemetrySecret | quote }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ dig "name" "" $openTelemetrySecret | quote }}
+                  key: {{ dig "headersKey" "OTEL_EXPORTER_OTLP_HEADERS" $openTelemetrySecret | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "deployment.environment=%s,service.namespace=%s,service.version=%s,service.instance.id=$(POD_NAME)" (required "observability.openTelemetry.deploymentEnvironment is required when OpenTelemetry is enabled" (dig "deploymentEnvironment" "" $openTelemetry)) (dig "serviceNamespace" "ccplant" $openTelemetry) .Chart.AppVersion | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ dig "tracesSampler" "parentbased_traceidratio" $openTelemetry | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ dig "tracesSamplerArg" "1.0" $openTelemetry | quote }}
+            {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: {{ dig "autoUpgrade" true $manager | quote }}}
             {{- if (dig "versionUrl" "" $manager) }}
             - {name: AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL, value: {{ dig "versionUrl" "" $manager | quote }}}
