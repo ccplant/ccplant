@@ -27,11 +27,13 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // SessionCreator is an interface for creating sessions
 type SessionCreator interface {
-	CreateSession(sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error)
+	CreateSession(ctx context.Context, sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error)
 	DeleteSessionByID(sessionID string) error
 }
 
@@ -179,6 +181,13 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 
 // StartSession handles POST /start requests to start a new agentapi server
 func (c *SessionController) StartSession(ctx echo.Context) error {
+	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.StartSession", func(requestCtx context.Context) error {
+		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
+		return c.startSession(ctx)
+	})
+}
+
+func (c *SessionController) startSession(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
 	sessionID := uuid.New().String()
@@ -368,7 +377,7 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 		}
 	}
 
-	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
+	session, err := c.sessionCreator.CreateSession(ctx.Request().Context(), sessionID, startReq, userID, userRole, teams)
 	if err != nil {
 		var quotaErr *sessionrunnercore.QuotaExceededError
 		if errors.As(err, &quotaErr) {
@@ -995,6 +1004,13 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
+	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.RouteToSession", func(requestCtx context.Context) error {
+		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
+		return c.routeToSession(ctx)
+	}, telemetry.String("http.request.method", ctx.Request().Method))
+}
+
+func (c *SessionController) routeToSession(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
 
 	session := c.getSessionManager().GetSession(sessionID)
@@ -1048,6 +1064,7 @@ func (c *SessionController) RouteToSession(ctx echo.Context) error {
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.FlushInterval = time.Millisecond * 100
+	proxy.Transport = otelhttp.NewTransport(http.DefaultTransport)
 
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -1165,6 +1182,13 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 // routeToRemoteSession sends session requests over an outbound connection opened
 // by the Session Pod or external session manager. The parent never dials the manager.
 func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.routeToRemoteSession", func(requestCtx context.Context) error {
+		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
+		return c.routeToRemoteSessionRequest(ctx, route)
+	}, telemetry.String("session.transport", route.Transport))
+}
+
+func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || route.ManagerID == "") {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
@@ -1208,6 +1232,7 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build direct runtime request")
 		}
 		req.Header = ctx.Request().Header.Clone()
+		telemetry.InjectHTTP(ctx.Request().Context(), req)
 		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
 		if tunnelErr != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, tunnelErr.Error())
@@ -1227,6 +1252,7 @@ func (c *SessionController) routeToRemoteSession(ctx echo.Context, route *reposi
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build outbound ESM request")
 		}
 		req.Header = ctx.Request().Header.Clone()
+		telemetry.InjectHTTP(ctx.Request().Context(), req)
 		authzCtx := auth.GetAuthorizationContext(ctx)
 		if authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
 			req.Header.Set("X-Forwarded-User", authzCtx.PersonalScope.UserID)

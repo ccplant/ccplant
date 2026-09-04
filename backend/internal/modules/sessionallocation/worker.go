@@ -8,6 +8,7 @@ import (
 
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type SessionCreator interface {
@@ -82,6 +83,15 @@ func (w *Worker) run(ctx context.Context) {
 }
 
 func (w *Worker) processOne(ctx context.Context, req *core.AllocationRequest) {
+	telemetry.OperationVoid(ctx, "sessionallocation.Worker.processOne", func(ctx context.Context) {
+		w.processAllocation(ctx, req)
+	},
+		telemetry.Bool("session.sandbox", req.Requirements.Sandbox),
+		telemetry.Bool("session.dind", req.Requirements.DinD),
+	)
+}
+
+func (w *Worker) processAllocation(ctx context.Context, req *core.AllocationRequest) {
 	log.Printf("[SESSION_ALLOCATOR] Allocating session %s (sandbox=%t dind=%t agent_type=%s)",
 		req.SessionID, req.Requirements.Sandbox, req.Requirements.DinD, req.Requirements.AgentType)
 	sess, err := w.creator.CreateSessionDirect(ctx, req.SessionID, req.Request, req.WebhookPayload)

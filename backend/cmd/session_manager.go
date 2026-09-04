@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 var (
@@ -35,6 +36,16 @@ func init() {
 }
 
 func runSessionManager(_ *cobra.Command, _ []string) error {
+	shutdownTelemetry, err := telemetry.Setup(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTelemetry(shutdownCtx)
+	}()
+
 	cfg, err := loadRuntimeConfig(sessionManagerConfigPath)
 	if err != nil {
 		return err

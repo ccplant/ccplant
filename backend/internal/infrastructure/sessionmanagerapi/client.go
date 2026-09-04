@@ -17,6 +17,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const maxResponseBodyBytes = 16 << 20
@@ -70,7 +72,7 @@ func NewClient(baseURL, bearerToken string, options ...ClientOption) (*Client, e
 		token:   bearerToken,
 		// Stock creation can wait up to 120 seconds for its Kubernetes workload.
 		// Keep this hop alive for the entire session-manager operation.
-		http: &http.Client{Timeout: 150 * time.Second},
+		http: &http.Client{Timeout: 150 * time.Second, Transport: otelhttp.NewTransport(http.DefaultTransport)},
 	}
 	for _, option := range options {
 		option(client)
@@ -177,6 +179,12 @@ func (c *Client) SubscribeMessageEvents(sessionID string) (<-chan portrepos.Sess
 }
 
 func (c *Client) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	return telemetry.Operation(ctx, "sessionmanagerapi.Client.CreateSession", func(ctx context.Context) (entities.Session, error) {
+		return c.createSession(ctx, id, request, webhookPayload)
+	})
+}
+
+func (c *Client) createSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	var response SessionDTO
 	input := createSessionRequest{Request: request, WebhookPayload: webhookPayload}
 	if err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id), input, &response); err != nil {
@@ -274,6 +282,12 @@ func (c *Client) StopAgent(ctx context.Context, id string) error {
 }
 
 func (c *Client) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
+	return telemetry.Operation(ctx, "sessionmanagerapi.Client.GetMessages", func(ctx context.Context) ([]portrepos.Message, error) {
+		return c.getMessages(ctx, id)
+	})
+}
+
+func (c *Client) getMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	var response messagesResponse
 	if err := c.do(ctx, http.MethodGet, "/sessions/"+url.PathEscape(id)+"/messages", nil, &response); err != nil {
 		return nil, err

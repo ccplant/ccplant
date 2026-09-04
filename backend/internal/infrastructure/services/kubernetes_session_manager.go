@@ -45,6 +45,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
@@ -53,6 +55,8 @@ import (
 const provisionerPort = 9001
 
 const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
+
+var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 const (
 	sessionSuspendAtAnnotation   = "agentapi.proxy/suspend-at"
@@ -511,6 +515,12 @@ func (m *KubernetesSessionManager) StopStatusSubscriber() {
 // It first attempts to use a pre-warmed stock session (labeled agentapi.proxy/stock=true).
 // If no stock is available, a new session is created from scratch.
 func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	return telemetry.Operation(ctx, "services.KubernetesSessionManager.allocateSessionDirect", func(ctx context.Context) (entities.Session, error) {
+		return m.allocateSessionResources(ctx, id, req, webhookPayload)
+	})
+}
+
+func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	m.refreshConfig()
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
@@ -2575,6 +2585,12 @@ func (m *KubernetesSessionManager) getSessionAgentTypeFromService(ctx context.Co
 
 // GetMessages retrieves conversation history from a session
 func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
+	return telemetry.Operation(ctx, "services.KubernetesSessionManager.GetMessages", func(ctx context.Context) ([]portrepos.Message, error) {
+		return m.getMessages(ctx, id)
+	})
+}
+
+func (m *KubernetesSessionManager) getMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	// Get session
 	session := m.GetSession(id)
 	if session == nil {
@@ -2596,7 +2612,7 @@ func (m *KubernetesSessionManager) GetMessages(ctx context.Context, id string) (
 	}
 
 	// Send request
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := instrumentedHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages: %w", err)
 	}

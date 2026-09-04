@@ -922,6 +922,7 @@ observability:
   openTelemetry:
     enabled: false
     serviceName: agentapi-proxy
+    sessionManagerServiceName: agentapi-session-manager
     serviceNamespace: ccplant
     deploymentEnvironment: ""
     tracesSampler: parentbased_traceidratio

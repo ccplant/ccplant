@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // HTTPClientConfig holds configuration for HTTP client creation
@@ -21,7 +23,8 @@ func DefaultHTTPClientConfig() HTTPClientConfig {
 // NewHTTPClient creates a new HTTP client with the given configuration
 func NewHTTPClient(config HTTPClientConfig) *http.Client {
 	return &http.Client{
-		Timeout: config.Timeout,
+		Timeout:   config.Timeout,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 }
 

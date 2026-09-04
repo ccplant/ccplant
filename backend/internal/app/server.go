@@ -50,6 +50,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"k8s.io/client-go/kubernetes"
@@ -1083,38 +1084,44 @@ func (s *Server) GetSessionRouteRepository() portrepos.SessionRouteRepository {
 }
 
 // CreateSession creates a new agent session
-func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+func (s *Server) CreateSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+	return telemetry.Operation(ctx, "app.Server.CreateSession", func(ctx context.Context) (entities.Session, error) {
+		return s.createSession(ctx, sessionID, startReq, userID, userRole, teams)
+	}, telemetry.String("session.scope", string(startReq.Scope)))
+}
+
+func (s *Server) createSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
 	// Identity and TeamConfig mutation belong to the API. The execution-plane
 	// manager receives an already-authorized request and never initializes the
 	// public authentication service.
 	if startReq.Scope == entities.ScopeTeam && startReq.TeamID != "" && s.teamConfigRepo != nil {
 		if simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService); ok {
 			ensurer := serviceaccountuc.NewGetOrCreateServiceAccountUseCase(s.teamConfigRepo, simpleAuth)
-			if err := ensurer.EnsureServiceAccount(context.Background(), startReq.TeamID); err != nil {
+			if err := ensurer.EnsureServiceAccount(ctx, startReq.TeamID); err != nil {
 				return nil, fmt.Errorf("ensure team service account: %w", err)
 			}
 		}
 	}
 	if startReq.Scope != entities.ScopeTeam {
-		if err := s.EnsurePersonalAPIKey(context.Background(), userID); err != nil {
+		if err := s.EnsurePersonalAPIKey(ctx, userID); err != nil {
 			return nil, fmt.Errorf("ensure personal API key: %w", err)
 		}
 	}
 	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
 	if startReq.Params != nil && startReq.Params.ManagerID != "" {
-		return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+		return s.createRemoteSession(ctx, sessionID, startReq, userID, teams)
 	}
 	if s.sessionRunnerStore != nil {
 		subject := sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: userID}
 		if startReq.Scope == entities.ScopeTeam {
 			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
 		}
-		resolved, err := s.resolveSessionPool(context.Background(), subject, startReq.Tags)
+		resolved, err := s.resolveSessionPool(ctx, subject, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
-			return s.createPoolSession(context.Background(), resolved, sessionID, startReq, userID, teams)
+			return s.createPoolSession(ctx, resolved, sessionID, startReq, userID, teams)
 		}
 	}
 
@@ -1128,7 +1135,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
 	}
 	if !sandboxRequested && !dindRequested {
-		selectedESM, err := s.findAutomaticAssignmentESM(context.Background(), userID, teams, startReq.Tags)
+		selectedESM, err := s.findAutomaticAssignmentESM(ctx, userID, teams, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select external session manager: %w", err)
 		}
@@ -1138,7 +1145,7 @@ func (s *Server) CreateSession(sessionID string, startReq entities.StartRequest,
 				startReq.Params = &entities.SessionParams{}
 			}
 			startReq.Params.ManagerID = selectedESM.ID
-			return s.createRemoteSession(context.Background(), sessionID, startReq, userID, teams)
+			return s.createRemoteSession(ctx, sessionID, startReq, userID, teams)
 		}
 		if hasAllocatorSelector {
 			return nil, fmt.Errorf("no external session manager matches allocator.* tags")

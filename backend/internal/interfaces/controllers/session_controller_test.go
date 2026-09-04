@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -47,7 +48,7 @@ func TestSessionTokenDebugLogging(t *testing.T) {
 
 type quotaErrorSessionCreator struct{}
 
-func (quotaErrorSessionCreator) CreateSession(string, entities.StartRequest, string, string, []string) (entities.Session, error) {
+func (quotaErrorSessionCreator) CreateSession(context.Context, string, entities.StartRequest, string, string, []string) (entities.Session, error) {
 	return nil, &sessionrunnercore.QuotaExceededError{
 		Pool: "linux", BindingID: "binding-alice", MaxConcurrent: 2, Active: 2,
 	}
