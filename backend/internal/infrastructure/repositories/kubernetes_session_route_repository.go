@@ -22,22 +22,22 @@ const (
 )
 
 type routeJSON struct {
-	SessionID        string            `json:"session_id"`
-	RemoteSessionID  string            `json:"remote_session_id"`
-	ManagerID        string            `json:"manager_id,omitempty"`
-	HMACSecret       string            `json:"hmac_secret"`
-	Transport        string            `json:"transport,omitempty"`
-	RuntimeTokenHash string            `json:"runtime_token_hash,omitempty"`
-	Generation       int64             `json:"generation,omitempty"`
-	UserID           string            `json:"user_id,omitempty"`
-	Scope            string            `json:"scope,omitempty"`
-	TeamID           string            `json:"team_id,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
-	StartedAt        time.Time         `json:"started_at,omitempty"`
-	InitialMessage   string            `json:"initial_message,omitempty"`
-	Status           string            `json:"status,omitempty"`
-	StatusUpdatedAt  time.Time         `json:"status_updated_at,omitempty"`
-	DeletionRequestID string           `json:"deletion_request_id,omitempty"`
+	SessionID         string            `json:"session_id"`
+	RemoteSessionID   string            `json:"remote_session_id"`
+	ManagerID         string            `json:"manager_id,omitempty"`
+	HMACSecret        string            `json:"hmac_secret"`
+	Transport         string            `json:"transport,omitempty"`
+	RuntimeTokenHash  string            `json:"runtime_token_hash,omitempty"`
+	Generation        int64             `json:"generation,omitempty"`
+	UserID            string            `json:"user_id,omitempty"`
+	Scope             string            `json:"scope,omitempty"`
+	TeamID            string            `json:"team_id,omitempty"`
+	Tags              map[string]string `json:"tags,omitempty"`
+	StartedAt         time.Time         `json:"started_at,omitempty"`
+	InitialMessage    string            `json:"initial_message,omitempty"`
+	Status            string            `json:"status,omitempty"`
+	StatusUpdatedAt   time.Time         `json:"status_updated_at,omitempty"`
+	DeletionRequestID string            `json:"deletion_request_id,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -62,21 +62,21 @@ func (r *KubernetesSessionRouteRepository) secretName(sessionID string) string {
 // Save creates or updates a session route secret
 func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *portrepos.SessionRoute) error {
 	data, err := json.Marshal(&routeJSON{
-		SessionID:        route.SessionID,
-		RemoteSessionID:  route.RemoteSessionID,
-		ManagerID:        route.ManagerID,
-		HMACSecret:       route.HMACSecret,
-		Transport:        route.Transport,
-		RuntimeTokenHash: route.RuntimeTokenHash,
-		Generation:       route.Generation,
-		UserID:           route.UserID,
-		Scope:            route.Scope,
-		TeamID:           route.TeamID,
-		Tags:             route.Tags,
-		StartedAt:        route.StartedAt,
-		InitialMessage:   route.InitialMessage,
-		Status:           route.Status,
-		StatusUpdatedAt:  route.StatusUpdatedAt,
+		SessionID:         route.SessionID,
+		RemoteSessionID:   route.RemoteSessionID,
+		ManagerID:         route.ManagerID,
+		HMACSecret:        route.HMACSecret,
+		Transport:         route.Transport,
+		RuntimeTokenHash:  route.RuntimeTokenHash,
+		Generation:        route.Generation,
+		UserID:            route.UserID,
+		Scope:             route.Scope,
+		TeamID:            route.TeamID,
+		Tags:              route.Tags,
+		StartedAt:         route.StartedAt,
+		InitialMessage:    route.InitialMessage,
+		Status:            route.Status,
+		StatusUpdatedAt:   route.StatusUpdatedAt,
 		DeletionRequestID: route.DeletionRequestID,
 	})
 	if err != nil {
@@ -141,21 +141,21 @@ func (r *KubernetesSessionRouteRepository) Get(ctx context.Context, sessionID st
 	}
 
 	return &portrepos.SessionRoute{
-		SessionID:        rj.SessionID,
-		RemoteSessionID:  rj.RemoteSessionID,
-		ManagerID:        rj.ManagerID,
-		HMACSecret:       rj.HMACSecret,
-		Transport:        rj.Transport,
-		RuntimeTokenHash: rj.RuntimeTokenHash,
-		Generation:       rj.Generation,
-		UserID:           rj.UserID,
-		Scope:            rj.Scope,
-		TeamID:           rj.TeamID,
-		Tags:             rj.Tags,
-		StartedAt:        rj.StartedAt,
-		InitialMessage:   rj.InitialMessage,
-		Status:           rj.Status,
-		StatusUpdatedAt:  rj.StatusUpdatedAt,
+		SessionID:         rj.SessionID,
+		RemoteSessionID:   rj.RemoteSessionID,
+		ManagerID:         rj.ManagerID,
+		HMACSecret:        rj.HMACSecret,
+		Transport:         rj.Transport,
+		RuntimeTokenHash:  rj.RuntimeTokenHash,
+		Generation:        rj.Generation,
+		UserID:            rj.UserID,
+		Scope:             rj.Scope,
+		TeamID:            rj.TeamID,
+		Tags:              rj.Tags,
+		StartedAt:         rj.StartedAt,
+		InitialMessage:    rj.InitialMessage,
+		Status:            rj.Status,
+		StatusUpdatedAt:   rj.StatusUpdatedAt,
 		DeletionRequestID: rj.DeletionRequestID,
 	}, nil
 }
@@ -184,21 +184,21 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			continue
 		}
 		routes = append(routes, &portrepos.SessionRoute{
-			SessionID:        rj.SessionID,
-			RemoteSessionID:  rj.RemoteSessionID,
-			ManagerID:        rj.ManagerID,
-			HMACSecret:       rj.HMACSecret,
-			Transport:        rj.Transport,
-			RuntimeTokenHash: rj.RuntimeTokenHash,
-			Generation:       rj.Generation,
-			UserID:           rj.UserID,
-			Scope:            rj.Scope,
-			TeamID:           rj.TeamID,
-			Tags:             rj.Tags,
-			StartedAt:        rj.StartedAt,
-			InitialMessage:   rj.InitialMessage,
-			Status:           rj.Status,
-			StatusUpdatedAt:  rj.StatusUpdatedAt,
+			SessionID:         rj.SessionID,
+			RemoteSessionID:   rj.RemoteSessionID,
+			ManagerID:         rj.ManagerID,
+			HMACSecret:        rj.HMACSecret,
+			Transport:         rj.Transport,
+			RuntimeTokenHash:  rj.RuntimeTokenHash,
+			Generation:        rj.Generation,
+			UserID:            rj.UserID,
+			Scope:             rj.Scope,
+			TeamID:            rj.TeamID,
+			Tags:              rj.Tags,
+			StartedAt:         rj.StartedAt,
+			InitialMessage:    rj.InitialMessage,
+			Status:            rj.Status,
+			StatusUpdatedAt:   rj.StatusUpdatedAt,
 			DeletionRequestID: rj.DeletionRequestID,
 		})
 	}

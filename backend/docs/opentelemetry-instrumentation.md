@@ -91,6 +91,22 @@ elapsed time. Child spans show time spent in downstream methods or remote I/O;
 the difference between the parent duration and its children is application
 self time.
 
+Direct-runtime tunnel traces split chat-history latency into these operations:
+
+- `esmcontrol.Tunnel.Enqueue`: persist the tunneled request.
+- `esmcontrol.Tunnel.WaitForFirstFrame`: wait for the runtime to begin its response.
+- `sessionmanager.ControlWorker.Execute`: execute the request in the runtime; its
+  local HTTP server span shows upstream history-generation time.
+- `sessionmanager.ControlWorker.PostFrames`: encode and upload a response batch.
+- `esmcontrol.Store.AppendFrames`: persist that response batch in Redis.
+- `esmcontrol.Tunnel.StreamResponseBody`: read all batches and deliver the body;
+  child `esmcontrol.Store.ReadFrames` spans show Redis wait/read time.
+
+Frame upload and stream spans include `esm.response.frame_count` and
+`esm.response.body.size`. These are trace-only attributes, so they can be used
+to compare large and small histories without adding high-cardinality metric
+labels.
+
 For trends and percentiles, enable Grafana Tempo's metrics-generator (or an
 OpenTelemetry Collector span-metrics connector) and group span metrics by
 `service.name`, `span.name`, and `status.code`. This yields request rate, errors,

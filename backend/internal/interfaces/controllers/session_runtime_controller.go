@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 // SessionRuntimeController exposes a per-session reverse-RPC channel used by a
@@ -127,7 +128,9 @@ func (c *SessionRuntimeController) AppendFrames(ctx echo.Context) error {
 			return ctx.JSON(http.StatusBadRequest, map[string]string{"error": "all frames must have the same request_id and a non-empty id"})
 		}
 	}
-	last, err := c.store.AppendFrames(ctx.Request().Context(), requestID, request.Frames)
+	last, err := telemetry.Operation(ctx.Request().Context(), "esmcontrol.Store.AppendFrames", func(operationCtx context.Context) (string, error) {
+		return c.store.AppendFrames(operationCtx, requestID, request.Frames)
+	}, telemetry.Int64("esm.response.frame_count", int64(len(request.Frames))), telemetry.Int64("esm.response.body.size", responseFrameBytes(request.Frames)))
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 	}
@@ -139,4 +142,12 @@ func (c *SessionRuntimeController) AppendFrames(ctx echo.Context) error {
 		}
 	}
 	return ctx.JSON(http.StatusAccepted, map[string]string{"accepted_through": last})
+}
+
+func responseFrameBytes(frames []core.ResponseFrame) int64 {
+	var total int64
+	for _, frame := range frames {
+		total += int64(len(frame.Body))
+	}
+	return total
 }
