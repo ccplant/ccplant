@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type Tunnel struct{ store core.Store }
@@ -29,21 +30,33 @@ func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID s
 	if !t.IsConnected(ctx, managerID) {
 		return nil, fmt.Errorf("external session manager %s has no outbound control lease", managerID)
 	}
-	requestID, err := t.Enqueue(ctx, managerID, sessionID, remoteSessionID, req)
+	requestID, err := telemetry.Operation(ctx, "esmcontrol.Tunnel.Enqueue", func(operationCtx context.Context) (string, error) {
+		return t.Enqueue(operationCtx, managerID, sessionID, remoteSessionID, req)
+	}, telemetry.String("http.request.method", req.Method))
 	if err != nil {
 		return nil, err
 	}
 
-	frames, cursor, err := t.waitForFirstFrame(ctx, requestID)
+	type firstFrameResult struct {
+		frames []core.ResponseFrame
+		cursor string
+	}
+	firstResult, err := telemetry.Operation(ctx, "esmcontrol.Tunnel.WaitForFirstFrame", func(operationCtx context.Context) (firstFrameResult, error) {
+		frames, cursor, waitErr := t.waitForFirstFrame(operationCtx, requestID)
+		return firstFrameResult{frames: frames, cursor: cursor}, waitErr
+	})
 	if err != nil {
 		return nil, err
 	}
+	frames, cursor := firstResult.frames, firstResult.cursor
 	first := frames[0]
 	if first.Error != "" {
 		return nil, fmt.Errorf("external session manager: %s", first.Error)
 	}
 	pipeReader, pipeWriter := io.Pipe()
-	go t.streamBody(ctx, requestID, cursor, frames, pipeWriter)
+	go telemetry.OperationVoid(ctx, "esmcontrol.Tunnel.StreamResponseBody", func(operationCtx context.Context) {
+		t.streamBody(operationCtx, requestID, cursor, frames, pipeWriter)
+	})
 	return &http.Response{
 		StatusCode: first.Status, Status: fmt.Sprintf("%d %s", first.Status, http.StatusText(first.Status)),
 		Header: http.Header(first.Headers), Body: &cancelBody{ReadCloser: pipeReader, cancel: func() {
@@ -138,16 +151,25 @@ func (t *Tunnel) waitForFirstFrame(ctx context.Context, requestID string) ([]cor
 
 func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initial []core.ResponseFrame, writer *io.PipeWriter) {
 	defer func() { _ = writer.Close() }()
+	frameCount := int64(len(initial))
+	byteCount := frameBytes(initial)
+	defer func() {
+		telemetry.SetAttributes(ctx, telemetry.Int64("esm.response.frame_count", frameCount), telemetry.Int64("esm.response.body.size", byteCount))
+	}()
 	if writeFrames(writer, initial) {
 		return
 	}
 	for {
-		frames, err := t.store.ReadFrames(ctx, requestID, cursor, 30*time.Second, 100)
+		frames, err := telemetry.Operation(ctx, "esmcontrol.Store.ReadFrames", func(operationCtx context.Context) ([]core.ResponseFrame, error) {
+			return t.store.ReadFrames(operationCtx, requestID, cursor, 30*time.Second, 100)
+		}, telemetry.Bool("esm.store.blocking", true))
 		if err != nil {
 			_ = writer.CloseWithError(err)
 			return
 		}
 		if len(frames) > 0 {
+			frameCount += int64(len(frames))
+			byteCount += frameBytes(frames)
 			cursor = frames[len(frames)-1].StreamID
 			if writeFrames(writer, frames) {
 				return
@@ -158,6 +180,14 @@ func (t *Tunnel) streamBody(ctx context.Context, requestID, cursor string, initi
 			return
 		}
 	}
+}
+
+func frameBytes(frames []core.ResponseFrame) int64 {
+	var total int64
+	for _, frame := range frames {
+		total += int64(len(frame.Body))
+	}
+	return total
 }
 
 func writeFrames(writer io.Writer, frames []core.ResponseFrame) bool {

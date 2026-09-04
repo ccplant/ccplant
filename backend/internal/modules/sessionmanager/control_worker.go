@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type ControlWorker struct {
@@ -130,14 +131,21 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 		w.active.Delete(command.ID)
 		cancel()
 	}()
+	commandCtx = telemetry.ExtractHTTP(commandCtx, http.Header(command.Headers))
+	_ = telemetry.OperationErr(commandCtx, "sessionmanager.ControlWorker.Execute", func(operationCtx context.Context) error {
+		return w.executeCommand(operationCtx, command)
+	}, telemetry.String("http.request.method", command.Method))
+}
+
+func (w *ControlWorker) executeCommand(commandCtx context.Context, command core.Command) error {
 	target := w.localURL + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
 	}
 	req, err := http.NewRequestWithContext(commandCtx, command.Method, target, bytes.NewReader(command.Body))
 	if err != nil {
-		w.postExecutionError(ctx, command, err)
-		return
+		w.postExecutionError(commandCtx, command, err)
+		return err
 	}
 	req.Header = http.Header(command.Headers).Clone()
 	if req.Header == nil {
@@ -152,10 +160,11 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 	}
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), msg))
 	req.Header.Set(hmacutil.TimestampHeader, ts)
+	telemetry.InjectHTTP(commandCtx, req)
 	resp, err := w.client.Do(req)
 	if err != nil {
-		w.postExecutionError(ctx, command, err)
-		return
+		w.postExecutionError(commandCtx, command, err)
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -168,8 +177,8 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 	frames := []core.ResponseFrame{start}
 	batchBytes := 0
 	if isEventStream {
-		if err := w.postFrames(ctx, frames); err != nil {
-			return
+		if err := w.postFrames(commandCtx, frames); err != nil {
+			return err
 		}
 		frames = nil
 	}
@@ -189,12 +198,18 @@ func (w *ControlWorker) execute(ctx context.Context, command core.Command) {
 				frame.Error = readErr.Error()
 			}
 			frames = append(frames, frame)
-			_ = w.postFrames(context.Background(), frames)
-			return
+			finalCtx := context.WithoutCancel(commandCtx)
+			if err := w.postFrames(finalCtx, frames); err != nil {
+				return err
+			}
+			if readErr != io.EOF {
+				return readErr
+			}
+			return nil
 		}
 		if isEventStream || batchBytes >= 512*1024 {
-			if err := w.postFrames(ctx, frames); err != nil {
-				return
+			if err := w.postFrames(commandCtx, frames); err != nil {
+				return err
 			}
 			frames = nil
 			batchBytes = 0
@@ -207,6 +222,12 @@ func (w *ControlWorker) postExecutionError(ctx context.Context, command core.Com
 }
 
 func (w *ControlWorker) postFrames(ctx context.Context, frames []core.ResponseFrame) error {
+	return telemetry.OperationErr(ctx, "sessionmanager.ControlWorker.PostFrames", func(operationCtx context.Context) error {
+		return w.postFramesRequest(operationCtx, frames)
+	}, telemetry.Int64("esm.response.frame_count", int64(len(frames))), telemetry.Int64("esm.response.body.size", frameBytes(frames)))
+}
+
+func (w *ControlWorker) postFramesRequest(ctx context.Context, frames []core.ResponseFrame) error {
 	body, _ := json.Marshal(map[string]interface{}{"frames": frames})
 	u, _ := url.Parse(w.upstreamURL + "/internal/external-session-manager/control/frames")
 	q := u.Query()
@@ -216,6 +237,7 @@ func (w *ControlWorker) postFrames(ctx context.Context, frames []core.ResponseFr
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w.authorize(req)
+		telemetry.InjectHTTP(ctx, req)
 		resp, err := w.client.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
@@ -228,6 +250,14 @@ func (w *ControlWorker) postFrames(ctx context.Context, frames []core.ResponseFr
 		sleepOrDone(ctx, 2*time.Second)
 	}
 	return ctx.Err()
+}
+
+func frameBytes(frames []core.ResponseFrame) int64 {
+	var total int64
+	for _, frame := range frames {
+		total += int64(len(frame.Body))
+	}
+	return total
 }
 
 func (w *ControlWorker) authorize(req *http.Request) {

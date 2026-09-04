@@ -27,6 +27,22 @@ func InjectHTTP(ctx context.Context, req *http.Request) {
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 }
 
+// ExtractHTTP restores trace propagation headers from an HTTP-shaped request.
+// It is intended for requests carried over transports that bypass net/http's
+// server instrumentation, such as the durable ESM control tunnel.
+func ExtractHTTP(ctx context.Context, header http.Header) context.Context {
+	return otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(header))
+}
+
+// Int64 creates an int64 span attribute without exposing the OpenTelemetry SDK
+// to instrumented packages.
+func Int64(key string, value int64) attribute.KeyValue { return attribute.Int64(key, value) }
+
+// SetAttributes adds attributes to the current span.
+func SetAttributes(ctx context.Context, attrs ...attribute.KeyValue) {
+	trace.SpanFromContext(ctx).SetAttributes(attrs...)
+}
+
 // Operation runs fn in an internal span and applies the project's error
 // recording policy. It keeps OpenTelemetry lifecycle bookkeeping out of
 // application code while preserving context propagation.

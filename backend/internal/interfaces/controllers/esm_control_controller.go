@@ -1,12 +1,14 @@
 package controllers
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	sessionrunner "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type ESMControlController struct {
@@ -99,7 +101,9 @@ func (c *ESMControlController) AppendFrames(ctx echo.Context) error {
 			request.Frames[i].CreatedAt = time.Now().UTC()
 		}
 	}
-	last, err := c.store.AppendFrames(ctx.Request().Context(), requestID, request.Frames)
+	last, err := telemetry.Operation(ctx.Request().Context(), "esmcontrol.Store.AppendFrames", func(operationCtx context.Context) (string, error) {
+		return c.store.AppendFrames(operationCtx, requestID, request.Frames)
+	}, telemetry.Int64("esm.response.frame_count", int64(len(request.Frames))), telemetry.Int64("esm.response.body.size", responseFrameBytes(request.Frames)))
 	if err != nil {
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 	}
