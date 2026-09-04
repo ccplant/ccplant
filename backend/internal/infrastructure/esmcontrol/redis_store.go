@@ -20,10 +20,20 @@ const (
 	connectionTTL = 75 * time.Second
 )
 
-type RedisStore struct{ client *redis.Client }
+type RedisStore struct {
+	client         *redis.Client
+	blockingClient *redis.Client
+}
 
 func NewRedisStore(client *redis.Client) *RedisStore {
-	return &RedisStore{client: client}
+	// Blocking reads use a separate pool so persistent command/response waits can
+	// never consume the connections needed to enqueue commands or append frames.
+	options := *client.Options()
+	if options.MaintNotificationsConfig != nil {
+		config := *options.MaintNotificationsConfig
+		options.MaintNotificationsConfig = &config
+	}
+	return &RedisStore{client: client, blockingClient: redis.NewClient(&options)}
 }
 
 func commandKey(managerID string) string {
@@ -45,13 +55,37 @@ func frameDedupKey(requestID, frameID string) string {
 	return "agentapi:esm-request:{" + requestID + "}:frame:" + frameID
 }
 
-var appendFrameScript = redis.NewScript(`
+const appendFrameScriptSource = `
 if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
   local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[2], '*', 'frame', ARGV[1])
   redis.call('EXPIRE', KEYS[1], ARGV[3])
   return id
 end
 return ''
+`
+
+var refreshOwnerScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0
+`)
+
+var ackCommandScript = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+local function before(left, right)
+  local left_ms, left_seq = string.match(left, '^(%d+)%-(%d+)$')
+  local right_ms, right_seq = string.match(right, '^(%d+)%-(%d+)$')
+  if not left_ms or not right_ms then return left < right end
+  left_ms, left_seq = tonumber(left_ms), tonumber(left_seq)
+  right_ms, right_seq = tonumber(right_ms), tonumber(right_seq)
+  return left_ms < right_ms or (left_ms == right_ms and left_seq < right_seq)
+end
+if not current or before(current, ARGV[1]) then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+end
+return 1
 `)
 
 func (s *RedisStore) TouchManager(ctx context.Context, managerID, instanceID string) error {
@@ -78,15 +112,14 @@ func (s *RedisStore) EnqueueCommand(ctx context.Context, managerID string, comma
 		return "", err
 	}
 	key := commandKey(managerID)
-	id, err := s.client.XAdd(ctx, &redis.XAddArgs{Stream: key, MaxLen: maxLen, Approx: true, Values: map[string]interface{}{"command": payload}}).Result()
-	if err != nil {
+	pipe := s.client.Pipeline()
+	idCommand := pipe.XAdd(ctx, &redis.XAddArgs{Stream: key, MaxLen: maxLen, Approx: true, Values: map[string]interface{}{"command": payload}})
+	pipe.Expire(ctx, key, streamTTL)
+	pipe.Set(ctx, requestOwnerKey(command.ID), managerID, streamTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
 		return "", fmt.Errorf("append ESM command: %w", err)
 	}
-	_ = s.client.Expire(ctx, key, streamTTL).Err()
-	if err := s.client.Set(ctx, requestOwnerKey(command.ID), managerID, streamTTL).Err(); err != nil {
-		return "", fmt.Errorf("record ESM request owner: %w", err)
-	}
-	return id, nil
+	return idCommand.Val(), nil
 }
 
 func (s *RedisStore) ReadCommands(ctx context.Context, managerID, after string, wait time.Duration, count int64) ([]core.Command, error) {
@@ -118,30 +151,31 @@ func (s *RedisStore) AckCommand(ctx context.Context, managerID, streamID string)
 		return nil
 	}
 	key := commandAckKey(managerID)
-	current, err := s.client.Get(ctx, key).Result()
-	if err != nil && err != redis.Nil {
-		return err
-	}
-	if !streamIDLess(current, streamID) {
-		return nil
-	}
-	return s.client.Set(ctx, key, streamID, streamTTL).Err()
+	return ackCommandScript.Run(ctx, s.client, []string{key}, streamID, int64(streamTTL/time.Second)).Err()
 }
 
 func (s *RedisStore) AppendFrames(ctx context.Context, requestID string, frames []core.ResponseFrame) (string, error) {
 	key := responseKey(requestID)
-	last := ""
+	commands := make([]*redis.Cmd, 0, len(frames))
+	pipe := s.client.Pipeline()
 	for _, frame := range frames {
 		payload, err := json.Marshal(frame)
 		if err != nil {
 			return "", err
 		}
-		last, err = appendFrameScript.Run(ctx, s.client, []string{key, frameDedupKey(requestID, frame.ID)}, payload, maxLen, int64(streamTTL/time.Second)).Text()
-		if err != nil {
-			return "", fmt.Errorf("append ESM response frame: %w", err)
+		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID, frame.ID)}, payload, maxLen, int64(streamTTL/time.Second)))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return "", fmt.Errorf("append ESM response frames: %w", err)
+	}
+	last := ""
+	for _, command := range commands {
+		if value, err := command.Text(); err != nil && err != redis.Nil {
+			return "", fmt.Errorf("read appended ESM response frame: %w", err)
+		} else if value != "" {
+			last = value
 		}
 	}
-	_ = s.client.Expire(ctx, key, streamTTL).Err()
 	return last, nil
 }
 
@@ -164,23 +198,14 @@ func (s *RedisStore) ReadFrames(ctx context.Context, requestID, after string, wa
 
 func (s *RedisStore) RequestBelongsToManager(ctx context.Context, requestID, managerID string) (bool, error) {
 	key := requestOwnerKey(requestID)
-	owner, err := s.client.Get(ctx, key).Result()
-	if err == redis.Nil {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if owner != managerID {
-		return false, nil
-	}
 	// A successful upload proves that the request is still active. Refresh its
 	// lease so a long-running request cannot start returning 403 midway through
 	// execution.
-	if err := s.client.Expire(ctx, key, streamTTL).Err(); err != nil {
+	owned, err := refreshOwnerScript.Run(ctx, s.client, []string{key}, managerID, int64(streamTTL/time.Second)).Bool()
+	if err != nil {
 		return false, fmt.Errorf("refresh ESM request owner: %w", err)
 	}
-	return true, nil
+	return owned, nil
 }
 
 func (s *RedisStore) read(ctx context.Context, key, after string, wait time.Duration, count int64) ([]redis.XMessage, error) {
@@ -190,35 +215,25 @@ func (s *RedisStore) read(ctx context.Context, key, after string, wait time.Dura
 	if count <= 0 || count > 100 {
 		count = 100
 	}
-	deadline := time.Now().Add(wait)
-	for {
-		// Do not use XREAD BLOCK here. Browser bootstrap opens several tunnel
-		// requests concurrently; blocked reads can consume every Redis connection
-		// and prevent the runtime's response-frame write that would wake them.
-		streams, err := s.client.XRead(ctx, &redis.XReadArgs{
-			Streams: []string{key, after}, Count: count, Block: -1,
-		}).Result()
-		if err != nil && err != redis.Nil {
-			return nil, fmt.Errorf("read ESM control stream: %w", err)
-		}
-		if len(streams) > 0 {
-			return streams[0].Messages, nil
-		}
-		if wait <= 0 || !time.Now().Before(deadline) {
-			return nil, nil
-		}
-		delay := 50 * time.Millisecond
-		if remaining := time.Until(deadline); remaining < delay {
-			delay = remaining
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
+	client := s.client
+	block := time.Duration(-1)
+	if wait > 0 {
+		client = s.blockingClient
+		block = wait
 	}
+	streams, err := client.XRead(ctx, &redis.XReadArgs{
+		Streams: []string{key, after}, Count: count, Block: block,
+	}).Result()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read ESM control stream: %w", err)
+	}
+	if len(streams) == 0 {
+		return nil, nil
+	}
+	return streams[0].Messages, nil
 }
 
 func decode(msg redis.XMessage, field string, target interface{}) error {

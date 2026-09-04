@@ -93,6 +93,7 @@
             "serviceName": { "type": "string", "minLength": 1 },
             "serviceNamespace": { "type": "string", "minLength": 1 },
             "deploymentEnvironment": { "type": "string" },
+            "cloudRegion": { "type": "string" },
             "tracesSampler": { "type": "string", "minLength": 1 },
             "tracesSamplerArg": { "type": "string", "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$" },
             "secretRef": {

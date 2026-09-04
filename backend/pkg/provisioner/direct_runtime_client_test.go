@@ -1,6 +1,7 @@
 package provisioner
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -12,6 +13,39 @@ import (
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+func TestDirectRuntimeCompressesLargeFrameUpload(t *testing.T) {
+	var contentEncoding string
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentEncoding = r.Header.Get("Content-Encoding")
+		reader, err := gzip.NewReader(r.Body)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer func() { _ = reader.Close() }()
+		var body struct {
+			Frames []core.ResponseFrame `json:"frames"`
+		}
+		if err := json.NewDecoder(reader).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if len(body.Frames) != 1 || len(body.Frames[0].Body) != 128*1024 {
+			t.Errorf("unexpected frames: count=%d", len(body.Frames))
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer parent.Close()
+	worker := &directRuntimeWorker{cfg: &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "session-a", Token: "secret", Generation: 1}, client: parent.Client()}
+	err := worker.postFrames(context.Background(), []core.ResponseFrame{{ID: "frame-a", RequestID: "request-a", Body: make([]byte, 128*1024)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentEncoding != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", contentEncoding)
+	}
+}
 
 func TestDirectRuntimePollAndExecute(t *testing.T) {
 	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"

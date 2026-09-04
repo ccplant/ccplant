@@ -3,6 +3,8 @@ package telemetry
 import (
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 func TestEnabled(t *testing.T) {
@@ -20,6 +22,19 @@ func TestEnabled(t *testing.T) {
 	t.Setenv("OTEL_SDK_DISABLED", "true")
 	if Enabled() {
 		t.Fatal("Enabled() = true when SDK is disabled")
+	}
+}
+
+func TestPlatformResourceAttributes(t *testing.T) {
+	t.Setenv("FLY_APP_NAME", "proxy")
+	t.Setenv("FLY_REGION", "nrt")
+	attributes := platformResourceAttributes()
+	values := map[string]string{}
+	for _, item := range attributes {
+		values[string(item.Key)] = item.Value.AsString()
+	}
+	if values[string(semconv.CloudRegionKey)] != "nrt" || values[string(semconv.CloudProviderKey)] != "fly_io" {
+		t.Fatalf("platform attributes = %#v", values)
 	}
 }
 

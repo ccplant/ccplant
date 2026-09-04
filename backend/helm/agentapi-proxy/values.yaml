@@ -925,6 +925,9 @@ observability:
     sessionManagerServiceName: agentapi-session-manager
     serviceNamespace: ccplant
     deploymentEnvironment: ""
+    # Region is added to every trace as cloud.region. Set this when the
+    # platform does not expose FLY_REGION, CLOUD_RUN_REGION, or AWS_REGION.
+    cloudRegion: ""
     tracesSampler: parentbased_traceidratio
     tracesSamplerArg: "1.0"
     # Existing Secret containing the OTLP base endpoint and authentication
