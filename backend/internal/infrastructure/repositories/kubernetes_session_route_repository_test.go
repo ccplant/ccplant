@@ -26,3 +26,29 @@ func TestKubernetesSessionRouteRepositorySaveUpdatesExistingSecret(t *testing.T)
 		t.Fatalf("route was not updated: %#v", route)
 	}
 }
+
+func TestKubernetesSessionRouteRepositoryCachesGets(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	writer := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	if err := writer.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", ManagerID: "manager-a", Tags: map[string]string{"env": "test"}}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	before := len(client.Actions())
+	first, err := repo.Get(ctx, "session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Tags["env"] = "mutated"
+	second, err := repo.Get(ctx, "session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(client.Actions()) - before; got != 1 {
+		t.Fatalf("Kubernetes calls = %d, want 1", got)
+	}
+	if second.Tags["env"] != "test" {
+		t.Fatalf("cached route was mutated: %#v", second.Tags)
+	}
+}
