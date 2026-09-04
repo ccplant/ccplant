@@ -34,6 +34,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilversion "k8s.io/apimachinery/pkg/util/version"
@@ -397,14 +398,16 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 }
 
 func reconcileSessionRunnerHeartbeat(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier, registeredRunnerIDs *[]string) {
-	// The parent inventory was captured before this heartbeat response. Remove
-	// orphaned local runners before replenishing stock so a runner registered by
-	// this reconciliation is not immediately deleted as absent from that stale
-	// snapshot.
-	if registeredRunnerIDs != nil {
-		reconcileOrphanedSessionRunners(ctx, manager, *registeredRunnerIDs)
-	}
-	reconcileSessionRunnerPools(ctx, manager, pools)
+	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcileHeartbeat", func(ctx context.Context) {
+		// The parent inventory was captured before this heartbeat response. Remove
+		// orphaned local runners before replenishing stock so a runner registered by
+		// this reconciliation is not immediately deleted as absent from that stale
+		// snapshot.
+		if registeredRunnerIDs != nil {
+			reconcileOrphanedSessionRunners(ctx, manager, *registeredRunnerIDs)
+		}
+		reconcileSessionRunnerPools(ctx, manager, pools)
+	})
 }
 
 type orphanedSessionRunnerCleaner interface {
@@ -412,19 +415,21 @@ type orphanedSessionRunnerCleaner interface {
 }
 
 func reconcileOrphanedSessionRunners(ctx context.Context, manager sessionRunnerInfrastructure, registeredIDs []string) {
-	cleaner, ok := manager.(orphanedSessionRunnerCleaner)
-	if !ok {
-		return
-	}
-	registered := make(map[string]struct{}, len(registeredIDs))
-	for _, id := range registeredIDs {
-		if id != "" {
-			registered[id] = struct{}{}
+	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcileOrphanedRunners", func(ctx context.Context) {
+		cleaner, ok := manager.(orphanedSessionRunnerCleaner)
+		if !ok {
+			return
 		}
-	}
-	if err := cleaner.DeleteRunnerSessionsNotRegistered(ctx, registered); err != nil {
-		log.Printf("[SESSION_MANAGER] Delete orphaned runner sessions: %v", err)
-	}
+		registered := make(map[string]struct{}, len(registeredIDs))
+		for _, id := range registeredIDs {
+			if id != "" {
+				registered[id] = struct{}{}
+			}
+		}
+		if err := cleaner.DeleteRunnerSessionsNotRegistered(ctx, registered); err != nil {
+			log.Printf("[SESSION_MANAGER] Delete orphaned runner sessions: %v", err)
+		}
+	})
 }
 
 func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace, desired string) error {
@@ -534,35 +539,37 @@ type sessionRunnerInfrastructure interface {
 }
 
 func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier) {
-	for _, pool := range pools {
-		if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
-			continue
-		}
-		localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
-		if err != nil {
-			log.Printf("[SESSION_MANAGER] Count pool %s idle runners: %v", pool.Pool, err)
-			continue
-		}
-		localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
-		if err != nil {
-			log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
-			continue
-		}
-		// A stock Service can survive after its runner registration has gone
-		// stale. Conversely, the parent registry can briefly outlive a deleted
-		// Service. Treat capacity as idle only when both inventories agree so a
-		// stale record on either side cannot permanently suppress replenishment.
-		idle := min(localIdle, pool.IdleRunners)
-		total := max(localTotal, pool.TotalRunners)
-		for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
-			if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
-				log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)
-				break
+	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcilePools", func(ctx context.Context) {
+		for _, pool := range pools {
+			if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
+				continue
 			}
-			idle++
-			total++
+			localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
+			if err != nil {
+				log.Printf("[SESSION_MANAGER] Count pool %s idle runners: %v", pool.Pool, err)
+				continue
+			}
+			localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
+			if err != nil {
+				log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
+				continue
+			}
+			// A stock Service can survive after its runner registration has gone
+			// stale. Conversely, the parent registry can briefly outlive a deleted
+			// Service. Treat capacity as idle only when both inventories agree so a
+			// stale record on either side cannot permanently suppress replenishment.
+			idle := min(localIdle, pool.IdleRunners)
+			total := max(localTotal, pool.TotalRunners)
+			for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
+				if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
+					log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)
+					break
+				}
+				idle++
+				total++
+			}
 		}
-	}
+	})
 }
 
 func newSessionManagerEncryptionRegistry() (*services.EncryptionServiceRegistry, error) {
