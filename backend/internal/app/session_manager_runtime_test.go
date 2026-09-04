@@ -9,6 +9,7 @@ import (
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
@@ -31,6 +32,19 @@ func TestNewSessionManagerRuntimeRemoteModeDoesNotRequireRedis(t *testing.T) {
 	_, err := NewSessionManagerRuntime(context.Background(), cfg, false)
 	if err == nil || err.Error() != "session-manager internal API token is required" {
 		t.Fatalf("error = %v, want internal API token required after Redis validation is skipped", err)
+	}
+}
+
+func TestRemoteSessionManagerStoresDoNotUseRedis(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Redis.Addr = "redis.example.invalid:6379"
+
+	statusRepo := buildSessionManagerStatusEventRepository(cfg, true)
+	if _, ok := statusRepo.(*repositories.NoopStatusRepository); !ok {
+		t.Fatalf("status repository = %T, want *repositories.NoopStatusRepository", statusRepo)
+	}
+	if controlStore := buildSessionManagerControlStore(cfg, true); controlStore != nil {
+		t.Fatalf("control store = %T, want nil", controlStore)
 	}
 }
 

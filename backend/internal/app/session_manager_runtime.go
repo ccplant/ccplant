@@ -19,6 +19,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
+	"github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
@@ -130,7 +131,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
 		cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())
 	})
-	statusRepo := buildStatusEventRepository(cfg)
+	statusRepo := buildSessionManagerStatusEventRepository(cfg, remoteMode)
 	manager.SetStatusEventRepository(statusRepo)
 	if cache, ok := statusRepo.(portrepos.SessionListCacheRepository); ok {
 		manager.SetSessionListCacheRepository(cache)
@@ -145,7 +146,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		_ = manager.Shutdown(5 * time.Second)
 		return nil, fmt.Errorf("initialize session state store: %w", err)
 	}
-	controlStore := buildSessionControlStore(cfg)
+	controlStore := buildSessionManagerControlStore(cfg, remoteMode)
 	if controlStore != nil {
 		manager.SetSessionControlStore(controlStore)
 	}
@@ -305,6 +306,20 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+func buildSessionManagerStatusEventRepository(cfg *config.Config, remoteMode bool) portrepos.StatusEventRepository {
+	if remoteMode {
+		return repositories.NewNoopStatusRepository()
+	}
+	return buildStatusEventRepository(cfg)
+}
+
+func buildSessionManagerControlStore(cfg *config.Config, remoteMode bool) sessioncontrol.Store {
+	if remoteMode {
+		return nil
+	}
+	return buildSessionControlStore(cfg)
 }
 
 func runSessionManagerVersionPoller(ctx context.Context, cfg *config.Config, client kubernetes.Interface, namespace string) {
