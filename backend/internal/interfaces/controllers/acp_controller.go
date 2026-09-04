@@ -208,7 +208,7 @@ func (c *ACPController) handleSessionNew(ctx echo.Context, req acpRequest) error
 	startReq.TeamID = resolvedTeamID
 
 	sessionID := uuid.New().String()
-	session, err := c.sessionCreator.CreateSession(sessionID, startReq, userID, userRole, teams)
+	session, err := c.sessionCreator.CreateSession(ctx.Request().Context(), sessionID, startReq, userID, userRole, teams)
 	if err != nil {
 		log.Printf("[ACP] session/new failed: %v", err)
 		return ctx.JSON(http.StatusOK, acpErrResp(req.ID, -32603, "failed to create session: "+err.Error()))

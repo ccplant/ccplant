@@ -16,6 +16,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // RunnerWorker exposes native process capacity through the same runner_claim_v1
@@ -53,7 +55,7 @@ type nativeClaim struct {
 }
 
 func NewRunnerWorker(manager repositories.SessionManager, upstream, managerID, token string) *RunnerWorker {
-	return &RunnerWorker{manager: manager, upstream: strings.TrimRight(upstream, "/"), managerID: managerID, token: token, client: &http.Client{Timeout: 35 * time.Second}, idle: map[string]int{}}
+	return &RunnerWorker{manager: manager, upstream: strings.TrimRight(upstream, "/"), managerID: managerID, token: token, client: utils.NewHTTPClient(utils.HTTPClientConfig{Timeout: 35 * time.Second}), idle: map[string]int{}}
 }
 
 func (w *RunnerWorker) Start(ctx context.Context) {
@@ -74,6 +76,10 @@ func (w *RunnerWorker) Start(ctx context.Context) {
 }
 
 func (w *RunnerWorker) reconcile(ctx context.Context) {
+	telemetry.OperationVoid(ctx, "sessionmanager.RunnerWorker.reconcile", w.reconcileOnce)
+}
+
+func (w *RunnerWorker) reconcileOnce(ctx context.Context) {
 	// Native managers communicate only with the backend. The backend owns the
 	// shared Redis connection used for liveness, pool state, and control traffic.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", nil)
@@ -120,6 +126,12 @@ func (w *RunnerWorker) reconcile(ctx context.Context) {
 }
 
 func (w *RunnerWorker) runSlot(ctx context.Context, pool string) {
+	telemetry.OperationVoid(ctx, "sessionmanager.RunnerWorker.runSlot", func(ctx context.Context) {
+		w.runSlotOnce(ctx, pool)
+	}, telemetry.String("runner.pool", pool))
+}
+
+func (w *RunnerWorker) runSlotOnce(ctx context.Context, pool string) {
 	defer func() { w.mu.Lock(); w.idle[pool]--; w.mu.Unlock() }()
 	runnerID := uuid.NewString()
 	runnerToken, err := w.register(ctx, runnerID, pool)

@@ -34,6 +34,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/kubernetes"
@@ -170,6 +171,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 
 	e := echo.New()
 	e.HideBanner = true
+	e.Use(otelecho.Middleware("agentapi-session-manager", otelecho.WithSkipper(func(c echo.Context) bool {
+		return c.Path() == "/livez" || c.Path() == "/healthz" || c.Path() == "/readyz"
+	})))
 	e.Use(middleware.Recover())
 	e.GET("/livez", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
 	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })

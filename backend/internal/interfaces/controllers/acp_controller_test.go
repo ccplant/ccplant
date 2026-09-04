@@ -119,7 +119,7 @@ func (r *fakeACPRouteRepo) List(context.Context, string) ([]*repositories.Sessio
 }
 func (r *fakeACPRouteRepo) Delete(context.Context, string) error { return nil }
 
-func (c *fakeSessionCreator) CreateSession(sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+func (c *fakeSessionCreator) CreateSession(_ context.Context, sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
 	c.created = append(c.created, sessionID)
 	return &fakeSession{id: sessionID, userID: userID, scope: req.Scope, status: "running"}, nil
 }

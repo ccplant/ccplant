@@ -33,9 +33,20 @@ Echo middleware (server span)
             -> otelhttp.Transport (client span + context injection)
 ```
 
-The session launch workflow is the first business operation using this pattern.
-It covers HTTP, schedule, webhook, Slack, and worker callers because all of them
-enter through the same use case.
+The initial rollout covers the latency-sensitive paths below:
+
+- Start API: `SessionController.StartSession` -> `Server.CreateSession` -> pool
+  selection or `KubernetesSessionManager.CreateSession` -> allocation submission
+  or direct Kubernetes resource creation.
+- Chat retrieval: `sessionmanagerapi.Client.GetMessages` -> session-manager HTTP
+  server -> `KubernetesSessionManager.GetMessages` -> the session's AgentAPI HTTP
+  endpoint, including response decoding.
+- Background execution: schedule worker iterations, allocation worker jobs, and
+  session-manager runner reconciliation/slots.
+
+The API, worker, and session-manager commands each initialize and shut down the
+OpenTelemetry SDK. W3C trace context is propagated over the instrumented HTTP
+clients, so work crossing those process boundaries remains in one trace.
 
 ## Rules
 

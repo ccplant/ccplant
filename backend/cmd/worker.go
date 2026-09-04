@@ -20,6 +20,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stockinventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +40,16 @@ func init() {
 }
 
 func runWorkers(_ *cobra.Command, _ []string) error {
+	shutdownTelemetry, err := telemetry.Setup(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTelemetry(shutdownCtx)
+	}()
+
 	cfg, err := loadRuntimeConfig(workerConfigPath)
 	if err != nil {
 		return err
@@ -267,6 +278,10 @@ func (w *remoteScheduleWorker) Run(ctx context.Context) {
 }
 
 func (w *remoteScheduleWorker) process(ctx context.Context) {
+	telemetry.OperationVoid(ctx, "cmd.remoteScheduleWorker.process", w.processOnce)
+}
+
+func (w *remoteScheduleWorker) processOnce(ctx context.Context) {
 	jobs, err := w.client.ClaimDueSchedules(ctx)
 	if err != nil {
 		log.Printf("[SCHEDULE_WORKER] Claim API failed: %v", err)

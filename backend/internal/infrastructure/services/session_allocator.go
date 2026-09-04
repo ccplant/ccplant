@@ -11,6 +11,7 @@ import (
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,12 @@ const (
 // the leader-elected allocator is enabled. Tests and non-server usage fall back
 // to direct allocation when the allocator has not been started.
 func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	return telemetry.Operation(ctx, "services.KubernetesSessionManager.CreateSession", func(ctx context.Context) (entities.Session, error) {
+		return m.createSession(ctx, id, req, webhookPayload)
+	}, telemetry.Bool("session.allocator_enabled", m.isSessionAllocatorEnabled()))
+}
+
+func (m *KubernetesSessionManager) createSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	if !m.isSessionAllocatorEnabled() {
 		return m.allocateSessionDirect(ctx, id, req, webhookPayload)
 	}
@@ -35,10 +42,18 @@ func (m *KubernetesSessionManager) CreateSession(ctx context.Context, id string,
 // to the cluster-wide allocator. External session manager workers use this to
 // ensure the remote session ID they report matches the concrete local session.
 func (m *KubernetesSessionManager) CreateSessionDirect(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
-	return m.allocateSessionDirect(ctx, id, req, webhookPayload)
+	return telemetry.Operation(ctx, "services.KubernetesSessionManager.CreateSessionDirect", func(ctx context.Context) (entities.Session, error) {
+		return m.allocateSessionDirect(ctx, id, req, webhookPayload)
+	})
 }
 
 func (m *KubernetesSessionManager) submitSessionAllocation(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	return telemetry.Operation(ctx, "services.KubernetesSessionManager.submitSessionAllocation", func(ctx context.Context) (entities.Session, error) {
+		return m.submitSessionAllocationRequest(ctx, id, req, webhookPayload)
+	})
+}
+
+func (m *KubernetesSessionManager) submitSessionAllocationRequest(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	allocation := &sessionallocation.AllocationRequest{
 		SessionID:      id,
 		Request:        req,
