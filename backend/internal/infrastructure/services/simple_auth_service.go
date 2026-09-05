@@ -37,6 +37,7 @@ type SimpleAuthService struct {
 	keyToUserID      map[string]entities.UserID
 	apiTokens        map[string]*apiTokenRecord // keyed by plaintext secret
 	apiTokenRepo     repositories.APITokenRepository
+	localUserRepo    repositories.LocalUserRepository
 	githubProvider   *auth.GitHubAuthProvider
 	githubAuthConfig *config.GitHubAuthConfig
 
@@ -104,6 +105,12 @@ func (s *SimpleAuthService) SetAPITokenRepository(repo repositories.APITokenRepo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.apiTokenRepo = repo
+}
+
+func (s *SimpleAuthService) SetLocalUserRepository(repo repositories.LocalUserRepository) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.localUserRepo = repo
 }
 
 // ReconcileAPITokens refreshes the in-memory named-token map from the
@@ -195,7 +202,6 @@ func (s *SimpleAuthService) AuthenticateUser(ctx context.Context, credentials *s
 // ValidateAPIKey validates an API key and returns the associated user
 func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (*entities.User, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	// If this secret has ever been registered as a named API token (e.g. via
 	// migration or explicit creation), the named-token store is authoritative.
@@ -205,20 +211,30 @@ func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (
 	// silently bypassing the revocation. Shadowing is sticky, so a later
 	// legacy reload cannot unshadow it either.
 	if _, shadowed := s.shadowedSecrets[apiKey]; shadowed {
-		return s.validateAPITokenLocked(apiKey)
+		rec, repo, err := s.copyAPITokenLocked(apiKey)
+		s.mu.RUnlock()
+		if err != nil {
+			return nil, err
+		}
+		return validateAPITokenRecord(ctx, rec, repo)
 	}
 
 	// Check if API key exists
 	key, exists := s.apiKeys[apiKey]
 	if !exists {
-		// Fall through to named API tokens (new multi-token system).
-		return s.validateAPITokenLocked(apiKey)
+		rec, repo, err := s.copyAPITokenLocked(apiKey)
+		s.mu.RUnlock()
+		if err != nil {
+			return nil, err
+		}
+		return validateAPITokenRecord(ctx, rec, repo)
 	}
 
 	// Check if API key is expired
 	if key.ExpiresAt != nil {
 		expiresAt, err := time.Parse(time.RFC3339, *key.ExpiresAt)
 		if err == nil && time.Now().After(expiresAt) {
+			s.mu.RUnlock()
 			return nil, errors.New("API key expired")
 		}
 	}
@@ -227,38 +243,47 @@ func (s *SimpleAuthService) ValidateAPIKey(ctx context.Context, apiKey string) (
 	userID := s.keyToUserID[apiKey]
 	user, exists := s.users[userID]
 	if !exists {
+		s.mu.RUnlock()
 		return nil, errors.New("user not found")
 	}
-
+	s.mu.RUnlock()
 	return user, nil
 }
 
-// validateAPITokenLocked looks up a plaintext secret in the named API token
-// map and returns a freshly constructed User entity that authenticates as the
-// token's identity (personal owner or team service account). It must be
-// called with s.mu already held (at least read-locked).
-func (s *SimpleAuthService) validateAPITokenLocked(secret string) (*entities.User, error) {
+func (s *SimpleAuthService) copyAPITokenLocked(secret string) (*apiTokenRecord, repositories.LocalUserRepository, error) {
 	rec, ok := s.apiTokens[secret]
 	if !ok {
-		return nil, errors.New("invalid API key")
+		return nil, nil, errors.New("invalid API key")
 	}
+	copyRec := *rec
+	copyRec.permissions = append([]entities.Permission(nil), rec.permissions...)
+	if rec.expiresAt != nil {
+		exp := *rec.expiresAt
+		copyRec.expiresAt = &exp
+	}
+	return &copyRec, s.localUserRepo, nil
+}
+
+func validateAPITokenRecord(ctx context.Context, rec *apiTokenRecord, localUsers repositories.LocalUserRepository) (*entities.User, error) {
 	if rec.expiresAt != nil && time.Now().After(*rec.expiresAt) {
 		return nil, errors.New("API key expired")
 	}
-
-	perms := make([]entities.Permission, len(rec.permissions))
-	copy(perms, rec.permissions)
-
-	switch rec.scope {
-	case entities.APITokenScopeTeam:
-		return entities.NewServiceAccountUser(rec.userID, rec.teamID, perms), nil
-	default:
-		// Personal token authenticates as the owner with the token's
-		// explicit permissions.
-		user := entities.NewUser(rec.userID, entities.UserTypeRegular, string(rec.userID))
-		user.SetPermissions(perms)
-		return user, nil
+	if rec.scope == entities.APITokenScopeTeam {
+		return entities.NewServiceAccountUser(rec.userID, rec.teamID, rec.permissions), nil
 	}
+	if strings.HasPrefix(string(rec.userID), "local:") {
+		if localUsers == nil {
+			return nil, errors.New("local user repository unavailable")
+		}
+		localUser, err := localUsers.GetByID(ctx, rec.userID)
+		if err != nil {
+			return nil, errors.New("local user not found")
+		}
+		return localUser.ToUser(rec.permissions), nil
+	}
+	user := entities.NewUser(rec.userID, entities.UserTypeRegular, string(rec.userID))
+	user.SetPermissions(rec.permissions)
+	return user, nil
 }
 
 // LoadAPIToken registers a named API token into the in-memory auth map so it
