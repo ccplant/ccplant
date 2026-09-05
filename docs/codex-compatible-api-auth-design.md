@@ -228,3 +228,16 @@ API キーの実値をリポジトリの `.claude/settings.json`、引数、プ�
 | 401、404、到達不能、非対応モデル | 秘密情報を伏せて原因を表示し、別接続へ切り替えない |
 
 本 PR に設定 API、接続解決、起動設定の生成、復元時の接続検証と両フォームの操作テストを追加した。Fly 開発環境にデプロイし、Codex / Claude ACP と Ollama Cloud の実推論・モデル上書き・ツール実行を確認した。検証範囲と制限は [実機検証記録](ollama-fly-dev-verification.md) を参照。
+
+### セッションプロファイルの認証方法指定
+
+セッションプロファイルの作成・編集画面に、Codex と Claude Code それぞれの認証方法を設ける。
+`config.params.codex_auth_mode` は `auth_json` / `openai_compatible`、
+`config.params.claude_auth_mode` は `oauth` / `bedrock` / `anthropic_compatible` を指定できる。
+省略時は認証設定を継承する。明示的な起動リクエストの指定はプロファイルより優先する。
+
+認証方法は起動するセッションにのみ適用し、保存済み認証設定を変更しない。
+接続先と API キーは既存の `credential_source` で選択された所有者の認証設定から読み込む。
+互換 API に必要な接続設定がない場合は起動エラーとし、別の認証方法へフォールバックしない。
+OAuth / auth.json / Bedrock の資格情報の配布・取得は既存の仕組みを使用する。
+プロファイルには秘密値を保存しない。接続のデフォルトモデルとプロファイル・リクエストのモデル上書き順は維持する。

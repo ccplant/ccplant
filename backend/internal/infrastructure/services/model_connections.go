@@ -14,9 +14,8 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	if req.ProvisionSettings != nil || req.ModelConnectionsResolved {
 		return nil
 	}
-	if m.settingsRepo == nil {
-		req.ModelConnectionsResolved = true
-		return nil
+	if err := modelprovider.ValidateAuthModes(req.CodexAuthMode, req.ClaudeAuthMode); err != nil {
+		return err
 	}
 	var codexConnection, claudeConnection *modelprovider.Connection
 	owners := credentialOwnersForRequest(req)
@@ -26,7 +25,7 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		owners = []string{req.TeamID}
 	}
 	for _, owner := range owners {
-		if owner == "" {
+		if owner == "" || m.settingsRepo == nil {
 			continue
 		}
 		exists, err := m.settingsRepo.Exists(ctx, owner)
@@ -52,6 +51,15 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if codexConnection != nil && claudeConnection != nil {
 			break
 		}
+	}
+	var err error
+	codexConnection, err = modelprovider.SelectAuthMode(codexConnection, req.CodexAuthMode)
+	if err != nil {
+		return err
+	}
+	claudeConnection, err = modelprovider.SelectAuthMode(claudeConnection, req.ClaudeAuthMode)
+	if err != nil {
+		return err
 	}
 	for agent, c := range map[string]*modelprovider.Connection{"codex": codexConnection, "claude": claudeConnection} {
 		if c == nil {

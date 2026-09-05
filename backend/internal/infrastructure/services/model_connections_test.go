@@ -49,3 +49,34 @@ func TestResolveConnectionsAndProfileModel(t *testing.T) {
 	require.False(t, req.ModelConnectionsResolved)
 	require.Error(t, manager.prepareModelConnections(context.Background(), req))
 }
+
+func TestSessionAuthenticationOverrides(t *testing.T) {
+	personal := entities.NewSettings("user")
+	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "default", Authentication: "api_key", APIKey: "secret"})
+	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://example.com", Model: "default", Authentication: "api_key", APIKey: "secret"})
+	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": personal}}}
+	for _, mode := range []string{"oauth", "bedrock"} {
+		req := &entities.RunServerRequest{UserID: "user", AgentType: "claude-acp", CodexAuthMode: "auth_json", ClaudeAuthMode: mode}
+		require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+		require.Equal(t, "auth_json", req.CodexConnection.Mode)
+		require.Equal(t, mode, req.ClaudeConnection.Mode)
+		require.Empty(t, req.ClaudeConnection.APIKey)
+		settings := &sessionsettings.SessionSettings{Env: map[string]string{"ANTHROPIC_API_KEY": "stale", "ANTHROPIC_BASE_URL": "https://stale.example"}}
+		applyModelConnections(settings, req)
+		require.NotContains(t, settings.Env, "ANTHROPIC_API_KEY")
+		require.NotContains(t, settings.Env, "ANTHROPIC_BASE_URL")
+	}
+	require.Equal(t, "openai_compatible", personal.CodexConnection().Mode)
+	require.Equal(t, "anthropic_compatible", personal.ClaudeConnection().Mode)
+	req := &entities.RunServerRequest{UserID: "user", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "override"}}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "override", req.CodexConnection.Model)
+	for _, req := range []*entities.RunServerRequest{
+		{CodexAuthMode: "invalid"}, {ClaudeAuthMode: "invalid"},
+		{CodexAuthMode: "openai_compatible"}, {ClaudeAuthMode: "anthropic_compatible"},
+		{UserID: "user", CredentialSource: "none", CodexAuthMode: "openai_compatible"},
+	} {
+		require.Error(t, manager.prepareModelConnections(context.Background(), req))
+		require.False(t, req.ModelConnectionsResolved)
+	}
+}

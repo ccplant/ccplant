@@ -6813,6 +6813,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 	}
 
 	resolved := settingspatch.Resolve(layers...)
+	// Materialize credentials for the selected session method, including when
+	// a legacy oneshot patch contains a different default authentication mode.
+	if req.ClaudeAuthMode != "" {
+		resolved.AuthMode = req.ClaudeAuthMode
+	}
 	materialized, err := settingspatch.Materialize(resolved)
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to materialize settings: %v", err)

@@ -709,3 +709,28 @@ func TestLaunchReuseReturnsErrorForNonStaleSendFailure(t *testing.T) {
 func boolPointer(v bool) *bool {
 	return &v
 }
+
+func TestLaunchProfileAuthenticationMethods(t *testing.T) {
+	for _, override := range []string{"", "auth_json"} {
+		t.Run("request_"+override, func(t *testing.T) {
+			manager := &recordingSessionManager{}
+			profile := entities.NewSessionProfile("profile-1", "default", "user-1")
+			profile.SetIsDefault(true)
+			cfg := entities.NewSessionProfileConfig()
+			cfg.SetParams(&entities.SessionParams{CodexAuthMode: "openai_compatible", ClaudeAuthMode: "bedrock"})
+			profile.SetConfig(cfg)
+			launcher := NewLaunchUseCase(manager).WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+			_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser, CodexAuthMode: override})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "openai_compatible"
+			if override != "" {
+				want = override
+			}
+			if manager.req.CodexAuthMode != want || manager.req.ClaudeAuthMode != "bedrock" {
+				t.Fatalf("unexpected auth methods: %q / %q", manager.req.CodexAuthMode, manager.req.ClaudeAuthMode)
+			}
+		})
+	}
+}

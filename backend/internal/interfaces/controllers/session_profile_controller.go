@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
 // SessionProfileController handles session profile CRUD endpoints
@@ -276,6 +277,11 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 }
 
 func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
+	if params := config.Params(); params != nil {
+		if err := modelprovider.ValidateAuthModes(params.CodexAuthMode, params.ClaudeAuthMode); err != nil {
+			return err
+		}
+	}
 	if config.MCPServers() != nil {
 		return config.MCPServers().Validate()
 	}

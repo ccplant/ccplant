@@ -6502,6 +6502,16 @@
               "/home/agentapi/.codex/auth.json"
             ]
           },
+          "codex_auth_mode": {
+            "type": "string",
+            "enum": ["auth_json", "openai_compatible"],
+            "description": "Override the Codex authentication method; omitted inherits authentication settings."
+          },
+          "claude_auth_mode": {
+            "type": "string",
+            "enum": ["oauth", "bedrock", "anthropic_compatible"],
+            "description": "Override the Claude Code authentication method; omitted inherits authentication settings."
+          },
           "credential_source": {
             "type": "string",
             "enum": [

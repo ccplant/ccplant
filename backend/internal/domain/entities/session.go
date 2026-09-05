@@ -128,6 +128,10 @@ type SessionParams struct {
 	// Valid values are "session_user", "triggered_user", "github_sender", "team", and "none". Empty preserves the
 	// legacy behavior (session user for user scope, none for team scope).
 	CredentialSource string `json:"credential_source,omitempty"`
+	// CodexAuthMode and ClaudeAuthMode override authentication settings for this session.
+	// Empty values inherit the configured method.
+	CodexAuthMode  string `json:"codex_auth_mode,omitempty"`
+	ClaudeAuthMode string `json:"claude_auth_mode,omitempty"`
 }
 
 // SessionAnnotations contains user-managed annotations attached to a session.
@@ -226,6 +230,8 @@ type RunServerRequest struct {
 	UnsyncedFilePaths []string
 	// CredentialSource selects the owner of managed credential files.
 	CredentialSource string
+	CodexAuthMode    string
+	ClaudeAuthMode   string
 	// ProfileMCPServers is applied as a settings layer above user/team settings.
 	ProfileMCPServers *MCPServersSettings
 }

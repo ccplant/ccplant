@@ -6,6 +6,7 @@ import {
   CreateSessionProfileRequest,
   UpdateSessionProfileRequest,
   CredentialSource,
+  SessionProfileParams,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
 import { LogicalSessionPool } from '../../types/session_pool'
@@ -61,6 +62,8 @@ export default function SessionProfileFormModal({
   // Session TTL
   const [sessionTTL, setSessionTTL] = useState('')
   const [unsyncedFilePaths, setUnsyncedFilePaths] = useState('')
+  const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
+  const [claudeAuthMode, setClaudeAuthMode] = useState<SessionProfileParams['claude_auth_mode'] | ''>('')
   const [credentialSource, setCredentialSource] = useState<CredentialSource | ''>('')
 
   const addDockerRegistry = () => setDockerRegistries(prev => [...prev, { server: '', username: '', password: '', secretName: '', insecure: false }])
@@ -163,6 +166,8 @@ export default function SessionProfileFormModal({
 
       const source = cfg?.params?.credential_source ?? ''
       setCredentialSource(source)
+      setCodexAuthMode(cfg?.params?.codex_auth_mode ?? '')
+      setClaudeAuthMode(cfg?.params?.claude_auth_mode ?? '')
     } else {
       // Reset form
       setName('')
@@ -179,6 +184,8 @@ export default function SessionProfileFormModal({
       setSessionTTL('')
       setUnsyncedFilePaths('')
       setCredentialSource('')
+      setCodexAuthMode('')
+      setClaudeAuthMode('')
       setShowAdvanced(false)
     }
     setError(null)
@@ -281,6 +288,8 @@ export default function SessionProfileFormModal({
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
         sandbox: sandboxConfig,
         ...(dockerConfig ? { docker: dockerConfig } : {}),
+        ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
+        ...(claudeAuthMode ? { claude_auth_mode: claudeAuthMode } : {}),
         ...(credentialSource ? { credential_source: credentialSource } : {}),
       }
 
@@ -398,6 +407,25 @@ export default function SessionProfileFormModal({
                 rows={2}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
               />
+            </div>
+
+            <div>
+              <label htmlFor="profile-codex-auth" className="block text-sm font-medium mb-1">Codex の認証方法</label>
+              <select id="profile-codex-auth" value={codexAuthMode} onChange={e => setCodexAuthMode(e.target.value as typeof codexAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">認証設定を引き継ぐ</option>
+                <option value="auth_json">ChatGPT / auth.json</option>
+                <option value="openai_compatible">OpenAI 互換 API</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="profile-claude-auth" className="block text-sm font-medium mb-1">Claude Code の認証方法</label>
+              <select id="profile-claude-auth" value={claudeAuthMode} onChange={e => setClaudeAuthMode(e.target.value as typeof claudeAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">認証設定を引き継ぐ</option>
+                <option value="oauth">Claude OAuth</option>
+                <option value="bedrock">AWS Bedrock</option>
+                <option value="anthropic_compatible">Anthropic 互換 API</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-2">このプロファイルで使う認証方法を指定します。接続先・API キーは認証設定で登録してください。モデルは下の設定で上書きできます。</p>
             </div>
 
             {/* Credential source */}

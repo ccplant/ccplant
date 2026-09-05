@@ -12,6 +12,8 @@ export interface SessionProfileParams {
   session_ttl?: string;
   unsynced_file_paths?: string[];
   credential_source?: CredentialSource;
+  codex_auth_mode?: 'auth_json' | 'openai_compatible';
+  claude_auth_mode?: 'oauth' | 'bedrock' | 'anthropic_compatible';
 }
 
 export type CredentialSource = 'session_user' | 'team' | 'none';

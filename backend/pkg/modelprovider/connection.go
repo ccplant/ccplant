@@ -144,3 +144,31 @@ func ModelForLayers(agent, fallback string, layers ...map[string]string) string 
 	}
 	return model
 }
+
+// ValidateAuthModes validates optional per-session authentication selections.
+func ValidateAuthModes(codex, claude string) error {
+	if codex != "" && codex != "auth_json" && codex != "openai_compatible" {
+		return fmt.Errorf("invalid Codex authentication method")
+	}
+	if claude != "" && claude != "oauth" && claude != "bedrock" && claude != "anthropic_compatible" {
+		return fmt.Errorf("invalid Claude authentication method")
+	}
+	return nil
+}
+
+// SelectAuthMode changes only this session's authentication method. Compatible
+// modes require an existing connection, never falling back to account auth.
+func SelectAuthMode(c *Connection, mode string) (*Connection, error) {
+	if mode == "" {
+		return c.Clone(), nil
+	}
+	if mode == "openai_compatible" || mode == "anthropic_compatible" {
+		if c == nil {
+			return nil, fmt.Errorf("%s connection must be configured in authentication settings", mode)
+		}
+		result := c.Clone()
+		result.Mode = mode
+		return result, nil
+	}
+	return &Connection{Mode: mode}, nil
+}
