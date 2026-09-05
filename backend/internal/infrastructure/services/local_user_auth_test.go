@@ -32,7 +32,7 @@ func TestSimpleAuthServiceAuthenticatesPersistedLocalUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID() != "local:alice" || got.Username() != "alice" || !got.HasPermission(entities.PermissionSessionCreate) || got.IsAdmin() {
+	if got.ID() != "alice" || got.Username() != "alice" || !got.HasPermission(entities.PermissionSessionCreate) || got.IsAdmin() {
 		t.Fatalf("unexpected authenticated user: id=%s username=%s roles=%v", got.ID(), got.Username(), got.Roles())
 	}
 }

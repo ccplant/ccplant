@@ -29,7 +29,7 @@ func NewLocalUser(username, displayName, email string, role Role, createdBy User
 	if displayName == "" {
 		displayName = username
 	}
-	u := &LocalUser{ID: UserID("local:" + username), Username: username, DisplayName: displayName,
+	u := &LocalUser{ID: UserID(username), Username: username, DisplayName: displayName,
 		Email: email, Role: role, Status: UserStatusActive, CreatedAt: time.Now().UTC(), CreatedBy: createdBy}
 	if err := u.Validate(); err != nil {
 		return nil, err
@@ -41,8 +41,8 @@ func (u *LocalUser) Validate() error {
 	if u == nil || !localUsernamePattern.MatchString(u.Username) {
 		return errors.New("username must match [a-z][a-z0-9_-]{0,62}")
 	}
-	if u.ID != UserID("local:"+u.Username) {
-		return errors.New("invalid local user id")
+	if u.ID != UserID(u.Username) {
+		return errors.New("user id must equal username")
 	}
 	if n := len([]rune(u.DisplayName)); n < 1 || n > 128 || strings.ContainsAny(u.DisplayName, "\r\n\x00") {
 		return errors.New("display_name must be 1..128 characters without control characters")

@@ -51,9 +51,9 @@ func (c *AdminLocalUserController) Create(ctx echo.Context) error {
 	}
 	if err := c.users.Create(ctx.Request().Context(), user); err != nil {
 		if errors.Is(err, entities.ErrLocalUserAlreadyExists) {
-			return echo.NewHTTPError(http.StatusConflict, "local user already exists")
+			return echo.NewHTTPError(http.StatusConflict, "user already exists")
 		}
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to persist local user")
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to persist user")
 	}
 	return ctx.JSON(http.StatusCreated, user)
 }
@@ -61,10 +61,10 @@ func (c *AdminLocalUserController) Create(ctx echo.Context) error {
 func (c *AdminLocalUserController) Get(ctx echo.Context) error {
 	user, err := c.users.GetByID(ctx.Request().Context(), entities.UserID(ctx.Param("id")))
 	if errors.Is(err, entities.ErrLocalUserNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "local user not found")
+		return echo.NewHTTPError(http.StatusNotFound, "user not found")
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to read local user")
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to read user")
 	}
 	return ctx.JSON(http.StatusOK, user)
 }
@@ -89,10 +89,10 @@ func localUserPermissions(role entities.Role) []entities.Permission {
 func (c *AdminLocalUserController) CreateToken(ctx echo.Context) error {
 	user, err := c.users.GetByID(ctx.Request().Context(), entities.UserID(ctx.Param("id")))
 	if errors.Is(err, entities.ErrLocalUserNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "local user not found")
+		return echo.NewHTTPError(http.StatusNotFound, "user not found")
 	}
 	if err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to read local user")
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to read user")
 	}
 	var req createLocalUserTokenRequest
 	if err := ctx.Bind(&req); err != nil {
@@ -133,9 +133,9 @@ func (c *AdminLocalUserController) CreateToken(ctx echo.Context) error {
 func (c *AdminLocalUserController) ListTokens(ctx echo.Context) error {
 	id := entities.UserID(ctx.Param("id"))
 	if _, err := c.users.GetByID(ctx.Request().Context(), id); errors.Is(err, entities.ErrLocalUserNotFound) {
-		return echo.NewHTTPError(http.StatusNotFound, "local user not found")
+		return echo.NewHTTPError(http.StatusNotFound, "user not found")
 	} else if err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to read local user")
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to read user")
 	}
 	tokens, err := c.tokens.ListByOwner(ctx.Request().Context(), id)
 	if err != nil {

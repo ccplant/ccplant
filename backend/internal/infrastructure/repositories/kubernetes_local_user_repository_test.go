@@ -18,11 +18,11 @@ func TestKubernetesLocalUserRepositoryCreateGetAndConflict(t *testing.T) {
 	if err := repo.Create(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.GetByID(context.Background(), "local:alice")
+	got, err := repo.GetByID(context.Background(), "alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Username != "alice" || got.DisplayName != "Alice" || got.ID != "local:alice" {
+	if got.Username != "alice" || got.DisplayName != "Alice" || got.ID != "alice" {
 		t.Fatalf("unexpected user: %#v", got)
 	}
 	if err := repo.Create(context.Background(), user); !errors.Is(err, entities.ErrLocalUserAlreadyExists) {
@@ -32,7 +32,7 @@ func TestKubernetesLocalUserRepositoryCreateGetAndConflict(t *testing.T) {
 
 func TestKubernetesLocalUserRepositoryNotFound(t *testing.T) {
 	repo := NewKubernetesLocalUserRepository(fake.NewSimpleClientset(), "default")
-	_, err := repo.GetByID(context.Background(), "local:missing")
+	_, err := repo.GetByID(context.Background(), "missing")
 	if !errors.Is(err, entities.ErrLocalUserNotFound) {
 		t.Fatalf("expected not found, got %v", err)
 	}

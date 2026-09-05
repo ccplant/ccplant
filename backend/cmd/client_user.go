@@ -14,7 +14,7 @@ import (
 
 var localUsername, localDisplayName, localEmail, localRole, localTokenName, localExpiresIn, localSecretFile string
 
-var userCmd = &cobra.Command{Use: "user", Short: "Manage local users"}
+var userCmd = &cobra.Command{Use: "user", Short: "Manage users"}
 var userCreateCmd = &cobra.Command{Use: "create", RunE: func(cmd *cobra.Command, _ []string) error {
 	c, err := resolveMemoryClient()
 	if err != nil {
@@ -37,7 +37,7 @@ var userGetCmd = &cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE:
 	}
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 }}
-var userTokenCmd = &cobra.Command{Use: "token", Short: "Manage a local user's API tokens"}
+var userTokenCmd = &cobra.Command{Use: "token", Short: "Manage a user's API tokens"}
 var userTokenCreateCmd = &cobra.Command{Use: "create <user-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 	if localSecretFile == "" {
 		return errors.New("--secret-file is required")

@@ -45,7 +45,7 @@ func TestAdminLocalUserCreateIssueTokenAndAuthenticate(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	ctx, rec = localUserContext(t, http.MethodPost, "/admin/users/local:alice/api-tokens", map[string]any{"name": "initial"}, admin, []string{"id"}, []string{"local:alice"})
+	ctx, rec = localUserContext(t, http.MethodPost, "/admin/users/alice/api-tokens", map[string]any{"name": "initial"}, admin, []string{"id"}, []string{"alice"})
 	if err := controller.CreateToken(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestAdminLocalUserCreateIssueTokenAndAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authenticated.ID() != "local:alice" || authenticated.Username() != "alice" || !authenticated.HasPermission(entities.PermissionSessionCreate) {
+	if authenticated.ID() != "alice" || authenticated.Username() != "alice" || !authenticated.HasPermission(entities.PermissionSessionCreate) {
 		t.Fatalf("unexpected identity: %s %s", authenticated.ID(), authenticated.Username())
 	}
 }

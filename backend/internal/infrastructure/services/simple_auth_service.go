@@ -271,15 +271,14 @@ func validateAPITokenRecord(ctx context.Context, rec *apiTokenRecord, localUsers
 	if rec.scope == entities.APITokenScopeTeam {
 		return entities.NewServiceAccountUser(rec.userID, rec.teamID, rec.permissions), nil
 	}
-	if strings.HasPrefix(string(rec.userID), "local:") {
-		if localUsers == nil {
-			return nil, errors.New("local user repository unavailable")
-		}
+	if localUsers != nil {
 		localUser, err := localUsers.GetByID(ctx, rec.userID)
-		if err != nil {
-			return nil, errors.New("local user not found")
+		if err == nil {
+			return localUser.ToUser(rec.permissions), nil
 		}
-		return localUser.ToUser(rec.permissions), nil
+		if !errors.Is(err, entities.ErrLocalUserNotFound) {
+			return nil, errors.New("user repository unavailable")
+		}
 	}
 	user := entities.NewUser(rec.userID, entities.UserTypeRegular, string(rec.userID))
 	user.SetPermissions(rec.permissions)

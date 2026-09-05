@@ -1,12 +1,12 @@
-# CLI によるローカルユーザー作成の設計
+# CLI によるユーザー作成の設計
 
 状態: 実装済み・Fly.io 開発環境で検証予定
 
 ## 目的と対象
 
-管理者が `agentapi-proxy client user create` で、GitHub アカウントを持たないユーザーを作成できるようにする。任意の名前を指定でき、作成したユーザーは発行された API トークンで既存 API を利用できる。バックエンドの再起動や複数レプリカへの振り分けでも同じ ID と権限を使用する。
+管理者が `agentapi-proxy client user create` で、GitHub アカウントを持たないユーザーを作成できるようにする。任意の名前を指定でき、作成したユーザーは通常経路で認証されたユーザーと同じ ID・権限・リソース所有者として扱われる。発行された API トークンで既存 API と Web UI を利用できる。
 
-ここでいうユーザーは CCPlant のローカルユーザーであり、OS アカウントではない。初版は通常ユーザーと管理者を対象にする。パスワード認証、GitHub ユーザーの代理作成・統合、チーム所属の編集、ユーザー削除・改名は対象外。認証済み管理者による API 操作とし、最初の管理者には既存の Bootstrap Admin を使用する。
+ここでいうユーザーは CCPlant のユーザーであり、OS アカウントではない。初版は通常ユーザーと管理者を対象にする。パスワード認証、チーム所属の編集、ユーザー削除・改名は対象外。認証済み管理者による API 操作とし、最初の管理者には既存の Bootstrap Admin を使用する。
 
 ## 現状と不足
 
@@ -26,16 +26,16 @@
 ```bash
 # 管理者の接続先と認証情報は既存の --endpoint / 環境変数で指定
 agentapi-proxy client user create --username alice --display-name 'Alice'
-# => {"id":"local:alice","username":"alice","role":"user","status":"active"}
+# => {"id":"alice","username":"alice","role":"user","status":"active"}
 
 agentapi-proxy client user create --username operator --role admin
-agentapi-proxy client user get local:alice
+agentapi-proxy client user get alice
 
 # 初期トークンは別操作。秘密値は指定ファイルだけに書き込む
-agentapi-proxy client user token create local:alice \
+agentapi-proxy client user token create alice \
   --name initial --expires-in 720h --secret-file ./alice-token
-agentapi-proxy client user token list local:alice
-agentapi-proxy client user token revoke local:alice TOKEN_ID
+agentapi-proxy client user token list alice
+agentapi-proxy client user token revoke alice TOKEN_ID
 ```
 
 | 引数 | 仕様 |
@@ -51,13 +51,13 @@ agentapi-proxy client user token revoke local:alice TOKEN_ID
 
 ## ID と永続化
 
-ID はサーバーが `local:<username>` として決定する。任意の既存 ID を指定するオプションは設けない。username はローカルユーザー内で一意、display_name と email は重複可能とする。
+ID はサーバーが username と同じ値に決定する。任意の別 ID を指定するオプションは設けない。これにより、同じ username で通常経路から認証されたユーザーと同一の所有者になる。username は一意、display_name と email は重複可能とする。
 
 `LocalUserRepository` を新設し、`Create` と `GetByID` に限定する。初版の永続実装は既存トークン保存方式に合わせて Kubernetes Secret API とし、1 ユーザーを 1 Secret に保存する。Fly.io の API 構成では Kubernetes 互換アダプターを通して libSQL に保存される。Secret 名は `agentapi-local-user-<ID の SHA-256 hex>`。メタデータには id、username、display_name、email、role、status、created_at、created_by を持たせる。秘密トークンはユーザーの Secret に保存しない。
 
 同じ ID の作成は Kubernetes Create の AlreadyExists を 409 に変換し、更新や upsert はしない。事前検索だけで一意性を保証しない。永続バックエンドが使えない場合は 503 とし、メモリへの保存で成功扱いにしない。Kubernetes を利用しない構成への永続実装は後続対応とする。
 
-`local:` は認証プロバイダー間で予約する。導入時には静的認証設定、Bootstrap Admin、既存トークン所有者、個人リソースの所有者 ID に同じ名前空間が使われていないことを検査する。衝突があれば導入を停止し、自動的に新ユーザーへ割り当てない。設定追加・認証経路でも非ローカル identity に `local:` を許可しない。既存の GitHub ID や所有権は変更しない。
+同じ username の登録済みユーザーがある場合、作成は 409 を返して属性を上書きしない。通常の認証経路が同じ username を返した場合は同じユーザーとして扱い、既存の個人リソースも同じ ID で参照する。
 
 ## 管理 API
 
@@ -79,7 +79,7 @@ ID はサーバーが `local:<username>` として決定する。任意の既存
 
 ローカルユーザーの権限は role から一意に決定する。`user` は session:create/read/update/delete、`admin` はそれらと admin。各リソースの所有者チェックは引き続き必要で、通常ユーザーが他人のセッションを操作できることを意味しない。
 
-個人トークン所有者が `local:` の場合は、永続リポジトリからユーザーを取得し、有効状態とトークン期限を検証する。存在しないユーザーや読み出し障害で従来のユーザー自動生成へフォールバックしない。ネットワーク I/O を既存の `SimpleAuthService.mu` のロック中に実行せず、必要なトークン情報をコピーした後で読む。
+個人トークンの認証では、所有者 ID に一致する永続ユーザーがあれば属性と状態を取得する。登録がなければ従来どおりトークン所有者 ID から通常ユーザーを構成する。永続層の読み出し障害は認証失敗とし、ネットワーク I/O を既存の `SimpleAuthService.mu` のロック中に実行しない。
 
 認証後の ID・表示名は永続ユーザーから取得し、実効権限はユーザーの現在の権限とトークン権限の積集合にする。`RoleAdmin` は `HasPermission` で全権限を許可するため、保存済み role を無条件に認証結果へコピーしない。実効権限に admin が含まれる場合だけ管理者ロールを設定し、`IsAdmin()` と `/user/info` の結果を合わせる。
 
@@ -89,7 +89,7 @@ ID はサーバーが `local:<username>` として決定する。任意の既存
 
 ## 失敗時の扱いと秘密値
 
-- ユーザー作成の応答が失われた場合は `user get local:alice` で結果を確認する。再作成は 409 とし、既存ユーザーを変更しない。
+- ユーザー作成の応答が失われた場合は `user get alice` で結果を確認する。再作成は 409 とし、既存ユーザーを変更しない。
 - トークン発行は非冪等。CLI は POST を自動再送しない。通信断時はトークン一覧で確認し、不明な発行分を失効してから新規発行する。秘密値の再取得 API は作らない。
 - 保存後に認証キャッシュ登録が失敗した場合、発行済みであることを API 応答の activation_pending に示す。秘密値を含む 201 を返し、定期同期による有効化を待つ。既存ユースケースの「保存後にエラー」をそのまま汎用 500 にしない。
 - ファイルへの書き込みに失敗した場合は、発行済み token_id と失効手順を標準エラーへ出し、非ゼロ終了する。秘密値を代わりに標準出力へ表示しない。
