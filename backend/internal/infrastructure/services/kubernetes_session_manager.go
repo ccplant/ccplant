@@ -101,9 +101,10 @@ type SessionMessageEvent = portrepos.SessionMessageEvent
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
-	config         *config.Config
-	k8sConfig      *config.KubernetesSessionConfig
-	configProvider interface {
+	sessionProfileRepo portrepos.SessionProfileRepository
+	config             *config.Config
+	k8sConfig          *config.KubernetesSessionConfig
+	configProvider     interface {
 		Current() *config.Config
 		AgentDefaults() settingspatch.SettingsPatch
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -86,7 +87,15 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	}
 	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken)
 	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, persistenceNamespace)
-	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, persistenceNamespace)
+	encryption, err := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION").Create()
+	if err != nil {
+		return err
+	}
+	encryptionRegistry := services.NewEncryptionServiceRegistry(encryption)
+	if decryption, err := services.NewEncryptionServiceFactory("AGENTAPI_DECRYPTION").Create(); err == nil {
+		encryptionRegistry.Register(decryption)
+	}
+	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, persistenceNamespace, encryptionRegistry)
 	leaseClient := remote
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

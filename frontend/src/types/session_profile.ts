@@ -1,5 +1,5 @@
 import { ResourceScope, SandboxConfig, DockerConfig } from './agentapi';
-import type { APIMCPServerConfig } from './settings';
+import type { APIMCPServerConfig, ModelConnection } from './settings';
 
 // Session profile params
 export interface SessionProfileParams {
@@ -20,6 +20,8 @@ export type CredentialSource = 'session_user' | 'team' | 'none';
 
 // Session profile config
 export interface SessionProfileConfig {
+  codex_connection?: ModelConnection | null;
+  claude_connection?: ModelConnection | null;
   environment?: Record<string, string>;
   tags?: Record<string, string>;
   pool?: string;

@@ -724,6 +724,9 @@ func TestLaunchProfileAuthenticationMethods(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if manager.req.ResolvedSessionProfileID != "profile-1" {
+				t.Fatalf("profile ID was not propagated")
+			}
 			want := "openai_compatible"
 			if override != "" {
 				want = override

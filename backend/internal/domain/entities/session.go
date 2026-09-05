@@ -171,7 +171,8 @@ type StartRequest struct {
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
 	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
-	ProfileMCPServers *MCPServersSettings `json:"-"`
+	ProfileMCPServers        *MCPServersSettings `json:"-"`
+	ResolvedSessionProfileID string              `json:"-"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -233,7 +234,8 @@ type RunServerRequest struct {
 	CodexAuthMode    string
 	ClaudeAuthMode   string
 	// ProfileMCPServers is applied as a settings layer above user/team settings.
-	ProfileMCPServers *MCPServersSettings
+	ProfileMCPServers        *MCPServersSettings
+	ResolvedSessionProfileID string
 }
 
 // Session represents a running agentapi session

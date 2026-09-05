@@ -295,6 +295,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			startReq.Tags["session_profile_id"] = profile.ID()
 			cfg := profile.Config()
 			startReq.ProfileMCPServers = cfg.MCPServers()
+			startReq.ResolvedSessionProfileID = profile.ID()
 
 			// Keep profile environment separate so it can override team/user
 			// settings without overriding explicit request keys.

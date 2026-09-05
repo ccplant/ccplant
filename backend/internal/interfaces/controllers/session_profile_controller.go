@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -32,6 +33,8 @@ func (c *SessionProfileController) GetName() string {
 
 // SessionProfileConfigRequest represents session profile config in requests
 type SessionProfileConfigRequest struct {
+	CodexConnection        json.RawMessage              `json:"codex_connection,omitempty"`
+	ClaudeConnection       json.RawMessage              `json:"claude_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -83,6 +86,8 @@ type SessionProfileResponse struct {
 
 // SessionProfileConfigResponse represents session profile config in responses
 type SessionProfileConfigResponse struct {
+	CodexConnection        *modelprovider.Connection    `json:"codex_connection,omitempty"`
+	ClaudeConnection       *modelprovider.Connection    `json:"claude_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -137,6 +142,9 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 	profile.SetIsDefault(req.IsDefault)
 	profile.SetSelectorTags(req.SelectorTags)
 	config := c.requestToConfig(req.Config)
+	if err := applyProfileConnections(&config, entities.NewSessionProfileConfig(), req.Config); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if err := validateSessionProfileConfig(config); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -262,6 +270,9 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	}
 	if req.Config != nil {
 		config := c.requestToConfig(*req.Config)
+		if err := applyProfileConnections(&config, profile.Config(), *req.Config); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		if err := validateSessionProfileConfig(config); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
@@ -394,6 +405,8 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		IsDefault:    p.IsDefault(),
 		SelectorTags: p.SelectorTags(),
 		Config: SessionProfileConfigResponse{
+			CodexConnection:        cfg.CodexConnection(),
+			ClaudeConnection:       cfg.ClaudeConnection(),
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
 			Pool:                   cfg.Pool(),

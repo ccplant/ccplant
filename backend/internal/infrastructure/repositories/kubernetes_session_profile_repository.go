@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,6 +50,8 @@ type sessionProfileJSON struct {
 }
 
 type sessionProfileConfigJSON struct {
+	CodexConnection        *connectionJSON           `json:"codex_connection,omitempty"`
+	ClaudeConnection       *connectionJSON           `json:"claude_connection,omitempty"`
 	Environment            map[string]string         `json:"environment,omitempty"`
 	Tags                   map[string]string         `json:"tags,omitempty"`
 	Pool                   string                    `json:"pool,omitempty"`
@@ -64,16 +68,18 @@ type sessionProfileConfigJSON struct {
 
 // KubernetesSessionProfileRepository implements SessionProfileRepository using Kubernetes Secrets
 type KubernetesSessionProfileRepository struct {
-	client    kubernetes.Interface
-	namespace string
-	mu        sync.RWMutex
+	client      kubernetes.Interface
+	namespace   string
+	mu          sync.RWMutex
+	connections *KubernetesSettingsRepository
 }
 
 // NewKubernetesSessionProfileRepository creates a new KubernetesSessionProfileRepository
-func NewKubernetesSessionProfileRepository(client kubernetes.Interface, namespace string) *KubernetesSessionProfileRepository {
+func NewKubernetesSessionProfileRepository(client kubernetes.Interface, namespace string, registry ...*services.EncryptionServiceRegistry) *KubernetesSessionProfileRepository {
 	return &KubernetesSessionProfileRepository{
-		client:    client,
-		namespace: namespace,
+		client:      client,
+		namespace:   namespace,
+		connections: NewKubernetesSettingsRepository(client, namespace, registry...),
 	}
 }
 
@@ -213,7 +219,7 @@ func (r *KubernetesSessionProfileRepository) loadProfile(ctx context.Context, id
 		pj.TeamID = annotationTeamID
 	}
 
-	return r.jsonToEntity(&pj), nil
+	return r.decodeProfile(ctx, &pj)
 }
 
 func (r *KubernetesSessionProfileRepository) loadAllProfiles(ctx context.Context) ([]*entities.SessionProfile, error) {
@@ -241,7 +247,11 @@ func (r *KubernetesSessionProfileRepository) loadAllProfiles(ctx context.Context
 			pj.TeamID = annotationTeamID
 		}
 
-		result = append(result, r.jsonToEntity(&pj))
+		profile, err := r.decodeProfile(ctx, &pj)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, profile)
 	}
 
 	return result, nil
@@ -249,6 +259,24 @@ func (r *KubernetesSessionProfileRepository) loadAllProfiles(ctx context.Context
 
 func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, profile *entities.SessionProfile) error {
 	pj := r.entityToJSON(profile)
+	cfg := profile.Config()
+	for _, c := range []*modelprovider.Connection{cfg.CodexConnection(), cfg.ClaudeConnection()} {
+		if c != nil && c.APIKey != "" {
+			svc := r.connections.encryptionSvc()
+			if svc == nil || svc.Algorithm() == "noop" {
+				return fmt.Errorf("encryption must be configured to store session profile API keys")
+			}
+		}
+	}
+	var err error
+	pj.Config.CodexConnection, err = r.connections.encodeConnection(ctx, cfg.CodexConnection())
+	if err != nil {
+		return err
+	}
+	pj.Config.ClaudeConnection, err = r.connections.encodeConnection(ctx, cfg.ClaudeConnection())
+	if err != nil {
+		return err
+	}
 	data, err := json.Marshal(pj)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session profile: %w", err)
@@ -381,4 +409,22 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 		CreatedAt: profile.CreatedAt(),
 		UpdatedAt: profile.UpdatedAt(),
 	}
+}
+
+func (r *KubernetesSessionProfileRepository) decodeProfile(ctx context.Context, pj *sessionProfileJSON) (*entities.SessionProfile, error) {
+	codex, err := r.connections.decodeConnection(ctx, pj.Config.CodexConnection)
+	if err != nil {
+		return nil, err
+	}
+	claude, err := r.connections.decodeConnection(ctx, pj.Config.ClaudeConnection)
+	if err != nil {
+		return nil, err
+	}
+	p := r.jsonToEntity(pj)
+	cfg := p.Config()
+	cfg.SetCodexConnection(codex)
+	cfg.SetClaudeConnection(claude)
+	p.SetConfig(cfg)
+	p.SetUpdatedAt(pj.UpdatedAt)
+	return p, nil
 }

@@ -2,6 +2,8 @@ package entities
 
 import (
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
 // SessionProfile represents a named, reusable session configuration for a tenant
@@ -21,6 +23,8 @@ type SessionProfile struct {
 
 // SessionProfileConfig contains the reusable session configuration fields
 type SessionProfileConfig struct {
+	codexConnection        *modelprovider.Connection
+	claudeConnection       *modelprovider.Connection
 	environment            map[string]string
 	tags                   map[string]string
 	pool                   string
@@ -301,4 +305,17 @@ func copyStringMap(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+func (c *SessionProfileConfig) CodexConnection() *modelprovider.Connection {
+	return c.codexConnection.Clone()
+}
+func (c *SessionProfileConfig) ClaudeConnection() *modelprovider.Connection {
+	return c.claudeConnection.Clone()
+}
+func (c *SessionProfileConfig) SetCodexConnection(v *modelprovider.Connection) {
+	c.codexConnection = v.Clone()
+}
+func (c *SessionProfileConfig) SetClaudeConnection(v *modelprovider.Connection) {
+	c.claudeConnection = v.Clone()
 }

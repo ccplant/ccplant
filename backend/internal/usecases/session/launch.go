@@ -50,6 +50,7 @@ type LaunchRequest struct {
 	ClaudeAuthMode           string
 	CredentialSource         string
 	ProfileMCPServers        *entities.MCPServersSettings
+	ResolvedSessionProfileID string
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -160,6 +161,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		profile := uc.resolveSessionProfile(ctx, req)
 		if profile != nil {
 			applyProfileToLaunchRequest(profile.Config(), &req)
+			req.ResolvedSessionProfileID = profile.ID()
 			if req.Tags == nil {
 				req.Tags = make(map[string]string)
 			}
@@ -237,6 +239,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		CodexAuthMode:            req.CodexAuthMode,
 		ClaudeAuthMode:           req.ClaudeAuthMode,
 		ProfileMCPServers:        req.ProfileMCPServers,
+		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)

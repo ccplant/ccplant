@@ -9128,6 +9128,86 @@
     "SessionProfileConfig": {
       "type": "object",
       "properties": {
+        "codex_connection": {
+          "type": "object",
+          "nullable": true,
+          "description": "Profile-owned compatible API connection, used when params selects the matching compatible authentication mode. Omitted retains the existing override; null deletes it and restores settings inheritance. Credentials never inherit from settings for this endpoint.",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "openai_compatible"
+              ]
+            },
+            "base_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "authentication": {
+              "type": "string",
+              "enum": [
+                "api_key",
+                "none"
+              ]
+            },
+            "api_key": {
+              "type": "string",
+              "writeOnly": true,
+              "description": "Encrypted at rest. Omitted preserves this profile’s stored key."
+            },
+            "has_api_key": {
+              "type": "boolean",
+              "readOnly": true
+            },
+            "model": {
+              "type": "string",
+              "description": "Default model; empty inherits settings. Profile environment and request model overrides take precedence."
+            }
+          }
+        },
+        "claude_connection": {
+          "type": "object",
+          "nullable": true,
+          "description": "Profile-owned compatible API connection, used when params selects the matching compatible authentication mode. Omitted retains the existing override; null deletes it and restores settings inheritance. Credentials never inherit from settings for this endpoint.",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "anthropic_compatible"
+              ]
+            },
+            "base_url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "authentication": {
+              "type": "string",
+              "enum": [
+                "api_key",
+                "bearer_token"
+              ]
+            },
+            "api_key": {
+              "type": "string",
+              "writeOnly": true,
+              "description": "Encrypted at rest. Omitted preserves this profile’s stored key."
+            },
+            "has_api_key": {
+              "type": "boolean",
+              "readOnly": true
+            },
+            "model": {
+              "type": "string",
+              "description": "Default model; empty inherits settings. Profile environment and request model overrides take precedence."
+            }
+          }
+        },
         "environment": {
           "type": "object",
           "additionalProperties": {

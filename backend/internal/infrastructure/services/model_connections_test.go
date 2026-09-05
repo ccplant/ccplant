@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,4 +81,43 @@ func TestSessionAuthenticationOverrides(t *testing.T) {
 		require.Error(t, manager.prepareModelConnections(context.Background(), req))
 		require.False(t, req.ModelConnectionsResolved)
 	}
+}
+
+type profileConnectionRepository struct {
+	portrepos.SessionProfileRepository
+	profile *entities.SessionProfile
+}
+
+func (r profileConnectionRepository) Get(_ context.Context, _ string) (*entities.SessionProfile, error) {
+	return r.profile, nil
+}
+
+func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
+	global := entities.NewSettings("user")
+	global.SetCodexConnection(&modelprovider.Connection{Mode: "auth_json", BaseURL: "https://global.example/v1", Model: "default", Authentication: "api_key", APIKey: "global-key"})
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://profile.example/v1", Authentication: "api_key", APIKey: "profile-key"})
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	profile.SetConfig(cfg)
+	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": global}}, sessionProfileRepo: profileConnectionRepository{profile: profile}}
+	req := &entities.RunServerRequest{UserID: "user", AgentType: "codex-acp", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible"}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "https://profile.example/v1", req.CodexConnection.BaseURL)
+	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
+	require.Equal(t, "default", req.CodexConnection.Model)
+	require.Equal(t, "global-key", global.CodexConnection().APIKey)
+	// Internal worker transport carries the profile ID, not its secret.
+	encoded, err := json.Marshal(req)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "profile-key")
+	require.Contains(t, string(encoded), "ResolvedSessionProfileID")
+	req = &entities.RunServerRequest{UserID: "user", ResolvedSessionProfileID: "profile", CodexAuthMode: "auth_json"}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "auth_json", req.CodexConnection.Mode)
+	require.Empty(t, req.CodexConnection.APIKey)
+	// A fully specified profile can work without inherited credentials/models.
+	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "profile-model"}}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "profile-model", req.CodexConnection.Model)
+	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
 }

@@ -12,6 +12,8 @@ import { SandboxPolicy } from '../../types/sandbox_policy'
 import { LogicalSessionPool } from '../../types/session_pool'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
+import ProfileConnectionFields from './ProfileConnectionFields'
+import type { ModelConnection } from '../../types/settings'
 import type { APIMCPServerConfig } from '../../types/settings'
 import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
 
@@ -62,6 +64,8 @@ export default function SessionProfileFormModal({
   // Session TTL
   const [sessionTTL, setSessionTTL] = useState('')
   const [unsyncedFilePaths, setUnsyncedFilePaths] = useState('')
+  const [codexConnection, setCodexConnection] = useState<ModelConnection | null>(null)
+  const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
   const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
   const [claudeAuthMode, setClaudeAuthMode] = useState<SessionProfileParams['claude_auth_mode'] | ''>('')
   const [credentialSource, setCredentialSource] = useState<CredentialSource | ''>('')
@@ -166,6 +170,8 @@ export default function SessionProfileFormModal({
 
       const source = cfg?.params?.credential_source ?? ''
       setCredentialSource(source)
+      setCodexConnection(cfg?.codex_connection ?? null)
+      setClaudeConnection(cfg?.claude_connection ?? null)
       setCodexAuthMode(cfg?.params?.codex_auth_mode ?? '')
       setClaudeAuthMode(cfg?.params?.claude_auth_mode ?? '')
     } else {
@@ -184,6 +190,8 @@ export default function SessionProfileFormModal({
       setSessionTTL('')
       setUnsyncedFilePaths('')
       setCredentialSource('')
+      setCodexConnection(null)
+      setClaudeConnection(null)
       setCodexAuthMode('')
       setClaudeAuthMode('')
       setShowAdvanced(false)
@@ -293,7 +301,16 @@ export default function SessionProfileFormModal({
         ...(credentialSource ? { credential_source: credentialSource } : {}),
       }
 
+      const connectionPayload = (connection: ModelConnection | null) => {
+        if (!connection) return null
+        const payload = { ...connection }
+        delete payload.has_api_key
+        if (!payload.api_key) delete payload.api_key
+        return payload
+      }
       const config = {
+        codex_connection: connectionPayload(codexConnection),
+        claude_connection: connectionPayload(claudeConnection),
         ...(Object.keys(environment).length > 0 ? { environment } : {}),
         ...(Object.keys(tags).length > 0 ? { tags } : {}),
         ...(pool.trim() ? { pool: pool.trim() } : {}),
@@ -417,6 +434,7 @@ export default function SessionProfileFormModal({
                 <option value="openai_compatible">OpenAI 互換 API</option>
               </select>
             </div>
+            {codexAuthMode === 'openai_compatible' && <ProfileConnectionFields agent="codex" value={codexConnection} onChange={setCodexConnection} />}
             <div>
               <label htmlFor="profile-claude-auth" className="block text-sm font-medium mb-1">Claude Code の認証方法</label>
               <select id="profile-claude-auth" value={claudeAuthMode} onChange={e => setClaudeAuthMode(e.target.value as typeof claudeAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
@@ -425,8 +443,10 @@ export default function SessionProfileFormModal({
                 <option value="bedrock">AWS Bedrock</option>
                 <option value="anthropic_compatible">Anthropic 互換 API</option>
               </select>
-              <p className="text-xs text-gray-500 mt-2">このプロファイルで使う認証方法を指定します。接続先・API キーは認証設定で登録してください。モデルは下の設定で上書きできます。</p>
+              <p className="text-xs text-gray-500 mt-2">このプロファイルで使う認証方法を指定します。互換 API の接続先・API キーはプロファイル専用に設定できます。</p>
             </div>
+
+            {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={setClaudeConnection} />}
 
             {/* Credential source */}
             <div>

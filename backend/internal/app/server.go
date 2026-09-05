@@ -480,8 +480,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Initialize session profile repository (Kubernetes Secret-backed)
 	sessionProfileRepo := portrepos.SessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(
 		persistenceClient,
-		namespace,
+		namespace, encryptionRegistry,
 	))
+	if k8sSessionManager != nil {
+		k8sSessionManager.SetSessionProfileRepository(sessionProfileRepo)
+	}
 	log.Printf("[SERVER] Session profile repository initialized")
 
 	assetStore, err := services.NewAssetStore(context.Background(), cfg.Asset)
@@ -1289,6 +1292,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		CodexAuthMode:            codexAuthMode,
 		ClaudeAuthMode:           claudeAuthMode,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
+		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 	})
 	if err != nil {
 		return nil, err
@@ -1331,7 +1335,8 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
 		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
-		ProfileMCPServers: startReq.ProfileMCPServers,
+		ProfileMCPServers:        startReq.ProfileMCPServers,
+		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 	}
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
