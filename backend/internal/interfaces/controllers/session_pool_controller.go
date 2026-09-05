@@ -804,11 +804,18 @@ func (c *SessionPoolController) DeleteBinding(ctx echo.Context) error {
 		return sessionRunnerStoreError(err)
 	}
 	found := false
+	var target *core.Binding
 	for _, binding := range bindings {
-		found = found || binding.ID == ctx.Param("bindingId")
+		if binding.ID == ctx.Param("bindingId") {
+			found = true
+			target = binding
+		}
 	}
 	if !found {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
+	}
+	if target.Enabled && target.Role == core.BindingRoleManage && !hasOtherEnabledManageBinding(bindings, target.ID) {
+		return echo.NewHTTPError(http.StatusConflict, "cannot remove the last enabled manage binding")
 	}
 	if err := c.store.DeleteBinding(ctx.Request().Context(), ctx.Param("bindingId")); err != nil {
 		return sessionRunnerStoreError(err)
@@ -860,6 +867,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	if binding == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
+	wasEnabledManage := binding.Enabled && binding.Role == core.BindingRoleManage
 	var patch struct {
 		Role          *core.BindingRole `json:"role,omitempty"`
 		Enabled       *bool             `json:"enabled,omitempty"`
@@ -903,10 +911,24 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	if wasEnabledManage && (binding.Role != core.BindingRoleManage || !binding.Enabled) {
+		if !hasOtherEnabledManageBinding(bindings, binding.ID) {
+			return echo.NewHTTPError(http.StatusConflict, "cannot remove the last enabled manage binding")
+		}
+	}
 	if err := c.store.UpdateBinding(ctx.Request().Context(), binding); err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	return ctx.JSON(http.StatusOK, binding)
+}
+
+func hasOtherEnabledManageBinding(bindings []*core.Binding, bindingID string) bool {
+	for _, binding := range bindings {
+		if binding.ID != bindingID && binding.Enabled && binding.Role == core.BindingRoleManage {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {

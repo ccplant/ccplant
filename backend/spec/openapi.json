@@ -5737,6 +5737,9 @@
         "responses": {
           "200": {
             "description": "Updated binding"
+          },
+          "409": {
+            "description": "The update would remove the pool's last enabled manage binding"
           }
         }
       },
@@ -5749,6 +5752,9 @@
         "responses": {
           "204": {
             "description": "Binding deleted"
+          },
+          "409": {
+            "description": "The binding is the pool's last enabled manage binding"
           }
         }
       }

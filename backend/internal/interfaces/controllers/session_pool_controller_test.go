@@ -487,6 +487,50 @@ func TestPoolCreatorReceivesManageBinding(t *testing.T) {
 	}
 }
 
+func TestLastEnabledManageBindingCannotBeRemoved(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
+		map[string]any{"name": "linux"}, nil, nil, alice)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
+	}
+	bindings, err := store.ListBindings(context.Background(), "linux")
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("creator binding: bindings=%+v err=%v", bindings, err)
+	}
+	binding := bindings[0]
+
+	for name, patch := range map[string]map[string]any{
+		"disable": {"enabled": false},
+		"demote":  {"role": "use"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+				patch, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+			if result.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", result.Code, result.Body.String())
+			}
+		})
+	}
+	deleted := callSessionPoolHandlerAs(t, controller.DeleteBinding, http.MethodDelete, "/session-pools/linux/bindings/"+binding.ID,
+		nil, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if deleted.Code != http.StatusConflict {
+		t.Fatalf("delete last manage binding status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+
+	second := &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "bob", Role: core.BindingRoleManage, Enabled: true}
+	if err := store.CreateBinding(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	deleted = callSessionPoolHandlerAs(t, controller.DeleteBinding, http.MethodDelete, "/session-pools/linux/bindings/"+binding.ID,
+		nil, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete manage binding with successor status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+}
+
 func TestAllBindingCannotManagePool(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
