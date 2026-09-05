@@ -41,3 +41,7 @@
 同日、管理命令の転送先 `sessionManager.apiUrl` が親 API を指していたことを特定し、`http://127.0.0.1:8080` に修正した（Helm revision 30）。上記3件の削除失敗記録は再試行により解消済み。既存セッション3件を維持して新規起動できるよう、pool 上限は4に変更し idle runner 1件を確認した。
 
 また、公開セッション ID を manager の削除対象にしていた処理を、実際の `RemoteSessionID`（割り当てたランナー ID）に修正した。公開 ID 宛ての削除は 404 になり、実際の Pod の削除を後続の orphan reconciliation に依存していた。回帰テストでは削除先 ID、完了確認までの記録保持、完了後の記録削除を確認する。
+
+修正コミット `b8b03d2cd2f50c3434022f390735a76285ffdcec` の API image `sha256:21f4e235e37fdadfcdbd6fd9a9d736184022a64ceab97d88b84876a0fabf4498` を Fly dev に適用し、health のバージョンを確認した。新規セッション `fb0a5184-22d7-4776-bb19-872516d826a6` は Ollama から `DEV_RECOVERY_OK` を返し、公開 DELETE が 202 を返した後、manager が割当 ID `c594425f-9f1f-4285-bec9-28990db50982` を直接削除した。検索結果と Kubernetes Deployment の両方から消えたことを確認済み。一時ユーザー設定と pool binding も削除済み。
+
+最終観測では、既存ランナー3件も 01:31:59〜01:32:59 UTC に orphan reconciliation で削除されていた。今回それらへの削除要求は送っていないが、親の登録から外れた原因は取得できたログだけでは確定できず、ユーザー操作との照合が必要。したがって「既存3セッションを維持」は復旧途中の状態であり、最終状態ではない。01:34:54 UTC に後続の待機ランナー1件が Ready になった。
