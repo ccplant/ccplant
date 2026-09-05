@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { useTeamScope } from '../../../contexts/TeamScopeContext'
 import SessionProfileEditor from '../../components/SessionProfileEditor'
 import { createAgentAPIProxyClientFromStorage } from '../../../lib/agentapi-proxy-client'
 import type { SessionProfile } from '../../../types/session_profile'
@@ -11,6 +12,14 @@ function ProfilePage() {
   const { profileId } = useParams<{ profileId: string }>()
   const query = useSearchParams()
   const router = useRouter()
+  const { setAvailableTeams } = useTeamScope()
+  useEffect(() => {
+    let cancelled = false
+    createAgentAPIProxyClientFromStorage().getUserInfo()
+      .then(info => { if (!cancelled) setAvailableTeams(info.teams ?? []) })
+      .catch(() => { /* Existing team choices remain available when offline. */ })
+    return () => { cancelled = true }
+  }, [setAvailableTeams])
   const [profile, setProfile] = useState<SessionProfile | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
