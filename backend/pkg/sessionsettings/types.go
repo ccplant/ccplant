@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"gopkg.in/yaml.v3"
 )
 
@@ -169,21 +170,25 @@ type RegistryConfig struct {
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
-	Session               SessionMeta          `yaml:"session"                   json:"session"`
-	Env                   map[string]string    `yaml:"env,omitempty"             json:"env,omitempty"`
-	Claude                ClaudeConfig         `yaml:"claude,omitempty"          json:"claude,omitempty"`
-	Codex                 CodexConfig          `yaml:"codex,omitempty"           json:"codex,omitempty"`
-	Pi                    PiConfig             `yaml:"pi,omitempty"              json:"pi,omitempty"`
-	Repository            *RepositoryConfig    `yaml:"repository,omitempty"      json:"repository,omitempty"`
-	InitialMessage        string               `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
-	WebhookPayload        string               `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
-	Startup               StartupConfig        `yaml:"startup,omitempty"         json:"startup,omitempty"`
-	Github                *GithubConfig        `yaml:"github,omitempty"          json:"github,omitempty"`
-	SlackParams           *SlackParams         `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
-	OtelCollector         *OtelCollectorConfig `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
-	UsageReportingEnabled bool                 `yaml:"usage_reporting_enabled,omitempty" json:"usage_reporting_enabled,omitempty"`
-	Sandbox               *SandboxConfig       `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
-	Docker                *DockerConfig        `yaml:"docker,omitempty"          json:"docker,omitempty"`
+	CodexConnection       *modelprovider.Connection `json:"codex_connection,omitempty" yaml:"codex_connection,omitempty"`
+	ClaudeConnection      *modelprovider.Connection `json:"claude_connection,omitempty" yaml:"claude_connection,omitempty"`
+	UnsetEnv              []string                  `json:"unset_env,omitempty" yaml:"unset_env,omitempty"`
+	RemoveFiles           []string                  `json:"remove_files,omitempty" yaml:"remove_files,omitempty"`
+	Session               SessionMeta               `yaml:"session"                   json:"session"`
+	Env                   map[string]string         `yaml:"env,omitempty"             json:"env,omitempty"`
+	Claude                ClaudeConfig              `yaml:"claude,omitempty"          json:"claude,omitempty"`
+	Codex                 CodexConfig               `yaml:"codex,omitempty"           json:"codex,omitempty"`
+	Pi                    PiConfig                  `yaml:"pi,omitempty"              json:"pi,omitempty"`
+	Repository            *RepositoryConfig         `yaml:"repository,omitempty"      json:"repository,omitempty"`
+	InitialMessage        string                    `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
+	WebhookPayload        string                    `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
+	Startup               StartupConfig             `yaml:"startup,omitempty"         json:"startup,omitempty"`
+	Github                *GithubConfig             `yaml:"github,omitempty"          json:"github,omitempty"`
+	SlackParams           *SlackParams              `yaml:"slack_params,omitempty"    json:"slack_params,omitempty"`
+	OtelCollector         *OtelCollectorConfig      `yaml:"otel_collector,omitempty"  json:"otel_collector,omitempty"`
+	UsageReportingEnabled bool                      `yaml:"usage_reporting_enabled,omitempty" json:"usage_reporting_enabled,omitempty"`
+	Sandbox               *SandboxConfig            `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
+	Docker                *DockerConfig             `yaml:"docker,omitempty"          json:"docker,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.

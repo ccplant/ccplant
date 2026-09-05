@@ -7589,6 +7589,230 @@
         "default": "user",
         "description": "Ownership scope. 'user' for personal resources, 'team' for team-shared resources"
       },
+      "CodexConnectionRequest": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false,
+        "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "auth_json",
+              "openai_compatible"
+            ]
+          },
+          "base_url": {
+            "type": "string",
+            "description": "HTTP(S) API base URL. Required in compatible mode."
+          },
+          "model": {
+            "type": "string",
+            "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
+          },
+          "authentication": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "none"
+            ]
+          },
+          "context_window": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 1000000000,
+            "nullable": true
+          },
+          "auto_compact_token_limit": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "nullable": true
+          },
+          "supports_reasoning_summaries": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "api_key": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Omit to keep the stored secret. Empty or null is rejected."
+          },
+          "clear_api_key": {
+            "type": "boolean",
+            "writeOnly": true,
+            "description": "Delete the stored key. Incompatible with api_key and active key authentication."
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        }
+      },
+      "CodexConnectionResponse": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "auth_json",
+              "openai_compatible"
+            ]
+          },
+          "base_url": {
+            "type": "string",
+            "description": "HTTP(S) API base URL. Required in compatible mode."
+          },
+          "model": {
+            "type": "string",
+            "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
+          },
+          "authentication": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "none"
+            ]
+          },
+          "context_window": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 1000000000,
+            "nullable": true
+          },
+          "auto_compact_token_limit": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "nullable": true
+          },
+          "supports_reasoning_summaries": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        }
+      },
+      "ClaudeConnectionRequest": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false,
+        "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "bedrock",
+              "anthropic_compatible"
+            ]
+          },
+          "base_url": {
+            "type": "string",
+            "description": "HTTP(S) API base URL. Required in compatible mode."
+          },
+          "model": {
+            "type": "string",
+            "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
+          },
+          "authentication": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "bearer_token"
+            ]
+          },
+          "model_aliases": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": false,
+            "properties": {
+              "sonnet": {
+                "type": "string"
+              },
+              "opus": {
+                "type": "string"
+              },
+              "haiku": {
+                "type": "string"
+              }
+            }
+          },
+          "api_key": {
+            "type": "string",
+            "minLength": 1,
+            "writeOnly": true,
+            "description": "Omit to keep the stored secret. Empty or null is rejected."
+          },
+          "clear_api_key": {
+            "type": "boolean",
+            "writeOnly": true,
+            "description": "Delete the stored key. Incompatible with api_key and active key authentication."
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        }
+      },
+      "ClaudeConnectionResponse": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "bedrock",
+              "anthropic_compatible"
+            ]
+          },
+          "base_url": {
+            "type": "string",
+            "description": "HTTP(S) API base URL. Required in compatible mode."
+          },
+          "model": {
+            "type": "string",
+            "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
+          },
+          "authentication": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "bearer_token"
+            ]
+          },
+          "model_aliases": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": false,
+            "properties": {
+              "sonnet": {
+                "type": "string"
+              },
+              "opus": {
+                "type": "string"
+              },
+              "haiku": {
+                "type": "string"
+              }
+            }
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        }
+      },
       "UpdateSettingsRequest": {
         "type": "object",
         "properties": {
@@ -7617,9 +7841,11 @@
             "type": "string",
             "enum": [
               "oauth",
-              "bedrock"
+              "bedrock",
+              "anthropic_compatible",
+              ""
             ],
-            "description": "Authentication mode. If not set, oauth is preferred when both credentials are available."
+            "description": "Claude connection mode. When claude_connection is registered, both mode fields must agree."
           },
           "enabled_plugins": {
             "type": "array",
@@ -7663,6 +7889,12 @@
               "cursor"
             ],
             "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
+          },
+          "codex_connection": {
+            "$ref": "#/components/schemas/CodexConnectionRequest"
+          },
+          "claude_connection": {
+            "$ref": "#/components/schemas/ClaudeConnectionRequest"
           }
         }
       },
@@ -7809,9 +8041,10 @@
             "enum": [
               "oauth",
               "bedrock",
+              "anthropic_compatible",
               ""
             ],
-            "description": "The determined authentication mode being used"
+            "description": "Claude connection mode. When claude_connection is registered, both mode fields must agree."
           },
           "enabled_plugins": {
             "type": "array",
@@ -7861,6 +8094,12 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "codex_connection": {
+            "$ref": "#/components/schemas/CodexConnectionResponse"
+          },
+          "claude_connection": {
+            "$ref": "#/components/schemas/ClaudeConnectionResponse"
           }
         }
       },

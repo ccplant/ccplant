@@ -9,14 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	domainservices "github.com/takutakahashi/agentapi-proxy/internal/domain/services"
+	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	domainservices "github.com/takutakahashi/agentapi-proxy/internal/domain/services"
-	infraservices "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 const (
@@ -42,6 +41,8 @@ type encryptedEnvVarJSON struct {
 
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
+	CodexConnection         *connectionJSON                        `json:"codex_connection,omitempty"`
+	ClaudeConnection        *connectionJSON                        `json:"claude_connection,omitempty"`
 	Name                    string                                 `json:"name"`
 	Bedrock                 *bedrockJSON                           `json:"bedrock,omitempty"`
 	MCPServers              map[string]*mcpServerJSON              `json:"mcp_servers,omitempty"`
@@ -273,6 +274,15 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 		UpdatedAt:            settings.UpdatedAt(),
 	}
 
+	var connectionErr error
+	sj.CodexConnection, connectionErr = r.encodeConnection(ctx, settings.CodexConnection())
+	if connectionErr != nil {
+		return nil, connectionErr
+	}
+	sj.ClaudeConnection, connectionErr = r.encodeConnection(ctx, settings.ClaudeConnection())
+	if connectionErr != nil {
+		return nil, connectionErr
+	}
 	if bedrock := settings.Bedrock(); bedrock != nil {
 		sj.Bedrock = &bedrockJSON{
 			Enabled:         bedrock.Enabled(),
@@ -442,6 +452,17 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
+	codexConnection, connectionErr := r.decodeConnection(ctx, sj.CodexConnection)
+	if connectionErr != nil {
+		return nil, connectionErr
+	}
+	claudeConnection, connectionErr := r.decodeConnection(ctx, sj.ClaudeConnection)
+	if connectionErr != nil {
+		return nil, connectionErr
+	}
+	settings.SetCodexConnection(codexConnection)
+	settings.SetClaudeConnection(claudeConnection)
+	settings.SetUpdatedAt(sj.UpdatedAt)
 	// Load env vars: encrypted_env_vars takes precedence; plain env_vars serves as
 	// fallback for legacy data and is merged for keys not present in the encrypted map.
 	{

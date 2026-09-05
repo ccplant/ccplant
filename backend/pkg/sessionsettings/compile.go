@@ -79,7 +79,18 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 	}
 
 	// 3c. Generate ~/.codex/config.toml (codex-acp sessions only)
-	if err := generateCodexConfigTOML(opts.OutputDir, settings.Codex.ConfigTOML, settings.Env); err != nil {
+	codexConfig, codexEnv := settings.Codex.ConfigTOML, settings.Env
+	if settings.CodexConnection != nil {
+		codexEnv = nil
+		if settings.CodexConnection.Compatible() {
+			var err error
+			codexConfig, err = MergeCodexConnectionConfig(codexConfig, settings.CodexConnection)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if err := generateCodexConfigTOML(opts.OutputDir, codexConfig, codexEnv); err != nil {
 		return fmt.Errorf("failed to generate codex config.toml: %w", err)
 	}
 

@@ -587,6 +587,18 @@ export default function SessionProfileFormModal({
                     </div>
                   </div>
 
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">モデルの上書き</p>
+                    <p className="text-xs text-gray-500">空欄なら認証設定のデフォルトモデルを使用します。接続先・認証情報は変更しません。</p>
+                    {([{ key: 'CODEX_MODEL', label: 'Codex モデル ID' }, { key: 'ANTHROPIC_MODEL', label: 'Claude Code モデル ID' }]).map(({ key, label }) => (
+                      <label key={key} className="block text-sm">{label}
+                        <input aria-label={label} value={envPairs.find(pair => pair.key === key)?.value || (key === 'CODEX_MODEL' ? envPairs.find(pair => pair.key === 'OPENAI_MODEL')?.value : '') || ''}
+                          onChange={e => setEnvPairs(prev => [...prev.filter(pair => pair.key !== key && !(key === 'CODEX_MODEL' && pair.key === 'OPENAI_MODEL')), ...(e.target.value ? [{ key, value: e.target.value }] : [])])}
+                          placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
+                      </label>
+                    ))}
+                  </div>
+
                   {/* Agent Type */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -595,7 +607,7 @@ export default function SessionProfileFormModal({
                     <div className="space-y-2">
                       {([
                         { value: '', label: 'デフォルト', description: 'agent_type を送信しない' },
-                        { value: 'auto', label: '自動選択', description: 'Codex auth.json があれば Codex ACP、それ以外は Claude ACP' },
+                        { value: 'auto', label: '自動選択', description: 'Codex の互換 API または auth.json があれば Codex ACP、それ以外は Claude ACP' },
                         { value: 'claude-legacy', label: 'Claude Legacy', description: 'agent_type=claude-legacy を送信' },
                         { value: 'claude-acp', label: 'Claude ACP', description: 'agent_type=claude-acp を送信' },
                         { value: 'codex-acp', label: 'Codex ACP', description: 'agent_type=codex-acp を送信' },

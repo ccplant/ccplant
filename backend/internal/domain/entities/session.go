@@ -3,6 +3,7 @@ package entities
 import (
 	"time"
 
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -179,8 +180,11 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
-	ResumeFrom string
-	UserID     string
+	ModelConnectionsResolved bool                      `json:"-"`
+	CodexConnection          *modelprovider.Connection `json:"-"`
+	ClaudeConnection         *modelprovider.Connection `json:"-"`
+	ResumeFrom               string
+	UserID                   string
 	// TriggeredUserID identifies the external actor that caused a trigger-backed session.
 	// It is distinct from UserID, which remains the trigger configuration owner.
 	TriggeredUserID string

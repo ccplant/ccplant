@@ -1,6 +1,6 @@
 # Codex / Claude Code 認証設定への互換 API 追加
 
-ステータス: 設計案（実装はこの PR の対象外）
+ステータス: 実装済み・レビュー待ち（外部接続先での実機検証は未実施）
 
 ## 目的と対応範囲
 
@@ -145,7 +145,7 @@ Claude の Base URL は API ルートを指定する（例: `https://host/anthro
 
 接続は **URL・デフォルトモデル・キー・認証方式を一組として解決**した後、モデルだけをプロファイル等で上書きする。通常の環境変数マージで個人の URL とチームのキーを合成しない。
 
-1. 既存の `credentialOwnersForRequest` に基づいて利用可能な認証元を列挙する。`session_user`、`team`、`triggered_user`、`github_sender` の選択と権限を維持する。単に個人優先とする別のルールを追加しない。
+1. 既存の `credentialOwnersForRequest` に基づいて利用可能な認証元を列挙する。チームスコープで認証元未指定の場合、新しい構造化接続は当該チームの設定を使う（旧認証ファイルの配置規則は維持する）。`session_user`、`team`、`triggered_user`、`github_sender` の選択と権限を維持する。単に個人優先とする別のルールを追加しない。
 2. エージェントごとに候補順で、明示された接続設定、または既存認証を採用する。Codex は `codex_connection`、Claude は `claude_connection` を扱い、Claude の既存 OAuth / Bedrock は従来の解決経路を再利用する。前の候補の有効な認証ファイル集合を採用した場合は、後の候補の互換 API キーを混ぜない。既存認証のマージ規則を互換 API の URL・キーへ流用しない。
 3. 明示設定が不完全・復号不能ならエラーにする。別の所有者や auth.json へ暗黙に切り替えない。`credential_source=none` では管理された接続キーも注入しない。
 4. 共通 resolver の結果をエージェント自動選択と設定生成の双方へ渡す。開始要求・プロファイル・既存 `default_agent_type` で明示されたエージェントを優先する。最終的に `auto` なら、有効な Codex 認証（互換 API または auth.json）があれば `codex-acp`、なければ `claude-acp` とする。両方の互換 API を登録した場合も Codex 優先を維持し、Claude を常用する場合は既存の既定エージェント設定で選ぶことを画面に説明する。保存順では決めない。
@@ -227,4 +227,4 @@ API キーの実値をリポジトリの `.claude/settings.json`、引数、プ�
 | Claude 新旧 API フィールド | auth_mode との同期と矛盾検出が機能し、既存 OAuth / Bedrock 利用者を維持する |
 | 401、404、到達不能、非対応モデル | 秘密情報を伏せて原因を表示し、別接続へ切り替えない |
 
-この設計 PR ではコード変更・ランタイム検証を行わない。実装 PR では設定 API、resolver、materialize、compile の単体テストと両フォームの操作テストを追加し、対応する Codex / codex-acp / Claude Code / claude-acp のバージョンと実機確認した接続先を記録する。
+本 PR に設定 API、接続解決、起動設定の生成、復元時の接続検証と両フォームの操作テストを追加した。外部 API への実推論は未実施。リリース前に、配布する Codex / codex-acp / Claude Code / claude-acp のバージョンと実機確認した接続先を記録する。

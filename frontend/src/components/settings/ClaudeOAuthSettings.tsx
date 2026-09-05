@@ -4,12 +4,13 @@ import { useState } from 'react'
 import { AuthMode } from '@/types/settings'
 
 interface ClaudeOAuthSettingsProps {
+  showAuthModeSelector?: boolean
   hasToken: boolean  // トークンが設定されているかどうか（API レスポンスから取得）
   authMode?: AuthMode  // 現在の認証モード
   onChange: (token: string, authMode: AuthMode) => void  // トークンと認証モードの変更を通知
 }
 
-export function ClaudeOAuthSettings({ hasToken, authMode, onChange }: ClaudeOAuthSettingsProps) {
+export function ClaudeOAuthSettings({ hasToken, authMode, onChange, showAuthModeSelector = true }: ClaudeOAuthSettingsProps) {
   const [token, setToken] = useState('')
   const [isEditing, setIsEditing] = useState(false)
   const [showToken, setShowToken] = useState(false)
@@ -75,7 +76,7 @@ export function ClaudeOAuthSettings({ hasToken, authMode, onChange }: ClaudeOAut
       </div>
 
       {/* Auth Mode Selection */}
-      {hasToken && (
+      {hasToken && showAuthModeSelector && (
         <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Authentication Mode

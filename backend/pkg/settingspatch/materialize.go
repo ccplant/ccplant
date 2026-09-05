@@ -73,6 +73,8 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 		delete(result.EnvVars, "AWS_SECRET_ACCESS_KEY")
 		delete(result.EnvVars, "AWS_ROLE_ARN")
 		delete(result.EnvVars, "AWS_PROFILE")
+	case "anthropic_compatible":
+	// The structured connection is applied after the final session env merge.
 	case "":
 		// not set — preserve externally injected auth
 	default:
@@ -80,7 +82,7 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 	}
 
 	// 3. OAuth token.
-	if resolved.OAuthToken != "" {
+	if resolved.OAuthToken != "" && resolved.AuthMode != "anthropic_compatible" {
 		result.EnvVars["CLAUDE_CODE_OAUTH_TOKEN"] = resolved.OAuthToken
 	}
 
