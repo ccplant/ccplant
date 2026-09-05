@@ -295,6 +295,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			startReq.Tags["session_profile_id"] = profile.ID()
 			cfg := profile.Config()
 			startReq.ProfileMCPServers = cfg.MCPServers()
+			startReq.ResolvedSessionProfileID = profile.ID()
 
 			// Keep profile environment separate so it can override team/user
 			// settings without overriding explicit request keys.
@@ -1618,6 +1619,12 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	}
 	if len(override.UnsyncedFilePaths) > 0 {
 		merged.UnsyncedFilePaths = append([]string(nil), override.UnsyncedFilePaths...)
+	}
+	if override.CodexAuthMode != "" {
+		merged.CodexAuthMode = override.CodexAuthMode
+	}
+	if override.ClaudeAuthMode != "" {
+		merged.ClaudeAuthMode = override.ClaudeAuthMode
 	}
 	if override.CredentialSource != "" {
 		merged.CredentialSource = override.CredentialSource

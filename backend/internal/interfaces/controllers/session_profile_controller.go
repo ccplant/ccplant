@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
 // SessionProfileController handles session profile CRUD endpoints
@@ -31,6 +33,9 @@ func (c *SessionProfileController) GetName() string {
 
 // SessionProfileConfigRequest represents session profile config in requests
 type SessionProfileConfigRequest struct {
+	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
+	CodexConnection        json.RawMessage              `json:"codex_connection,omitempty"`
+	ClaudeConnection       json.RawMessage              `json:"claude_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -82,6 +87,9 @@ type SessionProfileResponse struct {
 
 // SessionProfileConfigResponse represents session profile config in responses
 type SessionProfileConfigResponse struct {
+	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
+	CodexConnection        *modelprovider.Connection    `json:"codex_connection,omitempty"`
+	ClaudeConnection       *modelprovider.Connection    `json:"claude_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -136,6 +144,12 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 	profile.SetIsDefault(req.IsDefault)
 	profile.SetSelectorTags(req.SelectorTags)
 	config := c.requestToConfig(req.Config)
+	if err := validateProfileSettingsTeam(user, profile, config); err != nil {
+		return err
+	}
+	if err := applyProfileConnections(&config, entities.NewSessionProfileConfig(), req.Config); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if err := validateSessionProfileConfig(config); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -261,6 +275,12 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	}
 	if req.Config != nil {
 		config := c.requestToConfig(*req.Config)
+		if err := validateProfileSettingsTeam(user, profile, config); err != nil {
+			return err
+		}
+		if err := applyProfileConnections(&config, profile.Config(), *req.Config); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		if err := validateSessionProfileConfig(config); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
@@ -276,6 +296,11 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 }
 
 func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
+	if params := config.Params(); params != nil {
+		if err := modelprovider.ValidateAuthModes(params.CodexAuthMode, params.ClaudeAuthMode); err != nil {
+			return err
+		}
+	}
 	if config.MCPServers() != nil {
 		return config.MCPServers().Validate()
 	}
@@ -339,6 +364,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 		cfg.SetTags(req.Tags)
 	}
 	cfg.SetPool(req.Pool)
+	cfg.SetSettingsTeamID(req.SettingsTeamID)
 	cfg.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	cfg.SetReuseSession(req.ReuseSession)
@@ -388,9 +414,12 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		IsDefault:    p.IsDefault(),
 		SelectorTags: p.SelectorTags(),
 		Config: SessionProfileConfigResponse{
+			CodexConnection:        cfg.CodexConnection(),
+			ClaudeConnection:       cfg.ClaudeConnection(),
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
 			Pool:                   cfg.Pool(),
+			SettingsTeamID:         cfg.SettingsTeamID(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			Params:                 cfg.Params(),
@@ -404,4 +433,18 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),
 	}
+}
+
+func validateProfileSettingsTeam(user *entities.User, profile *entities.SessionProfile, cfg entities.SessionProfileConfig) error {
+	team := cfg.SettingsTeamID()
+	if team == "" {
+		return nil
+	}
+	if profile.Scope() == entities.ScopeTeam && profile.TeamID() != team {
+		return echo.NewHTTPError(http.StatusBadRequest, "team profiles can inherit settings only from their own team")
+	}
+	if !user.IsAdmin() && !user.IsMemberOfTeam(team) {
+		return echo.NewHTTPError(http.StatusForbidden, "team membership is required to inherit settings")
+	}
+	return nil
 }

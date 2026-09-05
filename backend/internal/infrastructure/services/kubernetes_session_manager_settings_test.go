@@ -875,3 +875,59 @@ func TestResolveAutoAgentType_DefaultsToAutoWhenAgentTypeIsOmitted(t *testing.T)
 		t.Fatalf("resolveAutoAgentType = %q, want claude-acp", got)
 	}
 }
+
+func TestBuildSessionSettings_ProfileAuthOverridesCompatible(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset()
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{Namespace: "test-ns", Image: "test-image", BasePort: 9000, PVCEnabled: boolPtrForTest(false)}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := entities.NewSettings("user")
+	settings.SetAuthMode(entities.AuthModeAnthropicCompatible)
+	settings.SetClaudeCodeOAuthToken("saved-oauth")
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{"user": settings}})
+	req := &entities.RunServerRequest{UserID: "user", AgentType: "claude-acp", ClaudeAuthMode: "oauth"}
+	if err := manager.prepareModelConnections(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	session := NewKubernetesSession("test-auth", req, "deploy", "service", "pvc", "test-ns", 9000, nil, nil)
+	resolved := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if resolved.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "saved-oauth" || resolved.Env["CLAUDE_CODE_USE_BEDROCK"] != "0" {
+		t.Fatal("profile OAuth selection did not materialize saved OAuth credentials")
+	}
+	if settings.AuthMode() != entities.AuthModeAnthropicCompatible {
+		t.Fatal("stored auth mode changed")
+	}
+}
+
+func TestBuildSessionSettings_ProfileSelectsTeamSettings(t *testing.T) {
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{Namespace: "test", Image: "test-image", BasePort: 9000, PVCEnabled: boolPtrForTest(false)}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	team := entities.NewSettings("org/team")
+	team.SetAuthMode(entities.AuthModeOAuth)
+	team.SetClaudeCodeOAuthToken("team-oauth")
+	team.SetEnvVars(map[string]string{"SHARED": "team"})
+	personal := entities.NewSettings("user")
+	personal.SetAuthMode(entities.AuthModeOAuth)
+	personal.SetClaudeCodeOAuthToken("personal-oauth")
+	personal.SetEnvVars(map[string]string{"SHARED": "personal", "PERSONAL_ONLY": "private"})
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{"org/team": team, "user": personal}})
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	pc := entities.NewSessionProfileConfig()
+	pc.SetSettingsTeamID("org/team")
+	profile.SetConfig(pc)
+	manager.SetSessionProfileRepository(profileConnectionRepository{profile: profile})
+	req := &entities.RunServerRequest{UserID: "user", Teams: []string{"org/team"}, ResolvedSessionProfileID: "profile", AgentType: "claude-acp"}
+	if err := manager.prepareModelConnections(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	session := NewKubernetesSession("session", req, "deploy", "service", "pvc", "test", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if settings.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "team-oauth" || settings.Env["SHARED"] != "team" || settings.Env["PERSONAL_ONLY"] != "" {
+		t.Fatal("personal settings overrode selected team")
+	}
+}

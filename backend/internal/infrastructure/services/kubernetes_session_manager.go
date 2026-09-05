@@ -101,9 +101,10 @@ type SessionMessageEvent = portrepos.SessionMessageEvent
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
-	config         *config.Config
-	k8sConfig      *config.KubernetesSessionConfig
-	configProvider interface {
+	sessionProfileRepo portrepos.SessionProfileRepository
+	config             *config.Config
+	k8sConfig          *config.KubernetesSessionConfig
+	configProvider     interface {
 		Current() *config.Config
 		AgentDefaults() settingspatch.SettingsPatch
 	}
@@ -2493,6 +2494,9 @@ func supportedAgentTypeOrDefault(agentType string) string {
 }
 
 func credentialOwnersForRequest(req *entities.RunServerRequest) []string {
+	if req.SettingsTeamID != "" {
+		return []string{req.SettingsTeamID}
+	}
 	owners := make([]string, 0, 2)
 	switch req.CredentialSource {
 	case "session_user":
@@ -2551,7 +2555,9 @@ func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req
 
 func (m *KubernetesSessionManager) defaultAgentTypeForRequest(ctx context.Context, req *entities.RunServerRequest) string {
 	settingsName := ""
-	if req.Scope == entities.ScopeTeam {
+	if req.SettingsTeamID != "" {
+		settingsName = req.SettingsTeamID
+	} else if req.Scope == entities.ScopeTeam {
 		settingsName = req.TeamID
 	} else {
 		settingsName = req.UserID
@@ -6771,7 +6777,9 @@ func (m *KubernetesSessionManager) resolveSettings(
 	}
 
 	// 2. teams (in order)
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+	if req.SettingsTeamID != "" {
+		appendSettingsIfExists(req.SettingsTeamID)
+	} else if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		// Team-scoped session: always use the specified team only (preferred_team_id is ignored)
 		appendSettingsIfExists(req.TeamID)
 		if req.CredentialSource == "github_sender" && req.TriggeredUserID != "" {
@@ -6813,6 +6821,11 @@ func (m *KubernetesSessionManager) resolveSettings(
 	}
 
 	resolved := settingspatch.Resolve(layers...)
+	// Materialize credentials for the selected session method, including when
+	// a legacy oneshot patch contains a different default authentication mode.
+	if req.ClaudeAuthMode != "" {
+		resolved.AuthMode = req.ClaudeAuthMode
+	}
 	materialized, err := settingspatch.Materialize(resolved)
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to materialize settings: %v", err)

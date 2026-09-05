@@ -3,40 +3,28 @@
 import { useState, useCallback } from 'react'
 import { SessionProfile } from '../../types/session_profile'
 import SessionProfileListView from '../components/SessionProfileListView'
-import SessionProfileFormModal from '../components/SessionProfileFormModal'
+import { useRouter } from 'next/navigation'
+import { useTeamScope } from '../../contexts/TeamScopeContext'
 import SessionProfileSidebar from '../components/SessionProfileSidebar'
 import TopBar from '../components/TopBar'
 import NavigationTabs from '../components/NavigationTabs'
 
 export default function SessionProfilesPage() {
   const [refreshKey, setRefreshKey] = useState(0)
-  const [isFormModalOpen, setIsFormModalOpen] = useState(false)
-  const [editingProfile, setEditingProfile] = useState<SessionProfile | null>(null)
+  const router = useRouter()
+  const { getScopeParams } = useTeamScope()
   const [sidebarVisible, setSidebarVisible] = useState(false)
 
   const handleProfilesUpdate = useCallback(() => {
     setRefreshKey((prev) => prev + 1)
   }, [])
 
-  const handleProfileEdit = useCallback((profile: SessionProfile) => {
-    setEditingProfile(profile)
-    setIsFormModalOpen(true)
-  }, [])
-
-  const handleFormModalClose = useCallback(() => {
-    setIsFormModalOpen(false)
-    setEditingProfile(null)
-  }, [])
-
-  const handleFormModalSuccess = useCallback(() => {
-    handleProfilesUpdate()
-    handleFormModalClose()
-  }, [handleProfilesUpdate, handleFormModalClose])
-
-  const handleNewProfile = useCallback(() => {
-    setEditingProfile(null)
-    setIsFormModalOpen(true)
-  }, [])
+  const handleProfileEdit = (profile: SessionProfile) => router.push(`/session-profiles/${encodeURIComponent(profile.id)}`)
+  const handleNewProfile = () => {
+    const scope = getScopeParams()
+    const query = new URLSearchParams({ scope: scope.scope, ...(scope.team_id ? { team_id: scope.team_id } : {}) })
+    router.push(`/session-profiles/new?${query}`)
+  }
 
   return (
     <main className="min-h-dvh bg-gray-50 dark:bg-gray-900">
@@ -94,13 +82,6 @@ export default function SessionProfilesPage() {
         </svg>
       </button>
 
-      {/* Session Profile Form Modal */}
-      <SessionProfileFormModal
-        isOpen={isFormModalOpen}
-        onClose={handleFormModalClose}
-        onSuccess={handleFormModalSuccess}
-        editingProfile={editingProfile}
-      />
     </main>
   )
 }

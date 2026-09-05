@@ -46,8 +46,11 @@ type LaunchRequest struct {
 	CycleMaxCount            int
 	SessionTTL               string
 	UnsyncedFilePaths        []string
+	CodexAuthMode            string
+	ClaudeAuthMode           string
 	CredentialSource         string
 	ProfileMCPServers        *entities.MCPServersSettings
+	ResolvedSessionProfileID string
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -158,6 +161,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		profile := uc.resolveSessionProfile(ctx, req)
 		if profile != nil {
 			applyProfileToLaunchRequest(profile.Config(), &req)
+			req.ResolvedSessionProfileID = profile.ID()
 			if req.Tags == nil {
 				req.Tags = make(map[string]string)
 			}
@@ -232,7 +236,10 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		SessionTTL:               req.SessionTTL,
 		UnsyncedFilePaths:        req.UnsyncedFilePaths,
 		CredentialSource:         req.CredentialSource,
+		CodexAuthMode:            req.CodexAuthMode,
+		ClaudeAuthMode:           req.ClaudeAuthMode,
 		ProfileMCPServers:        req.ProfileMCPServers,
+		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)
@@ -434,6 +441,12 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		}
 		if len(req.UnsyncedFilePaths) == 0 && len(cfg.Params().UnsyncedFilePaths) > 0 {
 			req.UnsyncedFilePaths = append([]string(nil), cfg.Params().UnsyncedFilePaths...)
+		}
+		if req.CodexAuthMode == "" {
+			req.CodexAuthMode = cfg.Params().CodexAuthMode
+		}
+		if req.ClaudeAuthMode == "" {
+			req.ClaudeAuthMode = cfg.Params().ClaudeAuthMode
 		}
 		if req.CredentialSource == "" {
 			req.CredentialSource = cfg.Params().CredentialSource

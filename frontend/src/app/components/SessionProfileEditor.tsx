@@ -1,25 +1,49 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { ArrowLeft, PanelLeft, X, Settings, KeyRound, Bot, Server, Terminal, Tags, Shield, Container, Clock, Files } from 'lucide-react'
+import { SideNav } from '@/components/settings/ui/SideNav'
+import { SettingsPageHeader } from '@/components/settings/ui/SettingsPageHeader'
+import { usePathname, useSearchParams } from 'next/navigation'
+
+import { useState, useEffect, useRef } from 'react'
 import {
   SessionProfile,
   CreateSessionProfileRequest,
   UpdateSessionProfileRequest,
-  CredentialSource,
+  SessionProfileParams,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
 import { LogicalSessionPool } from '../../types/session_pool'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
+import ProfileConnectionFields from './ProfileConnectionFields'
+import type { ModelConnection } from '../../types/settings'
 import type { APIMCPServerConfig } from '../../types/settings'
 import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
 
-interface SessionProfileFormModalProps {
-  isOpen: boolean
+interface SessionProfileEditorProps {
   onClose: () => void
   onSuccess: () => void
   editingProfile?: SessionProfile | null
+  section?: string
+  createScope?: { scope: 'user' | 'team'; team_id?: string }
 }
+
+const profileSections = [
+  { slug: 'basic', label: '基本情報', icon: Settings, group: '' },
+  { slug: 'inheritance', label: 'ベース設定', icon: Settings, group: '' },
+  { slug: 'authentication', label: '認証・API 接続', icon: KeyRound, group: 'AI とエージェント' },
+  { slug: 'agent', label: 'エージェント', icon: Bot, group: 'AI とエージェント' },
+  { slug: 'models', label: 'モデル', icon: Bot, group: 'AI とエージェント' },
+  { slug: 'mcp', label: 'MCP サーバー', icon: Server, group: 'セッション環境' },
+  { slug: 'environment', label: '環境変数', icon: Terminal, group: 'セッション環境' },
+  { slug: 'files', label: 'セッションファイル', icon: Files, group: 'セッション環境' },
+  { slug: 'tags', label: 'タグ', icon: Tags, group: 'セッション環境' },
+  { slug: 'pool', label: 'プール', icon: Server, group: '実行基盤' },
+  { slug: 'sandbox', label: 'ネットワーク制限', icon: Shield, group: '実行基盤' },
+  { slug: 'docker', label: 'Docker', icon: Container, group: '実行基盤' },
+  { slug: 'lifecycle', label: '自動削除', icon: Clock, group: '実行基盤' },
+]
 
 type KeyValuePair = { key: string; value: string }
 const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi-ollama', 'cursor'])
@@ -28,13 +52,16 @@ const normalizeAgentType = (value?: string): string => {
   return value && SUPPORTED_AGENT_TYPES.has(value) ? value : ''
 }
 
-export default function SessionProfileFormModal({
-  isOpen,
+export default function SessionProfileEditor({
   onClose,
   onSuccess,
   editingProfile,
-}: SessionProfileFormModalProps) {
-  const { getScopeParams } = useTeamScope()
+  section = 'basic',
+  createScope,
+}: SessionProfileEditorProps) {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const { getScopeParams, availableTeams = [] } = useTeamScope()
 
   // Basic fields
   const [name, setName] = useState('')
@@ -61,26 +88,35 @@ export default function SessionProfileFormModal({
   // Session TTL
   const [sessionTTL, setSessionTTL] = useState('')
   const [unsyncedFilePaths, setUnsyncedFilePaths] = useState('')
-  const [credentialSource, setCredentialSource] = useState<CredentialSource | ''>('')
+  const [settingsTeamId, setSettingsTeamId] = useState('')
+  const [codexConnection, setCodexConnection] = useState<ModelConnection | null>(null)
+  const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
+  const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
+  const [claudeAuthMode, setClaudeAuthMode] = useState<SessionProfileParams['claude_auth_mode'] | ''>('')
 
   const addDockerRegistry = () => setDockerRegistries(prev => [...prev, { server: '', username: '', password: '', secretName: '', insecure: false }])
-  const removeDockerRegistry = (index: number) => setDockerRegistries(prev => prev.filter((_, i) => i !== index))
+  const removeDockerRegistry = (index: number) => { setDirty(true); setDockerRegistries(prev => prev.filter((_, i) => i !== index)) }
   const updateDockerRegistry = (index: number, field: string, value: string | boolean) =>
     setDockerRegistries(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r))
 
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [resetKey, setResetKey] = useState(0)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const dirtyRef = useRef(false)
+  dirtyRef.current = dirty
 
   const isEditing = !!editingProfile
+  const scope = editingProfile?.scope ?? createScope?.scope
+  const teamId = editingProfile?.team_id ?? createScope?.team_id
 
   useEffect(() => {
-    if (!isOpen) return
     const fetchConfigOptions = async () => {
       const client = createAgentAPIProxyClientFromStorage()
       try {
-        const response = await client.getSandboxPolicies({ ...getScopeParams() })
+        const response = await client.getSandboxPolicies(scope ? { scope, ...(teamId ? { team_id: teamId } : {}) } : getScopeParams())
         setSandboxPolicies(response.sandbox_policies || [])
       } catch {
         setSandboxPolicies([])
@@ -92,42 +128,32 @@ export default function SessionProfileFormModal({
       }
     }
     fetchConfigOptions()
-  }, [isOpen, getScopeParams])
+  }, [getScopeParams, scope, teamId])
 
   // Initialize form when editing
   useEffect(() => {
     if (editingProfile) {
-      setShowAdvanced(false)
       setName(editingProfile.name)
       setDescription(editingProfile.description ?? '')
       setIsDefault(editingProfile.is_default ?? false)
 
       const cfg = editingProfile.config
       setPool(cfg?.pool ?? '')
-      if (cfg?.pool) setShowAdvanced(true)
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
       setMcpServers(cfg?.mcp_servers ?? {})
-      if (cfg?.mcp_servers && Object.keys(cfg.mcp_servers).length > 0) {
-        setShowAdvanced(true)
-      }
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         setEnvPairs(Object.entries(cfg.environment).map(([key, value]) => ({ key, value })))
-        setShowAdvanced(true)
       } else {
         setEnvPairs([{ key: '', value: '' }])
       }
 
       if (cfg?.tags && Object.keys(cfg.tags).length > 0) {
         setTagPairs(Object.entries(cfg.tags).map(([key, value]) => ({ key, value })))
-        setShowAdvanced(true)
       } else {
         setTagPairs([{ key: '', value: '' }])
       }
 
-      if (cfg?.params?.agent_type) {
-        setShowAdvanced(true)
-      }
 
       // Initialize docker from profile params
       const docker = cfg?.params?.docker
@@ -140,7 +166,6 @@ export default function SessionProfileFormModal({
           secretName: r.secret_name ?? '',
           insecure: r.insecure ?? false,
         })))
-        if (docker.enabled) setShowAdvanced(true)
       } else {
         setDockerEnabled(false)
         setDockerRegistries([])
@@ -150,19 +175,19 @@ export default function SessionProfileFormModal({
       const sandbox = cfg?.params?.sandbox
       const policyId = sandbox?.policy_id ?? cfg?.sandbox_policy_id ?? ''
       setSandboxPolicyId(policyId)
-      if (sandbox?.enabled || sandbox?.count_mode || policyId) setShowAdvanced(true)
 
       // Initialize session_ttl from profile config
-      const ttl = cfg?.session_ttl ?? ''
+      const ttl = cfg?.session_ttl ?? cfg?.params?.session_ttl ?? ''
       setSessionTTL(ttl)
-      if (ttl) setShowAdvanced(true)
 
       const paths = cfg?.unsynced_file_paths ?? cfg?.params?.unsynced_file_paths ?? []
       setUnsyncedFilePaths(paths.join('\n'))
-      if (paths.length > 0) setShowAdvanced(true)
 
-      const source = cfg?.params?.credential_source ?? ''
-      setCredentialSource(source)
+      setSettingsTeamId(cfg?.settings_team_id ?? '')
+      setCodexConnection(cfg?.codex_connection ?? null)
+      setClaudeConnection(cfg?.claude_connection ?? null)
+      setCodexAuthMode(cfg?.params?.codex_auth_mode ?? '')
+      setClaudeAuthMode(cfg?.params?.claude_auth_mode ?? '')
     } else {
       // Reset form
       setName('')
@@ -178,26 +203,24 @@ export default function SessionProfileFormModal({
       setSandboxPolicyId('')
       setSessionTTL('')
       setUnsyncedFilePaths('')
-      setCredentialSource('')
-      setShowAdvanced(false)
+      setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
+      setCodexConnection(null)
+      setClaudeConnection(null)
+      setCodexAuthMode('')
+      setClaudeAuthMode('')
     }
     setError(null)
-  }, [editingProfile, isOpen])
+    setDirty(false)
+  }, [editingProfile, resetKey, createScope?.scope, createScope?.team_id])
 
-  // Keyboard handler
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    },
-    [onClose]
-  )
-
+  useEffect(() => { setDrawerOpen(false) }, [section])
   useEffect(() => {
-    if (isOpen) {
-      document.addEventListener('keydown', handleKeyDown)
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirtyRef.current) { event.preventDefault(); event.returnValue = '' }
     }
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, handleKeyDown])
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [])
 
   // Key-value pair helpers
   const updatePair = (
@@ -209,10 +232,12 @@ export default function SessionProfileFormModal({
   ) => {
     const next = [...pairs]
     next[index] = { ...next[index], [field]: val }
+    setDirty(true)
     setPairs(next)
   }
 
   const addPair = (setPairs: React.Dispatch<React.SetStateAction<KeyValuePair[]>>) => {
+    setDirty(true)
     setPairs((prev) => [...prev, { key: '', value: '' }])
   }
 
@@ -221,10 +246,12 @@ export default function SessionProfileFormModal({
     setPairs: React.Dispatch<React.SetStateAction<KeyValuePair[]>>,
     index: number
   ) => {
+    setDirty(true)
     if (pairs.length === 1) {
       setPairs([{ key: '', value: '' }])
     } else {
-      setPairs((prev) => prev.filter((_, i) => i !== index))
+      setDirty(true)
+    setPairs((prev) => prev.filter((_, i) => i !== index))
     }
   }
 
@@ -241,7 +268,7 @@ export default function SessionProfileFormModal({
     setError(null)
 
     if (!name.trim()) {
-      setError('名前は必須です')
+      setError('基本情報で名前を入力してください')
       return
     }
 
@@ -277,14 +304,32 @@ export default function SessionProfileFormModal({
       }
 
       // Build params if any param is set
+      // Preserve fields managed through the API that are not exposed in this editor.
+      const extraParams = { ...editingProfile?.config?.params }
+      for (const key of ['agent_type', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const params = {
+        ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
         sandbox: sandboxConfig,
         ...(dockerConfig ? { docker: dockerConfig } : {}),
-        ...(credentialSource ? { credential_source: credentialSource } : {}),
+        ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
+        ...(claudeAuthMode ? { claude_auth_mode: claudeAuthMode } : {}),
       }
 
+      const connectionPayload = (connection: ModelConnection | null) => {
+        if (!connection) return null
+        const payload = { ...connection }
+        delete payload.has_api_key
+        if (!payload.api_key) delete payload.api_key
+        return payload
+      }
+      const extraConfig = { ...editingProfile?.config }
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths'] as const) delete extraConfig[key]
       const config = {
+        ...extraConfig,
+        ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
+        codex_connection: connectionPayload(codexConnection),
+        claude_connection: connectionPayload(claudeConnection),
         ...(Object.keys(environment).length > 0 ? { environment } : {}),
         ...(Object.keys(tags).length > 0 ? { tags } : {}),
         ...(pool.trim() ? { pool: pool.trim() } : {}),
@@ -298,16 +343,16 @@ export default function SessionProfileFormModal({
       if (isEditing && editingProfile) {
         const updateData: UpdateSessionProfileRequest = {
           name: name.trim(),
-          description: description.trim() || undefined,
+          description: description.trim(),
           is_default: isDefault,
           config: Object.keys(config).length > 0 ? config : undefined,
         }
         await client.updateSessionProfile(editingProfile.id, updateData)
       } else {
-        const scopeParams = getScopeParams()
+        const scopeParams = createScope ?? getScopeParams()
         const createData: CreateSessionProfileRequest = {
           name: name.trim(),
-          description: description.trim() || undefined,
+          description: description.trim(),
           is_default: isDefault,
           ...(Object.keys(config).length > 0 ? { config } : {}),
           ...scopeParams,
@@ -315,6 +360,8 @@ export default function SessionProfileFormModal({
         await client.createSessionProfile(createData)
       }
 
+      setDirty(false)
+      dirtyRef.current = false
       onSuccess()
     } catch (err) {
       console.error('Failed to save session profile:', err)
@@ -324,54 +371,35 @@ export default function SessionProfileFormModal({
     }
   }
 
-  if (!isOpen) return null
-
+  const active = profileSections.find(item => item.slug === section) ?? profileSections[0]
+  const hrefFor = (slug: string) => {
+    const query = new URLSearchParams(searchParams.toString())
+    query.set('section', slug)
+    return `${pathname}?${query}`
+  }
+  const groups = [...new Set(profileSections.map(item => item.group))].map(title => ({
+    title, items: profileSections.filter(item => item.group === title).map(item => ({ ...item, href: hrefFor(item.slug) })),
+  }))
+  const leave = () => {
+    if (!dirty || window.confirm('未保存の変更があります。破棄して移動しますか？')) onClose()
+  }
+  const nav = <SideNav groups={groups} activeHref={hrefFor(active.slug)} ariaLabel="セッションプロファイルの設定" header={<div className="px-3 py-2"><p className="text-xs text-gray-500">{isEditing ? 'セッションプロファイル' : '新しいプロファイル'} · {scope === 'team' ? teamId : '個人'}</p><p className="truncate font-semibold">{name || '名前未設定'}</p></div>} />
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="relative min-h-full flex items-center justify-center p-4">
-        <div
-          className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-                <svg className="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              </div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                {isEditing ? 'プロファイルを編集' : '新しいプロファイル'}
-              </h2>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto overflow-x-hidden">
-            {/* Error */}
-            {error && (
-              <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
-              </div>
-            )}
-
-            {/* Name */}
+    <main className="min-h-dvh bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white">
+      <div className="container mx-auto max-w-6xl px-4 py-6">
+        <div className="mb-6 flex items-center gap-3">
+          <button type="button" className="md:hidden p-2" aria-label="設定項目を開く" onClick={() => setDrawerOpen(true)}><PanelLeft className="h-5 w-5" /></button>
+          <button type="button" onClick={leave} className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-white"><ArrowLeft className="h-4 w-4" />プロファイル一覧に戻る</button>
+        </div>
+        <div className="flex gap-8">
+          <aside className="hidden md:block">{nav}</aside>
+          <form onSubmit={handleSubmit} onChange={() => setDirty(true)} className="min-w-0 flex-1">
+            <SettingsPageHeader title={active.label} description="ベースの設定に、このプロファイルで指定した内容を上書きします。各項目の変更はまとめて保存されます。" />
+            <p className="mb-5 text-sm text-gray-500">ベース: {settingsTeamId ? `チーム ${settingsTeamId}` : '既定の個人・チーム設定'}。未指定の認証方法・モデル・環境変数・MCP はベースの設定を使用します。</p>
+            {error && <p role="alert" className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">{error}</p>}
+            <fieldset disabled={isSubmitting} className="space-y-5">
+            {active.slug === 'basic' && <div className="space-y-5">
+{/* Name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 名前 <span className="text-red-500">*</span>
@@ -400,27 +428,7 @@ export default function SessionProfileFormModal({
               />
             </div>
 
-            {/* Credential source */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                認証情報の配布元
-              </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                Codex の <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">auth.json</code> など、セッションへ配布する認証情報を選択します。
-              </p>
-              <select
-                value={credentialSource}
-                onChange={(e) => setCredentialSource(e.target.value as CredentialSource | '')}
-                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="">デフォルト（個人: 作成者 / チーム: 配布なし）</option>
-                <option value="session_user">セッションを作成したユーザー</option>
-                <option value="team">セッションのチーム</option>
-                <option value="none">配布しない</option>
-              </select>
-            </div>
-
-            {/* is_default */}
+{/* is_default */}
             <div>
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
@@ -440,58 +448,117 @@ export default function SessionProfileFormModal({
               </label>
             </div>
 
-            {/* Config Section */}
+            
+            </div>}
+            {active.slug === 'inheritance' && <div className="space-y-5">
             <div>
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
-              >
-                <svg
-                  className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-                設定（Config）
-              </button>
+              <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">ベースにする設定</label>
+              <select id="profile-settings-team" value={settingsTeamId} onChange={e => setSettingsTeamId(e.target.value)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">既定の個人・チーム設定</option>
+                {[...new Set([...availableTeams, ...(settingsTeamId ? [settingsTeamId] : [])])].filter(team => {
+                  const scope = editingProfile ?? createScope ?? getScopeParams()
+                  return scope.scope !== 'team' || scope.team_id === team
+                }).map(team => <option key={team} value={team}>チーム: {team}</option>)}
+              </select>
+              <p className="text-xs text-gray-500 mt-2">選んだチームの設定をベースにします。認証方法・モデル・環境変数・MCP は、このプロファイルで指定した項目だけ上書きします。チームの設定自体は変更されません。</p>
+            </div>
 
-              {showAdvanced && (
-                <div className="mt-4 space-y-5 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
-                  {/* Session Runner Pool */}
+            </div>}
+            {active.slug === 'authentication' && <div className="space-y-5">
+            <div>
+              <label htmlFor="profile-codex-auth" className="block text-sm font-medium mb-1">Codex の認証方法</label>
+              <select id="profile-codex-auth" value={codexAuthMode} onChange={e => setCodexAuthMode(e.target.value as typeof codexAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">ベースの認証方法を使う</option>
+                <option value="auth_json">ChatGPT / auth.json</option>
+                <option value="openai_compatible">OpenAI 互換 API</option>
+              </select>
+            </div>
+            {codexAuthMode === 'openai_compatible' && <ProfileConnectionFields agent="codex" value={codexConnection} onChange={value => { setCodexConnection(value); setDirty(true) }} />}
+            <div>
+              <label htmlFor="profile-claude-auth" className="block text-sm font-medium mb-1">Claude Code の認証方法</label>
+              <select id="profile-claude-auth" value={claudeAuthMode} onChange={e => setClaudeAuthMode(e.target.value as typeof claudeAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">ベースの認証方法を使う</option>
+                <option value="oauth">Claude OAuth</option>
+                <option value="bedrock">AWS Bedrock</option>
+                <option value="anthropic_compatible">Anthropic 互換 API</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-2">認証方法を選ぶと、このプロファイルで使う方法を上書きします。互換 API の接続先・API キーも必要に応じて上書きできます。</p>
+            </div>
+
+            {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={value => { setClaudeConnection(value); setDirty(true) }} />}
+
+            </div>}
+            {active.slug === 'agent' && <div className="space-y-5">
+{/* Agent Type */}
                   <div>
-                    <label htmlFor="session-profile-pool" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Session Runner Pool
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      エージェントタイプ
                     </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      このプロファイルで作成するセッションの実行先Poolを指定します。空欄の場合は自動選択されます。
-                    </p>
-                    <select
-                      id="session-profile-pool"
-                      value={pool}
-                      onChange={(e) => setPool(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
-                    >
-                      <option value="">自動選択</option>
-                      {pool && !availablePools.some((availablePool) => availablePool.name === pool) && (
-                        <option value={pool}>{pool}（現在の設定）</option>
-                      )}
-                      {availablePools.map((availablePool) => (
-                        <option key={availablePool.name} value={availablePool.name}>
-                          {availablePool.name}
-                        </option>
+                    <div className="space-y-2">
+                      {([
+                        { value: '', label: 'デフォルト', description: '継承元のエージェント設定を使用します' },
+                        { value: 'auto', label: '自動選択', description: 'Codex の互換 API または auth.json があれば Codex ACP、それ以外は Claude ACP' },
+                        { value: 'claude-legacy', label: 'Claude Legacy', description: 'Claude の従来の実行方式' },
+                        { value: 'claude-acp', label: 'Claude ACP', description: 'Claude Code を使用します' },
+                        { value: 'codex-acp', label: 'Codex ACP', description: 'Codex を使用します' },
+                        { value: 'pi-ollama', label: 'Pi Ollama', description: 'Ollama に接続する Pi を使用します' },
+                        { value: 'cursor', label: 'Cursor ACP', description: 'Cursor を使用します' },
+                      ]).map(({ value: v, label, description }) => (
+                        <label key={v} className="flex items-start cursor-pointer group">
+                          <input
+                            type="radio"
+                            name="profile-agent-type"
+                            value={v}
+                            checked={agentType === v}
+                            onChange={() => setAgentType(v)}
+                            className="mt-0.5 w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-gray-600 focus:ring-blue-500"
+                          />
+                          <span className="ml-2">
+                            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 group-hover:text-gray-800 dark:group-hover:text-gray-200">
+                              {label}
+                            </span>
+                            <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                              {description}
+                            </span>
+                          </span>
+                        </label>
                       ))}
-                    </select>
-                    {availablePools.length === 0 && (
-                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                        選択可能なPool候補がありません。
-                      </p>
-                    )}
+                    </div>
                   </div>
 
-                  {/* Environment Variables */}
+                  
+            </div>}
+            {active.slug === 'models' && <div className="space-y-5">
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">モデルの上書き</p>
+                    <p className="text-xs text-gray-500">空欄なら接続設定のデフォルトモデルを使用します。モデルを入力すると、このプロファイルで使用するモデルを上書きします。</p>
+                    {([{ key: 'CODEX_MODEL', label: 'Codex モデル ID' }, { key: 'ANTHROPIC_MODEL', label: 'Claude Code モデル ID' }]).map(({ key, label }) => (
+                      <label key={key} className="block text-sm">{label}
+                        <input aria-label={label} value={envPairs.find(pair => pair.key === key)?.value || (key === 'CODEX_MODEL' ? envPairs.find(pair => pair.key === 'OPENAI_MODEL')?.value : '') || ''}
+                          onChange={e => setEnvPairs(prev => [...prev.filter(pair => pair.key !== key && !(key === 'CODEX_MODEL' && pair.key === 'OPENAI_MODEL')), ...(e.target.value ? [{ key, value: e.target.value }] : [])])}
+                          placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
+                      </label>
+                    ))}
+                  </div>
+
+                  
+            </div>}
+            {active.slug === 'mcp' && <div className="space-y-5">
+{/* MCP Servers */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      MCP サーバー
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                      個人・チーム設定の MCP サーバーを継承します。同じ名前のサーバーは、このプロファイルの設定で上書きされます。
+                    </p>
+                    <MCPServerSettings servers={mcpServers} onChange={value => { setMcpServers(value); setDirty(true) }} />
+                  </div>
+
+                  
+            </div>}
+            {active.slug === 'environment' && <div className="space-y-5">
+{/* Environment Variables */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       環境変数
@@ -539,7 +606,29 @@ export default function SessionProfileFormModal({
                     </div>
                   </div>
 
-                  {/* Tags */}
+                  
+            </div>}
+            {active.slug === 'files' && <div className="space-y-5">
+{/* 同期しないファイルパス */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      同期しないファイルパス
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                      変更を保存先へ同期しない管理ファイルのパスを 1 行に 1 つ指定します。
+                    </p>
+                    <textarea
+                      value={unsyncedFilePaths}
+                      onChange={e => setUnsyncedFilePaths(e.target.value)}
+                      placeholder="/home/agentapi/.codex/auth.json"
+                      rows={3}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono resize-y"
+                    />
+                  </div>
+
+            </div>}
+            {active.slug === 'tags' && <div className="space-y-5">
+{/* Tags */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       タグ
@@ -587,67 +676,44 @@ export default function SessionProfileFormModal({
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium">モデルの上書き</p>
-                    <p className="text-xs text-gray-500">空欄なら認証設定のデフォルトモデルを使用します。接続先・認証情報は変更しません。</p>
-                    {([{ key: 'CODEX_MODEL', label: 'Codex モデル ID' }, { key: 'ANTHROPIC_MODEL', label: 'Claude Code モデル ID' }]).map(({ key, label }) => (
-                      <label key={key} className="block text-sm">{label}
-                        <input aria-label={label} value={envPairs.find(pair => pair.key === key)?.value || (key === 'CODEX_MODEL' ? envPairs.find(pair => pair.key === 'OPENAI_MODEL')?.value : '') || ''}
-                          onChange={e => setEnvPairs(prev => [...prev.filter(pair => pair.key !== key && !(key === 'CODEX_MODEL' && pair.key === 'OPENAI_MODEL')), ...(e.target.value ? [{ key, value: e.target.value }] : [])])}
-                          placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
-                      </label>
-                    ))}
-                  </div>
 
-                  {/* Agent Type */}
+            </div>}
+            {active.slug === 'pool' && <div className="space-y-5">
+{/* Session Runner Pool */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      エージェントタイプ
+                    <label htmlFor="session-profile-pool" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Session Runner Pool
                     </label>
-                    <div className="space-y-2">
-                      {([
-                        { value: '', label: 'デフォルト', description: 'agent_type を送信しない' },
-                        { value: 'auto', label: '自動選択', description: 'Codex の互換 API または auth.json があれば Codex ACP、それ以外は Claude ACP' },
-                        { value: 'claude-legacy', label: 'Claude Legacy', description: 'agent_type=claude-legacy を送信' },
-                        { value: 'claude-acp', label: 'Claude ACP', description: 'agent_type=claude-acp を送信' },
-                        { value: 'codex-acp', label: 'Codex ACP', description: 'agent_type=codex-acp を送信' },
-                        { value: 'pi-ollama', label: 'Pi Ollama', description: 'agent_type=pi-ollama を送信' },
-                        { value: 'cursor', label: 'Cursor ACP', description: 'agent_type=cursor を送信' },
-                      ]).map(({ value: v, label, description }) => (
-                        <label key={v} className="flex items-start cursor-pointer group">
-                          <input
-                            type="radio"
-                            name="profile-agent-type"
-                            value={v}
-                            checked={agentType === v}
-                            onChange={() => setAgentType(v)}
-                            className="mt-0.5 w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-gray-600 focus:ring-blue-500"
-                          />
-                          <span className="ml-2">
-                            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 group-hover:text-gray-800 dark:group-hover:text-gray-200">
-                              {label}
-                            </span>
-                            <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                              {description}
-                            </span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* MCP Servers */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      MCP サーバー
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                      個人・チーム設定の MCP サーバーを継承します。同じ名前のサーバーは、このプロファイルの設定で上書きされます。
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                      このプロファイルで作成するセッションの実行先Poolを指定します。空欄の場合は自動選択されます。
                     </p>
-                    <MCPServerSettings servers={mcpServers} onChange={setMcpServers} />
+                    <select
+                      id="session-profile-pool"
+                      value={pool}
+                      onChange={(e) => setPool(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    >
+                      <option value="">自動選択</option>
+                      {pool && !availablePools.some((availablePool) => availablePool.name === pool) && (
+                        <option value={pool}>{pool}（現在の設定）</option>
+                      )}
+                      {availablePools.map((availablePool) => (
+                        <option key={availablePool.name} value={availablePool.name}>
+                          {availablePool.name}
+                        </option>
+                      ))}
+                    </select>
+                    {availablePools.length === 0 && (
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                        選択可能なPool候補がありません。
+                      </p>
+                    )}
                   </div>
 
-                  {/* Network Sandbox */}
+                  
+            </div>}
+            {active.slug === 'sandbox' && <div className="space-y-5">
+{/* Network Sandbox */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       sandbox policy
@@ -671,7 +737,10 @@ export default function SessionProfileFormModal({
                     )}
                   </div>
 
-                  {/* Docker in Docker (DinD) */}
+                  
+            </div>}
+            {active.slug === 'docker' && <div className="space-y-5">
+{/* Docker in Docker (DinD) */}
                   <div>
                     <label className="flex items-start gap-2 cursor-pointer">
                       <input
@@ -779,7 +848,10 @@ export default function SessionProfileFormModal({
                     )}
                   </div>
 
-                  {/* セッション TTL */}
+                  
+            </div>}
+            {active.slug === 'lifecycle' && <div className="space-y-5">
+{/* セッション TTL */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       セッション自動削除 TTL
@@ -796,53 +868,25 @@ export default function SessionProfileFormModal({
                     />
                   </div>
 
-                  {/* 同期しないファイルパス */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      同期しないファイルパス
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      変更を保存先へ同期しない管理ファイルのパスを 1 行に 1 つ指定します。
-                    </p>
-                    <textarea
-                      value={unsyncedFilePaths}
-                      onChange={e => setUnsyncedFilePaths(e.target.value)}
-                      placeholder="/home/agentapi/.codex/auth.json"
-                      rows={3}
-                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono resize-y"
-                    />
-                  </div>
-                </div>
-              )}
+                  
+            </div>}
+            </fieldset>
+            <div className="sticky bottom-0 z-30 -mx-4 mt-8 border-t border-gray-200 bg-white/90 px-4 py-3 backdrop-blur dark:border-gray-700 dark:bg-gray-900/90">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {dirty && <span role="status" className="mr-auto text-sm text-amber-600 dark:text-amber-400">未保存の変更があります</span>}
+                <button type="button" disabled={isSubmitting || !dirty} onClick={() => setResetKey(key => key + 1)} className="rounded-md border px-4 py-1.5 text-sm disabled:opacity-50">破棄</button>
+                <button type="submit" disabled={isSubmitting} className="rounded-md bg-blue-600 px-5 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{isSubmitting ? '保存中...' : isEditing ? '保存' : '作成'}</button>
+              </div>
             </div>
           </form>
-
-          {/* Footer */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-              className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
-            >
-              {isSubmitting && (
-                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              )}
-              {isEditing ? '保存' : '作成'}
-            </button>
-          </div>
         </div>
       </div>
-    </div>
+      {drawerOpen && <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="設定項目">
+        <button type="button" className="absolute inset-0 bg-black/40" aria-label="設定項目を閉じる" onClick={() => setDrawerOpen(false)} />
+        <div className="absolute inset-y-0 left-0 w-72 overflow-y-auto bg-white p-4 dark:bg-gray-900">
+          <button type="button" autoFocus aria-label="閉じる" className="mb-2 p-2" onClick={() => setDrawerOpen(false)}><X className="h-5 w-5" /></button>{nav}
+        </div>
+      </div>}
+    </main>
   )
 }
