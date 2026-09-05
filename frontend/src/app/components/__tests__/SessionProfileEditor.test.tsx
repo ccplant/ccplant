@@ -69,7 +69,7 @@ it('saves and restores team settings inheritance', async () => {
 })
 
 it('retains edits between sections, discards all edits, and preserves API-only fields', async () => {
-  const profile = { id: 'profile', name: 'Original', created_at: '', updated_at: '', config: { reuse_session: true, initial_message_template: 'Hello', params: { auth_proxy: true } } }
+  const profile = { id: 'profile', name: 'Original', created_at: '', updated_at: '', config: { reuse_session: true, initial_message_template: 'Hello', params: { auth_proxy: true, credential_source: 'none' as const } } }
   const props = { editingProfile: profile, onClose: vi.fn(), onSuccess: vi.fn() }
   const { rerender } = render(<SessionProfileEditor {...props} section="basic" />)
   fireEvent.change(screen.getByDisplayValue('Original'), { target: { value: 'Changed' } })
@@ -80,7 +80,7 @@ it('retains edits between sections, discards all edits, and preserves API-only f
   expect(screen.getByDisplayValue('Changed')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
-  expect(mocks.update.mock.calls[0][1]).toMatchObject({ name: 'Changed', config: { reuse_session: true, initial_message_template: 'Hello', environment: { CODEX_MODEL: 'test-model' }, params: { auth_proxy: true } } })
+  expect(mocks.update.mock.calls[0][1]).toMatchObject({ name: 'Changed', config: { reuse_session: true, initial_message_template: 'Hello', environment: { CODEX_MODEL: 'test-model' }, params: { auth_proxy: true, credential_source: 'none' as const } } })
   fireEvent.change(screen.getByDisplayValue('Changed'), { target: { value: 'Discard this' } })
   fireEvent.click(screen.getByRole('button', { name: '破棄' }))
   expect(screen.getByDisplayValue('Original')).toBeInTheDocument()

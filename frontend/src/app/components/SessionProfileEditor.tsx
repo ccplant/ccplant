@@ -10,7 +10,6 @@ import {
   SessionProfile,
   CreateSessionProfileRequest,
   UpdateSessionProfileRequest,
-  CredentialSource,
   SessionProfileParams,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
@@ -94,7 +93,6 @@ export default function SessionProfileEditor({
   const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
   const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
   const [claudeAuthMode, setClaudeAuthMode] = useState<SessionProfileParams['claude_auth_mode'] | ''>('')
-  const [credentialSource, setCredentialSource] = useState<CredentialSource | ''>('')
 
   const addDockerRegistry = () => setDockerRegistries(prev => [...prev, { server: '', username: '', password: '', secretName: '', insecure: false }])
   const removeDockerRegistry = (index: number) => { setDirty(true); setDockerRegistries(prev => prev.filter((_, i) => i !== index)) }
@@ -185,8 +183,6 @@ export default function SessionProfileEditor({
       const paths = cfg?.unsynced_file_paths ?? cfg?.params?.unsynced_file_paths ?? []
       setUnsyncedFilePaths(paths.join('\n'))
 
-      const source = cfg?.params?.credential_source ?? ''
-      setCredentialSource(source)
       setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
       setClaudeConnection(cfg?.claude_connection ?? null)
@@ -207,7 +203,6 @@ export default function SessionProfileEditor({
       setSandboxPolicyId('')
       setSessionTTL('')
       setUnsyncedFilePaths('')
-      setCredentialSource('')
       setSettingsTeamId('')
       setCodexConnection(null)
       setClaudeConnection(null)
@@ -311,7 +306,7 @@ export default function SessionProfileEditor({
       // Build params if any param is set
       // Preserve fields managed through the API that are not exposed in this editor.
       const extraParams = { ...editingProfile?.config?.params }
-      for (const key of ['agent_type', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'credential_source', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      for (const key of ['agent_type', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const params = {
         ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
@@ -319,7 +314,6 @@ export default function SessionProfileEditor({
         ...(dockerConfig ? { docker: dockerConfig } : {}),
         ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
         ...(claudeAuthMode ? { claude_auth_mode: claudeAuthMode } : {}),
-        ...(credentialSource ? { credential_source: credentialSource } : {}),
       }
 
       const connectionPayload = (connection: ModelConnection | null) => {
@@ -492,29 +486,6 @@ export default function SessionProfileEditor({
 
             {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={value => { setClaudeConnection(value); setDirty(true) }} />}
 
-            {/* Credential source */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                認証情報の配布元
-              </label>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                {settingsTeamId ? `認証情報も ${settingsTeamId} から読み込みます。` : null}
-                Codex の <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">auth.json</code> など、セッションへ配布する認証情報を選択します。
-              </p>
-              <select
-                value={settingsTeamId ? 'team' : credentialSource}
-                disabled={!!settingsTeamId}
-                onChange={(e) => setCredentialSource(e.target.value as CredentialSource | '')}
-                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="">デフォルト（個人: 作成者 / チーム: 配布なし）</option>
-                <option value="session_user">セッションを作成したユーザー</option>
-                <option value="team">セッションのチーム</option>
-                <option value="none">配布しない</option>
-              </select>
-            </div>
-
-            
             </div>}
             {active.slug === 'agent' && <div className="space-y-5">
 {/* Agent Type */}
