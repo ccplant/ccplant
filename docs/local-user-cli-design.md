@@ -119,6 +119,6 @@ ID はサーバーが username と同じ値に決定する。任意の別 ID を
 
 ## Fly.io 開発環境での検証
 
-2026-09-05 UTC にコミット `7f4ebc8eb85989c99d69e2529e72e3f12a40f4ca` の API イメージを `ccplant-api-dev` へデプロイした。Fly マシン内の CLI で `local:e2e-7f4ebc8` を作成し、対象ユーザー用の有効期限 1 時間のトークンを発行した。そのトークンを `Authorization: Bearer` に指定した `POST /start` は HTTP 200 を返し、セッション ID `25f3e5fc-15ce-476d-aecc-771afbd65b63` が発行された。
+2026-09-05 UTC にコミット `cd0a31d910b43319357638fdba776a650f7b1095` の API イメージを `ccplant-api-dev` へデプロイした。Fly マシン内の CLI でプレフィックスなしのユーザー `e2e-cd0a31d` を作成し、対象ユーザー用の API トークンを発行した。そのトークンを `Authorization: Bearer` に指定した `POST /start` は HTTP 200 を返し、セッション ID `8efa51ec-1a8f-41d0-8a00-985786a29743` が発行された。また、同じトークンによる `https://dev.ccplant.com/api/auth/login` への Web UI ログインも成功した。
 
 検証後、セッションの削除を要求し、発行した API トークンを失効した。トークンの秘密値は Fly マシン上の mode 0600 の一時ファイルだけに書き込み、外部出力には含めていない。ローカルユーザー自体は初版に削除 API がないため、トークンを持たない検証記録として残る。
