@@ -5345,14 +5345,14 @@
     },
     "/session-pools": {
       "get": {
-        "summary": "List logical pools manageable by the authenticated subject",
+        "summary": "List logical pools usable or manageable by the authenticated subject",
         "operationId": "listManagedSessionPools",
         "tags": [
           "Session Pools"
         ],
         "responses": {
           "200": {
-            "description": "Manageable pools"
+            "description": "Usable or manageable pools, including pools with a disabled direct use binding"
           }
         }
       },
@@ -5439,7 +5439,7 @@
     },
     "/session-pools/{pool}/bindings": {
       "get": {
-        "summary": "List bindings with manage access",
+        "summary": "List all bindings with manage access, or applicable bindings with use access",
         "operationId": "listManagedSessionPoolBindings",
         "tags": [
           "Session Pools"
@@ -5461,7 +5461,7 @@
         }
       },
       "post": {
-        "summary": "Grant pool use or manage access",
+        "summary": "Grant pool use or manage access; users with global use access may create their own use override",
         "operationId": "createManagedSessionPoolBinding",
         "tags": [
           "Session Pools"
@@ -5729,7 +5729,7 @@
         }
       ],
       "patch": {
-        "summary": "Update a pool binding",
+        "summary": "Update a pool binding; use-only subjects may only toggle enabled on their own binding",
         "operationId": "patchSessionPoolBinding",
         "tags": [
           "Session Pools"

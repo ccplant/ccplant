@@ -13,6 +13,7 @@ interface PoolRuntime {
   pool: LogicalSessionPool
   suppliers: SessionPoolSupplier[]
   bindings: SessionPoolBinding[]
+  scopeBinding: SessionPoolBinding
 }
 
 type PoolTab = 'managers' | 'pools' | 'assignments' | 'status'
@@ -37,27 +38,31 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
   const [assigningPool, setAssigningPool] = useState<string | null>(null)
   const [assignManagerID, setAssignManagerID] = useState('')
   const [busyAction, setBusyAction] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<PoolTab>('managers')
+  const [activeTab, setActiveTab] = useState<PoolTab>('pools')
 
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const pools = await client.listManagedSessionPools()
+      const subjectType = scopeKind === 'personal' ? 'user' : 'team'
       const details = await Promise.all(pools.map(async (pool) => {
-        const [suppliers, bindings] = await Promise.all([
-          client.listManagedSessionPoolSuppliers(pool.name),
-          client.listManagedSessionPoolBindings(pool.name),
-        ])
-        return { pool, suppliers, bindings }
+        const bindings = await client.listManagedSessionPoolBindings(pool.name)
+        const exact = bindings.find((binding) => binding.subject_type === subjectType && binding.subject_id === scopeId)
+        const scopeBinding = exact ?? bindings.find((binding) => binding.subject_type === 'all' && !binding.subject_id)
+        if (!scopeBinding) return null
+        const suppliers = scopeBinding.role === 'manage' && scopeBinding.enabled
+          ? await client.listManagedSessionPoolSuppliers(pool.name)
+          : []
+        return { pool, suppliers, bindings, scopeBinding }
       }))
-      setRuntimes(details)
+      setRuntimes(details.filter((runtime): runtime is PoolRuntime => runtime !== null))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Pool情報の読み込みに失敗しました')
     } finally {
       setLoading(false)
     }
-  }, [client])
+  }, [client, scopeId, scopeKind])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -78,6 +83,32 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
       await reload()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Poolの更新に失敗しました')
+    }
+  }
+
+  const togglePoolUsage = async (runtime: PoolRuntime) => {
+    const { pool, scopeBinding } = runtime
+    setBusyAction(`usage:${pool.name}`)
+    setError(null)
+    try {
+      if (scopeBinding.subject_type === 'all') {
+        await client.createManagedSessionPoolBinding(
+          pool.name,
+          scopeKind === 'personal' ? 'user' : 'team',
+          scopeId,
+          'use',
+          0,
+          0,
+          false,
+        )
+      } else {
+        await client.patchManagedSessionPoolBinding(pool.name, scopeBinding.id, { enabled: !scopeBinding.enabled })
+      }
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Pool利用設定の更新に失敗しました')
+    } finally {
+      setBusyAction(null)
     }
   }
 
@@ -218,7 +249,9 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
           </div>
         )}
 
-        {runtimes.map(({ pool, suppliers, bindings }) => {
+        {runtimes.map((runtime) => {
+          const { pool, suppliers, bindings, scopeBinding } = runtime
+          const canManage = scopeBinding.role === 'manage' && scopeBinding.enabled
           const idle = suppliers.reduce((sum, supplier) => sum + (supplier.idle_runners ?? 0), 0)
           const runners = suppliers.reduce((sum, supplier) => sum + (supplier.total_runners ?? 0), 0)
           return (
@@ -228,21 +261,30 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
                   <div>
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <h2 className="break-all text-base font-semibold text-gray-950 sm:text-lg dark:text-white">{pool.name}</h2>
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${pool.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>{pool.enabled ? 'Enabled' : 'Disabled'}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${scopeBinding.enabled && pool.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>{scopeBinding.enabled && pool.enabled ? '使用する' : '使用しない'}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-                      <span>{suppliers.length} suppliers</span><span>{runners} runners</span><span>{idle} idle</span><span>{bindings.length} bindings</span>
+                      {canManage && <><span>{suppliers.length} suppliers</span><span>{runners} runners</span><span>{idle} idle</span><span>{bindings.length} bindings</span></>}
+                      {!canManage && <span>use 権限</span>}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <button
+                    {scopeBinding.role === 'use' && <button
+                      type="button"
+                      onClick={() => void togglePoolUsage(runtime)}
+                      disabled={busyAction === `usage:${pool.name}` || !pool.enabled}
+                      className="ml-1 rounded-md border border-blue-300 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/30"
+                    >
+                      {scopeBinding.enabled ? '使用しない' : '使用する'}
+                    </button>}
+                    {canManage && <button
                       type="button"
                       onClick={() => void togglePool(pool)}
                       className="ml-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
                     >
                       {pool.enabled ? 'Poolを停止' : 'Poolを有効化'}
-                    </button>
-                    <button type="button" onClick={() => void deletePool(pool)} disabled={busyAction === `delete:${pool.name}`} className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"><Trash2 className="h-3.5 w-3.5" /> 削除</button>
+                    </button>}
+                    {canManage && <button type="button" onClick={() => void deletePool(pool)} disabled={busyAction === `delete:${pool.name}`} className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"><Trash2 className="h-3.5 w-3.5" /> 削除</button>}
                   </div>
                 </div>
               </div>
@@ -256,7 +298,7 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
       {activeTab === 'assignments' && <div className="space-y-4">
         <div><h2 className="text-base font-semibold text-gray-950 dark:text-white">割り当て設定</h2><p className="mt-1 text-sm text-gray-500">ManagerをPoolへ割り当て、供給状態とDrainを管理します。</p></div>
         {runtimes.length === 0 && <div className={`${card} py-8 text-center text-sm text-gray-500`}>先にPoolを作成してください。</div>}
-        {runtimes.map(({ pool, suppliers, bindings }) => <section key={pool.name} className={card}>
+        {runtimes.filter(({ scopeBinding }) => scopeBinding.role === 'manage' && scopeBinding.enabled).map(({ pool, suppliers, bindings }) => <section key={pool.name} className={card}>
           <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="break-all font-semibold text-gray-950 dark:text-white">{pool.name}</h3><button type="button" onClick={() => { setAssigningPool(assigningPool === pool.name ? null : pool.name); setAssignManagerID('') }} className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:text-blue-300"><UserPlus className="h-3.5 w-3.5" /> Managerを割り当て</button></div>
           {assigningPool === pool.name && <div className="mt-3 flex flex-col gap-2 sm:flex-row"><select value={assignManagerID} onChange={(event) => setAssignManagerID(event.target.value)} className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-950 dark:text-white"><option value="">Managerを選択</option>{managers.filter((manager) => manager.id && !suppliers.some((supplier) => supplier.manager_id === manager.id)).map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select><button type="button" onClick={() => void assignManager(pool.name)} disabled={!assignManagerID || busyAction === `assign:${pool.name}`} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">割り当て</button></div>}
           {bindings.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{bindings.map((binding) => <span key={binding.id} className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-xs text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"><Users className="h-3 w-3" /> {binding.subject_type}: {binding.subject_id || 'everyone'} · {binding.role}</span>)}</div>}

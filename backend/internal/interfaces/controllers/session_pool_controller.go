@@ -559,7 +559,7 @@ func (c *SessionPoolController) ListPools(ctx echo.Context) error {
 	}
 	result := make([]*core.LogicalPool, 0, len(pools))
 	for _, pool := range pools {
-		if ok, checkErr := c.canManagePool(ctx.Request().Context(), user, pool.Name); checkErr != nil {
+		if ok, checkErr := c.canAccessPool(ctx.Request().Context(), user, pool.Name); checkErr != nil {
 			return sessionRunnerStoreError(checkErr)
 		} else if ok {
 			result = append(result, pool)
@@ -763,8 +763,30 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 	if err := c.ensureLogicalPoolExists(ctx.Request().Context(), binding.Pool); err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	if err := c.requirePoolManage(ctx, binding.Pool); err != nil {
-		return err
+	user := auth.GetUserFromContext(ctx)
+	canManage := user == nil || user.IsAdmin()
+	if !canManage {
+		var err error
+		canManage, err = c.canManagePool(ctx.Request().Context(), user, binding.Pool)
+		if err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
+	if !canManage {
+		if binding.Role != core.BindingRoleUse || !bindingAppliesToUser(&binding, user) || binding.SubjectType == core.SubjectAll {
+			return echo.NewHTTPError(http.StatusForbidden, "pool manage binding required")
+		}
+		bindings, listErr := c.store.ListBindings(ctx.Request().Context(), binding.Pool)
+		if listErr != nil {
+			return sessionRunnerStoreError(listErr)
+		}
+		hasGlobalUse := false
+		for _, candidate := range bindings {
+			hasGlobalUse = hasGlobalUse || (candidate.Enabled && candidate.Role == core.BindingRoleUse && candidate.SubjectType == core.SubjectAll && candidate.SubjectID == "")
+		}
+		if !hasGlobalUse {
+			return echo.NewHTTPError(http.StatusForbidden, "pool manage binding required")
+		}
 	}
 	if err := c.store.CreateBinding(ctx.Request().Context(), &binding); err != nil {
 		return sessionRunnerStoreError(err)
@@ -795,21 +817,35 @@ func (c *SessionPoolController) DeleteBinding(ctx echo.Context) error {
 }
 
 func (c *SessionPoolController) ListBindings(ctx echo.Context) error {
-	if err := c.requirePoolManage(ctx, ctx.Param("pool")); err != nil {
-		return err
-	}
-	bindings, err := c.store.ListBindings(ctx.Request().Context(), ctx.Param("pool"))
+	pool := ctx.Param("pool")
+	bindings, err := c.store.ListBindings(ctx.Request().Context(), pool)
 	if err != nil {
 		return sessionRunnerStoreError(err)
+	}
+	user := auth.GetUserFromContext(ctx)
+	if user != nil && !user.IsAdmin() {
+		canManage, checkErr := c.canManagePool(ctx.Request().Context(), user, pool)
+		if checkErr != nil {
+			return sessionRunnerStoreError(checkErr)
+		}
+		if !canManage {
+			visible := make([]*core.Binding, 0, len(bindings))
+			for _, binding := range bindings {
+				if bindingAppliesToUser(binding, user) && (binding.SubjectType != core.SubjectAll || binding.Enabled) {
+					visible = append(visible, binding)
+				}
+			}
+			if len(visible) == 0 {
+				return echo.NewHTTPError(http.StatusForbidden, "pool use or manage binding required")
+			}
+			bindings = visible
+		}
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"pool_bindings": bindings})
 }
 
 func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	pool := ctx.Param("pool")
-	if err := c.requirePoolManage(ctx, pool); err != nil {
-		return err
-	}
 	bindings, err := c.store.ListBindings(ctx.Request().Context(), pool)
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -832,6 +868,22 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	user := auth.GetUserFromContext(ctx)
+	canManage := user == nil || user.IsAdmin()
+	if !canManage {
+		canManage, err = c.canManagePool(ctx.Request().Context(), user, pool)
+		if err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
+	if !canManage {
+		if binding.Role != core.BindingRoleUse || binding.SubjectType == core.SubjectAll || !bindingAppliesToUser(binding, user) {
+			return echo.NewHTTPError(http.StatusForbidden, "pool manage binding required")
+		}
+		if patch.Enabled == nil || patch.Role != nil || patch.Priority != nil || patch.MaxConcurrent != nil {
+			return echo.NewHTTPError(http.StatusForbidden, "use binding may only change enabled")
+		}
 	}
 	if patch.Role != nil {
 		binding.Role = *patch.Role
@@ -1227,6 +1279,38 @@ func (c *SessionPoolController) canManagePool(ctx context.Context, user *entitie
 		}
 	}
 	return false, nil
+}
+
+func (c *SessionPoolController) canAccessPool(ctx context.Context, user *entities.User, pool string) (bool, error) {
+	if user == nil || user.IsAdmin() {
+		return true, nil
+	}
+	bindings, err := c.store.ListBindings(ctx, pool)
+	if err != nil {
+		return false, err
+	}
+	for _, binding := range bindings {
+		if bindingAppliesToUser(binding, user) && (binding.SubjectType != core.SubjectAll || binding.Enabled) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func bindingAppliesToUser(binding *core.Binding, user *entities.User) bool {
+	if binding == nil || user == nil {
+		return false
+	}
+	switch binding.SubjectType {
+	case core.SubjectAll:
+		return binding.SubjectID == ""
+	case core.SubjectUser:
+		return binding.SubjectID == string(user.ID())
+	case core.SubjectTeam:
+		return user.IsMemberOfTeam(binding.SubjectID)
+	default:
+		return false
+	}
 }
 
 func poolSubjectForUser(user *entities.User) core.Subject {
