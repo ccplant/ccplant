@@ -1,0 +1,37 @@
+# Fly 開発環境での Ollama 検証
+
+2026-09-05 UTC に PR #229 の実装コミット `c13de65ab4e0aa06f87ac1b45a6973d19d1d7fb4` をデプロイして検証した。
+
+- UI: https://dev.ccplant.com
+- API: https://ccplant-api-dev.fly.dev
+- デプロイ: https://github.com/ccplant/ccplant-deploy/actions/runs/33934398133 （全ジョブ成功）
+- API image: `ghcr.io/ccplant/ccplant-api@sha256:c9485cd657dbb4429b8342ffadb078422fec6c61696c70fbd469be09281584db`
+- 開発ランナー: namespace `ccplant-session-dev`、Helm release `ccplant-session`、revision 29、chart `0.3.0-dev.ccplant.c13de65`。セッションイメージも同じコミットに更新。
+- イメージ内 CLI: `codex-cli 0.153.4`、`Claude Code 2.1.12`。
+
+既存ユーザーの設定を変更せず、開発用 bootstrap ユーザーの一時設定でテストした。Ollama Cloud の既存 API キーを使用し、実値は記録していない。
+
+| 検証 | 結果 |
+| --- | --- |
+| Ollama `https://ollama.com/v1/responses` | HTTP 200、指定した確認文字列を返した |
+| Ollama `https://ollama.com/v1/messages` | HTTP 200、指定した確認文字列を返した |
+| UI のログインと設定取得 | 成功。デプロイされた Codex 設定ページの JS に互換 API フォームを確認 |
+| 認証設定の保存・再取得 | 両方式を保存でき、API キー実値を返さず `has_api_key: true` を返した |
+| Codex + API キー | `CCPLANT_CODEX_OLLAMA_OK` を返した |
+| Claude ACP + Bearer | `CCPLANT_CLAUDE_OLLAMA_OK` を返した |
+| プロファイル上書き | 設定の `gpt-oss:120b` に対し、両エージェントの起動モデルが `gpt-oss:20b` になった |
+| デフォルト継承 | プロファイルなしの Codex が `gpt-oss:120b` で起動し `CCPLANT_DEFAULT_MODEL_OK` を返した |
+| ツール実行 | 両エージェントが `/tmp` に確認用ファイルを作成して読み取った。Pod 内からも内容を照合した |
+| 非選択の認証 | Codex の `auth.json` と Claude の `.credentials.json` が検証 Pod に存在しないことを確認 |
+
+継続メッセージは UI と同じ `/{sessionId}/rpc` 経路、結果は `/{sessionId}/messages` で確認した。Claude ACP の `/session` はモデル名を別名 `opus` と表示したが、起動時の接続記録と別名の設定先は `gpt-oss:20b` だった。
+
+## 制限と観測された問題
+
+- Codex は独自モデルの metadata が未登録という警告を表示した。`gpt-oss:20b` のツール実行後の文章には制御文字列に似た余計な出力もあった。
+- Claude の `gpt-oss:20b` は Read ツールに不要な引数を付けて失敗した後、自分で修正して読み取りに成功した。接続確認は、モデルの出力品質や全ツールの互換性を保証するものではない。
+- Claude の `x-api-key` 方式、ローカル Ollama、再開、長時間実行は今回の実機検証に含めていない。今回の Claude 実機検証は Bearer 方式。
+- 既存のトップレベル `/acp` 経路は外部ランナーのセッションに対して `session not found` を返した。UI が利用するセッション別 `/rpc` は正常だった。
+- 公開セッション削除 API から manager への処理は HTTP 401 になったため、認証済みの private session-manager API で検証用の実行環境を削除した。公開 API の3件の記録には `delete_failed` が残る。対象 ID は `92dab872-ab3d-4319-804e-940a3c41eef9`、`bb518b57-f00d-4257-84c0-53bcdf5ee4d7`、`e73fa7ec-42b4-48ef-9286-8ef14ac90f5f`。
+
+一時設定、プロファイル、pool binding は削除済み。ランナー上限を元の3に戻し、検証用 Pod がなく既存の3セッションだけが残っていることを確認した。API、UI、開発ランナーの更新は維持している。

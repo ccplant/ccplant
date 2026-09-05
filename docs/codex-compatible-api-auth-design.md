@@ -1,6 +1,6 @@
 # Codex / Claude Code 認証設定への互換 API 追加
 
-ステータス: 実装済み・レビュー待ち（外部接続先での実機検証は未実施）
+ステータス: 実装済み・レビュー待ち（Fly 開発環境で Ollama Cloud を実機検証済み。[検証結果と制限](ollama-fly-dev-verification.md)）
 
 ## 目的と対応範囲
 
@@ -227,4 +227,4 @@ API キーの実値をリポジトリの `.claude/settings.json`、引数、プ�
 | Claude 新旧 API フィールド | auth_mode との同期と矛盾検出が機能し、既存 OAuth / Bedrock 利用者を維持する |
 | 401、404、到達不能、非対応モデル | 秘密情報を伏せて原因を表示し、別接続へ切り替えない |
 
-本 PR に設定 API、接続解決、起動設定の生成、復元時の接続検証と両フォームの操作テストを追加した。外部 API への実推論は未実施。リリース前に、配布する Codex / codex-acp / Claude Code / claude-acp のバージョンと実機確認した接続先を記録する。
+本 PR に設定 API、接続解決、起動設定の生成、復元時の接続検証と両フォームの操作テストを追加した。Fly 開発環境にデプロイし、Codex / Claude ACP と Ollama Cloud の実推論・モデル上書き・ツール実行を確認した。検証範囲と制限は [実機検証記録](ollama-fly-dev-verification.md) を参照。
