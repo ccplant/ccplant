@@ -35,3 +35,9 @@
 - 公開セッション削除 API から manager への処理は HTTP 401 になったため、認証済みの private session-manager API で検証用の実行環境を削除した。公開 API の3件の記録には `delete_failed` が残る。対象 ID は `92dab872-ab3d-4319-804e-940a3c41eef9`、`bb518b57-f00d-4257-84c0-53bcdf5ee4d7`、`e73fa7ec-42b4-48ef-9286-8ef14ac90f5f`。
 
 一時設定、プロファイル、pool binding は削除済み。ランナー上限を元の3に戻し、検証用 Pod がなく既存の3セッションだけが残っていることを確認した。API、UI、開発ランナーの更新は維持している。
+
+## その後の開発環境の復旧
+
+同日、管理命令の転送先 `sessionManager.apiUrl` が親 API を指していたことを特定し、`http://127.0.0.1:8080` に修正した（Helm revision 30）。上記3件の削除失敗記録は再試行により解消済み。既存セッション3件を維持して新規起動できるよう、pool 上限は4に変更し idle runner 1件を確認した。
+
+また、公開セッション ID を manager の削除対象にしていた処理を、実際の `RemoteSessionID`（割り当てたランナー ID）に修正した。公開 ID 宛ての削除は 404 になり、実際の Pod の削除を後続の orphan reconciliation に依存していた。回帰テストでは削除先 ID、完了確認までの記録保持、完了後の記録削除を確認する。
