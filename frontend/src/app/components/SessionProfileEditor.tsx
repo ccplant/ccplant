@@ -31,7 +31,7 @@ interface SessionProfileEditorProps {
 
 const profileSections = [
   { slug: 'basic', label: '基本情報', icon: Settings, group: '' },
-  { slug: 'inheritance', label: '設定の継承', icon: Settings, group: '' },
+  { slug: 'inheritance', label: 'ベース設定', icon: Settings, group: '' },
   { slug: 'authentication', label: '認証・API 接続', icon: KeyRound, group: 'AI とエージェント' },
   { slug: 'agent', label: 'エージェント', icon: Bot, group: 'AI とエージェント' },
   { slug: 'models', label: 'モデル', icon: Bot, group: 'AI とエージェント' },
@@ -203,7 +203,7 @@ export default function SessionProfileEditor({
       setSandboxPolicyId('')
       setSessionTTL('')
       setUnsyncedFilePaths('')
-      setSettingsTeamId('')
+      setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
       setCodexConnection(null)
       setClaudeConnection(null)
       setCodexAuthMode('')
@@ -211,7 +211,7 @@ export default function SessionProfileEditor({
     }
     setError(null)
     setDirty(false)
-  }, [editingProfile, resetKey])
+  }, [editingProfile, resetKey, createScope?.scope, createScope?.team_id])
 
   useEffect(() => { setDrawerOpen(false) }, [section])
   useEffect(() => {
@@ -394,7 +394,8 @@ export default function SessionProfileEditor({
         <div className="flex gap-8">
           <aside className="hidden md:block">{nav}</aside>
           <form onSubmit={handleSubmit} onChange={() => setDirty(true)} className="min-w-0 flex-1">
-            <SettingsPageHeader title={active.label} description="このプロファイルで使用する設定を編集します。各項目の変更はまとめて保存されます。" />
+            <SettingsPageHeader title={active.label} description="ベースの設定に、このプロファイルで指定した内容を上書きします。各項目の変更はまとめて保存されます。" />
+            <p className="mb-5 text-sm text-gray-500">ベース: {settingsTeamId ? `チーム ${settingsTeamId}` : '既定の個人・チーム設定'}。未指定の認証方法・モデル・環境変数・MCP はベースの設定を使用します。</p>
             {error && <p role="alert" className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">{error}</p>}
             <fieldset disabled={isSubmitting} className="space-y-5">
             {active.slug === 'basic' && <div className="space-y-5">
@@ -451,15 +452,15 @@ export default function SessionProfileEditor({
             </div>}
             {active.slug === 'inheritance' && <div className="space-y-5">
             <div>
-              <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">設定の継承元</label>
+              <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">ベースにする設定</label>
               <select id="profile-settings-team" value={settingsTeamId} onChange={e => setSettingsTeamId(e.target.value)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
-                <option value="">既定の設定を引き継ぐ</option>
+                <option value="">既定の個人・チーム設定</option>
                 {[...new Set([...availableTeams, ...(settingsTeamId ? [settingsTeamId] : [])])].filter(team => {
                   const scope = editingProfile ?? createScope ?? getScopeParams()
                   return scope.scope !== 'team' || scope.team_id === team
                 }).map(team => <option key={team} value={team}>チーム: {team}</option>)}
               </select>
-              <p className="text-xs text-gray-500 mt-2">チームを指定すると、そのチームの認証・モデル・環境変数・MCP などの設定を引き継ぎます。プロファイルの専用接続やモデル指定が優先されます。</p>
+              <p className="text-xs text-gray-500 mt-2">選んだチームの設定をベースにします。認証方法・モデル・環境変数・MCP は、このプロファイルで指定した項目だけ上書きします。チームの設定自体は変更されません。</p>
             </div>
 
             </div>}
@@ -467,7 +468,7 @@ export default function SessionProfileEditor({
             <div>
               <label htmlFor="profile-codex-auth" className="block text-sm font-medium mb-1">Codex の認証方法</label>
               <select id="profile-codex-auth" value={codexAuthMode} onChange={e => setCodexAuthMode(e.target.value as typeof codexAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
-                <option value="">認証設定を引き継ぐ</option>
+                <option value="">ベースの認証方法を使う</option>
                 <option value="auth_json">ChatGPT / auth.json</option>
                 <option value="openai_compatible">OpenAI 互換 API</option>
               </select>
@@ -476,12 +477,12 @@ export default function SessionProfileEditor({
             <div>
               <label htmlFor="profile-claude-auth" className="block text-sm font-medium mb-1">Claude Code の認証方法</label>
               <select id="profile-claude-auth" value={claudeAuthMode} onChange={e => setClaudeAuthMode(e.target.value as typeof claudeAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
-                <option value="">認証設定を引き継ぐ</option>
+                <option value="">ベースの認証方法を使う</option>
                 <option value="oauth">Claude OAuth</option>
                 <option value="bedrock">AWS Bedrock</option>
                 <option value="anthropic_compatible">Anthropic 互換 API</option>
               </select>
-              <p className="text-xs text-gray-500 mt-2">このプロファイルで使う認証方法を指定します。互換 API の接続先・API キーはプロファイル専用に設定できます。</p>
+              <p className="text-xs text-gray-500 mt-2">認証方法を選ぶと、このプロファイルで使う方法を上書きします。互換 API の接続先・API キーも必要に応じて上書きできます。</p>
             </div>
 
             {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={value => { setClaudeConnection(value); setDirty(true) }} />}
@@ -530,7 +531,7 @@ export default function SessionProfileEditor({
             {active.slug === 'models' && <div className="space-y-5">
                   <div className="space-y-3">
                     <p className="text-sm font-medium">モデルの上書き</p>
-                    <p className="text-xs text-gray-500">空欄なら認証設定のデフォルトモデルを使用します。接続先・認証情報は変更しません。</p>
+                    <p className="text-xs text-gray-500">空欄なら接続設定のデフォルトモデルを使用します。モデルを入力すると、このプロファイルで使用するモデルを上書きします。</p>
                     {([{ key: 'CODEX_MODEL', label: 'Codex モデル ID' }, { key: 'ANTHROPIC_MODEL', label: 'Claude Code モデル ID' }]).map(({ key, label }) => (
                       <label key={key} className="block text-sm">{label}
                         <input aria-label={label} value={envPairs.find(pair => pair.key === key)?.value || (key === 'CODEX_MODEL' ? envPairs.find(pair => pair.key === 'OPENAI_MODEL')?.value : '') || ''}
