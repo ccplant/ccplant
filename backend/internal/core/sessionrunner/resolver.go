@@ -62,7 +62,7 @@ func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*Reso
 	result := make([]*ResolvedPool, 0, len(pools))
 	for _, pool := range pools {
 		binding := effectiveBinding(bindings, pool.Name, subject)
-		if binding == nil || !pool.Enabled || !healthy[pool.Name] {
+		if binding == nil || !binding.Enabled || !pool.Enabled || !healthy[pool.Name] {
 			continue
 		}
 		result = append(result, &ResolvedPool{Pool: pool, Binding: binding})
@@ -152,13 +152,13 @@ func ManagerAvailable(manager *Manager, heartbeatTTL time.Duration, now time.Tim
 func effectiveBinding(bindings []*Binding, pool string, subject Subject) *Binding {
 	var all *Binding
 	for _, binding := range bindings {
-		if !binding.Enabled || binding.Pool != pool {
+		if binding.Pool != pool {
 			continue
 		}
 		if binding.SubjectType == subject.Type && binding.SubjectID == subject.ID {
 			return binding
 		}
-		if binding.SubjectType == SubjectAll && binding.SubjectID == "" {
+		if binding.Enabled && binding.SubjectType == SubjectAll && binding.SubjectID == "" {
 			all = binding
 		}
 	}

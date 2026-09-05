@@ -487,6 +487,50 @@ func TestPoolCreatorReceivesManageBinding(t *testing.T) {
 	}
 }
 
+func TestLastEnabledManageBindingCannotBeRemoved(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
+		map[string]any{"name": "linux"}, nil, nil, alice)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
+	}
+	bindings, err := store.ListBindings(context.Background(), "linux")
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("creator binding: bindings=%+v err=%v", bindings, err)
+	}
+	binding := bindings[0]
+
+	for name, patch := range map[string]map[string]any{
+		"disable": {"enabled": false},
+		"demote":  {"role": "use"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+				patch, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+			if result.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", result.Code, result.Body.String())
+			}
+		})
+	}
+	deleted := callSessionPoolHandlerAs(t, controller.DeleteBinding, http.MethodDelete, "/session-pools/linux/bindings/"+binding.ID,
+		nil, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if deleted.Code != http.StatusConflict {
+		t.Fatalf("delete last manage binding status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+
+	second := &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "bob", Role: core.BindingRoleManage, Enabled: true}
+	if err := store.CreateBinding(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	deleted = callSessionPoolHandlerAs(t, controller.DeleteBinding, http.MethodDelete, "/session-pools/linux/bindings/"+binding.ID,
+		nil, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete manage binding with successor status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+}
+
 func TestAllBindingCannotManagePool(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
@@ -500,6 +544,93 @@ func TestAllBindingCannotManagePool(t *testing.T) {
 		map[string]any{"subject_type": "all", "role": "manage"}, map[string]string{"pool": "linux"}, nil, alice)
 	if result.Code != http.StatusBadRequest {
 		t.Fatalf("all manage binding status=%d body=%s", result.Code, result.Body.String())
+	}
+}
+
+func TestUseBindingCanListPoolAndOnlyToggleOwnUsage(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	if err := store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	binding := &core.Binding{Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleUse, Enabled: true}
+	if err := store.CreateBinding(context.Background(), binding); err != nil {
+		t.Fatal(err)
+	}
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+
+	pools := callSessionPoolHandlerAs(t, controller.ListPools, http.MethodGet, "/session-pools", nil, nil, nil, alice)
+	if pools.Code != http.StatusOK {
+		t.Fatalf("list pools status=%d body=%s", pools.Code, pools.Body.String())
+	}
+	listed := callSessionPoolHandlerAs(t, controller.ListBindings, http.MethodGet, "/session-pools/linux/bindings", nil, map[string]string{"pool": "linux"}, nil, alice)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list bindings status=%d body=%s", listed.Code, listed.Body.String())
+	}
+
+	patched := callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+		map[string]any{"enabled": false}, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("toggle use binding status=%d body=%s", patched.Code, patched.Body.String())
+	}
+	forbidden := callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+		map[string]any{"priority": 10}, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("patch use binding priority status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+
+	pools = callSessionPoolHandlerAs(t, controller.ListPools, http.MethodGet, "/session-pools", nil, nil, nil, alice)
+	if pools.Code != http.StatusOK || !bytes.Contains(pools.Body.Bytes(), []byte(`"name":"linux"`)) {
+		t.Fatalf("disabled use pool remains configurable: status=%d body=%s", pools.Code, pools.Body.String())
+	}
+}
+
+func TestUseBindingCanCreateDisabledOverrideForGlobalPool(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	if err := store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateBinding(context.Background(), &core.Binding{Pool: "linux", SubjectType: core.SubjectAll, Role: core.BindingRoleUse, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	created := callSessionPoolHandlerAs(t, controller.CreateBinding, http.MethodPost, "/session-pools/linux/bindings",
+		map[string]any{"subject_type": "user", "subject_id": "alice", "role": "use", "enabled": false}, map[string]string{"pool": "linux"}, nil, alice)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create use override status=%d body=%s", created.Code, created.Body.String())
+	}
+	denied := callSessionPoolHandlerAs(t, controller.CreateBinding, http.MethodPost, "/session-pools/linux/bindings",
+		map[string]any{"subject_type": "user", "subject_id": "bob", "role": "use", "enabled": false}, map[string]string{"pool": "linux"}, nil, alice)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("create another user's override status=%d body=%s", denied.Code, denied.Body.String())
+	}
+}
+
+func TestTeamUseBindingCanBeToggledByTeamMember(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	if err := store.CreateLogicalPool(context.Background(), &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	binding := &core.Binding{Pool: "linux", SubjectType: core.SubjectTeam, SubjectID: "org/platform", Role: core.BindingRoleUse, Enabled: true}
+	if err := store.CreateBinding(context.Background(), binding); err != nil {
+		t.Fatal(err)
+	}
+	member := entities.NewUser(entities.UserID("alice"), entities.UserTypeGitHub, "alice")
+	member.SetGitHubInfo(entities.NewGitHubUserInfo(1, "alice", "", "", "", "", ""), []entities.GitHubTeamMembership{{Organization: "org", TeamSlug: "platform"}})
+
+	patched := callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+		map[string]any{"enabled": false}, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, member)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("toggle team use binding status=%d body=%s", patched.Code, patched.Body.String())
+	}
+
+	outsider := entities.NewUser(entities.UserID("bob"), entities.UserTypeAPIKey, "bob")
+	denied := callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+		map[string]any{"enabled": true}, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, outsider)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("outsider toggle team binding status=%d body=%s", denied.Code, denied.Body.String())
 	}
 }
 

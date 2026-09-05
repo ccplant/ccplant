@@ -224,6 +224,26 @@ func TestResolverPrefersExactBindingOverAll(t *testing.T) {
 	require.Equal(t, "binding-all", resolved.Binding.ID)
 }
 
+func TestResolverDisabledExactBindingOptsOutOfAllBinding(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings: []*Binding{
+			{ID: "binding-all", Pool: "linux", SubjectType: SubjectAll, Enabled: true},
+			{ID: "binding-alice", Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: false},
+		},
+	}
+
+	resolved, err := NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved)
+
+	resolved, err = NewResolver(store, 0).Resolve(context.Background(), Subject{Type: SubjectUser, ID: "bob"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, "binding-all", resolved.Binding.ID)
+}
+
 func TestResolverDoesNotUseBindingsFromAnotherScope(t *testing.T) {
 	store := &resolverStore{
 		managers:  []*Manager{{ID: "manager-a", Enabled: true}},

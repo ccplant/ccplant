@@ -3252,8 +3252,8 @@ export class AgentAPIProxyClient {
     await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
   }
 
-  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
-    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
+  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage', priority = 0, maxConcurrent = 0, enabled = true): Promise<SessionPoolBinding> {
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent, enabled }) });
   }
 
   async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage'; enabled?: boolean; priority?: number; max_concurrent?: number }): Promise<SessionPoolBinding> {
