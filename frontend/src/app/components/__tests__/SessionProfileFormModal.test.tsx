@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
     getAvailableSessionPools: vi.fn().mockResolvedValue([]),
   },
 }))
-vi.mock('../../../contexts/TeamScopeContext', () => ({ useTeamScope: () => ({ getScopeParams: mocks.scope }) }))
+vi.mock('../../../contexts/TeamScopeContext', () => ({ useTeamScope: () => ({ getScopeParams: mocks.scope, availableTeams: ['org/team', 'org/other'] }) }))
 vi.mock('../../../lib/agentapi-proxy-client', () => ({ createAgentAPIProxyClientFromStorage: () => ({ ...mocks.client, updateSessionProfile: mocks.update }) }))
 vi.mock('../../../components/settings/MCPServerSettings', () => ({ MCPServerSettings: () => null }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -50,4 +50,18 @@ it('preserves a stored profile key on edit and explicitly removes the override',
   fireEvent.submit(screen.getByLabelText('Codex の認証方法').closest('form')!)
   await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(3))
   expect(mocks.update.mock.calls[2][1].config.codex_connection).toBeNull()
+})
+
+
+it('saves and restores team settings inheritance', async () => {
+  render(<SessionProfileFormModal isOpen onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Test', created_at: '', updated_at: '', config: { settings_team_id: 'org/team' } }} />)
+  expect(screen.getByLabelText('設定の継承元')).toHaveValue('org/team')
+  fireEvent.change(screen.getByLabelText('設定の継承元'), { target: { value: 'org/other' } })
+  fireEvent.submit(screen.getByLabelText('設定の継承元').closest('form')!)
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+  expect(mocks.update.mock.calls[0][1].config.settings_team_id).toBe('org/other')
+  fireEvent.change(screen.getByLabelText('設定の継承元'), { target: { value: '' } })
+  fireEvent.submit(screen.getByLabelText('設定の継承元').closest('form')!)
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2))
+  expect(mocks.update.mock.calls[1][1].config).not.toHaveProperty('settings_team_id')
 })

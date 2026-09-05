@@ -121,3 +121,37 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	require.Equal(t, "profile-model", req.CodexConnection.Model)
 	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
 }
+
+func TestProfileTeamSettingsInheritance(t *testing.T) {
+	team := entities.NewSettings("org/team")
+	team.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://team.example/v1", Model: "team-model", Authentication: "api_key", APIKey: "team-key"})
+	personal := entities.NewSettings("user")
+	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://personal.example/v1", Model: "personal-model", Authentication: "api_key", APIKey: "personal-key"})
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSettingsTeamID("org/team")
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	profile.SetConfig(cfg)
+	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": personal, "org/team": team}}, sessionProfileRepo: profileConnectionRepository{profile: profile}}
+	req := &entities.RunServerRequest{UserID: "user", Teams: []string{"org/team"}, ResolvedSessionProfileID: "profile", CredentialSource: "session_user"}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "team-key", req.CodexConnection.APIKey)
+	require.Equal(t, "team-model", req.CodexConnection.Model)
+	require.Equal(t, []string{"org/team"}, credentialOwnersForRequest(req))
+	cfg.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://profile.example/v1", Authentication: "api_key", APIKey: "profile-key"})
+	profile.SetConfig(cfg)
+	req = &entities.RunServerRequest{UserID: "user", Teams: []string{"org/team"}, ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "override-model"}}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
+	require.Equal(t, "override-model", req.CodexConnection.Model)
+	for _, req := range []*entities.RunServerRequest{
+		{UserID: "user", ResolvedSessionProfileID: "profile"},
+		{UserID: "user", Teams: []string{"org/team"}, Scope: entities.ScopeTeam, TeamID: "org/other", ResolvedSessionProfileID: "profile"},
+	} {
+		require.Error(t, manager.prepareModelConnections(context.Background(), req))
+		require.False(t, req.ModelConnectionsResolved)
+	}
+	// Explicitly selected missing settings never fall back to personal settings.
+	delete(manager.settingsRepo.(*fakeSettingsRepository).settings, "org/team")
+	req = &entities.RunServerRequest{UserID: "user", Teams: []string{"org/team"}, ResolvedSessionProfileID: "profile"}
+	require.Error(t, manager.prepareModelConnections(context.Background(), req))
+}

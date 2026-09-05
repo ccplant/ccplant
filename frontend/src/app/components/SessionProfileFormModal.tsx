@@ -37,7 +37,7 @@ export default function SessionProfileFormModal({
   onSuccess,
   editingProfile,
 }: SessionProfileFormModalProps) {
-  const { getScopeParams } = useTeamScope()
+  const { getScopeParams, availableTeams = [] } = useTeamScope()
 
   // Basic fields
   const [name, setName] = useState('')
@@ -64,6 +64,7 @@ export default function SessionProfileFormModal({
   // Session TTL
   const [sessionTTL, setSessionTTL] = useState('')
   const [unsyncedFilePaths, setUnsyncedFilePaths] = useState('')
+  const [settingsTeamId, setSettingsTeamId] = useState('')
   const [codexConnection, setCodexConnection] = useState<ModelConnection | null>(null)
   const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
   const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
@@ -170,6 +171,7 @@ export default function SessionProfileFormModal({
 
       const source = cfg?.params?.credential_source ?? ''
       setCredentialSource(source)
+      setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
       setClaudeConnection(cfg?.claude_connection ?? null)
       setCodexAuthMode(cfg?.params?.codex_auth_mode ?? '')
@@ -190,6 +192,7 @@ export default function SessionProfileFormModal({
       setSessionTTL('')
       setUnsyncedFilePaths('')
       setCredentialSource('')
+      setSettingsTeamId('')
       setCodexConnection(null)
       setClaudeConnection(null)
       setCodexAuthMode('')
@@ -309,6 +312,7 @@ export default function SessionProfileFormModal({
         return payload
       }
       const config = {
+        ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
         codex_connection: connectionPayload(codexConnection),
         claude_connection: connectionPayload(claudeConnection),
         ...(Object.keys(environment).length > 0 ? { environment } : {}),
@@ -427,6 +431,17 @@ export default function SessionProfileFormModal({
             </div>
 
             <div>
+              <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">設定の継承元</label>
+              <select id="profile-settings-team" value={settingsTeamId} onChange={e => setSettingsTeamId(e.target.value)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">既定の設定を引き継ぐ</option>
+                {[...new Set([...availableTeams, ...(settingsTeamId ? [settingsTeamId] : [])])].filter(team => {
+                  const scope = editingProfile ?? getScopeParams()
+                  return scope.scope !== 'team' || scope.team_id === team
+                }).map(team => <option key={team} value={team}>チーム: {team}</option>)}
+              </select>
+              <p className="text-xs text-gray-500 mt-2">チームを指定すると、そのチームの認証・モデル・環境変数・MCP などの設定を引き継ぎます。プロファイルの専用接続やモデル指定が優先されます。</p>
+            </div>
+            <div>
               <label htmlFor="profile-codex-auth" className="block text-sm font-medium mb-1">Codex の認証方法</label>
               <select id="profile-codex-auth" value={codexAuthMode} onChange={e => setCodexAuthMode(e.target.value as typeof codexAuthMode)} className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white">
                 <option value="">認証設定を引き継ぐ</option>
@@ -454,10 +469,12 @@ export default function SessionProfileFormModal({
                 認証情報の配布元
               </label>
               <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                {settingsTeamId ? `認証情報も ${settingsTeamId} から読み込みます。` : null}
                 Codex の <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">auth.json</code> など、セッションへ配布する認証情報を選択します。
               </p>
               <select
-                value={credentialSource}
+                value={settingsTeamId ? 'team' : credentialSource}
+                disabled={!!settingsTeamId}
                 onChange={(e) => setCredentialSource(e.target.value as CredentialSource | '')}
                 className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
               >

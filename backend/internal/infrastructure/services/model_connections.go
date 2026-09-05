@@ -18,11 +18,48 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	if err := modelprovider.ValidateAuthModes(req.CodexAuthMode, req.ClaudeAuthMode); err != nil {
 		return err
 	}
+	var profileConfig entities.SessionProfileConfig
+	req.SettingsTeamID = ""
+	if req.ResolvedSessionProfileID != "" {
+		if m.sessionProfileRepo == nil {
+			return fmt.Errorf("session profile repository unavailable")
+		}
+		profile, err := m.sessionProfileRepo.Get(ctx, req.ResolvedSessionProfileID)
+		if err != nil {
+			return fmt.Errorf("failed to load session profile connection")
+		}
+		profileConfig = profile.Config()
+		team := profileConfig.SettingsTeamID()
+		if team != "" {
+			allowed := false
+			if req.Scope == entities.ScopeTeam {
+				allowed = req.TeamID == team
+			} else {
+				for _, memberTeam := range req.Teams {
+					if memberTeam == team {
+						allowed = true
+						break
+					}
+				}
+			}
+			if !allowed {
+				return fmt.Errorf("team membership is required to inherit profile settings")
+			}
+			if m.settingsRepo == nil {
+				return fmt.Errorf("team settings unavailable")
+			}
+			exists, err := m.settingsRepo.Exists(ctx, team)
+			if err != nil || !exists {
+				return fmt.Errorf("selected team settings are not configured")
+			}
+			req.SettingsTeamID = team
+		}
+	}
 	var codexConnection, claudeConnection *modelprovider.Connection
 	owners := credentialOwnersForRequest(req)
 	// Team-scoped API connections default to the team's settings. Legacy auth
 	// file mounting keeps its existing credential_source behavior.
-	if req.CredentialSource == "" && req.Scope == entities.ScopeTeam && req.TeamID != "" {
+	if req.SettingsTeamID == "" && req.CredentialSource == "" && req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		owners = []string{req.TeamID}
 	}
 	for _, owner := range owners {
@@ -53,18 +90,8 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 			break
 		}
 	}
-	if req.ResolvedSessionProfileID != "" {
-		if m.sessionProfileRepo == nil {
-			return fmt.Errorf("session profile repository unavailable")
-		}
-		profile, err := m.sessionProfileRepo.Get(ctx, req.ResolvedSessionProfileID)
-		if err != nil {
-			return fmt.Errorf("failed to load session profile connection")
-		}
-		cfg := profile.Config()
-		codexConnection = selectProfileConnection(codexConnection, cfg.CodexConnection(), req.CodexAuthMode)
-		claudeConnection = selectProfileConnection(claudeConnection, cfg.ClaudeConnection(), req.ClaudeAuthMode)
-	}
+	codexConnection = selectProfileConnection(codexConnection, profileConfig.CodexConnection(), req.CodexAuthMode)
+	claudeConnection = selectProfileConnection(claudeConnection, profileConfig.ClaudeConnection(), req.ClaudeAuthMode)
 	var err error
 	codexConnection, err = modelprovider.SelectAuthMode(codexConnection, req.CodexAuthMode)
 	if err != nil {
@@ -98,6 +125,13 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 }
 
 func applyModelConnections(settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) {
+	if req.SettingsTeamID != "" {
+		// Remove process-level personal credentials before applying the selected
+		// team's environment, including legacy OAuth/Bedrock configurations.
+		settings.UnsetEnv = append(settings.UnsetEnv, modelprovider.ConnectionEnvKeys("codex")...)
+		settings.UnsetEnv = append(settings.UnsetEnv, modelprovider.ConnectionEnvKeys("claude")...)
+		settings.UnsetEnv = append(settings.UnsetEnv, "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_ROLE_ARN")
+	}
 	switch req.AgentType {
 	case "codex-acp":
 		settings.CodexConnection = req.CodexConnection.Clone()

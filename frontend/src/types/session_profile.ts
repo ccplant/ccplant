@@ -20,6 +20,7 @@ export type CredentialSource = 'session_user' | 'team' | 'none';
 
 // Session profile config
 export interface SessionProfileConfig {
+  settings_team_id?: string;
   codex_connection?: ModelConnection | null;
   claude_connection?: ModelConnection | null;
   environment?: Record<string, string>;

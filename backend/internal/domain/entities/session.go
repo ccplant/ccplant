@@ -236,6 +236,8 @@ type RunServerRequest struct {
 	// ProfileMCPServers is applied as a settings layer above user/team settings.
 	ProfileMCPServers        *MCPServersSettings
 	ResolvedSessionProfileID string
+	// SettingsTeamID is authorized and resolved from the profile at launch.
+	SettingsTeamID string `json:"-"`
 }
 
 // Session represents a running agentapi session

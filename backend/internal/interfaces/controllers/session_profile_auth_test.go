@@ -51,3 +51,18 @@ func TestProfileConnectionSecretLifecycle(t *testing.T) {
 	require.Contains(t, string(encoded), `"has_api_key":true`)
 	require.NotContains(t, string(encoded), `"api_key":`)
 }
+
+func TestProfileTeamSettingsAccess(t *testing.T) {
+	user := entities.NewUser("user", entities.UserTypeGitHub, "user")
+	user.SetGitHubInfo(entities.NewGitHubUserInfo(1, "user", "", "", "", "", ""), []entities.GitHubTeamMembership{{Organization: "org", TeamSlug: "team"}})
+	p := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSettingsTeamID("org/team")
+	require.NoError(t, validateProfileSettingsTeam(user, p, cfg))
+	cfg.SetSettingsTeamID("org/other")
+	require.Error(t, validateProfileSettingsTeam(user, p, cfg))
+	p.SetScope(entities.ScopeTeam)
+	p.SetTeamID("org/other")
+	cfg.SetSettingsTeamID("org/team")
+	require.Error(t, validateProfileSettingsTeam(user, p, cfg))
+}

@@ -9128,6 +9128,10 @@
     "SessionProfileConfig": {
       "type": "object",
       "properties": {
+        "settings_team_id": {
+          "type": "string",
+          "description": "Inherit settings and credential files exclusively from this team, instead of personal settings. Membership is checked at save and launch; team profiles may reference only their own team. Profile overrides retain precedence. Empty restores default inheritance."
+        },
         "codex_connection": {
           "type": "object",
           "nullable": true,

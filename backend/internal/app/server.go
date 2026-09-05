@@ -1340,7 +1340,14 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
-		settings, _ = builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq)
+		var err error
+		settings, err = builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq)
+		if err != nil {
+			return nil, fmt.Errorf("resolve pool provision settings: %w", err)
+		}
+		if settings == nil {
+			return nil, fmt.Errorf("session manager returned no provision settings")
+		}
 	}
 	if settings == nil {
 		settings = &sessionsettings.SessionSettings{

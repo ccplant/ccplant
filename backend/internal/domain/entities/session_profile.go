@@ -23,6 +23,7 @@ type SessionProfile struct {
 
 // SessionProfileConfig contains the reusable session configuration fields
 type SessionProfileConfig struct {
+	settingsTeamID         string
 	codexConnection        *modelprovider.Connection
 	claudeConnection       *modelprovider.Connection
 	environment            map[string]string
@@ -319,3 +320,6 @@ func (c *SessionProfileConfig) SetCodexConnection(v *modelprovider.Connection) {
 func (c *SessionProfileConfig) SetClaudeConnection(v *modelprovider.Connection) {
 	c.claudeConnection = v.Clone()
 }
+
+func (c *SessionProfileConfig) SettingsTeamID() string      { return c.settingsTeamID }
+func (c *SessionProfileConfig) SetSettingsTeamID(id string) { c.settingsTeamID = id }

@@ -50,6 +50,7 @@ type sessionProfileJSON struct {
 }
 
 type sessionProfileConfigJSON struct {
+	SettingsTeamID         string                    `json:"settings_team_id,omitempty"`
 	CodexConnection        *connectionJSON           `json:"codex_connection,omitempty"`
 	ClaudeConnection       *connectionJSON           `json:"claude_connection,omitempty"`
 	Environment            map[string]string         `json:"environment,omitempty"`
@@ -346,6 +347,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetEnvironment(pj.Config.Environment)
 	cfg.SetTags(pj.Config.Tags)
 	cfg.SetPool(pj.Config.Pool)
+	cfg.SetSettingsTeamID(pj.Config.SettingsTeamID)
 	cfg.SetInitialMessageTemplate(pj.Config.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(pj.Config.ReuseMessageTemplate)
 	cfg.SetParams(pj.Config.Params)
@@ -396,6 +398,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
 			Pool:                   cfg.Pool(),
+			SettingsTeamID:         cfg.SettingsTeamID(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			Params:                 cfg.Params(),
