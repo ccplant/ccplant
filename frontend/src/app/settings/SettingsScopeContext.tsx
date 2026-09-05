@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { SettingsData, prepareSettingsForSave } from '@/types/settings'
+import { SettingsData, ModelConnection, prepareSettingsForSave } from '@/types/settings'
 import {
   AgentAPIProxyError,
   CredentialsMetadata,
@@ -32,6 +32,7 @@ interface SettingsScopeValue {
   settings: SettingsData
   update: (partial: SettingsUpdate) => void
   save: () => Promise<void>
+ saveConnection: (agent: 'codex' | 'claude', connection: ModelConnection) => Promise<void>
   discard: () => void
   dirty: boolean
   dirtyFields: (keyof SettingsData)[]
@@ -246,6 +247,22 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
     }
   }, [scopeId, settings, showToast])
 
+  const saveConnection = useCallback(async (agent: 'codex' | 'claude', connection: ModelConnection) => {
+    if (!scopeId || !ready) throw new Error('設定の読み込みが完了していません')
+    if (saving) throw new Error('設定の保存が完了するまでお待ちください')
+    setSaving(true)
+    try {
+      const field = agent === 'codex' ? 'codex_connection' : 'claude_connection'
+      const client = createAgentAPIProxyClientFromStorage()
+      const saved = await client.saveSettings(scopeId, { [field]: connection })
+      const patch: Partial<SettingsData> = { [field]: saved[field], ...(agent === 'claude' ? { auth_mode: saved.auth_mode } : {}) }
+      setSettings(prev => ({ ...prev, ...patch }))
+      setOriginalSettings(prev => ({ ...prev, ...patch }))
+    } finally {
+      setSaving(false)
+    }
+  }, [scopeId, ready, saving])
+
   const reloadCredentials = useCallback(async () => {
     if (!scopeId) return
     try {
@@ -300,6 +317,7 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
     save,
     discard,
     dirty,
+    saveConnection,
     dirtyFields,
     loading,
     ready,

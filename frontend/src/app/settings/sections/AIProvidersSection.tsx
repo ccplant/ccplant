@@ -1,5 +1,6 @@
 'use client'
 
+import { ModelConnectionSettings } from '@/components/settings/ModelConnectionSettings'
 import { AuthMode, BedrockConfig } from '@/types/settings'
 import {
   BedrockSettings,
@@ -11,7 +12,7 @@ import {
 import { useSettingsScope } from '../SettingsScopeContext'
 
 export function AIProvidersSection() {
-  const { scopeKind, settings, update, userTeams } = useSettingsScope()
+  const { scopeKind, settings, update, userTeams, saveConnection } = useSettingsScope()
   const isPersonal = scopeKind === 'personal'
 
   const handleBedrockChange = (bedrock: BedrockConfig) => update({ bedrock })
@@ -49,12 +50,15 @@ export function AIProvidersSection() {
         </SettingsSubsection>
       )}
 
-      {isPersonal && (
+      <ModelConnectionSettings agent="claude" connection={settings.claude_connection} legacyMode={settings.auth_mode} onSave={connection => saveConnection('claude', connection)} />
+
+      {isPersonal && settings.claude_connection?.mode !== 'anthropic_compatible' && (
         <SettingsSubsection
           title="Claude Code OAuth"
           description="Claude Code の OAuth トークンでセッションを認証します"
         >
           <ClaudeOAuthSettings
+            showAuthModeSelector={false}
             hasToken={settings.has_claude_code_oauth_token ?? false}
             authMode={settings.auth_mode}
             onChange={handleClaudeOAuthChange}
@@ -74,7 +78,7 @@ export function AIProvidersSection() {
       </SettingsSubsection>
 
       <p className="mt-8 text-xs text-gray-500 dark:text-gray-400">
-        Codex を使う場合は「Codex 認証」ページで auth.json を登録してください。
+        Codex は「Codex 認証」で接続を設定できます。両方を設定した場合、自動選択は Codex を優先します。Claude を使う場合はエージェント設定で選択してください。
       </p>
     </>
   )

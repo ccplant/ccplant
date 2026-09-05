@@ -58,6 +58,9 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 		}
 		return closeErr
 	}
+	if err := add(filepath.Join(home, ".session", "model-connection.json"), "home/.session/model-connection.json"); err != nil {
+		return err
+	}
 	if err := add(filepath.Join(cwd, ".acp-session-id"), "cwd/.acp-session-id"); err != nil {
 		return err
 	}

@@ -1009,7 +1009,7 @@ export default function NewSessionPage() {
                       <div className="space-y-2">
                       {([
                         { value: 'default', label: 'チーム設定', description: 'チーム設定（未設定なら自動選択）を使用' },
-                        { value: 'auto', label: '自動選択', description: 'Codex auth.json があれば Codex ACP、それ以外は Claude ACP' },
+                        { value: 'auto', label: '自動選択', description: 'Codex の互換 API または auth.json があれば Codex ACP、それ以外は Claude ACP' },
                         { value: 'claude-legacy', label: 'Claude Legacy', description: 'agent_type=claude-legacy を送信' },
                         { value: 'claude-acp', label: 'Claude ACP', description: 'agent_type=claude-acp を送信' },
                         { value: 'codex-acp', label: 'Codex ACP', description: 'agent_type=codex-acp を送信' },

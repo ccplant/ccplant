@@ -22,18 +22,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"k8s.io/client-go/kubernetes"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/yaml"
-
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	coresessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -47,6 +35,17 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/kubernetes"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/yaml"
 )
 
 // provisionerPort is the TCP port on which agent-provisioner listens inside session Pods.
@@ -522,6 +521,9 @@ func (m *KubernetesSessionManager) allocateSessionDirect(ctx context.Context, id
 
 func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	m.refreshConfig()
+	if err := m.prepareModelConnections(ctx, req); err != nil {
+		return nil, err
+	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
 	applySandboxDefaults(req)
@@ -2521,6 +2523,9 @@ func (m *KubernetesSessionManager) resolveAutoAgentType(ctx context.Context, req
 	}
 	if req.AgentType != "auto" {
 		return req.AgentType
+	}
+	if req.CodexConnection.Compatible() {
+		return "codex-acp"
 	}
 	for _, owner := range credentialOwnersForRequest(req) {
 		if owner == "" {
@@ -6355,6 +6360,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		log.Printf("[K8S_SESSION] DinD enabled for session %s (registries: %d)", session.id, len(registries))
 	}
 	settings.ParentRuntime = req.ParentRuntime
+	applyModelConnections(settings, req)
 
 	return settings
 }
@@ -6871,6 +6877,9 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	sessionID string,
 	req *entities.RunServerRequest,
 ) (*sessionsettings.SessionSettings, error) {
+	if err := m.prepareModelConnections(ctx, req); err != nil {
+		return nil, err
+	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	// Create a temporary session with the provided ID to satisfy buildSessionSettings
 	tempSession := &KubernetesSession{

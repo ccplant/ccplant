@@ -1337,14 +1337,9 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	if !useTunnel {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	deleteSessionID := route.RemoteSessionID
-	if route.Transport == repositories.SessionRouteTransportDirectRuntime {
-		// Runner-pool workloads are created with the stable public session ID;
-		// RemoteSessionID is only the parent allocator's internal claim ID. Sending
-		// that claim ID to the manager leaves the real Kubernetes workload behind.
-		deleteSessionID = route.SessionID
-	}
-	targetURL := "http://esm.local/api/v1/sessions/" + deleteSessionID
+	// The manager owns the allocated runner workload. The public session ID is
+	// an API alias; deleting that alias on the manager would leave the Pod alive.
+	targetURL := "http://esm.local/api/v1/sessions/" + route.RemoteSessionID
 
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodDelete, targetURL, nil)
 	if err != nil {

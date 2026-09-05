@@ -3,6 +3,7 @@ package controllers
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"log"
 	"net/http"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
 	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 )
@@ -80,6 +82,8 @@ type MarketplaceRequest struct {
 
 // UpdateSettingsRequest is the request body for updating settings
 type UpdateSettingsRequest struct {
+	CodexConnection         map[string]json.RawMessage       `json:"codex_connection,omitempty"`
+	ClaudeConnection        map[string]json.RawMessage       `json:"claude_connection,omitempty"`
 	Bedrock                 *BedrockSettingsRequest          `json:"bedrock"`
 	MCPServers              map[string]*MCPServerRequest     `json:"mcp_servers,omitempty"`
 	Marketplaces            map[string]*MarketplaceRequest   `json:"marketplaces,omitempty"`
@@ -131,6 +135,8 @@ type MarketplaceResponse struct {
 
 // SettingsResponse is the response body for settings
 type SettingsResponse struct {
+	CodexConnection         *modelprovider.Connection        `json:"codex_connection,omitempty"`
+	ClaudeConnection        *modelprovider.Connection        `json:"claude_connection,omitempty"`
 	Name                    string                           `json:"name"`
 	Bedrock                 *BedrockSettingsResponse         `json:"bedrock,omitempty"`
 	MCPServers              map[string]*MCPServerResponse    `json:"mcp_servers,omitempty"`
@@ -284,8 +290,16 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	settings, err := c.repo.FindByName(ctx.Request().Context(), name)
 	isNewSettings := err != nil
 	if isNewSettings {
+		exists, checkErr := c.repo.Exists(ctx.Request().Context(), name)
+		if checkErr != nil || exists {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to load settings")
+		}
 		// Create new settings if not exists
 		settings = entities.NewSettings(name)
+	}
+
+	if err := updateModelConnections(settings, &req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	// Update Bedrock settings
@@ -710,6 +724,9 @@ func (c *SettingsController) sanitizeName(s string) string {
 
 // determineAuthMode determines the auth mode based on request and available credentials
 func (c *SettingsController) determineAuthMode(settings *entities.Settings, requestedMode *string) entities.AuthMode {
+	if connection := settings.ClaudeConnection(); connection != nil {
+		return entities.AuthMode(connection.Mode)
+	}
 	// 1. If explicitly specified, use that mode (if credentials are available)
 	if requestedMode != nil && *requestedMode != "" {
 		mode := entities.AuthMode(*requestedMode)
@@ -741,6 +758,8 @@ func (c *SettingsController) determineAuthMode(settings *entities.Settings, requ
 // toResponse converts Settings entity to response
 func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsResponse {
 	resp := &SettingsResponse{
+		CodexConnection:         settings.CodexConnection(),
+		ClaudeConnection:        settings.ClaudeConnection(),
 		Name:                    settings.Name(),
 		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
 		AuthMode:                string(settings.AuthMode()),

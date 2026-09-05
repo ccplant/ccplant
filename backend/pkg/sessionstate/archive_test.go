@@ -105,6 +105,8 @@ func runTestGit(t *testing.T, cwd string, args ...string) string {
 func TestPackUnpackClaude(t *testing.T) {
 	srcHome, srcCwd := t.TempDir(), t.TempDir()
 	id := "11111111-1111-1111-1111-111111111111"
+	mustWrite(t, filepath.Join(srcHome, ".session", "model-connection.json"), `{"mode":"anthropic_compatible","model":"profile"}`)
+	mustWrite(t, filepath.Join(srcHome, ".session", "private-key"), "do-not-archive")
 	mustWrite(t, filepath.Join(srcCwd, ".acp-session-id"), id)
 	mustWrite(t, filepath.Join(srcCwd, "src", "main.go"), "package main\n")
 	mustWrite(t, filepath.Join(srcCwd, ".git", "HEAD"), "ref: refs/heads/main\n")
@@ -123,6 +125,10 @@ func TestPackUnpackClaude(t *testing.T) {
 	assertFile(t, filepath.Join(dstCwd, "src", "main.go"), "package main\n")
 	assertFile(t, filepath.Join(dstCwd, ".git", "HEAD"), "ref: refs/heads/main\n")
 	assertFile(t, filepath.Join(dstHome, ".claude", "projects", "project", id+".jsonl"), "main\n")
+	assertFile(t, filepath.Join(dstHome, ".session", "model-connection.json"), `{"mode":"anthropic_compatible","model":"profile"}`)
+	if _, err := os.Stat(filepath.Join(dstHome, ".session", "private-key")); !os.IsNotExist(err) {
+		t.Fatalf("unrelated session file restored: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(dstHome, ".claude", "projects", "project", "other.jsonl")); !os.IsNotExist(err) {
 		t.Fatalf("unrelated transcript restored: %v", err)
 	}

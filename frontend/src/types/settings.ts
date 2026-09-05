@@ -39,7 +39,16 @@ export interface APIMCPServerResponse {
 }
 
 // 認証モード
-export type AuthMode = 'oauth' | 'bedrock';
+export type AuthMode = 'oauth' | 'bedrock' | 'anthropic_compatible';
+
+export interface ModelConnection {
+ mode: 'auth_json' | 'openai_compatible' | 'oauth' | 'bedrock' | 'anthropic_compatible';
+ base_url?: string; model?: string; authentication?: 'api_key' | 'none' | 'bearer_token';
+ api_key?: string; clear_api_key?: boolean; has_api_key?: boolean;
+ context_window?: number | null; auto_compact_token_limit?: number | null; supports_reasoning_summaries?: boolean | null;
+ model_aliases?: Partial<Record<'sonnet' | 'opus' | 'haiku', string>> | null;
+}
+
 
 export interface GoogleOAuthStatus {
   enabled: boolean;
@@ -103,6 +112,8 @@ export interface SciaRevokeResponse {
 
 // 設定データ（API で保存）
 export interface SettingsData {
+ codex_connection?: ModelConnection;
+ claude_connection?: ModelConnection;
   bedrock?: BedrockConfig;
   mcp_servers?: Record<string, APIMCPServerConfig>;
   marketplaces?: Record<string, MarketplaceConfig>;
@@ -355,7 +366,11 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
     prepared.claude_code_oauth_token = data.claude_code_oauth_token
   }
 
-  // Auth Mode の処理
+  for (const field of ['codex_connection', 'claude_connection'] as const) {
+ if (data[field]) { const { has_api_key: _hasKey, ...connection } = data[field]; void _hasKey; prepared[field] = connection }
+ }
+
+ // Auth Mode の処理
   if (data.auth_mode) {
     prepared.auth_mode = data.auth_mode
   }

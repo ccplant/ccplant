@@ -95,6 +95,9 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 	for i := range settings.Files {
 		settings.Files[i].Path = rewrite(settings.Files[i].Path)
 	}
+	for i, path := range settings.RemoveFiles {
+		settings.RemoveFiles[i] = rewrite(path)
+	}
 	for i, path := range settings.UnsyncedFilePaths {
 		settings.UnsyncedFilePaths[i] = rewrite(path)
 	}
@@ -189,6 +192,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Session setup complete")
 	restoreSource := settings.Session.ResumeFrom
 	restoreRequired := restoreSource != ""
+	restoredConnectionState := false
 	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
 		// Pod replacement keeps the proxy session ID. Use that stable ID as the
 		// implicit snapshot key so restart recovery needs no API parameter.
@@ -196,6 +200,11 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	if restoreSource != "" {
 		s.setPhase("provision:restore-session-state")
+		// A missing marker in the archive must not reuse one left on disk.
+		if err := os.Remove(filepath.Join(runtimeHome, ".session", "model-connection.json")); err != nil && !os.IsNotExist(err) {
+			s.setStatus(StatusError, "failed to prepare restored connection identity")
+			return
+		}
 		restoreCWD := filepath.Dir(workdirRepoPath)
 		if settings.Repository != nil && strings.TrimSpace(settings.Repository.FullName) != "" {
 			restoreCWD = workdirRepoPath
@@ -210,6 +219,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: snapshot %s was not found", restoreSource))
 			return
 		} else if found {
+			restoredConnectionState = true
 			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
 		}
 	}
@@ -245,6 +255,15 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		} else {
 			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
+	}
+
+	if err := persistModelConnectionIdentity(settings, compileOpts.OutputDir, restoreRequired || restoredConnectionState); err != nil {
+		s.setStatus(StatusError, err.Error())
+		return
+	}
+	if err := cleanModelConnectionFiles(settings, compileOpts.OutputDir); err != nil {
+		s.setStatus(StatusError, "failed to prepare connection files: "+err.Error())
+		return
 	}
 
 	// ── Step 2.6: expose Codex skills to Pi ─────────────────────────────────
@@ -325,7 +344,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
 	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
-	cmd.Env = mergeEnv(os.Environ(), envMap)
+	cmd.Env = mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

@@ -241,11 +241,11 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDeleteDirectRuntimeUsesPublicSessionID(t *testing.T) {
+func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}
 	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
-		SessionID: "public-id", RemoteSessionID: "allocator-claim-id", ManagerID: "manager-a",
+		SessionID: "public-id", RemoteSessionID: "allocated-runner-id", ManagerID: "manager-a",
 		Transport: repositories.SessionRouteTransportDirectRuntime,
 	}}
 	controller := controllers.NewSessionController(
@@ -261,8 +261,8 @@ func TestDeleteDirectRuntimeUsesPublicSessionID(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("response status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
-	if tunnel.path != "/api/v1/sessions/public-id" {
-		t.Fatalf("delete path = %q, want public session ID", tunnel.path)
+	if tunnel.path != "/api/v1/sessions/allocated-runner-id" {
+		t.Fatalf("delete path = %q, want allocated runner workload ID", tunnel.path)
 	}
 	if !tunnel.enqueued {
 		t.Fatal("direct-runtime deletion was not durably enqueued")

@@ -2,6 +2,8 @@ package entities
 
 import (
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
 // AuthMode represents the authentication mode for Claude Code
@@ -11,7 +13,8 @@ const (
 	// AuthModeOAuth uses Claude Code OAuth token
 	AuthModeOAuth AuthMode = "oauth"
 	// AuthModeBedrock uses AWS Bedrock
-	AuthModeBedrock AuthMode = "bedrock"
+	AuthModeBedrock             AuthMode = "bedrock"
+	AuthModeAnthropicCompatible AuthMode = "anthropic_compatible"
 )
 
 // BedrockSettings represents AWS Bedrock configuration
@@ -135,6 +138,8 @@ func (e ExternalSessionManagerEntry) IsPoolEnabled() bool {
 
 // Settings represents user or team settings
 type Settings struct {
+	codexConnection         *modelprovider.Connection
+	claudeConnection        *modelprovider.Connection
 	name                    string
 	bedrock                 *BedrockSettings
 	mcpServers              *MCPServersSettings
@@ -400,5 +405,19 @@ func (s *Settings) DefaultAgentType() string { return s.defaultAgentType }
 // SetDefaultAgentType sets the agent type used for sessions that do not specify one.
 func (s *Settings) SetDefaultAgentType(agentType string) {
 	s.defaultAgentType = agentType
+	s.updatedAt = time.Now()
+}
+
+func (s *Settings) CodexConnection() *modelprovider.Connection  { return s.codexConnection.Clone() }
+func (s *Settings) ClaudeConnection() *modelprovider.Connection { return s.claudeConnection.Clone() }
+func (s *Settings) SetCodexConnection(c *modelprovider.Connection) {
+	s.codexConnection = c.Clone()
+	s.updatedAt = time.Now()
+}
+func (s *Settings) SetClaudeConnection(c *modelprovider.Connection) {
+	s.claudeConnection = c.Clone()
+	if c != nil {
+		s.authMode = AuthMode(c.Mode)
+	}
 	s.updatedAt = time.Now()
 }
