@@ -1,6 +1,6 @@
 # CLI によるローカルユーザー作成の設計
 
-状態: 提案（実装は含まない）
+状態: 実装済み・Fly.io 開発環境で検証予定
 
 ## 目的と対象
 
@@ -53,7 +53,7 @@ agentapi-proxy client user token revoke local:alice TOKEN_ID
 
 ID はサーバーが `local:<username>` として決定する。任意の既存 ID を指定するオプションは設けない。username はローカルユーザー内で一意、display_name と email は重複可能とする。
 
-`LocalUserRepository` を新設し、`Create` と `GetByID` に限定する。初版の永続実装は既存トークン保存方式に合わせて Kubernetes Secret とし、1 ユーザーを 1 Secret に保存する。Secret 名は `agentapi-local-user-<ID の SHA-256 hex>`。メタデータには schema_version、id、username、display_name、email、role、status、created_at、created_by を持たせる。秘密トークンはユーザーの Secret に保存しない。
+`LocalUserRepository` を新設し、`Create` と `GetByID` に限定する。初版の永続実装は既存トークン保存方式に合わせて Kubernetes Secret API とし、1 ユーザーを 1 Secret に保存する。Fly.io の API 構成では Kubernetes 互換アダプターを通して libSQL に保存される。Secret 名は `agentapi-local-user-<ID の SHA-256 hex>`。メタデータには id、username、display_name、email、role、status、created_at、created_by を持たせる。秘密トークンはユーザーの Secret に保存しない。
 
 同じ ID の作成は Kubernetes Create の AlreadyExists を 409 に変換し、更新や upsert はしない。事前検索だけで一意性を保証しない。永続バックエンドが使えない場合は 503 とし、メモリへの保存で成功扱いにしない。Kubernetes を利用しない構成への永続実装は後続対応とする。
 
@@ -115,4 +115,4 @@ ID はサーバーが `local:<username>` として決定する。任意の既存
 - 別レプリカで同期後に利用・失効が反映され、既存認証の回帰テストが通る。
 - 通信断、キャッシュ登録失敗、秘密ファイル書き込み失敗で、結果確認・失効ができ、ログへ秘密値が出ない。
 
-この提案の完了条件は設計のレビューであり、コマンド自体の利用開始ではない。
+実装の完了条件は、Fly.io 開発環境でこの CLI を使ってローカルユーザーとトークンを発行し、そのトークンでセッション作成 API が成功することである。
