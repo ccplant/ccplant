@@ -40,7 +40,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
@@ -49,7 +48,10 @@ import (
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
-	Static         *StaticAuthConfig         `json:"static,omitempty" mapstructure:"static"`
+	// AdminKey enables a single non-expiring admin API key via the
+	// X-API-Key header. Prefer AGENTAPI_AUTH_ADMIN_KEY over config files so
+	// the value never lands in version control.
+	AdminKey       string                    `json:"admin_key,omitempty" mapstructure:"admin_key"`
 	BootstrapAdmin *BootstrapAdminAuthConfig `json:"bootstrap_admin,omitempty" mapstructure:"bootstrap_admin"`
 	GitHub         *GitHubAuthConfig         `json:"github,omitempty" mapstructure:"github"`
 }
@@ -61,14 +63,6 @@ type BootstrapAdminAuthConfig struct {
 	UserID   string `json:"user_id" mapstructure:"user_id"`
 	Username string `json:"username" mapstructure:"username"`
 	Token    string `json:"token" mapstructure:"token"`
-}
-
-// StaticAuthConfig represents static API key authentication
-type StaticAuthConfig struct {
-	Enabled    bool     `json:"enabled" mapstructure:"enabled"`
-	APIKeys    []APIKey `json:"api_keys" mapstructure:"api_keys"`
-	KeysFile   string   `json:"keys_file" mapstructure:"keys_file"`
-	HeaderName string   `json:"header_name" mapstructure:"header_name"`
 }
 
 // GitHubAuthConfig represents GitHub OAuth authentication
@@ -111,16 +105,6 @@ type RoleEnvFilesConfig struct {
 	Path string `json:"path" mapstructure:"path"`
 	// LoadDefault loads default.env before role-specific env file
 	LoadDefault bool `json:"load_default" mapstructure:"load_default"`
-}
-
-// APIKey represents an API key configuration
-type APIKey struct {
-	Key         string   `json:"key" mapstructure:"key" yaml:"key"`
-	UserID      string   `json:"user_id" mapstructure:"user_id" yaml:"user_id"`
-	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
-	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
-	CreatedAt   string   `json:"created_at" mapstructure:"created_at" yaml:"created_at"`
-	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at" yaml:"expires_at,omitempty"`
 }
 
 // Toleration represents a Kubernetes toleration for session pods
@@ -683,7 +667,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	// Debug: Log configuration summary
-	log.Printf("[CONFIG] Static auth enabled: %v", config.Auth.Static != nil && config.Auth.Static.Enabled)
+	log.Printf("[CONFIG] Admin key authentication configured: %v", config.Auth.AdminKey != "")
 	log.Printf("[CONFIG] GitHub auth enabled: %v", config.Auth.GitHub != nil && config.Auth.GitHub.Enabled)
 	if config.Auth.GitHub != nil {
 		log.Printf("[CONFIG] GitHub OAuth configured: %v", config.Auth.GitHub.OAuth != nil)
@@ -818,16 +802,12 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 			Prefix: v.GetString("session_persistence.s3.prefix"), Endpoint: v.GetString("session_persistence.s3.endpoint"),
 		}
 	}
-	// Initialize Auth.Static if environment variables are set
-	if config.Auth.Static == nil && (v.GetBool("auth.static.enabled") || v.GetString("auth.static.header_name") != "" || v.GetString("auth.static.keys_file") != "") {
-		config.Auth.Static = &StaticAuthConfig{
-			Enabled:    v.GetBool("auth.static.enabled"),
-			HeaderName: v.GetString("auth.static.header_name"),
-			KeysFile:   v.GetString("auth.static.keys_file"),
-			APIKeys:    []APIKey{},
-		}
-		log.Printf("[CONFIG] Initialized Static auth config from environment variables")
+	// Static API key authentication was removed. Warn loudly when its legacy
+	// settings are still present so operators do not assume they take effect.
+	if v.IsSet("auth.static") || v.GetBool("auth.static.enabled") || os.Getenv("AGENTAPI_AUTH_STATIC_ENABLED") != "" || os.Getenv("AGENTAPI_AUTH_STATIC_HEADER_NAME") != "" {
+		log.Printf("[CONFIG] Warning: static API key authentication has been removed; ignoring legacy auth.static settings. Set AGENTAPI_AUTH_ADMIN_KEY to provide a single admin API key instead.")
 	}
+	// Initialize Auth.BootstrapAdmin if environment variables are set
 	if config.Auth.BootstrapAdmin == nil && (v.GetBool("auth.bootstrap_admin.enabled") || v.GetString("auth.bootstrap_admin.token") != "") {
 		config.Auth.BootstrapAdmin = &BootstrapAdminAuthConfig{
 			Enabled:  v.GetBool("auth.bootstrap_admin.enabled"),
@@ -999,12 +979,6 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	}
 
 	// Override fields if environment variables are set (even if structures already exist)
-	if config.Auth.Static != nil {
-		if v.IsSet("auth.static.keys_file") {
-			config.Auth.Static.KeysFile = v.GetString("auth.static.keys_file")
-		}
-	}
-
 	if config.Auth.GitHub != nil {
 		if v.IsSet("auth.github.user_mapping.default_role") {
 			config.Auth.GitHub.UserMapping.DefaultRole = v.GetString("auth.github.user_mapping.default_role")
@@ -1043,9 +1017,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("binary_path", "CCPLANT_BINARY_PATH")
 
 	// Auth configuration
-	_ = v.BindEnv("auth.static.enabled")
-	_ = v.BindEnv("auth.static.header_name")
-	_ = v.BindEnv("auth.static.keys_file")
+	_ = v.BindEnv("auth.admin_key")
 	_ = v.BindEnv("auth.bootstrap_admin.enabled")
 	_ = v.BindEnv("auth.bootstrap_admin.user_id")
 	_ = v.BindEnv("auth.bootstrap_admin.username")
@@ -1279,8 +1251,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.bootstrap_admin.user_id", "bootstrap-admin")
 	v.SetDefault("auth.bootstrap_admin.username", "admin")
 	v.SetDefault("auth.bootstrap_admin.token", "")
-	v.SetDefault("auth.static.enabled", false)
-	v.SetDefault("auth.static.header_name", "X-API-Key")
+	v.SetDefault("auth.admin_key", "")
 	v.SetDefault("auth.github.enabled", false)
 	v.SetDefault("auth.github.base_url", "https://api.github.com")
 	v.SetDefault("auth.github.token_header", "Authorization")
@@ -1429,9 +1400,6 @@ func setDefaults(v *viper.Viper) {
 func applyConfigDefaults(config *Config) {
 
 	// Apply auth defaults
-	if config.Auth.Static != nil && config.Auth.Static.HeaderName == "" {
-		config.Auth.Static.HeaderName = "X-API-Key"
-	}
 	if config.Auth.BootstrapAdmin != nil {
 		if config.Auth.BootstrapAdmin.UserID == "" {
 			config.Auth.BootstrapAdmin.UserID = "bootstrap-admin"
@@ -1519,13 +1487,6 @@ func postProcessConfig(config *Config) error {
 		log.Printf("[CONFIG] Load default.env: %v", config.RoleEnvFiles.LoadDefault)
 	}
 
-	// Load API keys from external file if specified
-	if config.Auth.Static != nil && config.Auth.Static.KeysFile != "" {
-		if err := config.loadAPIKeysFromFile(); err != nil {
-			log.Printf("Warning: Failed to load API keys from %s: %v", config.Auth.Static.KeysFile, err)
-		}
-	}
-
 	// Load kubernetes session config from external file if specified
 	if config.KubernetesSession.ConfigFile != "" {
 		if err := loadK8sSessionConfigFromFile(config, config.KubernetesSession.ConfigFile); err != nil {
@@ -1593,11 +1554,6 @@ func expandEnvVars(s string) string {
 func DefaultConfig() *Config {
 	return &Config{
 		Auth: AuthConfig{
-			Static: &StaticAuthConfig{
-				Enabled:    false,
-				HeaderName: "X-API-Key",
-				APIKeys:    []APIKey{},
-			},
 			BootstrapAdmin: &BootstrapAdminAuthConfig{
 				Enabled:  false,
 				UserID:   "bootstrap-admin",
@@ -1623,95 +1579,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// loadAPIKeysFromFile loads API keys from an external JSON file
-func (c *Config) loadAPIKeysFromFile() error {
-	file, err := os.Open(c.Auth.Static.KeysFile)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			log.Printf("Failed to close API keys file: %v", err)
-		}
-	}()
-
-	var keysData struct {
-		APIKeys []APIKey `json:"api_keys"`
-	}
-
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&keysData); err != nil {
-		return err
-	}
-
-	c.Auth.Static.APIKeys = keysData.APIKeys
-	return nil
-}
-
-// ValidateAPIKey validates an API key and returns user information
-func (c *Config) ValidateAPIKey(key string) (*APIKey, bool) {
-	if c.Auth.Static == nil || !c.Auth.Static.Enabled {
-		return nil, false
-	}
-
-	for _, apiKey := range c.Auth.Static.APIKeys {
-		if apiKey.Key == key {
-			// Check if key is expired
-			if apiKey.ExpiresAt != "" {
-				expiryTime, err := time.Parse(time.RFC3339, apiKey.ExpiresAt)
-				if err != nil {
-					log.Printf("Invalid expiry time format for API key: %v", err)
-					continue
-				}
-				if time.Now().After(expiryTime) {
-					maskedExpiredKey := key
-					if len(key) > 8 {
-						maskedExpiredKey = key[:8] + "***"
-					} else if len(key) > 0 {
-						maskedExpiredKey = key[:1] + "***"
-					}
-					log.Printf("API key expired for user %s (key: %s)", apiKey.UserID, maskedExpiredKey)
-					continue
-				}
-			}
-			return &apiKey, true
-		}
-	}
-	// Log invalid API key attempt with masked key for security
-	maskedKey := key
-	if len(key) > 8 {
-		maskedKey = key[:8] + "***"
-	} else if len(key) > 0 {
-		maskedKey = key[:1] + "***"
-	}
-	log.Printf("API key validation failed: invalid key %s", maskedKey)
-	return nil, false
-}
-
-// HasPermission checks if a user has a specific permission
-func (apiKey *APIKey) HasPermission(permission string) bool {
-	for _, perm := range apiKey.Permissions {
-		if perm == permission || perm == "*" {
-			return true
-		}
-	}
-	return false
-}
-
 // AuthConfigOverride represents auth configuration overrides from external file
 type AuthConfigOverride struct {
 	GitHub *GitHubAuthConfigOverride `json:"github,omitempty" yaml:"github,omitempty"`
-	Static *StaticAuthConfigOverride `json:"static,omitempty" yaml:"static,omitempty"`
-}
-
-// StaticAuthConfigOverride mirrors StaticAuthConfig with presence-aware fields so
-// an auth config file can enable static keys without clobbering values that the
-// file does not mention.
-type StaticAuthConfigOverride struct {
-	Enabled    *bool    `json:"enabled" yaml:"enabled"`
-	APIKeys    []APIKey `json:"api_keys" yaml:"api_keys"`
-	KeysFile   *string  `json:"keys_file" yaml:"keys_file"`
-	HeaderName *string  `json:"header_name" yaml:"header_name"`
 }
 
 // GitHubAuthConfigOverride represents GitHub auth configuration overrides
@@ -1719,45 +1589,7 @@ type GitHubAuthConfigOverride struct {
 	UserMapping *GitHubUserMapping `json:"user_mapping,omitempty" yaml:"user_mapping,omitempty"`
 }
 
-var authConfigOverrideSections = []string{"github", "static"}
-
-// applyStaticAuthOverride merges the file's static section into the base config.
-// Pointer fields are only applied when the file actually specifies them, so a
-// file that only sets api_keys keeps the header name and keys_file resolved
-// from environment variables.
-func applyStaticAuthOverride(config *Config, override *StaticAuthConfigOverride) {
-	if override == nil {
-		return
-	}
-	target := config.Auth.Static
-	if target == nil {
-		target = &StaticAuthConfig{
-			Enabled:    false,
-			HeaderName: "X-API-Key",
-			APIKeys:    []APIKey{},
-		}
-	}
-	if override.Enabled != nil {
-		target.Enabled = *override.Enabled
-	}
-	if override.HeaderName != nil && *override.HeaderName != "" {
-		target.HeaderName = *override.HeaderName
-	}
-	if override.KeysFile != nil && *override.KeysFile != "" {
-		target.KeysFile = *override.KeysFile
-	}
-	if len(override.APIKeys) > 0 {
-		target.APIKeys = override.APIKeys
-	}
-	config.Auth.Static = target
-	log.Printf("[CONFIG] Applying static auth from external config:")
-	log.Printf("[CONFIG]   Enabled: %v", target.Enabled)
-	log.Printf("[CONFIG]   Header name: %s", target.HeaderName)
-	log.Printf("[CONFIG]   Inline API keys: %d", len(target.APIKeys))
-	if target.KeysFile != "" {
-		log.Printf("[CONFIG]   Keys file: %s", target.KeysFile)
-	}
-}
+var authConfigOverrideSections = []string{"github"}
 
 // LoadAuthConfigFromFile loads auth configuration from an external file (e.g., ConfigMap)
 func LoadAuthConfigFromFile(config *Config, filename string) error {
@@ -1819,8 +1651,6 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 	} else {
 		log.Printf("[CONFIG] No GitHub config found in auth override file")
 	}
-
-	applyStaticAuthOverride(config, authOverride.Static)
 
 	return nil
 }

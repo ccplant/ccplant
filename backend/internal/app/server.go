@@ -595,6 +595,19 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Printf("[AUTH_INIT] Bootstrap admin authentication enabled for user %q", bootstrap.UserID)
 		}
 	}
+	// Register the single admin API key from AGENTAPI_AUTH_ADMIN_KEY as a
+	// non-expiring admin credential for the X-API-Key header. This replaces the
+	// removed static API key authentication (ccplant-deploy#66 F1).
+	if cfg.Auth.AdminKey != "" {
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			if err := simpleAuth.LoadBootstrapAdmin("admin-key", "admin-key", cfg.Auth.AdminKey); err != nil {
+				log.Fatalf("[AUTH_INIT] Invalid AGENTAPI_AUTH_ADMIN_KEY configuration: %v", err)
+			}
+			log.Printf("[AUTH_INIT] Admin key authentication enabled (user \"admin-key\", header X-API-Key)")
+		} else {
+			log.Printf("[AUTH_INIT] Warning: AGENTAPI_AUTH_ADMIN_KEY is set but the auth service does not support API keys; it will be ignored")
+		}
+	}
 	e.Use(auth.AuthMiddleware(runtimeProvider, container.AuthService))
 
 	// Initialize OAuth provider if configured.

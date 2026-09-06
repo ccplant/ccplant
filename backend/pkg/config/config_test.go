@@ -3,10 +3,8 @@ package config
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -41,8 +39,11 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Verify default auth config
-	if config.Auth.Static == nil {
-		t.Error("Auth.Static should be initialized by default")
+	if config.Auth.AdminKey != "" {
+		t.Error("Auth.AdminKey should be empty by default")
+	}
+	if config.Auth.BootstrapAdmin == nil {
+		t.Error("Auth.BootstrapAdmin should be initialized by default")
 	}
 }
 
@@ -62,11 +63,7 @@ func TestLoadConfig(t *testing.T) {
 
 	// Create a temporary config file
 	tempConfig := &Config{
-		Auth: AuthConfig{
-			Static: &StaticAuthConfig{
-				Enabled: false,
-			},
-		},
+		Auth: AuthConfig{},
 	}
 
 	configData, err := json.Marshal(tempConfig)
@@ -92,21 +89,9 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Compare auth config values (not pointer equality)
-	if loadedConfig.Auth.Static != nil && loadedConfig.Auth.Static.Enabled {
-		t.Error("Auth.Static should be disabled by default")
-	}
-
-	// Verify static auth config is properly initialized with defaults
-	if loadedConfig.Auth.Static == nil {
-		t.Error("Auth.Static should not be nil")
-	} else {
-		if loadedConfig.Auth.Static.HeaderName != "X-API-Key" {
-			t.Errorf("Auth.Static.HeaderName should be 'X-API-Key', got '%s'", loadedConfig.Auth.Static.HeaderName)
-		}
-		if loadedConfig.Auth.Static.Enabled != false {
-			t.Errorf("Auth.Static.Enabled should be false, got %t", loadedConfig.Auth.Static.Enabled)
-		}
+	// Verify auth config defaults
+	if loadedConfig.Auth.AdminKey != "" {
+		t.Error("Auth.AdminKey should be empty by default")
 	}
 
 	// Verify GitHub auth config is properly initialized with defaults
@@ -169,107 +154,6 @@ func TestLoadConfigInvalidJSON(t *testing.T) {
 		t.Error("LoadConfig should return error for invalid JSON")
 	}
 }
-
-func TestValidateAPIKey_AuthDisabled(t *testing.T) {
-	cfg := &Config{
-		Auth: AuthConfig{
-			Static: &StaticAuthConfig{
-				Enabled: false,
-			},
-		},
-	}
-
-	_, valid := cfg.ValidateAPIKey("any-key")
-	assert.False(t, valid)
-}
-
-func TestValidateAPIKey_ValidKey(t *testing.T) {
-	cfg := &Config{
-		Auth: AuthConfig{
-			Static: &StaticAuthConfig{
-				Enabled: true,
-				APIKeys: []APIKey{
-					{
-						Key:         "valid-key",
-						UserID:      "user1",
-						Role:        "user",
-						Permissions: []string{"session:create"},
-						CreatedAt:   "2024-01-01T00:00:00Z",
-					},
-				},
-			},
-		},
-	}
-
-	apiKey, valid := cfg.ValidateAPIKey("valid-key")
-	assert.True(t, valid)
-	assert.NotNil(t, apiKey)
-	assert.Equal(t, "user1", apiKey.UserID)
-	assert.Equal(t, "user", apiKey.Role)
-}
-
-func TestValidateAPIKey_InvalidKey(t *testing.T) {
-	cfg := &Config{
-		Auth: AuthConfig{
-			Static: &StaticAuthConfig{
-				Enabled: true,
-				APIKeys: []APIKey{
-					{
-						Key:    "valid-key",
-						UserID: "user1",
-					},
-				},
-			},
-		},
-	}
-
-	_, valid := cfg.ValidateAPIKey("invalid-key")
-	assert.False(t, valid)
-}
-
-func TestValidateAPIKey_ExpiredKey(t *testing.T) {
-	// Create an expired key
-	expiredTime := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
-
-	cfg := &Config{
-		Auth: AuthConfig{
-			Static: &StaticAuthConfig{
-				Enabled: true,
-				APIKeys: []APIKey{
-					{
-						Key:       "expired-key",
-						UserID:    "user1",
-						ExpiresAt: expiredTime,
-					},
-				},
-			},
-		},
-	}
-
-	_, valid := cfg.ValidateAPIKey("expired-key")
-	assert.False(t, valid)
-}
-
-func TestAPIKey_HasPermission(t *testing.T) {
-	apiKey := &APIKey{
-		Permissions: []string{"session:create", "session:delete"},
-	}
-
-	assert.True(t, apiKey.HasPermission("session:create"))
-	assert.True(t, apiKey.HasPermission("session:delete"))
-	assert.False(t, apiKey.HasPermission("session:admin"))
-}
-
-func TestAPIKey_HasPermission_Wildcard(t *testing.T) {
-	apiKey := &APIKey{
-		Permissions: []string{"*"},
-	}
-
-	assert.True(t, apiKey.HasPermission("session:create"))
-	assert.True(t, apiKey.HasPermission("session:delete"))
-	assert.True(t, apiKey.HasPermission("any:permission"))
-}
-
 func TestExpandEnvVars(t *testing.T) {
 	// Set up test environment variables
 	_ = os.Setenv("TEST_VAR", "test_value")
@@ -534,17 +418,11 @@ func TestLoadConfigNetworkFilterResourceDefaults(t *testing.T) {
 	assert.Equal(t, "64Mi", loadedConfig.KubernetesSession.NetworkFilterInitMemoryLimit)
 }
 
-func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {
-	// Set up test environment variables for static auth
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Custom-Key")
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_KEYS_FILE", "/path/to/keys.json")
+func TestInitializeConfigStructsFromEnv_AdminKey(t *testing.T) {
+	// Set up admin key environment variable
+	_ = os.Setenv("AGENTAPI_AUTH_ADMIN_KEY", "ap_admin_env_key")
 
-	defer func() {
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED")
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_HEADER_NAME")
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_KEYS_FILE")
-	}()
+	defer func() { _ = os.Unsetenv("AGENTAPI_AUTH_ADMIN_KEY") }()
 
 	// Load config without file (should initialize from env vars)
 	loadedConfig, err := LoadConfig("")
@@ -552,15 +430,7 @@ func TestInitializeConfigStructsFromEnv_StaticAuth(t *testing.T) {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Verify Static auth config was initialized from environment variables
-	if loadedConfig.Auth.Static == nil {
-		t.Fatal("Auth.Static should not be nil when environment variables are set")
-	}
-
-	assert.True(t, loadedConfig.Auth.Static.Enabled)
-	assert.Equal(t, "X-Custom-Key", loadedConfig.Auth.Static.HeaderName)
-	assert.Equal(t, "/path/to/keys.json", loadedConfig.Auth.Static.KeysFile)
-	assert.Empty(t, loadedConfig.Auth.Static.APIKeys) // Should be empty initially
+	assert.Equal(t, "ap_admin_env_key", loadedConfig.Auth.AdminKey)
 }
 
 func TestInitializeConfigStructsFromEnv_GitHubAuth(t *testing.T) {
@@ -636,28 +506,16 @@ func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *test
 	clearAGENTAPIEnvVars(t)
 
 	// Set up environment variables
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_AUTH_ADMIN_KEY", "ap_admin_env_key")
 	_ = os.Setenv("AGENTAPI_AUTH_GITHUB_ENABLED", "true")
 
 	defer func() {
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_AUTH_ADMIN_KEY")
 		_ = os.Unsetenv("AGENTAPI_AUTH_GITHUB_ENABLED")
 	}()
 
 	// Create config with existing auth structures
-	configJSON := `{
-		"auth": {
-			"enabled": false,
-			"static": {
-				"enabled": false,
-				"header_name": "X-Existing-Key"
-			},
-			"github": {
-				"enabled": false,
-				"base_url": "https://existing.github.com"
-			}
-		}
-	}`
+	configJSON := `{"auth":{"enabled":false,"admin_key":"ap_file_key","github":{"enabled":false,"base_url":"https://existing.github.com"}}}`
 
 	// Write to temporary file
 	tmpfile, err := os.CreateTemp("", "config*.json")
@@ -677,36 +535,11 @@ func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *test
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	// Verify existing config structures were NOT overwritten by environment variables
-	// But environment variables still affect enabled flags due to viper's automatic env handling
-	assert.True(t, loadedConfig.Auth.Static.Enabled)                                 // Environment variable takes precedence
-	assert.Equal(t, "X-Existing-Key", loadedConfig.Auth.Static.HeaderName)           // Should remain as configured
+	// Verify environment variables take precedence for scalar auth values,
+	// while struct fields already set from the file keep their non-env values.
+	assert.Equal(t, "ap_admin_env_key", loadedConfig.Auth.AdminKey) // Environment variable takes precedence
 	assert.True(t, loadedConfig.Auth.GitHub.Enabled)                                 // Environment variable takes precedence
 	assert.Equal(t, "https://existing.github.com", loadedConfig.Auth.GitHub.BaseURL) // Should remain as configured
-}
-
-func TestInitializeConfigStructsFromEnv_PartialEnvironmentVariables(t *testing.T) {
-	// Set up only some environment variables
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Partial-Key")
-	// Note: Not setting AGENTAPI_AUTH_STATIC_ENABLED
-
-	defer func() {
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_HEADER_NAME")
-	}()
-
-	// Load config without file (should initialize from env vars)
-	loadedConfig, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Verify Static auth config was still initialized due to header_name being set
-	if loadedConfig.Auth.Static == nil {
-		t.Fatal("Auth.Static should not be nil when any environment variable is set")
-	}
-
-	assert.False(t, loadedConfig.Auth.Static.Enabled)                     // Should be false (default)
-	assert.Equal(t, "X-Partial-Key", loadedConfig.Auth.Static.HeaderName) // Should be from env var
 }
 
 func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T) {
@@ -715,9 +548,7 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 	// Set up comprehensive environment variables
 	envVars := map[string]string{
 		"AGENTAPI_AUTH_ENABLED":                          "true",
-		"AGENTAPI_AUTH_STATIC_ENABLED":                   "true",
-		"AGENTAPI_AUTH_STATIC_HEADER_NAME":               "X-Full-Test-Key",
-		"AGENTAPI_AUTH_STATIC_KEYS_FILE":                 "/full/test/keys.json",
+		"AGENTAPI_AUTH_ADMIN_KEY":                        "ap_admin_full_test",
 		"AGENTAPI_AUTH_GITHUB_ENABLED":                   "true",
 		"AGENTAPI_AUTH_GITHUB_BASE_URL":                  "https://full.test.github.com/api/v3",
 		"AGENTAPI_AUTH_GITHUB_TOKEN_HEADER":              "X-Full-GitHub-Token",
@@ -747,12 +578,8 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 	}
 
 	// Verify all settings were loaded from environment variables
-	// Static auth verification
-	if assert.NotNil(t, loadedConfig.Auth.Static) {
-		assert.True(t, loadedConfig.Auth.Static.Enabled)
-		assert.Equal(t, "X-Full-Test-Key", loadedConfig.Auth.Static.HeaderName)
-		assert.Equal(t, "/full/test/keys.json", loadedConfig.Auth.Static.KeysFile)
-	}
+	// Admin key verification
+	assert.Equal(t, "ap_admin_full_test", loadedConfig.Auth.AdminKey)
 
 	// GitHub auth verification
 	if assert.NotNil(t, loadedConfig.Auth.GitHub) {
@@ -772,136 +599,3 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 
 }
 
-func TestLoadAuthConfigFromFile_AppliesStaticSection(t *testing.T) {
-	clearAGENTAPIEnvVars(t)
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
-	defer func() { _ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED") }()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "auth-config.yaml")
-	content := `github:
-  user_mapping:
-    default_role: user
-    default_permissions:
-      - read
-static:
-  enabled: true
-  header_name: X-API-Key
-  api_keys:
-    - key: ap_test_admin_key
-      user_id: pentester
-      role: admin
-      permissions:
-        - "*"
-`
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write auth config: %v", err)
-	}
-
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if err := LoadAuthConfigFromFile(cfg, path); err != nil {
-		t.Fatalf("LoadAuthConfigFromFile failed: %v", err)
-	}
-
-	if cfg.Auth.Static == nil {
-		t.Fatal("Auth.Static should not be nil after applying static override")
-	}
-	if !cfg.Auth.Static.Enabled {
-		t.Error("Auth.Static.Enabled should be true")
-	}
-	if cfg.Auth.Static.HeaderName != "X-API-Key" {
-		t.Errorf("unexpected header name: %s", cfg.Auth.Static.HeaderName)
-	}
-	if len(cfg.Auth.Static.APIKeys) != 1 {
-		t.Fatalf("expected 1 API key, got %d", len(cfg.Auth.Static.APIKeys))
-	}
-	if cfg.Auth.Static.APIKeys[0].Key != "ap_test_admin_key" {
-		t.Errorf("unexpected API key: %s", cfg.Auth.Static.APIKeys[0].Key)
-	}
-	if cfg.Auth.Static.APIKeys[0].UserID != "pentester" {
-		t.Errorf("unexpected API key user id: %s", cfg.Auth.Static.APIKeys[0].UserID)
-	}
-}
-
-func TestLoadAuthConfigFromFile_StaticWithoutBaseConfig(t *testing.T) {
-	clearAGENTAPIEnvVars(t)
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "auth-config.yaml")
-	content := `static:
-  enabled: true
-  api_keys:
-    - key: ap_only_file_key
-      user_id: file-user
-      role: admin
-`
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write auth config: %v", err)
-	}
-
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if err := LoadAuthConfigFromFile(cfg, path); err != nil {
-		t.Fatalf("LoadAuthConfigFromFile failed: %v", err)
-	}
-
-	if cfg.Auth.Static == nil {
-		t.Fatal("Auth.Static should be created when the file provides a static section")
-	}
-	if !cfg.Auth.Static.Enabled {
-		t.Error("Auth.Static.Enabled should be true")
-	}
-	// Header name falls back to the default when the file does not set it.
-	if cfg.Auth.Static.HeaderName != "X-API-Key" {
-		t.Errorf("expected default header name X-API-Key, got %s", cfg.Auth.Static.HeaderName)
-	}
-	if len(cfg.Auth.Static.APIKeys) != 1 || cfg.Auth.Static.APIKeys[0].Key != "ap_only_file_key" {
-		t.Errorf("unexpected API keys: %+v", cfg.Auth.Static.APIKeys)
-	}
-}
-
-func TestLoadAuthConfigFromFile_StaticPreservesEnvHeaderName(t *testing.T) {
-	clearAGENTAPIEnvVars(t)
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
-	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Custom-Key")
-	defer func() {
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED")
-		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_HEADER_NAME")
-	}()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "auth-config.yaml")
-	content := `static:
-  api_keys:
-    - key: ap_merge_key
-      user_id: merge-user
-      role: admin
-`
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write auth config: %v", err)
-	}
-
-	cfg, err := LoadConfig("")
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if err := LoadAuthConfigFromFile(cfg, path); err != nil {
-		t.Fatalf("LoadAuthConfigFromFile failed: %v", err)
-	}
-
-	if cfg.Auth.Static == nil {
-		t.Fatal("Auth.Static should not be nil")
-	}
-	// The file only sets api_keys; the env-provided header name must survive.
-	if cfg.Auth.Static.HeaderName != "X-Custom-Key" {
-		t.Errorf("env header name was clobbered: %s", cfg.Auth.Static.HeaderName)
-	}
-	if len(cfg.Auth.Static.APIKeys) != 1 {
-		t.Errorf("expected 1 API key, got %d", len(cfg.Auth.Static.APIKeys))
-	}
-}

@@ -849,9 +849,15 @@ config:
 
   # 認証設定
   auth:
-    # Break-glass administrator authentication. This works even when static,
-    # GitHub and other authentication providers are disabled. Prefer tokenSecretRef over
-    # token so the credential is not stored in Helm release values.
+    # Single admin API key for the X-API-Key header. Prefer adminKeySecretRef
+    # over adminKey so the credential is not stored in Helm release values.
+    adminKey: ""
+    adminKeySecretRef:
+      name: ""
+      key: "admin-key"
+    # Break-glass administrator authentication. This works even when the admin
+    # key, GitHub and other authentication providers are disabled. Prefer
+    # tokenSecretRef over token so the credential is not stored in Helm release values.
     bootstrapAdmin:
       enabled: false
       userId: "bootstrap-admin"
@@ -860,9 +866,6 @@ config:
       tokenSecretRef:
         name: ""
         key: "token"
-    static:
-      enabled: false
-      headerName: "X-API-Key"
     github:
       enabled: false
       baseUrl: "https://api.github.com"

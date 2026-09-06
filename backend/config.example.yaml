@@ -32,14 +32,12 @@ kv_store:
 # Authentication configuration
 auth:
   enabled: false
-  
-  # Static API key authentication
-  static:
-    enabled: false
-    header_name: "X-API-Key"
-    keys_file: ""  # Path to external API keys file
-    api_keys: []
-  
+
+  # Single admin API key. Prefer the AGENTAPI_AUTH_ADMIN_KEY environment
+  # variable over config files so the value never lands in version control.
+  # Requests with `X-API-Key: <admin key>` authenticate as an admin user.
+  admin_key: ""
+
   # GitHub OAuth authentication
   github:
     enabled: false
