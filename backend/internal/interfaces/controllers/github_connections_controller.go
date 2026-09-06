@@ -82,10 +82,9 @@ type githubSecretUpdate struct {
 }
 
 type githubPrincipal struct {
-	ID              string    `json:"id"`
-	InternalUserID  string    `json:"internal_user_id"`
-	CanonicalUserID string    `json:"canonical_user_id,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	InternalUserID string    `json:"internal_user_id"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type githubIdentity struct {
@@ -453,7 +452,30 @@ func (c *GitHubConnectionsController) CompleteLogin(ctx context.Context, stateID
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub identity could not be resolved").SetInternal(err)
 	}
-	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL, UserID: principal.CanonicalUserID}, nil
+	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL, UserID: principal.ID}, nil
+}
+
+// ResolvePrincipalIDForGitHubUser maps the legacy GitHub OAuth flow onto the
+// same stable principal IDs used by connection-based login.
+func (c *GitHubConnectionsController) ResolvePrincipalIDForGitHubUser(ctx context.Context, githubUserID int64) (string, error) {
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, identity := range identities {
+		if identity.GitHubUserID != githubUserID {
+			continue
+		}
+		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
+		if err == nil && connection.BaseURL == "https://github.com" {
+			return identity.PrincipalID, nil
+		}
+	}
+	principal, err := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github:%d", githubUserID))
+	if err != nil {
+		return "", err
+	}
+	return principal.ID, nil
 }
 
 func (c *GitHubConnectionsController) OAuthStateMode(ctx context.Context, stateID string) (string, error) {
@@ -518,7 +540,7 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "GitHub connection is unavailable")
 	}
 	internalSubject := principalSubject(user)
-	principal, err := c.getOrCreatePrincipal(ctx.Request().Context(), internalSubject, string(user.ID()))
+	principal, err := c.getOrCreatePrincipal(ctx.Request().Context(), internalSubject)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve principal").SetInternal(err)
 	}
@@ -707,38 +729,20 @@ func (c *GitHubConnectionsController) ResolveAccessTokenForOrganization(ctx cont
 	return "", "", false, nil
 }
 
-func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID, canonicalUserID string) (githubPrincipal, error) {
+func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, internalUserID string) (githubPrincipal, error) {
 	principal, err := c.loadPrincipal(ctx, internalUserID)
 	if err == nil {
-		if principal.CanonicalUserID == "" {
-			principal.CanonicalUserID = canonicalUserID
-			err = c.savePrincipal(ctx, principal)
-		}
 		return principal, nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return githubPrincipal{}, err
 	}
-	principal = githubPrincipal{ID: uuid.NewString(), InternalUserID: internalUserID, CanonicalUserID: canonicalUserID, CreatedAt: time.Now().UTC()}
+	principal = githubPrincipal{ID: uuid.NewString(), InternalUserID: internalUserID, CreatedAt: time.Now().UTC()}
 	err = c.createObject(ctx, principalSecretName(internalUserID), githubPrincipalLabel, principal, nil)
 	if apierrors.IsAlreadyExists(err) {
-		return c.getOrCreatePrincipal(ctx, internalUserID, canonicalUserID)
+		return c.getOrCreatePrincipal(ctx, internalUserID)
 	}
 	return principal, err
-}
-
-func (c *GitHubConnectionsController) savePrincipal(ctx context.Context, principal githubPrincipal) error {
-	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, principalSecretName(principal.InternalUserID), metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	record, err := json.Marshal(principal)
-	if err != nil {
-		return err
-	}
-	secret.Data["record.json"] = record
-	_, err = c.client.CoreV1().Secrets(c.namespace).Update(ctx, secret, metav1.UpdateOptions{})
-	return err
 }
 
 func (c *GitHubConnectionsController) listPrincipals(ctx context.Context) ([]githubPrincipal, error) {
@@ -766,7 +770,7 @@ func (c *GitHubConnectionsController) loadPrincipalForUser(ctx context.Context, 
 		return githubPrincipal{}, err
 	}
 	for _, candidate := range principals {
-		if candidate.CanonicalUserID == string(user.ID()) {
+		if candidate.ID == string(user.ID()) {
 			return candidate, nil
 		}
 	}
@@ -777,7 +781,7 @@ func (c *GitHubConnectionsController) resolveLoginPrincipal(ctx context.Context,
 	var identity githubIdentity
 	_, err := c.loadObject(ctx, identitySecretName(connection.ID, user.ID), &identity)
 	if apierrors.IsNotFound(err) {
-		principal, createErr := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github-connection:%s:%d", connection.ID, user.ID), user.Login)
+		principal, createErr := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github-connection:%s:%d", connection.ID, user.ID))
 		if createErr != nil {
 			return githubPrincipal{}, createErr
 		}
@@ -799,32 +803,9 @@ func (c *GitHubConnectionsController) resolveLoginPrincipal(ctx context.Context,
 		if principal.ID != identity.PrincipalID {
 			continue
 		}
-		if principal.CanonicalUserID == "" {
-			principal.CanonicalUserID = c.inferCanonicalUserID(ctx, principal.ID, user.Login)
-			if err := c.savePrincipal(ctx, principal); err != nil {
-				return githubPrincipal{}, err
-			}
-		}
 		return principal, nil
 	}
 	return githubPrincipal{}, errors.New("principal for GitHub identity not found")
-}
-
-func (c *GitHubConnectionsController) inferCanonicalUserID(ctx context.Context, principalID, fallback string) string {
-	identities, err := c.listIdentities(ctx)
-	if err != nil {
-		return fallback
-	}
-	for _, identity := range identities {
-		if identity.PrincipalID != principalID {
-			continue
-		}
-		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
-		if err == nil && connection.BaseURL == "https://github.com" {
-			return identity.Login
-		}
-	}
-	return fallback
 }
 
 func (c *GitHubConnectionsController) loadPrincipal(ctx context.Context, internalUserID string) (githubPrincipal, error) {

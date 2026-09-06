@@ -87,8 +87,9 @@ type Server struct {
 	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
 	scheduleManager             schedule.Manager
 	apiTokenRepo                portrepos.APITokenRepository // Named API token repository
-	apiTokenDeps                *apiTokenInitDeps            // Wiring for bootstrap/reconcile
-	assetStore                  services.AssetStore          // Static asset storage backend
+	localUserRepo               portrepos.LocalUserRepository
+	apiTokenDeps                *apiTokenInitDeps   // Wiring for bootstrap/reconcile
+	assetStore                  services.AssetStore // Static asset storage backend
 	sessionStateStore           services.SessionStateStore
 	sessionControlStore         sessioncontrol.Store
 	esmControlStore             esmcontrol.Store
@@ -408,6 +409,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		namespace,
 	)
 	log.Printf("[SERVER] API token repository initialized")
+	localUserRepo := repositories.NewKubernetesLocalUserRepository(persistenceClient, namespace)
+	log.Printf("[SERVER] Local user repository initialized")
 
 	// Initialize memory repository based on backend configuration.
 	// Supported backends: "kubernetes" (default), "s3", "external".
@@ -541,6 +544,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionProfileRepo:          sessionProfileRepo,
 		scheduleManager:             scheduleManager,
 		apiTokenRepo:                apiTokenRepo,
+		localUserRepo:               localUserRepo,
 		namespace:                   namespace,
 		personalAPIKeyRepo:          personalAPIKeyRepo,
 		assetStore:                  assetStore,
@@ -987,6 +991,7 @@ func (s *Server) initAPITokenWiring() {
 	// can keep named tokens consistent across replicas. Legacy static and
 	// personal API keys live in a separate map and are unaffected.
 	simpleAuth.SetAPITokenRepository(s.apiTokenRepo)
+	simpleAuth.SetLocalUserRepository(s.localUserRepo)
 }
 
 // InitAPITokens loads named API tokens into the in-memory auth service.

@@ -31,7 +31,12 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "jobs": {"type": "array", "items": {"type": "object"}}
+                    "jobs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
                   }
                 }
               }
@@ -50,9 +55,30 @@
       "post": {
         "summary": "Finalize a claimed schedule execution",
         "operationId": "finalizeScheduleExecution",
-        "tags": ["Worker Control"],
-        "parameters": [{"name":"scheduleId","in":"path","required":true,"schema":{"type":"string"}}],
-        "responses": {"204":{"description":"Execution finalized"},"401":{"description":"Invalid worker control token"},"409":{"description":"Claim mismatch"}}
+        "tags": [
+          "Worker Control"
+        ],
+        "parameters": [
+          {
+            "name": "scheduleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Execution finalized"
+          },
+          "401": {
+            "description": "Invalid worker control token"
+          },
+          "409": {
+            "description": "Claim mismatch"
+          }
+        }
       }
     },
     "/internal/worker/leases/{leaseName}": {
@@ -376,50 +402,253 @@
       "get": {
         "summary": "List GitHub OAuth connections",
         "operationId": "listGitHubConnections",
-        "tags": ["GitHub Connections"],
-        "responses": {"200": {"description": "GitHub connections with masked secret status"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "200": {
+            "description": "GitHub connections with masked secret status"
+          }
+        }
       },
       "post": {
         "summary": "Create a GitHub OAuth connection",
         "operationId": "createGitHubConnection",
-        "tags": ["GitHub Connections"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitHubConnectionInput"}}}},
-        "responses": {"201": {"description": "Connection created"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubConnectionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Connection created"
+          }
+        }
       }
     },
     "/admin/github-connections/{id}": {
-      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
-      "get": {"summary": "Get a GitHub OAuth connection", "operationId": "getGitHubConnection", "tags": ["GitHub Connections"], "responses": {"200": {"description": "Connection"}}},
-      "patch": {"summary": "Update a GitHub OAuth connection", "operationId": "updateGitHubConnection", "tags": ["GitHub Connections"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitHubConnectionInput"}}}}, "responses": {"200": {"description": "Connection updated"}}},
-      "delete": {"summary": "Delete an unused GitHub OAuth connection", "operationId": "deleteGitHubConnection", "tags": ["GitHub Connections"], "responses": {"204": {"description": "Connection deleted"}, "409": {"description": "Connection has linked identities"}}}
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Get a GitHub OAuth connection",
+        "operationId": "getGitHubConnection",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a GitHub OAuth connection",
+        "operationId": "updateGitHubConnection",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubConnectionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connection updated"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete an unused GitHub OAuth connection",
+        "operationId": "deleteGitHubConnection",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "204": {
+            "description": "Connection deleted"
+          },
+          "409": {
+            "description": "Connection has linked identities"
+          }
+        }
+      }
     },
     "/admin/github-connections/{id}/secret": {
       "put": {
         "summary": "Replace a GitHub OAuth client secret",
         "operationId": "updateGitHubConnectionSecret",
-        "tags": ["GitHub Connections"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
-        "responses": {"200": {"description": "Secret replaced; plaintext is never returned"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret replaced; plaintext is never returned"
+          }
+        }
       },
-      "delete": {"summary": "Remove a GitHub OAuth client secret", "operationId": "deleteGitHubConnectionSecret", "tags": ["GitHub Connections"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}], "responses": {"204": {"description": "Secret removed"}}}
+      "delete": {
+        "summary": "Remove a GitHub OAuth client secret",
+        "operationId": "deleteGitHubConnectionSecret",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Secret removed"
+          }
+        }
+      }
     },
     "/admin/github-connections/{id}/test": {
-      "post": {"summary": "Test GitHub API reachability and secret resolution", "operationId": "testGitHubConnection", "tags": ["GitHub Connections"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}], "responses": {"200": {"description": "Connection test result"}}}
+      "post": {
+        "summary": "Test GitHub API reachability and secret resolution",
+        "operationId": "testGitHubConnection",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection test result"
+          }
+        }
+      }
     },
     "/github-connections": {
-      "get": {"summary": "List enabled GitHub connections", "operationId": "listAvailableGitHubConnections", "tags": ["GitHub Connections"], "responses": {"200": {"description": "Enabled connections"}}}
+      "get": {
+        "summary": "List enabled GitHub connections",
+        "operationId": "listAvailableGitHubConnections",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "200": {
+            "description": "Enabled connections"
+          }
+        }
+      }
     },
     "/users/me/github-identities": {
-      "get": {"summary": "List the current principal's GitHub identities", "operationId": "listMyGitHubIdentities", "tags": ["GitHub Connections"], "responses": {"200": {"description": "Principal and linked identities"}}}
+      "get": {
+        "summary": "List the current principal's GitHub identities",
+        "operationId": "listMyGitHubIdentities",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "200": {
+            "description": "Principal and linked identities"
+          }
+        }
+      }
     },
     "/users/me/github-identities/link": {
-      "post": {"summary": "Start linking a GitHub identity", "operationId": "startGitHubIdentityLink", "tags": ["GitHub Connections"], "responses": {"200": {"description": "GitHub authorization URL"}}}
+      "post": {
+        "summary": "Start linking a GitHub identity",
+        "operationId": "startGitHubIdentityLink",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "200": {
+            "description": "GitHub authorization URL"
+          }
+        }
+      }
     },
     "/users/me/github-identities/{identity_id}": {
-      "delete": {"summary": "Unlink a GitHub identity", "operationId": "unlinkGitHubIdentity", "tags": ["GitHub Connections"], "parameters": [{"name": "identity_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}], "responses": {"204": {"description": "Identity unlinked"}}}
+      "delete": {
+        "summary": "Unlink a GitHub identity",
+        "operationId": "unlinkGitHubIdentity",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "identity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Identity unlinked"
+          }
+        }
+      }
     },
     "/auth/github-connections/callback": {
-      "get": {"summary": "Complete GitHub identity linking", "operationId": "completeGitHubIdentityLink", "tags": ["GitHub Connections"], "responses": {"302": {"description": "Redirect to the user settings page"}}}
+      "get": {
+        "summary": "Complete GitHub identity linking",
+        "operationId": "completeGitHubIdentityLink",
+        "tags": [
+          "GitHub Connections"
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the user settings page"
+          }
+        }
+      }
     },
     "/health": {
       "get": {
@@ -5838,33 +6067,309 @@
           }
         }
       }
+    },
+    "/admin/users": {
+      "post": {
+        "summary": "Create a user principal",
+        "operationId": "createAdminUser",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdminUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User principal created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "Username already exists"
+          }
+        }
+      }
+    },
+    "/admin/users/{principalId}": {
+      "get": {
+        "summary": "Get a user principal",
+        "operationId": "getAdminUser",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "principalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User principal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUser"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "User not found"
+          }
+        }
+      }
+    },
+    "/admin/users/{principalId}/api-tokens": {
+      "post": {
+        "summary": "Create an API token for a user principal",
+        "operationId": "createAdminUserToken",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "principalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdminUserTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Token created; plaintext is returned once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APITokenWithSecret"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found"
+          }
+        }
+      },
+      "get": {
+        "summary": "List API tokens for a user principal",
+        "operationId": "listAdminUserTokens",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "principalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APITokenListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found"
+          }
+        }
+      }
+    },
+    "/admin/users/{principalId}/api-tokens/{tokenId}": {
+      "delete": {
+        "summary": "Revoke an API token for a user principal",
+        "operationId": "revokeAdminUserToken",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "principalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Token revoked"
+          },
+          "404": {
+            "description": "User or token not found"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
       "GitHubConnectionInput": {
         "type": "object",
-        "required": ["name", "base_url", "api_url", "oauth_client_id"],
+        "required": [
+          "name",
+          "base_url",
+          "api_url",
+          "oauth_client_id"
+        ],
         "properties": {
-          "name": {"type": "string"},
-          "base_url": {"type": "string", "format": "uri"},
-          "api_url": {"type": "string", "format": "uri"},
-          "oauth_client_id": {"type": "string"},
-          "oauth_scope": {"type": "string", "default": "read:user read:org project"},
-          "enabled": {"type": "boolean", "default": true},
-          "show_on_login": {"type": "boolean", "default": true},
+          "name": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "api_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "oauth_client_id": {
+            "type": "string"
+          },
+          "oauth_scope": {
+            "type": "string",
+            "default": "read:user read:org project"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "show_on_login": {
+            "type": "boolean",
+            "default": true
+          },
           "organizations": {
             "type": "array",
             "description": "Repository organizations whose sessions automatically use this connection.",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "uniqueItems": true
           },
           "oauth_client_secret": {
             "type": "object",
             "properties": {
-              "source": {"type": "string", "enum": ["encrypted", "environment"]},
-              "value": {"type": "string", "format": "password", "writeOnly": true},
-              "environment": {"type": "string"}
+              "source": {
+                "type": "string",
+                "enum": [
+                  "encrypted",
+                  "environment"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "format": "password",
+                "writeOnly": true
+              },
+              "environment": {
+                "type": "string"
+              }
             }
           }
         }
@@ -6510,12 +7015,19 @@
           },
           "codex_auth_mode": {
             "type": "string",
-            "enum": ["auth_json", "openai_compatible"],
+            "enum": [
+              "auth_json",
+              "openai_compatible"
+            ],
             "description": "Override the Codex authentication method; omitted inherits authentication settings."
           },
           "claude_auth_mode": {
             "type": "string",
-            "enum": ["oauth", "bedrock", "anthropic_compatible"],
+            "enum": [
+              "oauth",
+              "bedrock",
+              "anthropic_compatible"
+            ],
             "description": "Override the Claude Code authentication method; omitted inherits authentication settings."
           },
           "credential_source": {
@@ -8800,6 +9312,99 @@
         "required": [
           "items"
         ]
+      },
+      "AdminUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "display_name",
+          "role",
+          "status",
+          "created_at",
+          "created_by"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable principal ID used for authentication and resource ownership"
+          },
+          "username": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_by": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateAdminUserRequest": {
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "username": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "admin"
+            ],
+            "default": "user"
+          }
+        }
+      },
+      "CreateAdminUserTokenRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "string",
+            "default": "720h"
+          }
+        }
       }
     },
     "SlackBotStatus": {

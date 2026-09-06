@@ -551,7 +551,9 @@ func TestOAuthProviderIntegration(t *testing.T) {
 		userContext, err := proxy.validateOAuthSession(c3)
 		require.NoError(t, err)
 		require.NotNil(t, userContext)
-		require.Equal(t, "testuser", userContext.UserID)
+		require.NotEmpty(t, userContext.UserID)
+		require.NotEqual(t, "testuser", userContext.UserID)
+		require.Equal(t, callbackResp.User.UserID, userContext.UserID)
 
 		// Step 4: Refresh session
 		req4 := httptest.NewRequest(http.MethodPost, "/oauth/refresh", nil)

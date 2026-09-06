@@ -41,6 +41,7 @@ type HandlerRegistry struct {
 	shareController                *controllers.ShareController
 	personalAPIKeyController       *controllers.PersonalAPIKeyController
 	apiTokenController             *controllers.APITokenController
+	adminLocalUserController       *controllers.AdminLocalUserController
 	memoryController               *controllers.MemoryController
 	sandboxPolicyController        *controllers.SandboxPolicyController
 	resourceTransferController     *controllers.ResourceTransferController
@@ -171,6 +172,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create the unified multi API token controller (list/create/get/delete)
 	// when the new API token repository is available (Kubernetes mode only).
 	var apiTokenController *controllers.APITokenController
+	var adminLocalUserController *controllers.AdminLocalUserController
 	if server.apiTokenRepo != nil {
 		var tokenAuthService apitokenuc.AuthService
 		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
@@ -181,6 +183,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		getUC := apitokenuc.NewGetAPITokenUseCase(server.apiTokenRepo)
 		deleteUC := apitokenuc.NewDeleteAPITokenUseCase(server.apiTokenRepo, tokenAuthService)
 		apiTokenController = controllers.NewAPITokenController(createUC, listUC, getUC, deleteUC)
+		if server.localUserRepo != nil {
+			adminLocalUserController = controllers.NewAdminLocalUserController(server.localUserRepo, server.apiTokenRepo, tokenAuthService)
+		}
 		log.Printf("[ROUTER] API token controller initialized")
 	}
 
@@ -311,6 +316,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			shareController:                shareController,
 			personalAPIKeyController:       personalAPIKeyController,
 			apiTokenController:             apiTokenController,
+			adminLocalUserController:       adminLocalUserController,
 			memoryController:               memoryController,
 			sandboxPolicyController:        sandboxPolicyController,
 			resourceTransferController:     resourceTransferController,
@@ -581,6 +587,15 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/admin/system-settings", r.handlers.adminSettingsController.Get, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 		r.echo.GET("/admin/system-settings/versions", r.handlers.adminSettingsController.ListVersions, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
 		r.echo.PUT("/admin/system-settings", r.handlers.adminSettingsController.Put, auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService))
+	}
+	if r.handlers.adminLocalUserController != nil {
+		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
+		c := r.handlers.adminLocalUserController
+		r.echo.POST("/admin/users", c.Create, admin)
+		r.echo.GET("/admin/users/:id", c.Get, admin)
+		r.echo.POST("/admin/users/:id/api-tokens", c.CreateToken, admin)
+		r.echo.GET("/admin/users/:id/api-tokens", c.ListTokens, admin)
+		r.echo.DELETE("/admin/users/:id/api-tokens/:tokenId", c.DeleteToken, admin)
 	}
 	if r.handlers.githubConnectionsController != nil {
 		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
