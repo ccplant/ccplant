@@ -115,12 +115,12 @@ type RoleEnvFilesConfig struct {
 
 // APIKey represents an API key configuration
 type APIKey struct {
-	Key         string   `json:"key" mapstructure:"key"`
-	UserID      string   `json:"user_id" mapstructure:"user_id"`
-	Role        string   `json:"role" mapstructure:"role"`
-	Permissions []string `json:"permissions" mapstructure:"permissions"`
-	CreatedAt   string   `json:"created_at" mapstructure:"created_at"`
-	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at"`
+	Key         string   `json:"key" mapstructure:"key" yaml:"key"`
+	UserID      string   `json:"user_id" mapstructure:"user_id" yaml:"user_id"`
+	Role        string   `json:"role" mapstructure:"role" yaml:"role"`
+	Permissions []string `json:"permissions" mapstructure:"permissions" yaml:"permissions"`
+	CreatedAt   string   `json:"created_at" mapstructure:"created_at" yaml:"created_at"`
+	ExpiresAt   string   `json:"expires_at,omitempty" mapstructure:"expires_at" yaml:"expires_at,omitempty"`
 }
 
 // Toleration represents a Kubernetes toleration for session pods
@@ -1701,11 +1701,62 @@ func (apiKey *APIKey) HasPermission(permission string) bool {
 // AuthConfigOverride represents auth configuration overrides from external file
 type AuthConfigOverride struct {
 	GitHub *GitHubAuthConfigOverride `json:"github,omitempty" yaml:"github,omitempty"`
+	Static *StaticAuthConfigOverride `json:"static,omitempty" yaml:"static,omitempty"`
+}
+
+// StaticAuthConfigOverride mirrors StaticAuthConfig with presence-aware fields so
+// an auth config file can enable static keys without clobbering values that the
+// file does not mention.
+type StaticAuthConfigOverride struct {
+	Enabled    *bool    `json:"enabled" yaml:"enabled"`
+	APIKeys    []APIKey `json:"api_keys" yaml:"api_keys"`
+	KeysFile   *string  `json:"keys_file" yaml:"keys_file"`
+	HeaderName *string  `json:"header_name" yaml:"header_name"`
 }
 
 // GitHubAuthConfigOverride represents GitHub auth configuration overrides
 type GitHubAuthConfigOverride struct {
 	UserMapping *GitHubUserMapping `json:"user_mapping,omitempty" yaml:"user_mapping,omitempty"`
+}
+
+var authConfigOverrideSections = []string{"github", "static"}
+
+// applyStaticAuthOverride merges the file's static section into the base config.
+// Pointer fields are only applied when the file actually specifies them, so a
+// file that only sets api_keys keeps the header name and keys_file resolved
+// from environment variables.
+func applyStaticAuthOverride(config *Config, override *StaticAuthConfigOverride) {
+	if override == nil {
+		return
+	}
+	target := config.Auth.Static
+	if target == nil {
+		target = &StaticAuthConfig{
+			Enabled:    false,
+			HeaderName: "X-API-Key",
+			APIKeys:    []APIKey{},
+		}
+	}
+	if override.Enabled != nil {
+		target.Enabled = *override.Enabled
+	}
+	if override.HeaderName != nil && *override.HeaderName != "" {
+		target.HeaderName = *override.HeaderName
+	}
+	if override.KeysFile != nil && *override.KeysFile != "" {
+		target.KeysFile = *override.KeysFile
+	}
+	if len(override.APIKeys) > 0 {
+		target.APIKeys = override.APIKeys
+	}
+	config.Auth.Static = target
+	log.Printf("[CONFIG] Applying static auth from external config:")
+	log.Printf("[CONFIG]   Enabled: %v", target.Enabled)
+	log.Printf("[CONFIG]   Header name: %s", target.HeaderName)
+	log.Printf("[CONFIG]   Inline API keys: %d", len(target.APIKeys))
+	if target.KeysFile != "" {
+		log.Printf("[CONFIG]   Keys file: %s", target.KeysFile)
+	}
 }
 
 // LoadAuthConfigFromFile loads auth configuration from an external file (e.g., ConfigMap)
@@ -1734,6 +1785,7 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 		if err := decoder.Decode(&authOverride); err != nil {
 			return err
 		}
+		warnUnknownAuthConfigSections(filename)
 	} else {
 		// Default to JSON
 		decoder := json.NewDecoder(file)
@@ -1768,7 +1820,37 @@ func loadAuthConfigFromFile(config *Config, filename string) error {
 		log.Printf("[CONFIG] No GitHub config found in auth override file")
 	}
 
+	applyStaticAuthOverride(config, authOverride.Static)
+
 	return nil
+}
+
+// warnUnknownAuthConfigSections logs a warning for top-level sections the auth
+// config loader does not understand, so operators never assume an unsupported
+// setting took effect.
+func warnUnknownAuthConfigSections(filename string) {
+	rawFile, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer func() { _ = rawFile.Close() }()
+	var raw map[interface{}]interface{}
+	if err := yaml.NewDecoder(rawFile).Decode(&raw); err != nil {
+		return
+	}
+	for key := range raw {
+		name := fmt.Sprintf("%v", key)
+		known := false
+		for _, section := range authConfigOverrideSections {
+			if name == section {
+				known = true
+				break
+			}
+		}
+		if !known {
+			log.Printf("[CONFIG] Warning: unknown section %q in auth config file %s is ignored (supported: %v)", name, filename, authConfigOverrideSections)
+		}
+	}
 }
 
 // K8sSessionConfigOverride represents kubernetes session configuration overrides from external file
