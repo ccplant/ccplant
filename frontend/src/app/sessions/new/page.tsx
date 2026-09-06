@@ -225,7 +225,7 @@ export default function NewSessionPage() {
 
       // セッションマネージャーが指定されている場合は送信
       if (pool) {
-        tags['allocator.pool'] = pool
+        params.pool = pool
       }
 
       // サイクルセッションが有効な場合はcycle_messageを送信
@@ -329,7 +329,6 @@ export default function NewSessionPage() {
         await acpClient.initialize()
         const tags = buildRepositoryTags(currentRepository, checkoutTarget, checkoutBranch, checkoutPrNumber)
         if (selectedTeam) tags.team = selectedTeam
-        if (selectedManagerId) tags['allocator.pool'] = selectedManagerId
         // cwd: リポジトリが指定されていれば /home/user/workdir/<repo名> を使用、なければデフォルト
         const repoPart = currentRepository ? currentRepository.split('/').pop() : ''
         const cwd = repoPart ? `/home/user/workdir/${repoPart}` : '/home/user'
@@ -337,6 +336,7 @@ export default function NewSessionPage() {
           cwd,
           message: currentMessage,
           agentType: selectedAgentType !== 'default' ? selectedAgentType : undefined,
+          pool: selectedManagerId || undefined,
           tags,
         })
         setCreationProgress(prev => prev ? { ...prev, status: 'completed' } : null)

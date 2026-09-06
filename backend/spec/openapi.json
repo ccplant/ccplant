@@ -6946,6 +6946,10 @@
       "SessionParams": {
         "type": "object",
         "properties": {
+          "pool": {
+            "type": "string",
+            "description": "Logical session runner pool to use. The caller must have an enabled binding to an available pool with this name."
+          },
           "resume_from": {
             "type": "string",
             "description": "Previous proxy session ID whose persisted ACP conversation state should be restored before starting the agent"
@@ -9839,7 +9843,7 @@
         },
         "pool": {
           "type": "string",
-          "description": "Logical session runner pool to use for sessions created with this profile. An explicit allocator.pool tag on the start request takes precedence."
+          "description": "Logical session runner pool to use for sessions created with this profile. An explicit params.pool value on the start request takes precedence."
         },
         "initial_message_template": {
           "type": "string",

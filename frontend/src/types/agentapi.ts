@@ -231,6 +231,7 @@ export interface CreateSessionRequest {
   metadata?: Record<string, unknown>;
   tags?: Record<string, string>;
   params?: {
+    pool?: string;
     message?: string;
     github_token?: string;
     connection_id?: string;
