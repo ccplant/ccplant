@@ -6971,6 +6971,11 @@
             "description": "Agent type for the session. Supported values include 'auto', 'claude-acp', 'codex-acp', and 'cursor'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If not specified, uses default agentapi.",
             "example": "claude-acp"
           },
+          "model": {
+            "type": "string",
+            "description": "Model ID override for the selected agent. Session request overrides the session profile and connection default.",
+            "example": "gpt-5.3-codex"
+          },
           "slack": {
             "$ref": "#/components/schemas/SlackParams"
           },
@@ -8037,7 +8042,7 @@
           },
           "params": {
             "$ref": "#/components/schemas/SessionParams",
-            "description": "Session parameters. All string fields (message, github_token, agent_type) can use Go template syntax to extract data from the webhook payload (e.g., {\"message\": \"Review PR #{{.pull_request.number}}\"})"
+            "description": "Session parameters. String fields including message, github_token, agent_type, and model can use Go template syntax to extract data from the webhook payload (e.g., {\"message\": \"Review PR #{{.pull_request.number}}\"})"
           }
         }
       },
@@ -9426,6 +9431,10 @@
           "type": "string",
           "description": "Agent type to use. Supported values include 'auto', 'claude-acp', 'codex-acp', and 'cursor'. 'auto' selects codex-acp when Codex auth.json is available, otherwise claude-acp. If omitted, the default agentapi is used.",
           "example": "claude-acp"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model ID override for the selected agent"
         },
         "oneshot": {
           "type": "boolean",

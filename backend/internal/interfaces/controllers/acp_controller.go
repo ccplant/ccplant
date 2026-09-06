@@ -165,6 +165,7 @@ type sessionNewParams struct {
 		Params struct {
 			Message   string `json:"message"`
 			AgentType string `json:"agentType"`
+			Model     string `json:"model"`
 			Pool      string `json:"pool"`
 		} `json:"params"`
 	} `json:"_meta"`
@@ -201,6 +202,7 @@ func (c *ACPController) handleSessionNew(ctx echo.Context, req acpRequest) error
 		Params: &entities.SessionParams{
 			Message:   params.Meta.Params.Message,
 			AgentType: params.Meta.Params.AgentType,
+			Model:     params.Meta.Params.Model,
 			Pool:      params.Meta.Params.Pool,
 		},
 	}

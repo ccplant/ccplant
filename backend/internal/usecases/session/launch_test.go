@@ -717,10 +717,14 @@ func TestLaunchProfileAuthenticationMethods(t *testing.T) {
 			profile := entities.NewSessionProfile("profile-1", "default", "user-1")
 			profile.SetIsDefault(true)
 			cfg := entities.NewSessionProfileConfig()
-			cfg.SetParams(&entities.SessionParams{CodexAuthMode: "openai_compatible", ClaudeAuthMode: "bedrock"})
+			cfg.SetParams(&entities.SessionParams{Model: "profile-model", CodexAuthMode: "openai_compatible", ClaudeAuthMode: "bedrock"})
 			profile.SetConfig(cfg)
 			launcher := NewLaunchUseCase(manager).WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
-			_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser, CodexAuthMode: override})
+			requestModel := ""
+			if override != "" {
+				requestModel = "request-model"
+			}
+			_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser, Model: requestModel, CodexAuthMode: override})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -733,6 +737,13 @@ func TestLaunchProfileAuthenticationMethods(t *testing.T) {
 			}
 			if manager.req.CodexAuthMode != want || manager.req.ClaudeAuthMode != "bedrock" {
 				t.Fatalf("unexpected auth methods: %q / %q", manager.req.CodexAuthMode, manager.req.ClaudeAuthMode)
+			}
+			wantModel := "profile-model"
+			if requestModel != "" {
+				wantModel = requestModel
+			}
+			if manager.req.Model != wantModel {
+				t.Fatalf("unexpected model: %q", manager.req.Model)
 			}
 		})
 	}

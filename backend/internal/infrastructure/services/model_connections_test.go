@@ -52,6 +52,28 @@ func TestResolveConnectionsAndProfileModel(t *testing.T) {
 	require.Error(t, manager.prepareModelConnections(context.Background(), req))
 }
 
+func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
+	connection := &modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "connection-default", Authentication: "api_key", APIKey: "secret"}
+
+	codex := &sessionsettings.SessionSettings{Codex: sessionsettings.CodexConfig{ConfigTOML: "approval-mode = \"full-auto\"\n"}}
+	applyModelConnections(codex, &entities.RunServerRequest{AgentType: "codex-acp", Model: "profile-model", CodexConnection: connection})
+	require.Equal(t, "profile-model", codex.CodexConnection.Model)
+	require.Equal(t, "connection-default", connection.Model)
+
+	accountCodex := &sessionsettings.SessionSettings{Codex: sessionsettings.CodexConfig{ConfigTOML: "approval-mode = \"full-auto\"\n"}}
+	applyModelConnections(accountCodex, &entities.RunServerRequest{AgentType: "codex-acp", Model: "account-model"})
+	require.Contains(t, accountCodex.Codex.ConfigTOML, "model =")
+	require.Contains(t, accountCodex.Codex.ConfigTOML, "account-model")
+
+	claude := &sessionsettings.SessionSettings{}
+	applyModelConnections(claude, &entities.RunServerRequest{AgentType: "claude-acp", Model: "claude-model"})
+	require.Equal(t, "claude-model", claude.Env["ANTHROPIC_MODEL"])
+
+	pi := &sessionsettings.SessionSettings{}
+	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi-ollama", Model: "ollama/model"})
+	require.Equal(t, "ollama/model", pi.Env["PI_OLLAMA_MODEL"])
+}
+
 func TestSessionAuthenticationOverrides(t *testing.T) {
 	personal := entities.NewSettings("user")
 	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "default", Authentication: "api_key", APIKey: "secret"})

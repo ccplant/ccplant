@@ -36,6 +36,7 @@ export interface SessionParams {
   message?: string;
   github_token?: string;
   agent_type?: string;
+  model?: string;
   oneshot?: boolean;
   credential_source?: 'session_user' | 'triggered_user' | 'team' | 'none';
 }

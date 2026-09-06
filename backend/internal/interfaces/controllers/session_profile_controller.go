@@ -300,6 +300,11 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 		if err := modelprovider.ValidateAuthModes(params.CodexAuthMode, params.ClaudeAuthMode); err != nil {
 			return err
 		}
+		if params.Model != "" {
+			if err := modelprovider.ValidateModel(params.Model); err != nil {
+				return err
+			}
+		}
 	}
 	if config.MCPServers() != nil {
 		return config.MCPServers().Validate()

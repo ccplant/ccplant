@@ -74,6 +74,7 @@ export default function SessionProfileEditor({
   const [pool, setPool] = useState('')
   const [availablePools, setAvailablePools] = useState<LogicalSessionPool[]>([])
   const [agentType, setAgentType] = useState('')
+  const [model, setModel] = useState('')
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
 
   // Docker / DinD fields
@@ -140,6 +141,7 @@ export default function SessionProfileEditor({
       const cfg = editingProfile.config
       setPool(cfg?.pool ?? '')
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
+      setModel(cfg?.params?.model ?? '')
       setMcpServers(cfg?.mcp_servers ?? {})
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
@@ -197,6 +199,7 @@ export default function SessionProfileEditor({
       setTagPairs([{ key: '', value: '' }])
       setPool('')
       setAgentType('')
+      setModel('')
       setMcpServers({})
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -306,10 +309,11 @@ export default function SessionProfileEditor({
       // Build params if any param is set
       // Preserve fields managed through the API that are not exposed in this editor.
       const extraParams = { ...editingProfile?.config?.params }
-      for (const key of ['agent_type', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      for (const key of ['agent_type', 'model', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const params = {
         ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
+        ...(model.trim() ? { model: model.trim() } : {}),
         sandbox: sandboxConfig,
         ...(dockerConfig ? { docker: dockerConfig } : {}),
         ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
@@ -531,14 +535,12 @@ export default function SessionProfileEditor({
             {active.slug === 'models' && <div className="space-y-5">
                   <div className="space-y-3">
                     <p className="text-sm font-medium">モデルの上書き</p>
-                    <p className="text-xs text-gray-500">空欄なら接続設定のデフォルトモデルを使用します。モデルを入力すると、このプロファイルで使用するモデルを上書きします。</p>
-                    {([{ key: 'CODEX_MODEL', label: 'Codex モデル ID' }, { key: 'ANTHROPIC_MODEL', label: 'Claude Code モデル ID' }]).map(({ key, label }) => (
-                      <label key={key} className="block text-sm">{label}
-                        <input aria-label={label} value={envPairs.find(pair => pair.key === key)?.value || (key === 'CODEX_MODEL' ? envPairs.find(pair => pair.key === 'OPENAI_MODEL')?.value : '') || ''}
-                          onChange={e => setEnvPairs(prev => [...prev.filter(pair => pair.key !== key && !(key === 'CODEX_MODEL' && pair.key === 'OPENAI_MODEL')), ...(e.target.value ? [{ key, value: e.target.value }] : [])])}
-                          placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
-                      </label>
-                    ))}
+                    <p className="text-xs text-gray-500">空欄なら接続設定のデフォルトモデルを使用します。指定値は選択されたエージェントに応じて適用されます。</p>
+                    <label className="block text-sm">モデル ID
+                      <input aria-label="モデル ID" value={model}
+                        onChange={e => { setModel(e.target.value); setDirty(true) }}
+                        placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
+                    </label>
                   </div>
 
                   

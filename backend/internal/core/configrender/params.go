@@ -28,6 +28,7 @@ func RenderSessionParams(sessionConfig *entities.WebhookSessionConfig, payload m
 		{params.Message, &result.Message, "params.message"},
 		{params.GithubToken, &result.GithubToken, "params.github_token"},
 		{params.AgentType, &result.AgentType, "params.agent_type"},
+		{params.Model, &result.Model, "params.model"},
 	}
 
 	for _, f := range fields {

@@ -151,6 +151,7 @@ interface AgentStatus {
   last_activity?: string;
   current_task?: string;
   agent_type?: string;
+  model?: string;
   /** Provisioner error message when status is 'error' */
   message?: string;
 }

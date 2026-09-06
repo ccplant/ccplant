@@ -1275,7 +1275,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	}
 
 	var unsyncedFilePaths []string
-	var credentialSource, codexAuthMode, claudeAuthMode string
+	var credentialSource, codexAuthMode, claudeAuthMode, model string
 	var resumeFrom string
 	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
@@ -1285,6 +1285,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		resumeFrom = startReq.Params.ResumeFrom
+		model = startReq.Params.Model
 	}
 
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
@@ -1302,6 +1303,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		Scope:                    startReq.Scope,
 		TeamID:                   startReq.TeamID,
 		AgentType:                agentType,
+		Model:                    model,
 		SlackParams:              slackParams,
 		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
@@ -1345,7 +1347,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
 		return nil, err
 	}
-	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode string
+	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model string
 	var oneshot bool
 	var authProxy *bool
 	var unsyncedFilePaths []string
@@ -1357,11 +1359,12 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		credentialSource = startReq.Params.CredentialSource
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
+		model = startReq.Params.Model
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		Pool: pool, AgentType: agentType, Oneshot: oneshot, Environment: startReq.Environment,
+		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
