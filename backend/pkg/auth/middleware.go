@@ -136,7 +136,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			var err error
 
 			// Try API key authentication first
-			// Always attempt API key auth if an API key is provided, regardless of Static Auth config
+			// Always attempt API key auth if an API key is provided.
 			// This allows personal API keys (loaded via bootstrap) to work
 			if user, err = tryInternalAPIKeyAuth(c, cfg, authService); err == nil {
 				c.Set("internal_user", user)
@@ -147,8 +147,8 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 				c.Set("authz_context", authzCtx)
 				return next(c)
 			}
-			// Only log if Static Auth is explicitly enabled (to avoid noise for missing API keys)
-			if cfg.Auth.Static != nil && cfg.Auth.Static.Enabled {
+			// Only log when an API key was actually supplied (to avoid noise for missing API keys)
+			if apiKeyHeader := c.Request().Header.Get("X-API-Key"); apiKeyHeader != "" {
 				log.Printf("API key authentication failed: %v from %s", err, c.RealIP())
 			}
 
@@ -353,17 +353,10 @@ func UserOwnsSession(c echo.Context, sessionUserID string) bool {
 func tryInternalAPIKeyAuth(c echo.Context, cfg *config.Config, authService services.AuthService) (*entities.User, error) {
 	var apiKey string
 
-	// First, try to get API key from the configured custom header
-	if cfg.Auth.Static != nil && cfg.Auth.Static.HeaderName != "" {
-		apiKey = c.Request().Header.Get(cfg.Auth.Static.HeaderName)
-	}
+	// Try the X-API-Key header (used by the AGENTAPI_AUTH_ADMIN_KEY and named API tokens)
+	apiKey = c.Request().Header.Get("X-API-Key")
 
-	// Also try default X-API-Key header if not found yet
-	if apiKey == "" {
-		apiKey = c.Request().Header.Get("X-API-Key")
-	}
-
-	// If not found in custom header, try to extract from Authorization header (Bearer token)
+	// If not found in the API key header, try to extract from Authorization header (Bearer token)
 	if apiKey == "" {
 		authHeader := c.Request().Header.Get("Authorization")
 		if authHeader != "" {

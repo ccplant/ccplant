@@ -133,11 +133,7 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 
 			// Create a basic config
 			config := &Config{
-				Auth: AuthConfig{
-					Static: &StaticAuthConfig{
-						Enabled: false,
-					},
-				},
+				Auth: AuthConfig{},
 			}
 
 			// Load auth config from file

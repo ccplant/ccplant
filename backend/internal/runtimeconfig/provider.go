@@ -149,16 +149,12 @@ func applySections(cfg *config.Config, sections map[string]interface{}) error {
 	}
 
 	var authentication struct {
-		Static                *config.StaticAuthConfig       `json:"static"`
 		AllowUsersWithoutTeam *bool                          `json:"allow_users_without_team"`
 		DefaultRole           *string                        `json:"default_role"`
 		DefaultPermissions    interface{}                    `json:"default_permissions"`
 		TeamRoleMapping       map[string]config.TeamRoleRule `json:"team_role_mapping"`
 	}
 	decode("authentication", &authentication)
-	if authentication.Static != nil {
-		cfg.Auth.Static = authentication.Static
-	}
 	if cfg.Auth.GitHub != nil {
 		if authentication.AllowUsersWithoutTeam != nil {
 			cfg.Auth.GitHub.UserMapping.AllowUsersWithoutTeam = *authentication.AllowUsersWithoutTeam

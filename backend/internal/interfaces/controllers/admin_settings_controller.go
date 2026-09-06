@@ -223,10 +223,6 @@ func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
 			put("github.oauth.scope", cfg.Auth.GitHub.OAuth.Scope)
 		}
 	}
-	if cfg.Auth.Static != nil {
-		put("authentication.static.enabled", cfg.Auth.Static.Enabled)
-		put("authentication.static.header_name", cfg.Auth.Static.HeaderName)
-	}
 	put("slack.cleanup_enabled", cfg.SlackbotCleanupWorker.Enabled)
 	put("slack.session_ttl", cfg.SlackbotCleanupWorker.SessionTTL)
 	put("slack.cleanup_check_interval", cfg.SlackbotCleanupWorker.CheckInterval)

@@ -28,7 +28,6 @@ func TestAdminSettingsControllerAutofillsRuntimeConfig(t *testing.T) {
 	pvcEnabled := true
 	cfg := &proxyconfig.Config{
 		Auth: proxyconfig.AuthConfig{
-			Static: &proxyconfig.StaticAuthConfig{Enabled: true, HeaderName: "X-Admin-Key"},
 			GitHub: &proxyconfig.GitHubAuthConfig{Enabled: true, OAuth: &proxyconfig.GitHubOAuthConfig{ClientID: "helm-client", ClientSecret: "helm-secret", Scope: "read:user"}, UserMapping: proxyconfig.GitHubUserMapping{TeamRoleMapping: map[string]proxyconfig.TeamRoleRule{"example/admins": {Role: "admin", Permissions: []string{"session:access"}}}}},
 		},
 		KubernetesSession: proxyconfig.KubernetesSessionConfig{Image: "session:helm", CPURequest: "500m", PVCEnabled: &pvcEnabled},

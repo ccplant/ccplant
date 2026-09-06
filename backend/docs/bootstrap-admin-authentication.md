@@ -1,7 +1,7 @@
 # Bootstrap Admin Authentication
 
 Bootstrap Admin authentication is a break-glass login for a new installation.
-It works independently of Static API Key, GitHub, and other authentication, so an
+It works independently of the admin key, GitHub, and other authentication, so an
 operator can open the admin UI before configuring an external identity provider.
 
 ## Recommended: existing Kubernetes Secret

@@ -375,10 +375,18 @@ spec:
               value: {{ required "config.auth.bootstrapAdmin.token or tokenSecretRef.name is required when bootstrapAdmin is enabled" .Values.config.auth.bootstrapAdmin.token | quote }}
               {{- end }}
             {{- end }}
-            - name: AGENTAPI_AUTH_STATIC_ENABLED
-              value: {{ .Values.config.auth.static.enabled | quote }}
-            - name: AGENTAPI_AUTH_STATIC_HEADER_NAME
-              value: {{ .Values.config.auth.static.headerName | quote }}
+            {{- if or .Values.config.auth.adminKey (dig "adminKeySecretRef" "name" "" .Values.config.auth) }}
+            - name: AGENTAPI_AUTH_ADMIN_KEY
+              {{- $adminKeySecretName := dig "adminKeySecretRef" "name" "" .Values.config.auth }}
+              {{- if $adminKeySecretName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminKeySecretName | quote }}
+                  key: {{ dig "adminKeySecretRef" "key" "admin-key" .Values.config.auth | quote }}
+              {{- else }}
+              value: {{ .Values.config.auth.adminKey | quote }}
+              {{- end }}
+            {{- end }}
             - name: AGENTAPI_AUTH_GITHUB_ENABLED
               value: {{ .Values.config.auth.github.enabled | quote }}
             - name: AGENTAPI_AUTH_GITHUB_BASE_URL

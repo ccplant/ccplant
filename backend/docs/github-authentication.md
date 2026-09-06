@@ -98,25 +98,13 @@
 }
 ```
 
-### ハイブリッド認証（静的APIキー + GitHub）
+### ハイブリッド認証（管理者キー + GitHub）
 
 ```json
 {
   "auth": {
     "enabled": true,
-    "static": {
-      "enabled": true,
-      "header_name": "X-API-Key",
-      "api_keys": [
-        {
-          "key": "admin-emergency-key",
-          "user_id": "emergency-admin",
-          "role": "admin",
-          "permissions": ["*"],
-          "created_at": "2024-01-01T00:00:00Z"
-        }
-      ]
-    },
+    "admin_key": "<ADMIN_KEY>",
     "github": {
       "enabled": true,
       "base_url": "https://api.github.com",
@@ -144,9 +132,9 @@
 - **設定**: `auth.github` のみを有効化
 
 ### 2. ハイブリッド認証
-- **使用場面**: 緊急時アクセス用の静的キーも必要
-- **メリット**: GitHub障害時のフォールバック、サービスアカウント対応
-- **設定**: `auth.static` と `auth.github` の両方を有効化
+- **使用場面**: 緊急時アクセス用の管理者キーや bootstrap admin も必要
+- **メリット**: GitHub障害時のフォールバック、ブレークグラスアクセス
+- **設定**: `AGENTAPI_AUTH_ADMIN_KEY`（または `auth.bootstrap_admin`）と `auth.github` の両方を設定
 
 ## チーム・組織ベースの権限設定
 

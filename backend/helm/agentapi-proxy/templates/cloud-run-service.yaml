@@ -71,8 +71,18 @@ spec:
             {{- end }}
             - {name: AGENTAPI_USAGE_ENABLED, value: {{ .Values.config.usage.enabled | quote }}}
             - {name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_ENABLED, value: {{ .Values.config.auth.bootstrapAdmin.enabled | quote }}}
-            - {name: AGENTAPI_AUTH_STATIC_ENABLED, value: {{ .Values.config.auth.static.enabled | quote }}}
-            - {name: AGENTAPI_AUTH_STATIC_HEADER_NAME, value: {{ .Values.config.auth.static.headerName | quote }}}
+            {{- if or .Values.config.auth.adminKey (dig "adminKeySecretRef" "name" "" .Values.config.auth) }}
+            - name: AGENTAPI_AUTH_ADMIN_KEY
+              {{- $adminKeySecretName := dig "adminKeySecretRef" "name" "" .Values.config.auth }}
+              {{- if $adminKeySecretName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminKeySecretName | quote }}
+                  key: {{ dig "adminKeySecretRef" "key" "admin-key" .Values.config.auth | quote }}
+              {{- else }}
+              value: {{ .Values.config.auth.adminKey | quote }}
+              {{- end }}
+            {{- end }}
             - {name: AGENTAPI_AUTH_GITHUB_ENABLED, value: {{ .Values.config.auth.github.enabled | quote }}}
             - {name: AGENTAPI_AUTH_GITHUB_BASE_URL, value: {{ .Values.config.auth.github.baseUrl | quote }}}
             - {name: AGENTAPI_AUTH_GITHUB_TOKEN_HEADER, value: {{ .Values.config.auth.github.tokenHeader | quote }}}
