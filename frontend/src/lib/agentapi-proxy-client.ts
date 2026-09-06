@@ -1510,7 +1510,7 @@ export class AgentAPIProxyClient {
 
   /**
    * Get user info from agentapi-proxy
-   * Returns username and teams the user belongs to
+   * Returns the stable principal ID, display username, and team memberships.
    */
   async getUserInfo(): Promise<ProxyUserInfo> {
     if (this.debug) {

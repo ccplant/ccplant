@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -621,14 +620,8 @@ func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 		return true
 	}
 
-	// Sanitize the input name for consistent comparison
-	sanitizedInputName := c.sanitizeName(name)
-	sanitizedUserID := c.sanitizeName(string(user.ID()))
-
-	log.Printf("[SETTINGS_ACCESS] Comparison: sanitizedInputName=%q, sanitizedUserID=%q", sanitizedInputName, sanitizedUserID)
-
 	// Check if it's the user's own settings
-	if sanitizedUserID == sanitizedInputName {
+	if string(user.ID()) == name {
 		log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s owns settings (userID match)", user.ID())
 		return true
 	}
@@ -639,9 +632,8 @@ func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 		log.Printf("[SETTINGS_ACCESS] User has %d teams", len(teams))
 		for _, team := range teams {
 			teamName := team.Organization + "/" + team.TeamSlug
-			sanitizedTeamName := c.sanitizeName(teamName)
-			log.Printf("[SETTINGS_ACCESS] Checking team: original=%q, sanitized=%q, role=%s", teamName, sanitizedTeamName, team.Role)
-			if sanitizedTeamName == sanitizedInputName {
+			log.Printf("[SETTINGS_ACCESS] Checking team: name=%q, role=%s", teamName, team.Role)
+			if teamName == name {
 				log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s is member of team %s", user.ID(), teamName)
 				return true
 			}
@@ -674,14 +666,8 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 		return true
 	}
 
-	// Sanitize the input name for consistent comparison
-	sanitizedInputName := c.sanitizeName(name)
-	sanitizedUserID := c.sanitizeName(string(user.ID()))
-
-	log.Printf("[SETTINGS_MODIFY] Comparison: sanitizedInputName=%q, sanitizedUserID=%q", sanitizedInputName, sanitizedUserID)
-
 	// Check if it's the user's own settings
-	if sanitizedUserID == sanitizedInputName {
+	if string(user.ID()) == name {
 		log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s owns settings (userID match)", user.ID())
 		return true
 	}
@@ -692,9 +678,8 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 		log.Printf("[SETTINGS_MODIFY] User has %d teams", len(teams))
 		for _, team := range teams {
 			teamName := team.Organization + "/" + team.TeamSlug
-			sanitizedTeamName := c.sanitizeName(teamName)
-			log.Printf("[SETTINGS_MODIFY] Checking team: original=%q, sanitized=%q, role=%s", teamName, sanitizedTeamName, team.Role)
-			if sanitizedTeamName == sanitizedInputName {
+			log.Printf("[SETTINGS_MODIFY] Checking team: name=%q, role=%s", teamName, team.Role)
+			if teamName == name {
 				log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s is member of team %s", user.ID(), teamName)
 				return true
 			}
@@ -705,21 +690,6 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 
 	log.Printf("[SETTINGS_MODIFY] DENIED: user=%s has no modify permission for settings %q", user.ID(), name)
 	return false
-}
-
-// sanitizeName sanitizes a name for comparison
-func (c *SettingsController) sanitizeName(s string) string {
-	// Convert to lowercase
-	sanitized := strings.ToLower(s)
-	// Replace non-alphanumeric characters (except dash) with dash
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	sanitized = re.ReplaceAllString(sanitized, "-")
-	// Remove leading/trailing dashes
-	sanitized = strings.Trim(sanitized, "-")
-	// Collapse multiple dashes
-	re = regexp.MustCompile(`-+`)
-	sanitized = re.ReplaceAllString(sanitized, "-")
-	return sanitized
 }
 
 // determineAuthMode determines the auth mode based on request and available credentials

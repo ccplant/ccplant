@@ -2,6 +2,7 @@
 // teams は "org/team-slug" 形式の文字列配列
 // repositories は "owner/repo" 形式の文字列配列
 export interface ProxyUserInfo {
+  principal_id: string
   username: string
   teams: string[]
   repositories?: string[]
