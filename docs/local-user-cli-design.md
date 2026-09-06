@@ -119,6 +119,6 @@ Principal ID はサーバーが UUID として発行し、クライアントか�
 
 ## Fly.io 開発環境での検証
 
-Fly.io 開発環境での最終検証結果は、Principal ID 対応版をデプロイした後に更新する。
+2026-09-06 UTC にコミット `3c04a94c6baed7f2fd4a004607987f9ba040283e` の API イメージを `ccplant-api-dev` へデプロイした。CLI で username `e2e-principal-3c04a94` のユーザーを作成し、username とは異なる UUID Principal ID `2b14a984-ed6c-41a8-99c0-b7efab3e0c3d` が発行された。その Principal 用トークンによる `POST /start` はセッション `5309d6c0-4cc5-4d39-bcdc-5ae614b3d7ea` を作成し、`GET /search` で session owner が同じ Principal ID であることを確認した。同じトークンによる Web UI ログインも成功した。
 
 検証後、セッションの削除を要求し、発行した API トークンを失効した。トークンの秘密値は Fly マシン上の mode 0600 の一時ファイルだけに書き込み、外部出力には含めていない。ローカルユーザー自体は初版に削除 API がないため、トークンを持たない検証記録として残る。
