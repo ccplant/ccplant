@@ -23,7 +23,7 @@ type SettingsUpdate = Partial<SettingsData> | ((prev: SettingsData) => Partial<S
 
 interface SettingsScopeValue {
   scopeKind: SettingsScopeKind
-  /** 設定 API に渡す名前。personal はユーザー名、team はチーム名 */
+  /** 設定 API に渡す所有者ID。personal は principal ID、team はチーム名 */
   scopeId: string
   /** ログイン中のユーザー名。scopeKind に関わらず常に自分自身 */
   userName: string
@@ -91,6 +91,7 @@ interface SettingsScopeProviderProps {
 export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsScopeProviderProps) {
   const [settings, setSettings] = useState<SettingsData>({})
   const [originalSettings, setOriginalSettings] = useState<SettingsData>({})
+  const [principalId, setPrincipalId] = useState('')
   const [userName, setUserName] = useState('')
   const [userTeams, setUserTeams] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -103,7 +104,7 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
   const [regeneratingEsmId, setRegeneratingEsmId] = useState<string | null>(null)
   const { showToast } = useToast()
 
-  const scopeId = scopeKind === 'personal' ? userName : (teamId ?? '')
+  const scopeId = scopeKind === 'personal' ? principalId : (teamId ?? '')
 
   const dirtyFields = useMemo(
     () => collectDirtyFields(settings, originalSettings),
@@ -136,11 +137,12 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
         const client = createAgentAPIProxyClientFromStorage()
         const info = await client.getUserInfo()
         if (cancelled) return
-        if (info?.username) {
+        if (info?.principal_id && info?.username) {
+          setPrincipalId(info.principal_id)
           setUserName(info.username)
           setUserTeams(info.teams || [])
         } else {
-          setError('ユーザー情報の取得に失敗しました')
+          setError('principal ID を含むユーザー情報の取得に失敗しました')
           setLoading(false)
         }
       } catch (err) {

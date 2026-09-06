@@ -13,9 +13,10 @@ type UserController struct{}
 
 // UserInfoResponse represents the response for /user/info endpoint
 type UserInfoResponse struct {
-	Username string   `json:"username"`
-	Teams    []string `json:"teams"`
-	IsAdmin  bool     `json:"is_admin"`
+	PrincipalID string   `json:"principal_id"`
+	Username    string   `json:"username"`
+	Teams       []string `json:"teams"`
+	IsAdmin     bool     `json:"is_admin"`
 }
 
 // NewUserController creates a new UserController instance
@@ -36,8 +37,9 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 	}
 
 	response := UserInfoResponse{
-		Teams:   []string{},
-		IsAdmin: user.IsAdmin(),
+		PrincipalID: string(user.ID()),
+		Teams:       []string{},
+		IsAdmin:     user.IsAdmin(),
 	}
 
 	if githubInfo := user.GitHubInfo(); githubInfo != nil {

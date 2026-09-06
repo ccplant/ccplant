@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -178,11 +177,8 @@ func (c *CredentialsController) canAccess(user *entities.User, name string) bool
 		return true
 	}
 
-	sanitizedInputName := c.sanitizeName(name)
-	sanitizedUserID := c.sanitizeName(string(user.ID()))
-
 	// Check if it's the user's own credentials
-	if sanitizedUserID == sanitizedInputName {
+	if string(user.ID()) == name {
 		log.Printf("[CREDENTIALS_ACCESS] GRANTED: user=%s owns credentials (userID match)", user.ID())
 		return true
 	}
@@ -191,8 +187,7 @@ func (c *CredentialsController) canAccess(user *entities.User, name string) bool
 	if user.GitHubInfo() != nil {
 		for _, team := range user.GitHubInfo().Teams() {
 			teamName := team.Organization + "/" + team.TeamSlug
-			sanitizedTeamName := c.sanitizeName(teamName)
-			if sanitizedTeamName == sanitizedInputName {
+			if teamName == name {
 				log.Printf("[CREDENTIALS_ACCESS] GRANTED: user=%s is member of team %s", user.ID(), teamName)
 				return true
 			}
@@ -213,11 +208,8 @@ func (c *CredentialsController) canModify(user *entities.User, name string) bool
 		return true
 	}
 
-	sanitizedInputName := c.sanitizeName(name)
-	sanitizedUserID := c.sanitizeName(string(user.ID()))
-
 	// Check if it's the user's own credentials
-	if sanitizedUserID == sanitizedInputName {
+	if string(user.ID()) == name {
 		log.Printf("[CREDENTIALS_MODIFY] GRANTED: user=%s owns credentials (userID match)", user.ID())
 		return true
 	}
@@ -226,8 +218,7 @@ func (c *CredentialsController) canModify(user *entities.User, name string) bool
 	if user.GitHubInfo() != nil {
 		for _, team := range user.GitHubInfo().Teams() {
 			teamName := team.Organization + "/" + team.TeamSlug
-			sanitizedTeamName := c.sanitizeName(teamName)
-			if sanitizedTeamName == sanitizedInputName {
+			if teamName == name {
 				log.Printf("[CREDENTIALS_MODIFY] GRANTED: user=%s is member of team %s", user.ID(), teamName)
 				return true
 			}
@@ -236,17 +227,6 @@ func (c *CredentialsController) canModify(user *entities.User, name string) bool
 
 	log.Printf("[CREDENTIALS_MODIFY] DENIED: user=%s has no modify permission for credentials %q", user.ID(), name)
 	return false
-}
-
-// sanitizeName sanitizes a name for comparison
-func (c *CredentialsController) sanitizeName(s string) string {
-	sanitized := strings.ToLower(s)
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	sanitized = re.ReplaceAllString(sanitized, "-")
-	sanitized = strings.Trim(sanitized, "-")
-	re = regexp.MustCompile(`-+`)
-	sanitized = re.ReplaceAllString(sanitized, "-")
-	return sanitized
 }
 
 // toResponse converts a Credentials entity to a response (raw data is never exposed).

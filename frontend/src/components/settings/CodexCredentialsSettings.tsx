@@ -10,7 +10,7 @@ import { DangerZone, SettingsSubsection } from './ui/SettingsPageHeader'
 interface CodexCredentialsSettingsProps {
   /** CodexDeviceAuthSettings に渡すスコープ */
   scope: 'user' | 'team'
-  /** credentials API に渡す名前（ユーザー名またはチーム名） */
+  /** credentials API に渡す所有者ID（principal ID またはチーム名） */
   scopeName: string
   teamId?: string
   credentialsMetadata: CredentialsMetadata | null
