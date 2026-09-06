@@ -35,6 +35,7 @@ type LaunchRequest struct {
 	InitialMessage           string
 	GithubToken              string
 	AgentType                string
+	Model                    string
 	SlackParams              *entities.SlackParams
 	Oneshot                  bool
 	RepoInfo                 *entities.RepositoryInfo
@@ -223,6 +224,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		InitialMessage:           req.InitialMessage,
 		GithubToken:              req.GithubToken,
 		AgentType:                req.AgentType,
+		Model:                    req.Model,
 		SlackParams:              req.SlackParams,
 		Oneshot:                  req.Oneshot,
 		RepoInfo:                 req.RepoInfo,
@@ -407,6 +409,9 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	if cfg.Params() != nil {
 		if req.AgentType == "" {
 			req.AgentType = cfg.Params().AgentType
+		}
+		if req.Model == "" {
+			req.Model = cfg.Params().Model
 		}
 		if req.GithubToken == "" {
 			req.GithubToken = cfg.Params().GithubToken

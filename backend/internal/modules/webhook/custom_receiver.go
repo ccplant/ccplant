@@ -274,7 +274,7 @@ Raw payload (first 500 chars):
 Please ensure the webhook payload is valid JSON.
 `, wh.Name(), parseErr.Error(), truncateString(string(rawBody), 500))
 
-	var githubToken, agentType string
+	var githubToken, agentType, model string
 	var slackParams *entities.SlackParams
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
@@ -287,6 +287,7 @@ Please ensure the webhook payload is valid JSON.
 		params := sessionConfig.Params()
 		githubToken = params.GithubToken
 		agentType = params.AgentType
+		model = params.Model
 		slackParams = params.Slack
 		sandbox = params.Sandbox
 		docker = params.Docker
@@ -308,6 +309,7 @@ Please ensure the webhook payload is valid JSON.
 		InitialMessage:           initialMessage,
 		GithubToken:              githubToken,
 		AgentType:                agentType,
+		Model:                    model,
 		SlackParams:              slackParams,
 		Sandbox:                  sandbox,
 		Docker:                   docker,

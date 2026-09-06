@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -17,6 +18,12 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	}
 	if err := modelprovider.ValidateAuthModes(req.CodexAuthMode, req.ClaudeAuthMode); err != nil {
 		return err
+	}
+	if strings.TrimSpace(req.Model) != "" {
+		if err := modelprovider.ValidateModel(req.Model); err != nil {
+			return err
+		}
+		req.Model = strings.TrimSpace(req.Model)
 	}
 	var profileConfig entities.SessionProfileConfig
 	req.SettingsTeamID = ""
@@ -135,10 +142,32 @@ func applyModelConnections(settings *sessionsettings.SessionSettings, req *entit
 	switch req.AgentType {
 	case "codex-acp":
 		settings.CodexConnection = req.CodexConnection.Clone()
+		if req.Model != "" && settings.CodexConnection != nil && settings.CodexConnection.Compatible() {
+			settings.CodexConnection.Model = req.Model
+		}
 	case "", "claude-acp", "claude-legacy", "claude":
 		settings.ClaudeConnection = req.ClaudeConnection.Clone()
+		if req.Model != "" && settings.ClaudeConnection != nil && settings.ClaudeConnection.Compatible() {
+			settings.ClaudeConnection.Model = req.Model
+		}
 	}
 	settings.ApplyModelConnections()
+	if req.Model == "" {
+		return
+	}
+	switch req.AgentType {
+	case "codex-acp":
+		// Compatible connections write their model while compiling the provider.
+		if settings.CodexConnection == nil || !settings.CodexConnection.Compatible() {
+			if merged, err := sessionsettings.MergeCodexModelConfig(settings.Codex.ConfigTOML, req.Model); err == nil {
+				settings.Codex.ConfigTOML = merged
+			}
+		}
+	case "", "claude-acp", "claude-legacy", "claude":
+		settings.Env["ANTHROPIC_MODEL"] = req.Model
+	case "pi-ollama":
+		settings.Env["PI_OLLAMA_MODEL"] = req.Model
+	}
 }
 
 func (m *KubernetesSessionManager) SetSessionProfileRepository(repo portrepos.SessionProfileRepository) {

@@ -250,7 +250,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 	tags["schedule_id"] = schedule.ID
 	tags["schedule_name"] = schedule.Name
 
-	var initialMessage, githubToken, agentType string
+	var initialMessage, githubToken, agentType, model string
 	var slackParams *entities.SlackParams
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
@@ -266,6 +266,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 			githubToken = schedule.SessionConfig.Params.GithubToken
 		}
 		agentType = schedule.SessionConfig.Params.AgentType
+		model = schedule.SessionConfig.Params.Model
 		slackParams = schedule.SessionConfig.Params.Slack
 		sandbox = schedule.SessionConfig.Params.Sandbox
 		docker = schedule.SessionConfig.Params.Docker
@@ -306,6 +307,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		InitialMessage:           initialMessage,
 		GithubToken:              githubToken,
 		AgentType:                agentType,
+		Model:                    model,
 		SlackParams:              slackParams,
 		Sandbox:                  sandbox,
 		Docker:                   docker,

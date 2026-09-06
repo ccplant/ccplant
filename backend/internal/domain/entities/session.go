@@ -86,6 +86,8 @@ type SessionParams struct {
 	ConnectionID string `json:"connection_id,omitempty"`
 	// AgentType specifies the type of agent to use for the session
 	AgentType string `json:"agent_type,omitempty"`
+	// Model overrides the model used by the selected agent.
+	Model string `json:"model,omitempty"`
 	// Slack contains Slack integration parameters
 	Slack *SlackParams `json:"slack,omitempty"`
 	// Oneshot indicates whether the session should automatically delete itself after stopping
@@ -204,6 +206,7 @@ type RunServerRequest struct {
 	Scope                    ResourceScope     // Resource scope ("user" or "team")
 	TeamID                   string            // Team identifier when Scope is "team"
 	AgentType                string            // Agent type for the session
+	Model                    string            // Model override interpreted for the selected agent
 	SlackParams              *SlackParams      // Slack integration parameters
 	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)

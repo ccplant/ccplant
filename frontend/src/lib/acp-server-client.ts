@@ -62,6 +62,7 @@ export interface ACPServerCreateSessionParams {
   cwd?: string;
   message?: string;
   agentType?: string;
+  model?: string;
   mcpServers?: unknown[];
   tags?: Record<string, string>;
 }

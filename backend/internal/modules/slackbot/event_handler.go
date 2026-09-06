@@ -289,7 +289,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 	// Determine agent type: default to "claude-acp"; bot session_config may override.
 	agentType := "claude-acp"
+	model := ""
 	if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+		model = bot.SessionConfig().Params().Model
 		if bot.SessionConfig().Params().AgentType != "" {
 			agentType = bot.SessionConfig().Params().AgentType
 		}
@@ -438,6 +440,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			Tags:                     tags,
 			InitialMessage:           initialMessage,
 			AgentType:                agentType,
+			Model:                    model,
 			MemoryKey:                memoryKey,
 			RepoInfo:                 repoInfo,
 			Sandbox:                  slackSandbox,

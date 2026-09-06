@@ -514,7 +514,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	tags["schedule_id"] = schedule.ID
 	tags["schedule_name"] = schedule.Name
 
-	var initialMessage, githubToken, agentType string
+	var initialMessage, githubToken, agentType, model string
 	var slackParams *entities.SlackParams
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
@@ -530,6 +530,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 			githubToken = schedule.SessionConfig.Params.GithubToken
 		}
 		agentType = schedule.SessionConfig.Params.AgentType
+		model = schedule.SessionConfig.Params.Model
 		slackParams = schedule.SessionConfig.Params.Slack
 		sandbox = schedule.SessionConfig.Params.Sandbox
 		docker = schedule.SessionConfig.Params.Docker
@@ -551,6 +552,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		InitialMessage:           initialMessage,
 		GithubToken:              githubToken,
 		AgentType:                agentType,
+		Model:                    model,
 		SlackParams:              slackParams,
 		Sandbox:                  sandbox,
 		Docker:                   docker,

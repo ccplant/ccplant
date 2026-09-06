@@ -1584,6 +1584,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if override.AgentType != "" {
 		merged.AgentType = override.AgentType
 	}
+	if override.Model != "" {
+		merged.Model = override.Model
+	}
 	if override.Slack != nil {
 		merged.Slack = override.Slack
 	}

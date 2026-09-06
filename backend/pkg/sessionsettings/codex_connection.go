@@ -62,3 +62,15 @@ func MergeCodexConnectionConfig(base string, c *modelprovider.Connection) (strin
 	data, err := toml.Marshal(config)
 	return string(data), err
 }
+
+// MergeCodexModelConfig sets the top-level Codex model while preserving all
+// other user and managed configuration.
+func MergeCodexModelConfig(base, model string) (string, error) {
+	config := map[string]interface{}{}
+	if err := toml.Unmarshal([]byte(base), &config); err != nil {
+		return "", fmt.Errorf("invalid Codex config TOML: %w", err)
+	}
+	config["model"] = model
+	data, err := toml.Marshal(config)
+	return string(data), err
+}
