@@ -3,6 +3,8 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
@@ -62,6 +64,13 @@ func mergeModelConnection(existing *modelprovider.Connection, patch map[string]j
 		c.APIKey = ""
 	}
 	c.HasAPIKey = c.APIKey != ""
+	if c.Compatible() && strings.TrimSpace(c.BaseURL) == "" {
+		envName := "ANTHROPIC_BASE_URL"
+		if agent == "codex" {
+			envName = "OPENAI_BASE_URL"
+		}
+		c.BaseURL = strings.TrimSpace(os.Getenv(envName))
+	}
 	if err := c.Validate(agent); err != nil {
 		return nil, err
 	}
