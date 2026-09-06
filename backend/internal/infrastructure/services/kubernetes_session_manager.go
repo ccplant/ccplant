@@ -5813,6 +5813,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
 	}
+	// Base URLs configured on the proxy are defaults for every session. The
+	// settings, profile, and request layers below can each override them.
+	for _, name := range []string{"OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			env[name] = value
+		}
+	}
 	if req.ResumeFrom != "" {
 		env["AGENTAPI_RESUME_FROM"] = req.ResumeFrom
 	}
