@@ -4,7 +4,7 @@
 
 ## 目的と対象
 
-管理者が `agentapi-proxy client user create` で、GitHub アカウントを持たないユーザーを作成できるようにする。任意の名前を指定でき、作成したユーザーは通常経路で認証されたユーザーと同じ ID・権限・リソース所有者として扱われる。発行された API トークンで既存 API と Web UI を利用できる。
+管理者が `agentapi-proxy client user create` で、GitHub アカウントを持たないユーザーを作成できるようにする。サーバーが不変の UUID Principal ID を発行し、username は変更可能な属性として分離する。認証後の User ID と個人リソースの owner ID は常に Principal ID を使う。発行された API トークンで既存 API と Web UI を利用できる。
 
 ここでいうユーザーは CCPlant のユーザーであり、OS アカウントではない。初版は通常ユーザーと管理者を対象にする。パスワード認証、チーム所属の編集、ユーザー削除・改名は対象外。認証済み管理者による API 操作とし、最初の管理者には既存の Bootstrap Admin を使用する。
 
@@ -32,10 +32,10 @@ agentapi-proxy client user create --username operator --role admin
 agentapi-proxy client user get alice
 
 # 初期トークンは別操作。秘密値は指定ファイルだけに書き込む
-agentapi-proxy client user token create alice \
+agentapi-proxy client user token create PRINCIPAL_ID \
   --name initial --expires-in 720h --secret-file ./alice-token
-agentapi-proxy client user token list alice
-agentapi-proxy client user token revoke alice TOKEN_ID
+agentapi-proxy client user token list PRINCIPAL_ID
+agentapi-proxy client user token revoke PRINCIPAL_ID TOKEN_ID
 ```
 
 | 引数 | 仕様 |
@@ -51,13 +51,13 @@ agentapi-proxy client user token revoke alice TOKEN_ID
 
 ## ID と永続化
 
-ID はサーバーが username と同じ値に決定する。任意の別 ID を指定するオプションは設けない。これにより、同じ username で通常経路から認証されたユーザーと同一の所有者になる。username は一意、display_name と email は重複可能とする。
+Principal ID はサーバーが UUID として発行し、クライアントから指定できない。username は Principal ID と独立した一意属性とし、display_name と email は重複可能とする。API トークン、セッション、メモリ、設定などの個人所有権には username ではなく Principal ID を保存する。
 
-`LocalUserRepository` を新設し、`Create` と `GetByID` に限定する。初版の永続実装は既存トークン保存方式に合わせて Kubernetes Secret API とし、1 ユーザーを 1 Secret に保存する。Fly.io の API 構成では Kubernetes 互換アダプターを通して libSQL に保存される。Secret 名は `agentapi-local-user-<ID の SHA-256 hex>`。メタデータには id、username、display_name、email、role、status、created_at、created_by を持たせる。秘密トークンはユーザーの Secret に保存しない。
+`LocalUserRepository` は `Create`、`GetByID`、`GetByUsername` を提供する。初版の永続実装は既存トークン保存方式に合わせて Kubernetes Secret API とし、1 ユーザーを 1 Secret に保存する。Fly.io の API 構成では Kubernetes 互換アダプターを通して libSQL に保存される。Secret 名は username の SHA-256 から決め、同時作成でも username の一意性を保つ。メタデータには Principal ID、username、display_name、email、role、status、created_at、created_by を持たせる。秘密トークンはユーザーの Secret に保存しない。
 
 同じ ID の作成は Kubernetes Create の AlreadyExists を 409 に変換し、更新や upsert はしない。事前検索だけで一意性を保証しない。永続バックエンドが使えない場合は 503 とし、メモリへの保存で成功扱いにしない。Kubernetes を利用しない構成への永続実装は後続対応とする。
 
-同じ username の登録済みユーザーがある場合、作成は 409 を返して属性を上書きしない。通常の認証経路が同じ username を返した場合は同じユーザーとして扱い、既存の個人リソースも同じ ID で参照する。
+同じ username の登録済みユーザーがある場合、作成は 409 を返して属性を上書きしない。GitHub identity とコマンド作成ユーザーは、明示的に同じ Principal へリンクされない限り、同じ username でも別の認証主体として扱う。
 
 ## 管理 API
 
@@ -119,6 +119,6 @@ ID はサーバーが username と同じ値に決定する。任意の別 ID を
 
 ## Fly.io 開発環境での検証
 
-2026-09-05 UTC にコミット `cd0a31d910b43319357638fdba776a650f7b1095` の API イメージを `ccplant-api-dev` へデプロイした。Fly マシン内の CLI でプレフィックスなしのユーザー `e2e-cd0a31d` を作成し、対象ユーザー用の API トークンを発行した。そのトークンを `Authorization: Bearer` に指定した `POST /start` は HTTP 200 を返し、セッション ID `8efa51ec-1a8f-41d0-8a00-985786a29743` が発行された。また、同じトークンによる `https://dev.ccplant.com/api/auth/login` への Web UI ログインも成功した。
+Fly.io 開発環境での最終検証結果は、Principal ID 対応版をデプロイした後に更新する。
 
 検証後、セッションの削除を要求し、発行した API トークンを失効した。トークンの秘密値は Fly マシン上の mode 0600 の一時ファイルだけに書き込み、外部出力には含めていない。ローカルユーザー自体は初版に削除 API がないため、トークンを持たない検証記録として残る。

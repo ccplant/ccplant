@@ -27,8 +27,8 @@ func NewKubernetesLocalUserRepository(client kubernetes.Interface, namespace str
 	return &KubernetesLocalUserRepository{client: client, namespace: namespace}
 }
 
-func localUserSecretName(id entities.UserID) string {
-	sum := sha256.Sum256([]byte(id))
+func localUserSecretName(username string) string {
+	sum := sha256.Sum256([]byte(username))
 	return "agentapi-local-user-" + hex.EncodeToString(sum[:16])
 }
 
@@ -40,7 +40,7 @@ func (r *KubernetesLocalUserRepository) Create(ctx context.Context, user *entiti
 	if err != nil {
 		return err
 	}
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: localUserSecretName(user.ID), Namespace: r.namespace,
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: localUserSecretName(user.Username), Namespace: r.namespace,
 		Labels: map[string]string{"agentapi.proxy/local-user": "true"}}, Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{localUserDataKey: b}}
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
@@ -53,13 +53,13 @@ func (r *KubernetesLocalUserRepository) Create(ctx context.Context, user *entiti
 	return nil
 }
 
-func (r *KubernetesLocalUserRepository) GetByID(ctx context.Context, id entities.UserID) (*entities.LocalUser, error) {
-	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, localUserSecretName(id), metav1.GetOptions{})
+func (r *KubernetesLocalUserRepository) GetByUsername(ctx context.Context, username string) (*entities.LocalUser, error) {
+	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, localUserSecretName(username), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, entities.ErrLocalUserNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get local user: %w", err)
+		return nil, fmt.Errorf("get local user by username: %w", err)
 	}
 	var user entities.LocalUser
 	if err := json.Unmarshal(secret.Data[localUserDataKey], &user); err != nil {
@@ -68,8 +68,25 @@ func (r *KubernetesLocalUserRepository) GetByID(ctx context.Context, id entities
 	if err := user.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid persisted local user: %w", err)
 	}
-	if user.ID != id {
-		return nil, errors.New("persisted local user id mismatch")
+	if user.Username != username {
+		return nil, errors.New("persisted local user username mismatch")
 	}
 	return &user, nil
+}
+
+func (r *KubernetesLocalUserRepository) GetByID(ctx context.Context, id entities.UserID) (*entities.LocalUser, error) {
+	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: "agentapi.proxy/local-user=true"})
+	if err != nil {
+		return nil, fmt.Errorf("list local users: %w", err)
+	}
+	for i := range secrets.Items {
+		var user entities.LocalUser
+		if json.Unmarshal(secrets.Items[i].Data[localUserDataKey], &user) == nil && user.ID == id {
+			if err := user.Validate(); err != nil {
+				return nil, fmt.Errorf("invalid persisted local user: %w", err)
+			}
+			return &user, nil
+		}
+	}
+	return nil, entities.ErrLocalUserNotFound
 }

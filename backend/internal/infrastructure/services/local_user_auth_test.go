@@ -10,6 +10,12 @@ import (
 type localUserRepoStub struct{ user *entities.LocalUser }
 
 func (r localUserRepoStub) Create(context.Context, *entities.LocalUser) error { return nil }
+func (r localUserRepoStub) GetByUsername(_ context.Context, username string) (*entities.LocalUser, error) {
+	if r.user == nil || r.user.Username != username {
+		return nil, entities.ErrLocalUserNotFound
+	}
+	return r.user, nil
+}
 func (r localUserRepoStub) GetByID(_ context.Context, id entities.UserID) (*entities.LocalUser, error) {
 	if r.user == nil || r.user.ID != id {
 		return nil, entities.ErrLocalUserNotFound
@@ -32,7 +38,7 @@ func TestSimpleAuthServiceAuthenticatesPersistedLocalUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID() != "alice" || got.Username() != "alice" || !got.HasPermission(entities.PermissionSessionCreate) || got.IsAdmin() {
+	if got.ID() != local.ID || got.Username() != "alice" || !got.HasPermission(entities.PermissionSessionCreate) || got.IsAdmin() {
 		t.Fatalf("unexpected authenticated user: id=%s username=%s roles=%v", got.ID(), got.Username(), got.Roles())
 	}
 }

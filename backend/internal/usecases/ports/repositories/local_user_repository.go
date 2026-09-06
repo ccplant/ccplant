@@ -8,4 +8,5 @@ import (
 type LocalUserRepository interface {
 	Create(context.Context, *entities.LocalUser) error
 	GetByID(context.Context, entities.UserID) (*entities.LocalUser, error)
+	GetByUsername(context.Context, string) (*entities.LocalUser, error)
 }

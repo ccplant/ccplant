@@ -168,6 +168,16 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		log.Printf("OAuth code exchange failed: %v", err)
 		return echo.NewHTTPError(http.StatusUnauthorized, "OAuth authentication failed")
 	}
+	if s.router != nil && s.router.handlers.githubConnectionsController != nil &&
+		userContext.GitHubUser != nil && userContext.GitHubUser.ID != 0 {
+		principalID, err := s.router.handlers.githubConnectionsController.ResolvePrincipalIDForGitHubUser(
+			c.Request().Context(), userContext.GitHubUser.ID,
+		)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to resolve principal").SetInternal(err)
+		}
+		userContext.UserID = principalID
+	}
 
 	// Create a new session for the authenticated user
 	sessionID := uuid.New().String()

@@ -18,14 +18,22 @@ func TestKubernetesLocalUserRepositoryCreateGetAndConflict(t *testing.T) {
 	if err := repo.Create(context.Background(), user); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.GetByID(context.Background(), "alice")
+	got, err := repo.GetByID(context.Background(), user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Username != "alice" || got.DisplayName != "Alice" || got.ID != "alice" {
+	if got.Username != "alice" || got.DisplayName != "Alice" || got.ID != user.ID {
 		t.Fatalf("unexpected user: %#v", got)
 	}
-	if err := repo.Create(context.Background(), user); !errors.Is(err, entities.ErrLocalUserAlreadyExists) {
+	byUsername, err := repo.GetByUsername(context.Background(), "alice")
+	if err != nil || byUsername.ID != user.ID {
+		t.Fatalf("username lookup: %#v, %v", byUsername, err)
+	}
+	duplicate, err := entities.NewLocalUser("alice", "Another Alice", "", entities.RoleUser, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(context.Background(), duplicate); !errors.Is(err, entities.ErrLocalUserAlreadyExists) {
 		t.Fatalf("expected conflict, got %v", err)
 	}
 }

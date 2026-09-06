@@ -60,19 +60,29 @@ func TestPrincipalIsStableAndRandom(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
 
-	first, err := controller.getOrCreatePrincipal(context.Background(), "alice", "alice")
+	first, err := controller.getOrCreatePrincipal(context.Background(), "alice")
 	require.NoError(t, err)
-	second, err := controller.getOrCreatePrincipal(context.Background(), "alice", "alice")
+	second, err := controller.getOrCreatePrincipal(context.Background(), "alice")
 	require.NoError(t, err)
 	require.Equal(t, first.ID, second.ID)
 	require.NotEqual(t, "alice", first.ID)
-	require.Equal(t, "alice", first.CanonicalUserID)
 }
 
-func TestResolveLoginPrincipalUsesLinkedCanonicalUserID(t *testing.T) {
+func TestLegacyGitHubLoginResolvesStablePrincipalID(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "github:1", "alice")
+	first, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
+	require.NoError(t, err)
+	second, err := controller.ResolvePrincipalIDForGitHubUser(context.Background(), 42)
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+	require.NotEqual(t, "alice", first)
+}
+
+func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github:1")
 	require.NoError(t, err)
 	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", APIURL: "https://github.example.com/api/v3"}
 	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice-enterprise"}
@@ -82,7 +92,6 @@ func TestResolveLoginPrincipalUsesLinkedCanonicalUserID(t *testing.T) {
 	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "token", nil)
 	require.NoError(t, err)
 	require.Equal(t, principal.ID, resolved.ID)
-	require.Equal(t, "alice", resolved.CanonicalUserID)
 }
 
 func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {
@@ -101,10 +110,7 @@ func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {
 
 	resolved, err := controller.resolveLoginPrincipal(context.Background(), enterpriseConnection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "enterprise-token", nil)
 	require.NoError(t, err)
-	require.Equal(t, "alice", resolved.CanonicalUserID)
-	persisted, err := controller.loadPrincipal(context.Background(), legacy.InternalUserID)
-	require.NoError(t, err)
-	require.Equal(t, "alice", persisted.CanonicalUserID)
+	require.Equal(t, legacy.ID, resolved.ID)
 }
 
 func TestLinkIdentityIsIdempotentAndRejectsAnotherPrincipal(t *testing.T) {
@@ -132,7 +138,7 @@ func TestResolveAccessTokenChecksOwnershipAndExpiry(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice", "alice")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
 	require.NoError(t, err)
 	identity := githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: "connection-1", GitHubUserID: 42, Login: "alice"}
 	expiresAt := time.Now().UTC().Add(time.Hour)
@@ -190,7 +196,7 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "", true)
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
-	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice", "alice")
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
 	require.NoError(t, err)
 	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, Organizations: []string{"example-org"}}
 	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))

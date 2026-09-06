@@ -65,7 +65,7 @@ func (c *Client) localUserRequest(ctx context.Context, method, path string, inpu
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != expected {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, b)

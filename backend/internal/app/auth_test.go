@@ -153,7 +153,9 @@ func TestHandleOAuthCallback(t *testing.T) {
 	assert.Equal(t, "gho_test_token", resp.AccessToken)
 	assert.Equal(t, "Bearer", resp.TokenType)
 	assert.NotNil(t, resp.User)
-	assert.Equal(t, "testuser", resp.User.UserID)
+	assert.NotEmpty(t, resp.User.UserID)
+	assert.NotEqual(t, "testuser", resp.User.UserID)
+	assert.Equal(t, "testuser", resp.User.GitHubUser.Login)
 }
 
 func TestHandleOAuthCallback_MissingParameters(t *testing.T) {

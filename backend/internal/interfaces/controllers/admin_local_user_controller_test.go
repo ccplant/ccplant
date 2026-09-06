@@ -45,7 +45,14 @@ func TestAdminLocalUserCreateIssueTokenAndAuthenticate(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	ctx, rec = localUserContext(t, http.MethodPost, "/admin/users/alice/api-tokens", map[string]any{"name": "initial"}, admin, []string{"id"}, []string{"alice"})
+	var created entities.LocalUser
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == entities.UserID(created.Username) {
+		t.Fatal("principal id must be independent from username")
+	}
+	ctx, rec = localUserContext(t, http.MethodPost, "/admin/users/"+string(created.ID)+"/api-tokens", map[string]any{"name": "initial"}, admin, []string{"id"}, []string{string(created.ID)})
 	if err := controller.CreateToken(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +70,7 @@ func TestAdminLocalUserCreateIssueTokenAndAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authenticated.ID() != "alice" || authenticated.Username() != "alice" || !authenticated.HasPermission(entities.PermissionSessionCreate) {
+	if authenticated.ID() != created.ID || authenticated.Username() != "alice" || !authenticated.HasPermission(entities.PermissionSessionCreate) {
 		t.Fatalf("unexpected identity: %s %s", authenticated.ID(), authenticated.Username())
 	}
 }
