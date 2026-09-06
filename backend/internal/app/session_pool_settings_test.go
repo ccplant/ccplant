@@ -8,8 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	infrasessionrunner "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type rejectedProfileSettingsManager struct{ portrepos.SessionManager }
@@ -23,4 +26,25 @@ func TestPoolSessionDoesNotIgnoreSettingsAuthorizationError(t *testing.T) {
 	result, err := server.createPoolSession(context.Background(), &sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}}, "session", entities.StartRequest{ResolvedSessionProfileID: "profile"}, "user", nil)
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "team membership is required")
+}
+
+func TestPoolSessionDoesNotAddDeprecatedPoolTag(t *testing.T) {
+	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	routes := &recordingSessionRouteRepository{}
+	server := &Server{sessionRunnerStore: store, sessionRouteRepo: routes}
+	tags := map[string]string{"repository": "owner/repo"}
+
+	result, err := server.createPoolSession(
+		context.Background(),
+		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		"session",
+		entities.StartRequest{Tags: tags},
+		"user",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, tags, routes.route.Tags)
+	require.NotContains(t, routes.route.Tags, "allocator.pool")
 }

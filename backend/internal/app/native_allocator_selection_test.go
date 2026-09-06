@@ -12,7 +12,7 @@ func TestExternalSessionManagerMatchesAllocatorTags(t *testing.T) {
 		Labels: map[string]string{
 			"os":   "linux",
 			"arch": "amd64",
-			"pool": "developers",
+			"zone": "developers",
 		},
 	}
 	tests := []struct {
@@ -21,7 +21,8 @@ func TestExternalSessionManagerMatchesAllocatorTags(t *testing.T) {
 		want bool
 	}{
 		{name: "no selector", tags: map[string]string{"repository": "owner/repo"}, want: true},
-		{name: "all selectors match", tags: map[string]string{"allocator.os": "linux", "allocator.pool": "developers"}, want: true},
+		{name: "all selectors match", tags: map[string]string{"allocator.os": "linux", "allocator.zone": "developers"}, want: true},
+		{name: "deprecated pool tag is ignored", tags: map[string]string{"allocator.pool": "other"}, want: true},
 		{name: "allocator ID", tags: map[string]string{"allocator.id": "native-1"}, want: true},
 		{name: "missing label", tags: map[string]string{"allocator.location": "tokyo"}, want: false},
 		{name: "case sensitive", tags: map[string]string{"allocator.os": "Linux"}, want: false},
@@ -42,5 +43,8 @@ func TestHasAllocatorSelector(t *testing.T) {
 	}
 	if !hasAllocatorSelector(map[string]string{"allocator.os": "linux"}) {
 		t.Fatal("allocator.* tag must be treated as an allocator selector")
+	}
+	if hasAllocatorSelector(map[string]string{"allocator.pool": "legacy"}) {
+		t.Fatal("deprecated allocator.pool tag must not be treated as an allocator selector")
 	}
 }

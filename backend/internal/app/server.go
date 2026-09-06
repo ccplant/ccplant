@@ -1137,13 +1137,20 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		if startReq.Scope == entities.ScopeTeam {
 			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
 		}
-		resolved, err := s.resolveSessionPool(ctx, subject, startReq.Tags)
+		requestedPool := ""
+		if startReq.Params != nil {
+			requestedPool = startReq.Params.Pool
+		}
+		resolved, err := s.resolveSessionPool(ctx, subject, requestedPool, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
 			return s.createPoolSession(ctx, resolved, sessionID, startReq, userID, teams)
 		}
+	}
+	if requestedPool := requestedSessionPool(startReq); requestedPool != "" {
+		return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requestedPool)
 	}
 
 	// Preserve automatic assignment only for legacy ESMs that do not have a runner pool.
@@ -1320,12 +1327,19 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	return result.Session, nil
 }
 
-func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnercore.Subject, tags map[string]string) (*sessionrunnercore.ResolvedPool, error) {
+func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnercore.Subject, requestedPool string, tags map[string]string) (*sessionrunnercore.ResolvedPool, error) {
 	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
 	if s.esmControlStore != nil {
 		resolver.WithManagerLiveness(s.esmControlStore)
 	}
-	return resolver.Resolve(ctx, subject, tags)
+	return resolver.Resolve(ctx, subject, requestedPool, tags)
+}
+
+func requestedSessionPool(startReq entities.StartRequest) string {
+	if startReq.Params == nil {
+		return ""
+	}
+	return strings.TrimSpace(startReq.Params.Pool)
 }
 
 func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnercore.ResolvedPool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
@@ -1350,7 +1364,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		AgentType: agentType, Model: model, Oneshot: oneshot, Environment: startReq.Environment,
+		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
@@ -1393,19 +1407,14 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		return nil, fmt.Errorf("enqueue session pool allocation: %w", err)
 	}
 	startedAt := time.Now().UTC()
-	tags := startReq.Tags
-	if tags == nil {
-		tags = map[string]string{}
-	}
-	tags["allocator.pool"] = pool
 	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
 		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
-		TeamID: startReq.TeamID, Tags: tags, StartedAt: startedAt, InitialMessage: initialMessage,
+		TeamID: startReq.TeamID, Tags: startReq.Tags, StartedAt: startedAt, InitialMessage: initialMessage,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
-	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, tags, startedAt, "creating"), nil
+	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
 }
 
 func (s *Server) checkSessionPoolQuota(ctx context.Context, binding *sessionrunnercore.Binding) error {
@@ -1543,7 +1552,7 @@ func (s *Server) findAutomaticAssignmentESM(ctx context.Context, userID string, 
 
 func hasAllocatorSelector(tags map[string]string) bool {
 	for key := range tags {
-		if strings.HasPrefix(key, "allocator.") {
+		if strings.HasPrefix(key, "allocator.") && key != "allocator.pool" {
 			return true
 		}
 	}
@@ -1552,7 +1561,7 @@ func hasAllocatorSelector(tags map[string]string) bool {
 
 func externalSessionManagerMatches(manager entities.ExternalSessionManagerEntry, tags map[string]string) bool {
 	for key, expected := range tags {
-		if !strings.HasPrefix(key, "allocator.") {
+		if !strings.HasPrefix(key, "allocator.") || key == "allocator.pool" {
 			continue
 		}
 		label := strings.TrimPrefix(key, "allocator.")

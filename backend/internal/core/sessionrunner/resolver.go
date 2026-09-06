@@ -82,12 +82,12 @@ func (r *Resolver) AvailablePools(ctx context.Context, subject Subject) ([]*Logi
 	return result, nil
 }
 
-func (r *Resolver) Resolve(ctx context.Context, subject Subject, tags map[string]string) (*ResolvedPool, error) {
+func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedPool, error) {
 	available, err := r.availablePools(ctx, subject)
 	if err != nil {
 		return nil, err
 	}
-	requested := strings.TrimSpace(tags["allocator.pool"])
+	requested := strings.TrimSpace(requestedPool)
 	var candidates []*ResolvedPool
 	for _, resolved := range available {
 		if requested == "" && resolved.Binding.ExplicitOnly {

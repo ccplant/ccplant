@@ -160,7 +160,7 @@ func TestLaunchAppliesDefaultProfileDocker(t *testing.T) {
 	}
 }
 
-func TestLaunchAppliesProfilePoolAsAllocatorSelector(t *testing.T) {
+func TestLaunchAppliesProfilePoolAsSessionParam(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "pooled", "user-1")
 	profile.SetIsDefault(true)
@@ -178,8 +178,8 @@ func TestLaunchAppliesProfilePoolAsAllocatorSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	if got := sessionManager.req.Tags["allocator.pool"]; got != "native-linux" {
-		t.Fatalf("allocator.pool = %q, want %q", got, "native-linux")
+	if got := sessionManager.req.Pool; got != "native-linux" {
+		t.Fatalf("Pool = %q, want %q", got, "native-linux")
 	}
 }
 
@@ -197,13 +197,13 @@ func TestLaunchExplicitPoolSelectorOverridesProfilePool(t *testing.T) {
 	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
 		UserID: "user-1",
 		Scope:  entities.ScopeUser,
-		Tags:   map[string]string{"allocator.pool": "request-pool"},
+		Pool:   "request-pool",
 	})
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	if got := sessionManager.req.Tags["allocator.pool"]; got != "request-pool" {
-		t.Fatalf("allocator.pool = %q, want %q", got, "request-pool")
+	if got := sessionManager.req.Pool; got != "request-pool" {
+		t.Fatalf("Pool = %q, want %q", got, "request-pool")
 	}
 }
 

@@ -24,6 +24,14 @@ func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {
 	require.Equal(t, "anthropic_compatible", cfg.Params().ClaudeAuthMode)
 }
 
+func TestMergeSessionParamsRequestPoolOverridesProfilePool(t *testing.T) {
+	profile := &entities.SessionParams{Pool: "profile-pool"}
+	merged := mergeSessionParams(profile, &entities.SessionParams{Pool: "request-pool"})
+
+	require.Equal(t, "request-pool", merged.Pool)
+	require.Equal(t, "profile-pool", profile.Pool)
+}
+
 func TestProfileConnectionSecretLifecycle(t *testing.T) {
 	raw := []byte(`{"mode":"openai_compatible","base_url":"https://profile.example/v1","authentication":"api_key","api_key":"profile-secret"}`)
 	connection, err := mergeProfileConnection(nil, raw, "codex")

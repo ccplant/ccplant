@@ -307,13 +307,10 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			}
 
 			// Tags: profile is base, request keys override
-			if len(cfg.Tags()) > 0 || cfg.Pool() != "" {
-				merged := make(map[string]string, len(cfg.Tags())+1)
+			if len(cfg.Tags()) > 0 {
+				merged := make(map[string]string, len(cfg.Tags()))
 				for k, v := range cfg.Tags() {
 					merged[k] = v
-				}
-				if cfg.Pool() != "" {
-					merged["allocator.pool"] = cfg.Pool()
 				}
 				for k, v := range startReq.Tags {
 					merged[k] = v
@@ -329,7 +326,15 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
 				}
 			}
-			if containsAllocatorSelector(startReq.Tags) {
+			if cfg.Pool() != "" {
+				if startReq.Params == nil {
+					startReq.Params = &entities.SessionParams{}
+				}
+				if startReq.Params.Pool == "" {
+					startReq.Params.Pool = cfg.Pool()
+				}
+			}
+			if containsAllocatorSelector(startReq.Tags) || hasRequestedSessionPool(startReq) {
 				removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
 			}
 
@@ -354,7 +359,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			// allocator.* request into an unsupported-capability request. An explicit
 			// sandbox in the request remains intact and is rejected by the allocator
 			// selection layer.
-			if !containsAllocatorSelector(startReq.Tags) {
+			if !containsAllocatorSelector(startReq.Tags) && !hasRequestedSessionPool(startReq) {
 				applyProfileSandboxDefaults(cfg, startReq.Params)
 			}
 
@@ -448,6 +453,10 @@ func containsAllocatorSelector(tags map[string]string) bool {
 		}
 	}
 	return false
+}
+
+func hasRequestedSessionPool(startReq entities.StartRequest) bool {
+	return startReq.Params != nil && strings.TrimSpace(startReq.Params.Pool) != ""
 }
 
 func removeImplicitAllocatorCapabilities(params *entities.SessionParams, explicitSandbox, explicitDocker bool) {
@@ -1575,6 +1584,9 @@ func (c *SessionController) setCORSHeaders(ctx echo.Context) {
 // For each field: if the override field is the zero value, the base value is used.
 func mergeSessionParams(base, override *entities.SessionParams) *entities.SessionParams {
 	merged := *base // start from profile defaults
+	if override.Pool != "" {
+		merged.Pool = override.Pool
+	}
 	if override.Message != "" {
 		merged.Message = override.Message
 	}
