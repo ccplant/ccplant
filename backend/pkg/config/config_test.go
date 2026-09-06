@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -769,4 +770,138 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 		}
 	}
 
+}
+
+func TestLoadAuthConfigFromFile_AppliesStaticSection(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
+	defer func() { _ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED") }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth-config.yaml")
+	content := `github:
+  user_mapping:
+    default_role: user
+    default_permissions:
+      - read
+static:
+  enabled: true
+  header_name: X-API-Key
+  api_keys:
+    - key: ap_test_admin_key
+      user_id: pentester
+      role: admin
+      permissions:
+        - "*"
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write auth config: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if err := LoadAuthConfigFromFile(cfg, path); err != nil {
+		t.Fatalf("LoadAuthConfigFromFile failed: %v", err)
+	}
+
+	if cfg.Auth.Static == nil {
+		t.Fatal("Auth.Static should not be nil after applying static override")
+	}
+	if !cfg.Auth.Static.Enabled {
+		t.Error("Auth.Static.Enabled should be true")
+	}
+	if cfg.Auth.Static.HeaderName != "X-API-Key" {
+		t.Errorf("unexpected header name: %s", cfg.Auth.Static.HeaderName)
+	}
+	if len(cfg.Auth.Static.APIKeys) != 1 {
+		t.Fatalf("expected 1 API key, got %d", len(cfg.Auth.Static.APIKeys))
+	}
+	if cfg.Auth.Static.APIKeys[0].Key != "ap_test_admin_key" {
+		t.Errorf("unexpected API key: %s", cfg.Auth.Static.APIKeys[0].Key)
+	}
+	if cfg.Auth.Static.APIKeys[0].UserID != "pentester" {
+		t.Errorf("unexpected API key user id: %s", cfg.Auth.Static.APIKeys[0].UserID)
+	}
+}
+
+func TestLoadAuthConfigFromFile_StaticWithoutBaseConfig(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth-config.yaml")
+	content := `static:
+  enabled: true
+  api_keys:
+    - key: ap_only_file_key
+      user_id: file-user
+      role: admin
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write auth config: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if err := LoadAuthConfigFromFile(cfg, path); err != nil {
+		t.Fatalf("LoadAuthConfigFromFile failed: %v", err)
+	}
+
+	if cfg.Auth.Static == nil {
+		t.Fatal("Auth.Static should be created when the file provides a static section")
+	}
+	if !cfg.Auth.Static.Enabled {
+		t.Error("Auth.Static.Enabled should be true")
+	}
+	// Header name falls back to the default when the file does not set it.
+	if cfg.Auth.Static.HeaderName != "X-API-Key" {
+		t.Errorf("expected default header name X-API-Key, got %s", cfg.Auth.Static.HeaderName)
+	}
+	if len(cfg.Auth.Static.APIKeys) != 1 || cfg.Auth.Static.APIKeys[0].Key != "ap_only_file_key" {
+		t.Errorf("unexpected API keys: %+v", cfg.Auth.Static.APIKeys)
+	}
+}
+
+func TestLoadAuthConfigFromFile_StaticPreservesEnvHeaderName(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_ENABLED", "true")
+	_ = os.Setenv("AGENTAPI_AUTH_STATIC_HEADER_NAME", "X-Custom-Key")
+	defer func() {
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_ENABLED")
+		_ = os.Unsetenv("AGENTAPI_AUTH_STATIC_HEADER_NAME")
+	}()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth-config.yaml")
+	content := `static:
+  api_keys:
+    - key: ap_merge_key
+      user_id: merge-user
+      role: admin
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write auth config: %v", err)
+	}
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if err := LoadAuthConfigFromFile(cfg, path); err != nil {
+		t.Fatalf("LoadAuthConfigFromFile failed: %v", err)
+	}
+
+	if cfg.Auth.Static == nil {
+		t.Fatal("Auth.Static should not be nil")
+	}
+	// The file only sets api_keys; the env-provided header name must survive.
+	if cfg.Auth.Static.HeaderName != "X-Custom-Key" {
+		t.Errorf("env header name was clobbered: %s", cfg.Auth.Static.HeaderName)
+	}
+	if len(cfg.Auth.Static.APIKeys) != 1 {
+		t.Errorf("expected 1 API key, got %d", len(cfg.Auth.Static.APIKeys))
+	}
 }
