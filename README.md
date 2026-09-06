@@ -13,6 +13,11 @@
 
 ## Development
 
+`OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` set on the proxy process are used as
+system-wide defaults when an OpenAI-compatible or Anthropic-compatible API
+connection is saved without an explicit Base URL. They are not propagated to
+sessions that use other connection modes.
+
 ```bash
 make backend-test
 make frontend-test

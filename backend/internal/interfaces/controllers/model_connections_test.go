@@ -62,6 +62,19 @@ func TestConnectionUpdateAtomicAndModeConflict(t *testing.T) {
 	require.Error(t, updateModelConnections(s, request))
 }
 
+func TestCompatibleConnectionUsesSystemBaseURLDefault(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "https://system-openai.example/v1")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://system-anthropic.example")
+
+	codex, err := mergeModelConnection(nil, connectionPatch(t, `{"mode":"openai_compatible","model":"default","authentication":"none"}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, "https://system-openai.example/v1", codex.BaseURL)
+
+	claude, err := mergeModelConnection(nil, connectionPatch(t, `{"mode":"anthropic_compatible","model":"default","authentication":"api_key","api_key":"secret"}`), "claude")
+	require.NoError(t, err)
+	require.Equal(t, "https://system-anthropic.example", claude.BaseURL)
+}
+
 func TestRejectedModelMetadataDoesNotMutateStoredConnection(t *testing.T) {
 	window := int64(1000)
 	limit := int64(500)
