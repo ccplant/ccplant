@@ -417,6 +417,57 @@ func (s *SimpleAuthService) AddUser(user *entities.User) {
 	s.users[user.ID()] = user
 }
 
+// LoadStaticAPIKey registers a static API key from configuration as a
+// non-expiring credential. Role "admin" (or a "*" permission) grants the admin
+// permission; any other role creates a regular user with the listed permissions.
+// This makes Auth.Static.APIKeys from the auth config file actually enforceable:
+// without this loader the middleware reads the header but never finds a key.
+func (s *SimpleAuthService) LoadStaticAPIKey(userID, role, apiKey string, permissions []string) error {
+	if strings.TrimSpace(userID) == "" {
+		return errors.New("static API key user ID is required")
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		return errors.New("static API key value is required")
+	}
+
+	isAdmin := strings.EqualFold(role, "admin")
+	perms := make([]entities.Permission, 0, len(permissions)+1)
+	for _, p := range permissions {
+		switch entities.Permission(p) {
+		case entities.PermissionAdmin:
+			isAdmin = true
+		case entities.PermissionSessionCreate, entities.PermissionSessionRead,
+			entities.PermissionSessionUpdate, entities.PermissionSessionDelete:
+			perms = append(perms, entities.Permission(p))
+		}
+	}
+
+	var user *entities.User
+	if isAdmin {
+		user = entities.NewUser(entities.UserID(userID), entities.UserTypeAdmin, userID)
+		if err := user.SetRoles([]entities.Role{entities.RoleAdmin}); err != nil {
+			return fmt.Errorf("set static API key admin role: %w", err)
+		}
+		perms = append(perms, entities.PermissionAdmin)
+		user.SetPermissions(perms)
+	} else {
+		user = entities.NewUser(entities.UserID(userID), entities.UserTypeRegular, userID)
+		user.SetPermissions(perms)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.users[user.ID()] = user
+	s.apiKeys[apiKey] = &services.APIKey{
+		Key:         apiKey,
+		UserID:      user.ID(),
+		Permissions: perms,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	s.keyToUserID[apiKey] = user.ID()
+	return nil
+}
+
 // LoadBootstrapAdmin registers a non-expiring break-glass admin token. It is
 // intentionally independent of GitHub/static auth enablement so a fresh
 // installation can always reach the admin configuration UI.
