@@ -134,6 +134,7 @@ func (r *Resolver) Resolve(ctx context.Context, owner Subject, tags map[string]s
 ```
 
 `params.pool` があれば明示指定として扱い、一致する利用可能な Pool がなければエラーにする。
+旧 `allocator.pool` タグは廃止し、Pool の指定やセッションタグへの記録には使用しない。
 指定がなければ、現在の Binding・health・label 条件で利用可能な候補を effective Binding の
 `priority` 降順で並べ、最も高い Pool を選ぶ。同じ priority は Pool 名の昇順で決定的に選ぶ。
 候補がなければ local Session Manager 経路へ進む。Preference と default Pool は持たない。

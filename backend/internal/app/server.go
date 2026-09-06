@@ -1404,19 +1404,14 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		return nil, fmt.Errorf("enqueue session pool allocation: %w", err)
 	}
 	startedAt := time.Now().UTC()
-	tags := startReq.Tags
-	if tags == nil {
-		tags = map[string]string{}
-	}
-	tags["allocator.pool"] = pool
 	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
 		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
-		TeamID: startReq.TeamID, Tags: tags, StartedAt: startedAt, InitialMessage: initialMessage,
+		TeamID: startReq.TeamID, Tags: startReq.Tags, StartedAt: startedAt, InitialMessage: initialMessage,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
-	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, tags, startedAt, "creating"), nil
+	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
 }
 
 func (s *Server) checkSessionPoolQuota(ctx context.Context, binding *sessionrunnercore.Binding) error {
@@ -1554,7 +1549,7 @@ func (s *Server) findAutomaticAssignmentESM(ctx context.Context, userID string, 
 
 func hasAllocatorSelector(tags map[string]string) bool {
 	for key := range tags {
-		if strings.HasPrefix(key, "allocator.") {
+		if strings.HasPrefix(key, "allocator.") && key != "allocator.pool" {
 			return true
 		}
 	}
@@ -1563,7 +1558,7 @@ func hasAllocatorSelector(tags map[string]string) bool {
 
 func externalSessionManagerMatches(manager entities.ExternalSessionManagerEntry, tags map[string]string) bool {
 	for key, expected := range tags {
-		if !strings.HasPrefix(key, "allocator.") {
+		if !strings.HasPrefix(key, "allocator.") || key == "allocator.pool" {
 			continue
 		}
 		label := strings.TrimPrefix(key, "allocator.")
