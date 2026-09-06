@@ -595,6 +595,26 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Printf("[AUTH_INIT] Bootstrap admin authentication enabled for user %q", bootstrap.UserID)
 		}
 	}
+	// Register static API keys from the auth config so Auth.Static is actually
+	// enforceable (the middleware reads the configured header but validation is
+	// entirely driven by keys registered in the auth service).
+	if static := cfg.Auth.Static; static != nil && static.Enabled && len(static.APIKeys) > 0 {
+		if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+			loaded := 0
+			for _, apiKey := range static.APIKeys {
+				if apiKey.Key == "" || apiKey.UserID == "" {
+					log.Printf("[AUTH_INIT] Warning: skipping static API key with empty key or user_id (role %q)", apiKey.Role)
+					continue
+				}
+				if err := simpleAuth.LoadStaticAPIKey(apiKey.UserID, apiKey.Role, apiKey.Key, apiKey.Permissions); err != nil {
+					log.Printf("[AUTH_INIT] Warning: failed to load static API key for user %q: %v", apiKey.UserID, err)
+					continue
+				}
+				loaded++
+			}
+			log.Printf("[AUTH_INIT] Static API key authentication enabled with %d key(s)", loaded)
+		}
+	}
 	e.Use(auth.AuthMiddleware(runtimeProvider, container.AuthService))
 
 	// Initialize OAuth provider if configured.
