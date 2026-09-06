@@ -81,6 +81,10 @@ type adminSettingsResponse struct {
 	Sections         map[string]interface{} `json:"sections"`
 	SecretConfigured map[string]bool        `json:"secret_configured"`
 	UpdatedAt        time.Time              `json:"updated_at,omitempty"`
+	// RuntimeApplied is always false today: runtime application of admin
+	// settings is disabled (see runtimeconfig.Provider), so saved settings
+	// only persist for audit until the next deployment re-reads base config.
+	RuntimeApplied bool `json:"runtime_applied"`
 }
 
 type adminSettingsVersion struct {
@@ -112,7 +116,7 @@ func (c *AdminSettingsController) Get(ctx echo.Context) error {
 	}
 	if errors.Is(err, kvstore.ErrNotFound) {
 		doc = adminSettingsDocument{SchemaVersion: 1, Sections: cloneSections(c.runtimeDefaults())}
-		return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
+		return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc, c.runtimeApplied()))
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load admin settings").SetInternal(err)
@@ -120,7 +124,7 @@ func (c *AdminSettingsController) Get(ctx echo.Context) error {
 	if ctx.QueryParam("version") == "" {
 		mergeMissing(doc.Sections, c.runtimeDefaults())
 	}
-	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
+	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc, c.runtimeApplied()))
 }
 
 func (c *AdminSettingsController) ListVersions(ctx echo.Context) error {
@@ -203,7 +207,7 @@ func (c *AdminSettingsController) Put(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusInternalServerError, "settings were saved but could not be applied").SetInternal(err)
 		}
 	}
-	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc))
+	return ctx.JSON(http.StatusOK, sanitizeAdminSettings(doc, c.runtimeApplied()))
 }
 
 func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
@@ -373,7 +377,7 @@ func versionKey(version int64) string {
 	return fmt.Sprintf("%s%010d", adminSettingsVersionPrefix, version)
 }
 
-func sanitizeAdminSettings(doc adminSettingsDocument) adminSettingsResponse {
+func sanitizeAdminSettings(doc adminSettingsDocument, runtimeApplied bool) adminSettingsResponse {
 	copyBytes, _ := json.Marshal(doc.Sections)
 	sections := map[string]interface{}{}
 	_ = json.Unmarshal(copyBytes, &sections)
@@ -384,7 +388,18 @@ func sanitizeAdminSettings(doc adminSettingsDocument) adminSettingsResponse {
 			deleteNested(sections, path)
 		}
 	}
-	return adminSettingsResponse{SchemaVersion: doc.SchemaVersion, Version: doc.Version, Sections: sections, SecretConfigured: configured, UpdatedAt: doc.UpdatedAt}
+	return adminSettingsResponse{SchemaVersion: doc.SchemaVersion, Version: doc.Version, Sections: sections, SecretConfigured: configured, UpdatedAt: doc.UpdatedAt, RuntimeApplied: runtimeApplied}
+}
+
+// runtimeApplied reports whether saved settings take effect in the running
+// process. The runtime config provider does not apply admin-managed settings
+// today (secret-wiping defect, see runtimeconfig.Provider), so this is false
+// and the admin UI must surface it (ccplant-deploy#66 F4).
+func (c *AdminSettingsController) runtimeApplied() bool {
+	if c.provider == nil {
+		return false
+	}
+	return c.provider.RuntimeApplicationEnabled()
 }
 
 func preserveOmittedSecrets(existing, requested map[string]interface{}) {

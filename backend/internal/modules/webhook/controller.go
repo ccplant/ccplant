@@ -267,6 +267,13 @@ func (c *WebhookController) CreateWebhook(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Template validation error: %v", err))
 	}
 
+	// Reject enterprise URLs that point at internal infrastructure (SSRF)
+	if req.GitHub != nil {
+		if err := validateEnterpriseURL(req.GitHub.EnterpriseURL); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+	}
+
 	// Get user from context
 	user := auth.GetUserFromContext(ctx)
 	var userID string
@@ -486,6 +493,13 @@ func (c *WebhookController) UpdateWebhook(ctx echo.Context) error {
 	// Validate templates before updating webhook
 	if err := c.validateWebhookTemplatesForUpdate(webhook.WebhookType(), req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Template validation error: %v", err))
+	}
+
+	// Reject enterprise URLs that point at internal infrastructure (SSRF)
+	if req.GitHub != nil {
+		if err := validateEnterpriseURL(req.GitHub.EnterpriseURL); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 	}
 
 	// Apply updates
