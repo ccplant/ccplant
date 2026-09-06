@@ -62,6 +62,7 @@ export interface ACPServerCreateSessionParams {
   cwd?: string;
   message?: string;
   agentType?: string;
+  pool?: string;
   mcpServers?: unknown[];
   tags?: Record<string, string>;
 }
@@ -325,6 +326,7 @@ export class ACPServerClient {
         params: {
           message: params.message,
           agentType: params.agentType,
+          pool: params.pool,
         },
       },
     });

@@ -44,7 +44,7 @@ func TestResolveSessionPoolUsesControlStoreLiveness(t *testing.T) {
 	}
 
 	server := &Server{sessionRunnerStore: store, esmControlStore: connectedManagerStore{connected: true}}
-	resolved, err := server.resolveSessionPool(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: "alice"}, nil)
+	resolved, err := server.resolveSessionPool(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: "alice"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,6 +35,7 @@ type LaunchRequest struct {
 	InitialMessage           string
 	GithubToken              string
 	AgentType                string
+	Pool                     string
 	SlackParams              *entities.SlackParams
 	Oneshot                  bool
 	RepoInfo                 *entities.RepositoryInfo
@@ -223,6 +224,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		InitialMessage:           req.InitialMessage,
 		GithubToken:              req.GithubToken,
 		AgentType:                req.AgentType,
+		Pool:                     req.Pool,
 		SlackParams:              req.SlackParams,
 		Oneshot:                  req.Oneshot,
 		RepoInfo:                 req.RepoInfo,
@@ -379,18 +381,18 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		}
 	}
 	// Tags: profile is base, request overrides key-by-key
-	if len(cfg.Tags()) > 0 || cfg.Pool() != "" {
-		merged := make(map[string]string, len(cfg.Tags())+1)
+	if len(cfg.Tags()) > 0 {
+		merged := make(map[string]string, len(cfg.Tags()))
 		for k, v := range cfg.Tags() {
 			merged[k] = v
-		}
-		if cfg.Pool() != "" {
-			merged["allocator.pool"] = cfg.Pool()
 		}
 		for k, v := range req.Tags {
 			merged[k] = v
 		}
 		req.Tags = merged
+	}
+	if req.Pool == "" {
+		req.Pool = cfg.Pool()
 	}
 	// MemoryKey: profile is base, request overrides key-by-key
 	if len(cfg.MemoryKey()) > 0 {

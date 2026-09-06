@@ -76,7 +76,7 @@ type Binding struct {
 	Role        BindingRole `json:"role"`
 	Enabled     bool        `json:"enabled"`
 	// ExplicitOnly makes the pool available for explicit selection without
-	// allowing the resolver to choose it for requests that omit allocator.pool.
+	// allowing the resolver to choose it for requests that omit params.pool.
 	ExplicitOnly  bool      `json:"explicit_only,omitempty"`
 	Priority      int       `json:"priority,omitempty"`
 	MaxConcurrent int       `json:"max_concurrent,omitempty"`

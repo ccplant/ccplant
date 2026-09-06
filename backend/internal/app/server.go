@@ -1137,13 +1137,20 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		if startReq.Scope == entities.ScopeTeam {
 			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
 		}
-		resolved, err := s.resolveSessionPool(ctx, subject, startReq.Tags)
+		requestedPool := ""
+		if startReq.Params != nil {
+			requestedPool = startReq.Params.Pool
+		}
+		resolved, err := s.resolveSessionPool(ctx, subject, requestedPool, startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
 			return s.createPoolSession(ctx, resolved, sessionID, startReq, userID, teams)
 		}
+	}
+	if requestedPool := requestedSessionPool(startReq); requestedPool != "" {
+		return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requestedPool)
 	}
 
 	// Preserve automatic assignment only for legacy ESMs that do not have a runner pool.
@@ -1318,12 +1325,19 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	return result.Session, nil
 }
 
-func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnercore.Subject, tags map[string]string) (*sessionrunnercore.ResolvedPool, error) {
+func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnercore.Subject, requestedPool string, tags map[string]string) (*sessionrunnercore.ResolvedPool, error) {
 	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
 	if s.esmControlStore != nil {
 		resolver.WithManagerLiveness(s.esmControlStore)
 	}
-	return resolver.Resolve(ctx, subject, tags)
+	return resolver.Resolve(ctx, subject, requestedPool, tags)
+}
+
+func requestedSessionPool(startReq entities.StartRequest) string {
+	if startReq.Params == nil {
+		return ""
+	}
+	return strings.TrimSpace(startReq.Params.Pool)
 }
 
 func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnercore.ResolvedPool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
@@ -1347,7 +1361,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		AgentType: agentType, Oneshot: oneshot, Environment: startReq.Environment,
+		Pool: pool, AgentType: agentType, Oneshot: oneshot, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,

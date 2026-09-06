@@ -76,6 +76,8 @@ type DockerRegistry struct {
 
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
+	// Pool selects the logical session runner pool used to execute the session.
+	Pool string `json:"pool,omitempty"`
 	// ResumeFrom restores ACP conversation state saved by a previous session ID.
 	ResumeFrom string `json:"resume_from,omitempty"`
 	// Message is the initial message to send to the agent after session starts
@@ -185,6 +187,7 @@ type RepositoryInfo struct {
 
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
+	Pool                     string
 	ModelConnectionsResolved bool                      `json:"-"`
 	CodexConnection          *modelprovider.Connection `json:"-"`
 	ClaudeConnection         *modelprovider.Connection `json:"-"`
