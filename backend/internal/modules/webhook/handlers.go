@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/ratelimit"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
@@ -49,7 +53,13 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.POST("/:id/trigger", h.TriggerWebhook)
 
 	// Receiver endpoints
+	// Unauthenticated by design (signature-verified payloads), so they are rate
+	// limited per client IP to prevent brute forcing signatures or flooding
+	// session creation (ccplant-deploy#66 F2).
 	hooks := e.Group("/hooks")
+	hooks.Use(ratelimit.EchoMiddleware(hooksLimiter(), func(c echo.Context) string {
+		return c.RealIP()
+	}))
 	hooks.POST("/github/:id", h.githubController.HandleGitHubWebhook)
 	hooks.POST("/custom/:id", h.customController.HandleCustomWebhook)
 
@@ -241,4 +251,16 @@ func (h *Handlers) setCORSHeaders(ctx echo.Context) {
 	ctx.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
 	ctx.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 	ctx.Response().Header().Set("Access-Control-Max-Age", "86400")
+}
+
+// hooksLimiter returns the per-IP limiter for webhook receiver endpoints.
+// Defaults to 120 requests per minute; 0 disables the limiter.
+func hooksLimiter() *ratelimit.Limiter {
+	max := 120
+	if raw := os.Getenv("AGENTAPI_RATE_LIMIT_HOOKS_PER_MIN"); raw != "" {
+		if limit, err := strconv.Atoi(raw); err == nil {
+			max = limit
+		}
+	}
+	return ratelimit.New(max, time.Minute)
 }

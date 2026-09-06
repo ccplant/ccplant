@@ -5,16 +5,35 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/ratelimit"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
+
+// authFailureLimiter throttles repeated authentication failures per client IP
+// so public endpoints cannot be brute forced (ccplant-deploy#66 F2). The
+// default is 30 failures per minute; 0 disables the limiter.
+var authFailureLimiter = ratelimit.New(authFailureLimitFromEnv(), time.Minute)
+
+func authFailureLimitFromEnv() int {
+	raw := os.Getenv("AGENTAPI_RATE_LIMIT_AUTH_FAILURES_PER_MIN")
+	if raw == "" {
+		return 30
+	}
+	if limit, err := strconv.Atoi(raw); err == nil {
+		return limit
+	}
+	return 30
+}
 
 // UserContext represents the authenticated user context (for legacy compatibility)
 type UserContext struct {
@@ -167,6 +186,10 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			}
 
 			log.Printf("Authentication failed: no valid credentials provided from %s", c.RealIP())
+			if !authFailureLimiter.Allow(c.RealIP()) {
+				c.Response().Header().Set(echo.HeaderRetryAfter, "60")
+				return echo.NewHTTPError(http.StatusTooManyRequests, "Rate limit exceeded")
+			}
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 		}
 	}

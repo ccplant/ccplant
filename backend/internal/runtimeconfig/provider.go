@@ -124,6 +124,13 @@ func (p *Provider) Apply(version int64, sections map[string]interface{}) error {
 	return nil
 }
 
+// RuntimeApplicationEnabled reports whether Apply mutates the running
+// configuration. It is always false today; the admin settings controller uses
+// it to tell operators honestly that saved settings only persist for audit.
+func (p *Provider) RuntimeApplicationEnabled() bool {
+	return false
+}
+
 func (p *Provider) Subscribe(listener func(*config.Config)) {
 	if listener == nil {
 		return
