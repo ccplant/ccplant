@@ -260,7 +260,7 @@ spec:
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_LIMIT, value: {{ dig "networkFilter" "initResources" "limits" "memory" "64Mi" $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ $k8s.imagePullPolicy | quote }}}
             - {name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: {{ $k8s.serviceAccountName | quote }}}
-            - {name: AGENTAPI_K8S_SESSION_BASE_PORT, value: {{ $k8s.basePort | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_BASE_PORT, value: {{ $k8s.basePort | default 9000 | quote }}}
             - {name: AGENTAPI_K8S_SESSION_CPU_REQUEST, value: {{ $k8s.resources.requests.cpu | quote }}}
             - {name: AGENTAPI_K8S_SESSION_CPU_LIMIT, value: {{ $k8s.resources.limits.cpu | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST, value: {{ $k8s.resources.requests.memory | quote }}}

@@ -47,6 +47,15 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDefaultsEmptyKubernetesSessionBasePort(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_K8S_SESSION_BASE_PORT", "")
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, 9000, loadedConfig.KubernetesSession.BasePort)
+}
+
 func TestBinaryPathConfig(t *testing.T) {
 	t.Setenv("CCPLANT_BINARY_PATH", "/opt/ccplant/bin/ccplant")
 	loadedConfig, err := LoadConfig("")
@@ -598,4 +607,3 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 	}
 
 }
-
