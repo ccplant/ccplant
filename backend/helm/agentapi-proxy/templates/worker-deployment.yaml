@@ -8,6 +8,10 @@
 {{- $slack := $worker.slack | default dict }}
 {{- $slackToken := $slack.tokenSecretRef | default dict }}
 {{- $controlURL := $control.url | default (printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port) }}
+{{- $hostname := .Values.config.hostname | default "" }}
+{{- if .Values.global }}
+  {{- $hostname = .Values.global.hostname | default $hostname }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -108,6 +112,13 @@ spec:
             {{- end }}
             - {name: AGENTAPI_SLACK_DRY_RUN, value: {{ $slack.dryRun | default false | quote }}}
             - {name: AGENTAPI_WEBHOOK_BASE_URL, value: {{ $slack.baseUrl | default "" | quote }}}
+            {{- if .Values.config.notification.baseUrl }}
+            - name: NOTIFICATION_BASE_URL
+              value: {{ .Values.config.notification.baseUrl | quote }}
+            {{- else if $hostname }}
+            - name: NOTIFICATION_BASE_URL
+              value: {{ printf "https://%s" $hostname | quote }}
+            {{- end }}
             - {name: AGENTAPI_SCHEDULE_WORKER_ENABLED, value: {{ $worker.schedule.enabled | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_CHECK_INTERVAL, value: {{ $worker.schedule.checkInterval | quote }}}
             - {name: AGENTAPI_SCHEDULE_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
