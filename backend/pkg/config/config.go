@@ -34,6 +34,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"reflect"
@@ -44,6 +45,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // AuthConfig represents authentication configuration
@@ -1711,8 +1713,14 @@ func loadK8sSessionConfigFromFile(config *Config, filename string) error {
 
 	// Determine file format based on extension
 	if strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") {
-		decoder := yaml.NewDecoder(file)
-		if err := decoder.Decode(&k8sOverride); err != nil {
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return err
+		}
+		// sigs.k8s.io/yaml converts YAML through JSON, ensuring nested arbitrary
+		// values (notably affinity) use string-keyed maps that json.Marshal can
+		// safely clone later in runtimeconfig.Provider.
+		if err := sigsyaml.Unmarshal(data, &k8sOverride); err != nil {
 			return err
 		}
 	} else {

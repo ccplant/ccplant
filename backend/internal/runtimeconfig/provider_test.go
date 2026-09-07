@@ -130,6 +130,25 @@ func TestProviderDoesNotApplyAdminSettingsAtRuntime(t *testing.T) {
 	require.Equal(t, "base:image", provider.Current().KubernetesSession.Image)
 }
 
+func TestProviderPreservesConfigWhenDeepCloneFails(t *testing.T) {
+	base := &config.Config{
+		KubernetesSession: config.KubernetesSessionConfig{
+			BasePort:     9000,
+			NodeSelector: map[string]string{"storage": "hci50k-a05"},
+			Affinity: map[string]interface{}{
+				"nodeAffinity": map[interface{}]interface{}{"required": true},
+			},
+		},
+	}
+
+	provider := New(base, nil, "default")
+	current := provider.Current()
+
+	require.Equal(t, 9000, current.KubernetesSession.BasePort)
+	require.Equal(t, "hci50k-a05", current.KubernetesSession.NodeSelector["storage"])
+	require.NotEmpty(t, current.KubernetesSession.Affinity)
+}
+
 // TestProviderReloadDoesNotApplyStoredDocument asserts that Reload does not
 // overlay a versioned admin settings document even when one exists in the KV
 // store (e.g. a document that would wipe the GitHub OAuth client secret).

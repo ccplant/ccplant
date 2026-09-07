@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -444,9 +445,20 @@ func cloneConfig(source *config.Config) *config.Config {
 	if source == nil {
 		return &config.Config{}
 	}
-	data, _ := json.Marshal(source)
+	// Keep a shallow copy as a last-resort fallback. Some configuration fields
+	// contain arbitrary values, so an unsupported nested type must not turn the
+	// entire runtime configuration into zero values.
+	fallback := *source
+	data, err := json.Marshal(source)
+	if err != nil {
+		log.Printf("[RUNTIMECONFIG] Failed to clone config: %v", err)
+		return &fallback
+	}
 	var cloned config.Config
-	_ = json.Unmarshal(data, &cloned)
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		log.Printf("[RUNTIMECONFIG] Failed to decode cloned config: %v", err)
+		return &fallback
+	}
 	return &cloned
 }
 
