@@ -152,9 +152,6 @@ all_role_args=(
   --set worker.image.repository=example/worker
   --set worker.controlApi.tokenSecretRef.name=worker-control
   --set worker.kvStore.databaseUrlSecretRef.name=worker-libsql
-  --set worker.stockInventory.enabled=true
-  --set worker.stockInventory.pools[0].targetCount=3
-  --set worker.stockInventory.pools[0].dockerEnabled=true
   --set sessionManager.enabled=true
   --set sessionManager.image.repository=example/session-manager
   --set sessionManager.internalApi.tokenSecretRef.name=manager-internal
@@ -242,9 +239,7 @@ assert_contains 'name: "worker-control"' "$TMP_DIR/backend-worker-deployment.yam
 assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'name: AGENTAPI_REDIS_' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains 'name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains '\\"targetCount\\":3' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'AGENTAPI_STOCK_INVENTORY_WORKER_' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'AGENTAPI_K8S_SESSION_PROVISIONER_TOKEN' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'name: "manager-internal"' "$TMP_DIR/backend-worker-deployment.yaml"

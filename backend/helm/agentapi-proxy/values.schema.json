@@ -135,7 +135,7 @@
     },
     "worker": {
       "type": "object",
-      "required": ["enabled", "replicaCount", "image", "serviceAccount", "controlApi", "kvStore", "redis", "slack", "schedule", "slackbotCleanup", "stockInventory"],
+      "required": ["enabled", "replicaCount", "image", "serviceAccount", "controlApi", "kvStore", "redis", "slack", "schedule", "slackbotCleanup"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 1 },
@@ -175,8 +175,7 @@
           }
         },
         "schedule": { "$ref": "#/definitions/workerConfig" },
-        "slackbotCleanup": { "$ref": "#/definitions/workerConfig" },
-        "stockInventory": { "$ref": "#/definitions/workerConfig" }
+        "slackbotCleanup": { "$ref": "#/definitions/workerConfig" }
       }
     },
     "sessionManager": {

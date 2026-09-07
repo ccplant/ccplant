@@ -20,7 +20,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
-	stockinventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -103,7 +102,6 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	var mu sync.Mutex
 	var scheduleWorker *remoteScheduleWorker
 	var cleanupWorker *slackbotcleanup.LeaderCleanupWorker
-	var stockWorker *stockinventory.LeaderWorker
 	if cfg.ScheduleWorker.Enabled {
 		scheduleWorker = newRemoteScheduleWorker(cfg, remote, leaseClient, runtimeNamespace)
 		go scheduleWorker.Run(ctx)
@@ -111,10 +109,6 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if cfg.SlackbotCleanupWorker.Enabled {
 		cleanupWorker = newRemoteCleanupWorker(cfg, remote, leaseClient, runtimeNamespace)
 		go cleanupWorker.Run(ctx)
-	}
-	if cfg.StockInventoryWorker.Enabled {
-		stockWorker = newRemoteStockWorker(cfg, remote, leaseClient, runtimeNamespace)
-		go stockWorker.Run(ctx)
 	}
 	startRemoteSlackSocketManager(ctx, cfg, persistence, persistenceNamespace, runtimeNamespace, remote, memoryRepo, profileRepo, leaseClient)
 	<-ctx.Done()
@@ -125,9 +119,6 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	}
 	if cleanupWorker != nil {
 		cleanupWorker.Stop()
-	}
-	if stockWorker != nil {
-		stockWorker.Stop()
 	}
 	return nil
 }
@@ -332,15 +323,6 @@ func newRemoteCleanupWorker(cfg *config.Config, remote *controlapi.SessionManage
 	ttlCheck, _ := time.ParseDuration(cfg.SlackbotCleanupWorker.SessionTTLCheckInterval)
 	election := workerElection(cfg.SlackbotCleanupWorker.LeaseDuration, cfg.SlackbotCleanupWorker.RenewDeadline, cfg.SlackbotCleanupWorker.RetryPeriod, schedule.SlackbotCleanupWorkerLeaseName, namespace)
 	return slackbotcleanup.NewLeaderCleanupWorker(remote, leaseClient, slackbotcleanup.CleanupWorkerConfig{CheckInterval: check, SessionTTL: ttl, SessionTTLCheckInterval: ttlCheck, Enabled: true, DryRun: cfg.SlackbotCleanupWorker.DryRun}, election)
-}
-
-func newRemoteStockWorker(cfg *config.Config, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient, namespace string) *stockinventory.LeaderWorker {
-	interval, _ := time.ParseDuration(cfg.StockInventoryWorker.CheckInterval)
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-	election := workerElection(cfg.StockInventoryWorker.LeaseDuration, cfg.StockInventoryWorker.RenewDeadline, cfg.StockInventoryWorker.RetryPeriod, schedule.StockInventoryWorkerLeaseName, namespace)
-	return stockinventory.NewLeaderWorker(remote, leaseClient, stockinventory.WorkerConfig{CheckInterval: interval, TargetCount: cfg.StockInventoryWorker.TargetCount, Requirements: stockinventory.StockRequirements{DinD: cfg.StockInventoryWorker.DockerEnabled}, Pools: buildStockInventoryPools(cfg.StockInventoryWorker, cfg.StockInventoryWorker.TargetCount), Enabled: true}, election)
 }
 
 func workerElection(lease, renew, retry, name, namespace string) schedule.LeaderElectionConfig {

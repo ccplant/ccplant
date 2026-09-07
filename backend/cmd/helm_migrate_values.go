@@ -127,7 +127,6 @@ func runHelmMigrateValues(stdin io.Reader, stdout, stderr io.Writer, o *helmMigr
 		},
 		"schedule":        migratedWorkerSection(values, "scheduleWorker", "schedule"),
 		"slackbotCleanup": migratedWorkerSection(values, "slackbotCleanupWorker", "slackbotCleanup"),
-		"stockInventory":  migratedWorkerSection(values, "stockInventoryWorker", "stockInventory"),
 		"slack":           migratedSlack(values),
 	}
 	copyKeys(worker, values, "imagePullSecrets", "podAnnotations", "podLabels", "podSecurityContext", "securityContext", "resources", "nodeSelector", "tolerations", "affinity", "env", "envFrom")
@@ -256,7 +255,7 @@ func migratedWorkerSection(values map[string]any, legacy, current string) map[st
 }
 
 func legacyWorkerEnabled(values map[string]any) bool {
-	for _, key := range []string{"scheduleWorker", "slackbotCleanupWorker", "stockInventoryWorker"} {
+	for _, key := range []string{"scheduleWorker", "slackbotCleanupWorker"} {
 		if boolValue(nestedValue(values, key, "enabled")) || boolValue(nestedValue(values, "config", key, "enabled")) {
 			return true
 		}

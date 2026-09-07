@@ -122,15 +122,6 @@ spec:
             - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION, value: {{ $worker.slackbotCleanup.leaderElection.leaseDuration | quote }}}
             - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE, value: {{ $worker.slackbotCleanup.leaderElection.renewDeadline | quote }}}
             - {name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD, value: {{ $worker.slackbotCleanup.leaderElection.retryPeriod | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED, value: {{ $worker.stockInventory.enabled | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL, value: {{ $worker.stockInventory.checkInterval | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_NAMESPACE, value: {{ .Release.Namespace | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_TARGET_COUNT, value: {{ $worker.stockInventory.targetCount | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_DOCKER_ENABLED, value: {{ $worker.stockInventory.dockerEnabled | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_POOLS, value: {{ $worker.stockInventory.pools | toJson | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_LEASE_DURATION, value: {{ $worker.stockInventory.leaderElection.leaseDuration | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_RENEW_DEADLINE, value: {{ $worker.stockInventory.leaderElection.renewDeadline | quote }}}
-            - {name: AGENTAPI_STOCK_INVENTORY_WORKER_RETRY_PERIOD, value: {{ $worker.stockInventory.leaderElection.retryPeriod | quote }}}
             {{- with $worker.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

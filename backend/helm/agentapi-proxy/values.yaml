@@ -312,17 +312,6 @@ worker:
       renewDeadline: "6m"
       retryPeriod: "1m"
 
-  stockInventory:
-    enabled: false
-    checkInterval: "30s"
-    targetCount: 2
-    dockerEnabled: false
-    pools: []
-    leaderElection:
-      leaseDuration: "9m"
-      renewDeadline: "6m"
-      retryPeriod: "1m"
-
 # The forwarding session manager is an independent HTTP workload.
 sessionManager:
   enabled: false
