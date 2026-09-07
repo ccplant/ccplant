@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -36,6 +35,8 @@ type Worker struct {
 	launcher       *sessionuc.LaunchUseCase
 	config         WorkerConfig
 	logger         *log.Logger
+	clock          Clock
+	ids            IDGenerator
 
 	// Internal state
 	running bool
@@ -54,8 +55,22 @@ func NewWorker(manager Manager, sessionManager portrepos.SessionManager, memoryR
 			WithSessionProfileRepository(sessionProfileRepo),
 		config: config,
 		logger: log.Default(),
+		clock:  realClock{},
+		ids:    uuidGenerator{},
 		stopCh: make(chan struct{}),
 	}
+}
+
+// WithRuntime replaces nondeterministic runtime dependencies. It lets tests
+// execute a worker tick synchronously with fixed time and identifiers.
+func (w *Worker) WithRuntime(clock Clock, ids IDGenerator) *Worker {
+	if clock != nil {
+		w.clock = clock
+	}
+	if ids != nil {
+		w.ids = ids
+	}
+	return w
 }
 
 // Start begins the worker loop
@@ -118,7 +133,7 @@ func (w *Worker) run(ctx context.Context) {
 // exported so the API can own schedule persistence and expose a narrow,
 // authenticated processing operation to remote workers.
 func (w *Worker) ProcessDueSchedules(ctx context.Context) (int, error) {
-	now := time.Now()
+	now := w.clock.Now()
 
 	schedules, err := w.manager.GetDueSchedules(ctx, now)
 	if err != nil {
@@ -156,7 +171,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 				log.Printf("[SCHEDULE_WORKER] Skipping schedule %s: previous session %s still active",
 					schedule.ID, schedule.LastExecution.SessionID)
 				w.recordExecution(ctx, schedule, ExecutionRecord{
-					ExecutedAt: time.Now(),
+					ExecutedAt: w.clock.Now(),
 					Status:     "skipped",
 					Error:      "previous session still active",
 				})
@@ -173,7 +188,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 	}
 
 	// Create session
-	sessionID := uuid.New().String()
+	sessionID := w.ids.New()
 	launchReq := w.buildLaunchRequest(schedule, sessionID)
 
 	result, err := w.launcher.Launch(ctx, sessionID, launchReq)
@@ -181,7 +196,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 		log.Printf("[SCHEDULE_WORKER] Failed to create session for schedule %s: %v",
 			schedule.ID, err)
 		w.recordExecution(ctx, schedule, ExecutionRecord{
-			ExecutedAt: time.Now(),
+			ExecutedAt: w.clock.Now(),
 			Status:     "failed",
 			Error:      err.Error(),
 		})
@@ -202,7 +217,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 	if schedule.IsRecurring() {
 		// Record execution first, then update next execution time
 		w.recordExecution(ctx, schedule, ExecutionRecord{
-			ExecutedAt:    time.Now(),
+			ExecutedAt:    w.clock.Now(),
 			SessionID:     result.SessionID,
 			Status:        "success",
 			SessionReused: result.SessionReused,
@@ -212,7 +227,7 @@ func (w *Worker) executeSchedule(ctx context.Context, schedule *Schedule) {
 		// For one-time schedule: record execution and mark as completed together
 		// First record the execution
 		record := ExecutionRecord{
-			ExecutedAt:    time.Now(),
+			ExecutedAt:    w.clock.Now(),
 			SessionID:     result.SessionID,
 			Status:        "success",
 			SessionReused: result.SessionReused,
@@ -357,14 +372,15 @@ func (w *Worker) recordExecution(ctx context.Context, schedule *Schedule, record
 
 // updateNextExecution calculates and updates the next execution time
 func (w *Worker) updateNextExecution(ctx context.Context, schedule *Schedule) {
-	nextAt, err := CalculateNextExecution(schedule, time.Now())
+	now := w.clock.Now()
+	nextAt, err := CalculateNextExecution(schedule, now)
 	if err != nil {
 		log.Printf("[SCHEDULE_WORKER] Failed to calculate next execution for schedule %s: %v",
 			schedule.ID, err)
 		// Push the next execution time into the future to prevent infinite retry loops.
 		// Without this, the schedule would remain perpetually "due" and be re-executed
 		// every check interval (e.g. every 30 seconds) due to the calculation failure.
-		fallback := time.Now().Add(time.Hour)
+		fallback := now.Add(time.Hour)
 		if updateErr := w.manager.UpdateNextExecution(ctx, schedule.ID, fallback); updateErr != nil {
 			log.Printf("[SCHEDULE_WORKER] Failed to set fallback next execution for schedule %s: %v",
 				schedule.ID, updateErr)

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,6 +55,8 @@ type KubernetesManager struct {
 	client    kubernetes.Interface
 	namespace string
 	mu        sync.RWMutex
+	clock     Clock
+	ids       IDGenerator
 }
 
 // NewKubernetesManager creates a new KubernetesManager
@@ -63,7 +64,21 @@ func NewKubernetesManager(client kubernetes.Interface, namespace string) *Kubern
 	return &KubernetesManager{
 		client:    client,
 		namespace: namespace,
+		clock:     realClock{},
+		ids:       uuidGenerator{},
 	}
+}
+
+// WithRuntime replaces time and ID sources used while persisting and claiming
+// schedules. Production callers use the defaults from NewKubernetesManager.
+func (m *KubernetesManager) WithRuntime(clock Clock, ids IDGenerator) *KubernetesManager {
+	if clock != nil {
+		m.clock = clock
+	}
+	if ids != nil {
+		m.ids = ids
+	}
+	return m
 }
 
 // Create creates a new schedule
@@ -85,7 +100,7 @@ func (m *KubernetesManager) Create(ctx context.Context, schedule *Schedule) erro
 		return fmt.Errorf("failed to check schedule existence: %w", err)
 	}
 
-	now := time.Now()
+	now := m.clock.Now()
 	schedule.CreatedAt = now
 	schedule.UpdatedAt = now
 
@@ -168,7 +183,7 @@ func (m *KubernetesManager) Update(ctx context.Context, schedule *Schedule) erro
 		return fmt.Errorf("failed to get schedule: %w", err)
 	}
 
-	schedule.UpdatedAt = time.Now()
+	schedule.UpdatedAt = m.clock.Now()
 
 	if err := m.saveSchedule(ctx, schedule); err != nil {
 		return fmt.Errorf("failed to save schedule: %w", err)
@@ -214,23 +229,61 @@ func (m *KubernetesManager) ClaimDueSchedules(ctx context.Context, now time.Time
 	}
 	claimed := make([]*Schedule, 0)
 	for _, item := range schedules {
+		item, ok, err := m.claimSchedule(ctx, item.ID, now, lease)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			claimed = append(claimed, item)
+		}
+	}
+	return claimed, nil
+}
+
+// claimSchedule uses the Kubernetes resourceVersion as an optimistic lock.
+// The in-process mutex above protects a single manager; resourceVersion makes
+// the claim exclusive when multiple API pods race to claim the same schedule.
+func (m *KubernetesManager) claimSchedule(ctx context.Context, id string, now time.Time, lease time.Duration) (*Schedule, bool, error) {
+	secretName := scheduleSecretName(id)
+	for range 3 {
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to load schedule for claim: %w", err)
+		}
+		data, ok := secret.Data[SecretKeySchedule]
+		if !ok {
+			return nil, false, fmt.Errorf("schedule secret missing data key: %s", SecretKeySchedule)
+		}
+		var item Schedule
+		if err := json.Unmarshal(data, &item); err != nil {
+			return nil, false, fmt.Errorf("failed to unmarshal schedule for claim: %w", err)
+		}
+		if teamID := secret.Annotations[AnnotationScheduleTeamID]; teamID != "" {
+			item.TeamID = teamID
+		}
 		if !item.IsDue(now) || (item.PendingExecution != nil && item.PendingExecution.ExpiresAt.After(now)) {
-			continue
+			return nil, false, nil
 		}
 		if item.PendingExecution == nil {
-			item.PendingExecution = &PendingExecution{ExecutionID: uuid.NewString(), SessionID: uuid.NewString()}
+			item.PendingExecution = &PendingExecution{ExecutionID: m.ids.New(), SessionID: m.ids.New()}
 		}
 		// An expired claim keeps its stable IDs. If session creation succeeded but
 		// finalize was interrupted, retrying /start remains idempotent.
 		item.PendingExecution.ClaimedAt = now
 		item.PendingExecution.ExpiresAt = now.Add(lease)
 		item.UpdatedAt = now
-		if err := m.saveSchedule(ctx, item); err != nil {
-			return nil, err
+		encoded, err := json.Marshal(&item)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to marshal schedule claim: %w", err)
 		}
-		claimed = append(claimed, item)
+		secret.Data[SecretKeySchedule] = encoded
+		if _, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err == nil {
+			return &item, true, nil
+		} else if !errors.IsConflict(err) {
+			return nil, false, fmt.Errorf("failed to persist schedule claim: %w", err)
+		}
 	}
-	return claimed, nil
+	return nil, false, fmt.Errorf("failed to claim schedule %s after concurrent updates", id)
 }
 
 func (m *KubernetesManager) FinalizeClaim(ctx context.Context, id, executionID string, record ExecutionRecord, nextAt *time.Time, completed bool) error {
@@ -254,7 +307,7 @@ func (m *KubernetesManager) FinalizeClaim(ctx context.Context, id, executionID s
 	if completed {
 		item.Status = ScheduleStatusCompleted
 	}
-	item.UpdatedAt = time.Now()
+	item.UpdatedAt = m.clock.Now()
 	return m.saveSchedule(ctx, item)
 }
 
@@ -270,7 +323,7 @@ func (m *KubernetesManager) RecordExecution(ctx context.Context, id string, reco
 
 	schedule.LastExecution = &record
 	schedule.ExecutionCount++
-	schedule.UpdatedAt = time.Now()
+	schedule.UpdatedAt = m.clock.Now()
 
 	if err := m.saveSchedule(ctx, schedule); err != nil {
 		return fmt.Errorf("failed to save schedule: %w", err)
@@ -290,7 +343,7 @@ func (m *KubernetesManager) UpdateNextExecution(ctx context.Context, id string, 
 	}
 
 	schedule.NextExecutionAt = &nextAt
-	schedule.UpdatedAt = time.Now()
+	schedule.UpdatedAt = m.clock.Now()
 
 	if err := m.saveSchedule(ctx, schedule); err != nil {
 		return fmt.Errorf("failed to save schedule: %w", err)
