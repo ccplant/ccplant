@@ -152,6 +152,7 @@ all_role_args=(
   --set worker.image.repository=example/worker
   --set worker.controlApi.tokenSecretRef.name=worker-control
   --set worker.kvStore.databaseUrlSecretRef.name=worker-libsql
+  --set config.notification.baseUrl=https://notifications.example
   --set sessionManager.enabled=true
   --set sessionManager.image.repository=example/session-manager
   --set sessionManager.internalApi.tokenSecretRef.name=manager-internal
@@ -235,6 +236,8 @@ assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-worker-d
 assert_contains 'args: \["worker"\]' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_API_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: NOTIFICATION_BASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'value: "https://notifications.example"' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: "worker-control"' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'name: AGENTAPI_REDIS_' "$TMP_DIR/backend-worker-deployment.yaml"
