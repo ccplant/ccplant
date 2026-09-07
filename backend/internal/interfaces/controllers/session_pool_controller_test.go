@@ -125,6 +125,32 @@ func TestSessionManagerHeartbeatUsesSharedLivenessWithoutPersistingManager(t *te
 	}
 }
 
+func TestSessionManagerHeartbeatResolvesCurrentManagerIDFromToken(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "generated-manager-id", Name: "Manager", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(context.Background(), manager); err != nil {
+		t.Fatal(err)
+	}
+	controller := NewSessionPoolController(store, nil)
+
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/stale-manager-id/heartbeat",
+		nil, map[string]string{"id": "stale-manager-id"}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		ManagerID string `json:"manager_id"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if heartbeat.ManagerID != manager.ID {
+		t.Fatalf("manager_id = %q, want %q", heartbeat.ManagerID, manager.ID)
+	}
+}
+
 func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")

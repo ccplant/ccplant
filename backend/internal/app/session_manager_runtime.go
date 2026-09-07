@@ -76,6 +76,17 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if err != nil {
 		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
 	}
+	// Stock workloads belong to the session-manager revision that created them.
+	// Purge the complete inventory at the process boundary instead of relying
+	// only on template-hash reconciliation: a manager replacement can otherwise
+	// leave apparently compatible stock backed by the previous revision.
+	purgeCtx, purgeCancel := context.WithTimeout(parent, 30*time.Second)
+	if err := purgeSessionManagerStock(purgeCtx, manager); err != nil {
+		purgeCancel()
+		_ = manager.Shutdown(5 * time.Second)
+		return nil, fmt.Errorf("purge stock sessions on session-manager startup: %w", err)
+	}
+	purgeCancel()
 	if cfg.SessionManager.RunnerPool != "" {
 		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
 	}
@@ -308,6 +319,14 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
 }
 
+type sessionManagerStockPurger interface {
+	PurgeStockSessions(context.Context) error
+}
+
+func purgeSessionManagerStock(ctx context.Context, purger sessionManagerStockPurger) error {
+	return purger.PurgeStockSessions(ctx)
+}
+
 func buildSessionManagerStatusEventRepository(cfg *config.Config, remoteMode bool) portrepos.StatusEventRepository {
 	if remoteMode {
 		return repositories.NewNoopStatusRepository()
@@ -389,6 +408,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
+						ManagerID           string                            `json:"manager_id"`
 						Pools               []*sessionrunnercore.PoolSupplier `json:"pools"`
 						RegisteredRunnerIDs *[]string                         `json:"registered_runner_ids"`
 						UpstreamVersion     string                            `json:"upstream_version"`
@@ -397,6 +417,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
+					if result.ManagerID != "" && result.ManagerID != managerID {
+						log.Printf("[SESSION_MANAGER] Resolved registered manager ID %s (configured as %s)", result.ManagerID, managerID)
+						managerID = result.ManagerID
+						manager.ConfigureSessionRunnerPool(upstream, managerID, token, cfg.SessionManager.RunnerPool)
+					}
 					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
