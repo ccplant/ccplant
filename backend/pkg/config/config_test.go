@@ -56,6 +56,36 @@ func TestLoadConfigDefaultsEmptyKubernetesSessionBasePort(t *testing.T) {
 	assert.Equal(t, 9000, loadedConfig.KubernetesSession.BasePort)
 }
 
+func TestLoadK8sSessionConfigFromYAMLUsesStringKeyedAffinityMaps(t *testing.T) {
+	configFile := t.TempDir() + "/k8s-session-config.yaml"
+	err := os.WriteFile(configFile, []byte(`
+kubernetes_session:
+  node_selector:
+    storage: hci50k-a05
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: storage
+                operator: In
+                values: [hci50k-a05]
+`), 0o600)
+	assert.NoError(t, err)
+
+	loaded := DefaultConfig()
+	assert.NoError(t, loadK8sSessionConfigFromFile(loaded, configFile))
+	assert.Equal(t, "hci50k-a05", loaded.KubernetesSession.NodeSelector["storage"])
+	assert.NotPanics(t, func() {
+		_, err = json.Marshal(loaded)
+	})
+	assert.NoError(t, err)
+
+	nodeAffinity, ok := loaded.KubernetesSession.Affinity["nodeAffinity"].(map[string]interface{})
+	assert.True(t, ok, "nested affinity map must have string keys")
+	assert.Contains(t, nodeAffinity, "requiredDuringSchedulingIgnoredDuringExecution")
+}
+
 func TestBinaryPathConfig(t *testing.T) {
 	t.Setenv("CCPLANT_BINARY_PATH", "/opt/ccplant/bin/ccplant")
 	loadedConfig, err := LoadConfig("")
@@ -546,7 +576,7 @@ func TestInitializeConfigStructsFromEnv_NoInitializationWhenConfigExists(t *test
 
 	// Verify environment variables take precedence for scalar auth values,
 	// while struct fields already set from the file keep their non-env values.
-	assert.Equal(t, "ap_admin_env_key", loadedConfig.Auth.AdminKey) // Environment variable takes precedence
+	assert.Equal(t, "ap_admin_env_key", loadedConfig.Auth.AdminKey)                  // Environment variable takes precedence
 	assert.True(t, loadedConfig.Auth.GitHub.Enabled)                                 // Environment variable takes precedence
 	assert.Equal(t, "https://existing.github.com", loadedConfig.Auth.GitHub.BaseURL) // Should remain as configured
 }
