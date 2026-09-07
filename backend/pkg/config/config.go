@@ -1398,6 +1398,9 @@ func setDefaults(v *viper.Viper) {
 
 // applyConfigDefaults applies default values to any unset configuration fields
 func applyConfigDefaults(config *Config) {
+	if config.KubernetesSession.BasePort == 0 {
+		config.KubernetesSession.BasePort = 9000
+	}
 
 	// Apply auth defaults
 	if config.Auth.BootstrapAdmin != nil {

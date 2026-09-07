@@ -188,6 +188,11 @@ done
   "${all_role_args[@]}" \
   --set sessionManager.versionUrl=https://app.example/api/v1/health \
   >"$TMP_DIR/backend-manager-version-poller.yaml"
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/session-manager-deployment.yaml \
+  "${all_role_args[@]}" \
+  --set sessionManager.kubernetesSession.basePort=0 \
+  >"$TMP_DIR/backend-manager-default-port.yaml"
 
 # A parent-registered Kubernetes session manager is stateless and may run with
 # multiple replicas without a remote Redis. Kubernetes Lease elects its single
@@ -253,6 +258,7 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME' "$TMP_DIR/backe
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_BASE_PORT, value: "9000"' "$TMP_DIR/backend-manager-default-port.yaml"
 assert_contains 'value: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-manager-deployment.yaml"
