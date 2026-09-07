@@ -450,6 +450,73 @@ func TestPurgeStockSessionsKeepsAdoptedSessionWithStaleStockWorkloadLabels(t *te
 	}
 }
 
+func TestPurgeStockSessionsKeepsAllocatedSessionWithStaleStockServiceLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		stockState   string
+		secretLabels map[string]string
+	}{
+		{
+			name:       "session settings",
+			stockState: "true",
+			secretLabels: map[string]string{
+				"agentapi.proxy/resource": "session-settings",
+			},
+		},
+		{
+			name:       "provision request",
+			stockState: "claiming",
+			secretLabels: map[string]string{
+				"agentapi.proxy/provision-request": "true",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newWorkloadTestManager(t, false)
+			ctx := context.Background()
+			sessionID := "allocated-stock-session"
+			name := "agentapi-session-" + sessionID
+			stockLabels := map[string]string{
+				"app.kubernetes.io/name":       "agentapi-session",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"agentapi.proxy/session-id":    sessionID,
+				"agentapi.proxy/stock":         tc.stockState,
+			}
+
+			if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: stockLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create stale-labeled service: %v", err)
+			}
+			if _, err := manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: stockLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create stale-labeled pod: %v", err)
+			}
+
+			secretLabels := map[string]string{"agentapi.proxy/session-id": sessionID}
+			for key, value := range tc.secretLabels {
+				secretLabels[key] = value
+			}
+			if _, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: name + "-allocation-proof", Namespace: "test-ns", Labels: secretLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create allocation artifact: %v", err)
+			}
+
+			if err := manager.PurgeStockSessions(ctx); err != nil {
+				t.Fatalf("PurgeStockSessions failed: %v", err)
+			}
+			if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); err != nil {
+				t.Fatalf("Expected allocated service to remain, got err=%v", err)
+			}
+			if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+				t.Fatalf("Expected allocated pod to remain, got err=%v", err)
+			}
+		})
+	}
+}
+
 func TestPurgeStaleStockSessionsUsesEffectiveSessionPodTemplateHash(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	ctx := context.Background()

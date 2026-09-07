@@ -1079,13 +1079,25 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	if err != nil {
 		return fmt.Errorf("failed to list stock pvcs for purge: %w", err)
 	}
+	settingsSecrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/resource=session-settings,agentapi.proxy/session-id",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session settings for purge protection: %w", err)
+	}
+	provisionRequests, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/provision-request=true,agentapi.proxy/session-id",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list provision requests for purge protection: %w", err)
+	}
 
 	deletePolicy := metav1.DeletePropagationForeground
 	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
 
 	var purgeErrs []string
 	sessionIDs := make(map[string]struct{})
-	adoptedSessionIDs := make(map[string]struct{})
+	allocatedSessionIDs := make(map[string]struct{})
 	for i := range allSessionSvcs.Items {
 		svc := &allSessionSvcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
@@ -1094,15 +1106,35 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 		}
 		stockState := svc.Labels["agentapi.proxy/stock"]
 		if stockState != "true" && stockState != "claiming" {
-			adoptedSessionIDs[sessionID] = struct{}{}
+			allocatedSessionIDs[sessionID] = struct{}{}
+		}
+	}
+	// An allocation creates durable session settings and a provision request
+	// before it updates the stock Service labels. Treat either Secret as proof
+	// that the stock has been allocated. This closes the adoption window where
+	// a manager restart could otherwise purge a running session whose Service is
+	// still labeled stock=true or stock=claiming.
+	for i := range settingsSecrets.Items {
+		if sessionID := settingsSecrets.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			allocatedSessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for i := range provisionRequests.Items {
+		if sessionID := provisionRequests.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			allocatedSessionIDs[sessionID] = struct{}{}
 		}
 	}
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
-		if sessionID != "" {
-			sessionIDs[sessionID] = struct{}{}
+		if sessionID == "" {
+			continue
 		}
+		if _, allocated := allocatedSessionIDs[sessionID]; allocated {
+			log.Printf("[STOCK_INVENTORY] Skipping allocated session %s during stock purge (matched allocation artifact)", sessionID)
+			continue
+		}
+		sessionIDs[sessionID] = struct{}{}
 
 		// Delete Service
 		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
@@ -1111,7 +1143,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range deployments.Items {
 		if sessionID := deployments.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
-			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+			if _, adopted := allocatedSessionIDs[sessionID]; adopted {
 				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale deployment label)", sessionID)
 				continue
 			}
@@ -1120,7 +1152,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range pods.Items {
 		if sessionID := pods.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
-			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+			if _, adopted := allocatedSessionIDs[sessionID]; adopted {
 				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pod label)", sessionID)
 				continue
 			}
@@ -1129,7 +1161,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range pvcs.Items {
 		if sessionID := pvcs.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
-			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+			if _, adopted := allocatedSessionIDs[sessionID]; adopted {
 				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pvc label)", sessionID)
 				continue
 			}
