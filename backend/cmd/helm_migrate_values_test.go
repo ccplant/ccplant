@@ -37,7 +37,7 @@ scheduleWorker:
   enabled: true
   checkInterval: 10s
 slackbotCleanupWorker: {enabled: true, sessionTTL: 24h}
-stockInventoryWorker: {enabled: false}
+stockInventoryWorker: {enabled: true}
 sessionPersistence: {backend: s3, s3: {bucket: sessions}}
 github: {tokenRef: {name: github, key: token}}
 ingress: {enabled: true}
@@ -68,6 +68,9 @@ env: [{name: AWS_REGION, value: test-region}]
 	}
 	if got := stringValue(nestedValue(values, "worker", "schedule", "checkInterval")); got != "10s" {
 		t.Fatalf("schedule interval=%q", got)
+	}
+	if _, ok := nestedMap(values, "worker")["stockInventory"]; ok {
+		t.Fatal("deprecated stock inventory config was migrated to worker")
 	}
 	if got := stringValue(nestedValue(values, "sessionManager", "kubernetesSession", "provisioner", "tokenSecretRef", "name")); got != "existing-provisioner" {
 		t.Fatalf("provisioner secret=%q", got)

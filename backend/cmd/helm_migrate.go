@@ -335,7 +335,6 @@ var migrationWorkerLeases = []struct {
 }{
 	{"scheduleWorker", "schedule", schedule.ScheduleWorkerLeaseName, false},
 	{"slackbotCleanupWorker", "slackbot cleanup", schedule.SlackbotCleanupWorkerLeaseName, false},
-	{"stockInventoryWorker", "stock inventory", schedule.StockInventoryWorkerLeaseName, false},
 	{"", "session allocator", schedule.SessionAllocatorLeaseName, true},
 }
 

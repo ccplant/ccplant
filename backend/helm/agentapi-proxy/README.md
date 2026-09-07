@@ -62,8 +62,6 @@ worker:
     addr: redis.example:6379
   schedule:
     enabled: true
-  stockInventory:
-    enabled: true
 
 api:
   kvStore:
