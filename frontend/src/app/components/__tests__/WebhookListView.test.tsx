@@ -1,6 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WebhookListView from '../WebhookListView'
+import type { Webhook, WebhookStatus } from '../../../types/webhook'
+
+interface WebhookCardContractProps {
+  webhook: Webhook
+  onTogglePause: (id: string, status: WebhookStatus) => void
+  onRegenerateSecret: (id: string) => void
+  onDelete: (id: string) => void
+}
 
 const mocks = vi.hoisted(() => ({
   scope: vi.fn(() => ({ scope: 'user' })),
@@ -17,7 +25,7 @@ vi.mock('../../../lib/agentapi-proxy-client', () => ({
   createAgentAPIProxyClientFromStorage: () => mocks,
 }))
 vi.mock('../WebhookCard', () => ({
-  default: ({ webhook, onTogglePause, onRegenerateSecret, onDelete }: any) => (
+  default: ({ webhook, onTogglePause, onRegenerateSecret, onDelete }: WebhookCardContractProps) => (
     <div>
       <span>{webhook.name}</span>
       <span>{webhook.status}</span>

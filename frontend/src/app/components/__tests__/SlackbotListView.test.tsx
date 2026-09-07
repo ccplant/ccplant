@@ -1,6 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SlackbotListView from '../SlackbotListView'
+import type { SlackBot, SlackBotStatus } from '../../../types/slackbot'
+
+interface SlackbotCardContractProps {
+  slackbot: SlackBot
+  onToggleStatus: (id: string, status: SlackBotStatus) => void
+  onDelete: (id: string) => void
+}
 
 const mocks = vi.hoisted(() => ({
   scope: vi.fn(() => ({ scope: 'user' })),
@@ -9,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../../contexts/TeamScopeContext', () => ({ useTeamScope: () => ({ getScopeParams: mocks.scope }) }))
 vi.mock('../../../lib/agentapi-proxy-client', () => ({ createAgentAPIProxyClientFromStorage: () => mocks }))
 vi.mock('../SlackbotCard', () => ({
-  default: ({ slackbot, onToggleStatus, onDelete }: any) => (
+  default: ({ slackbot, onToggleStatus, onDelete }: SlackbotCardContractProps) => (
     <div>
       <span>{slackbot.name}</span><span>{slackbot.status}</span>
       <button onClick={() => onToggleStatus(slackbot.id, 'paused')}>pause</button>
