@@ -1,4 +1,4 @@
-.PHONY: backend-build backend-test frontend-install frontend-test frontend-build docs-install docs-dev docs-build chart-deps chart-test schedule-test test
+.PHONY: backend-build backend-test frontend-install frontend-test frontend-build docs-install docs-dev docs-build chart-deps chart-test schedule-test webhook-test slackbot-test session-manager-test test
 
 HELM ?= helm
 
@@ -45,5 +45,17 @@ chart-test: chart-deps
 schedule-test:
 	cd backend && CGO_ENABLED=1 go test -race -run '^TestScheduleAcceptance_' -count=20 ./internal/modules/schedule
 	cd frontend && bun run test -- src/app/components/__tests__/ScheduleListView.test.tsx
+
+webhook-test:
+	cd backend && CGO_ENABLED=1 go test -race -count=3 ./internal/modules/webhook/...
+	cd frontend && bun run test -- src/app/components/__tests__/WebhookListView.test.tsx
+
+slackbot-test:
+	cd backend && CGO_ENABLED=1 go test -race -count=3 ./internal/modules/slackbot/...
+	cd frontend && bun run test -- src/app/components/__tests__/SlackbotListView.test.tsx
+
+session-manager-test:
+	cd backend && CGO_ENABLED=1 go test -race -count=10 ./internal/modules/sessionmanager/...
+	cd frontend && bun run test -- src/components/settings/__tests__/ExternalSessionManagerList.test.tsx
 
 test: backend-test frontend-test chart-test
