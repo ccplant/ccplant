@@ -4,15 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 type fakeClock struct {
@@ -35,6 +42,39 @@ func (c *fakeClock) Advance(d time.Duration) {
 type sequenceIDs struct {
 	mu  sync.Mutex
 	ids []string
+}
+
+// enforceSecretResourceVersions adds the optimistic concurrency behavior of a
+// real Kubernetes API server, which client-go's object tracker does not model.
+func enforceSecretResourceVersions(client *fake.Clientset) {
+	var mu sync.Mutex
+	version := 0
+	resource := corev1.SchemeGroupVersion.WithResource("secrets")
+	client.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		update := action.(k8stesting.UpdateAction)
+		candidate := update.GetObject().(*corev1.Secret)
+		currentObject, err := client.Tracker().Get(resource, candidate.Namespace, candidate.Name)
+		if err != nil {
+			return true, nil, err
+		}
+		current := currentObject.(*corev1.Secret)
+		if candidate.ResourceVersion != current.ResourceVersion {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Resource: "secrets"},
+				candidate.Name,
+				fmt.Errorf("resource version changed"),
+			)
+		}
+		version++
+		updated := candidate.DeepCopy()
+		updated.ResourceVersion = strconv.Itoa(version)
+		if err := client.Tracker().Update(resource, updated, candidate.Namespace); err != nil {
+			return true, nil, err
+		}
+		return true, updated, nil
+	})
 }
 
 func (g *sequenceIDs) New() string {
@@ -133,9 +173,9 @@ func TestScheduleAcceptance_ConcurrentClaim(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.September, 7, 9, 0, 0, 0, time.UTC)
 	clock := &fakeClock{now: now}
-	ids := &sequenceIDs{ids: []string{"execution-fixed", "session-fixed"}}
 	client := fake.NewSimpleClientset()
-	manager := NewKubernetesManager(client, "default").WithRuntime(clock, ids)
+	enforceSecretResourceVersions(client)
+	manager := NewKubernetesManager(client, "default").WithRuntime(clock, &sequenceIDs{ids: []string{"execution-fixed", "session-fixed"}})
 	due := now.Add(-time.Minute)
 	require.NoError(t, manager.Create(ctx, &Schedule{
 		ID:              "schedule-fixed",
@@ -153,7 +193,7 @@ func TestScheduleAcceptance_ConcurrentClaim(t *testing.T) {
 	var wg sync.WaitGroup
 	workers := []*KubernetesManager{
 		manager,
-		NewKubernetesManager(client, "default").WithRuntime(clock, ids),
+		NewKubernetesManager(client, "default").WithRuntime(clock, &sequenceIDs{ids: []string{"execution-fixed", "session-fixed"}}),
 	}
 	for _, workerManager := range workers {
 		wg.Add(1)
