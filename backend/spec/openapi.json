@@ -4811,13 +4811,20 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Device authorization started",
+          "202": {
+            "description": "Device authorization workload accepted",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "attempt_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": ["starting", "waiting_for_user", "authorized", "denied", "failed", "cancelled"]
+                    },
                     "user_code": {
                       "type": "string",
                       "description": "Code the user must enter at the verification URI"
@@ -4825,11 +4832,20 @@
                     "verification_uri": {
                       "type": "string",
                       "description": "URL the user must visit to authenticate"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "poll_after_ms": {
+                      "type": "integer"
                     }
                   },
                   "required": [
-                    "user_code",
-                    "verification_uri"
+                    "attempt_id",
+                    "status",
+                    "expires_at",
+                    "poll_after_ms"
                   ]
                 }
               }
@@ -4838,9 +4854,38 @@
           "401": {
             "description": "Unauthorized"
           },
+          "409": {
+            "description": "An authorization attempt is already active for this credential target"
+          },
           "503": {
-            "description": "codex CLI not found in PATH"
+            "description": "Device auth workload is unavailable"
           }
+        }
+      }
+    },
+    "/codex/device-auth/{attemptId}": {
+      "get": {
+        "summary": "Get a Codex device authorization attempt",
+        "operationId": "getCodexDeviceAuthAttempt",
+        "tags": ["Codex"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Current attempt state"},
+          "401": {"description": "Unauthorized"},
+          "404": {"description": "Attempt not found"}
+        }
+      },
+      "delete": {
+        "summary": "Cancel a Codex device authorization attempt",
+        "operationId": "cancelCodexDeviceAuthAttempt",
+        "tags": ["Codex"],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "204": {"description": "Attempt cancelled"},
+          "401": {"description": "Unauthorized"},
+          "404": {"description": "Attempt not found"}
         }
       }
     },
