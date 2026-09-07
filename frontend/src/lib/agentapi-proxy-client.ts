@@ -118,12 +118,17 @@ export interface CredentialsMetadata {
 // CodexDeviceAuthConfig is returned by GET /codex/device-auth/config
 export interface CodexDeviceAuthConfig {
   configured: boolean;
+  execution_mode?: 'auth_workload';
 }
 
 // CodexDeviceAuthStart is returned by POST /codex/device-auth
 export interface CodexDeviceAuthStart {
-  user_code: string;
-  verification_uri: string;
+  attempt_id: string;
+  status: 'starting' | 'waiting_for_user' | 'authorized' | 'denied' | 'failed' | 'cancelled';
+  user_code?: string;
+  verification_uri?: string;
+  expires_at: string;
+  poll_after_ms: number;
 }
 
 // CodexDeviceAuthStatus is returned by POST /codex/device-auth/token
@@ -1929,6 +1934,14 @@ export class AgentAPIProxyClient {
     return await this.makeRequest<CodexDeviceAuthStatus>('/codex/device-auth/token', {
       method: 'POST',
     });
+  }
+
+  async getCodexDeviceAuthAttempt(attemptId: string): Promise<CodexDeviceAuthStart> {
+    return await this.makeRequest<CodexDeviceAuthStart>(`/codex/device-auth/${encodeURIComponent(attemptId)}`);
+  }
+
+  async cancelCodexDeviceAuth(attemptId: string): Promise<void> {
+    await this.makeRequest<void>(`/codex/device-auth/${encodeURIComponent(attemptId)}`, { method: 'DELETE' });
   }
 
   // Session sharing operations

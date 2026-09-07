@@ -32,6 +32,7 @@ func init() {
 	rootCmd.AddCommand(cmd.ControlPlaneCmd)
 	rootCmd.AddCommand(cmd.HelmCmd)
 	rootCmd.AddCommand(cmd.KVStoreCmd)
+	rootCmd.AddCommand(cmd.CodexAuthWorkerCmd)
 }
 
 func main() {

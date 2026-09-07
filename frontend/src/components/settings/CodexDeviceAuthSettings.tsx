@@ -27,6 +27,7 @@ export function CodexDeviceAuthSettings({ hasCredentials, onAuthComplete, scope 
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [copied, setCopied] = useState(false)
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const attemptIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     const client = createAgentAPIProxyClientFromStorage()
@@ -49,14 +50,20 @@ export function CodexDeviceAuthSettings({ hasCredentials, onAuthComplete, scope 
   const poll = useCallback(async () => {
     const client = createAgentAPIProxyClientFromStorage()
     try {
-      const result = await client.pollCodexDeviceAuth()
+      const attemptId = attemptIdRef.current
+      if (!attemptId) return
+      const result = await client.getCodexDeviceAuthAttempt(attemptId)
+
+      if (result.status === 'waiting_for_user' && result.user_code && result.verification_uri) {
+        setDeviceAuth({ userCode: result.user_code, verificationUri: result.verification_uri })
+      }
       if (result.status === 'authorized') {
         setPhase('authorized')
         setDeviceAuth(null)
         onAuthComplete?.()
         return
       }
-      if (result.status === 'denied') {
+      if (result.status === 'denied' || result.status === 'failed' || result.status === 'cancelled') {
         setPhase('denied')
         setDeviceAuth(null)
         return
@@ -83,7 +90,10 @@ export function CodexDeviceAuthSettings({ hasCredentials, onAuthComplete, scope 
       const res = await client.startCodexDeviceAuth(
         scope === 'team' ? { scope, team_id: teamId } : { scope }
       )
-      setDeviceAuth({ userCode: res.user_code, verificationUri: res.verification_uri })
+      attemptIdRef.current = res.attempt_id
+      if (res.user_code && res.verification_uri) {
+        setDeviceAuth({ userCode: res.user_code, verificationUri: res.verification_uri })
+      }
       setPhase('polling')
       pollTimerRef.current = setTimeout(poll, POLL_INTERVAL_MS)
     } catch (err) {
@@ -94,8 +104,14 @@ export function CodexDeviceAuthSettings({ hasCredentials, onAuthComplete, scope 
     }
   }
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     clearPollTimer()
+    const attemptId = attemptIdRef.current
+    attemptIdRef.current = null
+    if (attemptId) {
+      const client = createAgentAPIProxyClientFromStorage()
+      try { await client.cancelCodexDeviceAuth(attemptId) } catch { /* best effort */ }
+    }
     setPhase('idle')
     setDeviceAuth(null)
     setError(null)

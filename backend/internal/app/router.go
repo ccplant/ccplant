@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
@@ -120,7 +121,14 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create Codex device auth controller (requires credentials repo)
 	var codexDeviceAuthController *controllers.CodexDeviceAuthController
 	if server.credentialsRepo != nil {
-		codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo)
+		if launcher, ok := server.sessionManager.(codexauth.WorkloadLauncher); ok {
+			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo, launcher)
+		} else {
+			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo)
+		}
+		if server.persistenceClient != nil {
+			codexDeviceAuthController.WithAttemptStore(repositories.NewKubernetesCodexAuthAttemptRepository(server.GetPersistenceClient(), server.namespace))
+		}
 		log.Printf("[ROUTER] Codex device auth controller initialized")
 	}
 
@@ -667,6 +675,10 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/codex/device-auth/config", r.handlers.codexDeviceAuthController.GetConfig, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.POST("/codex/device-auth", r.handlers.codexDeviceAuthController.StartDeviceAuth, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.POST("/codex/device-auth/token", r.handlers.codexDeviceAuthController.PollDeviceAuth, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/codex/device-auth/:attemptId", r.handlers.codexDeviceAuthController.GetAttempt, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/codex/device-auth/:attemptId", r.handlers.codexDeviceAuthController.CancelAttempt, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/internal/codex-device-auth/:attemptId/challenge", r.handlers.codexDeviceAuthController.ReportChallenge)
+		r.echo.POST("/internal/codex-device-auth/:attemptId/result", r.handlers.codexDeviceAuthController.ReportResult)
 		log.Printf("[ROUTES] Codex device auth endpoints registered")
 	}
 
