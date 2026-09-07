@@ -408,6 +408,7 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
+						ManagerID           string                            `json:"manager_id"`
 						Pools               []*sessionrunnercore.PoolSupplier `json:"pools"`
 						RegisteredRunnerIDs *[]string                         `json:"registered_runner_ids"`
 						UpstreamVersion     string                            `json:"upstream_version"`
@@ -416,6 +417,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
 					}
 					_ = resp.Body.Close()
+					if result.ManagerID != "" && result.ManagerID != managerID {
+						log.Printf("[SESSION_MANAGER] Resolved registered manager ID %s (configured as %s)", result.ManagerID, managerID)
+						managerID = result.ManagerID
+						manager.ConfigureSessionRunnerPool(upstream, managerID, token, cfg.SessionManager.RunnerPool)
+					}
 					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)

@@ -1113,18 +1113,33 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		}
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
-		"ok": true, "at": c.now(), "pools": owned,
+		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
 		"registered_runner_ids": registeredRunnerIDs,
 		"upstream_version":      buildinfo.Version,
 	})
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {
+	token := bearerToken(ctx.Request())
 	manager, err := c.store.GetManager(ctx.Request().Context(), ctx.Param("id"))
-	if err != nil || !verifySessionRunnerToken(manager.ConnectionTokenHash, bearerToken(ctx.Request())) {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid manager token")
+	if err == nil && verifySessionRunnerToken(manager.ConnectionTokenHash, token) {
+		return manager, nil
 	}
-	return manager, nil
+
+	// The connection token is the manager credential and remains authoritative
+	// when a manager is re-enrolled under a new generated ID. Resolve the current
+	// ID from that credential so a stale deployment value cannot permanently
+	// break heartbeats and stock reconciliation.
+	managers, listErr := c.store.ListManagers(ctx.Request().Context())
+	if listErr != nil {
+		return nil, sessionRunnerStoreError(listErr)
+	}
+	for _, candidate := range managers {
+		if verifySessionRunnerToken(candidate.ConnectionTokenHash, token) {
+			return candidate, nil
+		}
+	}
+	return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid manager token")
 }
 
 func (c *SessionPoolController) authenticateRunner(ctx echo.Context) (*core.Runner, error) {
