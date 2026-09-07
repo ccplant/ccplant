@@ -1044,6 +1044,10 @@ func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context
 // This also purges sessions stuck in the "claiming" state (stock=claiming) that
 // were abandoned mid-adoption due to a crash or restart.
 func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to resolve allocated runners for purge protection: %w", err)
+	}
 	// Use a set-based selector to match both stock=true (unclaimed) and
 	// stock=claiming (abandoned mid-adoption). Collect session IDs from every
 	// resource kind so a previous partial purge cannot leave orphaned stock
@@ -1098,6 +1102,11 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	var purgeErrs []string
 	sessionIDs := make(map[string]struct{})
 	allocatedSessionIDs := make(map[string]struct{})
+	for _, sessionID := range allocatedRunnerIDs {
+		if sessionID != "" {
+			allocatedSessionIDs[sessionID] = struct{}{}
+		}
+	}
 	for i := range allSessionSvcs.Items {
 		svc := &allSessionSvcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
@@ -1196,6 +1205,43 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(sessionIDs))
 	return nil
+}
+
+// fetchAllocatedRunnerIDs asks the parent control plane which local runners
+// have already accepted an allocation. Direct-runtime runners keep their local
+// Kubernetes resources labeled as stock while serving a session, so the parent
+// runner state is the durable authority that distinguishes them from idle stock.
+func (m *KubernetesSessionManager) fetchAllocatedRunnerIDs(ctx context.Context) ([]string, error) {
+	m.mutex.RLock()
+	parentURL := m.runnerParentURL
+	managerID := m.runnerManagerID
+	managerToken := m.runnerManagerToken
+	m.mutex.RUnlock()
+	if parentURL == "" || managerID == "" || managerToken == "" {
+		return nil, nil
+	}
+
+	endpoint := parentURL + "/internal/session-managers/" + url.PathEscape(managerID) + "/heartbeat"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+managerToken)
+	resp, err := instrumentedHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("parent heartbeat returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		AllocatedRunnerIDs []string `json:"allocated_runner_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode parent heartbeat: %w", err)
+	}
+	return result.AllocatedRunnerIDs, nil
 }
 
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
