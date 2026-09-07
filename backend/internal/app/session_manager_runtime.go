@@ -76,6 +76,17 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if err != nil {
 		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
 	}
+	// Stock workloads belong to the session-manager revision that created them.
+	// Purge the complete inventory at the process boundary instead of relying
+	// only on template-hash reconciliation: a manager replacement can otherwise
+	// leave apparently compatible stock backed by the previous revision.
+	purgeCtx, purgeCancel := context.WithTimeout(parent, 30*time.Second)
+	if err := purgeSessionManagerStock(purgeCtx, manager); err != nil {
+		purgeCancel()
+		_ = manager.Shutdown(5 * time.Second)
+		return nil, fmt.Errorf("purge stock sessions on session-manager startup: %w", err)
+	}
+	purgeCancel()
 	if cfg.SessionManager.RunnerPool != "" {
 		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
 	}
@@ -306,6 +317,14 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+type sessionManagerStockPurger interface {
+	PurgeStockSessions(context.Context) error
+}
+
+func purgeSessionManagerStock(ctx context.Context, purger sessionManagerStockPurger) error {
+	return purger.PurgeStockSessions(ctx)
 }
 
 func buildSessionManagerStatusEventRepository(cfg *config.Config, remoteMode bool) portrepos.StatusEventRepository {

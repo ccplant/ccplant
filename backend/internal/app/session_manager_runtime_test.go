@@ -48,6 +48,34 @@ func TestRemoteSessionManagerStoresDoNotUseRedis(t *testing.T) {
 	}
 }
 
+type fakeSessionManagerStockPurger struct {
+	called bool
+	err    error
+}
+
+func (f *fakeSessionManagerStockPurger) PurgeStockSessions(context.Context) error {
+	f.called = true
+	return f.err
+}
+
+func TestPurgeSessionManagerStockPurgesCompleteInventory(t *testing.T) {
+	purger := &fakeSessionManagerStockPurger{}
+	if err := purgeSessionManagerStock(context.Background(), purger); err != nil {
+		t.Fatal(err)
+	}
+	if !purger.called {
+		t.Fatal("PurgeStockSessions was not called")
+	}
+}
+
+func TestPurgeSessionManagerStockReturnsPurgeFailure(t *testing.T) {
+	want := errors.New("kubernetes unavailable")
+	purger := &fakeSessionManagerStockPurger{err: want}
+	if err := purgeSessionManagerStock(context.Background(), purger); !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
 type fakeRunnerInfrastructure struct {
 	idle, total int
 	created     int
