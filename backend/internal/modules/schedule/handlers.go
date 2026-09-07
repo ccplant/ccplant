@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -20,6 +19,8 @@ type Handlers struct {
 	sessionManager  portrepos.SessionManager
 	launcher        *sessionuc.LaunchUseCase
 	defaultTimezone string
+	clock           Clock
+	ids             IDGenerator
 }
 
 // NewHandlers creates a new Handlers instance
@@ -31,6 +32,8 @@ func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, memor
 			WithMemoryRepository(memoryRepo).
 			WithSessionProfileRepository(sessionProfileRepo),
 		defaultTimezone: "Asia/Tokyo",
+		clock:           realClock{},
+		ids:             uuidGenerator{},
 	}
 }
 
@@ -43,7 +46,21 @@ func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionMa
 			WithMemoryRepository(memoryRepo).
 			WithSessionProfileRepository(sessionProfileRepo),
 		defaultTimezone: defaultTimezone,
+		clock:           realClock{},
+		ids:             uuidGenerator{},
 	}
+}
+
+// WithRuntime replaces nondeterministic runtime dependencies. It is intended
+// for tests and other controlled execution environments.
+func (h *Handlers) WithRuntime(clock Clock, ids IDGenerator) *Handlers {
+	if clock != nil {
+		h.clock = clock
+	}
+	if ids != nil {
+		h.ids = ids
+	}
+	return h
 }
 
 // GetName returns the name of this handler for logging
@@ -200,7 +217,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 
 	// Create schedule
 	schedule := &Schedule{
-		ID:            uuid.New().String(),
+		ID:            h.ids.New(),
 		Name:          req.Name,
 		UserID:        userID,
 		Scope:         req.Scope,
@@ -214,7 +231,7 @@ func (h *Handlers) CreateSchedule(c echo.Context) error {
 	}
 
 	// Calculate next execution time
-	nextAt, err := CalculateNextExecution(schedule, time.Now())
+	nextAt, err := CalculateNextExecution(schedule, h.clock.Now())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "failed to calculate next execution: "+err.Error())
 	}
@@ -416,7 +433,7 @@ func (h *Handlers) UpdateSchedule(c echo.Context) error {
 
 	// Recalculate next execution if schedule changed
 	if req.ScheduledAt != nil || req.CronExpr != nil || req.Status != nil {
-		nextAt, err := CalculateNextExecution(schedule, time.Now())
+		nextAt, err := CalculateNextExecution(schedule, h.clock.Now())
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "failed to calculate next execution: "+err.Error())
 		}
@@ -494,7 +511,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	// For the Teams field we prefer the live auth context (most up-to-date team
 	// memberships), falling back to the memberships captured at schedule creation time.
 	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
-	sessionID := uuid.New().String()
+	sessionID := h.ids.New()
 
 	// Resolve user teams: prefer live auth context, fall back to saved UserTeams
 	var userTeams []string
@@ -576,7 +593,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 		// Record failed execution
 		record := ExecutionRecord{
-			ExecutedAt: time.Now(),
+			ExecutedAt: h.clock.Now(),
 			Status:     "failed",
 			Error:      err.Error(),
 		}
@@ -587,7 +604,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Record successful execution
 	record := ExecutionRecord{
-		ExecutedAt:    time.Now(),
+		ExecutedAt:    h.clock.Now(),
 		SessionID:     result.SessionID,
 		Status:        "success",
 		SessionReused: result.SessionReused,
