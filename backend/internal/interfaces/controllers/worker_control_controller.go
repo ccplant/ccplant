@@ -125,6 +125,8 @@ type workerSessionLister interface {
 	ListSessionsContext(context.Context, entities.SessionFilter) ([]entities.Session, error)
 }
 
+const defaultOneshotSessionTTL = "1m"
+
 type workerSessionInfo struct {
 	ID            string                 `json:"id"`
 	UserID        string                 `json:"user_id"`
@@ -133,6 +135,7 @@ type workerSessionInfo struct {
 	Tags          map[string]string      `json:"tags"`
 	Status        string                 `json:"status"`
 	StartedAt     time.Time              `json:"started_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 	LastMessageAt time.Time              `json:"last_message_at"`
 }
 
@@ -143,10 +146,20 @@ func workerSessionInfoFrom(session entities.Session) workerSessionInfo {
 	}
 	if provider, ok := session.(interface {
 		Request() *entities.RunServerRequest
-	}); ok && provider.Request() != nil && provider.Request().SessionTTL != "" {
-		tags["session_ttl"] = provider.Request().SessionTTL
+	}); ok && provider.Request() != nil {
+		if provider.Request().SessionTTL != "" {
+			tags["session_ttl"] = provider.Request().SessionTTL
+		}
+		// oneshot is an internal cleanup hint. ACP agents do not execute Claude's
+		// Stop hook, so the worker applies its configured TTL to these sessions.
+		if provider.Request().Oneshot {
+			tags["oneshot"] = "true"
+			if provider.Request().SessionTTL == "" {
+				tags["session_ttl"] = defaultOneshotSessionTTL
+			}
+		}
 	}
-	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), LastMessageAt: session.LastMessageAt()}
+	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), UpdatedAt: session.UpdatedAt(), LastMessageAt: session.LastMessageAt()}
 }
 
 func NewWorkerControlController(manager repositories.SessionManager, token string, teams workerTeamEnsurer, routes repositories.SessionRouteRepository) *WorkerControlController {

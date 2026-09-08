@@ -212,8 +212,8 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 }
 
 // pruneSessionsWithTTL scans all agentapi-proxy sessions (regardless of Slackbot label)
-// that have the agentapi.proxy/session-ttl annotation set, and deletes those whose
-// last-message-at is older than the annotation value.  Slackbot sessions are skipped
+// that have an explicit session TTL or are marked oneshot. Explicit TTLs take priority;
+// oneshot sessions are deleted one minute after their completed turn. Slackbot sessions are skipped
 // here because they are already handled by pruneStaleSlackbotSessions.
 func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	now := time.Now()
@@ -235,6 +235,10 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 		if ttlStr == "" {
 			continue
 		}
+		oneshot := session.Tags()["oneshot"] == "true"
+		if oneshot && session.Status() != "stopped" {
+			continue
+		}
 
 		ttl, err := time.ParseDuration(ttlStr)
 		if err != nil {
@@ -247,6 +251,9 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 		threshold := now.Add(-ttl)
 
 		refTime := session.LastMessageAt()
+		if oneshot {
+			refTime = session.UpdatedAt()
+		}
 		if refTime.IsZero() {
 			refTime = session.StartedAt()
 		}

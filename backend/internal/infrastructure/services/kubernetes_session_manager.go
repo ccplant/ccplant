@@ -616,14 +616,6 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 		}
 	}
 
-	// Create oneshot settings Secret if oneshot is enabled
-	if req.Oneshot {
-		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret: %v", err)
-			// Continue anyway - session will work without oneshot hook
-		}
-	}
-
 	// Build session settings once for the provision request and restart Secret.
 	// When req.ProvisionSettings is provided (small-cluster / forwarding mode), use it
 	// directly instead of resolving secrets from this cluster.
@@ -1306,13 +1298,6 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
 		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
 			log.Printf("[K8S_SESSION] Warning: failed to ensure service account for team %s: %v", req.TeamID, err)
-		}
-	}
-
-	// Create oneshot settings Secret if needed.
-	if req.Oneshot {
-		if err := m.createOneshotSettingsSecret(ctx, session); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create oneshot settings secret for stock session %s: %v", stockID, err)
 		}
 	}
 
@@ -4997,8 +4982,14 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 					session.SetStatus("running")
 					log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
 				case "stable":
-					session.SetStatus("active")
-					log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+					completedOneshot := session.Status() == "running" && session.Request() != nil && session.Request().Oneshot
+					if completedOneshot {
+						session.SetStatus("stopped")
+						log.Printf("[AGENT_STATUS] Session %s completed oneshot turn; waiting for TTL cleanup", session.id)
+					} else {
+						session.SetStatus("active")
+						log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+					}
 				}
 			case "message_update":
 				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
@@ -6813,11 +6804,6 @@ func (m *KubernetesSessionManager) resolveSettings(
 	// 4. session profile
 	if req.ProfileMCPServers != nil && !req.ProfileMCPServers.IsEmpty() {
 		layers = append(layers, settingsToMCPProfilePatch(req.ProfileMCPServers))
-	}
-
-	// 5. oneshot (highest priority)
-	if req.Oneshot {
-		appendIfExists(fmt.Sprintf("%s-oneshot-settings", session.ServiceName()))
 	}
 
 	resolved := settingspatch.Resolve(layers...)
