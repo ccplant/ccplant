@@ -425,6 +425,8 @@ sessionManager:
         key: secret-access-key
   # GitHub material copied into Session Pod Secrets. API OAuth/application
   # credentials remain independently configured at the root github key.
+  # GitHub App settings and Enterprise URLs fall back to the root github key
+  # for compatibility with deployments that predate the dedicated manager.
   github:
     token: ""
     tokenRef:
