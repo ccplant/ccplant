@@ -119,6 +119,31 @@ func TestKVStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
 	require.True(t, errors.Is(err, core.ErrConflict))
 }
 
+func TestKVStoreClaimMatchesDinDCapability(t *testing.T) {
+	ctx := context.Background()
+	store := newVersionedTestStore(t)
+	require.NoError(t, store.CreateRunner(ctx, &core.Runner{
+		ID: "plain-runner", ManagerID: "manager-a", Pool: "linux",
+		Capabilities: map[string]string{"dind": "false"},
+	}))
+	require.NoError(t, store.CreateRunner(ctx, &core.Runner{
+		ID: "dind-runner", ManagerID: "manager-a", Pool: "linux",
+		Capabilities: map[string]string{"dind": "true"},
+	}))
+	require.NoError(t, store.Enqueue(ctx, &core.Allocation{
+		SessionID: "docker-session", Pool: "linux",
+		Requirements: map[string]string{"dind": "true"},
+	}))
+
+	_, found, err := store.ClaimNext(ctx, "linux", "plain-runner", time.Minute)
+	require.NoError(t, err)
+	require.False(t, found)
+	allocation, found, err := store.ClaimNext(ctx, "linux", "dind-runner", time.Minute)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "docker-session", allocation.SessionID)
+}
+
 func newVersionedTestStore(t *testing.T) *Store {
 	t.Helper()
 	return NewStore(&versionedMemoryStore{records: make(map[string]kvstore.Record)}, "test")

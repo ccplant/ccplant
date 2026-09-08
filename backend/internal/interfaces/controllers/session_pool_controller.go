@@ -944,10 +944,11 @@ func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {
 }
 
 type runnerRegisterRequest struct {
-	RunnerID  string `json:"runner_id"`
-	Pool      string `json:"pool"`
-	PodName   string `json:"pod_name,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
+	RunnerID     string            `json:"runner_id"`
+	Pool         string            `json:"pool"`
+	PodName      string            `json:"pod_name,omitempty"`
+	Namespace    string            `json:"namespace,omitempty"`
+	Capabilities map[string]string `json:"capabilities,omitempty"`
 }
 
 func (c *SessionPoolController) RegisterRunner(ctx echo.Context) error {
@@ -971,7 +972,7 @@ func (c *SessionPoolController) RegisterRunner(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create runner token")
 	}
-	runner := &core.Runner{ID: input.RunnerID, ManagerID: manager.ID, Pool: pool.Pool, TokenHash: tokenHash, Status: core.RunnerIdle, PodName: input.PodName, Namespace: input.Namespace}
+	runner := &core.Runner{ID: input.RunnerID, ManagerID: manager.ID, Pool: pool.Pool, Capabilities: input.Capabilities, TokenHash: tokenHash, Status: core.RunnerIdle, PodName: input.PodName, Namespace: input.Namespace}
 	if err := c.store.CreateRunner(ctx.Request().Context(), runner); err != nil {
 		return sessionRunnerStoreError(err)
 	}

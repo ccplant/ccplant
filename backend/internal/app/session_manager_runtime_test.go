@@ -77,8 +77,10 @@ func TestPurgeSessionManagerStockReturnsPurgeFailure(t *testing.T) {
 }
 
 type fakeRunnerInfrastructure struct {
-	idle, total int
+	idle        map[bool]int
+	total       int
 	created     int
+	createdDinD []bool
 	registered  map[string]struct{}
 	operations  []string
 }
@@ -89,16 +91,17 @@ func (f *fakeRunnerInfrastructure) DeleteRunnerSessionsNotRegistered(_ context.C
 	return nil
 }
 
-func (f *fakeRunnerInfrastructure) CountStockSessionsForPool(context.Context, string, bool) (int, error) {
-	return f.idle, nil
+func (f *fakeRunnerInfrastructure) CountStockSessionsForPool(_ context.Context, _ string, dind bool) (int, error) {
+	return f.idle[dind], nil
 }
 
 func (f *fakeRunnerInfrastructure) CountRunnerSessionsForPool(context.Context, string) (int, error) {
 	return f.total, nil
 }
 
-func (f *fakeRunnerInfrastructure) CreateStockSessionForPool(context.Context, string, bool) error {
+func (f *fakeRunnerInfrastructure) CreateStockSessionForPool(_ context.Context, _ string, dind bool) error {
 	f.created++
+	f.createdDinD = append(f.createdDinD, dind)
 	f.operations = append(f.operations, "create")
 	return nil
 }
@@ -110,11 +113,14 @@ func TestReconcileSessionRunnerHeartbeatCleansBeforeReplenishing(t *testing.T) {
 		Pool: "managed", Enabled: true, MinIdle: 1, MaxRunners: 20,
 	}}, &registered)
 
-	if len(manager.operations) != 2 || manager.operations[0] != "cleanup" || manager.operations[1] != "create" {
-		t.Fatalf("operations = %v, want [cleanup create]", manager.operations)
+	if len(manager.operations) != 3 || manager.operations[0] != "cleanup" {
+		t.Fatalf("operations = %v, want cleanup followed by two creates", manager.operations)
 	}
-	if manager.created != 1 {
-		t.Fatalf("created %d runners, want 1", manager.created)
+	if manager.created != 2 {
+		t.Fatalf("created %d runners, want 2", manager.created)
+	}
+	if len(manager.createdDinD) != 2 || manager.createdDinD[0] || !manager.createdDinD[1] {
+		t.Fatalf("created DinD variants = %v, want [false true]", manager.createdDinD)
 	}
 }
 
@@ -126,19 +132,22 @@ func TestReconcileSessionRunnerPoolsUsesInfrastructureInventory(t *testing.T) {
 		// authoritative for capacity reconciliation.
 		IdleRunners: 3, TotalRunners: 3,
 	}})
-	if manager.created != 3 {
-		t.Fatalf("created %d runners, want 3", manager.created)
+	if manager.created != 6 {
+		t.Fatalf("created %d runners, want 6", manager.created)
 	}
 }
 
 func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
-	manager := &fakeRunnerInfrastructure{idle: 1, total: 1}
+	manager := &fakeRunnerInfrastructure{idle: map[bool]int{false: 1}, total: 1}
 	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{{
 		Pool: "managed", Enabled: true, MinIdle: 1, MaxRunners: 20,
 		IdleRunners: 0, TotalRunners: 0,
 	}})
 	if manager.created != 1 {
 		t.Fatalf("created %d runners, want 1", manager.created)
+	}
+	if len(manager.createdDinD) != 1 || !manager.createdDinD[0] {
+		t.Fatalf("created DinD variants = %v, want [true]", manager.createdDinD)
 	}
 }
 

@@ -104,16 +104,19 @@ const (
 )
 
 type Runner struct {
-	ID        string       `json:"id"`
-	ManagerID string       `json:"manager_id"`
-	Pool      string       `json:"pool"`
-	TokenHash string       `json:"token_hash,omitempty"`
-	Status    RunnerStatus `json:"status"`
-	PodName   string       `json:"pod_name,omitempty"`
-	Namespace string       `json:"namespace,omitempty"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	LastSeen  time.Time    `json:"last_seen,omitempty"`
+	ID        string `json:"id"`
+	ManagerID string `json:"manager_id"`
+	Pool      string `json:"pool"`
+	// Capabilities describes workload features prepared before this runner was
+	// registered. Allocations are only claimed by runners with matching values.
+	Capabilities map[string]string `json:"capabilities,omitempty"`
+	TokenHash    string            `json:"token_hash,omitempty"`
+	Status       RunnerStatus      `json:"status"`
+	PodName      string            `json:"pod_name,omitempty"`
+	Namespace    string            `json:"namespace,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	LastSeen     time.Time         `json:"last_seen,omitempty"`
 }
 
 type AllocationStatus string
