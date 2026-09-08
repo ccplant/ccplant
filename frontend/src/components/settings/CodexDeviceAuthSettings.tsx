@@ -88,7 +88,7 @@ export function CodexDeviceAuthSettings({ hasCredentials, onAuthComplete, scope 
     const client = createAgentAPIProxyClientFromStorage()
     try {
       const res = await client.startCodexDeviceAuth(
-        scope === 'team' ? { scope, team_id: teamId } : { scope }
+        scope === 'team' ? { scope, team_id: teamId, replace: true } : { scope, replace: true }
       )
       attemptIdRef.current = res.attempt_id
       if (res.user_code && res.verification_uri) {
