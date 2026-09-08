@@ -80,16 +80,17 @@ func TestRedisStoreKeepsLongRunningRequestOwnership(t *testing.T) {
 	store, server := newTestRedisStore(t)
 	ctx := context.Background()
 
-	_, err := store.EnqueueCommand(ctx, "manager-a", core.Command{ID: "request-a"})
+	_, err := store.EnqueueCommand(ctx, "manager-a", core.Command{ID: "request-a", Deadline: time.Now().Add(2 * time.Hour)})
 	require.NoError(t, err)
 
-	server.FastForward(6 * time.Minute)
+	server.FastForward(90 * time.Minute)
 	owned, err := store.RequestBelongsToManager(ctx, "request-a", "manager-a")
 	require.NoError(t, err)
 	require.True(t, owned)
 
 	ttl := server.TTL(requestOwnerKey("request-a"))
-	require.Greater(t, ttl, 23*time.Hour)
+	require.Greater(t, ttl, 34*time.Minute)
+	require.LessOrEqual(t, ttl, 35*time.Minute)
 }
 
 func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
@@ -116,18 +117,26 @@ func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
 	require.Contains(t, server.Keys(), frameDedupKey("request-a"))
 	for _, key := range []string{responseKey("request-a"), frameDedupKey("request-a"), requestOwnerKey("request-a")} {
 		require.Positive(t, server.TTL(key))
-		require.LessOrEqual(t, server.TTL(key), completedStreamTTL)
+		require.LessOrEqual(t, server.TTL(key), streamTTL)
 	}
 }
 
-func TestRedisStoreKeepsActiveFrameTTL(t *testing.T) {
+func TestRedisStoreUsesShortFrameTTL(t *testing.T) {
 	store, server := newTestRedisStore(t)
 	ctx := context.Background()
 
 	_, err := store.AppendFrames(ctx, "request-a", []core.ResponseFrame{{ID: "frame-a", RequestID: "request-a"}})
 	require.NoError(t, err)
-	require.Greater(t, server.TTL(responseKey("request-a")), 23*time.Hour)
-	require.Greater(t, server.TTL(frameDedupKey("request-a")), 23*time.Hour)
+	require.LessOrEqual(t, server.TTL(responseKey("request-a")), streamTTL)
+	require.LessOrEqual(t, server.TTL(frameDedupKey("request-a")), streamTTL)
+}
+
+func TestRequestOwnerTTLTracksDeadline(t *testing.T) {
+	now := time.Date(2026, time.September, 8, 0, 0, 0, 0, time.UTC)
+	require.Equal(t, 35*time.Minute, requestOwnerTTL(now.Add(30*time.Minute), now))
+	require.Equal(t, streamTTL, requestOwnerTTL(now.Add(-time.Minute), now))
+	require.Equal(t, maxRequestOwnerTTL, requestOwnerTTL(time.Time{}, now))
+	require.Equal(t, maxRequestOwnerTTL, requestOwnerTTL(now.Add(48*time.Hour), now))
 }
 
 func TestRedisStoreAckDoesNotMoveBackward(t *testing.T) {

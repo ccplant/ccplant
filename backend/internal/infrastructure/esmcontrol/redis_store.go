@@ -12,13 +12,14 @@ import (
 
 const (
 	maxLen = int64(10000)
-	// A direct-runtime request may legitimately run without producing frames
-	// for longer than the manager heartbeat window. Keep its command, response,
-	// and ownership records long enough to survive Cloud Run SSE reconnects and
-	// long-running tools. The bounded streams and TTL still provide cleanup.
-	streamTTL          = 24 * time.Hour
-	completedStreamTTL = 30 * time.Minute
-	connectionTTL      = 75 * time.Second
+	// Response frames are only a reconnect buffer. Canonical ACP history remains
+	// available from the runtime's /messages endpoint after these keys expire.
+	streamTTL     = 5 * time.Minute
+	connectionTTL = 75 * time.Second
+	// Ownership must remain valid until a long-running request can upload its
+	// first frame. Bound missing/invalid deadlines while respecting valid ones.
+	requestOwnerGrace  = 5 * time.Minute
+	maxRequestOwnerTTL = 24 * time.Hour
 )
 
 type RedisStore struct{ client *redis.Client }
@@ -59,9 +60,8 @@ end
 return ''
 `
 
-var refreshOwnerScript = redis.NewScript(`
+var checkOwnerScript = redis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then
-  redis.call('EXPIRE', KEYS[1], ARGV[2])
   return 1
 end
 return 0
@@ -110,7 +110,7 @@ func (s *RedisStore) EnqueueCommand(ctx context.Context, managerID string, comma
 	pipe := s.client.Pipeline()
 	idCommand := pipe.XAdd(ctx, &redis.XAddArgs{Stream: key, MaxLen: maxLen, Approx: true, Values: map[string]interface{}{"command": payload}})
 	pipe.Expire(ctx, key, streamTTL)
-	pipe.Set(ctx, requestOwnerKey(command.ID), managerID, streamTTL)
+	pipe.Set(ctx, requestOwnerKey(command.ID), managerID, requestOwnerTTL(command.Deadline, time.Now()))
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", fmt.Errorf("append ESM command: %w", err)
 	}
@@ -158,13 +158,11 @@ func (s *RedisStore) AppendFrames(ctx context.Context, requestID string, frames 
 		if err != nil {
 			return "", err
 		}
-		ttl := streamTTL
 		completed := 0
 		if frame.Done {
-			ttl = completedStreamTTL
 			completed = 1
 		}
-		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID), requestOwnerKey(requestID)}, payload, maxLen, int64(ttl/time.Second), frame.ID, completed))
+		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID), requestOwnerKey(requestID)}, payload, maxLen, int64(streamTTL/time.Second), frame.ID, completed))
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", fmt.Errorf("append ESM response frames: %w", err)
@@ -178,6 +176,20 @@ func (s *RedisStore) AppendFrames(ctx context.Context, requestID string, frames 
 		}
 	}
 	return last, nil
+}
+
+func requestOwnerTTL(deadline, now time.Time) time.Duration {
+	if deadline.IsZero() {
+		return maxRequestOwnerTTL
+	}
+	ttl := deadline.Sub(now) + requestOwnerGrace
+	if ttl < streamTTL {
+		return streamTTL
+	}
+	if ttl > maxRequestOwnerTTL {
+		return maxRequestOwnerTTL
+	}
+	return ttl
 }
 
 func (s *RedisStore) ReadFrames(ctx context.Context, requestID, after string, wait time.Duration, count int64) ([]core.ResponseFrame, error) {
@@ -199,12 +211,9 @@ func (s *RedisStore) ReadFrames(ctx context.Context, requestID, after string, wa
 
 func (s *RedisStore) RequestBelongsToManager(ctx context.Context, requestID, managerID string) (bool, error) {
 	key := requestOwnerKey(requestID)
-	// A successful upload proves that the request is still active. Refresh its
-	// lease so a long-running request cannot start returning 403 midway through
-	// execution.
-	owned, err := refreshOwnerScript.Run(ctx, s.client, []string{key}, managerID, int64(streamTTL/time.Second)).Bool()
+	owned, err := checkOwnerScript.Run(ctx, s.client, []string{key}, managerID).Bool()
 	if err != nil {
-		return false, fmt.Errorf("refresh ESM request owner: %w", err)
+		return false, fmt.Errorf("check ESM request owner: %w", err)
 	}
 	return owned, nil
 }
