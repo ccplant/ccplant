@@ -94,7 +94,7 @@ func TestCodexDeviceAuthWorkloadFlow(t *testing.T) {
 	startContext.Set("internal_user", user)
 	require.NoError(t, controller.StartDeviceAuth(startContext))
 	assert.Equal(t, http.StatusAccepted, startRecorder.Code)
-	require.NotEmpty(t, launcher.request.AttemptID)
+	require.Regexp(t, `^cda-[0-9a-f]{32}$`, launcher.request.AttemptID)
 	assert.Equal(t, "https://proxy.example/internal/codex-device-auth", launcher.request.CallbackURL)
 
 	challengeRecorder := httptest.NewRecorder()
