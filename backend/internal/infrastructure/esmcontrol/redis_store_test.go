@@ -93,7 +93,7 @@ func TestRedisStoreKeepsLongRunningRequestOwnership(t *testing.T) {
 }
 
 func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
-	store, _ := newTestRedisStore(t)
+	store, server := newTestRedisStore(t)
 	ctx := context.Background()
 	frames := []core.ResponseFrame{
 		{ID: "frame-a", RequestID: "request-a", Sequence: 1, Body: []byte("one")},
@@ -110,6 +110,8 @@ func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Equal(t, int64(1), got[0].Sequence)
 	require.Equal(t, int64(2), got[1].Sequence)
+	require.ElementsMatch(t, []string{responseKey("request-a"), frameDedupKey("request-a")}, server.Keys())
+	require.Positive(t, server.TTL(frameDedupKey("request-a")))
 }
 
 func TestRedisStoreAckDoesNotMoveBackward(t *testing.T) {

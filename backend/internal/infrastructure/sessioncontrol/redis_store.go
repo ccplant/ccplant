@@ -30,14 +30,15 @@ func commandAckKey(sessionID string) string {
 func connectionKey(sessionID string) string {
 	return "agentapi:session:{" + sessionID + "}:control-connection"
 }
-func eventDedupKey(sessionID, eventID string) string {
-	return "agentapi:session:{" + sessionID + "}:event:" + eventID
+func eventDedupKey(sessionID string) string {
+	return "agentapi:session:{" + sessionID + "}:event-dedup"
 }
 
 var appendEventScript = redis.NewScript(`
-if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
+if redis.call('SADD', KEYS[2], ARGV[4]) == 1 then
   local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[2], '*', 'event', ARGV[1])
   redis.call('EXPIRE', KEYS[1], ARGV[3])
+  redis.call('EXPIRE', KEYS[2], ARGV[3])
   return id
 end
 return ''
@@ -122,7 +123,7 @@ func (s *RedisStore) AppendEvents(ctx context.Context, sessionID string, events 
 		if err != nil {
 			return "", fmt.Errorf("marshal session event: %w", err)
 		}
-		id, err := appendEventScript.Run(ctx, s.client, []string{key, eventDedupKey(sessionID, event.ID)}, payload, defaultMaxLen, int64(streamTTL/time.Second)).Text()
+		id, err := appendEventScript.Run(ctx, s.client, []string{key, eventDedupKey(sessionID)}, payload, defaultMaxLen, int64(streamTTL/time.Second), event.ID).Text()
 		if err != nil {
 			return "", fmt.Errorf("append session event: %w", err)
 		}

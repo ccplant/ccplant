@@ -41,14 +41,15 @@ func responseKey(requestID string) string {
 func requestOwnerKey(requestID string) string {
 	return "agentapi:esm-request:{" + requestID + "}:manager"
 }
-func frameDedupKey(requestID, frameID string) string {
-	return "agentapi:esm-request:{" + requestID + "}:frame:" + frameID
+func frameDedupKey(requestID string) string {
+	return "agentapi:esm-request:{" + requestID + "}:frame-dedup"
 }
 
 const appendFrameScriptSource = `
-if redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[3]) then
+if redis.call('SADD', KEYS[2], ARGV[4]) == 1 then
   local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[2], '*', 'frame', ARGV[1])
   redis.call('EXPIRE', KEYS[1], ARGV[3])
+  redis.call('EXPIRE', KEYS[2], ARGV[3])
   return id
 end
 return ''
@@ -153,7 +154,7 @@ func (s *RedisStore) AppendFrames(ctx context.Context, requestID string, frames 
 		if err != nil {
 			return "", err
 		}
-		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID, frame.ID)}, payload, maxLen, int64(streamTTL/time.Second)))
+		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID)}, payload, maxLen, int64(streamTTL/time.Second), frame.ID))
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", fmt.Errorf("append ESM response frames: %w", err)
