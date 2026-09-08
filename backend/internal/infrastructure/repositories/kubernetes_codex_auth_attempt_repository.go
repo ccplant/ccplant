@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -101,7 +102,22 @@ func (r *KubernetesCodexAuthAttemptRepository) ActiveByCredential(ctx context.Co
 	if err != nil {
 		return nil, err
 	}
-	return r.Get(ctx, string(lock.Data["attempt_id"]))
+	attempt, err := r.Get(ctx, string(lock.Data["attempt_id"]))
+	if err != nil {
+		return nil, err
+	}
+	if !attempt.ExpiresAt.IsZero() && !attempt.ExpiresAt.After(time.Now()) {
+		attempt.Status = codexauth.StatusFailed
+		attempt.TokenHash = nil
+		// Updating the durable record is best effort: an expired attempt must not
+		// retain the credential lock indefinitely if its record cannot be updated.
+		_ = r.Update(ctx, attempt)
+		if err := r.Release(ctx, attempt); err != nil {
+			return nil, fmt.Errorf("release expired device auth attempt: %w", err)
+		}
+		return nil, codexauth.ErrAttemptNotFound
+	}
+	return attempt, nil
 }
 
 func (r *KubernetesCodexAuthAttemptRepository) LatestByUser(ctx context.Context, userID string) (*codexauth.Attempt, error) {
