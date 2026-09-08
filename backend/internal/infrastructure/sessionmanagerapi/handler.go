@@ -17,7 +17,6 @@ import (
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -103,34 +102,6 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.GET("/allocations/external/next", h.nextExternalAllocation)
 	g.POST("/allocations/external/:sessionId/result", h.completeExternalAllocation)
 	g.POST("/allocations/external/:sessionId", h.submitExternalAllocation)
-	g.POST("/codex-device-auth", h.startCodexDeviceAuth)
-	g.DELETE("/codex-device-auth/:attemptId", h.cancelCodexDeviceAuth)
-}
-
-func (h *Handler) startCodexDeviceAuth(c echo.Context) error {
-	launcher, ok := h.manager.(codexauth.WorkloadLauncher)
-	if !ok {
-		return unsupported(c, "Codex device auth workloads are not supported")
-	}
-	var request codexauth.WorkloadRequest
-	if err := decodeJSON(c, &request); err != nil {
-		return badRequest(c, err)
-	}
-	if err := launcher.StartCodexDeviceAuth(c.Request().Context(), request); err != nil {
-		return internalError(c, err)
-	}
-	return c.NoContent(http.StatusAccepted)
-}
-
-func (h *Handler) cancelCodexDeviceAuth(c echo.Context) error {
-	launcher, ok := h.manager.(codexauth.WorkloadLauncher)
-	if !ok {
-		return unsupported(c, "Codex device auth workloads are not supported")
-	}
-	if err := launcher.CancelCodexDeviceAuth(c.Request().Context(), c.Param("attemptId")); err != nil {
-		return internalError(c, err)
-	}
-	return c.NoContent(http.StatusNoContent)
 }
 
 func (h *Handler) authenticate(next echo.HandlerFunc) echo.HandlerFunc {

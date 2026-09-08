@@ -26,6 +26,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
@@ -65,6 +66,14 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.GET("", h.ListSessions)
 	g.GET("/:sessionId", h.GetSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
+
+	// Codex device auth workloads are manager-level operations addressed by the
+	// parent through the outbound control tunnel, exactly like session deletion.
+	// They use the same HMAC middleware as /api/v1/sessions.
+	auth := e.Group("/api/v1/codex-device-auth")
+	auth.Use(h.hmacMiddleware())
+	auth.POST("", h.StartCodexDeviceAuth)
+	auth.DELETE("/:attemptId", h.CancelCodexDeviceAuth)
 
 	// Runtime traffic is addressed by the parent as
 	// /<remote-id>/<agent-endpoint>, rather than through the management API
@@ -280,6 +289,48 @@ func (h *Handlers) ListSessions(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, ListSessionsResponse{Sessions: infos})
+}
+
+// StartCodexDeviceAuth handles POST /api/v1/codex-device-auth.
+//
+// Body: codexauth.WorkloadRequest JSON. The manager creates a purpose-built,
+// short-lived authentication Pod; the worker reports its challenge and result
+// directly back to the parent callback URL carried in the request.
+func (h *Handlers) StartCodexDeviceAuth(c echo.Context) error {
+	launcher, ok := h.sessionManager.(codexauth.WorkloadLauncher)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "codex device auth workloads are not supported")
+	}
+	var request codexauth.WorkloadRequest
+	if err := c.Bind(&request); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+	}
+	if request.AttemptID == "" || request.CallbackURL == "" || request.Token == "" || request.ExpiresAt.IsZero() {
+		return echo.NewHTTPError(http.StatusBadRequest, "attempt_id, callback_url, token, and expires_at are required")
+	}
+	if err := launcher.StartCodexDeviceAuth(c.Request().Context(), request); err != nil {
+		log.Printf("[SESSION_MANAGER] Failed to start codex device auth attempt %s: %v", request.AttemptID, err)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to start codex device auth workload: %v", err))
+	}
+	log.Printf("[SESSION_MANAGER] Started codex device auth attempt %s", request.AttemptID)
+	return c.NoContent(http.StatusAccepted)
+}
+
+// CancelCodexDeviceAuth handles DELETE /api/v1/codex-device-auth/:attemptId.
+func (h *Handlers) CancelCodexDeviceAuth(c echo.Context) error {
+	launcher, ok := h.sessionManager.(codexauth.WorkloadLauncher)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "codex device auth workloads are not supported")
+	}
+	attemptID := c.Param("attemptId")
+	if attemptID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "attemptId is required")
+	}
+	if err := launcher.CancelCodexDeviceAuth(c.Request().Context(), attemptID); err != nil {
+		log.Printf("[SESSION_MANAGER] Failed to cancel codex device auth attempt %s: %v", attemptID, err)
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to cancel codex device auth workload: %v", err))
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // GetSession handles GET /api/v1/sessions/:sessionId.

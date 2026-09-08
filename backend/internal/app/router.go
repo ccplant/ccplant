@@ -14,7 +14,6 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
@@ -121,11 +120,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Credentials controller initialized")
 	}
 
-	// Create Codex device auth controller (requires credentials repo)
+	// Create Codex device auth controller (requires credentials repo).
+	// Workloads are always delegated to an external session manager over the
+	// outbound control tunnel; there is deliberately no in-process launcher.
 	var codexDeviceAuthController *controllers.CodexDeviceAuthController
 	if server.credentialsRepo != nil {
-		if launcher, ok := server.sessionManager.(codexauth.WorkloadLauncher); ok {
-			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo, launcher)
+		if server.codexDeviceAuthLauncher != nil {
+			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo, server.codexDeviceAuthLauncher)
 		} else {
 			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo)
 		}

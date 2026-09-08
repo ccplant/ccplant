@@ -3,8 +3,9 @@ package sessionrunner
 import "time"
 
 const (
-	CapabilityRunnerClaimV1   = "runner_claim_v1"
-	CapabilityDirectRuntimeV1 = "direct_session_runtime_v1"
+	CapabilityRunnerClaimV1     = "runner_claim_v1"
+	CapabilityDirectRuntimeV1   = "direct_session_runtime_v1"
+	CapabilityCodexDeviceAuthV1 = "codex_device_auth_v1"
 )
 
 type ManagerScope string

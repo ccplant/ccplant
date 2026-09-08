@@ -46,6 +46,7 @@ import (
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
@@ -71,8 +72,9 @@ type Server struct {
 	notificationSvc             *notification.Service
 	container                   *di.Container            // Internal DI container
 	sessionManager              portrepos.SessionManager // Session lifecycle manager
-	persistenceClient           kubernetes.Interface     // Secret/ConfigMap client for non-session application data
-	kvStore                     kvstore.Store            // non-nil when persistenceClient is backed by libSQL
+	codexDeviceAuthLauncher     codexauth.WorkloadLauncher
+	persistenceClient           kubernetes.Interface // Secret/ConfigMap client for non-session application data
+	kvStore                     kvstore.Store        // non-nil when persistenceClient is backed by libSQL
 	usageRepo                   portrepos.UsageRepository
 	settingsRepo                portrepos.SettingsRepository                    // Settings repository
 	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
@@ -212,6 +214,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var sessionManager portrepos.SessionManager
 	var persistenceClient kubernetes.Interface
 	var applicationKVStore kvstore.Store
+	var codexDeviceAuthLauncher codexauth.WorkloadLauncher
 	var err error
 	if cfg.SessionManager.APIURL != "" {
 		if err := validateAPIKVStore(cfg.KVStore); err != nil {
@@ -518,6 +521,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	if esmControlStore != nil {
 		esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
 	}
+	// Codex device auth workloads always run on a session manager's execution
+	// plane, never inside the API process (whose Kubernetes client may be a
+	// fake in compositions without cluster access). Route every attempt to an
+	// enrolled, connected external session manager over the outbound control
+	// tunnel; the manager creates the short-lived authentication Pod.
+	if esmControlTunnel != nil && sessionRunnerStore != nil {
+		codexDeviceAuthLauncher = infraesmcontrol.NewCodexDeviceAuthLauncher(esmControlTunnel, sessionRunnerStore)
+		log.Printf("[SERVER] Codex device auth workloads are delegated to external session managers")
+	}
 
 	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
 	scheduleManager := schedule.NewKubernetesManager(persistenceClient, namespace)
@@ -531,6 +543,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		logger:                      lgr,
 		container:                   container,
 		sessionManager:              sessionManager,
+		codexDeviceAuthLauncher:     codexDeviceAuthLauncher,
 		persistenceClient:           persistenceClient,
 		kvStore:                     applicationKVStore,
 		usageRepo:                   usageRepo,
