@@ -84,6 +84,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	if server.esmControlStore != nil {
 		sessionPoolController.WithManagerLiveness(server.esmControlStore)
 	}
+	if server.sessionAllocationNotifier != nil {
+		sessionPoolController.WithAllocationNotifier(server.sessionAllocationNotifier)
+	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController

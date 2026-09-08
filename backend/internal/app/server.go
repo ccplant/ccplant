@@ -83,8 +83,10 @@ type Server struct {
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
-	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
-	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
+	sessionAllocationNotifier   sessionrunnercore.AllocationNotifier            // Wakes long-polling runners when durable allocations are created
+	sessionAllocationRedis      *redis.Client
+	userFileRepo                portrepos.UserFileRepository       // User-managed files repository
+	sessionProfileRepo          portrepos.SessionProfileRepository // Session profile repository
 	scheduleManager             schedule.Manager
 	apiTokenRepo                portrepos.APITokenRepository // Named API token repository
 	localUserRepo               portrepos.LocalUserRepository
@@ -297,6 +299,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	runtimeConfigCtx, runtimeConfigCancel := context.WithCancel(context.Background())
 	runtimeProvider.Start(runtimeConfigCtx, 30*time.Second, func(err error) { log.Printf("[RUNTIME_CONFIG] Reload failed: %v", err) })
+	sessionAllocationNotifier, sessionAllocationRedis := buildSessionAllocationNotifier(cfg)
 	var usageRepo portrepos.UsageRepository
 	if cfg.Usage.Enabled {
 		usageRepo, err = repositories.NewLibSQLUsageRepository(context.Background(), cfg.Usage.DatabaseURL, cfg.Usage.AuthToken)
@@ -540,6 +543,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sandboxDomainRepo:           sandboxDomainRepo,
 		sessionRouteRepo:            sessionRouteRepo,
 		sessionRunnerStore:          sessionRunnerStore,
+		sessionAllocationNotifier:   sessionAllocationNotifier,
+		sessionAllocationRedis:      sessionAllocationRedis,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
 		scheduleManager:             scheduleManager,
@@ -774,6 +779,34 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 	}
 	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
 	return infrasessioncontrol.NewRedisStore(client)
+}
+
+func buildSessionAllocationNotifier(cfg *config.Config) (sessionrunnercore.AllocationNotifier, *redis.Client) {
+	local := infrasessionrunner.NewLocalAllocationNotifier()
+	if cfg.Redis.Addr == "" {
+		log.Printf("[SESSION_POOL] Redis not configured; runner allocation notifications are process-local")
+		return local, nil
+	}
+	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if cfg.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("[SESSION_POOL] Redis unavailable; runner allocation notifications are process-local: %v", err)
+		_ = client.Close()
+		return local, nil
+	}
+	log.Printf("[SESSION_POOL] Redis runner allocation notifications enabled")
+	return infrasessionrunner.NewRedisAllocationNotifier(client), client
 }
 
 func buildESMControlStore(cfg *config.Config) esmcontrol.Store {
@@ -1422,6 +1455,11 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
+	if s.sessionAllocationNotifier != nil {
+		if err := s.sessionAllocationNotifier.Notify(ctx, pool); err != nil {
+			log.Printf("[SESSION_POOL] Warning: failed to notify runners for allocation %s: %v", sessionID, err)
+		}
+	}
 	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
 }
 
@@ -1806,10 +1844,14 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.usageRepo != nil {
 		usageErr = s.usageRepo.Close()
 	}
-	if s.kvStore != nil {
-		return errors.Join(managerErr, usageErr, s.kvStore.Close())
+	var notifierErr error
+	if s.sessionAllocationRedis != nil {
+		notifierErr = s.sessionAllocationRedis.Close()
 	}
-	return errors.Join(managerErr, usageErr)
+	if s.kvStore != nil {
+		return errors.Join(managerErr, usageErr, notifierErr, s.kvStore.Close())
+	}
+	return errors.Join(managerErr, usageErr, notifierErr)
 }
 
 // GetEcho returns the Echo instance for external access
