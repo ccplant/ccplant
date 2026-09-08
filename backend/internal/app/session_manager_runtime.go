@@ -1,12 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -399,9 +401,25 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		} else if revision != "" {
 			appliedRevision = revision
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", nil)
+		localRunnerIDs, inventoryErr := manager.ListRunnerSessionIDs(ctx)
+		if inventoryErr != nil {
+			log.Printf("[SESSION_MANAGER] List local runner inventory: %v", inventoryErr)
+		}
+		var heartbeatBody io.Reader
+		if inventoryErr == nil {
+			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs})
+			if marshalErr != nil {
+				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
+			} else {
+				heartbeatBody = bytes.NewReader(payload)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", heartbeatBody)
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token)
+			if heartbeatBody != nil {
+				req.Header.Set("Content-Type", "application/json")
+			}
 			if resp, doErr := client.Do(req); doErr != nil {
 				log.Printf("[SESSION_MANAGER] Runner pool heartbeat failed: %v", doErr)
 			} else {

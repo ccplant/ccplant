@@ -231,6 +231,56 @@ func TestSessionManagerHeartbeatReportsAllocatedRunnerIDs(t *testing.T) {
 	}
 }
 
+func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, runner := range []*core.Runner{
+		{ID: "live-running", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerRunning},
+		{ID: "missing-running", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerRunning},
+		{ID: "missing-idle", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle},
+	} {
+		if err := store.CreateRunner(ctx, runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "stale-session", Pool: "linux", RunnerID: "missing-running"}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"local_runner_ids": []string{"live-running", "missing-idle"}}, map[string]string{"id": manager.ID},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "missing-running"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("missing running runner was not deleted: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "stale-session"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("stale allocation was not deleted: %v", err)
+	}
+	for _, id := range []string{"live-running", "missing-idle"} {
+		if _, err := store.GetRunner(ctx, id); err != nil {
+			t.Fatalf("runner %s was unexpectedly deleted: %v", id, err)
+		}
+	}
+}
+
 func TestSessionManagerHeartbeatRepairsMissingRunnerRoute(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
