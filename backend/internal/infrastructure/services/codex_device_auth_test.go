@@ -19,7 +19,7 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 		k8sConfig: &config.KubernetesSessionConfig{Image: "example/session:dev", ImagePullPolicy: "IfNotPresent"},
 	}
 	request := codexauth.WorkloadRequest{
-		AttemptID: "cda_0123456789abcdef", CallbackURL: "https://proxy.example/internal/codex-device-auth",
+		AttemptID: "cda-0123456789abcdef", CallbackURL: "https://proxy.example/internal/codex-device-auth",
 		Token: "secret-token", ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
@@ -58,7 +58,7 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 func TestCancelCodexDeviceAuthDeletesResources(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	manager := &KubernetesSessionManager{client: client, namespace: "test", k8sConfig: &config.KubernetesSessionConfig{Image: "session"}}
-	request := codexauth.WorkloadRequest{AttemptID: "cda_deadbeef", CallbackURL: "https://proxy.example/internal/codex-device-auth", Token: "token", ExpiresAt: time.Now().Add(time.Minute)}
+	request := codexauth.WorkloadRequest{AttemptID: "cda-deadbeef", CallbackURL: "https://proxy.example/internal/codex-device-auth", Token: "token", ExpiresAt: time.Now().Add(time.Minute)}
 	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}

@@ -123,7 +123,7 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create device auth token")
 	}
-	attemptID := "cda_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	attemptID := "cda-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	attempt := &deviceAuthAttempt{ID: attemptID, UserID: string(user.ID()), CredentialName: credentialName, TokenHash: tokenHash, Status: codexauth.StatusStarting, ExpiresAt: time.Now().UTC().Add(deviceAuthTTL)}
 	if c.store != nil {
 		if err := c.store.Create(ctx.Request().Context(), durableAttempt(attempt)); err != nil {

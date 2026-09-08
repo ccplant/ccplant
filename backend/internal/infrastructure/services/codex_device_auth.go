@@ -16,8 +16,8 @@ import (
 const codexDeviceAuthLabel = "agentapi.proxy/codex-device-auth"
 
 func codexDeviceAuthResourceName(attemptID string) string {
-	id := strings.TrimPrefix(attemptID, "cda_")
-	id = strings.ToLower(strings.ReplaceAll(id, "_", "-"))
+	id := strings.TrimPrefix(attemptID, "cda-")
+	id = strings.ToLower(id)
 	if len(id) > 40 {
 		id = id[:40]
 	}

@@ -161,7 +161,7 @@ DELETE /codex/device-auth/{attempt_id}
 
 ```json
 {
-  "attempt_id": "cda_...",
+  "attempt_id": "cda-...",
   "status": "waiting_for_user",
   "user_code": "ABCD-EFGH",
   "verification_uri": "https://...",
@@ -222,7 +222,7 @@ annotation、allocation の診断表示には出さない。
 
 ```text
 CodexDeviceAuthAttempt
-  id                  cda_ + random ID
+  id                  cda- + random ID
   owner_scope         user | team
   owner_id            canonical user ID または team ID
   requested_by        caller user ID
