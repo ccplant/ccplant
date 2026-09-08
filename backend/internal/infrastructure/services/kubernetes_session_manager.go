@@ -780,39 +780,51 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 		return fmt.Errorf("failed to create stock workload: %w", err)
 	}
 
+	// Creating the Kubernetes resources and publishing them as allocatable stock
+	// are deliberately separate operations. Pod startup can take longer than an
+	// HTTP proxy's request timeout, but the Service's stock=creating label is a
+	// durable reservation that can be reconciled or purged after a manager
+	// restart. Complete readiness and publication independently of the request.
+	go m.publishStockSession(session, cancel, dind)
+	return nil
+}
+
+func (m *KubernetesSessionManager) publishStockSession(session *KubernetesSession, cancel context.CancelFunc, dind bool) {
 	// Do not publish the stock session to allocators until every container is
 	// ready. In particular, adoption immediately POSTs the sandbox policy to the
 	// provisioner. Marking the Service stock=true before its readiness probe has
 	// passed lets a concurrent allocation claim it while port 9001 is still
 	// closed, causing the allocation (and the newly claimed stock session) to be
 	// deleted.
-	if err := m.waitForSessionWorkloadReady(ctx, session); err != nil {
+	if err := m.waitForSessionWorkloadReady(context.Background(), session); err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload readiness failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("stock workload did not become ready: %w", err)
+		log.Printf("[K8S_SESSION] Stock session %s did not become ready: %v", session.ID(), err)
+		return
 	}
 
-	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(context.Background(), session.ServiceName(), metav1.GetOptions{})
 	if err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("failed to get stock service: %w", err)
+		log.Printf("[K8S_SESSION] Failed to get stock service for session %s: %v", session.ID(), err)
+		return
 	}
 	stockSvc.Labels["agentapi.proxy/stock"] = "true"
-	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, stockSvc, metav1.UpdateOptions{}); err != nil {
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(context.Background(), stockSvc, metav1.UpdateOptions{}); err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("failed to mark stock service ready: %w", err)
+		log.Printf("[K8S_SESSION] Failed to mark stock session %s ready: %v", session.ID(), err)
+		return
 	}
 	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
-		id, dind)
-	return nil
+		session.ID(), dind)
 }
 
 func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string, dind bool) (string, error) {
@@ -969,7 +981,10 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 	return nil
 }
 
-// CountStockSessions returns the number of available (not being deleted) stock sessions.
+// CountStockSessions returns the number of available or currently creating
+// (and not being deleted) stock sessions. Creating sessions count as reserved
+// inventory so the replenisher does not start another target-sized batch on
+// every reconciliation tick while Pods are becoming ready.
 // Note: Sandbox (network filter) is always enabled, so only DinD capability is queried.
 func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind bool) (int, error) {
 	return m.CountStockSessionsForPool(ctx, "", dind)
@@ -978,7 +993,7 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind 
 func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context, pool string, dind bool) (int, error) {
 	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		"agentapi.proxy/stock in (true,creating),app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
 		dind,
 	)
 	if pool != "" {
@@ -990,9 +1005,24 @@ func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context
 	if err != nil {
 		return 0, fmt.Errorf("failed to list stock services: %w", err)
 	}
+	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve allocated runners while counting stock: %w", err)
+	}
+	allocated := make(map[string]struct{}, len(allocatedRunnerIDs))
+	for _, id := range allocatedRunnerIDs {
+		allocated[id] = struct{}{}
+	}
 	count := 0
 	for i := range svcs.Items {
-		if svcs.Items[i].DeletionTimestamp == nil {
+		if svcs.Items[i].DeletionTimestamp != nil {
+			continue
+		}
+		// Direct-runtime runners intentionally retain their local stock labels
+		// after allocation. The parent runner registry is authoritative for their
+		// allocation state; counting these Services as idle suppresses pool
+		// replenishment even though they cannot accept another session.
+		if _, isAllocated := allocated[svcs.Items[i].Labels["agentapi.proxy/session-id"]]; !isAllocated {
 			count++
 		}
 	}

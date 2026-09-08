@@ -634,6 +634,108 @@ func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
 	}
 }
 
+func TestCountStockSessionsIncludesCreatingReservations(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		id    string
+		state string
+		dind  string
+	}{
+		{id: "ready-plain", state: "true", dind: "false"},
+		{id: "creating-plain", state: "creating", dind: "false"},
+		{id: "claiming-plain", state: "claiming", dind: "false"},
+		{id: "creating-dind", state: "creating", dind: "true"},
+	} {
+		labels := map[string]string{
+			"app.kubernetes.io/managed-by":      "agentapi-proxy",
+			"agentapi.proxy/stock":              tc.state,
+			"agentapi.proxy/capability-sandbox": "true",
+			"agentapi.proxy/capability-dind":    tc.dind,
+		}
+		_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + tc.id + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create service %s: %v", tc.id, err)
+		}
+	}
+
+	plain, err := manager.CountStockSessions(ctx, false)
+	if err != nil {
+		t.Fatalf("CountStockSessions(false): %v", err)
+	}
+	if plain != 2 {
+		t.Fatalf("CountStockSessions(false) = %d, want 2", plain)
+	}
+	dind, err := manager.CountStockSessions(ctx, true)
+	if err != nil {
+		t.Fatalf("CountStockSessions(true): %v", err)
+	}
+	if dind != 1 {
+		t.Fatalf("CountStockSessions(true) = %d, want 1", dind)
+	}
+}
+
+func TestCountStockSessionsExcludesAllocatedDirectRunners(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/session-managers/manager-a/heartbeat" {
+			t.Errorf("heartbeat path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"allocated_runner_ids":["allocated-stock"]}`))
+	}))
+	t.Cleanup(parent.Close)
+	manager.ConfigureSessionRunnerPool(parent.URL, "manager-a", "manager-token", "test-pool")
+
+	for _, id := range []string{"allocated-stock", "idle-stock"} {
+		_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + id + "-svc", Namespace: "test-ns", Labels: map[string]string{
+				"app.kubernetes.io/managed-by":      "agentapi-proxy",
+				"agentapi.proxy/stock":              "true",
+				"agentapi.proxy/session-id":         id,
+				"agentapi.proxy/session-pool":       "test-pool",
+				"agentapi.proxy/capability-sandbox": "true",
+				"agentapi.proxy/capability-dind":    "false",
+			}}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create service %s: %v", id, err)
+		}
+	}
+
+	count, err := manager.CountStockSessionsForPool(context.Background(), "test-pool", false)
+	if err != nil {
+		t.Fatalf("CountStockSessionsForPool: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("CountStockSessionsForPool = %d, want 1", count)
+	}
+}
+
+func TestCreateStockSessionReturnsBeforeWorkloadIsReady(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.PodStartTimeout = 1
+
+	started := time.Now()
+	if err := manager.CreateStockSession(context.Background(), false); err != nil {
+		t.Fatalf("CreateStockSession: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("CreateStockSession waited %s for workload readiness", elapsed)
+	}
+
+	services, err := manager.client.CoreV1().Services("test-ns").List(context.Background(), metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=creating",
+	})
+	if err != nil {
+		t.Fatalf("list creating stock services: %v", err)
+	}
+	if len(services.Items) != 1 {
+		t.Fatalf("creating stock services = %d, want 1", len(services.Items))
+	}
+}
+
 func TestCleanupStockSessionResourcesUsesIndependentContext(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 
