@@ -33,6 +33,11 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Fatal("service account token must not be mounted")
 	}
+	if pod.Spec.SecurityContext == nil || pod.Spec.SecurityContext.RunAsUser == nil || *pod.Spec.SecurityContext.RunAsUser != 999 ||
+		pod.Spec.SecurityContext.RunAsGroup == nil || *pod.Spec.SecurityContext.RunAsGroup != 999 ||
+		pod.Spec.SecurityContext.FSGroup == nil || *pod.Spec.SecurityContext.FSGroup != 999 {
+		t.Fatalf("auth pod must run with the image runtime UID/GID: %#v", pod.Spec.SecurityContext)
+	}
 	if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Image != "example/session:dev" {
 		t.Fatalf("unexpected containers: %#v", pod.Spec.Containers)
 	}
