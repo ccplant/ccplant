@@ -18,6 +18,18 @@ func TestWorkerControlAPIUsesInternalTokenAuthentication(t *testing.T) {
 	}
 }
 
+func TestCodexDeviceAuthCallbackUsesAttemptTokenAuthentication(t *testing.T) {
+	if !isInternalTokenEndpoint("/internal/codex-device-auth/cda-123/challenge") {
+		t.Fatal("Codex device auth callback must bypass user authentication middleware")
+	}
+	if !isInternalTokenEndpoint("/internal/codex-device-auth/cda-123/result") {
+		t.Fatal("Codex device auth result must bypass user authentication middleware")
+	}
+	if isInternalTokenEndpoint("/internal/codex-device-auth") {
+		t.Fatal("Codex device auth path without an attempt must not bypass user authentication middleware")
+	}
+}
+
 func TestAuthenticateScheduleExecution(t *testing.T) {
 	now := time.Now()
 	token, err := executiontoken.SignExecutionToken([]byte("secret"), executiontoken.ExecutionClaims{ScheduleID: "s", ExecutionID: "e", SessionID: "session", UserID: "alice", Teams: []string{"org/team"}, ExpiresAt: now.Add(time.Minute).Unix()})

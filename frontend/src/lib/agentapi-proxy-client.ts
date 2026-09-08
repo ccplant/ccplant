@@ -139,6 +139,7 @@ export interface CodexDeviceAuthStatus {
 export interface CodexDeviceAuthTarget {
   scope?: 'user' | 'team';
   team_id?: string;
+  replace?: boolean;
 }
 
 // GitHubUser type (moved from profile.ts)
