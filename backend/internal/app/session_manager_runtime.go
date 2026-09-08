@@ -76,6 +76,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if err != nil {
 		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
 	}
+	if cfg.SessionManager.RunnerPool != "" {
+		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
+	}
 	// Stock workloads belong to the session-manager revision that created them.
 	// Purge the complete inventory at the process boundary instead of relying
 	// only on template-hash reconciliation: a manager replacement can otherwise
@@ -87,9 +90,6 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		return nil, fmt.Errorf("purge stock sessions on session-manager startup: %w", err)
 	}
 	purgeCancel()
-	if cfg.SessionManager.RunnerPool != "" {
-		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
-	}
 
 	persistence := manager.GetClient()
 	applicationStore, wrapped, err := buildApplicationKVStore(cfg.KVStore, persistence)

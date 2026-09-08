@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -447,6 +449,91 @@ func TestPurgeStockSessionsKeepsAdoptedSessionWithStaleStockWorkloadLabels(t *te
 	}
 	if _, err := manager.client.CoreV1().PersistentVolumeClaims("test-ns").Get(ctx, name+"-pvc", metav1.GetOptions{}); err != nil {
 		t.Fatalf("Expected stale-labeled PVC to remain, got err=%v", err)
+	}
+}
+
+func TestPurgeStockSessionsKeepsAllocatedSessionWithStaleStockServiceLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		stockState   string
+		secretLabels map[string]string
+		parentRunner bool
+	}{
+		{
+			name:       "session settings",
+			stockState: "true",
+			secretLabels: map[string]string{
+				"agentapi.proxy/resource": "session-settings",
+			},
+		},
+		{
+			name:       "provision request",
+			stockState: "claiming",
+			secretLabels: map[string]string{
+				"agentapi.proxy/provision-request": "true",
+			},
+		},
+		{
+			name:         "parent runner allocation",
+			stockState:   "true",
+			parentRunner: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newWorkloadTestManager(t, false)
+			ctx := context.Background()
+			sessionID := "allocated-stock-session"
+			name := "agentapi-session-" + sessionID
+			if tc.parentRunner {
+				parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if got := r.Header.Get("Authorization"); got != "Bearer manager-token" {
+						t.Errorf("Authorization = %q", got)
+					}
+					_, _ = w.Write([]byte(`{"allocated_runner_ids":["` + sessionID + `"]}`))
+				}))
+				t.Cleanup(parent.Close)
+				manager.ConfigureSessionRunnerPool(parent.URL, "manager-a", "manager-token", "test-pool")
+			}
+			stockLabels := map[string]string{
+				"app.kubernetes.io/name":       "agentapi-session",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"agentapi.proxy/session-id":    sessionID,
+				"agentapi.proxy/stock":         tc.stockState,
+			}
+
+			if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: stockLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create stale-labeled service: %v", err)
+			}
+			if _, err := manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: stockLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create stale-labeled pod: %v", err)
+			}
+
+			if tc.secretLabels != nil {
+				secretLabels := map[string]string{"agentapi.proxy/session-id": sessionID}
+				for key, value := range tc.secretLabels {
+					secretLabels[key] = value
+				}
+				if _, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: name + "-allocation-proof", Namespace: "test-ns", Labels: secretLabels},
+				}, metav1.CreateOptions{}); err != nil {
+					t.Fatalf("Failed to create allocation artifact: %v", err)
+				}
+			}
+
+			if err := manager.PurgeStockSessions(ctx); err != nil {
+				t.Fatalf("PurgeStockSessions failed: %v", err)
+			}
+			if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); err != nil {
+				t.Fatalf("Expected allocated service to remain, got err=%v", err)
+			}
+			if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+				t.Fatalf("Expected allocated pod to remain, got err=%v", err)
+			}
+		})
 	}
 }
 
