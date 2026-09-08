@@ -1350,12 +1350,16 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model string
 	var oneshot bool
 	var authProxy *bool
+	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
 	var unsyncedFilePaths []string
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
 		oneshot = startReq.Params.Oneshot
 		authProxy = startReq.Params.AuthProxy
+		sandbox = startReq.Params.Sandbox
+		docker = startReq.Params.Docker
 		credentialSource = startReq.Params.CredentialSource
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
@@ -1368,6 +1372,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
+		Sandbox: sandbox, Docker: docker,
 		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
@@ -1400,7 +1405,10 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	allocation := &sessionrunnercore.Allocation{
 		SessionID: sessionID, Pool: pool, BindingID: resolved.Binding.ID, Generation: 1,
-		Requirements: map[string]string{"agent_type": agentType}, RuntimeToken: token,
+		Requirements: map[string]string{
+			"agent_type": agentType,
+			"dind":       fmt.Sprintf("%t", docker != nil && docker.Enabled),
+		}, RuntimeToken: token,
 		RuntimeTokenHash: tokenHash, ProvisionSettings: settingsRaw,
 	}
 	if err := s.sessionRunnerStore.Enqueue(ctx, allocation); err != nil {

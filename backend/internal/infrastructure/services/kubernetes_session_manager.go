@@ -716,7 +716,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 		Sandbox: stockSandboxParams(),
 	}
 	if pool != "" && m.runnerParentURL != "" {
-		runnerToken, registerErr := m.registerSessionRunner(ctx, id, pool)
+		runnerToken, registerErr := m.registerSessionRunner(ctx, id, pool, dind)
 		if registerErr != nil {
 			cancel()
 			return fmt.Errorf("register stock session runner: %w", registerErr)
@@ -815,8 +815,15 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 	return nil
 }
 
-func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string) (string, error) {
-	body, err := json.Marshal(map[string]string{"runner_id": runnerID, "pool": pool, "namespace": m.namespace})
+func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string, dind bool) (string, error) {
+	body, err := json.Marshal(map[string]any{
+		"runner_id": runnerID,
+		"pool":      pool,
+		"namespace": m.namespace,
+		"capabilities": map[string]string{
+			"dind": fmt.Sprintf("%t", dind),
+		},
+	})
 	if err != nil {
 		return "", err
 	}

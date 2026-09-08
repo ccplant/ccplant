@@ -366,7 +366,7 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	}
 
 	registerResult := callSessionPoolHandler(t, controller.RegisterRunner, http.MethodPost, "/internal/session-runners/register",
-		map[string]any{"runner_id": "runner-a", "pool": "linux", "pod_name": "pod-a"}, nil,
+		map[string]any{"runner_id": "runner-a", "pool": "linux", "pod_name": "pod-a", "capabilities": map[string]string{"dind": "true"}}, nil,
 		map[string]string{"Authorization": "Bearer " + created.ConnectionToken, "X-Session-Manager-ID": "manager-a"})
 	if registerResult.Code != http.StatusCreated {
 		t.Fatalf("register runner status=%d body=%s", registerResult.Code, registerResult.Body.String())
@@ -375,8 +375,12 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 		RunnerToken string `json:"runner_token"`
 	}
 	decodeRecorder(t, registerResult, &registered)
+	runner, err := store.GetRunner(context.Background(), "runner-a")
+	if err != nil || runner.Capabilities["dind"] != "true" {
+		t.Fatalf("runner capabilities not persisted: runner=%+v err=%v", runner, err)
+	}
 
-	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "linux", RuntimeToken: "runtime-secret"}); err != nil {
+	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "linux", RuntimeToken: "runtime-secret", Requirements: map[string]string{"dind": "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	claimResult := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s",
@@ -399,7 +403,7 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	if ackResult.Code != http.StatusOK {
 		t.Fatalf("ack status=%d body=%s", ackResult.Code, ackResult.Body.String())
 	}
-	runner, err := store.GetRunner(context.Background(), "runner-a")
+	runner, err = store.GetRunner(context.Background(), "runner-a")
 	if err != nil || runner.Status != core.RunnerRunning {
 		t.Fatalf("runner should be running: runner=%+v err=%v", runner, err)
 	}
