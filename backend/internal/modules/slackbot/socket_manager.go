@@ -52,6 +52,7 @@ type SlackSocketManager struct {
 // runningEntry holds the cancel function and updatedAt snapshot for a running worker
 type runningEntry struct {
 	cancel    context.CancelFunc
+	done      <-chan struct{}
 	updatedAt time.Time // snapshot of bot.UpdatedAt() when worker started
 	id        string    // unique ID to detect stale entries after natural goroutine exit
 }
@@ -226,14 +227,16 @@ func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey str
 	elector := schedule.NewLeaderElector(m.leaderElectionClient, electionConfig)
 
 	childCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	entryID := uuid.New().String()
 	m.mu.Lock()
-	m.running[botKey] = runningEntry{cancel: cancel, updatedAt: updatedAt, id: entryID}
+	m.running[botKey] = runningEntry{cancel: cancel, done: done, updatedAt: updatedAt, id: entryID}
 	m.mu.Unlock()
 
 	log.Printf("[SOCKET_MANAGER] Starting leader election for botKey=%s (lease=%s)", botKey, leaseName)
 
 	go func() {
+		defer close(done)
 		elector.Run(childCtx,
 			func(leaderCtx context.Context) {
 				log.Printf("[SOCKET_MANAGER] Became leader for botKey=%s", botKey)
@@ -323,6 +326,7 @@ func (m *SlackSocketManager) stopWorker(key string) {
 	if ok {
 		log.Printf("[SOCKET_MANAGER] Stopping worker for botKey=%s", key)
 		entry.cancel()
+		<-entry.done
 	}
 }
 
