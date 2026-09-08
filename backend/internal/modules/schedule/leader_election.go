@@ -17,6 +17,7 @@ const (
 	SlackbotCleanupWorkerLeaseName = "agentapi-slackbot-cleanup-worker"
 	StockInventoryWorkerLeaseName  = "agentapi-stock-inventory-worker"
 	SessionAllocatorLeaseName      = "agentapi-session-allocator"
+	leaseReleaseTimeout            = 5 * time.Second
 )
 
 type LeaderElectionConfig struct {
@@ -105,7 +106,14 @@ func (l *LeaderElector) Run(ctx context.Context, onStartedLeading func(context.C
 		lost := l.renew(ctx, key)
 		cancel()
 		<-done
-		_, _ = l.client.Release(context.Background(), key, l.identity)
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), leaseReleaseTimeout)
+		released, releaseErr := l.client.Release(releaseCtx, key, l.identity)
+		releaseCancel()
+		if releaseErr != nil {
+			log.Printf("[LEADER_ELECTION] lease release failed: %v", releaseErr)
+		} else if !released && !lost {
+			log.Printf("[LEADER_ELECTION] lease was no longer owned during release: %s", key)
+		}
 		if onStoppedLeading != nil {
 			onStoppedLeading()
 		}
