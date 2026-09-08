@@ -287,8 +287,6 @@ jobs:
           grep -q 'name: agentapi-proxy-github-session' "$rendered"
           grep -q 'GITHUB_APP_ID: "12345"' "$rendered"
           grep -q 'GITHUB_INSTALLATION_ID: "67890"' "$rendered"
-          grep -q 'AGENTAPI_K8S_SESSION_GITHUB_APP_PRIVATE_KEY_SECRET_NAME' "$rendered"
-          grep -q 'value: "github-app-key"' "$rendered"
           grep -q 'name: agentapi-proxy-github-config' "$rendered"
           grep -q 'GITHUB_URL: "https://ghe.example.com"' "$rendered"
           grep -q 'GITHUB_API: "https://ghe.example.com/api/v3"' "$rendered"

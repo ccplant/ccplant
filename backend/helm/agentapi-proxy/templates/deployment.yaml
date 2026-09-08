@@ -722,12 +722,6 @@ spec:
             - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
               value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}
             {{- end }}
-            {{- if and .Values.github.app.id .Values.github.app.privateKey.secretName }}
-            - {name: AGENTAPI_K8S_SESSION_GITHUB_APP_ID, value: {{ .Values.github.app.id | quote }}}
-            - {name: AGENTAPI_K8S_SESSION_GITHUB_INSTALLATION_ID, value: {{ .Values.github.app.installationId | quote }}}
-            - {name: AGENTAPI_K8S_SESSION_GITHUB_APP_PRIVATE_KEY_SECRET_NAME, value: {{ .Values.github.app.privateKey.secretName | quote }}}
-            - {name: AGENTAPI_K8S_SESSION_GITHUB_APP_PRIVATE_KEY_SECRET_KEY, value: {{ .Values.github.app.privateKey.key | default "private-key" | quote }}}
-            {{- end }}
             {{- if or .Values.github.enterprise.apiUrl .Values.github.enterprise.baseUrl }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME
               value: {{ printf "%s-github-config" (include "agentapi-proxy.fullname" .) | quote }}
