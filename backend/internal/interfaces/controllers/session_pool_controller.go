@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1078,6 +1079,19 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return sessionRunnerStoreError(err)
 		}
 	}
+	var heartbeat struct {
+		LocalRunnerIDs *[]string `json:"local_runner_ids"`
+	}
+	if ctx.Request().Body != nil && ctx.Request().Body != http.NoBody {
+		if err := ctx.Bind(&heartbeat); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid heartbeat request")
+		}
+	}
+	if heartbeat.LocalRunnerIDs != nil {
+		if err := c.reconcileMissingManagerRunners(ctx.Request().Context(), manager.ID, *heartbeat.LocalRunnerIDs); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
 	pools, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -1122,6 +1136,45 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		"allocated_runner_ids":  allocatedRunnerIDs,
 		"upstream_version":      buildinfo.Version,
 	})
+}
+
+func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
+	local := make(map[string]struct{}, len(localRunnerIDs))
+	for _, id := range localRunnerIDs {
+		local[id] = struct{}{}
+	}
+	runners, err := c.store.ListRunners(ctx, "")
+	if err != nil {
+		return err
+	}
+	allocations, err := c.store.ListAllocations(ctx, "")
+	if err != nil {
+		return err
+	}
+	allocationsByRunner := make(map[string][]string)
+	for _, allocation := range allocations {
+		if allocation.RunnerID != "" {
+			allocationsByRunner[allocation.RunnerID] = append(allocationsByRunner[allocation.RunnerID], allocation.SessionID)
+		}
+	}
+	for _, runner := range runners {
+		if runner.ManagerID != managerID || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
+			continue
+		}
+		if _, ok := local[runner.ID]; ok {
+			continue
+		}
+		for _, sessionID := range allocationsByRunner[runner.ID] {
+			if err := c.store.DeleteAllocation(ctx, sessionID); err != nil && !errors.Is(err, core.ErrNotFound) {
+				return err
+			}
+		}
+		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
+			return err
+		}
+		log.Printf("[SESSION_RUNNER] Removed stale %s runner %s absent from manager %s inventory", runner.Status, runner.ID, managerID)
+	}
+	return nil
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {
