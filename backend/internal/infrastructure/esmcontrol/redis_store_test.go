@@ -95,6 +95,8 @@ func TestRedisStoreKeepsLongRunningRequestOwnership(t *testing.T) {
 func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
 	store, server := newTestRedisStore(t)
 	ctx := context.Background()
+	_, err := store.EnqueueCommand(ctx, "manager-a", core.Command{ID: "request-a"})
+	require.NoError(t, err)
 	frames := []core.ResponseFrame{
 		{ID: "frame-a", RequestID: "request-a", Sequence: 1, Body: []byte("one")},
 		{ID: "frame-b", RequestID: "request-a", Sequence: 2, Body: []byte("two"), Done: true},
@@ -110,8 +112,22 @@ func TestRedisStoreAppendsFrameBatchInOrderAndDeduplicates(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Equal(t, int64(1), got[0].Sequence)
 	require.Equal(t, int64(2), got[1].Sequence)
-	require.ElementsMatch(t, []string{responseKey("request-a"), frameDedupKey("request-a")}, server.Keys())
-	require.Positive(t, server.TTL(frameDedupKey("request-a")))
+	require.Contains(t, server.Keys(), responseKey("request-a"))
+	require.Contains(t, server.Keys(), frameDedupKey("request-a"))
+	for _, key := range []string{responseKey("request-a"), frameDedupKey("request-a"), requestOwnerKey("request-a")} {
+		require.Positive(t, server.TTL(key))
+		require.LessOrEqual(t, server.TTL(key), completedStreamTTL)
+	}
+}
+
+func TestRedisStoreKeepsActiveFrameTTL(t *testing.T) {
+	store, server := newTestRedisStore(t)
+	ctx := context.Background()
+
+	_, err := store.AppendFrames(ctx, "request-a", []core.ResponseFrame{{ID: "frame-a", RequestID: "request-a"}})
+	require.NoError(t, err)
+	require.Greater(t, server.TTL(responseKey("request-a")), 23*time.Hour)
+	require.Greater(t, server.TTL(frameDedupKey("request-a")), 23*time.Hour)
 }
 
 func TestRedisStoreAckDoesNotMoveBackward(t *testing.T) {

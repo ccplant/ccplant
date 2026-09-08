@@ -16,8 +16,9 @@ const (
 	// for longer than the manager heartbeat window. Keep its command, response,
 	// and ownership records long enough to survive Cloud Run SSE reconnects and
 	// long-running tools. The bounded streams and TTL still provide cleanup.
-	streamTTL     = 24 * time.Hour
-	connectionTTL = 75 * time.Second
+	streamTTL          = 24 * time.Hour
+	completedStreamTTL = 30 * time.Minute
+	connectionTTL      = 75 * time.Second
 )
 
 type RedisStore struct{ client *redis.Client }
@@ -50,6 +51,9 @@ if redis.call('SADD', KEYS[2], ARGV[4]) == 1 then
   local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[2], '*', 'frame', ARGV[1])
   redis.call('EXPIRE', KEYS[1], ARGV[3])
   redis.call('EXPIRE', KEYS[2], ARGV[3])
+  if ARGV[5] == '1' then
+    redis.call('EXPIRE', KEYS[3], ARGV[3])
+  end
   return id
 end
 return ''
@@ -154,7 +158,13 @@ func (s *RedisStore) AppendFrames(ctx context.Context, requestID string, frames 
 		if err != nil {
 			return "", err
 		}
-		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID)}, payload, maxLen, int64(streamTTL/time.Second), frame.ID))
+		ttl := streamTTL
+		completed := 0
+		if frame.Done {
+			ttl = completedStreamTTL
+			completed = 1
+		}
+		commands = append(commands, pipe.Eval(ctx, appendFrameScriptSource, []string{key, frameDedupKey(requestID), requestOwnerKey(requestID)}, payload, maxLen, int64(ttl/time.Second), frame.ID, completed))
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return "", fmt.Errorf("append ESM response frames: %w", err)
