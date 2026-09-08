@@ -493,6 +493,55 @@ func TestBuildSessionSettings_TeamGitHubInstallationIDCreatesInitialToken(t *tes
 	}
 }
 
+func TestBuildSessionSettings_LoadsGitHubAppPEMFromReferencedSecret(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-app-key", Namespace: "test-ns"},
+			Data:       map[string][]byte{"private-key": []byte("test-pem")},
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:                     "test-ns",
+		Image:                         "test-image:latest",
+		BasePort:                      9000,
+		PVCEnabled:                    boolPtrForTest(false),
+		GitHubAppID:                   "12345",
+		GitHubInstallationID:          "67890",
+		GitHubAppPrivateKeySecretName: "github-app-key",
+		GitHubAppPrivateKeySecretKey:  "private-key",
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.namespace = "test-ns"
+	req := &entities.RunServerRequest{UserID: "test-user"}
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	if got := settings.Env["GITHUB_APP_ID"]; got != "12345" {
+		t.Fatalf("GITHUB_APP_ID = %q, want 12345", got)
+	}
+	if got := settings.Env["GITHUB_INSTALLATION_ID"]; got != "67890" {
+		t.Fatalf("GITHUB_INSTALLATION_ID = %q, want 67890", got)
+	}
+	if got := settings.Env["GITHUB_APP_PEM"]; got != "test-pem" {
+		t.Fatalf("GITHUB_APP_PEM = %q, want test-pem", got)
+	}
+	envVars := manager.buildEnvVars(session, req)
+	var pemRef *corev1.SecretKeySelector
+	for i := range envVars {
+		if envVars[i].Name == "GITHUB_APP_PEM" && envVars[i].ValueFrom != nil {
+			pemRef = envVars[i].ValueFrom.SecretKeyRef
+		}
+	}
+	if pemRef == nil || pemRef.Name != "github-app-key" || pemRef.Key != "private-key" {
+		t.Fatalf("GITHUB_APP_PEM secret ref = %#v, want github-app-key/private-key", pemRef)
+	}
+}
+
 func TestBuildSessionSettings_CodexACPDisablesNestedSandbox(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},

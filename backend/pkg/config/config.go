@@ -287,6 +287,13 @@ type KubernetesSessionConfig struct {
 	// This Secret is used by the clone-repo init container for repository cloning
 	// Expected keys: GITHUB_TOKEN, GITHUB_APP_ID, GITHUB_APP_PEM, GITHUB_INSTALLATION_ID
 	GitHubSecretName string `json:"github_secret_name" mapstructure:"github_secret_name"`
+	// GitHubAppID and GitHubInstallationID configure GitHub App authentication for session pods.
+	GitHubAppID          string `json:"github_app_id" mapstructure:"github_app_id"`
+	GitHubInstallationID string `json:"github_installation_id" mapstructure:"github_installation_id"`
+	// GitHubAppPrivateKeySecretName/Key point directly at the operator-managed PEM Secret.
+	// Direct references work with GitOps renderers where Helm lookup cannot copy Secret data.
+	GitHubAppPrivateKeySecretName string `json:"github_app_private_key_secret_name" mapstructure:"github_app_private_key_secret_name"`
+	GitHubAppPrivateKeySecretKey  string `json:"github_app_private_key_secret_key" mapstructure:"github_app_private_key_secret_key"`
 	// GitHubConfigSecretName is the name of the Kubernetes Secret containing GitHub configuration (non-auth)
 	// This Secret contains GITHUB_API and GITHUB_URL for GitHub Enterprise Server support
 	// It is kept separate from GitHubSecretName so that params.github_token can override authentication
@@ -1116,6 +1123,10 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.network_filter_init_memory_limit", "AGENTAPI_K8S_SESSION_NETWORK_FILTER_INIT_MEMORY_LIMIT")
 	_ = v.BindEnv("kubernetes_session.github_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME")
 	_ = v.BindEnv("kubernetes_session.github_config_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.github_app_id", "AGENTAPI_K8S_SESSION_GITHUB_APP_ID")
+	_ = v.BindEnv("kubernetes_session.github_installation_id", "AGENTAPI_K8S_SESSION_GITHUB_INSTALLATION_ID")
+	_ = v.BindEnv("kubernetes_session.github_app_private_key_secret_name", "AGENTAPI_K8S_SESSION_GITHUB_APP_PRIVATE_KEY_SECRET_NAME")
+	_ = v.BindEnv("kubernetes_session.github_app_private_key_secret_key", "AGENTAPI_K8S_SESSION_GITHUB_APP_PRIVATE_KEY_SECRET_KEY")
 	_ = v.BindEnv("kubernetes_session.config_file", "AGENTAPI_K8S_SESSION_CONFIG_FILE")
 	_ = v.BindEnv("kubernetes_session.session_pod_template_file", "AGENTAPI_K8S_SESSION_POD_TEMPLATE_FILE")
 	// MCP servers configuration
@@ -1301,6 +1312,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.network_filter_init_memory_request", "32Mi")
 	v.SetDefault("kubernetes_session.network_filter_init_memory_limit", "64Mi")
 	v.SetDefault("kubernetes_session.github_secret_name", "")
+	v.SetDefault("kubernetes_session.github_app_private_key_secret_key", "private-key")
 	v.SetDefault("worker.control_api_url", "")
 	v.SetDefault("worker.control_api_token", "")
 	v.SetDefault("worker.session_api_url", "")

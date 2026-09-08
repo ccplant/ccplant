@@ -4526,6 +4526,25 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		// GitHub App PEM path (file is written by setup directly to container FS)
 		{Name: "GITHUB_APP_PEM_PATH", Value: "/tmp/github-app/app.pem"},
 	}
+	if req.GithubToken == "" && m.k8sConfig.GitHubAppID != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "GITHUB_APP_ID", Value: m.k8sConfig.GitHubAppID})
+		if m.k8sConfig.GitHubInstallationID != "" {
+			envVars = append(envVars, corev1.EnvVar{Name: "GITHUB_INSTALLATION_ID", Value: m.k8sConfig.GitHubInstallationID})
+		}
+		if m.k8sConfig.GitHubAppPrivateKeySecretName != "" {
+			privateKeySecretKey := m.k8sConfig.GitHubAppPrivateKeySecretKey
+			if privateKeySecretKey == "" {
+				privateKeySecretKey = "private-key"
+			}
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "GITHUB_APP_PEM",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: m.k8sConfig.GitHubAppPrivateKeySecretName},
+					Key:                  privateKeySecretKey,
+				}},
+			})
+		}
+	}
 
 	// Add Claude Code telemetry configuration
 	if m.k8sConfig.OtelCollectorEnabled {
@@ -6040,6 +6059,24 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		// Merge secret data into env map (later secrets override earlier ones due to iteration order)
 		for k, v := range secret.Data {
 			env[k] = string(v)
+		}
+	}
+	if req.GithubToken == "" && m.k8sConfig.GitHubAppID != "" {
+		env["GITHUB_APP_ID"] = m.k8sConfig.GitHubAppID
+		if m.k8sConfig.GitHubInstallationID != "" {
+			env["GITHUB_INSTALLATION_ID"] = m.k8sConfig.GitHubInstallationID
+		}
+		if m.k8sConfig.GitHubAppPrivateKeySecretName != "" {
+			privateKeySecretKey := m.k8sConfig.GitHubAppPrivateKeySecretKey
+			if privateKeySecretKey == "" {
+				privateKeySecretKey = "private-key"
+			}
+			secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, m.k8sConfig.GitHubAppPrivateKeySecretName, metav1.GetOptions{})
+			if err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to read GitHub App private key Secret %s: %v", m.k8sConfig.GitHubAppPrivateKeySecretName, err)
+			} else if pem, ok := secret.Data[privateKeySecretKey]; ok {
+				env["GITHUB_APP_PEM"] = string(pem)
+			}
 		}
 	}
 
