@@ -159,7 +159,12 @@ func (r *KubernetesPersonalAPIKeyRepository) List(ctx context.Context) ([]*entit
 
 // secretName generates Secret name from user ID
 func (r *KubernetesPersonalAPIKeyRepository) secretName(userID string) string {
-	return PersonalAPIKeySecretPrefix + sanitizeLabelValue(userID)
+	sanitized := sanitizeSecretName(userID)
+	maxLen := 253 - len(PersonalAPIKeySecretPrefix)
+	if len(sanitized) > maxLen {
+		sanitized = sanitized[:maxLen]
+	}
+	return PersonalAPIKeySecretPrefix + sanitized
 }
 
 // fromSecret converts a Kubernetes Secret to PersonalAPIKey entity
