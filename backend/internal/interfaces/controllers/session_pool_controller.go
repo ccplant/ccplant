@@ -28,6 +28,7 @@ import (
 type SessionPoolController struct {
 	store    core.Store
 	resolver *core.Resolver
+	notifier core.AllocationNotifier
 	liveness managerLiveness
 	routes   portrepos.SessionRouteRepository
 	profile  interface {
@@ -62,6 +63,11 @@ func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRep
 func (c *SessionPoolController) WithManagerLiveness(liveness managerLiveness) *SessionPoolController {
 	c.liveness = liveness
 	c.resolver.WithManagerLiveness(liveness)
+	return c
+}
+
+func (c *SessionPoolController) WithAllocationNotifier(notifier core.AllocationNotifier) *SessionPoolController {
+	c.notifier = notifier
 	return c
 }
 
@@ -1000,6 +1006,16 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 	}
 	wait := parseRunnerWait(ctx.QueryParam("wait"))
 	deadline := c.now().Add(wait)
+	var notifications <-chan struct{}
+	if wait > 0 && c.notifier != nil {
+		var subscribeErr error
+		var cancelSubscription func()
+		notifications, cancelSubscription, subscribeErr = c.notifier.Subscribe(ctx.Request().Context(), runner.Pool)
+		if subscribeErr != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "allocation notifications are unavailable").SetInternal(subscribeErr)
+		}
+		defer cancelSubscription()
+	}
 	for {
 		allocation, found, claimErr := c.store.ClaimNext(ctx.Request().Context(), runner.Pool, runner.ID, 45*time.Second)
 		if claimErr != nil {
@@ -1016,10 +1032,32 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 		if wait <= 0 || c.now().After(deadline) {
 			return ctx.NoContent(http.StatusNoContent)
 		}
+		remaining := deadline.Sub(c.now())
+		if remaining <= 0 {
+			return ctx.NoContent(http.StatusNoContent)
+		}
+		timer := time.NewTimer(remaining)
 		select {
 		case <-ctx.Request().Context().Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return ctx.Request().Context().Err()
-		case <-time.After(250 * time.Millisecond):
+		case <-timer.C:
+			return ctx.NoContent(http.StatusNoContent)
+		case _, ok := <-notifications:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if !ok {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "allocation notifications are unavailable")
+			}
 		}
 	}
 }
