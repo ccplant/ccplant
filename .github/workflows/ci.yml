@@ -266,6 +266,31 @@ jobs:
       - run: helm lint "${{ matrix.path }}" --strict
       - name: Render chart
         run: helm template "${{ matrix.name }}" "${{ matrix.path }}" >/dev/null
+      - name: Verify GitHub Enterprise session configuration compatibility
+        if: matrix.name == 'agentapi-proxy'
+        run: |
+          rendered="$(mktemp)"
+          helm template agentapi-proxy "${{ matrix.path }}" \
+            --set sessionManager.enabled=true \
+            --set sessionManager.internalApi.tokenSecretRef.name=internal-api \
+            --set api.sessionManager.url=http://session-manager:8080 \
+            --set api.sessionManager.tokenSecretRef.name=internal-api \
+            --set sessionManager.kubernetesSession.provisioner.tokenSecretRef.name=provisioner \
+            --set sessionManager.kvStore.databaseUrl=file:///tmp/session-manager.db \
+            --set github.enterprise.enabled=true \
+            --set github.enterprise.baseUrl=https://ghe.example.com \
+            --set github.enterprise.apiUrl=https://ghe.example.com/api/v3 \
+            --set-string github.app.id=12345 \
+            --set-string github.app.installationId=67890 \
+            --set github.app.privateKey.secretName=github-app-key \
+            >"$rendered"
+          grep -q 'name: agentapi-proxy-github-session' "$rendered"
+          grep -q 'GITHUB_APP_ID: "12345"' "$rendered"
+          grep -q 'GITHUB_INSTALLATION_ID: "67890"' "$rendered"
+          grep -q 'name: agentapi-proxy-github-config' "$rendered"
+          grep -q 'GITHUB_URL: "https://ghe.example.com"' "$rendered"
+          grep -q 'GITHUB_API: "https://ghe.example.com/api/v3"' "$rendered"
+          grep -q 'value: "agentapi-proxy-github-config"' "$rendered"
       - name: Render Cloud Run manifest
         if: matrix.name == 'agentapi-proxy'
         run: |

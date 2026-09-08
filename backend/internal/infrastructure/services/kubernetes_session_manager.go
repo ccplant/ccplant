@@ -5949,6 +5949,18 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
 	}
+	// The parent API resolves Helm-provided GitHub configuration into the
+	// SessionSettings sent to dedicated/external session managers. Those
+	// managers must not need access to the parent's Kubernetes Secrets.
+	githubEnvVars := []string{"GITHUB_API", "GITHUB_URL"}
+	if req.GithubToken == "" {
+		githubEnvVars = append(githubEnvVars, "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_APP_PEM", "REPOSITORY_RESTRICTION")
+	}
+	for _, envName := range githubEnvVars {
+		if value := os.Getenv(envName); value != "" {
+			env[envName] = value
+		}
+	}
 	if req.ResumeFrom != "" {
 		env["AGENTAPI_RESUME_FROM"] = req.ResumeFrom
 	}

@@ -493,6 +493,76 @@ func TestBuildSessionSettings_TeamGitHubInstallationIDCreatesInitialToken(t *tes
 	}
 }
 
+func TestBuildSessionSettings_InheritsGitHubAppEnvironment(t *testing.T) {
+	t.Setenv("GITHUB_APP_ID", "12345")
+	t.Setenv("GITHUB_INSTALLATION_ID", "67890")
+	t.Setenv("GITHUB_APP_PEM", "test-pem")
+	t.Setenv("GITHUB_API", "https://ghe.example.com/api/v3")
+	t.Setenv("GITHUB_URL", "https://ghe.example.com")
+
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:  "test-ns",
+		Image:      "test-image:latest",
+		BasePort:   9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.namespace = "test-ns"
+	req := &entities.RunServerRequest{UserID: "test-user"}
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	want := map[string]string{
+		"GITHUB_APP_ID":          "12345",
+		"GITHUB_INSTALLATION_ID": "67890",
+		"GITHUB_APP_PEM":         "test-pem",
+		"GITHUB_API":             "https://ghe.example.com/api/v3",
+		"GITHUB_URL":             "https://ghe.example.com",
+	}
+	for key, expected := range want {
+		if got := settings.Env[key]; got != expected {
+			t.Errorf("settings.Env[%q] = %q, want %q", key, got, expected)
+		}
+	}
+}
+
+func TestBuildSessionSettings_GitHubTokenExcludesInheritedAppCredentials(t *testing.T) {
+	t.Setenv("GITHUB_APP_ID", "12345")
+	t.Setenv("GITHUB_APP_PEM", "test-pem")
+
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:  "test-ns",
+		Image:      "test-image:latest",
+		BasePort:   9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.namespace = "test-ns"
+	req := &entities.RunServerRequest{UserID: "test-user", GithubToken: "request-token"}
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	if got := settings.Env["GITHUB_TOKEN"]; got != "request-token" {
+		t.Fatalf("GITHUB_TOKEN = %q, want request-token", got)
+	}
+	if _, ok := settings.Env["GITHUB_APP_ID"]; ok {
+		t.Error("GITHUB_APP_ID should not be inherited when a request token is provided")
+	}
+	if _, ok := settings.Env["GITHUB_APP_PEM"]; ok {
+		t.Error("GITHUB_APP_PEM should not be inherited when a request token is provided")
+	}
+}
+
 func TestBuildSessionSettings_CodexACPDisablesNestedSandbox(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
