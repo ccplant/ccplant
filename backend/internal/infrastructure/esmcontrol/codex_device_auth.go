@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,7 +104,7 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 			continue
 		}
 		status := resp.StatusCode
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		_ = resp.Body.Close()
 		switch {
 		case status == http.StatusAccepted:
@@ -115,7 +116,7 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 			// next connected manager instead of failing the attempt.
 			lastErr = fmt.Errorf("manager %s does not support codex device auth workloads", manager.ID)
 		default:
-			lastErr = fmt.Errorf("manager %s returned HTTP %d", manager.ID, status)
+			lastErr = fmt.Errorf("manager %s returned HTTP %d: %s", manager.ID, status, strings.TrimSpace(string(detail)))
 		}
 	}
 	return "", lastErr
@@ -215,11 +216,11 @@ func (l *CodexDeviceAuthLauncher) deleteWorkload(ctx context.Context, managerID,
 		return fmt.Errorf("manager %s: %w", managerID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusNoContent, http.StatusAccepted, http.StatusNotFound, http.StatusNotImplemented:
 		return nil
 	default:
-		return fmt.Errorf("manager %s returned HTTP %d", managerID, resp.StatusCode)
+		return fmt.Errorf("manager %s returned HTTP %d: %s", managerID, resp.StatusCode, strings.TrimSpace(string(detail)))
 	}
 }

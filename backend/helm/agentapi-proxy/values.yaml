@@ -357,6 +357,13 @@ sessionManager:
     connectionTokenSecretRef:
       name: ""
       key: connection-token
+    # Optional dedicated secret for the HMAC-protected forwarding surface
+    # (session lifecycle and codex device auth workload commands). Defaults to
+    # the runner connection token, which the outbound control worker also uses
+    # as its signing fallback.
+    hmacSecretRef:
+      name: ""
+      key: hmac-secret
   # Credential accepted only by the session-manager internal API. The API
   # client references the same Secret independently under api.sessionManager.
   internalApi:

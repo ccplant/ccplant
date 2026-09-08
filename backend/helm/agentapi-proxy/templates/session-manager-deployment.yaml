@@ -154,6 +154,17 @@ spec:
                 secretKeyRef:
                   name: {{ required "sessionManager.runner.connectionTokenSecretRef.name is required when runner mode is enabled" (dig "connectionTokenSecretRef" "name" "" $runner) | quote }}
                   key: {{ dig "connectionTokenSecretRef" "key" "connection-token" $runner | quote }}
+            {{- /* The outbound control worker signs local commands with the
+                  HMAC secret, falling back to the connection token. Without an
+                  explicit secret the HMAC forwarding surface (session lifecycle
+                  and codex device auth workloads) never registers, so every
+                  tunneled command 404s. Default to the runner connection token
+                  so runner-mode managers keep the surface enabled. */}}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (dig "connectionTokenSecretRef" "name" "" $runner) (dig "hmacSecretRef" "name" "" $runner) | quote }}
+                  key: {{ default (dig "connectionTokenSecretRef" "key" "connection-token" $runner) (dig "hmacSecretRef" "key" "hmac-secret" $runner) | quote }}
             {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}
