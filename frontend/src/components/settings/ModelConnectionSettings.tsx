@@ -6,6 +6,7 @@ import { ModelConnection } from '@/types/settings'
 interface Props {
   agent: 'codex' | 'claude'
   connection?: ModelConnection
+  defaultBaseURL?: string
   legacyMode?: ModelConnection['mode']
   onSave: (connection: ModelConnection) => Promise<void>
 }
@@ -18,7 +19,7 @@ const modeLabels: Record<ModelConnection['mode'], string> = {
   anthropic_compatible: 'Anthropic 互換 API',
 }
 
-export function ModelConnectionSettings({ agent, connection, legacyMode, onSave }: Props) {
+export function ModelConnectionSettings({ agent, connection, defaultBaseURL, legacyMode, onSave }: Props) {
   const initialMode = connection?.mode || (agent === 'codex' ? 'auth_json' : legacyMode || 'oauth')
   const [draft, setDraft] = useState<ModelConnection>({ mode: initialMode, authentication: 'api_key', ...connection })
   const [key, setKey] = useState('')
@@ -34,6 +35,9 @@ export function ModelConnectionSettings({ agent, connection, legacyMode, onSave 
   const compatible = draft.mode === 'openai_compatible' || draft.mode === 'anthropic_compatible'
   const fieldClass = 'w-full rounded-md border border-gray-300 bg-white p-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white'
   const change = (patch: Partial<ModelConnection>) => { setDraft(prev => ({ ...prev, ...patch })); setSaved(false) }
+  const changeMode = (mode: ModelConnection['mode']) => {
+    change({ mode, ...(mode.endsWith('_compatible') && !draft.base_url ? { base_url: defaultBaseURL || '' } : {}) })
+  }
   const save = async () => {
     setSaving(true); setError(''); setSaved(false)
     try {
@@ -47,7 +51,7 @@ export function ModelConnectionSettings({ agent, connection, legacyMode, onSave 
       <legend className="font-medium">{agent === 'codex' ? 'Codex の接続方式' : 'Claude Code 認証'}</legend>
       <p className="text-sm text-gray-500">現在: {modeLabels[initialMode]}。保存した設定は次のセッションから適用されます。</p>
       <label className="block text-sm">接続方式
-        <select aria-label={`${agent} 接続方式`} className={fieldClass} value={draft.mode} onChange={e => change({ mode: e.target.value as ModelConnection['mode'] })}>
+        <select aria-label={`${agent} 接続方式`} className={fieldClass} value={draft.mode} onChange={e => changeMode(e.target.value as ModelConnection['mode'])}>
           {agent === 'codex' ? <>
             <option value="auth_json">既存の認証（auth.json）</option>
             <option value="openai_compatible">OpenAI 互換 API（Responses API）</option>
@@ -66,12 +70,12 @@ export function ModelConnectionSettings({ agent, connection, legacyMode, onSave 
           <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.model || ''} onChange={e => change({ model: e.target.value })} />
         </label>
         <p className="text-xs text-gray-500">セッションプロファイルでモデルを指定すると、このデフォルトを上書きします。</p>
-        <label className="block text-sm">認証
+        {agent === 'codex' && <label className="block text-sm">認証
           <select aria-label={`${agent} 認証`} className={fieldClass} value={draft.authentication || 'api_key'} onChange={e => change({ authentication: e.target.value as ModelConnection['authentication'] })}>
-            <option value="api_key">API キー{agent === 'claude' ? '（x-api-key）' : ''}</option>
-            {agent === 'codex' ? <option value="none">認証なし</option> : <option value="bearer_token">Bearer トークン</option>}
+            <option value="api_key">API キー</option>
+            <option value="none">認証なし</option>
           </select>
-        </label>
+        </label>}
         {draft.authentication !== 'none' && <label className="block text-sm">API キー / トークン {connection?.has_api_key ? '（保存済み・未入力なら保持）' : '（未設定）'}
           <input aria-label={`${agent} API キー`} type="password" autoComplete="new-password" className={fieldClass} value={key} onChange={e => { setKey(e.target.value); setClearKey(false); setSaved(false) }} />
         </label>}

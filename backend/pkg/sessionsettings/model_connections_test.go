@@ -10,28 +10,23 @@ import (
 )
 
 func TestManagedConnectionCredentialsAndPersistedEnvironment(t *testing.T) {
-	for _, auth := range []string{"api_key", "bearer_token"} {
-		s := &SessionSettings{Env: map[string]string{"ANTHROPIC_AUTH_TOKEN": "old", "ANTHROPIC_API_KEY": "old-key", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_OAUTH_TOKEN": "oauth"}, ClaudeConnection: &modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://gateway.example", Model: "profile-model", Authentication: auth, APIKey: "gateway-key"}, Files: []ManagedFile{{Path: ManagedFileTypes[FileTypeClaudeCredentials], Content: "oauth"}, {Path: "/tmp/example", Content: "keep"}}}
-		s.ApplyModelConnections()
-		require.NotContains(t, s.Env, "CLAUDE_CODE_OAUTH_TOKEN")
-		require.NotContains(t, s.Env, "CLAUDE_CODE_USE_BEDROCK")
-		require.Len(t, s.Files, 1)
-		require.Equal(t, "profile-model", s.Env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
-		if auth == "api_key" {
-			require.NotContains(t, s.Env, "ANTHROPIC_AUTH_TOKEN")
-			require.Equal(t, "gateway-key", s.Env["ANTHROPIC_API_KEY"])
-		} else {
-			require.NotContains(t, s.Env, "ANTHROPIC_API_KEY")
-			require.Equal(t, "gateway-key", s.Env["ANTHROPIC_AUTH_TOKEN"])
-		}
-		raw, err := json.Marshal(s)
-		require.NoError(t, err)
-		var restored SessionSettings
-		require.NoError(t, json.Unmarshal(raw, &restored))
-		require.Empty(t, restored.ClaudeConnection.APIKey)
-		require.Equal(t, s.Env, restored.Env)
-		require.Equal(t, s.UnsetEnv, restored.UnsetEnv)
-	}
+	s := &SessionSettings{Env: map[string]string{"ANTHROPIC_AUTH_TOKEN": "old", "ANTHROPIC_API_KEY": "old-key", "ANTHROPIC_OAUTH_TOKEN": "oauth", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_OAUTH_TOKEN": "oauth"}, ClaudeConnection: &modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://gateway.example", Model: "profile-model", Authentication: "api_key", APIKey: "gateway-key"}, Files: []ManagedFile{{Path: ManagedFileTypes[FileTypeClaudeCredentials], Content: "oauth"}, {Path: "/tmp/example", Content: "keep"}}}
+	s.ApplyModelConnections()
+	require.NotContains(t, s.Env, "ANTHROPIC_OAUTH_TOKEN")
+	require.NotContains(t, s.Env, "CLAUDE_CODE_OAUTH_TOKEN")
+	require.Contains(t, s.UnsetEnv, "ANTHROPIC_OAUTH_TOKEN")
+	require.NotContains(t, s.Env, "CLAUDE_CODE_USE_BEDROCK")
+	require.Len(t, s.Files, 1)
+	require.Equal(t, "profile-model", s.Env["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+	require.NotContains(t, s.Env, "ANTHROPIC_AUTH_TOKEN")
+	require.Equal(t, "gateway-key", s.Env["ANTHROPIC_API_KEY"])
+	raw, err := json.Marshal(s)
+	require.NoError(t, err)
+	var restored SessionSettings
+	require.NoError(t, json.Unmarshal(raw, &restored))
+	require.Empty(t, restored.ClaudeConnection.APIKey)
+	require.Equal(t, s.Env, restored.Env)
+	require.Equal(t, s.UnsetEnv, restored.UnsetEnv)
 }
 func TestCodexConfigReplacement(t *testing.T) {
 	c := &modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://gateway.example/v1", Model: "profile-model", Authentication: "api_key", APIKey: "never-in-toml"}

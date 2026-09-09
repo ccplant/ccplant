@@ -29,7 +29,7 @@ export function CodexAuthSection() {
 
       <ImmediateSaveNotice />
 
-      <ModelConnectionSettings agent="codex" connection={settings.codex_connection} onSave={connection => saveConnection('codex', connection)} />
+      <ModelConnectionSettings agent="codex" connection={settings.codex_connection} defaultBaseURL={settings.default_openai_base_url} onSave={connection => saveConnection('codex', connection)} />
 
       <CodexCredentialsSettings
         scope={scopeKind === 'personal' ? 'user' : 'team'}

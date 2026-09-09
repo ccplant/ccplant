@@ -50,7 +50,7 @@ export function AIProvidersSection() {
         </SettingsSubsection>
       )}
 
-      <ModelConnectionSettings agent="claude" connection={settings.claude_connection} legacyMode={settings.auth_mode} onSave={connection => saveConnection('claude', connection)} />
+      <ModelConnectionSettings agent="claude" connection={settings.claude_connection} defaultBaseURL={settings.default_anthropic_base_url} legacyMode={settings.auth_mode} onSave={connection => saveConnection('claude', connection)} />
 
       {isPersonal && settings.claude_connection?.mode !== 'anthropic_compatible' && (
         <SettingsSubsection

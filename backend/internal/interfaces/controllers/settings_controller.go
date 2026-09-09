@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,6 +137,8 @@ type MarketplaceResponse struct {
 type SettingsResponse struct {
 	CodexConnection         *modelprovider.Connection        `json:"codex_connection,omitempty"`
 	ClaudeConnection        *modelprovider.Connection        `json:"claude_connection,omitempty"`
+	DefaultOpenAIBaseURL    string                           `json:"default_openai_base_url,omitempty"`
+	DefaultAnthropicBaseURL string                           `json:"default_anthropic_base_url,omitempty"`
 	Name                    string                           `json:"name"`
 	Bedrock                 *BedrockSettingsResponse         `json:"bedrock,omitempty"`
 	MCPServers              map[string]*MCPServerResponse    `json:"mcp_servers,omitempty"`
@@ -730,6 +733,8 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp := &SettingsResponse{
 		CodexConnection:         settings.CodexConnection(),
 		ClaudeConnection:        settings.ClaudeConnection(),
+		DefaultOpenAIBaseURL:    strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
+		DefaultAnthropicBaseURL: strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")),
 		Name:                    settings.Name(),
 		HasClaudeCodeOAuthToken: settings.HasClaudeCodeOAuthToken(),
 		AuthMode:                string(settings.AuthMode()),

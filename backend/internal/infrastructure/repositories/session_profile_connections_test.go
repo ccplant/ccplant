@@ -26,7 +26,7 @@ func TestProfileConnectionsEncryptedRoundTrip(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetSettingsTeamID("org/team")
 	cfg.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Authentication: "api_key", APIKey: "profile-codex-secret"})
-	cfg.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://example.com", Authentication: "bearer_token", APIKey: "profile-claude-secret"})
+	cfg.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://example.com", Authentication: "api_key", APIKey: "profile-claude-secret"})
 	profile := entities.NewSessionProfile("profile", "Profile", "user")
 	profile.SetConfig(cfg)
 	require.NoError(t, repo.Create(ctx, profile))

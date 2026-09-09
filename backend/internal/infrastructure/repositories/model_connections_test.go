@@ -21,7 +21,7 @@ func TestConnectionEncryptedRoundTrip(t *testing.T) {
 	repo := NewKubernetesSettingsRepository(fake.NewSimpleClientset(), "test", services.NewEncryptionServiceRegistry(encryption))
 	settings := entities.NewSettings("user")
 	settings.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "default", Authentication: "api_key", APIKey: "codex-private-key"})
-	settings.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://example.com/anthropic", Model: "claude-default", Authentication: "bearer_token", APIKey: "claude-private-key"})
+	settings.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://example.com/anthropic", Model: "claude-default", Authentication: "api_key", APIKey: "claude-private-key"})
 	data, err := repo.toJSON(context.Background(), settings)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "codex-private-key")

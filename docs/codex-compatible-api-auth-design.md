@@ -125,7 +125,7 @@ Base URL は絶対 HTTP(S) URL として解析し、userinfo・query・fragment 
 | --- | --- |
 | `mode` | `oauth` / `bedrock` / `anthropic_compatible` |
 | `base_url`, `model` | 互換 API 有効時は必須。GET でも返す |
-| `authentication` | `api_key` / `bearer_token`。有効化時は選択必須 |
+| `authentication` | `api_key`。有効化時は必須 |
 | `api_key`, `clear_api_key`, `has_api_key` | Codex と同じ保持・置換・削除・write-only 契約。Bearer の秘密値もこの欄に格納 |
 | `model_aliases` | 任意の `sonnet` / `opus` / `haiku` と接続先モデル ID のマップ。未知キーは拒否 |
 
