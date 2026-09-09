@@ -2,10 +2,17 @@
 
 ## Status
 
-Proposed。
+Implemented（MVP）。
 
-この文書は、proxy プロセス内で実行している `codex login --device-auth` を、
+この文書は、proxy プロセス内で実行していた `codex login --device-auth` を、
 Session Manager が起動する短命な認証専用ワークロードへ移す設計を定める。
+
+実装済みの MVP では、parent proxy は認証ワークロードを session runner registry に登録済みで
+outbound control tunnel が接続している External Session Manager に直接委譲する
+（セッション削除と同じ `Tunnel.Do` 経路、HMAC 保護された
+`/api/v1/codex-device-auth` エンドポイント）。in-process 実行や implicit fallback は
+存在しない。対応 manager が接続していなければ開始は `503` となる。
+将来の WorkloadAllocation queue への移行は本設計の後半で扱う。
 
 ## 背景
 

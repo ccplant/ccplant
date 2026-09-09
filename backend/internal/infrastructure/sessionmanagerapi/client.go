@@ -16,7 +16,6 @@ import (
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -93,15 +92,6 @@ var _ SessionAnnotationUpdater = (*Client)(nil)
 var _ StockManager = (*Client)(nil)
 var _ PendingAllocationDeleter = (*Client)(nil)
 var _ ProvisionRequestDeleter = (*Client)(nil)
-var _ codexauth.WorkloadLauncher = (*Client)(nil)
-
-func (c *Client) StartCodexDeviceAuth(ctx context.Context, request codexauth.WorkloadRequest) error {
-	return c.do(ctx, http.MethodPost, "/codex-device-auth", request, nil)
-}
-
-func (c *Client) CancelCodexDeviceAuth(ctx context.Context, attemptID string) error {
-	return c.do(ctx, http.MethodDelete, "/codex-device-auth/"+url.PathEscape(attemptID), nil, nil)
-}
 
 func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/health", nil, nil)

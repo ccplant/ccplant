@@ -88,11 +88,23 @@ type CodexAuthConfigResponse struct {
 	ExecutionMode string `json:"execution_mode,omitempty"`
 }
 
+// workloadAvailability is implemented by launchers that can report whether an
+// execution plane is currently reachable.
+type workloadAvailability interface {
+	Available(context.Context) bool
+}
+
 func (c *CodexDeviceAuthController) GetConfig(ctx echo.Context) error {
 	if auth.GetUserFromContext(ctx) == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
-	return ctx.JSON(http.StatusOK, CodexAuthConfigResponse{Configured: c.launcher != nil, ExecutionMode: "auth_workload"})
+	configured := c.launcher != nil
+	if configured {
+		if provider, ok := c.launcher.(workloadAvailability); ok {
+			configured = provider.Available(ctx.Request().Context())
+		}
+	}
+	return ctx.JSON(http.StatusOK, CodexAuthConfigResponse{Configured: configured, ExecutionMode: "auth_workload"})
 }
 
 func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
