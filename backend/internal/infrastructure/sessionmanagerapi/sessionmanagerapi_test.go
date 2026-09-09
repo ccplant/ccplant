@@ -83,6 +83,14 @@ type fakeManager struct {
 	completedExternal  coreallocation.AllocationResult
 }
 
+type fakeProvisionSettingsBuilder struct {
+	settings *sessionsettings.SessionSettings
+}
+
+func (b fakeProvisionSettingsBuilder) BuildRemoteProvisionSettings(context.Context, string, *entities.RunServerRequest) (*sessionsettings.SessionSettings, error) {
+	return b.settings, nil
+}
+
 func newFakeManager() *fakeManager {
 	return &fakeManager{sessions: make(map[string]entities.Session)}
 }
@@ -377,6 +385,27 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	missing, err := client.GetSessionContext(ctx, session.ID())
 	if err != nil || missing != nil {
 		t.Fatalf("missing session = (%#v, %v)", missing, err)
+	}
+}
+
+func TestClientSendsAPIResolvedProvisionSettings(t *testing.T) {
+	manager := newFakeManager()
+	client, _ := newTestClient(t, manager)
+	settings := &sessionsettings.SessionSettings{Env: map[string]string{"ANTHROPIC_API_KEY": "plain-api-key"}}
+	client.SetProvisionSettingsBuilder(fakeProvisionSettingsBuilder{settings: settings})
+	original := &entities.RunServerRequest{UserID: "user-1"}
+
+	if _, err := client.CreateSession(context.Background(), "resolved-settings", original, nil); err != nil {
+		t.Fatal(err)
+	}
+	if original.ProvisionSettings != nil {
+		t.Fatal("CreateSession mutated the caller's request")
+	}
+	if manager.createdRequest == nil || manager.createdRequest.ProvisionSettings == nil {
+		t.Fatal("session manager did not receive provision settings")
+	}
+	if got := manager.createdRequest.ProvisionSettings.Env["ANTHROPIC_API_KEY"]; got != "plain-api-key" {
+		t.Fatalf("ANTHROPIC_API_KEY = %q", got)
 	}
 }
 

@@ -91,7 +91,7 @@ func TestEncryptionServiceRegistry_GetForDecryption_AlgorithmMatch(t *testing.T)
 	assert.Equal(t, noop, service)
 }
 
-func TestEncryptionServiceRegistry_GetForDecryption_FallbackToPrimary(t *testing.T) {
+func TestEncryptionServiceRegistry_GetForDecryption_RejectsUnknownAlgorithm(t *testing.T) {
 	primary := NewNoopEncryptionService()
 	registry := NewEncryptionServiceRegistry(primary)
 
@@ -110,9 +110,9 @@ func TestEncryptionServiceRegistry_GetForDecryption_FallbackToPrimary(t *testing
 	encrypted, err := local.Encrypt(ctx, "test")
 	require.NoError(t, err)
 
-	// GetForDecryption should fallback to primary (noop) since local is not registered
+	// An unknown algorithm must not fall back to noop and surface ciphertext as plaintext.
 	service := registry.GetForDecryption(encrypted.Metadata)
-	assert.Equal(t, primary, service)
+	assert.Nil(t, service)
 }
 
 func TestEncryptionServiceRegistry_SetPrimary(t *testing.T) {
