@@ -74,6 +74,31 @@ func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 	require.Equal(t, "ollama/model", pi.Env["PI_OLLAMA_MODEL"])
 }
 
+func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentType string
+		explicit  string
+		want      string
+	}{
+		{name: "auto selected codex", agentType: "codex-acp", want: "openai-default"},
+		{name: "auto selected claude", agentType: "claude-acp", want: "anthropic-default"},
+		{name: "explicit override wins", agentType: "codex-acp", explicit: "profile-model", want: "profile-model"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &entities.RunServerRequest{
+				AgentType:        tt.agentType,
+				Model:            tt.explicit,
+				CodexConnection:  &modelprovider.Connection{Mode: "auth_json", Model: "openai-default"},
+				ClaudeConnection: &modelprovider.Connection{Mode: "oauth", Model: "anthropic-default"},
+			}
+			applySelectedAgentDefaultModel(req)
+			require.Equal(t, tt.want, req.Model)
+		})
+	}
+}
+
 func TestSessionAuthenticationOverrides(t *testing.T) {
 	personal := entities.NewSettings("user")
 	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "default", Authentication: "api_key", APIKey: "secret"})

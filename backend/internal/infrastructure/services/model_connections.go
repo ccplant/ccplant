@@ -112,9 +112,7 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if c == nil {
 			continue
 		}
-		if c.Compatible() {
-			c.Model = modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment, req.Environment)
-		}
+		c.Model = modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment, req.Environment)
 		if err := c.Validate(agent); err != nil {
 			return fmt.Errorf("invalid %s connection: %w", agent, err)
 		}
@@ -129,6 +127,24 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	req.CodexConnection, req.ClaudeConnection = codexConnection, claudeConnection
 	req.ModelConnectionsResolved = true
 	return nil
+}
+
+// applySelectedAgentDefaultModel resolves the provider-specific default only
+// after auto agent selection. An explicit session/profile model always wins.
+func applySelectedAgentDefaultModel(req *entities.RunServerRequest) {
+	if req == nil || req.Model != "" {
+		return
+	}
+	switch req.AgentType {
+	case "codex-acp":
+		if req.CodexConnection != nil {
+			req.Model = req.CodexConnection.Model
+		}
+	case "", "claude-acp", "claude-legacy", "claude":
+		if req.ClaudeConnection != nil {
+			req.Model = req.ClaudeConnection.Model
+		}
+	}
 }
 
 func applyModelConnections(settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) {
