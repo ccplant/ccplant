@@ -11,10 +11,11 @@ import (
 )
 
 func TestModelEnvironmentIsolation(t *testing.T) {
-	env := mergeEnv(withoutEnvironment([]string{"ANTHROPIC_AUTH_TOKEN=old", "ANTHROPIC_API_KEY=old-key", "PATH=/bin"}, []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"}), map[string]string{"ANTHROPIC_API_KEY": "selected"})
+	env := mergeEnv(withoutEnvironment([]string{"ANTHROPIC_AUTH_TOKEN=old", "ANTHROPIC_API_KEY=old-key", "ANTHROPIC_OAUTH_TOKEN=oauth", "PATH=/bin"}, modelprovider.ConnectionEnvKeys("claude")), map[string]string{"ANTHROPIC_API_KEY": "selected"})
 	require.Contains(t, env, "PATH=/bin")
 	require.Contains(t, env, "ANTHROPIC_API_KEY=selected")
 	require.NotContains(t, env, "ANTHROPIC_AUTH_TOKEN=old")
+	require.NotContains(t, env, "ANTHROPIC_OAUTH_TOKEN=oauth")
 }
 func TestRestoredClaudeCredentialsRemoved(t *testing.T) {
 	home := t.TempDir()

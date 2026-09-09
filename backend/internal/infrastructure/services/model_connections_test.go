@@ -3,11 +3,11 @@ package services
 import (
 	"context"
 	"encoding/json"
-	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"k8s.io/client-go/kubernetes/fake"
@@ -16,7 +16,7 @@ import (
 func TestResolveConnectionsAndProfileModel(t *testing.T) {
 	personal := entities.NewSettings("user")
 	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://personal.example/v1", Model: "default", Authentication: "api_key", APIKey: "personal-key"})
-	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://personal.example/anthropic", Model: "claude-default", Authentication: "bearer_token", APIKey: "claude-key"})
+	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://personal.example/anthropic", Model: "claude-default", Authentication: "api_key", APIKey: "claude-key"})
 	team := entities.NewSettings("org/team")
 	team.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://team.example/v1", Model: "team-model", Authentication: "api_key", APIKey: "team-key"})
 	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": personal, "org/team": team}}}
@@ -41,7 +41,8 @@ func TestResolveConnectionsAndProfileModel(t *testing.T) {
 	req = &entities.RunServerRequest{AgentType: "", ClaudeConnection: personal.ClaudeConnection()}
 	legacy := &sessionsettings.SessionSettings{}
 	applyModelConnections(legacy, req)
-	require.Equal(t, "claude-key", legacy.Env["ANTHROPIC_AUTH_TOKEN"])
+	require.Equal(t, "claude-key", legacy.Env["ANTHROPIC_API_KEY"])
+	require.NotContains(t, legacy.Env, "ANTHROPIC_AUTH_TOKEN")
 	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none"}
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
 	require.Nil(t, req.CodexConnection)

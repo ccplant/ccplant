@@ -8310,8 +8310,7 @@
           "authentication": {
             "type": "string",
             "enum": [
-              "api_key",
-              "bearer_token"
+              "api_key"
             ]
           },
           "model_aliases": {
@@ -8369,8 +8368,7 @@
           "authentication": {
             "type": "string",
             "enum": [
-              "api_key",
-              "bearer_token"
+              "api_key"
             ]
           },
           "model_aliases": {
@@ -8682,6 +8680,14 @@
           },
           "claude_connection": {
             "$ref": "#/components/schemas/ClaudeConnectionResponse"
+          },
+          "default_openai_base_url": {
+            "type": "string",
+            "description": "Instance-level OPENAI_BASE_URL used to prefill compatible API settings."
+          },
+          "default_anthropic_base_url": {
+            "type": "string",
+            "description": "Instance-level ANTHROPIC_BASE_URL used to prefill compatible API settings."
           }
         }
       },
@@ -9862,8 +9868,7 @@
             "authentication": {
               "type": "string",
               "enum": [
-                "api_key",
-                "bearer_token"
+                "api_key"
               ]
             },
             "api_key": {

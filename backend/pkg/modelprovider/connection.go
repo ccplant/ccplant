@@ -105,7 +105,7 @@ func (c *Connection) Validate(agent string) error {
 	if err := ValidateModel(c.Model); err != nil {
 		return err
 	}
-	validAuthentication := c.Authentication == "api_key" || (agent == "codex" && c.Authentication == "none") || (agent == "claude" && c.Authentication == "bearer_token")
+	validAuthentication := c.Authentication == "api_key" || (agent == "codex" && c.Authentication == "none")
 	if !validAuthentication {
 		return fmt.Errorf("invalid connection authentication")
 	}

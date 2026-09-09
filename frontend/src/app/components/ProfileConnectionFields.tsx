@@ -24,12 +24,12 @@ export default function ProfileConnectionFields({ agent, value, onChange }: {
         <input type="url" required value={value.base_url ?? ''} onChange={e => onChange({ ...value, base_url: e.target.value })} placeholder={agent === 'codex' ? 'https://ollama.com/v1' : 'https://ollama.com'} className={fieldClass} />
       </label>
       <p className="text-xs text-gray-500">{agent === 'codex' ? '/responses を付けない API のベース URL を指定します。' : '/v1 や /messages を付けない URL を指定します。'}</p>
-      <label className="block text-sm">{label} API 認証方式
+      {agent === 'codex' && <label className="block text-sm">{label} API 認証方式
         <select value={value.authentication ?? 'api_key'} onChange={e => onChange({ ...value, authentication: e.target.value as ModelConnection['authentication'] })} className={fieldClass}>
           <option value="api_key">API キー</option>
-          {agent === 'claude' ? <option value="bearer_token">Bearer トークン</option> : <option value="none">認証なし</option>}
+          <option value="none">認証なし</option>
         </select>
-      </label>
+      </label>}
       {value.authentication !== 'none' && <label className="block text-sm">{label} API キー
         <input type="password" autoComplete="new-password" value={value.api_key ?? ''} required={!value.has_api_key} onChange={e => onChange({ ...value, api_key: e.target.value })} placeholder={value.has_api_key ? '保存済み（空欄なら保持）' : 'API キーを入力'} className={fieldClass} />
       </label>}

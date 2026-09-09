@@ -43,7 +43,7 @@ export type AuthMode = 'oauth' | 'bedrock' | 'anthropic_compatible';
 
 export interface ModelConnection {
  mode: 'auth_json' | 'openai_compatible' | 'oauth' | 'bedrock' | 'anthropic_compatible';
- base_url?: string; model?: string; authentication?: 'api_key' | 'none' | 'bearer_token';
+ base_url?: string; model?: string; authentication?: 'api_key' | 'none';
  api_key?: string; clear_api_key?: boolean; has_api_key?: boolean;
  context_window?: number | null; auto_compact_token_limit?: number | null; supports_reasoning_summaries?: boolean | null;
  model_aliases?: Partial<Record<'sonnet' | 'opus' | 'haiku', string>> | null;
@@ -114,6 +114,8 @@ export interface SciaRevokeResponse {
 export interface SettingsData {
  codex_connection?: ModelConnection;
  claude_connection?: ModelConnection;
+  default_openai_base_url?: string;
+  default_anthropic_base_url?: string;
   bedrock?: BedrockConfig;
   mcp_servers?: Record<string, APIMCPServerConfig>;
   marketplaces?: Record<string, MarketplaceConfig>;
