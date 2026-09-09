@@ -65,7 +65,8 @@ func (r *EncryptionServiceRegistry) GetForEncryption() services.EncryptionServic
 }
 
 // GetForDecryption returns the appropriate service for decrypting based on metadata
-// Falls back to primary if no matching service is found
+// Returns nil if no matching service is found. Falling back to a different
+// algorithm (especially noop) would expose ciphertext as if it were plaintext.
 func (r *EncryptionServiceRegistry) GetForDecryption(metadata services.EncryptionMetadata) services.EncryptionService {
 	// Try exact match by algorithm and keyID
 	key := fmt.Sprintf("%s:%s", metadata.Algorithm, metadata.KeyID)
@@ -80,10 +81,9 @@ func (r *EncryptionServiceRegistry) GetForDecryption(metadata services.Encryptio
 		return service
 	}
 
-	// Fallback to primary
-	log.Printf("[ENCRYPTION_REGISTRY] No matching service found for %s (keyID: %s), using primary",
+	log.Printf("[ENCRYPTION_REGISTRY] No matching service found for %s (keyID: %s)",
 		metadata.Algorithm, metadata.KeyID)
-	return r.primary
+	return nil
 }
 
 // SetPrimary sets the primary encryption service

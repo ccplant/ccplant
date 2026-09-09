@@ -211,6 +211,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var shareRepo portrepos.ShareRepository
 	namespace := resolveApplicationNamespace(cfg.KVStore.Namespace)
 	var k8sSessionManager *services.KubernetesSessionManager
+	var remoteSessionManager *sessionmanagerapi.Client
 	var sessionManager portrepos.SessionManager
 	var persistenceClient kubernetes.Interface
 	var applicationKVStore kvstore.Store
@@ -241,6 +242,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("[SERVER] Session manager is unavailable after startup grace period: %v", healthErr)
 		}
 		sessionManager = remoteManager
+		remoteSessionManager = remoteManager
 		var apiKVClient kubernetes.Interface = fake.NewSimpleClientset()
 		if configuredKVBackend(cfg.KVStore) == "kubernetes" {
 			restConfig, configErr := ctrlconfig.GetConfig()
@@ -493,6 +495,23 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	))
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetSessionProfileRepository(sessionProfileRepo)
+	}
+	if remoteSessionManager != nil {
+		// The API owns persistence encryption. Build the complete ephemeral
+		// provision payload here and send it to the isolated session manager;
+		// the manager never receives encryption keys or decrypts stored records.
+		settingsBuilder, builderErr := services.NewKubernetesSessionManagerWithClient(cfg, false, lgr, fake.NewSimpleClientset())
+		if builderErr != nil {
+			log.Fatalf("[SERVER] Failed to initialize API-side provision settings builder: %v", builderErr)
+		}
+		settingsBuilder.SetSettingsRepository(settingsRepo)
+		settingsBuilder.SetCredentialsRepository(credentialsRepo)
+		settingsBuilder.SetTeamConfigRepository(teamConfigRepo)
+		settingsBuilder.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
+		settingsBuilder.SetSandboxPolicyRepository(sandboxPolicyRepo)
+		settingsBuilder.SetUserFileRepository(userFileRepo)
+		settingsBuilder.SetSessionProfileRepository(sessionProfileRepo)
+		remoteSessionManager.SetProvisionSettingsBuilder(settingsBuilder)
 	}
 	log.Printf("[SERVER] Session profile repository initialized")
 
