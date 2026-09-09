@@ -47,6 +47,7 @@ type githubConnection struct {
 	SecretEnvironment string    `json:"secret_environment,omitempty"`
 	Enabled           bool      `json:"enabled"`
 	ShowOnLogin       *bool     `json:"show_on_login"`
+	AllowUserCreation bool      `json:"allow_user_creation"`
 	Organizations     []string  `json:"organizations,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
@@ -60,15 +61,16 @@ type githubConnectionResponse struct {
 }
 
 type githubConnectionRequest struct {
-	Name          string   `json:"name"`
-	BaseURL       string   `json:"base_url"`
-	APIURL        string   `json:"api_url"`
-	OAuthClientID string   `json:"oauth_client_id"`
-	OAuthScope    string   `json:"oauth_scope"`
-	Enabled       *bool    `json:"enabled,omitempty"`
-	ShowOnLogin   *bool    `json:"show_on_login,omitempty"`
-	Organizations []string `json:"organizations,omitempty"`
-	Secret        struct {
+	Name              string   `json:"name"`
+	BaseURL           string   `json:"base_url"`
+	APIURL            string   `json:"api_url"`
+	OAuthClientID     string   `json:"oauth_client_id"`
+	OAuthScope        string   `json:"oauth_scope"`
+	Enabled           *bool    `json:"enabled,omitempty"`
+	ShowOnLogin       *bool    `json:"show_on_login,omitempty"`
+	AllowUserCreation *bool    `json:"allow_user_creation,omitempty"`
+	Organizations     []string `json:"organizations,omitempty"`
+	Secret            struct {
 		Source      string `json:"source"`
 		Value       string `json:"value,omitempty"`
 		Environment string `json:"environment,omitempty"`
@@ -191,7 +193,8 @@ func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
 		ID: uuid.NewString(), Name: strings.TrimSpace(request.Name), BaseURL: baseURL, APIURL: apiURL,
 		OAuthClientID: strings.TrimSpace(request.OAuthClientID), OAuthScope: normalizeOAuthScope(request.OAuthScope), SecretSource: request.Secret.Source,
 		SecretEnvironment: request.Secret.Environment, Enabled: enabled, ShowOnLogin: &showOnLogin,
-		Organizations: normalizeOrganizations(request.Organizations), CreatedAt: now, UpdatedAt: now,
+		AllowUserCreation: request.AllowUserCreation != nil && *request.AllowUserCreation,
+		Organizations:     normalizeOrganizations(request.Organizations), CreatedAt: now, UpdatedAt: now,
 	}
 	if err := c.validateOrganizationAssignments(ctx.Request().Context(), connection.ID, connection.Organizations); err != nil {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
@@ -263,6 +266,9 @@ func (c *GitHubConnectionsController) Update(ctx echo.Context) error {
 	}
 	if request.ShowOnLogin != nil {
 		connection.ShowOnLogin = request.ShowOnLogin
+	}
+	if request.AllowUserCreation != nil {
+		connection.AllowUserCreation = *request.AllowUserCreation
 	}
 	if request.Organizations != nil {
 		connection.Organizations = normalizeOrganizations(request.Organizations)
@@ -781,6 +787,9 @@ func (c *GitHubConnectionsController) resolveLoginPrincipal(ctx context.Context,
 	var identity githubIdentity
 	_, err := c.loadObject(ctx, identitySecretName(connection.ID, user.ID), &identity)
 	if apierrors.IsNotFound(err) {
+		if !connection.AllowUserCreation {
+			return githubPrincipal{}, errors.New("user creation is disabled for this GitHub connection")
+		}
 		principal, createErr := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github-connection:%s:%d", connection.ID, user.ID))
 		if createErr != nil {
 			return githubPrincipal{}, createErr
