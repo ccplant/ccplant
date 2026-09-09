@@ -102,10 +102,10 @@ it('loads agent-specific models and keeps them out of the general environment ed
   expect(screen.queryByDisplayValue('ANTHROPIC_MODEL')).not.toBeInTheDocument()
 })
 
-it('migrates the legacy shared model into both agent-specific model fields', () => {
+it('does not prefill agent-specific fields from the legacy shared model', () => {
   render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config: { params: { model: 'legacy-model' } } }} />)
-  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('legacy-model')
-  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('legacy-model')
+  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('')
+  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('')
 })
 
 it('creates in the scope from the URL and retains the draft after a save failure', async () => {

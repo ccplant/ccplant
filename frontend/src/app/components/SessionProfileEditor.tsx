@@ -142,10 +142,8 @@ export default function SessionProfileEditor({
       const cfg = editingProfile.config
       setPool(cfg?.pool ?? '')
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
-      // params.model was the old, agent-dependent field. Populate both inputs
-      // from it so the next save migrates the profile without losing its value.
-      setCodexModel(cfg?.environment?.CODEX_MODEL ?? cfg?.params?.model ?? '')
-      setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? cfg?.params?.model ?? '')
+      setCodexModel(cfg?.environment?.CODEX_MODEL ?? '')
+      setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
       setMcpServers(cfg?.mcp_servers ?? {})
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
