@@ -363,7 +363,7 @@ sessionManager:
     # as its signing fallback.
     hmacSecretRef:
       name: ""
-      key: hmac-secret
+      key: ""
   # Credential accepted only by the session-manager internal API. The API
   # client references the same Secret independently under api.sessionManager.
   internalApi:
