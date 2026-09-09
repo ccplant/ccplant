@@ -2949,25 +2949,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// - GitHubConfigSecretName: Contains GITHUB_API, GITHUB_URL (configuration for Enterprise Server)
 	var envFrom []corev1.EnvFromSource
 
-	if req.GithubToken != "" {
-		// When params.github_token is provided:
-		// - GITHUB_TOKEN is embedded directly in session-settings env (no per-session secret)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings only
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
-		}
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided:
-		// - Mount GitHubSecretName for full GitHub App authentication
-		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
+	// params.github_token overrides shared authentication, but the Enterprise
+	// Server URL configuration is independent and must always be mounted when set.
+	if req.GithubToken == "" && m.k8sConfig.GitHubSecretName != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -2976,18 +2960,18 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 				Optional: boolPtr(true),
 			},
 		})
+	}
 
-		// Mount GitHub config Secret if available (for any additional config)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
+	if m.k8sConfig.GitHubConfigSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubConfigSecretName,
 				},
-			})
-		}
+				Optional: boolPtr(true),
+			},
+		})
+		log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
 	}
 
 	// Build container spec.
@@ -6021,17 +6005,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	var secretNames []string
 
 	if req.GithubToken != "" {
-		// When params.github_token is provided: embed token directly, no per-session secret needed
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
-		}
+		// When params.github_token is provided: embed token directly, no shared authentication secret needed
 		env["GITHUB_TOKEN"] = req.GithubToken
 	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided
 		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
-		}
+	}
+	if m.k8sConfig.GitHubConfigSecretName != "" {
+		secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
 	}
 
 	// Expand secrets into env map (GitHub secrets only)
@@ -6244,7 +6224,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			Token:            req.GithubToken,
 			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
 		}
-	} else if m.k8sConfig.GitHubSecretName != "" {
+	} else if m.k8sConfig.GitHubSecretName != "" || m.k8sConfig.GitHubConfigSecretName != "" {
 		settings.Github = &sessionsettings.GithubConfig{
 			SecretName:       m.k8sConfig.GitHubSecretName,
 			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
