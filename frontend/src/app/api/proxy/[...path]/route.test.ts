@@ -45,6 +45,7 @@ describe('API proxy route transport', () => {
     expect(headers.get('authorization')).toBe('Bearer api-client-token')
     expect(headers.get('content-type')).toBe('application/json-patch+json')
     expect(headers.get('last-event-id')).toBe('9')
+    expect(headers.get('x-forwarded-prefix')).toBe('/api/proxy')
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-cache, no-transform')
     expect(response.headers.get('x-accel-buffering')).toBe('no')

@@ -432,7 +432,11 @@ func deviceAuthCallbackURL(ctx echo.Context) (string, error) {
 	if host == "" || strings.ContainsAny(host, "\r\n/") {
 		return "", fmt.Errorf("invalid callback host")
 	}
-	return scheme + "://" + host + "/internal/codex-device-auth", nil
+	prefix := strings.TrimSuffix(ctx.Request().Header.Get("X-Forwarded-Prefix"), "/")
+	if prefix != "" && (!strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.ContainsAny(prefix, "\r\n?#")) {
+		return "", fmt.Errorf("invalid callback prefix")
+	}
+	return scheme + "://" + host + prefix + "/internal/codex-device-auth", nil
 }
 
 func validVerificationURI(raw string) bool {
