@@ -61,15 +61,15 @@ export function ModelConnectionSettings({ agent, connection, defaultBaseURL, leg
           </>}
         </select>
       </label>
+      <label className="block text-sm">デフォルトモデル ID
+        <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.model || ''} onChange={e => change({ model: e.target.value })} />
+      </label>
+      <p className="text-xs text-gray-500">自動選択時も、選ばれたエージェントに対応するこのモデルを使用します。セッションプロファイルの指定がある場合は上書きされます。</p>
       {compatible && <>
         <label className="block text-sm">Base URL
           <input aria-label={`${agent} Base URL`} className={fieldClass} value={draft.base_url || ''} onChange={e => change({ base_url: e.target.value })} placeholder={agent === 'codex' ? 'https://llm.example.com/v1' : 'https://llm.example.com/anthropic'} />
         </label>
         <p className="text-xs text-gray-500">{agent === 'codex' ? 'Responses API 対応の接続先を指定します。' : 'Messages API のルートを指定します。末尾の /v1/messages は不要です。'} localhost はセッションの実行環境を指します。</p>
-        <label className="block text-sm">デフォルトモデル ID
-          <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.model || ''} onChange={e => change({ model: e.target.value })} />
-        </label>
-        <p className="text-xs text-gray-500">セッションプロファイルでモデルを指定すると、このデフォルトを上書きします。</p>
         {agent === 'codex' && <label className="block text-sm">認証
           <select aria-label={`${agent} 認証`} className={fieldClass} value={draft.authentication || 'api_key'} onChange={e => change({ authentication: e.target.value as ModelConnection['authentication'] })}>
             <option value="api_key">API キー</option>

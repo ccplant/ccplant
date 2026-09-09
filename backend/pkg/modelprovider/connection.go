@@ -81,6 +81,11 @@ func (c *Connection) Validate(agent string) error {
 	default:
 		return fmt.Errorf("invalid agent")
 	}
+	if strings.TrimSpace(c.Model) != "" {
+		if err := ValidateModel(c.Model); err != nil {
+			return err
+		}
+	}
 	if !c.Compatible() {
 		return nil
 	}
