@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ModelConnection } from '@/types/settings'
+import { CodexModelMetadataFields } from './CodexModelMetadataFields'
 
 interface Props {
   agent: 'codex' | 'claude'
@@ -82,9 +83,7 @@ export function ModelConnectionSettings({ agent, connection, defaultBaseURL, leg
         <details><summary className="cursor-pointer text-sm">詳細設定</summary>
           <div className="space-y-3 pt-3">
             {agent === 'codex' ? <>
-              <label className="block text-sm">コンテキスト長<input type="number" min="1" className={fieldClass} value={draft.context_window ?? ''} onChange={e => change({ context_window: e.target.value ? Number(e.target.value) : null })} /></label>
-              <label className="block text-sm">自動圧縮開始トークン数<input type="number" min="1" className={fieldClass} value={draft.auto_compact_token_limit ?? ''} onChange={e => change({ auto_compact_token_limit: e.target.value ? Number(e.target.value) : null })} /></label>
-              <label className="block text-sm">Reasoning summaries<select className={fieldClass} value={draft.supports_reasoning_summaries == null ? '' : String(draft.supports_reasoning_summaries)} onChange={e => change({ supports_reasoning_summaries: e.target.value === '' ? null : e.target.value === 'true' })}><option value="">未指定</option><option value="true">対応</option><option value="false">非対応</option></select></label>
+              <CodexModelMetadataFields value={draft} onChange={change} fieldClass={fieldClass} idPrefix="settings-codex" />
             </> : <>
               <p className="text-xs text-gray-500">未指定の別名には、プロファイル上書き後のモデルを使用します。</p>
               {(['sonnet', 'opus', 'haiku'] as const).map(alias => <label className="block text-sm" key={alias}>{alias} モデル ID<input className={fieldClass} value={draft.model_aliases?.[alias] || ''} onChange={e => { const aliases = { ...draft.model_aliases }; if (e.target.value) aliases[alias] = e.target.value; else delete aliases[alias]; change({ model_aliases: aliases }) }} /></label>)}
