@@ -116,10 +116,14 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if err := c.Validate(agent); err != nil {
 			return fmt.Errorf("invalid %s connection: %w", agent, err)
 		}
-		for _, layer := range []map[string]string{req.ProfileEnvironment, req.Environment} {
-			for _, key := range modelprovider.ConnectionEnvKeys(agent) {
-				if _, ok := layer[key]; ok {
-					return fmt.Errorf("%s conflicts with managed %s connection; only model overrides are allowed", key, agent)
+		// Built-in authentication modes may coexist with legacy environment
+		// credentials. Only compatible API connections own these variables.
+		if c.Compatible() {
+			for _, layer := range []map[string]string{req.ProfileEnvironment, req.Environment} {
+				for _, key := range modelprovider.ConnectionEnvKeys(agent) {
+					if _, ok := layer[key]; ok {
+						return fmt.Errorf("%s conflicts with managed %s connection; only model overrides are allowed", key, agent)
+					}
 				}
 			}
 		}

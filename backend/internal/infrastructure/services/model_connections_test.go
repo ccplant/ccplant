@@ -99,6 +99,20 @@ func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {
 	}
 }
 
+func TestBuiltInAuthDefaultModelAllowsLegacyCredentialEnvironment(t *testing.T) {
+	personal := entities.NewSettings("user")
+	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "oauth", Model: "anthropic-default"})
+	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": personal}}}
+	req := &entities.RunServerRequest{
+		UserID:             "user",
+		AgentType:          "claude-acp",
+		ProfileEnvironment: map[string]string{"ANTHROPIC_API_KEY": "legacy-key"},
+	}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	applySelectedAgentDefaultModel(req)
+	require.Equal(t, "anthropic-default", req.Model)
+}
+
 func TestSessionAuthenticationOverrides(t *testing.T) {
 	personal := entities.NewSettings("user")
 	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://example.com/v1", Model: "default", Authentication: "api_key", APIKey: "secret"})
