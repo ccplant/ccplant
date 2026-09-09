@@ -1,6 +1,7 @@
 'use client'
 
 import type { ModelConnection } from '../../types/settings'
+import { CodexModelMetadataFields } from '../../components/settings/CodexModelMetadataFields'
 
 export default function ProfileConnectionFields({ agent, value, onChange }: {
   agent: 'codex' | 'claude'
@@ -36,6 +37,12 @@ export default function ProfileConnectionFields({ agent, value, onChange }: {
       <label className="block text-sm">{label} 接続のデフォルトモデル
         <input value={value.model ?? ''} onChange={e => onChange({ ...value, model: e.target.value })} placeholder="空欄ならベースのデフォルトモデルを使用" className={fieldClass} />
       </label>
+      {agent === 'codex' && <details>
+        <summary className="cursor-pointer text-sm">モデルメタデータ</summary>
+        <div className="pt-3">
+          <CodexModelMetadataFields value={value} onChange={patch => onChange({ ...value, ...patch })} fieldClass={fieldClass} idPrefix="profile-codex" />
+        </div>
+      </details>}
       <p className="text-xs text-gray-500">API キーは暗号化して保存し、再表示しません。チェックを外すと専用の接続設定を削除して、ベースの接続設定を使用します。</p>
     </>}
   </fieldset>
