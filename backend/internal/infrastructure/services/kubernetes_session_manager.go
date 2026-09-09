@@ -527,6 +527,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	applySelectedAgentDefaultModel(req)
 	applySandboxDefaults(req)
 
 	// Attempt to adopt a stock session matching the requested pod capabilities
@@ -7022,6 +7023,8 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 		return nil, err
 	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
+	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	applySelectedAgentDefaultModel(req)
 	// Create a temporary session with the provided ID to satisfy buildSessionSettings
 	tempSession := &KubernetesSession{
 		id:          sessionID,

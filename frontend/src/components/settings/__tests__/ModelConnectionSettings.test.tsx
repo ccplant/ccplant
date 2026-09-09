@@ -12,7 +12,7 @@ describe('ModelConnectionSettings', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls[0][0]).toMatchObject({ model: 'new-default', base_url: 'https://gateway.example/v1' })
     expect(onSave.mock.calls[0][0]).not.toHaveProperty('api_key')
-    expect(screen.getByText(/セッションプロファイルでモデルを指定/)).toBeTruthy()
+    expect(screen.getByText(/セッションプロファイルの指定がある場合/)).toBeTruthy()
   })
   it('supports Claude bearer credentials and reports save failures', async () => {
     const onSave = vi.fn().mockRejectedValue(new Error('API key is required'))
@@ -22,5 +22,13 @@ describe('ModelConnectionSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存して使用' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('API key is required')
     expect(onSave.mock.calls[0][0]).toMatchObject({ mode: 'anthropic_compatible', authentication: 'bearer_token' })
+  })
+  it('configures an agent-specific default model with built-in authentication', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    render(<ModelConnectionSettings agent="codex" connection={{ mode: 'auth_json' }} onSave={onSave} />)
+    fireEvent.change(screen.getByLabelText('codex デフォルトモデル ID'), { target: { value: 'gpt-default' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存して使用' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][0]).toMatchObject({ mode: 'auth_json', model: 'gpt-default' })
   })
 })
