@@ -13,6 +13,7 @@ const BLOCKED_REQUEST_HEADERS = new Set([
   'transfer-encoding',
   'upgrade',
   'x-api-key',
+  'x-forwarded-prefix',
 ])
 
 const BLOCKED_RESPONSE_HEADERS = new Set([
