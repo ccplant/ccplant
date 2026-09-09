@@ -75,17 +75,37 @@ it('retains edits between sections, discards all edits, and preserves API-only f
   fireEvent.change(screen.getByDisplayValue('Original'), { target: { value: 'Changed' } })
   rerender(<SessionProfileEditor {...props} section="models" />)
   expect(screen.queryByDisplayValue('Changed')).not.toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('モデル ID'), { target: { value: 'test-model' } })
+  fireEvent.change(screen.getByLabelText('Codex モデル ID'), { target: { value: 'gpt-test' } })
+  fireEvent.change(screen.getByLabelText('Claude Code (Anthropic) モデル ID'), { target: { value: 'claude-test' } })
   rerender(<SessionProfileEditor {...props} section="basic" />)
   expect(screen.getByDisplayValue('Changed')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
-  expect(mocks.update.mock.calls[0][1]).toMatchObject({ name: 'Changed', config: { reuse_session: true, initial_message_template: 'Hello', params: { auth_proxy: true, credential_source: 'none' as const, model: 'test-model' } } })
+  expect(mocks.update.mock.calls[0][1]).toMatchObject({ name: 'Changed', config: { reuse_session: true, initial_message_template: 'Hello', environment: { CODEX_MODEL: 'gpt-test', ANTHROPIC_MODEL: 'claude-test' }, params: { auth_proxy: true, credential_source: 'none' as const } } })
   fireEvent.change(screen.getByDisplayValue('Changed'), { target: { value: 'Discard this' } })
   fireEvent.click(screen.getByRole('button', { name: '破棄' }))
   expect(screen.getByDisplayValue('Original')).toBeInTheDocument()
   rerender(<SessionProfileEditor {...props} section="models" />)
-  expect(screen.getByLabelText('モデル ID')).toHaveValue('')
+  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('')
+  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('')
+})
+
+it('loads agent-specific models and keeps them out of the general environment editor', () => {
+  const profile = { id: 'profile', name: 'Models', created_at: '', updated_at: '', config: { environment: { CODEX_MODEL: 'gpt-profile', ANTHROPIC_MODEL: 'claude-profile', KEEP_ME: 'yes' } } }
+  const props = { editingProfile: profile, onClose: vi.fn(), onSuccess: vi.fn() }
+  const { rerender } = render(<SessionProfileEditor {...props} section="models" />)
+  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('gpt-profile')
+  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('claude-profile')
+  rerender(<SessionProfileEditor {...props} section="environment" />)
+  expect(screen.getByDisplayValue('KEEP_ME')).toBeInTheDocument()
+  expect(screen.queryByDisplayValue('CODEX_MODEL')).not.toBeInTheDocument()
+  expect(screen.queryByDisplayValue('ANTHROPIC_MODEL')).not.toBeInTheDocument()
+})
+
+it('does not prefill agent-specific fields from the legacy shared model', () => {
+  render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config: { params: { model: 'legacy-model' } } }} />)
+  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('')
+  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('')
 })
 
 it('creates in the scope from the URL and retains the draft after a save failure', async () => {
