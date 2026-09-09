@@ -563,6 +563,44 @@ func TestBuildSessionSettings_GitHubTokenExcludesInheritedAppCredentials(t *test
 	}
 }
 
+func TestBuildSessionSettings_LoadsGitHubConfigSecretWithoutAuthentication(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-config", Namespace: "test-ns"},
+			Data: map[string][]byte{
+				"GITHUB_API": []byte("https://ghe.example.com/api/v3"),
+				"GITHUB_URL": []byte("https://ghe.example.com"),
+			},
+		},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace:              "test-ns",
+		Image:                  "test-image:latest",
+		BasePort:               9000,
+		PVCEnabled:             boolPtrForTest(false),
+		GitHubConfigSecretName: "github-config",
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &entities.RunServerRequest{UserID: "test-user"}
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	if got := settings.Env["GITHUB_API"]; got != "https://ghe.example.com/api/v3" {
+		t.Errorf("GITHUB_API = %q", got)
+	}
+	if got := settings.Env["GITHUB_URL"]; got != "https://ghe.example.com" {
+		t.Errorf("GITHUB_URL = %q", got)
+	}
+	if settings.Github == nil || settings.Github.SecretName != "" || settings.Github.ConfigSecretName != "github-config" {
+		t.Errorf("Github = %+v, want config-only github-config", settings.Github)
+	}
+}
+
 func TestBuildSessionSettings_CodexACPDisablesNestedSandbox(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},

@@ -138,6 +138,28 @@ func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) 
 	}
 }
 
+func TestBuildDeploymentMountsGitHubConfigSecretWithoutAuthentication(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.GitHubConfigSecretName = "github-config"
+	session := newWorkloadTestSession()
+
+	deployment, err := manager.buildDeployment(context.Background(), session, session.Request())
+	if err != nil {
+		t.Fatalf("buildDeployment() error = %v", err)
+	}
+
+	envFrom := deployment.Spec.Template.Spec.Containers[0].EnvFrom
+	if len(envFrom) != 1 {
+		t.Fatalf("EnvFrom = %+v, want only github-config", envFrom)
+	}
+	if envFrom[0].SecretRef == nil || envFrom[0].SecretRef.Name != "github-config" {
+		t.Fatalf("EnvFrom[0] = %+v, want github-config SecretRef", envFrom[0])
+	}
+	if envFrom[0].SecretRef.Optional == nil || !*envFrom[0].SecretRef.Optional {
+		t.Fatalf("github-config SecretRef Optional = %v, want true", envFrom[0].SecretRef.Optional)
+	}
+}
+
 func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()

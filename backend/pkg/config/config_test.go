@@ -385,6 +385,17 @@ func TestLoadConfigWithEnvironmentVariables(t *testing.T) {
 	}
 }
 
+func TestLoadConfigWithKubernetesGitHubSecretEnvironmentVariables(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME", "github-session")
+	t.Setenv("AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME", "github-config")
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "github-session", loadedConfig.KubernetesSession.GitHubSecretName)
+	assert.Equal(t, "github-config", loadedConfig.KubernetesSession.GitHubConfigSecretName)
+}
+
 func TestLoadConfigWithStockInventoryPoolsEnv(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 
