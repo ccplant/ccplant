@@ -80,6 +80,48 @@ func TestBuildSessionSettings_OneshotDoesNotInjectDeleteHook(t *testing.T) {
 	}
 }
 
+func TestApplyAgentRuntimeStatusCompletesFastOneshotFromActive(t *testing.T) {
+	session := NewKubernetesSession(
+		"fast-oneshot",
+		&entities.RunServerRequest{Oneshot: true, InitialMessage: "finish quickly"},
+		"agentapi-session-fast-oneshot",
+		"agentapi-session-fast-oneshot-svc",
+		"",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+	session.SetStatus("active")
+
+	applyAgentRuntimeStatus(session, "stable")
+
+	if got := session.Status(); got != "stopped" {
+		t.Fatalf("status = %q, want stopped", got)
+	}
+}
+
+func TestApplyAgentRuntimeStatusKeepsInteractiveSessionActive(t *testing.T) {
+	session := NewKubernetesSession(
+		"interactive",
+		&entities.RunServerRequest{InitialMessage: "hello"},
+		"agentapi-session-interactive",
+		"agentapi-session-interactive-svc",
+		"",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+	session.SetStatus("active")
+
+	applyAgentRuntimeStatus(session, "stable")
+
+	if got := session.Status(); got != "active" {
+		t.Fatalf("status = %q, want active", got)
+	}
+}
+
 // TestOneshotSecretCreatedWithCorrectFormat verifies the oneshot settings secret
 // has the correct JSON format that settingspatch can parse.
 func TestOneshotSecretCreatedWithCorrectFormat(t *testing.T) {

@@ -5098,20 +5098,7 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 				if jsonErr := json.Unmarshal([]byte(data), &body); jsonErr != nil {
 					continue
 				}
-				switch body.Status {
-				case "running":
-					session.SetStatus("running")
-					log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
-				case "stable":
-					completedOneshot := session.Status() == "running" && session.Request() != nil && session.Request().Oneshot
-					if completedOneshot {
-						session.SetStatus("stopped")
-						log.Printf("[AGENT_STATUS] Session %s completed oneshot turn; waiting for TTL cleanup", session.id)
-					} else {
-						session.SetStatus("active")
-						log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
-					}
-				}
+				applyAgentRuntimeStatus(session, body.Status)
 			case "message_update":
 				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
 				m.broadcastMessageUpdate(session.id)
@@ -5119,6 +5106,28 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 		}
 	}
 	return scanner.Err()
+}
+
+func applyAgentRuntimeStatus(session *KubernetesSession, status string) {
+	switch status {
+	case "running":
+		session.SetStatus("running")
+		log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
+	case "stable":
+		request := session.Request()
+		// Runtime watching starts after pull provisioning, including the initial
+		// message, has completed. A fast turn can therefore finish before the
+		// watcher connects and its first event is stable rather than running.
+		completedOneshot := request != nil && request.Oneshot && request.InitialMessage != "" &&
+			(session.Status() == "running" || session.Status() == "active")
+		if completedOneshot {
+			session.SetStatus("stopped")
+			log.Printf("[AGENT_STATUS] Session %s completed oneshot turn; waiting for TTL cleanup", session.id)
+		} else {
+			session.SetStatus("active")
+			log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
+		}
+	}
 }
 
 // SetPersonalAPIKeyRepository sets the personal API key repository
