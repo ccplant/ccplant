@@ -102,27 +102,26 @@ GitHub identity ──membership──> External team binding
 
 ## 設定スキーマと自動作成
 
-GitHub 接続自体と Team 定義を分離し、トップレベルに `team_discovery` と `teams` を追加する。`team_discovery` は GitHub Team 名の一部を ccplant Team key としてキャプチャし、Team principal を動的に作成する。`teams` は既知の ccplant Team を静的に宣言する用途に残す。
+GitHub 接続自体と Team 定義を分離し、トップレベルに `team_discovery` と `teams` を追加する。`team_discovery` はパターンに一致した GitHub Team の完全名を ccplant Team key として使い、Team principal を動的に作成する。`teams` は既知の ccplant Team を静的に宣言する用途に残す。
 
 ### 動的 Team discovery
 
-GHES の `test/cc-users` から ccplant の `test` Team を作成する場合は、次のように設定する。
+GHES の `test/cc-users` から、同名の ccplant `test/cc-users` Team を作成する場合は次のように設定する。
 
 ```yaml
 team_discovery:
   - connection_id: ghes
-    team_pattern: "{team}/cc-users"
-    team_key: "{team}"
-    display_name: "{team}"
+    team_pattern: "*/cc-users"
+    team_key: "{organization}/{team_slug}"
 ```
 
-この `{team}` は通常の wildcard ではなく名前付き capture である。GitHub Team `test/cc-users` に対して `{team} = test` となり、次の TeamConfig を初回観測時に作成する。
+`team_pattern` は GitHub Team の `organization/team-slug` に対する glob である。`team_key` では、マッチした実値を表す組み込み変数 `{organization}` と `{team_slug}` を利用できる。この例では GitHub Team `test/cc-users` に対して `organization = test`, `team_slug = cc-users` となり、次の TeamConfig を初回観測時に作成する。`team_key` を省略した場合も既定値は `{organization}/{team_slug}` とする。
 
 ```json
 {
   "principal_id": "team_01JTEAM7AM3NQKPF6QJ8K58XW",
-  "team_key": "test",
-  "display_name": "test",
+  "team_key": "test/cc-users",
+  "display_name": "test/cc-users",
   "external_teams": [
     {
       "provider": "github",
@@ -135,21 +134,21 @@ team_discovery:
 }
 ```
 
-Team の生成契機は、対象 GitHub connection でユーザーの membership をロードしたときとする。たとえば Alice の GHES membership に `test/cc-users` が含まれていれば、resolver は discovery rule にマッチさせ、ccplant `test` Team がなければ principal を作成してから Alice をその Team のメンバーとして認可する。全 organization の事前列挙は不要である。
+Team の生成契機は、対象 GitHub connection でユーザーの membership をロードしたときとする。たとえば Alice の GHES membership に `test/cc-users` が含まれていれば、resolver は discovery rule にマッチさせ、ccplant `test/cc-users` Team がなければ principal を作成してから Alice をその Team のメンバーとして認可する。全 organization の事前列挙は不要である。
 
-同時に複数ユーザーが初回ログインしても principal が二重作成されないよう、正規化済み `team_key` を一意キーとして atomic create を行う。競合した処理は作成済み TeamConfig を再取得する。`team_key` は capture 展開後に小文字化し、`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` を満たす必要がある。不正な展開結果は認可せず監査ログへ記録する。
+同時に複数ユーザーが初回ログインしても principal が二重作成されないよう、正規化済み `team_key` を一意キーとして atomic create を行う。競合した処理は作成済み TeamConfig を再取得する。既定形式の `team_key` は小文字化された `organization/team-slug` とし、空要素や余分な `/` を含む展開結果は認可せず監査ログへ記録する。
 
-作成した TeamConfig には `discovery_rule_id` と capture 値も保存する。同じ key の Team がすでに存在しても、それが同じ discovery rule と capture から作成されたものなら再利用する。手動作成 Team や別 rule 由来 Team と key が衝突した場合は、既存 Team へ自動 binding せず fail closed にする。そうしないと、GitHub Team 名を作れるユーザーが既存 ccplant Team に参加できる可能性がある。
+作成した TeamConfig には `discovery_rule_id` とマッチした organization/team slug も保存する。同じ key の Team がすでに存在しても、それが同じ discovery rule と GitHub Team から作成されたものなら再利用する。手動作成 Team や別 rule 由来 Team と key が衝突した場合は、既存 Team へ自動 binding せず fail closed にする。そうしないと、GitHub Team 名を作れるユーザーが既存 ccplant Team に参加できる可能性がある。
 
-初期仕様では名前付き capture は organization または team slug の要素全体を表すものに限定し、部分 capture や正規表現は許可しない。たとえば `{team}/cc-users` と `myorg/{team}-cc-users` のうち、後者のような部分 capture は将来拡張とする。これにより Team key の予期しない生成や pattern ambiguity を避ける。
+初期仕様では `team_key` に指定できる変数を `{organization}` と `{team_slug}` に限定し、glob の `*` 自体を任意名で capture する機能や正規表現は導入しない。これにより Team key の生成規則を単純に保つ。
 
 ### 手動での追加マッピング
 
-discovery で `test` Team を一度作成した後、管理者は Team 設定 API または UI から GHEC Team を追加できる。
+discovery で `test/cc-users` Team を一度作成した後、管理者は Team 設定 API または UI から GHEC Team を追加できる。
 
 ```yaml
 # TeamConfig の UI/API 表現。サーバーの bootstrap config ではない。
-key: test
+key: test/cc-users
 external_teams:
   - connection_id: ghes
     team_pattern: test/cc-users
@@ -163,10 +162,10 @@ external_teams:
 
 | GitHub connection | GitHub Team | ccplant Team |
 |---|---|---|
-| `ghes` | `test/cc-users` | `test` |
-| `ghec` | `myorg/test-cc-users` | `test` |
+| `ghes` | `test/cc-users` | `test/cc-users` |
+| `ghec` | `myorg/test-cc-users` | `test/cc-users` |
 
-GHES membership をロードした Alice と、GHEC membership をロードした Bob は、同じ `test` Team principal のメンバーになる。両方の identity が同じ user principal にリンクされている場合も結果は `test` 1 件に重複排除する。
+GHES membership をロードした Alice と、GHEC membership をロードした Bob は、同じ `test/cc-users` Team principal のメンバーになる。両方の identity が同じ user principal にリンクされている場合も結果は `test/cc-users` 1 件に重複排除する。
 
 field ownership は binding 単位で管理する。`managed_by: discovery` の binding は discovery rule が所有するため API から削除・変更できない。一方、同じ TeamConfig の `managed_by: api` binding は管理者が追加・更新・削除できる。したがって、Team が config 由来であることを理由に TeamConfig 全体を read-only にはしない。
 
@@ -382,9 +381,9 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 - 同じ external GitHub Team を 2 つの ccplant Team に割り当てようとすると設定検証が失敗する。
 - `dev/cc-*` のような config pattern に一致する複数の GitHub Team を、1 つの ccplant Team membership source として扱える。
 - wildcard により 1 つの GitHub Team が複数 ccplant Team にマッチする場合は、設定適用が失敗して認可には反映されない。
-- discovery rule `{team}/cc-users` に `test/cc-users` がマッチすると、不変な principal ID を持つ ccplant `test` Team が初回 membership ロード時に作成される。
-- discovery で作成された `test` Team に、管理者が GHEC `myorg/test-cc-users` binding を追加できる。
-- 追加後、GHES `test/cc-users` と GHEC `myorg/test-cc-users` のメンバーが同じ `test` Team principal に解決される。
+- discovery rule `*/cc-users` に `test/cc-users` がマッチすると、不変な principal ID を持つ同名の ccplant `test/cc-users` Team が初回 membership ロード時に作成される。
+- discovery で作成された `test/cc-users` Team に、管理者が GHEC `myorg/test-cc-users` binding を追加できる。
+- 追加後、GHES `test/cc-users` と GHEC `myorg/test-cc-users` のメンバーが同じ ccplant `test/cc-users` Team principal に解決される。
 - membership 削除が共有キャッシュ TTL 以内に反映され、それ以降は fail closed になる。
 - 既存 `org/team-slug` データが移行期間中も読み書きでき、dry-run で移行対象を確認できる。
 
