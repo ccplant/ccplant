@@ -256,7 +256,12 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			if startReq.Environment == nil {
 				startReq.Environment = make(map[string]string)
 			}
-			startReq.Environment["AGENTAPI_GITHUB_BROKER_URL"] = githubBrokerURL(ctx, sessionID)
+			brokerURL, err := githubBrokerURL(ctx, sessionID)
+			if err != nil {
+				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
+			startReq.Environment["AGENTAPI_GITHUB_BROKER_URL"] = brokerURL
 			startReq.Environment["AGENTAPI_GITHUB_BROKER_TOKEN"] = lease
 			startReq.Environment["AGENTAPI_GITHUB_CONNECTION_ID"] = connectionID
 			if startReq.Params != nil {
@@ -440,7 +445,7 @@ func shouldUseGitHubBroker(startReq entities.StartRequest, repository string) bo
 	return startReq.Params == nil || (startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "")
 }
 
-func githubBrokerURL(ctx echo.Context, sessionID string) string {
+func githubBrokerURL(ctx echo.Context, sessionID string) (string, error) {
 	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
 	if scheme == "" {
 		if ctx.Request().TLS != nil {
@@ -453,7 +458,17 @@ func githubBrokerURL(ctx echo.Context, sessionID string) string {
 	if host == "" {
 		host = ctx.Request().Host
 	}
-	return scheme + "://" + host + "/internal/sessions/" + url.PathEscape(sessionID) + "/github-credentials"
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New("invalid GitHub broker scheme")
+	}
+	if host == "" || strings.ContainsAny(host, "\r\n/") {
+		return "", errors.New("invalid GitHub broker host")
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	if prefix != "" && (!strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.ContainsAny(prefix, "\r\n?#")) {
+		return "", errors.New("invalid GitHub broker prefix")
+	}
+	return scheme + "://" + host + prefix + "/internal/sessions/" + url.PathEscape(sessionID) + "/github-credentials", nil
 }
 
 func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.StartRequest) {
