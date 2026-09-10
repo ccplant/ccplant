@@ -1,6 +1,34 @@
 package sessioncontrol
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
+	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
+)
+
+func TestAppendEventsUsesSingleDedupKeyPerSession(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	store := NewRedisStore(client)
+	ctx := context.Background()
+
+	events := []core.Event{{ID: "event-a"}, {ID: "event-b"}}
+	_, err := store.AppendEvents(ctx, "session-a", events)
+	require.NoError(t, err)
+	_, err = store.AppendEvents(ctx, "session-a", events)
+	require.NoError(t, err)
+
+	got, err := store.ReadEvents(ctx, "session-a", "0-0", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.ElementsMatch(t, []string{eventKey("session-a"), eventDedupKey("session-a")}, server.Keys())
+	require.Positive(t, server.TTL(eventDedupKey("session-a")))
+}
 
 func TestStreamIDLess(t *testing.T) {
 	tests := []struct {
