@@ -18,6 +18,27 @@ func TestValidateAPIKVStoreSupportsCustomerBackends(t *testing.T) {
 	}
 }
 
+func TestSupportsGitHubSecretStorage(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.KVStoreConfig
+		want bool
+	}{
+		{name: "default kubernetes", cfg: config.KVStoreConfig{}, want: true},
+		{name: "legacy kubernetes", cfg: config.KVStoreConfig{Backend: "kubernetes"}, want: true},
+		{name: "primary kubernetes", cfg: config.KVStoreConfig{Primary: &config.KVStoreBackendConfig{Backend: "kubernetes"}}, want: true},
+		{name: "encrypted libsql", cfg: config.KVStoreConfig{Backend: "libsql-encrypted"}, want: true},
+		{name: "plaintext libsql", cfg: config.KVStoreConfig{Backend: "libsql"}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := supportsGitHubSecretStorage(tt.cfg); got != tt.want {
+				t.Fatalf("supportsGitHubSecretStorage() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLibSQLBackendNameControlsEncryption(t *testing.T) {
 	plain, err := buildKVBackend(config.KVStoreBackendConfig{
 		Backend: "libsql", DatabaseURL: "file://" + filepath.Join(t.TempDir(), "plain.db"),
