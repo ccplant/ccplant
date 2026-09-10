@@ -98,3 +98,39 @@ Observability** で `agentapi-proxy` を選びます。表示されない場合�
 
 `OTEL_EXPORTER_OTLP_ENDPOINT` が未設定、または `OTEL_SDK_DISABLED=true` の場合、
 計装は no-op になり既存の動作を変えません。
+
+## Cloudflare Worker から同じトレースを継続する
+
+バックエンドは W3C Trace Context の `traceparent` / `tracestate` と `baggage` を
+受け入れるため、Worker が送信したコンテキストを親として HTTP server span を
+作成します。Worker とバックエンドの両方を同じ Grafana Cloud stack に送れば、同じ
+Trace ID のウォーターフォールとして表示できます。
+
+Cloudflare Workers 標準の自動トレーシングは、現時点では Cloudflare 外のサービスへ
+Trace Context を伝播しません。一貫したトレースが必要な場合は、Worker 側を
+Worker 対応の OpenTelemetry SDK で計装し、バックエンドへの outbound `fetch` に
+W3C `traceparent` を挿入してください。Cloudflare 標準TraceのGrafana向けexportと
+併用するとWorker spanが別Trace IDで重複するため、どちらか一方に統一します。
+
+バックエンドの追加設定は不要です。既存の次の設定が伝播と送信を有効にします。
+
+```yaml
+observability:
+  openTelemetry:
+    enabled: true
+    serviceName: agentapi-proxy
+    deploymentEnvironment: production
+    tracesSampler: parentbased_traceidratio
+    tracesSamplerArg: "0.1"
+    secretRef:
+      name: grafana-cloud-otlp
+```
+
+`parentbased_traceidratio` により、Worker が `traceparent` で渡したサンプリング判断を
+バックエンドでも尊重します。また、Cloudflare 経由のリクエストでは server span に
+`cloudflare.ray_id` と `cloudflare.colo` を記録します。Trace Context が欠落した場合も、
+Grafana と Cloudflare のログを `cloudflare.ray_id` で相関できます。
+
+動作確認では、バックエンドへ送られるリクエストに有効な `traceparent` と `CF-Ray` が
+含まれることを確認し、Grafana Tempo で `service.name="agentapi-proxy"` または
+`cloudflare.ray_id="<Ray ID>"` を検索します。
