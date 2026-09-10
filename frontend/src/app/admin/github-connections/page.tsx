@@ -10,6 +10,7 @@ import { useToast } from '@/contexts/ToastContext'
 const emptyForm: GitHubConnectionInput = {
   name: '', base_url: 'https://github.com', api_url: 'https://api.github.com', oauth_client_id: '', oauth_scope: 'read:user read:org project', enabled: true, show_on_login: true, allow_user_creation: false, organizations: [],
   oauth_client_secret: { source: 'encrypted', value: '' },
+  github_app: { app_id: 0, private_key: '' },
 }
 
 export default function GitHubConnectionsAdminPage() {
@@ -34,7 +35,7 @@ export default function GitHubConnectionsAdminPage() {
   const startEdit = (item: GitHubConnection) => {
     setEditing(item)
     setForm({ name: item.name, base_url: item.base_url, api_url: item.api_url || '', oauth_client_id: item.oauth_client_id || '', oauth_scope: item.oauth_scope || 'read:user read:org project', enabled: item.enabled, show_on_login: item.show_on_login !== false, allow_user_creation: item.allow_user_creation === true, organizations: item.organizations || [],
-      oauth_client_secret: { source: item.secret_source || 'encrypted', environment: item.secret_environment || '', value: '' } })
+      oauth_client_secret: { source: item.secret_source || 'encrypted', environment: item.secret_environment || '', value: '' }, github_app: { app_id: item.github_app?.app_id || 0, private_key: '' } })
     setOpen(true)
   }
 
@@ -43,13 +44,15 @@ export default function GitHubConnectionsAdminPage() {
     const client = createCurrentDeploymentAgentAPIProxyClient()
     try {
       if (!editing) {
-        await client.createGitHubConnection(form)
+        const created = await client.createGitHubConnection({ ...form, github_app: form.github_app?.app_id ? { app_id: form.github_app.app_id } : undefined })
+        if (form.github_app?.private_key) await client.updateGitHubAppPrivateKey(created.id, form.github_app.private_key)
       } else {
-        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled, show_on_login: form.show_on_login, allow_user_creation: form.allow_user_creation, organizations: form.organizations })
+        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled, show_on_login: form.show_on_login, allow_user_creation: form.allow_user_creation, organizations: form.organizations, github_app: form.github_app?.app_id ? { app_id: form.github_app.app_id } : undefined })
         const secret = form.oauth_client_secret
         if (secret && ((secret.source === 'encrypted' && secret.value) || (secret.source === 'environment' && secret.environment !== editing.secret_environment))) {
           await client.updateGitHubConnectionSecret(editing.id, secret)
         }
+        if (form.github_app?.private_key) await client.updateGitHubAppPrivateKey(editing.id, form.github_app.private_key)
       }
       showToast(editing ? 'Connectionを更新しました' : 'Connectionを追加しました', 'success')
       setOpen(false); await load()
@@ -70,6 +73,15 @@ export default function GitHubConnectionsAdminPage() {
     } catch { showToast('接続テストを実行できませんでした', 'error') }
   }
 
+  const testGitHubApp = async (item: GitHubConnection) => {
+    const repository = prompt('テストするrepositoryを owner/name 形式で入力してください')?.trim()
+    if (!repository) return
+    try {
+      const result = await createCurrentDeploymentAgentAPIProxyClient().testGitHubApp(item.id, repository)
+      showToast(result.valid ? `GitHub App tokenを確認しました（期限: ${new Date(result.expires_at).toLocaleString()}）` : 'GitHub Appを確認できませんでした', result.valid ? 'success' : 'error')
+    } catch { showToast('GitHub Appテストを実行できませんでした', 'error') }
+  }
+
   const setSecretSource = (source: GitHubSecretSource) => setForm({ ...form, oauth_client_secret: { source, value: '', environment: '' } })
   const input = 'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-white'
 
@@ -78,8 +90,8 @@ export default function GitHubConnectionsAdminPage() {
     {loading ? <p className="py-8 text-sm text-gray-500">読み込み中...</p> : <div className="space-y-3">
       {connections.map((item) => <div key={item.id} className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-start justify-between gap-4"><div className="flex min-w-0 gap-3"><Github className="mt-0.5 h-5 w-5 shrink-0" /><div><h2 className="font-semibold dark:text-white">{item.name}</h2><p className="mt-1 break-all text-sm text-gray-500">{item.base_url}</p></div></div>
-          <div className="flex gap-2"><button onClick={() => void testConnection(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">接続テスト</button><button onClick={() => startEdit(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">編集</button><button onClick={() => void remove(item)} aria-label="削除" className="rounded-md border border-red-200 p-2 text-red-600 dark:border-red-800"><Trash2 className="h-4 w-4" /></button></div></div>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className={`rounded-full px-2 py-1 ${item.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{item.enabled ? 'Enabled' : 'Disabled'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.show_on_login !== false ? 'ログインに表示' : 'ログインでは非表示'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.allow_user_creation ? 'ユーザー作成可' : '既存ユーザーのみ'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.secret_source} / {item.secret_configured ? '設定済み' : '未設定'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.linked_identities || 0} identities</span>{item.organizations?.map(org => <span key={org} className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">{org}</span>)}</div>
+          <div className="flex gap-2"><button onClick={() => void testConnection(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">接続テスト</button>{item.github_app && <button onClick={() => void testGitHubApp(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">Appテスト</button>}<button onClick={() => startEdit(item)} className="rounded-md border px-3 py-1.5 text-sm dark:border-gray-600">編集</button><button onClick={() => void remove(item)} aria-label="削除" className="rounded-md border border-red-200 p-2 text-red-600 dark:border-red-800"><Trash2 className="h-4 w-4" /></button></div></div>
+        <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className={`rounded-full px-2 py-1 ${item.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{item.enabled ? 'Enabled' : 'Disabled'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.show_on_login !== false ? 'ログインに表示' : 'ログインでは非表示'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.allow_user_creation ? 'ユーザー作成可' : '既存ユーザーのみ'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">OAuth {item.secret_configured ? '設定済み' : '未設定'}</span>{item.github_app && <span className="rounded-full bg-purple-50 px-2 py-1 text-purple-700">App {item.github_app.app_id} / {item.github_app_private_key_configured ? 'PEM設定済み' : 'PEM未設定'}</span>}<span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">{item.linked_identities || 0} identities</span>{item.organizations?.map(org => <span key={org} className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">{org}</span>)}</div>
         <button onClick={() => { const callback = `${window.location.origin}/api/proxy/auth/github-connections/callback`; void navigator.clipboard.writeText(callback); showToast('Callback URLをコピーしました', 'success') }} className="mt-4 inline-flex items-center gap-1 text-xs text-blue-600"><Copy className="h-3.5 w-3.5" />Callback URLをコピー</button>
       </div>)}
       {!connections.length && <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">Connectionはまだありません。</div>}
@@ -96,6 +108,7 @@ export default function GitHubConnectionsAdminPage() {
         <label className="block text-sm dark:text-white">対象organization<input className={`${input} mt-1`} placeholder="example-org, another-org" value={(form.organizations || []).join(', ')} onChange={e => setForm({...form, organizations:e.target.value.split(',').map(value => value.trim()).filter(Boolean)})} /><span className="mt-1 block text-xs text-gray-500">カンマ区切り。repository ownerが一致するセッションでは、このconnectionのtokenを自動選択します。</span></label>
         <label className="block text-sm dark:text-white">Secret保存方式<select className={`${input} mt-1`} value={form.oauth_client_secret?.source} onChange={e => setSecretSource(e.target.value as GitHubSecretSource)}><option value="encrypted">暗号化して保存</option><option value="environment">環境変数を参照</option></select></label>
         {form.oauth_client_secret?.source === 'encrypted' ? <label className="block text-sm dark:text-white">OAuth Client Secret<input required={!editing || !editing.secret_configured} type="password" autoComplete="new-password" placeholder={editing?.secret_configured ? '変更する場合のみ入力' : ''} className={`${input} mt-1`} value={form.oauth_client_secret.value || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'encrypted', value:e.target.value}})} /></label> : <label className="block text-sm dark:text-white">環境変数名<input required className={`${input} mt-1`} placeholder="GITHUB_OAUTH_CORP_CLIENT_SECRET" value={form.oauth_client_secret?.environment || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'environment', environment:e.target.value}})} /></label>}
+        <div className="border-t pt-4 dark:border-gray-700"><h3 className="mb-3 text-sm font-semibold dark:text-white">Team session用 GitHub App</h3><div className="space-y-3"><label className="block text-sm dark:text-white">App ID<input type="number" min="1" className={`${input} mt-1`} value={form.github_app?.app_id || ''} onChange={e => setForm({...form, github_app:{...form.github_app, app_id:Number(e.target.value), private_key:form.github_app?.private_key || ''}})} /></label><label className="block text-sm dark:text-white">App PEM<textarea rows={5} className={`${input} mt-1 font-mono`} value={form.github_app?.private_key || ''} placeholder={editing?.github_app_private_key_configured ? '変更する場合のみ入力' : '-----BEGIN RSA PRIVATE KEY-----'} onChange={e => setForm({...form, github_app:{app_id:form.github_app?.app_id || 0, private_key:e.target.value}})} /></label></div></div>
         <label className="flex items-center gap-2 text-sm dark:text-white"><input type="checkbox" checked={form.enabled} onChange={e => setForm({...form, enabled:e.target.checked})} />有効</label>
         <label className="flex items-center gap-2 text-sm dark:text-white"><input type="checkbox" checked={form.show_on_login !== false} onChange={e => setForm({...form, show_on_login:e.target.checked})} />ログイン画面に表示</label>
         <label className="flex items-start gap-2 text-sm dark:text-white"><input className="mt-0.5" type="checkbox" checked={form.allow_user_creation === true} onChange={e => setForm({...form, allow_user_creation:e.target.checked})} /><span>ユーザーの作成を許可<span className="mt-1 block text-xs text-gray-500">未登録のGitHubユーザーがログインしたときに、principalとidentityを作成します。オフの場合は既存ユーザーのみログインできます。</span></span></label>

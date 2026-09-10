@@ -3,7 +3,11 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,6 +82,80 @@ func TestValidateGitHubSecret(t *testing.T) {
 	require.NoError(t, validateGitHubSecret("environment", "", "GITHUB_OAUTH_CORP_CLIENT_SECRET"))
 	require.Error(t, validateGitHubSecret("encrypted", "", ""))
 	require.Error(t, validateGitHubSecret("environment", "", "DATABASE_PASSWORD"))
+}
+
+func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
+	t.Parallel()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pemValue := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+
+	var installationCalls, tokenCalls int
+	githubAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/repos/acme/payments/installation":
+			installationCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+		case "/api/v3/app/installations/99/access_tokens":
+			tokenCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().UTC().Add(time.Hour)})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer githubAPI.Close()
+
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "", true)
+	connection := githubConnection{ID: "connection-1", Name: "GitHub", BaseURL: githubAPI.URL, APIURL: githubAPI.URL, Enabled: true, Organizations: []string{"acme"}, GitHubApp: &githubAppConfiguration{AppID: 123}}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+	_, _, resourceVersion, err := controller.loadConnection(context.Background(), connection.ID)
+	require.NoError(t, err)
+	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
+
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForOrganization(context.Background(), "session-1", "acme", "acme/payments")
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, connection.ID, connectionID)
+	require.NotEmpty(t, lease)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials", nil)
+	req.Header.Set("Authorization", "Bearer "+lease)
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(req, recorder)
+	ctx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-1")
+	require.NoError(t, controller.BrokerCredentials(ctx))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "installation-token")
+	require.Equal(t, 1, installationCalls)
+	require.Equal(t, 1, tokenCalls)
+	require.NoError(t, controller.RevokeBrokerLeases(context.Background(), "session-1"))
+	recorder = httptest.NewRecorder()
+	ctx = e.NewContext(req, recorder)
+	ctx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-1")
+	err = controller.BrokerCredentials(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusUnauthorized, httpErr.Code)
+
+	stored, err := client.CoreV1().Secrets("test").Get(context.Background(), connectionSecretName(connection.ID), metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, pemValue, stored.Data[githubAppPrivateKeyKey])
+	require.NotContains(t, string(stored.Data["record.json"]), string(pemValue))
+}
+
+func TestValidateGitHubAppPrivateKey(t *testing.T) {
+	t.Parallel()
+	require.Error(t, validateGitHubAppPrivateKey([]byte("not pem")))
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	value := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	require.NoError(t, validateGitHubAppPrivateKey(value))
 }
 
 func TestPrincipalIsStableAndRandom(t *testing.T) {

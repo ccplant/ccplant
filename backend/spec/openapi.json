@@ -569,6 +569,43 @@
         }
       }
     },
+    "/admin/github-connections/{id}/github-app/private-key": {
+      "put": {
+        "summary": "Upload or rotate the GitHub App PEM for a connection",
+        "operationId": "updateGitHubAppPrivateKey",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+        "requestBody": {"required":true,"content":{"application/json":{"schema":{"type":"object","required":["value"],"properties":{"value":{"type":"string","format":"password","writeOnly":true}}}}}},
+        "responses": {"200":{"description":"Private key updated; plaintext is never returned"}}
+      },
+      "delete": {
+        "summary": "Delete the GitHub App PEM from a connection",
+        "operationId": "deleteGitHubAppPrivateKey",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+        "responses": {"204":{"description":"Private key deleted"}}
+      }
+    },
+    "/admin/github-connections/{id}/github-app/test": {
+      "post": {
+        "summary": "Test a connection GitHub App against a repository",
+        "operationId": "testGitHubApp",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+        "requestBody": {"required":true,"content":{"application/json":{"schema":{"type":"object","required":["repository"],"properties":{"repository":{"type":"string","pattern":"^[^/]+/[^/]+$"}}}}}},
+        "responses": {"200":{"description":"GitHub App token mint succeeded"}}
+      }
+    },
+    "/internal/sessions/{sessionId}/github-credentials": {
+      "get": {
+        "summary": "Get a current repository-scoped token using a session broker credential",
+        "operationId": "getSessionGitHubCredentials",
+        "tags": ["GitHub Connections"],
+        "security": [{"bearerAuth":[]}],
+        "parameters": [{"name":"sessionId","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {"200":{"description":"Current short-lived credential"},"401":{"description":"Invalid or expired broker credential"}}
+      }
+    },
     "/github-connections": {
       "get": {
         "summary": "List enabled GitHub connections",
@@ -6396,6 +6433,18 @@
               "type": "string"
             },
             "uniqueItems": true
+          },
+          "github_app": {
+            "type": "object",
+            "required": ["app_id"],
+            "properties": {
+              "app_id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "description": "GitHub App ID used for team repository access. Installation ID is discovered from the repository."
+              }
+            }
           },
           "oauth_client_secret": {
             "type": "object",
