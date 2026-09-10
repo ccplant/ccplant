@@ -94,6 +94,36 @@ func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
 	require.Equal(t, principal.ID, resolved.ID)
 }
 
+func TestResolveLoginPrincipalRejectsUnlinkedUserWhenCreationDisabled(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com"}
+
+	_, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
+	require.ErrorContains(t, err, "user creation is disabled")
+
+	_, principalErr := controller.loadPrincipal(context.Background(), "github-connection:enterprise:42")
+	require.Error(t, principalErr)
+	var identity githubIdentity
+	_, identityErr := controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.Error(t, identityErr)
+}
+
+func TestResolveLoginPrincipalCreatesUnlinkedUserWhenCreationEnabled(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", AllowUserCreation: true}
+
+	principal, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, principal.ID)
+
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, identity.PrincipalID)
+}
+
 func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
