@@ -3150,6 +3150,14 @@ export class AgentAPIProxyClient {
     return this.makeRequest(`/admin/github-connections/${encodeURIComponent(id)}/test`, { method: 'POST' });
   }
 
+  async updateGitHubAppPrivateKey(id: string, value: string): Promise<GitHubConnection> {
+    return this.makeRequest<GitHubConnection>(`/admin/github-connections/${encodeURIComponent(id)}/github-app/private-key`, { method: 'PUT', body: JSON.stringify({ value }) });
+  }
+
+  async testGitHubApp(id: string, repository: string): Promise<{ valid: boolean; expires_at: string }> {
+    return this.makeRequest(`/admin/github-connections/${encodeURIComponent(id)}/github-app/test`, { method: 'POST', body: JSON.stringify({ repository }) });
+  }
+
   async listGitHubIdentities(): Promise<GitHubIdentitiesResponse> {
     return this.makeRequest<GitHubIdentitiesResponse>('/users/me/github-identities');
   }

@@ -91,6 +91,8 @@ type SessionController struct {
 	githubTokenResolver    interface {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
+		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+		RevokeBrokerLeases(context.Context, string) error
 	}
 	sessionTokenDebug bool
 }
@@ -98,6 +100,8 @@ type SessionController struct {
 func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
+	IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+	RevokeBrokerLeases(context.Context, string) error
 }) SessionControllerOption {
 	return func(c *SessionController) { c.githubTokenResolver = resolver }
 }
@@ -237,7 +241,31 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		startReq.Scope = entities.ResourceScope(resolvedScope)
 		startReq.TeamID = resolvedTeamID
 	}
-	if startReq.Params != nil && startReq.Params.ConnectionID != "" {
+	repository := sessionRepository(startReq)
+	brokerConfigured := false
+	if startReq.Scope == entities.ScopeTeam && repository != "" && c.githubTokenResolver != nil {
+		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
+		}
+		lease, connectionID, matched, err := c.githubTokenResolver.IssueBrokerLeaseForOrganization(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if matched {
+			brokerConfigured = true
+			if startReq.Environment == nil {
+				startReq.Environment = make(map[string]string)
+			}
+			startReq.Environment["AGENTAPI_GITHUB_BROKER_URL"] = githubBrokerURL(ctx, sessionID)
+			startReq.Environment["AGENTAPI_GITHUB_BROKER_TOKEN"] = lease
+			startReq.Environment["AGENTAPI_GITHUB_CONNECTION_ID"] = connectionID
+			if startReq.Params != nil {
+				startReq.Params.GithubToken = ""
+			}
+			c.logSessionTokenRouting(sessionID, "team-broker", connectionID, "")
+		}
+	}
+	if !brokerConfigured && startReq.Params != nil && startReq.Params.ConnectionID != "" {
 		if c.githubTokenResolver == nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection credentials are unavailable")
 		}
@@ -247,7 +275,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		startReq.Params.GithubToken = token
 		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
-	} else if (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
+	} else if !brokerConfigured && (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
 		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(sessionRepository(startReq)))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -259,7 +287,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)
 			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
 		}
-	} else {
+	} else if !brokerConfigured {
 		populateGitHubTokenFromAuthHeader(ctx, &startReq)
 		if startReq.Params != nil {
 			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
@@ -385,6 +413,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 
 	session, err := c.sessionCreator.CreateSession(ctx.Request().Context(), sessionID, startReq, userID, userRole, teams)
 	if err != nil {
+		c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 		var quotaErr *sessionrunnercore.QuotaExceededError
 		if errors.As(err, &quotaErr) {
 			return ctx.JSON(http.StatusTooManyRequests, map[string]any{
@@ -402,6 +431,22 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+func githubBrokerURL(ctx echo.Context, sessionID string) string {
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if ctx.Request().TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	return scheme + "://" + host + "/internal/sessions/" + url.PathEscape(sessionID) + "/github-credentials"
 }
 
 func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.StartRequest) {
@@ -934,6 +979,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusConflict, "Session allocation is no longer pending")
 		}
 		log.Printf("Pending session allocation %s deletion completed successfully", sessionID)
+		c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message":    "Session allocation deleted successfully",
 			"session_id": sessionID,
@@ -947,12 +993,22 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	}
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
+	c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+func (c *SessionController) revokeGitHubBrokerLeases(ctx context.Context, sessionID string) {
+	if c.githubTokenResolver == nil {
+		return
+	}
+	if err := c.githubTokenResolver.RevokeBrokerLeases(ctx, sessionID); err != nil {
+		log.Printf("Failed to revoke GitHub broker lease for session %s: %v", sessionID, err)
+	}
 }
 
 func findUncreatedSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {

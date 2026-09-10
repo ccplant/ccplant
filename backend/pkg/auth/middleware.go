@@ -444,6 +444,9 @@ func GetConfigFromContext(c echo.Context) *config.Config {
 
 // isOAuthEndpoint checks if the given path is an OAuth endpoint that should skip auth
 func isOAuthEndpoint(path string) bool {
+	if strings.HasPrefix(path, "/internal/sessions/") && strings.HasSuffix(path, "/github-credentials") {
+		return true
+	}
 	oauthPaths := []string{
 		"/oauth/authorize",
 		"/oauth/callback",

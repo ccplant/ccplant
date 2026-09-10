@@ -137,7 +137,7 @@ Changing the App ID does not erase the current PEM, but the Connection is marked
 `untested` until the App is tested again. Deleting the key disables GitHub App
 use without affecting OAuth login.
 
-Validation requires a positive App ID, a parseable RSA or EC PEM private key,
+Validation requires a positive App ID, a parseable RSA PEM private key,
 and an allowed environment-variable name. Encrypted key upload is available
 only when the configured KV backend supports encrypted-at-rest values.
 
@@ -289,10 +289,11 @@ The broker credential claims and enforces:
 - selected Connection ID;
 - normalized repository full name;
 - allowed operation `github:token:read` only;
-- expiry no later than the Session expiry;
+- a 24-hour idle expiry that is extended while the Session actively uses it;
 - a random identifier that can be revoked when the Session is stopped.
 
-It cannot request another repository, select another Connection, read the PEM,
+It is revoked on explicit Session deletion and otherwise expires after 24 hours
+without a broker request. It cannot request another repository, select another Connection, read the PEM,
 or call normal management APIs. For Kubernetes it should additionally be usable
 only from the Session workload identity or network path when that facility is
 available. Possession still grants renewable access to the repository for the

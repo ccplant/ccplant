@@ -2,9 +2,12 @@ package controllers
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,8 +16,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	"github.com/google/go-github/v57/github"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -27,49 +33,59 @@ import (
 )
 
 const (
-	githubConnectionLabel = "agentapi.ccplant.io/github-connection"
-	githubIdentityLabel   = "agentapi.ccplant.io/github-identity"
-	githubPrincipalLabel  = "agentapi.ccplant.io/github-principal"
-	githubOAuthStateLabel = "agentapi.ccplant.io/github-oauth-state"
-	githubOAuthStateTTL   = 10 * time.Minute
+	githubConnectionLabel  = "agentapi.ccplant.io/github-connection"
+	githubIdentityLabel    = "agentapi.ccplant.io/github-identity"
+	githubPrincipalLabel   = "agentapi.ccplant.io/github-principal"
+	githubOAuthStateLabel  = "agentapi.ccplant.io/github-oauth-state"
+	githubBrokerLeaseLabel = "agentapi.ccplant.io/github-broker-lease"
+	githubOAuthStateTTL    = 10 * time.Minute
 )
 
 var githubSecretEnvPattern = regexp.MustCompile(`^GITHUB_OAUTH_[A-Z0-9_]+_CLIENT_SECRET$`)
 
+const githubAppPrivateKeyKey = "github_app_private_key"
+
+type githubAppConfiguration struct {
+	AppID int64 `json:"app_id"`
+}
+
 type githubConnection struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	BaseURL           string    `json:"base_url"`
-	APIURL            string    `json:"api_url"`
-	OAuthClientID     string    `json:"oauth_client_id"`
-	OAuthScope        string    `json:"oauth_scope"`
-	SecretSource      string    `json:"secret_source"`
-	SecretEnvironment string    `json:"secret_environment,omitempty"`
-	Enabled           bool      `json:"enabled"`
-	ShowOnLogin       *bool     `json:"show_on_login"`
-	AllowUserCreation bool      `json:"allow_user_creation"`
-	Organizations     []string  `json:"organizations,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name"`
+	BaseURL           string                  `json:"base_url"`
+	APIURL            string                  `json:"api_url"`
+	OAuthClientID     string                  `json:"oauth_client_id"`
+	OAuthScope        string                  `json:"oauth_scope"`
+	SecretSource      string                  `json:"secret_source"`
+	SecretEnvironment string                  `json:"secret_environment,omitempty"`
+	Enabled           bool                    `json:"enabled"`
+	ShowOnLogin       *bool                   `json:"show_on_login"`
+	AllowUserCreation bool                    `json:"allow_user_creation"`
+	Organizations     []string                `json:"organizations,omitempty"`
+	GitHubApp         *githubAppConfiguration `json:"github_app,omitempty"`
+	CreatedAt         time.Time               `json:"created_at"`
+	UpdatedAt         time.Time               `json:"updated_at"`
 }
 
 type githubConnectionResponse struct {
 	githubConnection
-	SecretConfigured bool   `json:"secret_configured"`
-	CallbackURL      string `json:"callback_url"`
-	LinkedIdentities int    `json:"linked_identities"`
+	SecretConfigured              bool   `json:"secret_configured"`
+	GitHubAppPrivateKeyConfigured bool   `json:"github_app_private_key_configured"`
+	CallbackURL                   string `json:"callback_url"`
+	LinkedIdentities              int    `json:"linked_identities"`
 }
 
 type githubConnectionRequest struct {
-	Name              string   `json:"name"`
-	BaseURL           string   `json:"base_url"`
-	APIURL            string   `json:"api_url"`
-	OAuthClientID     string   `json:"oauth_client_id"`
-	OAuthScope        string   `json:"oauth_scope"`
-	Enabled           *bool    `json:"enabled,omitempty"`
-	ShowOnLogin       *bool    `json:"show_on_login,omitempty"`
-	AllowUserCreation *bool    `json:"allow_user_creation,omitempty"`
-	Organizations     []string `json:"organizations,omitempty"`
+	Name              string                  `json:"name"`
+	BaseURL           string                  `json:"base_url"`
+	APIURL            string                  `json:"api_url"`
+	OAuthClientID     string                  `json:"oauth_client_id"`
+	OAuthScope        string                  `json:"oauth_scope"`
+	Enabled           *bool                   `json:"enabled,omitempty"`
+	ShowOnLogin       *bool                   `json:"show_on_login,omitempty"`
+	AllowUserCreation *bool                   `json:"allow_user_creation,omitempty"`
+	Organizations     []string                `json:"organizations,omitempty"`
+	GitHubApp         *githubAppConfiguration `json:"github_app,omitempty"`
 	Secret            struct {
 		Source      string `json:"source"`
 		Value       string `json:"value,omitempty"`
@@ -81,6 +97,27 @@ type githubSecretUpdate struct {
 	Source      string `json:"source"`
 	Value       string `json:"value,omitempty"`
 	Environment string `json:"environment,omitempty"`
+}
+
+type githubAppPrivateKeyUpdate struct {
+	Value string `json:"value"`
+}
+
+type githubAppTestRequest struct {
+	Repository string `json:"repository"`
+}
+
+type githubBrokerLease struct {
+	SessionID    string    `json:"session_id"`
+	ConnectionID string    `json:"connection_id"`
+	Repository   string    `json:"repository"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	TokenHash    string    `json:"token_hash"`
+}
+
+type githubCachedToken struct {
+	Token     string
+	ExpiresAt time.Time
 }
 
 type githubPrincipal struct {
@@ -140,6 +177,8 @@ type GitHubConnectionsController struct {
 	httpClient       *http.Client
 	callbackURL      string
 	encryptedStorage bool
+	brokerMu         sync.Mutex
+	tokenCache       map[string]githubCachedToken
 }
 
 func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publicBaseURL string, encryptedStorage ...bool) *GitHubConnectionsController {
@@ -147,6 +186,7 @@ func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publ
 		client:     client,
 		namespace:  namespace,
 		httpClient: utils.NewDefaultHTTPClient(),
+		tokenCache: make(map[string]githubCachedToken),
 	}
 	if publicBaseURL != "" {
 		controller.callbackURL = strings.TrimSuffix(publicBaseURL, "/") + "/auth/github-connections/callback"
@@ -195,6 +235,10 @@ func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
 		SecretEnvironment: request.Secret.Environment, Enabled: enabled, ShowOnLogin: &showOnLogin,
 		AllowUserCreation: request.AllowUserCreation != nil && *request.AllowUserCreation,
 		Organizations:     normalizeOrganizations(request.Organizations), CreatedAt: now, UpdatedAt: now,
+		GitHubApp: request.GitHubApp,
+	}
+	if err := validateGitHubApp(connection.GitHubApp); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if err := c.validateOrganizationAssignments(ctx.Request().Context(), connection.ID, connection.Organizations); err != nil {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
@@ -236,6 +280,10 @@ func (c *GitHubConnectionsController) Update(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load GitHub connection").SetInternal(err)
 	}
+	previousAppID := int64(0)
+	if connection.GitHubApp != nil {
+		previousAppID = connection.GitHubApp.AppID
+	}
 	var request githubConnectionRequest
 	if err := ctx.Bind(&request); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
@@ -276,9 +324,18 @@ func (c *GitHubConnectionsController) Update(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusConflict, err.Error())
 		}
 	}
+	if request.GitHubApp != nil {
+		if err := validateGitHubApp(request.GitHubApp); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		connection.GitHubApp = request.GitHubApp
+	}
 	connection.UpdatedAt = time.Now().UTC()
 	if err := c.saveConnection(ctx.Request().Context(), connection, secret, resourceVersion); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update GitHub connection").SetInternal(err)
+	}
+	if connection.GitHubApp != nil && connection.GitHubApp.AppID != previousAppID {
+		c.invalidateGitHubAppTokens(connection.ID)
 	}
 	return ctx.JSON(http.StatusOK, c.connectionResponse(ctx.Request().Context(), connection, c.secretConfigured(ctx.Request().Context(), connection)))
 }
@@ -324,6 +381,68 @@ func (c *GitHubConnectionsController) DeleteSecret(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete GitHub client secret").SetInternal(err)
 	}
 	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (c *GitHubConnectionsController) UpdateGitHubAppPrivateKey(ctx echo.Context) error {
+	connection, _, resourceVersion, err := c.loadConnection(ctx.Request().Context(), ctx.Param("id"))
+	if apierrors.IsNotFound(err) {
+		return echo.NewHTTPError(http.StatusNotFound, "GitHub connection not found")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load GitHub connection").SetInternal(err)
+	}
+	if connection.GitHubApp == nil || connection.GitHubApp.AppID <= 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "github_app.app_id must be configured first")
+	}
+	if !c.encryptedStorage {
+		return echo.NewHTTPError(http.StatusBadRequest, "encrypted private key storage requires the libsql-encrypted or kubernetes KV backend")
+	}
+	var request githubAppPrivateKeyUpdate
+	if err := ctx.Bind(&request); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := validateGitHubAppPrivateKey([]byte(request.Value)); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := c.saveGitHubAppPrivateKey(ctx.Request().Context(), connection, []byte(request.Value), resourceVersion); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update GitHub App private key").SetInternal(err)
+	}
+	c.invalidateGitHubAppTokens(connection.ID)
+	return ctx.JSON(http.StatusOK, c.connectionResponse(ctx.Request().Context(), connection, c.secretConfigured(ctx.Request().Context(), connection)))
+}
+
+func (c *GitHubConnectionsController) DeleteGitHubAppPrivateKey(ctx echo.Context) error {
+	connection, _, resourceVersion, err := c.loadConnection(ctx.Request().Context(), ctx.Param("id"))
+	if apierrors.IsNotFound(err) {
+		return echo.NewHTTPError(http.StatusNotFound, "GitHub connection not found")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load GitHub connection").SetInternal(err)
+	}
+	if err := c.saveGitHubAppPrivateKey(ctx.Request().Context(), connection, nil, resourceVersion); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete GitHub App private key").SetInternal(err)
+	}
+	c.invalidateGitHubAppTokens(connection.ID)
+	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (c *GitHubConnectionsController) TestGitHubApp(ctx echo.Context) error {
+	connection, _, _, err := c.loadConnection(ctx.Request().Context(), ctx.Param("id"))
+	if apierrors.IsNotFound(err) {
+		return echo.NewHTTPError(http.StatusNotFound, "GitHub connection not found")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to load GitHub connection").SetInternal(err)
+	}
+	var request githubAppTestRequest
+	if err := ctx.Bind(&request); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	token, expiresAt, err := c.mintGitHubAppToken(ctx.Request().Context(), connection, request.Repository)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"valid": token != "", "expires_at": expiresAt})
 }
 
 func (c *GitHubConnectionsController) Test(ctx echo.Context) error {
@@ -875,6 +994,13 @@ func (c *GitHubConnectionsController) saveConnection(ctx context.Context, connec
 		return err
 	}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: connectionSecretName(connection.ID), Namespace: c.namespace, ResourceVersion: resourceVersion, Labels: map[string]string{githubConnectionLabel: "true"}}, Data: map[string][]byte{"record.json": record}}
+	if resourceVersion != "" {
+		if existing, getErr := c.client.CoreV1().Secrets(c.namespace).Get(ctx, connectionSecretName(connection.ID), metav1.GetOptions{}); getErr == nil {
+			if privateKey := existing.Data[githubAppPrivateKeyKey]; len(privateKey) > 0 {
+				secret.Data[githubAppPrivateKeyKey] = append([]byte(nil), privateKey...)
+			}
+		}
+	}
 	if connection.SecretSource == "encrypted" && clientSecret != "" {
 		secret.Data["client_secret"] = []byte(clientSecret)
 	}
@@ -1009,7 +1135,232 @@ func (c *GitHubConnectionsController) connectionResponse(ctx context.Context, co
 	if callbackURL == "" {
 		callbackURL = "/auth/github-connections/callback"
 	}
-	return githubConnectionResponse{githubConnection: connection, SecretConfigured: configured, CallbackURL: callbackURL, LinkedIdentities: c.identityCount(ctx, connection.ID)}
+	return githubConnectionResponse{githubConnection: connection, SecretConfigured: configured, GitHubAppPrivateKeyConfigured: c.githubAppPrivateKeyConfigured(ctx, connection.ID), CallbackURL: callbackURL, LinkedIdentities: c.identityCount(ctx, connection.ID)}
+}
+
+func validateGitHubApp(app *githubAppConfiguration) error {
+	if app != nil && app.AppID <= 0 {
+		return errors.New("github_app.app_id must be a positive integer")
+	}
+	return nil
+}
+
+func validateGitHubAppPrivateKey(value []byte) error {
+	block, _ := pem.Decode(value)
+	if block == nil {
+		return errors.New("github_app private key must be PEM encoded")
+	}
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		switch key.(type) {
+		case *rsa.PrivateKey:
+			return nil
+		}
+	}
+	if _, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return nil
+	}
+	return errors.New("github_app private key must contain an RSA private key")
+}
+
+func (c *GitHubConnectionsController) githubAppPrivateKeyConfigured(ctx context.Context, connectionID string) bool {
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, connectionSecretName(connectionID), metav1.GetOptions{})
+	return err == nil && len(secret.Data[githubAppPrivateKeyKey]) > 0
+}
+
+func (c *GitHubConnectionsController) saveGitHubAppPrivateKey(ctx context.Context, connection githubConnection, value []byte, resourceVersion string) error {
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, connectionSecretName(connection.ID), metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if secret.ResourceVersion != resourceVersion {
+		return errors.New("GitHub connection changed during private key update")
+	}
+	if len(value) == 0 {
+		delete(secret.Data, githubAppPrivateKeyKey)
+	} else {
+		secret.Data[githubAppPrivateKeyKey] = append([]byte(nil), value...)
+	}
+	_, err = c.client.CoreV1().Secrets(c.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	return err
+}
+
+func (c *GitHubConnectionsController) loadGitHubAppPrivateKey(ctx context.Context, connectionID string) ([]byte, error) {
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, connectionSecretName(connectionID), metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	value := secret.Data[githubAppPrivateKeyKey]
+	if len(value) == 0 {
+		return nil, errors.New("GitHub App private key is not configured")
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (c *GitHubConnectionsController) invalidateGitHubAppTokens(connectionID string) {
+	c.brokerMu.Lock()
+	defer c.brokerMu.Unlock()
+	for key := range c.tokenCache {
+		if strings.HasPrefix(key, connectionID+"\x00") {
+			delete(c.tokenCache, key)
+		}
+	}
+}
+
+func (c *GitHubConnectionsController) mintGitHubAppToken(ctx context.Context, connection githubConnection, repository string) (string, time.Time, error) {
+	repository = strings.TrimSpace(strings.TrimSuffix(repository, ".git"))
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", time.Time{}, errors.New("repository must use owner/name format")
+	}
+	if connection.GitHubApp == nil || connection.GitHubApp.AppID <= 0 {
+		return "", time.Time{}, errors.New("GitHub App is not configured for the selected connection")
+	}
+	cacheKey := connection.ID + "\x00" + strings.ToLower(repository)
+	c.brokerMu.Lock()
+	if cached, ok := c.tokenCache[cacheKey]; ok && time.Until(cached.ExpiresAt) > 5*time.Minute {
+		c.brokerMu.Unlock()
+		return cached.Token, cached.ExpiresAt, nil
+	}
+	c.brokerMu.Unlock()
+
+	privateKey, err := c.loadGitHubAppPrivateKey(ctx, connection.ID)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, connection.GitHubApp.AppID, privateKey)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("create GitHub App transport: %w", err)
+	}
+	transport.BaseURL = connection.APIURL
+	client := github.NewClient(&http.Client{Transport: transport})
+	if connection.APIURL != "https://api.github.com" {
+		apiURL := strings.TrimSuffix(connection.APIURL, "/") + "/"
+		client, err = client.WithEnterpriseURLs(apiURL, apiURL)
+		if err != nil {
+			return "", time.Time{}, fmt.Errorf("configure GitHub API URL: %w", err)
+		}
+	}
+	installation, _, err := client.Apps.FindRepositoryInstallation(ctx, parts[0], parts[1])
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("find GitHub App installation for %s: %w", repository, err)
+	}
+	result, _, err := client.Apps.CreateInstallationToken(ctx, installation.GetID(), &github.InstallationTokenOptions{Repositories: []string{parts[1]}})
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("create GitHub App installation token for %s: %w", repository, err)
+	}
+	if result.GetToken() == "" || result.ExpiresAt == nil {
+		return "", time.Time{}, errors.New("GitHub returned an incomplete installation token")
+	}
+	expiresAt := result.ExpiresAt.Time
+	c.brokerMu.Lock()
+	c.tokenCache[cacheKey] = githubCachedToken{Token: result.GetToken(), ExpiresAt: expiresAt}
+	c.brokerMu.Unlock()
+	return result.GetToken(), expiresAt, nil
+}
+
+// IssueBrokerLeaseForOrganization selects the existing organization-mapped
+// connection and grants one session renewable access to that repository token.
+func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx context.Context, sessionID, organization, repository string) (string, string, bool, error) {
+	connections, err := c.listConnections(ctx)
+	if err != nil {
+		return "", "", false, err
+	}
+	var selected *githubConnection
+	for i := range connections {
+		if connections[i].Enabled && containsOrganization(connections[i].Organizations, organization) {
+			if selected != nil {
+				return "", "", false, errors.New("multiple GitHub connections match the repository organization")
+			}
+			copy := connections[i]
+			selected = &copy
+		}
+	}
+	if selected == nil {
+		return "", "", false, nil
+	}
+	if selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID) {
+		return "", selected.ID, false, nil
+	}
+	if _, _, err := c.mintGitHubAppToken(ctx, *selected, repository); err != nil {
+		return "", "", true, err
+	}
+	leaseToken := uuid.NewString() + uuid.NewString()
+	lease := githubBrokerLease{SessionID: sessionID, ConnectionID: selected.ID, Repository: repository, ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
+	if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
+		return "", "", true, fmt.Errorf("store GitHub broker lease: %w", err)
+	}
+	return leaseToken, selected.ID, true, nil
+}
+
+// BrokerCredentials returns a current token for the repository fixed in the
+// session lease. This route performs its own bearer authentication.
+func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error {
+	ctx.Response().Header().Set("Cache-Control", "no-store")
+	ctx.Response().Header().Set("Pragma", "no-cache")
+	authorization := ctx.Request().Header.Get("Authorization")
+	if !strings.HasPrefix(authorization, "Bearer ") {
+		return echo.NewHTTPError(http.StatusUnauthorized, "broker credential is required")
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
+	if token == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "broker credential is required")
+	}
+	var lease githubBrokerLease
+	leaseSecret, err := c.loadObject(ctx.Request().Context(), brokerLeaseSecretName(token), &lease)
+	if err != nil || lease.TokenHash != brokerLeaseTokenHash(token) || !lease.ExpiresAt.After(time.Now().UTC()) || lease.SessionID != ctx.Param("sessionId") {
+		return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired broker credential")
+	}
+	if time.Until(lease.ExpiresAt) < 12*time.Hour {
+		lease.ExpiresAt = time.Now().UTC().Add(24 * time.Hour)
+		record, marshalErr := json.Marshal(lease)
+		if marshalErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to refresh broker lease").SetInternal(marshalErr)
+		}
+		leaseSecret.Data["record.json"] = record
+		if _, updateErr := c.client.CoreV1().Secrets(c.namespace).Update(ctx.Request().Context(), leaseSecret, metav1.UpdateOptions{}); updateErr != nil && !apierrors.IsConflict(updateErr) {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to refresh broker lease").SetInternal(updateErr)
+		}
+	}
+	connection, _, _, err := c.loadConnection(ctx.Request().Context(), lease.ConnectionID)
+	if err != nil || !connection.Enabled {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection is unavailable")
+	}
+	installationToken, expiresAt, err := c.mintGitHubAppToken(ctx.Request().Context(), connection, lease.Repository)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh GitHub token").SetInternal(err)
+	}
+	return ctx.JSON(http.StatusOK, map[string]any{"username": "x-access-token", "token": installationToken, "expires_at": expiresAt})
+}
+
+func brokerLeaseTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func brokerLeaseSecretName(token string) string {
+	return "github-broker-" + brokerLeaseTokenHash(token)[:32]
+}
+
+func shortHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:8])
+}
+
+func (c *GitHubConnectionsController) RevokeBrokerLeases(ctx context.Context, sessionID string) error {
+	secrets, err := c.client.CoreV1().Secrets(c.namespace).List(ctx, metav1.ListOptions{LabelSelector: "agentapi.ccplant.io/session-id-hash=" + shortHash(sessionID)})
+	if err != nil {
+		return err
+	}
+	for i := range secrets.Items {
+		var lease githubBrokerLease
+		if json.Unmarshal(secrets.Items[i].Data["record.json"], &lease) != nil || lease.SessionID != sessionID {
+			continue
+		}
+		if err := c.client.CoreV1().Secrets(c.namespace).Delete(ctx, secrets.Items[i].Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *GitHubConnectionsController) exchangeCode(ctx context.Context, connection githubConnection, clientSecret, code, callbackURL string) (string, *time.Time, error) {

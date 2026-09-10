@@ -88,6 +88,9 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 
 	// 2. Clone repository if configured
 	if settings.Repository != nil && settings.Repository.FullName != "" {
+		if err := configureGitHubTokenBroker(settings); err != nil {
+			return fmt.Errorf("configure GitHub token broker: %w", err)
+		}
 		if err := cloneRepo(settings); err != nil {
 			return fmt.Errorf("clone-repo failed: %w", err)
 		}
@@ -123,6 +126,63 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 	}
 
 	log.Printf("[SETUP] Setup completed successfully")
+	return nil
+}
+
+func configureGitHubTokenBroker(settings *SessionSettings) error {
+	brokerURL := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_URL"])
+	brokerToken := strings.TrimSpace(settings.Env["AGENTAPI_GITHUB_BROKER_TOKEN"])
+	if brokerURL == "" && brokerToken == "" {
+		return nil
+	}
+	if brokerURL == "" || brokerToken == "" {
+		return fmt.Errorf("broker URL and token must both be configured")
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	binDir := filepath.Join(homeDir, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0700); err != nil {
+		return err
+	}
+	helperPath := filepath.Join(binDir, "agentapi-github-credential")
+	helper := `#!/bin/sh
+set -eu
+[ "${1:-get}" = "get" ] || exit 0
+response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+token="$(printf '%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+[ -n "$token" ] || exit 1
+printf 'username=x-access-token\npassword=%s\n\n' "$token"
+`
+	if err := os.WriteFile(helperPath, []byte(helper), 0700); err != nil {
+		return err
+	}
+	cmd := exec.Command("git", "config", "--global", "credential.helper", helperPath)
+	cmd.Env = githubCommandEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git credential helper: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	realGH, err := exec.LookPath("gh")
+	if err == nil && !strings.HasPrefix(realGH, binDir+string(filepath.Separator)) {
+		wrapperPath := filepath.Join(binDir, "gh")
+		wrapper := fmt.Sprintf(`#!/bin/sh
+set -eu
+response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+token="$(printf '%%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+[ -n "$token" ] || exit 1
+GH_TOKEN="$token" exec %q "$@"
+`, realGH)
+		if err := os.WriteFile(wrapperPath, []byte(wrapper), 0700); err != nil {
+			return err
+		}
+		currentPath := settings.Env["PATH"]
+		if currentPath == "" {
+			currentPath = os.Getenv("PATH")
+		}
+		settings.Env["PATH"] = binDir + string(os.PathListSeparator) + currentPath
+	}
 	return nil
 }
 
