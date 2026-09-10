@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +23,49 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+type statusTestTunnel struct{ connected map[string]bool }
+
+func (t *statusTestTunnel) IsConnected(_ context.Context, id string) bool { return t.connected[id] }
+func (t *statusTestTunnel) Do(_ context.Context, id, _, _ string, req *http.Request) (*http.Response, error) {
+	body := `{"version":"v1.2.3","running_runners":2,"used_runners":1}`
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
+}
+
+func TestListManageablePoolStatusFiltersPoolsAndFetchesLiveManagerStatus(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	for _, pool := range []string{"managed", "use-only"} {
+		requireNoError(t, store.CreateLogicalPool(ctx, &core.LogicalPool{Name: pool, Enabled: true}))
+	}
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "A", Enabled: true}))
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-b", Name: "B", Enabled: true}))
+	requireNoError(t, store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "managed", ManagerID: "manager-a", Enabled: true}))
+	requireNoError(t, store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "use-only", ManagerID: "manager-b", Enabled: true}))
+	requireNoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "managed", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleManage, Enabled: true}))
+	requireNoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "use-only", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleUse, Enabled: true}))
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(&statusTestTunnel{connected: map[string]bool{"manager-a": true}})
+	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
+	rec := callSessionPoolHandlerAs(t, controller.ListManageablePoolStatus, http.MethodGet, "/session-pools/status", nil, nil, nil, user)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Pools    []core.LogicalPool `json:"session_pools"`
+		Managers []struct {
+			Manager core.Manager           `json:"manager"`
+			Online  bool                   `json:"online"`
+			Status  map[string]interface{} `json:"status"`
+		} `json:"session_managers"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Pools) != 1 || result.Pools[0].Name != "managed" {
+		t.Fatalf("pools=%+v", result.Pools)
+	}
+	if len(result.Managers) != 1 || result.Managers[0].Manager.ID != "manager-a" || !result.Managers[0].Online || result.Managers[0].Status["version"] != "v1.2.3" {
+		t.Fatalf("managers=%+v", result.Managers)
+	}
+}
 
 type testManagerLiveness struct {
 	connected map[string]bool
