@@ -177,7 +177,7 @@ func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if request.Secret.Source == "encrypted" && !c.encryptedStorage {
-		return echo.NewHTTPError(http.StatusBadRequest, "encrypted secret storage requires the libsql-encrypted KV backend")
+		return echo.NewHTTPError(http.StatusBadRequest, "encrypted secret storage requires the libsql-encrypted or kubernetes KV backend")
 	}
 
 	now := time.Now().UTC()
@@ -299,7 +299,7 @@ func (c *GitHubConnectionsController) UpdateSecret(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if request.Source == "encrypted" && !c.encryptedStorage {
-		return echo.NewHTTPError(http.StatusBadRequest, "encrypted secret storage requires the libsql-encrypted KV backend")
+		return echo.NewHTTPError(http.StatusBadRequest, "encrypted secret storage requires the libsql-encrypted or kubernetes KV backend")
 	}
 	connection.SecretSource = request.Source
 	connection.SecretEnvironment = request.Environment
@@ -528,7 +528,7 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
 	if !c.encryptedStorage {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "account linking requires the libsql-encrypted KV backend")
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "account linking requires the libsql-encrypted or kubernetes KV backend")
 	}
 	var request struct {
 		ConnectionID string `json:"connection_id"`
