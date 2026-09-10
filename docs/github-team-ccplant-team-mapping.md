@@ -102,7 +102,77 @@ GitHub identity ──membership──> External team binding
 
 ## 設定スキーマと自動作成
 
-GitHub 接続自体と Team 定義を分離し、トップレベルに `teams` を追加する。
+GitHub 接続自体と Team 定義を分離し、トップレベルに `team_discovery` と `teams` を追加する。`team_discovery` は GitHub Team 名の一部を ccplant Team key としてキャプチャし、Team principal を動的に作成する。`teams` は既知の ccplant Team を静的に宣言する用途に残す。
+
+### 動的 Team discovery
+
+GHES の `test/cc-users` から ccplant の `test` Team を作成する場合は、次のように設定する。
+
+```yaml
+team_discovery:
+  - connection_id: ghes
+    team_pattern: "{team}/cc-users"
+    team_key: "{team}"
+    display_name: "{team}"
+```
+
+この `{team}` は通常の wildcard ではなく名前付き capture である。GitHub Team `test/cc-users` に対して `{team} = test` となり、次の TeamConfig を初回観測時に作成する。
+
+```json
+{
+  "principal_id": "team_01JTEAM7AM3NQKPF6QJ8K58XW",
+  "team_key": "test",
+  "display_name": "test",
+  "external_teams": [
+    {
+      "provider": "github",
+      "connection_id": "ghes",
+      "organization_pattern": "test",
+      "team_slug_pattern": "cc-users",
+      "managed_by": "discovery"
+    }
+  ]
+}
+```
+
+Team の生成契機は、対象 GitHub connection でユーザーの membership をロードしたときとする。たとえば Alice の GHES membership に `test/cc-users` が含まれていれば、resolver は discovery rule にマッチさせ、ccplant `test` Team がなければ principal を作成してから Alice をその Team のメンバーとして認可する。全 organization の事前列挙は不要である。
+
+同時に複数ユーザーが初回ログインしても principal が二重作成されないよう、正規化済み `team_key` を一意キーとして atomic create を行う。競合した処理は作成済み TeamConfig を再取得する。`team_key` は capture 展開後に小文字化し、`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` を満たす必要がある。不正な展開結果は認可せず監査ログへ記録する。
+
+作成した TeamConfig には `discovery_rule_id` と capture 値も保存する。同じ key の Team がすでに存在しても、それが同じ discovery rule と capture から作成されたものなら再利用する。手動作成 Team や別 rule 由来 Team と key が衝突した場合は、既存 Team へ自動 binding せず fail closed にする。そうしないと、GitHub Team 名を作れるユーザーが既存 ccplant Team に参加できる可能性がある。
+
+初期仕様では名前付き capture は organization または team slug の要素全体を表すものに限定し、部分 capture や正規表現は許可しない。たとえば `{team}/cc-users` と `myorg/{team}-cc-users` のうち、後者のような部分 capture は将来拡張とする。これにより Team key の予期しない生成や pattern ambiguity を避ける。
+
+### 手動での追加マッピング
+
+discovery で `test` Team を一度作成した後、管理者は Team 設定 API または UI から GHEC Team を追加できる。
+
+```yaml
+# TeamConfig の UI/API 表現。サーバーの bootstrap config ではない。
+key: test
+external_teams:
+  - connection_id: ghes
+    team_pattern: test/cc-users
+    managed_by: discovery
+  - connection_id: ghec
+    team_pattern: myorg/test-cc-users
+    managed_by: api
+```
+
+これ以降の membership 解決は次のようになる。
+
+| GitHub connection | GitHub Team | ccplant Team |
+|---|---|---|
+| `ghes` | `test/cc-users` | `test` |
+| `ghec` | `myorg/test-cc-users` | `test` |
+
+GHES membership をロードした Alice と、GHEC membership をロードした Bob は、同じ `test` Team principal のメンバーになる。両方の identity が同じ user principal にリンクされている場合も結果は `test` 1 件に重複排除する。
+
+field ownership は binding 単位で管理する。`managed_by: discovery` の binding は discovery rule が所有するため API から削除・変更できない。一方、同じ TeamConfig の `managed_by: api` binding は管理者が追加・更新・削除できる。したがって、Team が config 由来であることを理由に TeamConfig 全体を read-only にはしない。
+
+### 静的 Team 宣言
+
+GitHub Team と ccplant Team の対応があらかじめ分かっている場合は、`teams` で静的に宣言できる。
 
 ```yaml
 teams:
@@ -179,7 +249,7 @@ teams:
 
 つまり、複数の external GitHub Team を 1 つの ccplant Team に束ねることはできるが、1 つの external GitHub Team を複数の ccplant Team に割り当てることはできない。たとえば別の ccplant Team にも `ghes: dev/cc-users` とマッチする pattern を追加すると、設定競合として reconciliation を失敗させる。
 
-起動時に `TeamReconciler` がこの宣言を TeamConfig repository に反映する。
+起動時に `TeamReconciler` が静的な `teams` 宣言を TeamConfig repository に反映し、`team_discovery` の構文と既存 Team との競合を検証する。discovery 対象の Team principal は起動時ではなく membership の初回観測時に作成する。
 
 1. `key` で既存 TeamConfig を検索する。
 2. 存在しなければ新しい Team principal ID を生成して作成する。
@@ -189,7 +259,7 @@ teams:
 
 複数 replica が同時起動するため、作成は compare-and-create とし、`key` の一意性を Kubernetes の決定的なリソース名または KV の unique constraint で担保する。既存の sanitized team ID だけを Secret 名に使う方式は衝突し得るため、`team-<sha256(key)[:32]>` のようなハッシュ名へ変更する。
 
-Helm values にも同じ `teams` を追加し、設定 ConfigMap にそのままレンダリングする。秘密情報を含まないため Secret 化は不要である。
+Helm values にも同じ `team_discovery` と `teams` を追加し、設定 ConfigMap にそのままレンダリングする。秘密情報を含まないため Secret 化は不要である。
 
 ## membership 解決フロー
 
@@ -245,7 +315,7 @@ GitHub API 障害時に古い membership を無期限に認めるのは権限剥
 }
 ```
 
-config 管理 Team に対する API 更新は `409 Conflict` とし、設定変更を促す。将来 API override を許可する場合は field ownership を導入する。binding 更新時は、参照 connection の存在確認、重複制約、GitHub API による Team 存在確認を行う。GitHub API が一時的に利用できない場合に保存を許すなら `verification_status: pending` とし、pending binding は認可には使用しない。
+config または discovery 管理の field/binding に対する API 更新は `409 Conflict` とし、設定変更を促す。ただし、同じ Team への API 管理 binding の追加は許可する。binding 更新時は、参照 connection の存在確認、重複制約、GitHub API による Team 存在確認を行う。GitHub API が一時的に利用できない場合に保存を許すなら `verification_status: pending` とし、pending binding は認可には使用しない。
 
 ## 実装構成
 
@@ -254,6 +324,7 @@ config 管理 Team に対する API 更新は `409 Conflict` とし、設定変�
 - `entities.TeamConfig`: principal ID、key、表示名、external binding、管理元を保持。
 - `TeamConfigRepository`: `FindByPrincipalID`, `FindByKey`, `FindByExternalTeam`, `Save`, `List` を提供。
 - `TeamReconciler`: config の検証と冪等反映を担当。
+- `TeamDiscoveryService`: membership に discovery rule を適用し、capture から Team key を生成して TeamConfig を atomic create する。
 - `TeamMembershipResolver`: linked GitHub identities の membership を ccplant Team principal ID に変換。
 - `GitHubMembershipService`: connection ごとの credential と API endpoint を使って membership を取得。
 - auth middleware: resolver の結果だけを `AuthorizationContext` に設定。
@@ -311,6 +382,9 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 - 同じ external GitHub Team を 2 つの ccplant Team に割り当てようとすると設定検証が失敗する。
 - `dev/cc-*` のような config pattern に一致する複数の GitHub Team を、1 つの ccplant Team membership source として扱える。
 - wildcard により 1 つの GitHub Team が複数 ccplant Team にマッチする場合は、設定適用が失敗して認可には反映されない。
+- discovery rule `{team}/cc-users` に `test/cc-users` がマッチすると、不変な principal ID を持つ ccplant `test` Team が初回 membership ロード時に作成される。
+- discovery で作成された `test` Team に、管理者が GHEC `myorg/test-cc-users` binding を追加できる。
+- 追加後、GHES `test/cc-users` と GHEC `myorg/test-cc-users` のメンバーが同じ `test` Team principal に解決される。
 - membership 削除が共有キャッシュ TTL 以内に反映され、それ以降は fail closed になる。
 - 既存 `org/team-slug` データが移行期間中も読み書きでき、dry-run で移行対象を確認できる。
 
@@ -321,5 +395,5 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 1. Team principal ID の形式を UUID と ULID のどちらにするか。運用上の視認性から `team_` + ULID を推奨する。
 2. 1 つの external GitHub Team を複数 ccplant Team に割り当てるユースケースを将来許可するか。初期仕様は一意制約を推奨する。
 3. GitHub API 障害時の stale membership 猶予。セキュリティ優先の既定値は 5 分後 fail closed とする。
-4. config 管理 Team の API override を許可するか。初期仕様は拒否し、field ownership は導入しない。
+4. discovery rule の変更により、既存 Team key と一致しなくなった Team をどう表示するか。自動削除はせず `discovery_status: orphaned` として警告することを推奨する。
 5. TeamConfig を現行 Secret に保存し続けるか、汎用 KV store に移すか。検索 index と一意制約を考えると KV store への移行を推奨する。
