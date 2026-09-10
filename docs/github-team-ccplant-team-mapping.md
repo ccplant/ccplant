@@ -138,7 +138,9 @@ Team の生成契機は、対象 GitHub connection でユーザーの membership
 
 同時に複数ユーザーが初回ログインしても principal が二重作成されないよう、正規化済み `team_key` を一意キーとして atomic create を行う。競合した処理は作成済み TeamConfig を再取得する。既定形式の `team_key` は小文字化された `organization/team-slug` とし、空要素や余分な `/` を含む展開結果は認可せず監査ログへ記録する。
 
-作成した TeamConfig には `discovery_rule_id` とマッチした organization/team slug も保存する。同じ key の Team がすでに存在しても、それが同じ discovery rule と GitHub Team から作成されたものなら再利用する。手動作成 Team や別 rule 由来 Team と key が衝突した場合は、既存 Team へ自動 binding せず fail closed にする。そうしないと、GitHub Team 名を作れるユーザーが既存 ccplant Team に参加できる可能性がある。
+作成した TeamConfig には `discovery_rule_id` とマッチした organization/team slug も保存する。同じ key の Team がすでに存在し、それが同じ discovery rule と GitHub Team から作成されたものなら再利用する。
+
+principal ID を持たない旧形式の TeamConfig が同じ key で存在する場合は例外として、後述する legacy adoption を実行する。たとえば既存の ccplant `test/cc-users` は削除も再作成もせず、その TeamConfig に principal ID と discovery binding を追加して現在の Team として引き継ぐ。principal ID をすでに持つ手動作成 Team や、別 discovery rule 由来 Team と key が衝突した場合だけは、既存 Team へ自動 binding せず fail closed にする。そうしないと、GitHub Team 名を作れるユーザーが既存 ccplant Team に参加できる可能性がある。
 
 初期仕様では `team_key` に指定できる変数を `{organization}` と `{team_slug}` に限定し、glob の `*` 自体を任意名で capture する機能や正規表現は導入しない。これにより Team key の生成規則を単純に保つ。
 
@@ -343,6 +345,23 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 - API 入力の既存 Team ID を key として解決できる compatibility resolver を追加する。
 - 既存リソースは旧 Team ID のまま読めるよう、認可比較の直前に canonical principal ID へ解決する。
 
+#### Legacy Team adoption
+
+既存環境に principal ID を持たない `test/cc-users` TeamConfig があり、discovery が GHES `test/cc-users` を観測した場合は次のように処理する。
+
+1. `team_key = test/cc-users` で既存 TeamConfig を検索する。
+2. `principal_id` が空であることを確認する。
+3. `team_legacy_<sha256("test/cc-users")>` を principal ID として決定する。これにより replica や再試行が異なっても同じ ID になる。
+4. 既存 TeamConfig の service account、env vars、その他の設定を変更せず、`schema_version`, `principal_id`, `team_key`, discovery metadata、GHES `test/cc-users` binding だけを追加する。
+5. Kubernetes `resourceVersion` または KV transaction を使って compare-and-swap で保存する。競合時は再取得し、同じ principal ID なら成功として扱う。
+6. 既存 resource の `team_id: test/cc-users` はそのまま残し、compatibility resolver が canonical principal ID に変換して認可する。
+
+この adoption は in-place schema upgrade であり、旧 TeamConfig Secret や Team-scoped resource を削除・再作成しない。したがって、過去の session、settings、memory、schedule、webhook、SlackBot、profile、sandbox policy、API token、service account は消えず、同じ Team から参照できる。
+
+途中で処理が失敗した場合も、principal ID は team key から決定的に再計算できるため再試行可能である。binding の追加まで完了していない Team は `migration_status: pending` として扱い、既存の旧認可経路は維持する。migration 完了前に旧 Team ID の読み取りを無効化してはならない。
+
+自動 adoption の対象は「principal ID が空で、discovery が観測した GitHub Team の完全名と legacy team ID が完全一致する TeamConfig」に限定する。曖昧な候補が複数ある場合や、別 principal がすでに割り当てられている場合は変更せず、管理者に衝突を通知する。
+
 ### Phase 2: config reconciliation と membership resolver
 
 - `teams` 設定、起動時 reconciler、管理 API を追加する。
@@ -382,6 +401,7 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 - `dev/cc-*` のような config pattern に一致する複数の GitHub Team を、1 つの ccplant Team membership source として扱える。
 - wildcard により 1 つの GitHub Team が複数 ccplant Team にマッチする場合は、設定適用が失敗して認可には反映されない。
 - discovery rule `*/cc-users` に `test/cc-users` がマッチすると、不変な principal ID を持つ同名の ccplant `test/cc-users` Team が初回 membership ロード時に作成される。
+- principal ID のない既存 ccplant `test/cc-users` Team がある場合、新規 Team を作らず既存 TeamConfig を in-place adoption し、既存設定と Team-scoped resource を維持する。
 - discovery で作成された `test/cc-users` Team に、管理者が GHEC `myorg/test-cc-users` binding を追加できる。
 - 追加後、GHES `test/cc-users` と GHEC `myorg/test-cc-users` のメンバーが同じ ccplant `test/cc-users` Team principal に解決される。
 - membership 削除が共有キャッシュ TTL 以内に反映され、それ以降は fail closed になる。
