@@ -34,6 +34,7 @@ type HandlerRegistry struct {
 	settingsController             *controllers.SettingsController
 	adminSettingsController        *controllers.AdminSettingsController
 	githubConnectionsController    *controllers.GitHubConnectionsController
+	teamConfigController           *controllers.TeamConfigController
 	googleOAuthController          *controllers.GoogleOAuthController
 	credentialsController          *controllers.CredentialsController
 	codexDeviceAuthController      *controllers.CodexDeviceAuthController
@@ -321,10 +322,11 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			settingsController:             settingsController,
 			adminSettingsController:        adminSettingsController,
 			githubConnectionsController:    githubConnectionsController,
+			teamConfigController:           controllers.NewTeamConfigController(server.teamConfigRepo),
 			googleOAuthController:          googleOAuthController,
 			credentialsController:          credentialsController,
 			codexDeviceAuthController:      codexDeviceAuthController,
-			userController:                 controllers.NewUserController(),
+			userController:                 controllers.NewUserController(server.teamConfigRepo),
 			shareController:                shareController,
 			personalAPIKeyController:       personalAPIKeyController,
 			apiTokenController:             apiTokenController,
@@ -563,6 +565,8 @@ func (r *Router) registerConditionalRoutes() error {
 	// User info endpoint (requires authentication)
 	log.Printf("[ROUTES] Registering user info endpoint...")
 	r.echo.GET("/user/info", r.handlers.userController.GetUserInfo, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.GET("/teams/:team/config", r.handlers.teamConfigController.Get, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.PUT("/teams/:team/config", r.handlers.teamConfigController.Update, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 	log.Printf("[ROUTES] User info endpoint registered")
 
 	// Add notification routes if service is available

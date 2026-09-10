@@ -99,6 +99,7 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 	}
 	authConfig := *s.config.Auth.GitHub
 	authConfig.BaseURL = result.APIURL
+	authConfig.ConnectionID = result.ConnectionID
 	provider := auth.NewGitHubAuthProvider(&authConfig)
 	userContext, err := provider.Authenticate(c.Request().Context(), result.AccessToken)
 	if err != nil {

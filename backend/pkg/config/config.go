@@ -69,11 +69,22 @@ type BootstrapAdminAuthConfig struct {
 
 // GitHubAuthConfig represents GitHub OAuth authentication
 type GitHubAuthConfig struct {
-	Enabled     bool               `json:"enabled" mapstructure:"enabled"`
-	BaseURL     string             `json:"base_url" mapstructure:"base_url"`
-	TokenHeader string             `json:"token_header" mapstructure:"token_header"`
-	UserMapping GitHubUserMapping  `json:"user_mapping" mapstructure:"user_mapping"`
-	OAuth       *GitHubOAuthConfig `json:"oauth,omitempty" mapstructure:"oauth"`
+	Enabled      bool               `json:"enabled" mapstructure:"enabled"`
+	ConnectionID string             `json:"connection_id,omitempty" mapstructure:"connection_id"`
+	BaseURL      string             `json:"base_url" mapstructure:"base_url"`
+	TokenHeader  string             `json:"token_header" mapstructure:"token_header"`
+	UserMapping  GitHubUserMapping  `json:"user_mapping" mapstructure:"user_mapping"`
+	OAuth        *GitHubOAuthConfig `json:"oauth,omitempty" mapstructure:"oauth"`
+	// TeamDiscoveryPatterns participate in membership fetching but not role mapping.
+	TeamDiscoveryPatterns []string `json:"-" mapstructure:"-"`
+}
+
+// TeamDiscoveryRule creates/adopts a ccplant team when a GitHub membership
+// matches TeamPattern. The initial implementation preserves the matched
+// organization/team-slug as the team key.
+type TeamDiscoveryRule struct {
+	ConnectionID string `json:"connection_id" mapstructure:"connection_id" yaml:"connection_id"`
+	TeamPattern  string `json:"team_pattern" mapstructure:"team_pattern" yaml:"team_pattern"`
 }
 
 // GitHubOAuthConfig represents GitHub OAuth2 configuration
@@ -545,6 +556,8 @@ type Config struct {
 	BinaryPath string `json:"binary_path" mapstructure:"binary_path"`
 	// Auth represents authentication configuration
 	Auth AuthConfig `json:"auth" mapstructure:"auth"`
+	// TeamDiscovery contains connection-aware GitHub team discovery rules.
+	TeamDiscovery []TeamDiscoveryRule `json:"team_discovery" mapstructure:"team_discovery"`
 	// AuthConfigFile is the path to an external auth configuration file (e.g., from ConfigMap)
 	AuthConfigFile string `json:"auth_config_file" mapstructure:"auth_config_file"`
 	// RoleEnvFiles is the configuration for role-based environment files
@@ -643,7 +656,7 @@ func LoadConfig(filename string) (*Config, error) {
 	}
 
 	var config Config
-	decodeHook := mapstructure.ComposeDecodeHookFunc(stockInventoryPoolsDecodeHook(), stringMapJSONDecodeHook())
+	decodeHook := mapstructure.ComposeDecodeHookFunc(stockInventoryPoolsDecodeHook(), teamDiscoveryDecodeHook(), stringMapJSONDecodeHook())
 	if err := v.Unmarshal(&config, viper.DecodeHook(decodeHook)); err != nil {
 		return nil, err
 	}
@@ -709,6 +722,22 @@ func stockInventoryPoolsDecodeHook() mapstructure.DecodeHookFunc {
 			return nil, err
 		}
 		return pools, nil
+	}
+}
+
+func teamDiscoveryDecodeHook() mapstructure.DecodeHookFunc {
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String || to != reflect.TypeOf([]TeamDiscoveryRule{}) {
+			return data, nil
+		}
+		if data == "" {
+			return []TeamDiscoveryRule{}, nil
+		}
+		var rules []TeamDiscoveryRule
+		if err := json.Unmarshal([]byte(data.(string)), &rules); err != nil {
+			return nil, fmt.Errorf("parse team discovery JSON: %w", err)
+		}
+		return rules, nil
 	}
 }
 
@@ -822,9 +851,10 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	// Initialize Auth.GitHub if environment variables are set
 	if config.Auth.GitHub == nil && (v.GetBool("auth.github.enabled") || v.GetString("auth.github.base_url") != "" || v.GetString("auth.github.token_header") != "") {
 		config.Auth.GitHub = &GitHubAuthConfig{
-			Enabled:     v.GetBool("auth.github.enabled"),
-			BaseURL:     v.GetString("auth.github.base_url"),
-			TokenHeader: v.GetString("auth.github.token_header"),
+			Enabled:      v.GetBool("auth.github.enabled"),
+			ConnectionID: v.GetString("auth.github.connection_id"),
+			BaseURL:      v.GetString("auth.github.base_url"),
+			TokenHeader:  v.GetString("auth.github.token_header"),
 			UserMapping: GitHubUserMapping{
 				DefaultRole:           v.GetString("auth.github.user_mapping.default_role"),
 				DefaultPermissions:    v.GetStringSlice("auth.github.user_mapping.default_permissions"),
@@ -1027,6 +1057,7 @@ func bindEnvVars(v *viper.Viper) {
 
 	// GitHub auth configuration
 	_ = v.BindEnv("auth.github.enabled")
+	_ = v.BindEnv("auth.github.connection_id")
 	_ = v.BindEnv("auth.github.base_url")
 	_ = v.BindEnv("auth.github.token_header")
 	_ = v.BindEnv("auth.github.user_mapping.default_role")
@@ -1041,6 +1072,7 @@ func bindEnvVars(v *viper.Viper) {
 
 	// Other configuration
 	_ = v.BindEnv("auth_config_file")
+	_ = v.BindEnv("team_discovery", "AGENTAPI_TEAM_DISCOVERY")
 	_ = v.BindEnv("session_token_debug", "AGENTAPI_SESSION_TOKEN_DEBUG_ENABLED")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")

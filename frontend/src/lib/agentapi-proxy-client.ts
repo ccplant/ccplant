@@ -77,6 +77,7 @@ import {
 } from '../types/share';
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
+import { TeamConfig, ExternalTeamBinding } from '../types/team-config';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
@@ -1523,6 +1524,17 @@ export class AgentAPIProxyClient {
       console.log('[AgentAPIProxy] Getting user info');
     }
     return await this.makeRequest<ProxyUserInfo>('/user/info');
+  }
+
+  async getTeamConfig(teamId: string): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`);
+  }
+
+  async updateTeamConfig(teamId: string, externalTeams: ExternalTeamBinding[]): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify({ external_teams: externalTeams }),
+    });
   }
 
   /**

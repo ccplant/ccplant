@@ -54,20 +54,36 @@ const (
 
 // User represents a user domain entity
 type User struct {
-	id          UserID
-	userType    UserType
-	username    string
-	email       *string
-	displayName *string
-	avatarURL   *string
-	status      UserStatus
-	roles       []Role
-	permissions []Permission
-	envFile     string
-	createdAt   time.Time
-	lastUsedAt  *time.Time
-	githubInfo  *GitHubUserInfo
-	teamID      string // For service accounts only
+	id              UserID
+	userType        UserType
+	username        string
+	email           *string
+	displayName     *string
+	avatarURL       *string
+	status          UserStatus
+	roles           []Role
+	permissions     []Permission
+	envFile         string
+	createdAt       time.Time
+	lastUsedAt      *time.Time
+	githubInfo      *GitHubUserInfo
+	teamID          string // For service accounts only
+	resolvedTeamIDs []string
+	teamsResolved   bool
+}
+
+// SetResolvedTeamIDs stores canonical ccplant team IDs resolved from external
+// memberships. Calling it with an empty slice intentionally suppresses the
+// legacy organization/team fallback.
+func (u *User) SetResolvedTeamIDs(teamIDs []string) {
+	u.resolvedTeamIDs = append([]string(nil), teamIDs...)
+	u.teamsResolved = true
+}
+
+// ResolvedTeamIDs returns canonical ccplant team IDs and whether resolution
+// was explicitly performed.
+func (u *User) ResolvedTeamIDs() ([]string, bool) {
+	return append([]string(nil), u.resolvedTeamIDs...), u.teamsResolved
 }
 
 // GitHubUserInfo contains GitHub-specific user information
@@ -153,6 +169,7 @@ type GitHubOrganization struct {
 
 // GitHubTeamMembership represents GitHub team membership
 type GitHubTeamMembership struct {
+	ConnectionID string
 	Organization string
 	TeamSlug     string
 	TeamName     string
