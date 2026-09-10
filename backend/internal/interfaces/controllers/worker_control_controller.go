@@ -25,10 +25,16 @@ type WorkerControlController struct {
 	routes          repositories.SessionRouteRepository
 	leases          schedule.LeaseClient
 	scheduleManager schedule.Manager
+	sessionDeleter  func(echo.Context) error
 }
 
 func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
 	wc.scheduleManager = manager
+	return wc
+}
+
+func (wc *WorkerControlController) WithSessionDeleter(deleter func(echo.Context) error) *WorkerControlController {
+	wc.sessionDeleter = deleter
 	return wc
 }
 
@@ -313,6 +319,18 @@ func (wc *WorkerControlController) DeleteSession(c echo.Context) error {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	publicID := c.Param("sessionId")
+	if wc.routes != nil {
+		route, err := wc.routes.Get(c.Request().Context(), publicID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if route != nil && route.ManagerID != "" && wc.sessionDeleter != nil {
+			// Direct runtimes are owned by an external session manager. Reuse the
+			// durable public deletion path so the workload is removed before its
+			// route alias is reconciled away.
+			return wc.sessionDeleter(c)
+		}
+	}
 	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), publicID)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}

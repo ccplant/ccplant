@@ -113,3 +113,26 @@ func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
 	require.Equal(t, "stopped", sessions[0].Status)
 	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
 }
+
+func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "public-session", RemoteSessionID: "runtime-session", ManagerID: "manager-a",
+		Transport: portrepos.SessionRouteTransportDirectRuntime,
+	}}
+	called := false
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes).
+		WithSessionDeleter(func(c echo.Context) error {
+			called = true
+			return c.NoContent(http.StatusAccepted)
+		})
+	req := httptest.NewRequest(http.MethodDelete, "/internal/worker/sessions/public-session", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("public-session")
+
+	require.NoError(t, controller.DeleteSession(ctx))
+	require.True(t, called)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+}
