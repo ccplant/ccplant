@@ -20,7 +20,7 @@
 - **Team principal ID**: ccplant Team に割り当てる不変かつ一意な ID。例: `team_01J...`。表示名や slug 変更の影響を受けない。
 - **Team key**: API や設定で人が指定する一意な論理名。例: `cc-users`。既存互換期間は `team_id` として扱うこともできる。
 - **GitHub connection**: `github.com` または特定 GHES への接続。既存の GitHub Connection の `id` で識別する。
-- **External team binding**: `(connection_id, organization, team_slug)` と ccplant Team の対応付け。
+- **External team binding**: `(connection_id, organization_pattern, team_slug_pattern)` と ccplant Team の対応付け。organization と team slug は完全一致または glob パターンで指定する。
 
 ## 提案するデータモデル
 
@@ -41,9 +41,8 @@ type TeamConfig struct {
 type ExternalTeamBinding struct {
     Provider       string // 初期値は "github"
     ConnectionID   string // GitHub Connection の不変 ID
-    Organization   string
-    TeamSlug       string
-    ExternalTeamID *int64 // GitHub API から解決後に保存。任意
+    OrganizationPattern string
+    TeamSlugPattern     string
 }
 ```
 
@@ -59,16 +58,14 @@ type ExternalTeamBinding struct {
     {
       "provider": "github",
       "connection_id": "github-enterprise",
-      "organization": "dev",
-      "team_slug": "cc-users",
-      "external_team_id": 1234
+      "organization_pattern": "dev",
+      "team_slug_pattern": "cc-users"
     },
     {
       "provider": "github",
       "connection_id": "github-com",
-      "organization": "ccplant",
-      "team_slug": "contributors",
-      "external_team_id": 5678
+      "organization_pattern": "ccplant-*",
+      "team_slug_pattern": "*-contributors"
     }
   ],
   "service_account": null,
@@ -81,9 +78,12 @@ type ExternalTeamBinding struct {
 binding の正規化規則は次のとおりとする。
 
 - `connection_id` は必須で、存在し enabled な GitHub Connection を参照する。
-- `organization` と `team_slug` は trim 後に小文字化する。
-- 一意制約は `(connection_id, organization, team_slug)`。同じ GitHub Team を複数 ccplant Team に割り当てることは初期仕様では禁止する。意図しない権限和集合を防げるためである。
-- GitHub の numeric team ID を取得できたら `external_team_id` を保存し、slug rename の検知と追従に使う。認証判定は connection 内の numeric ID を優先し、未解決時のみ organization/slug を使う。
+- `organization_pattern` と `team_slug_pattern` は trim 後に小文字化する。
+- パターン構文は既存 `team_role_mapping` と同じ glob (`*`, `?`) に統一し、正規表現は受け付けない。`*` は `/` をまたがず、それぞれ organization または team slug の 1 要素内だけに一致する。
+- 両方に wildcard がない binding は完全一致として扱う。
+- 同じ GitHub Team が複数の ccplant Team にマッチする設定は不正とする。起動時に静的に重複を判定し、wildcard 同士など静的に判定できない組み合わせは、GitHub API から Team 一覧を取得して展開・検証する。
+- GitHub API による検証ができない状態で、未検証の wildcard binding を認可には使用しない。
+- パターンは設定上の意図として保存し、解決済み Team は connection 内の numeric team ID とともに別 index/cache に保存する。slug rename 後は再展開で追従し、古い解決結果は TTL 後に認可しない。
 
 ### ID と表示名の分離
 
@@ -111,20 +111,34 @@ teams:
     external_teams:
       - provider: github
         connection_id: github-enterprise
-        organization: dev
-        team_slug: cc-users
+        organization_pattern: dev
+        team_slug_pattern: cc-users
       - provider: github
         connection_id: github-com
-        organization: ccplant
-        team_slug: contributors
+        organization_pattern: ccplant-*
+        team_slug_pattern: "*-contributors"
 ```
+
+短縮記法として `team_pattern` も許可する。`organization_pattern` / `team_slug_pattern` との同時指定はエラーにする。
+
+```yaml
+teams:
+  - key: cc-users
+    external_teams:
+      - connection_id: github-enterprise
+        team_pattern: dev/cc-users
+      - connection_id: github-com
+        team_pattern: ccplant-*/*-contributors
+```
+
+短縮記法は最初の `/` で organization pattern と team slug pattern に分割する。空要素、`/` がない値、3 要素以上の値は設定エラーとする。これにより既存 `team_role_mapping` の `org/team` パターンと移行時の見た目を揃えられる。
 
 起動時に `TeamReconciler` がこの宣言を TeamConfig repository に反映する。
 
 1. `key` で既存 TeamConfig を検索する。
 2. 存在しなければ新しい Team principal ID を生成して作成する。
 3. 存在すれば principal ID を維持したまま、宣言管理対象の `display_name` と `external_teams` を更新する。
-4. GitHub Connection と binding の重複を検証する。不正な設定があれば起動を失敗させ、部分適用しない。
+4. GitHub Connection、パターン構文、展開後 binding の重複を検証する。不正な設定があれば起動を失敗させ、部分適用しない。
 5. config から Team が消えても自動削除しない。既存リソースの orphan 化を避けるため、`managed_by: config` と最終観測世代を記録し、警告を出す。削除は明示 API と参照確認を伴う別操作にする。
 
 複数 replica が同時起動するため、作成は compare-and-create とし、`key` の一意性を Kubernetes の決定的なリソース名または KV の unique constraint で担保する。既存の sanitized team ID だけを Secret 名に使う方式は衝突し得るため、`team-<sha256(key)[:32]>` のようなハッシュ名へ変更する。
@@ -137,8 +151,8 @@ membership の解決はログイン時とトークン再認証時に行う。
 
 1. GitHub identity を既存の仕組みで user principal に解決する。
 2. その identity が属する `connection_id` を確定する。API URL だけで接続を推測しない。
-3. 対象 connection に binding された organization の membership のみ GitHub API から取得する。
-4. `(connection_id, external_team_id)`、未解決 binding では `(connection_id, organization, team_slug)` を `TeamBindingIndex` で検索する。
+3. 対象 connection の binding pattern に関係する organization の membership を GitHub API から取得する。organization pattern 自体が wildcard の場合は、ユーザーが所属する organization を列挙してから絞り込む。
+4. membership の `(connection_id, organization, team_slug)` を正規化し、設定済みパターンと照合する。検証時に作成した `(connection_id, external_team_id) -> team_principal_id` index があればそれを優先する。
 5. 一致した ccplant Team の principal ID を重複排除して `AuthorizationContext.TeamScope.Teams` に設定する。
 6. Team ごとの権限を `TeamPermissions` に設定する。
 
@@ -177,8 +191,8 @@ GitHub API 障害時に古い membership を無期限に認めるのは権限剥
     {
       "provider": "github",
       "connection_id": "github-enterprise",
-      "organization": "dev",
-      "team_slug": "cc-users"
+      "organization_pattern": "dev",
+      "team_slug_pattern": "cc-*"
     }
   ],
   "managed_by": "config"
@@ -199,6 +213,8 @@ config 管理 Team に対する API 更新は `409 Conflict` とし、設定変�
 - auth middleware: resolver の結果だけを `AuthorizationContext` に設定。
 
 connection-aware にするため、`GitHubTeamMembership` に少なくとも `ConnectionID` と `ExternalTeamID` を追加する。既存の `KubernetesUserTeamMappingRepository` のキーも username 単独ではなく `(connection_id, github_user_id)` とし、connection をまたぐ同名ユーザーの衝突を防ぐ。
+
+パターン照合は既存の `matchTeamPattern` と同じ意味になる共通 `teampattern` package に切り出す。config validation、Team reconciler、認証時 resolver が同じコンパイル済み matcher を利用し、実装差による権限漏れを防ぐ。binding 数に比例した毎回の全走査を避けるため、connection ID と完全一致 organization を第一キーに index 化し、wildcard organization の matcher だけを別リストで評価する。
 
 認可側では `TeamScope.Teams` と各 resource の `team_id` を principal ID に統一する。UI の選択肢には key/display name を表示し、送信値には principal ID を使う。セッション、schedule、webhook、SlackBot、memory、settings、profile、sandbox policy、API token、service account の Team ID はすべて同じ resolver を通す。
 
@@ -247,6 +263,8 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 - config による初回作成と再起動時の再適用で Team principal ID が変わらない。
 - Team key や GitHub team slug の変更で、既存 ccplant resource の所有 Team が変わらない。
 - 同じ external GitHub Team を 2 つの ccplant Team に割り当てようとすると設定検証が失敗する。
+- `dev/cc-*` のような config pattern に一致する複数の GitHub Team を、1 つの ccplant Team membership source として扱える。
+- wildcard により 1 つの GitHub Team が複数 ccplant Team にマッチする場合は、設定適用が失敗して認可には反映されない。
 - membership 削除が共有キャッシュ TTL 以内に反映され、それ以降は fail closed になる。
 - 既存 `org/team-slug` データが移行期間中も読み書きでき、dry-run で移行対象を確認できる。
 
