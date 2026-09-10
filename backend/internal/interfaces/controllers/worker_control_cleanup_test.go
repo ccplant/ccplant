@@ -28,7 +28,10 @@ func (r *cleanupRouteRepository) Get(_ context.Context, id string) (*portrepos.S
 	return nil, nil
 }
 func (r *cleanupRouteRepository) List(context.Context, string) ([]*portrepos.SessionRoute, error) {
-	return nil, nil
+	if r.route == nil {
+		return nil, nil
+	}
+	return []*portrepos.SessionRoute{r.route}, nil
 }
 func (r *cleanupRouteRepository) Delete(_ context.Context, id string) error {
 	r.deletedIDs = append(r.deletedIDs, id)
@@ -82,4 +85,31 @@ func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.Equal(t, []string{"runtime-session"}, manager.deletedIDs)
 	require.Equal(t, []string{"public-session"}, routes.deletedIDs)
+}
+
+func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
+	startedAt := time.Now().Add(-2 * time.Minute)
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "public-session", RemoteSessionID: "runtime-session",
+		Transport: portrepos.SessionRouteTransportDirectRuntime, UserID: "alice",
+		Scope: string(entities.ScopeUser), StartedAt: startedAt, Status: "stopped",
+		Tags: map[string]string{"oneshot": "true", "session_ttl": "1m"},
+	}}
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes)
+	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sessions []struct {
+		ID     string            `json:"id"`
+		Status string            `json:"status"`
+		Tags   map[string]string `json:"tags"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "public-session", sessions[0].ID)
+	require.Equal(t, "stopped", sessions[0].Status)
+	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
 }

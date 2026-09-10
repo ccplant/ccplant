@@ -283,12 +283,14 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 		}
 		aliasedRuntime := make(map[string]bool)
 		for _, route := range routes {
-			if route.ManagerID != "" || route.RemoteSessionID == "" {
+			if route.RemoteSessionID == "" {
 				continue
 			}
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
+			} else if route.Tags["session_ttl"] != "" {
+				sessions = append(sessions, entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, route.Status))
 			}
 		}
 		filtered := make([]entities.Session, 0, len(sessions))

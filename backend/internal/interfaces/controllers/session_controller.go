@@ -711,6 +711,9 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 		return nil
 	}
 	status := publicSessionStatus(runtimeStatus)
+	if runtimeStatus == "stable" && route.Tags["oneshot"] == "true" {
+		status = "stopped"
+	}
 	previous := route.Status
 	route.Status, route.StatusUpdatedAt = status, time.Now()
 	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
