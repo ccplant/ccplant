@@ -17,7 +17,7 @@
 ## 用語
 
 - **ccplant Team**: ccplant 内のリソース所有・認可単位。
-- **Team principal ID**: ccplant Team に割り当てる不変かつ一意な ID。例: `team_01J...`。表示名や slug 変更の影響を受けない。
+- **Team principal ID**: ccplant Team に割り当てる不変かつ一意な ID。形式は `team-` + ULID（例: `team-01K4QX7M9N2R8V5Y3C6D1F0GHA`）。表示名や slug 変更の影響を受けない。
 - **Team key**: API や設定で人が指定する一意な論理名。例: `cc-users`。既存互換期間は `team_id` として扱うこともできる。
 - **GitHub connection**: `github.com` または特定 GHES への接続。既存の GitHub Connection の `id` で識別する。
 - **External team binding**: `(connection_id, organization_pattern, team_slug_pattern)` と ccplant Team の対応付け。organization と team slug は完全一致または glob パターンで指定する。
@@ -51,7 +51,7 @@ type ExternalTeamBinding struct {
 ```json
 {
   "schema_version": 2,
-  "principal_id": "team_01JTEAM7AM3NQKPF6QJ8K58XW",
+  "principal_id": "team-01K4QX7M9N2R8V5Y3C6D1F0GHA",
   "team_key": "cc-users",
   "display_name": "CC users",
   "external_teams": [
@@ -73,7 +73,7 @@ type ExternalTeamBinding struct {
 }
 ```
 
-`principal_id` は作成時にサーバーが生成し、更新 API や config reconciliation では変更不可とする。ユーザー principal と同じ名前空間に置く場合は型付き ID (`usr_...`, `team_...`) にし、将来の ACL の subject を `(principal_type, principal_id)` で表現できるようにする。今回の実装ではユーザー用 `githubPrincipal` Secret を流用せず、TeamConfig 内に保持する。ユーザー principal は「複数 GitHub identity を同一人物に束ねるもの」、Team principal は「リソース所有・membership の単位」でライフサイクルが異なるためである。
+`principal_id` は作成時にサーバーが生成し、更新 API や config reconciliation では変更不可とする。形式は `^team-[0-9A-HJKMNP-TV-Z]{26}$` とし、アンダースコアや URL エンコードが必要な文字は使用しない。ULID は UUID の36文字より短い26文字で、prefix 込みでも31文字に収まる。生成には暗号学的乱数を entropy とする monotonic ULID generator を使用する。ユーザー principal と同じ名前空間に置く場合も、ハイフン区切りの型付き ID (`user-...`, `team-...`) にし、将来の ACL の subject を `(principal_type, principal_id)` で表現できるようにする。今回の実装ではユーザー用 `githubPrincipal` Secret を流用せず、TeamConfig 内に保持する。ユーザー principal は「複数 GitHub identity を同一人物に束ねるもの」、Team principal は「リソース所有・membership の単位」でライフサイクルが異なるためである。
 
 binding の正規化規則は次のとおりとする。
 
@@ -94,7 +94,7 @@ GitHub identity ──membership──> External team binding
                                       │
                                       ▼
                                ccplant Team
-                            principal_id = team_...
+                            principal_id = team-...
                                       │
                                       ▼
                          sessions / settings / memories
@@ -119,7 +119,7 @@ team_discovery:
 
 ```json
 {
-  "principal_id": "team_01JTEAM7AM3NQKPF6QJ8K58XW",
+  "principal_id": "team-01K4QX7M9N2R8V5Y3C6D1F0GHA",
   "team_key": "test/cc-users",
   "display_name": "test/cc-users",
   "external_teams": [
@@ -301,7 +301,7 @@ GitHub API 障害時に古い membership を無期限に認めるのは権限剥
 
 ```json
 {
-  "principal_id": "team_01JTEAM7AM3NQKPF6QJ8K58XW",
+  "principal_id": "team-01K4QX7M9N2R8V5Y3C6D1F0GHA",
   "key": "cc-users",
   "display_name": "CC users",
   "external_teams": [
@@ -341,7 +341,7 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 ### Phase 1: モデルと read compatibility
 
 - TeamConfig に `schema_version`, `principal_id`, `team_key`, `external_teams` を追加する。
-- v1 TeamConfig (`team_id: org/team`) の読み込み時に、決定的 ID `team_legacy_<sha256(team_id)>` と `team_key = team_id` を補う。保存時に v2 へ更新する。
+- v1 TeamConfig (`team_id: org/team`) の読み込み時は旧 Team ID を維持する。principal ID が必要になった時点で ULID を atomic に付与し、`team_key = team_id` とともに v2 へ更新する。
 - API 入力の既存 Team ID を key として解決できる compatibility resolver を追加する。
 - 既存リソースは旧 Team ID のまま読めるよう、認可比較の直前に canonical principal ID へ解決する。
 
@@ -351,14 +351,14 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 
 1. `team_key = test/cc-users` で既存 TeamConfig を検索する。
 2. `principal_id` が空であることを確認する。
-3. `team_legacy_<sha256("test/cc-users")>` を principal ID として決定する。これにより replica や再試行が異なっても同じ ID になる。
+3. 新しい `team-<ULID>` を候補 principal ID として生成する。
 4. 既存 TeamConfig の service account、env vars、その他の設定を変更せず、`schema_version`, `principal_id`, `team_key`, discovery metadata、GHES `test/cc-users` binding だけを追加する。
-5. Kubernetes `resourceVersion` または KV transaction を使って compare-and-swap で保存する。競合時は再取得し、同じ principal ID なら成功として扱う。
+5. Kubernetes `resourceVersion` または KV transaction を使って compare-and-swap で保存する。競合時は自分の候補 ULID を破棄して再取得し、先に保存された principal ID を正とする。
 6. 既存 resource の `team_id: test/cc-users` はそのまま残し、compatibility resolver が canonical principal ID に変換して認可する。
 
 この adoption は in-place schema upgrade であり、旧 TeamConfig Secret や Team-scoped resource を削除・再作成しない。したがって、過去の session、settings、memory、schedule、webhook、SlackBot、profile、sandbox policy、API token、service account は消えず、同じ Team から参照できる。
 
-途中で処理が失敗した場合も、principal ID は team key から決定的に再計算できるため再試行可能である。binding の追加まで完了していない Team は `migration_status: pending` として扱い、既存の旧認可経路は維持する。migration 完了前に旧 Team ID の読み取りを無効化してはならない。
+途中で処理が失敗した場合は TeamConfig を再取得する。principal ID が保存済みならその ULID を再利用し、未保存なら新しい候補 ULID で compare-and-swap を再試行する。binding の追加まで完了していない Team は `migration_status: pending` として扱い、既存の旧認可経路は維持する。migration 完了前に旧 Team ID の読み取りを無効化してはならない。
 
 自動 adoption の対象は「principal ID が空で、discovery が観測した GitHub Team の完全名と legacy team ID が完全一致する TeamConfig」に限定する。曖昧な候補が複数ある場合や、別 principal がすでに割り当てられている場合は変更せず、管理者に衝突を通知する。
 
@@ -411,8 +411,7 @@ connection-aware にするため、`GitHubTeamMembership` に少なくとも `Co
 
 実装開始前に次を確定する。
 
-1. Team principal ID の形式を UUID と ULID のどちらにするか。運用上の視認性から `team_` + ULID を推奨する。
-2. 1 つの external GitHub Team を複数 ccplant Team に割り当てるユースケースを将来許可するか。初期仕様は一意制約を推奨する。
-3. GitHub API 障害時の stale membership 猶予。セキュリティ優先の既定値は 5 分後 fail closed とする。
-4. discovery rule の変更により、既存 Team key と一致しなくなった Team をどう表示するか。自動削除はせず `discovery_status: orphaned` として警告することを推奨する。
-5. TeamConfig を現行 Secret に保存し続けるか、汎用 KV store に移すか。検索 index と一意制約を考えると KV store への移行を推奨する。
+1. 1 つの external GitHub Team を複数 ccplant Team に割り当てるユースケースを将来許可するか。初期仕様は一意制約を推奨する。
+2. GitHub API 障害時の stale membership 猶予。セキュリティ優先の既定値は 5 分後 fail closed とする。
+3. discovery rule の変更により、既存 Team key と一致しなくなった Team をどう表示するか。自動削除はせず `discovery_status: orphaned` として警告することを推奨する。
+4. TeamConfig を現行 Secret に保存し続けるか、汎用 KV store に移すか。検索 index と一意制約を考えると KV store への移行を推奨する。
