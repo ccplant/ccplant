@@ -1689,22 +1689,12 @@ export class AgentAPIProxyClient {
   // Settings operations
 
   /**
-   * Normalize name for settings API
-   * Team names may contain '/' which should be replaced with '-'
-   * @param name - User name or team name
-   */
-  private normalizeSettingsName(name: string): string {
-    return name.replace(/\//g, '-');
-  }
-
-  /**
    * Get settings for a user or team
    * @param name - User name or team name
    */
   async getSettings(name: string): Promise<SettingsData> {
-    const normalizedName = this.normalizeSettingsName(name);
     try {
-      return await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(normalizedName)}`);
+      return await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(name)}`);
     } catch (error) {
       // If settings don't exist (404), return empty settings
       if (error instanceof AgentAPIProxyError && error.status === 404) {
@@ -1723,11 +1713,10 @@ export class AgentAPIProxyClient {
    * @param data - Settings data to save
    */
   async saveSettings(name: string, data: SettingsData): Promise<SettingsData> {
-    const normalizedName = this.normalizeSettingsName(name);
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Saving settings for: ${name} (normalized: ${normalizedName})`);
+      console.log(`[AgentAPIProxy] Saving settings for: ${name}`);
     }
-    const result = await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(normalizedName)}`, {
+    const result = await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -1840,11 +1829,10 @@ export class AgentAPIProxyClient {
    * @param name - User name or team name
    */
   async deleteSettings(name: string): Promise<void> {
-    const normalizedName = this.normalizeSettingsName(name);
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Deleting settings for: ${name} (normalized: ${normalizedName})`);
+      console.log(`[AgentAPIProxy] Deleting settings for: ${name}`);
     }
-    await this.makeRequest<void>(`/settings/${encodeURIComponent(normalizedName)}`, {
+    await this.makeRequest<void>(`/settings/${encodeURIComponent(name)}`, {
       method: 'DELETE',
     });
     if (this.debug) {
