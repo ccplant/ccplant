@@ -37,6 +37,8 @@ Goals:
   session archives, and workload environments;
 - preserve existing personal OAuth-token and deployment-wide GitHub App behavior
   during migration;
+- select exactly one team GitHub Connection by checking which App is installed
+  for the target repository;
 - discover the applicable GitHub App installation from the target repository.
 
 Non-goals:
@@ -78,9 +80,9 @@ Introduce a `TeamGitHubAppBinding` entity:
 
 ```go
 type TeamGitHubAppBinding struct {
-    ID             string    `json:"id"`
-    ConnectionID   string    `json:"connection_id"`
-    TeamID         string    `json:"team_id"`
+    ID           string    `json:"id"`
+    ConnectionID string    `json:"connection_id"`
+    TeamID       string    `json:"team_id"`
     AppID        int64     `json:"app_id"`
     SecretSource string    `json:"private_key_source"` // encrypted | environment
     SecretEnv    string    `json:"private_key_environment,omitempty"`
@@ -222,29 +224,85 @@ Resolve GitHub credentials only after scope normalization and team authorization
 Refactor token selection behind a `GitHubCredentialResolver` use case:
 
 ```text
-explicit request token
-  -> explicit connection_id + team session binding
-  -> organization-mapped connection + team session binding
+team session
+  -> discover the team GitHub App Connection from the repository
+  -> mint an installation token from that Connection's App ID and PEM
+  -> legacy deployment-wide GitHub App fallback (migration period only)
+
+personal session
   -> explicit connection_id + user's linked OAuth identity
   -> organization-mapped connection + user's linked OAuth identity
   -> authenticated user's forwarded token
-  -> legacy deployment-wide GitHub App fallback (migration period only)
 ```
 
-For a team-scoped session, a matching enabled team binding takes precedence over
-the user's linked identity. This makes the workload identity stable regardless
-of which team member starts the session. A caller-supplied explicit token keeps
-the current highest precedence for backward compatibility; a future policy may
-disable explicit tokens per team.
+Team sessions always use a GitHub App. They must not fall back to the initiating
+user's linked OAuth identity or forwarded token. This makes the workload identity
+stable regardless of which team member starts the session. If a team request
+contains a caller-supplied `github_token`, reject it once this feature is enabled;
+accepting it would bypass team credential policy.
 
-The resolver takes the already authorized `team_id`, connection ID, and required
-repository full name. It loads the binding, resolves the private key, creates an
-App JWT, and discovers the installation with
-`GET /repos/{owner}/{repo}/installation`. It then calls the installation-token
-endpoint using the returned ID. Request a token restricted to the target
-repository and reject repositories not present in the installation. A team App
-binding cannot be used for a launch without a repository; return a validation
-error instead of guessing an installation.
+### Selecting a Connection from a repository
+
+The repository is the authoritative selector. The existing connection
+`organizations` field is not used for team App selection because an organization
+may install several Apps with overlapping repository access.
+
+Given an authorized `team_id` and repository URL, resolve the Connection as
+follows:
+
+1. Normalize the repository to `(GitHub host, owner, name)`. Reject a URL whose
+   host does not belong to a configured GitHub Connection.
+2. Load all enabled team bindings for `team_id` whose Connection `api_url`
+   matches the repository's GitHub host and whose App ID and PEM are configured.
+3. For each candidate, create an App JWT and call that host's
+   `GET /repos/{owner}/{name}/installation` endpoint. Probe candidates in
+   parallel with a small concurrency limit and a shared request deadline.
+4. A `200` means that Connection's GitHub App can access the repository and is a
+   match. A `404` means it is not installed for that repository and is not a
+   match.
+5. Select the Connection only when exactly one candidate matches.
+
+The outcomes are deterministic:
+
+| Matching Connections | Result |
+|---|---|
+| 1 | Select it and mint its repository-scoped installation token |
+| 0 | Return `github_app_not_installed` with the repository and team |
+| 2 or more | Return `github_connection_ambiguous` with the non-secret candidate IDs and names |
+
+Authentication failures (`401`/`403`), rate limits (`429`), timeouts, and GitHub
+`5xx` responses are candidate-resolution errors, not non-matches. If no unique
+answer can be proven because a probe failed, return `503` and do not silently
+select another App.
+
+An optional request `connection_id` narrows step 2 to one Connection; it does not
+bypass the repository check. This is the explicit disambiguation mechanism when
+multiple Apps are intentionally installed on the same repository. The resolver
+returns `409` with candidate metadata first, and the caller retries with the
+chosen `connection_id`.
+
+Example:
+
+```text
+team: acme/platform
+repository: https://github.com/acme/payments
+
+Connection A / App 101 -> GET /repos/acme/payments/installation -> 404
+Connection B / App 202 -> GET /repos/acme/payments/installation -> 200
+Connection C / App 303 -> GET /repos/acme/payments/installation -> 404
+
+selected connection: B
+credential: App 202 PEM -> short-lived token for acme/payments
+```
+
+The resolver takes the already authorized `team_id`, optional connection ID, and
+required repository full name. After selecting the unique Connection, it loads
+that binding, resolves the private key, creates an App JWT, and discovers the
+installation with `GET /repos/{owner}/{repo}/installation`. It then calls the
+installation-token endpoint using the returned ID. Request a token restricted to
+the target repository and reject repositories not present in the installation. A
+team App binding cannot be used for a launch without a repository; return a
+validation error instead of guessing an installation.
 
 Cache the discovered installation in memory by `(binding_id, repository)` for a
 short bounded period, and cache tokens by `(binding_id, repository, permissions)`
@@ -260,17 +318,19 @@ creates a stable credential correlate.
 
 Failures are fail-closed when a binding was selected: a disabled binding,
 unreadable key, GitHub rejection, or repository mismatch returns an actionable
-4xx/503 and must not fall back to a person's OAuth token. Fallback is allowed
-only when no binding exists, during the documented migration period.
+4xx/503 and must not fall back to a person's OAuth token. The legacy
+deployment-wide GitHub App fallback is allowed only when the team has no App
+bindings at all, during the documented migration period. It is not used when
+bindings exist but none matches the repository.
 
 ## Runtime sequence
 
 ```text
 client -> POST /start (scope=team, team_id, repository)
 proxy  -> authorize team session creation
-proxy  -> select GitHub Connection from connection_id or repository owner
-proxy  -> load (connection_id, team_id) binding
-proxy  -> discover the App installation for the target repository
+proxy  -> load the team's enabled GitHub App Connections for the repository host
+proxy  -> probe each App for access to the target repository
+proxy  -> require exactly one match and select that Connection
 proxy  -> mint/cache short-lived installation token using private key
 proxy  -> create session with GITHUB_TOKEN only
 session -> clone/fetch repository
@@ -341,8 +401,13 @@ must preserve team-scoped authorization and must not make the secret retrievable
   unrelated team members, and team service accounts;
 - PEM parsing and environment-name validation tests;
 - GitHub.com and GHES repository-installation discovery and token endpoint tests;
-- resolution precedence tests for explicit connection, organization mapping,
-  team binding, personal identity, explicit token, and legacy fallback;
+- Connection selection tests for zero, one, and multiple matching Apps;
+- candidate probe tests proving `404` is a non-match while authentication,
+  rate-limit, timeout, and server failures prevent selection;
+- explicit `connection_id` disambiguation still verifies repository access;
+- team sessions reject a caller-supplied token and never use personal OAuth;
+- personal-session resolution tests for explicit connection, organization
+  mapping, linked identity, and forwarded token;
 - fail-closed tests for disabled binding, expired/revoked key, missing repository,
   App not installed for the repository, repository restriction, and GitHub outage;
 - assertions that API responses, logs, events, session metadata, archives, and
