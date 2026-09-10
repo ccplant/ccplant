@@ -35,24 +35,27 @@ type fakeSession struct {
 	startedAt   time.Time
 	updatedAt   time.Time
 	description string
+	request     *entities.RunServerRequest
 }
 
-func (s *fakeSession) ID() string                    { return s.id }
-func (s *fakeSession) Addr() string                  { return s.addr }
-func (s *fakeSession) UserID() string                { return s.userID }
-func (s *fakeSession) Scope() entities.ResourceScope { return s.scope }
-func (s *fakeSession) TeamID() string                { return s.teamID }
-func (s *fakeSession) Tags() map[string]string       { return s.tags }
-func (s *fakeSession) Status() string                { return s.status }
-func (s *fakeSession) StartedAt() time.Time          { return s.startedAt }
-func (s *fakeSession) UpdatedAt() time.Time          { return s.updatedAt }
-func (s *fakeSession) LastMessageAt() time.Time      { return s.updatedAt }
-func (s *fakeSession) Description() string           { return s.description }
-func (s *fakeSession) Cancel()                       {}
+func (s *fakeSession) ID() string                          { return s.id }
+func (s *fakeSession) Addr() string                        { return s.addr }
+func (s *fakeSession) UserID() string                      { return s.userID }
+func (s *fakeSession) Scope() entities.ResourceScope       { return s.scope }
+func (s *fakeSession) TeamID() string                      { return s.teamID }
+func (s *fakeSession) Tags() map[string]string             { return s.tags }
+func (s *fakeSession) Status() string                      { return s.status }
+func (s *fakeSession) StartedAt() time.Time                { return s.startedAt }
+func (s *fakeSession) UpdatedAt() time.Time                { return s.updatedAt }
+func (s *fakeSession) LastMessageAt() time.Time            { return s.updatedAt }
+func (s *fakeSession) Description() string                 { return s.description }
+func (s *fakeSession) Cancel()                             {}
+func (s *fakeSession) Request() *entities.RunServerRequest { return s.request }
 
 // fakeSessionManager implements repositories.SessionManager for tests.
 type fakeSessionManager struct {
-	sessions map[string]*fakeSession
+	sessions   map[string]*fakeSession
+	deletedIDs []string
 }
 
 func (m *fakeSessionManager) GetSession(id string) entities.Session {
@@ -78,7 +81,10 @@ func (m *fakeSessionManager) ListSessions(filter entities.SessionFilter) []entit
 func (m *fakeSessionManager) CreateSession(_ context.Context, _ string, _ *entities.RunServerRequest, _ []byte) (entities.Session, error) {
 	return nil, nil
 }
-func (m *fakeSessionManager) DeleteSession(_ string) error { return nil }
+func (m *fakeSessionManager) DeleteSession(id string) error {
+	m.deletedIDs = append(m.deletedIDs, id)
+	return nil
+}
 func (m *fakeSessionManager) SendMessage(_ context.Context, _ string, _ string) error {
 	return nil
 }

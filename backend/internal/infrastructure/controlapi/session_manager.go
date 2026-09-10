@@ -31,6 +31,7 @@ type sessionInfo struct {
 	Tags          map[string]string      `json:"tags"`
 	Status        string                 `json:"status"`
 	StartedAt     time.Time              `json:"started_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 	LastMessageAt time.Time              `json:"last_message_at"`
 }
 
@@ -213,6 +214,7 @@ func (m *SessionManager) do(ctx context.Context, method, path string, input, out
 
 func (i sessionInfo) entity() entities.Session {
 	session := entities.NewProxySessionWithStatus(i.ID, i.UserID, i.Scope, i.TeamID, i.Tags, i.StartedAt, i.Status)
+	session.SetUpdatedAt(i.UpdatedAt)
 	session.SetLastMessageAt(i.LastMessageAt)
 	return session
 }

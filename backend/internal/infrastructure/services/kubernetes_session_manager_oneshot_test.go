@@ -40,9 +40,9 @@ func newTestManagerForOneshot(t *testing.T) *KubernetesSessionManager {
 	return manager
 }
 
-// TestBuildSessionSettings_OneshotHookInjected verifies that when req.Oneshot is true,
-// the Stop hook for delete-session is included in the compiled settings.json.
-func TestBuildSessionSettings_OneshotHookInjected(t *testing.T) {
+// TestBuildSessionSettings_OneshotDoesNotInjectDeleteHook verifies that oneshot
+// cleanup is owned by the TTL worker rather than an agent-specific Stop hook.
+func TestBuildSessionSettings_OneshotDoesNotInjectDeleteHook(t *testing.T) {
 	manager := newTestManagerForOneshot(t)
 	session := NewKubernetesSession(
 		"test-session",
@@ -71,75 +71,54 @@ func TestBuildSessionSettings_OneshotHookInjected(t *testing.T) {
 	if settings == nil {
 		t.Fatal("Expected non-nil settings")
 	}
-
-	hooksRaw, ok := settings.Claude.SettingsJSON["hooks"]
-	if !ok {
-		t.Fatal("Expected 'hooks' key in SettingsJSON")
+	encoded, err := json.Marshal(settings.Claude.SettingsJSON)
+	if err != nil {
+		t.Fatalf("Failed to marshal settings: %v", err)
 	}
-
-	hooksMap, ok := hooksRaw.(map[string]interface{})
-	if !ok {
-		t.Fatalf("Expected hooks to be map[string]interface{}, got %T", hooksRaw)
+	if strings.Contains(string(encoded), "client delete-session --confirm") {
+		t.Fatalf("oneshot delete hook must not be injected: %s", encoded)
 	}
+}
 
-	stopHooks, ok := hooksMap["Stop"]
-	if !ok {
-		t.Fatal("Expected 'Stop' hook in hooks map")
-	}
+func TestApplyAgentRuntimeStatusCompletesFastOneshotFromActive(t *testing.T) {
+	session := NewKubernetesSession(
+		"fast-oneshot",
+		&entities.RunServerRequest{Oneshot: true, InitialMessage: "finish quickly"},
+		"agentapi-session-fast-oneshot",
+		"agentapi-session-fast-oneshot-svc",
+		"",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+	session.SetStatus("active")
 
-	stopList, ok := stopHooks.([]interface{})
-	if !ok {
-		t.Fatalf("Expected Stop hooks to be []interface{}, got %T", stopHooks)
-	}
+	applyAgentRuntimeStatus(session, "stable")
 
-	if len(stopList) == 0 {
-		t.Fatal("Expected at least one Stop hook entry")
+	if got := session.Status(); got != "stopped" {
+		t.Fatalf("status = %q, want stopped", got)
 	}
+}
 
-	// Find the delete-session command among the entries
-	found := false
-	for _, entry := range stopList {
-		entryMap, ok := entry.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		hooksInner, ok := entryMap["hooks"].([]interface{})
-		if !ok {
-			continue
-		}
-		for _, h := range hooksInner {
-			hMap, ok := h.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			cmd, _ := hMap["command"].(string)
-			if strings.Contains(cmd, "client delete-session --confirm") {
-				found = true
-			}
-		}
-	}
-	if !found {
-		// Also check as []map[string]interface{} (for in-memory non-JSON-roundtripped maps)
-		for _, entry := range stopList {
-			entryMap, ok := entry.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			hooksInnerRaw := entryMap["hooks"]
-			// Try both []interface{} and []map[string]interface{}
-			if inner, ok := hooksInnerRaw.([]map[string]interface{}); ok {
-				for _, h := range inner {
-					cmd, _ := h["command"].(string)
-					if strings.Contains(cmd, "client delete-session --confirm") {
-						found = true
-					}
-				}
-			}
-		}
-	}
+func TestApplyAgentRuntimeStatusKeepsInteractiveSessionActive(t *testing.T) {
+	session := NewKubernetesSession(
+		"interactive",
+		&entities.RunServerRequest{InitialMessage: "hello"},
+		"agentapi-session-interactive",
+		"agentapi-session-interactive-svc",
+		"",
+		"test-ns",
+		9000,
+		nil,
+		nil,
+	)
+	session.SetStatus("active")
 
-	if !found {
-		t.Errorf("Expected delete-session command in Stop hooks, got: %+v", stopList)
+	applyAgentRuntimeStatus(session, "stable")
+
+	if got := session.Status(); got != "active" {
+		t.Fatalf("status = %q, want active", got)
 	}
 }
 

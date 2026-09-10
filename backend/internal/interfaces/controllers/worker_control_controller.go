@@ -25,10 +25,16 @@ type WorkerControlController struct {
 	routes          repositories.SessionRouteRepository
 	leases          schedule.LeaseClient
 	scheduleManager schedule.Manager
+	sessionDeleter  func(echo.Context) error
 }
 
 func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
 	wc.scheduleManager = manager
+	return wc
+}
+
+func (wc *WorkerControlController) WithSessionDeleter(deleter func(echo.Context) error) *WorkerControlController {
+	wc.sessionDeleter = deleter
 	return wc
 }
 
@@ -125,6 +131,8 @@ type workerSessionLister interface {
 	ListSessionsContext(context.Context, entities.SessionFilter) ([]entities.Session, error)
 }
 
+const defaultOneshotSessionTTL = "1m"
+
 type workerSessionInfo struct {
 	ID            string                 `json:"id"`
 	UserID        string                 `json:"user_id"`
@@ -133,6 +141,7 @@ type workerSessionInfo struct {
 	Tags          map[string]string      `json:"tags"`
 	Status        string                 `json:"status"`
 	StartedAt     time.Time              `json:"started_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 	LastMessageAt time.Time              `json:"last_message_at"`
 }
 
@@ -143,10 +152,20 @@ func workerSessionInfoFrom(session entities.Session) workerSessionInfo {
 	}
 	if provider, ok := session.(interface {
 		Request() *entities.RunServerRequest
-	}); ok && provider.Request() != nil && provider.Request().SessionTTL != "" {
-		tags["session_ttl"] = provider.Request().SessionTTL
+	}); ok && provider.Request() != nil {
+		if provider.Request().SessionTTL != "" {
+			tags["session_ttl"] = provider.Request().SessionTTL
+		}
+		// oneshot is an internal cleanup hint. ACP agents do not execute Claude's
+		// Stop hook, so the worker applies its configured TTL to these sessions.
+		if provider.Request().Oneshot {
+			tags["oneshot"] = "true"
+			if provider.Request().SessionTTL == "" {
+				tags["session_ttl"] = defaultOneshotSessionTTL
+			}
+		}
 	}
-	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), LastMessageAt: session.LastMessageAt()}
+	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), UpdatedAt: session.UpdatedAt(), LastMessageAt: session.LastMessageAt()}
 }
 
 func NewWorkerControlController(manager repositories.SessionManager, token string, teams workerTeamEnsurer, routes repositories.SessionRouteRepository) *WorkerControlController {
@@ -270,12 +289,14 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 		}
 		aliasedRuntime := make(map[string]bool)
 		for _, route := range routes {
-			if route.ManagerID != "" || route.RemoteSessionID == "" {
+			if route.RemoteSessionID == "" {
 				continue
 			}
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
+			} else if route.Tags["session_ttl"] != "" {
+				sessions = append(sessions, entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, route.Status))
 			}
 		}
 		filtered := make([]entities.Session, 0, len(sessions))
@@ -297,8 +318,29 @@ func (wc *WorkerControlController) DeleteSession(c echo.Context) error {
 	if !wc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), c.Param("sessionId"))); err != nil {
+	publicID := c.Param("sessionId")
+	if wc.routes != nil {
+		route, err := wc.routes.Get(c.Request().Context(), publicID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if route != nil && route.ManagerID != "" && wc.sessionDeleter != nil {
+			// Direct runtimes are owned by an external session manager. Reuse the
+			// durable public deletion path so the workload is removed before its
+			// route alias is reconciled away.
+			return wc.sessionDeleter(c)
+		}
+	}
+	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), publicID)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// Pool-backed sessions use a public route alias for the adopted runtime ID.
+	// TTL cleanup must remove that alias after the runtime deletion succeeds or
+	// /search continues to expose a session whose workload no longer exists.
+	if wc.routes != nil {
+		if err := wc.routes.Delete(c.Request().Context(), publicID); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 	}
 	return c.NoContent(http.StatusNoContent)
 }

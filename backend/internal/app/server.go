@@ -1412,7 +1412,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
 		return nil, err
 	}
-	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model string
+	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model, sessionTTL string
 	var oneshot bool
 	var authProxy *bool
 	var sandbox *entities.SandboxParams
@@ -1429,11 +1429,12 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		model = startReq.Params.Model
+		sessionTTL = startReq.Params.SessionTTL
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, Environment: startReq.Environment,
+		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
@@ -1480,10 +1481,23 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		return nil, fmt.Errorf("enqueue session pool allocation: %w", err)
 	}
 	startedAt := time.Now().UTC()
+	routeTags := make(map[string]string, len(startReq.Tags)+2)
+	for key, value := range startReq.Tags {
+		routeTags[key] = value
+	}
+	if oneshot {
+		routeTags["oneshot"] = "true"
+		if sessionTTL == "" {
+			sessionTTL = "1m"
+		}
+	}
+	if sessionTTL != "" {
+		routeTags["session_ttl"] = sessionTTL
+	}
 	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
 		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
-		TeamID: startReq.TeamID, Tags: startReq.Tags, StartedAt: startedAt, InitialMessage: initialMessage,
+		TeamID: startReq.TeamID, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
