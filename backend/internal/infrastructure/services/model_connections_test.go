@@ -100,6 +100,24 @@ func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {
 	}
 }
 
+func TestSelectedClaudeProfileModelOverridesTeamConnectionDefault(t *testing.T) {
+	req := &entities.RunServerRequest{
+		AgentType: "claude-acp",
+		ClaudeConnection: &modelprovider.Connection{
+			Mode:  "oauth",
+			Model: "team-model",
+		},
+		ProfileEnvironment: map[string]string{"ANTHROPIC_MODEL": "profile-model"},
+	}
+
+	applySelectedAgentDefaultModel(req)
+
+	require.Equal(t, "profile-model", req.Model)
+	settings := &sessionsettings.SessionSettings{}
+	applyModelConnections(settings, req)
+	require.Equal(t, "profile-model", settings.Env["ANTHROPIC_MODEL"])
+}
+
 func TestBuiltInAuthDefaultModelAllowsLegacyCredentialEnvironment(t *testing.T) {
 	personal := entities.NewSettings("user")
 	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "oauth", Model: "anthropic-default"})

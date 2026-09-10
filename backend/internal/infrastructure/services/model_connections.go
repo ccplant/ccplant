@@ -139,16 +139,25 @@ func applySelectedAgentDefaultModel(req *entities.RunServerRequest) {
 	if req == nil || req.Model != "" {
 		return
 	}
+	agent := "claude"
+	fallback := ""
 	switch req.AgentType {
 	case "codex-acp":
+		agent = "codex"
 		if req.CodexConnection != nil {
-			req.Model = req.CodexConnection.Model
+			fallback = req.CodexConnection.Model
 		}
 	case "", "claude-acp", "claude-legacy", "claude":
 		if req.ClaudeConnection != nil {
-			req.Model = req.ClaudeConnection.Model
+			fallback = req.ClaudeConnection.Model
 		}
+	default:
+		return
 	}
+	// Resolve the model for the selected agent again at the final selection
+	// boundary. This keeps profile/request model overrides authoritative even
+	// when the inherited team connection already carries its default model.
+	req.Model = modelprovider.ModelForLayers(agent, fallback, req.ProfileEnvironment, req.Environment)
 }
 
 func applyModelConnections(settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) {
