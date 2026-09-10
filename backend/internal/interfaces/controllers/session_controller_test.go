@@ -172,6 +172,36 @@ func TestShouldUseGitHubBrokerPreservesExplicitCredentials(t *testing.T) {
 	}
 }
 
+func TestGitHubBrokerURLUsesForwardedPrefix(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start", nil)
+	req.Host = "backend.internal"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
+	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
+
+	got, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session/id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://dev.ccplant.com/api/proxy/internal/sessions/session%2Fid/github-credentials"
+	if got != want {
+		t.Fatalf("githubBrokerURL() = %q, want %q", got, want)
+	}
+}
+
+func TestGitHubBrokerURLRejectsInvalidForwardedPrefix(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start", nil)
+	req.Host = "backend.internal"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Prefix", "/api/../admin")
+
+	if _, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session-1"); err == nil {
+		t.Fatal("githubBrokerURL() accepted an invalid forwarded prefix")
+	}
+}
+
 type sessionListTestSession struct {
 	id     string
 	status string
