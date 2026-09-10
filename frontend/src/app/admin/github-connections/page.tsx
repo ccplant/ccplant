@@ -6,6 +6,7 @@ import { SettingsPageHeader } from '@/components/settings'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import { GitHubConnection, GitHubConnectionInput, GitHubSecretSource } from '@/types/github-connection'
 import { useToast } from '@/contexts/ToastContext'
+import { parseGitHubOrganizations } from '@/utils/githubOrganizations'
 
 const emptyForm: GitHubConnectionInput = {
   name: '', base_url: 'https://github.com', api_url: 'https://api.github.com', oauth_client_id: '', oauth_scope: 'read:user read:org project', enabled: true, show_on_login: true, allow_user_creation: false, organizations: [],
@@ -16,6 +17,7 @@ const emptyForm: GitHubConnectionInput = {
 export default function GitHubConnectionsAdminPage() {
   const [connections, setConnections] = useState<GitHubConnection[]>([])
   const [form, setForm] = useState<GitHubConnectionInput>(emptyForm)
+  const [organizationsInput, setOrganizationsInput] = useState('')
   const [editing, setEditing] = useState<GitHubConnection | null>(null)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -31,23 +33,25 @@ export default function GitHubConnectionsAdminPage() {
 
   useEffect(() => { void load() }, [load])
 
-  const startCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true) }
+  const startCreate = () => { setEditing(null); setForm(emptyForm); setOrganizationsInput(''); setOpen(true) }
   const startEdit = (item: GitHubConnection) => {
     setEditing(item)
     setForm({ name: item.name, base_url: item.base_url, api_url: item.api_url || '', oauth_client_id: item.oauth_client_id || '', oauth_scope: item.oauth_scope || 'read:user read:org project', enabled: item.enabled, show_on_login: item.show_on_login !== false, allow_user_creation: item.allow_user_creation === true, organizations: item.organizations || [],
       oauth_client_secret: { source: item.secret_source || 'encrypted', environment: item.secret_environment || '', value: '' }, github_app: { app_id: item.github_app?.app_id || 0, private_key: '' } })
+    setOrganizationsInput((item.organizations || []).join(', '))
     setOpen(true)
   }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setSaving(true)
     const client = createCurrentDeploymentAgentAPIProxyClient()
+    const normalizedForm = { ...form, organizations: parseGitHubOrganizations(organizationsInput) }
     try {
       if (!editing) {
-        const created = await client.createGitHubConnection({ ...form, github_app: form.github_app?.app_id ? { app_id: form.github_app.app_id } : undefined })
+        const created = await client.createGitHubConnection({ ...normalizedForm, github_app: form.github_app?.app_id ? { app_id: form.github_app.app_id } : undefined })
         if (form.github_app?.private_key) await client.updateGitHubAppPrivateKey(created.id, form.github_app.private_key)
       } else {
-        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled, show_on_login: form.show_on_login, allow_user_creation: form.allow_user_creation, organizations: form.organizations, github_app: form.github_app?.app_id ? { app_id: form.github_app.app_id } : undefined })
+        await client.updateGitHubConnection(editing.id, { name: form.name, base_url: form.base_url, api_url: form.api_url, oauth_client_id: form.oauth_client_id, oauth_scope: form.oauth_scope, enabled: form.enabled, show_on_login: form.show_on_login, allow_user_creation: form.allow_user_creation, organizations: normalizedForm.organizations, github_app: form.github_app?.app_id ? { app_id: form.github_app.app_id } : undefined })
         const secret = form.oauth_client_secret
         if (secret && ((secret.source === 'encrypted' && secret.value) || (secret.source === 'environment' && secret.environment !== editing.secret_environment))) {
           await client.updateGitHubConnectionSecret(editing.id, secret)
@@ -105,7 +109,7 @@ export default function GitHubConnectionsAdminPage() {
         <label className="block text-sm dark:text-white">API URL<input required type="url" className={`${input} mt-1`} value={form.api_url} onChange={e => setForm({...form, api_url:e.target.value})} /></label>
         <label className="block text-sm dark:text-white">OAuth Client ID<input required className={`${input} mt-1`} value={form.oauth_client_id} onChange={e => setForm({...form, oauth_client_id:e.target.value})} /></label>
         <label className="block text-sm dark:text-white">OAuth Scope<input required className={`${input} mt-1`} placeholder="read:user read:org project" value={form.oauth_scope} onChange={e => setForm({...form, oauth_scope:e.target.value})} /><span className="mt-1 block text-xs text-gray-500">スペース区切りで指定します。</span></label>
-        <label className="block text-sm dark:text-white">対象organization<input className={`${input} mt-1`} placeholder="example-org, another-org" value={(form.organizations || []).join(', ')} onChange={e => setForm({...form, organizations:e.target.value.split(',').map(value => value.trim()).filter(Boolean)})} /><span className="mt-1 block text-xs text-gray-500">カンマ区切り。repository ownerが一致するセッションでは、このconnectionのtokenを自動選択します。</span></label>
+        <label className="block text-sm dark:text-white">対象organization<input className={`${input} mt-1`} placeholder="example-org, another-org" value={organizationsInput} onChange={e => setOrganizationsInput(e.target.value)} /><span className="mt-1 block text-xs text-gray-500">カンマ区切り。repository ownerが一致するセッションでは、このconnectionのtokenを自動選択します。</span></label>
         <label className="block text-sm dark:text-white">Secret保存方式<select className={`${input} mt-1`} value={form.oauth_client_secret?.source} onChange={e => setSecretSource(e.target.value as GitHubSecretSource)}><option value="encrypted">暗号化して保存</option><option value="environment">環境変数を参照</option></select></label>
         {form.oauth_client_secret?.source === 'encrypted' ? <label className="block text-sm dark:text-white">OAuth Client Secret<input required={!editing || !editing.secret_configured} type="password" autoComplete="new-password" placeholder={editing?.secret_configured ? '変更する場合のみ入力' : ''} className={`${input} mt-1`} value={form.oauth_client_secret.value || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'encrypted', value:e.target.value}})} /></label> : <label className="block text-sm dark:text-white">環境変数名<input required className={`${input} mt-1`} placeholder="GITHUB_OAUTH_CORP_CLIENT_SECRET" value={form.oauth_client_secret?.environment || ''} onChange={e => setForm({...form, oauth_client_secret:{source:'environment', environment:e.target.value}})} /></label>}
         <div className="border-t pt-4 dark:border-gray-700"><h3 className="mb-3 text-sm font-semibold dark:text-white">Team session用 GitHub App</h3><div className="space-y-3"><label className="block text-sm dark:text-white">App ID<input type="number" min="1" className={`${input} mt-1`} value={form.github_app?.app_id || ''} onChange={e => setForm({...form, github_app:{...form.github_app, app_id:Number(e.target.value), private_key:form.github_app?.private_key || ''}})} /></label><label className="block text-sm dark:text-white">App PEM<textarea rows={5} className={`${input} mt-1 font-mono`} value={form.github_app?.private_key || ''} placeholder={editing?.github_app_private_key_configured ? '変更する場合のみ入力' : '-----BEGIN RSA PRIVATE KEY-----'} onChange={e => setForm({...form, github_app:{app_id:form.github_app?.app_id || 0, private_key:e.target.value}})} /></label></div></div>
