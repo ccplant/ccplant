@@ -15,4 +15,11 @@ describe('parseGitHubOrganizations', () => {
       'another-org',
     ])
   })
+
+  it('accepts organizations separated by whitespace', () => {
+    expect(parseGitHubOrganizations('example-org another-org')).toEqual([
+      'example-org',
+      'another-org',
+    ])
+  })
 })

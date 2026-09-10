@@ -1,3 +1,3 @@
 export function parseGitHubOrganizations(value: string): string[] {
-  return value.split(',').map((organization) => organization.trim()).filter(Boolean)
+  return value.split(/[\s,]+/).map((organization) => organization.trim()).filter(Boolean)
 }
