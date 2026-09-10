@@ -21,7 +21,7 @@ repository
   -> selected GitHub Connection
   -> that Connection's App ID + PEM
   -> repository installation discovery
-  -> short-lived GITHUB_TOKEN
+  -> session-scoped token broker
 ```
 
 There is no team-to-App binding and no configured Installation ID.
@@ -36,7 +36,7 @@ Goals:
 - support GitHub.com and GitHub Enterprise Server;
 - keep the PEM encrypted and out of API responses, logs, session metadata,
   session archives, and workload environments;
-- inject only a short-lived, repository-scoped installation token into a
+- refresh repository-scoped installation tokens without giving the PEM to a
   session;
 - migrate safely from the deployment-wide GitHub App configuration.
 
@@ -228,7 +228,7 @@ After Connection selection:
    `api_url`.
 4. Use the returned ID only to call the installation-token endpoint.
 5. Request a token restricted to the target repository.
-6. Inject only that token as `GITHUB_TOKEN`.
+6. Return the token through the session-scoped token broker.
 
 The Installation ID is transient protocol data. It may exist in memory and in a
 GitHub request path, but is not persisted, returned, or configured.
@@ -240,8 +240,8 @@ proxy  -> existing repository mapping selects Connection B
 proxy  -> load App ID + PEM from Connection B
 proxy  -> discover the installation for acme/payments
 proxy  -> mint a repository-scoped installation token
-proxy  -> launch session with GITHUB_TOKEN only
-session -> clone/fetch acme/payments
+proxy  -> launch session with a broker credential, not the PEM or GitHub token
+session -> credential helper obtains a current token and clones/fetches
 ```
 
 A team App flow requires a repository. If none is present, return
@@ -260,6 +260,73 @@ bounded period. Cache installation tokens by `(connection_id, repository,
 permissions)` until five minutes before expiry with single-flight refresh.
 Invalidate both caches when the Connection's App ID or PEM changes. Do not
 persist either value.
+
+## Token refresh without distributing the PEM
+
+An installation token normally expires while a long-running session may remain
+active. A `GITHUB_TOKEN` environment variable set only at launch therefore
+cannot be the final interface: environment variables in an already running
+process cannot be updated, and a background refresh would leave tools holding
+the old value.
+
+Keep App ID/PEM and token minting in the proxy. Give the session a narrowly
+scoped broker credential instead:
+
+```text
+GET /internal/sessions/{session_id}/github-credentials
+Authorization: Bearer <session-github-credential>
+
+200 {
+  "username": "x-access-token",
+  "token": "ghs_...",
+  "expires_at": "2026-09-10T13:00:00Z"
+}
+```
+
+The broker credential claims and enforces:
+
+- the exact session ID;
+- selected Connection ID;
+- normalized repository full name;
+- allowed operation `github:token:read` only;
+- expiry no later than the Session expiry;
+- a random identifier that can be revoked when the Session is stopped.
+
+It cannot request another repository, select another Connection, read the PEM,
+or call normal management APIs. For Kubernetes it should additionally be usable
+only from the Session workload identity or network path when that facility is
+available. Possession still grants renewable access to the repository for the
+Session lifetime, so it must be treated as a secret and excluded from logs and
+archives.
+
+The endpoint runs repository-to-Connection validation again, then returns a
+cached installation token if it remains valid for more than five minutes.
+Otherwise it uses the Connection's PEM to mint a replacement. Concurrent refresh
+requests share one mint operation. Revoked/disabled Connections, changed mapping,
+deleted Sessions, or repositories no longer accessible fail closed.
+
+### Tool integration
+
+Do not set a long-lived `GITHUB_TOKEN` or `GH_TOKEN` in the Session environment.
+Configure tools to obtain a current token per command:
+
+- install a Git credential helper that calls the broker on `get` for only the
+  selected GitHub host/repository and returns `x-access-token` plus the current
+  token;
+- place a `gh` wrapper earlier in `PATH`; it calls the broker and executes the
+  real `gh` with `GH_TOKEN` set only in that child process;
+- provide a small `github-token` command for tools that need to make direct API
+  calls (`Authorization: Bearer "$(github-token)"`).
+
+Each new `git` or `gh` command obtains a token that is valid for that command.
+The proxy refreshes only near expiry, so this does not mint a token per command.
+A single command that receives `401` because its token crossed expiry may fetch
+once more and retry only when the operation is safe to retry; never busy-loop.
+
+Arbitrary applications that only read `GITHUB_TOKEN` once cannot transparently
+refresh without receiving the PEM. They must use the broker command/helper or a
+separate authenticated HTTP proxy. The initial implementation supports Git and
+`gh`; it must not imply transparent refresh for every GitHub client.
 
 ## Authorization and secret handling
 
@@ -309,7 +376,8 @@ Suggested metrics:
 - repository-to-Connection resolution result;
 - installation discovery and token mint latency by GitHub host and result;
 - installation/token cache hit and miss count;
-- token expiry remaining at injection.
+- token expiry remaining when returned by the broker;
+- broker request count by result.
 
 Do not use repository, Connection ID, App ID, or Installation ID as unbounded
 metric labels.
@@ -343,8 +411,15 @@ No Installation ID is copied into the new Connection model.
 - missing repository, incomplete App configuration, App-not-installed, rate
   limit, timeout, and GitHub outage all fail closed;
 - tokens are restricted to the requested repository;
+- an expired installation token is refreshed without exposing the PEM;
+- broker credentials cannot change Session, Connection, or repository;
+- broker access is revoked when the Session ends;
+- Git credential helper and `gh` wrapper fetch a current token for each command;
+- refresh uses single-flight and does not retry a persistent GitHub error;
 - API responses, logs, events, session metadata, archives, and workload
-  environments never contain the PEM, JWT, or Installation ID;
+  environments never contain the PEM, App JWT, or Installation ID;
+- the Session environment contains neither a static `GITHUB_TOKEN` nor
+  `GH_TOKEN`;
 - concurrent launches use single-flight discovery/token minting;
 - Kubernetes, native, and External Session Manager launches resolve credentials
   identically;
@@ -356,7 +431,8 @@ No Installation ID is copied into the new Connection model.
    private-key lifecycle endpoints.
 2. Add the administrator UI and repository-based test operation.
 3. Centralize existing repository-to-Connection selection and add the GitHub App
-   token resolver/cache.
-4. Adapt all session launch paths and retain the legacy fallback.
+   token resolver/cache and session-scoped broker endpoint.
+4. Add the Git credential helper and `gh` wrapper, adapt all session launch paths,
+   and retain the legacy fallback.
 5. Add audit events, migration warnings, and remove legacy team Installation ID
    settings after adoption.
