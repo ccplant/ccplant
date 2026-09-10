@@ -133,6 +133,52 @@ teams:
 
 短縮記法は最初の `/` で organization pattern と team slug pattern に分割する。空要素、`/` がない値、3 要素以上の値は設定エラーとする。これにより既存 `team_role_mapping` の `org/team` パターンと移行時の見た目を揃えられる。
 
+### マッピング例
+
+次の設定を例にする。
+
+```yaml
+teams:
+  - key: cc-users
+    display_name: CC users
+    external_teams:
+      - connection_id: ghes
+        team_pattern: dev/cc-*
+      - connection_id: github-com
+        team_pattern: ccplant-*/*-contributors
+
+  - key: platform-admins
+    display_name: Platform administrators
+    external_teams:
+      - connection_id: ghes
+        team_pattern: dev/platform-admins
+```
+
+この設定による解決結果は次のようになる。
+
+| GitHub connection | 実際の GitHub Team | マッチする設定 | 所属する ccplant Team |
+|---|---|---|---|
+| `ghes` | `dev/cc-users` | `dev/cc-*` | `cc-users` |
+| `ghes` | `dev/cc-admins` | `dev/cc-*` | `cc-users` |
+| `ghes` | `dev/platform-admins` | `dev/platform-admins` | `platform-admins` |
+| `github-com` | `ccplant/frontend-contributors` | `ccplant-*/*-contributors` | `cc-users` |
+| `github-com` | `ccplant-labs/ai-contributors` | `ccplant-*/*-contributors` | `cc-users` |
+| `github-com` | `ccplant/core` | なし | なし |
+| `github-com` | `dev/cc-users` | なし | なし |
+| `ghes` | `product/cc-users` | なし | なし |
+
+同じ `dev/cc-users` という Team 名でも、`connection_id` が異なれば別の external Team である。上の例では `ghes` の `dev/cc-users` だけが `cc-users` にマッチし、`github-com` の `dev/cc-users` はマッチしない。
+
+ユーザー単位では、以下のように解決する。
+
+- Alice が GHES の `dev/cc-users` に所属していれば、ccplant の `cc-users` に所属する。
+- Bob が github.com の `ccplant/frontend-contributors` に所属していても、ccplant の同じ `cc-users` に所属する。
+- Carol が両方に所属していても、ccplant の所属 Team は重複せず `cc-users` 1 件になる。
+- Dave が `github-com` の `ccplant/core` にしか所属していなければ、この設定から得る ccplant Team はない。
+- GHES 側の Alice と github.com 側の Alice の identity が同じ user principal にリンクされている場合、両 connection の membership の和集合から ccplant Team を解決する。名前やメールアドレスが同じだけでは統合しない。
+
+つまり、複数の external GitHub Team を 1 つの ccplant Team に束ねることはできるが、1 つの external GitHub Team を複数の ccplant Team に割り当てることはできない。たとえば別の ccplant Team にも `ghes: dev/cc-users` とマッチする pattern を追加すると、設定競合として reconciliation を失敗させる。
+
 起動時に `TeamReconciler` がこの宣言を TeamConfig repository に反映する。
 
 1. `key` で既存 TeamConfig を検索する。
