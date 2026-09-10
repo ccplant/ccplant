@@ -54,7 +54,7 @@ func TestControlWorkerExecutesCodexDeviceAuthCommand(t *testing.T) {
 	command := core.Command{
 		ID: "cmd-1", ManagerID: "manager-1", SessionID: "cda-0123456789abcdef",
 		Method: http.MethodPost, Path: "/api/v1/codex-device-auth", Body: body,
-		Headers: map[string][]string{"Content-Type": {"application/json"}},
+		Headers:  map[string][]string{"Content-Type": {"application/json"}},
 		Deadline: time.Now().Add(30 * time.Second), CreatedAt: time.Now().UTC(),
 	}
 	worker.executeCommand(context.Background(), command)

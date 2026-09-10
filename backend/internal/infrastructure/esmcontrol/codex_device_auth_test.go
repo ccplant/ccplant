@@ -22,11 +22,11 @@ type fakeTunnel struct {
 }
 
 type recordedRequest struct {
-	managerID  string
-	sessionID  string
-	method     string
-	path       string
-	body       string
+	managerID string
+	sessionID string
+	method    string
+	path      string
+	body      string
 }
 
 func (t *fakeTunnel) IsConnected(_ context.Context, managerID string) bool {

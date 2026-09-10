@@ -150,6 +150,28 @@ func TestSessionRepository(t *testing.T) {
 	}
 }
 
+func TestShouldUseGitHubBrokerPreservesExplicitCredentials(t *testing.T) {
+	tests := []struct {
+		name  string
+		input entities.StartRequest
+		repo  string
+		want  bool
+	}{
+		{name: "team repository uses broker", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{}}, repo: "acme/repo", want: true},
+		{name: "legacy explicit token wins", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{GithubToken: "legacy-token"}}, repo: "acme/repo", want: false},
+		{name: "explicit connection wins", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{ConnectionID: "connection-1"}}, repo: "acme/repo", want: false},
+		{name: "user session does not use broker", input: entities.StartRequest{Scope: entities.ScopeUser, Params: &entities.SessionParams{}}, repo: "acme/repo", want: false},
+		{name: "repository is required", input: entities.StartRequest{Scope: entities.ScopeTeam, Params: &entities.SessionParams{}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldUseGitHubBroker(tt.input, tt.repo); got != tt.want {
+				t.Fatalf("shouldUseGitHubBroker() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 type sessionListTestSession struct {
 	id     string
 	status string

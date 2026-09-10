@@ -243,7 +243,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	}
 	repository := sessionRepository(startReq)
 	brokerConfigured := false
-	if startReq.Scope == entities.ScopeTeam && repository != "" && c.githubTokenResolver != nil {
+	if shouldUseGitHubBroker(startReq, repository) && c.githubTokenResolver != nil {
 		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
 			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
 		}
@@ -431,6 +431,13 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+func shouldUseGitHubBroker(startReq entities.StartRequest, repository string) bool {
+	if startReq.Scope != entities.ScopeTeam || repository == "" {
+		return false
+	}
+	return startReq.Params == nil || (startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "")
 }
 
 func githubBrokerURL(ctx echo.Context, sessionID string) string {

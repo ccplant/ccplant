@@ -26,7 +26,7 @@ func TestLimiter_AllowsWithinWindow(t *testing.T) {
 }
 
 func TestLimiter_WindowReset(t *testing.T) {
-	l := New(1, 10 * time.Millisecond)
+	l := New(1, 10*time.Millisecond)
 	if !l.Allow("ip") {
 		t.Fatal("first request should be allowed")
 	}
