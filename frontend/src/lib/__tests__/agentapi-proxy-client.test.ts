@@ -2,6 +2,33 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-client';
 
+describe('AgentAPIProxyClient team settings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['get', (client: AgentAPIProxyClient) => client.getSettings('acme/platform')],
+    ['save', (client: AgentAPIProxyClient) => client.saveSettings('acme/platform', {})],
+    ['delete', (client: AgentAPIProxyClient) => client.deleteSettings('acme/platform')],
+  ])('preserves the organization/team identifier when settings are %s', async (_operation, request) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await request(client);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/settings/acme%2Fplatform',
+      expect.any(Object),
+    );
+  });
+});
+
 describe('AgentAPIProxyClient Session Runner Pools', () => {
   afterEach(() => {
     vi.restoreAllMocks();
