@@ -310,8 +310,17 @@ func (wc *WorkerControlController) DeleteSession(c echo.Context) error {
 	if !wc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), c.Param("sessionId"))); err != nil {
+	publicID := c.Param("sessionId")
+	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), publicID)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// Pool-backed sessions use a public route alias for the adopted runtime ID.
+	// TTL cleanup must remove that alias after the runtime deletion succeeds or
+	// /search continues to expose a session whose workload no longer exists.
+	if wc.routes != nil {
+		if err := wc.routes.Delete(c.Request().Context(), publicID); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 	}
 	return c.NoContent(http.StatusNoContent)
 }

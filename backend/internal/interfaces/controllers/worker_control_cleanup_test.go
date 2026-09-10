@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,28 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
+
+type cleanupRouteRepository struct {
+	route      *portrepos.SessionRoute
+	deletedIDs []string
+}
+
+func (r *cleanupRouteRepository) Save(context.Context, *portrepos.SessionRoute) error { return nil }
+func (r *cleanupRouteRepository) Get(_ context.Context, id string) (*portrepos.SessionRoute, error) {
+	if r.route != nil && r.route.SessionID == id {
+		return r.route, nil
+	}
+	return nil, nil
+}
+func (r *cleanupRouteRepository) List(context.Context, string) ([]*portrepos.SessionRoute, error) {
+	return nil, nil
+}
+func (r *cleanupRouteRepository) Delete(_ context.Context, id string) error {
+	r.deletedIDs = append(r.deletedIDs, id)
+	return nil
+}
 
 func TestWorkerSessionListMarksOneshotForTTLCleanup(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
@@ -40,4 +62,24 @@ func TestWorkerSessionListMarksOneshotForTTLCleanup(t *testing.T) {
 	require.Len(t, sessions, 1)
 	require.Equal(t, "true", sessions[0].Tags["oneshot"])
 	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
+}
+
+func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID:       "public-session",
+		RemoteSessionID: "runtime-session",
+	}}
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
+	req := httptest.NewRequest(http.MethodDelete, "/internal/worker/sessions/public-session", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("public-session")
+
+	require.NoError(t, controller.DeleteSession(ctx))
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, []string{"runtime-session"}, manager.deletedIDs)
+	require.Equal(t, []string{"public-session"}, routes.deletedIDs)
 }

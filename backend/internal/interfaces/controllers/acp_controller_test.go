@@ -54,7 +54,8 @@ func (s *fakeSession) Request() *entities.RunServerRequest { return s.request }
 
 // fakeSessionManager implements repositories.SessionManager for tests.
 type fakeSessionManager struct {
-	sessions map[string]*fakeSession
+	sessions   map[string]*fakeSession
+	deletedIDs []string
 }
 
 func (m *fakeSessionManager) GetSession(id string) entities.Session {
@@ -80,7 +81,10 @@ func (m *fakeSessionManager) ListSessions(filter entities.SessionFilter) []entit
 func (m *fakeSessionManager) CreateSession(_ context.Context, _ string, _ *entities.RunServerRequest, _ []byte) (entities.Session, error) {
 	return nil, nil
 }
-func (m *fakeSessionManager) DeleteSession(_ string) error { return nil }
+func (m *fakeSessionManager) DeleteSession(id string) error {
+	m.deletedIDs = append(m.deletedIDs, id)
+	return nil
+}
 func (m *fakeSessionManager) SendMessage(_ context.Context, _ string, _ string) error {
 	return nil
 }
