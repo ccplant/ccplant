@@ -1,4 +1,4 @@
-# Team-scoped GitHub App credentials for GitHub Connections
+# GitHub App credentials for GitHub Connections
 
 ## Status
 
@@ -6,426 +6,357 @@ Proposed design. This document does not change the current API or runtime behavi
 
 ## Summary
 
-Extend a GitHub Connection with optional **team bindings**. A binding says that a
-CCPlant team uses a particular GitHub App when a session accesses that
-connection. The binding owns only the App ID and private-key reference; the
-connection continues to own the GitHub host and organization routing
-information. The installation is discovered from the target repository at
-runtime and is not configured or persisted.
+Store one GitHub App credential set directly on each GitHub Connection. The
+credential consists of an App ID and PEM private key. It is connection-scoped,
+not user-scoped or team-scoped.
 
-Do not expose or mount the GitHub App private key in a session. The proxy uses it
-to mint a short-lived installation token immediately before launch and injects
-only that token as `GITHUB_TOKEN`.
+When a team session starts for a repository, CCPlant first selects the GitHub
+Connection using the repository-to-connection mapping already held by the
+GitHub Connection model. It then uses that Connection's App ID and PEM to
+discover the repository's GitHub App installation and mint a short-lived token.
 
-This preserves the current meanings of the two existing credential paths:
+```text
+repository
+  -> existing GitHub Connection mapping
+  -> selected GitHub Connection
+  -> that Connection's App ID + PEM
+  -> repository installation discovery
+  -> short-lived GITHUB_TOKEN
+```
 
-- a GitHub Connection OAuth client secret authenticates users and links their
-  personal GitHub identity;
-- a team binding authenticates a team workload as a GitHub App installation.
-
-The same connection may support both paths. A team binding is not a login method
-and is never shown on the login page.
+There is no team-to-App binding and no configured Installation ID.
 
 ## Goals and non-goals
 
 Goals:
 
-- let a team administrator attach GitHub App credentials to a GitHub Connection;
-- select credentials from the session's authorized `team_id`;
+- configure one GitHub App per GitHub Connection;
+- reuse the existing repository-to-Connection mapping;
+- use the selected Connection's App for team sessions;
 - support GitHub.com and GitHub Enterprise Server;
-- keep private keys encrypted and out of API responses, logs, session metadata,
+- keep the PEM encrypted and out of API responses, logs, session metadata,
   session archives, and workload environments;
-- preserve existing personal OAuth-token and deployment-wide GitHub App behavior
-  during migration;
-- select exactly one team GitHub Connection by checking which App is installed
-  for the target repository;
-- discover the applicable GitHub App installation from the target repository.
+- inject only a short-lived, repository-scoped installation token into a
+  session;
+- migrate safely from the deployment-wide GitHub App configuration.
 
 Non-goals:
 
+- configuring different Apps per team;
+- configuring or persisting an Installation ID;
+- discovering a Connection by probing every configured App;
 - using an installation token to authenticate a human user;
-- changing CCPlant team membership based on a GitHub App installation;
-- managing the GitHub App's permissions or installation from CCPlant;
-- long-term storage of installation access tokens.
+- changing team membership or authorization from GitHub App data.
 
-## Why a binding is separate from the connection
+## Model
 
-A connection describes a GitHub authority (`base_url`, `api_url`) and its routing
-rules. GitHub App installation credentials describe a workload identity and its
-repository permissions. Putting one App credential directly on the connection
-would make it global, while putting a complete connection in each team's
-settings would duplicate host and organization routing configuration.
-
-The relationship is therefore:
-
-```text
-GitHubConnection
-  id, name, base_url, api_url, organizations, OAuth settings
-       |
-       +-- TeamGitHubAppBinding (team A)
-       |     app_id, private_key
-       |
-       +-- TeamGitHubAppBinding (team B)
-             app_id, private_key
-```
-
-There is at most one binding for a `(connection_id, team_id)` pair. Different
-teams may use different GitHub Apps or share the same App credentials. The
-installation is derived from the repository, so no installation ID belongs to
-the binding.
-
-## Domain model
-
-Introduce a `TeamGitHubAppBinding` entity:
+Extend the existing `githubConnection` with GitHub App metadata:
 
 ```go
-type TeamGitHubAppBinding struct {
-    ID           string    `json:"id"`
-    ConnectionID string    `json:"connection_id"`
-    TeamID       string    `json:"team_id"`
-    AppID        int64     `json:"app_id"`
-    SecretSource string    `json:"private_key_source"` // encrypted | environment
-    SecretEnv    string    `json:"private_key_environment,omitempty"`
-    Enabled      bool      `json:"enabled"`
-    CreatedBy    string    `json:"created_by"`
-    CreatedAt    time.Time `json:"created_at"`
-    UpdatedAt    time.Time `json:"updated_at"`
+type githubConnection struct {
+    // Existing fields: ID, Name, BaseURL, APIURL, OAuth settings,
+    // Organizations, Enabled, and so on.
+
+    GitHubApp *githubAppConfiguration `json:"github_app,omitempty"`
+}
+
+type githubAppConfiguration struct {
+    AppID             int64  `json:"app_id"`
+    PrivateKeySource  string `json:"private_key_source"` // encrypted | environment
+    PrivateKeyEnv     string `json:"private_key_environment,omitempty"`
 }
 ```
 
-The PEM value is not part of the entity or any response DTO. For encrypted
-storage it is held in the binding's secret payload under `private_key`; for an
-environment reference only the validated environment-variable name is stored.
-Responses contain `private_key_configured: true|false` and optionally a stable
-SHA-256 public-key fingerprint, never the PEM.
+The PEM is secret payload, not model metadata. With encrypted storage it is held
+in the Connection's existing Secret/KV document under a separate
+`github_app_private_key` key. With an environment reference, only the validated
+environment-variable name is stored.
 
-`installation_id` is deliberately absent. At launch, the proxy creates an App
-JWT and calls GitHub's `GET /repos/{owner}/{repo}/installation`. GitHub returns
-the one installation through which that App can access the repository. The
-proxy then uses the returned ID only to mint the short-lived access token. An
-App installed in several organizations is therefore resolved unambiguously by
-the repository without adding configuration to CCPlant.
-
-The existing `github_app_installation_id` team setting becomes deprecated. It
-does not coexist as a second source of truth once a team binding has been
-created.
-
-## API
-
-Use team-scoped routes under the existing connection resource:
-
-```text
-GET    /github-connections/{connection_id}/team-bindings?team_id=org/team
-PUT    /github-connections/{connection_id}/team-bindings/{team_id}
-PATCH  /github-connections/{connection_id}/team-bindings/{team_id}
-DELETE /github-connections/{connection_id}/team-bindings/{team_id}
-PUT    /github-connections/{connection_id}/team-bindings/{team_id}/private-key
-DELETE /github-connections/{connection_id}/team-bindings/{team_id}/private-key
-POST   /github-connections/{connection_id}/team-bindings/{team_id}/test
-```
-
-`team_id` in the path must be URL encoded. `PUT` is idempotent and is the normal
-create/update operation from the settings UI. Secret rotation is a separate
-endpoint so an ordinary metadata update cannot accidentally erase or echo the
-key.
-
-Example request:
+The response DTO adds only non-secret state:
 
 ```json
 {
-  "app_id": 123456,
-  "enabled": true,
-  "private_key": {
-    "source": "encrypted",
-    "value": "-----BEGIN RSA PRIVATE KEY-----\n..."
+  "github_app": {
+    "app_id": 123456,
+    "private_key_source": "encrypted",
+    "private_key_configured": true,
+    "updated_at": "2026-09-10T12:00:00Z"
   }
 }
 ```
 
-Example response:
+The PEM is never returned. `installation_id` is not a field in the entity,
+request, response, settings, or persistence format.
+
+OAuth App fields and GitHub App fields have different purposes:
+
+- OAuth client ID/secret: login and personal GitHub identity linking;
+- GitHub App ID/PEM: team-session repository access.
+
+A Connection may configure either or both. Adding a GitHub App must not make the
+Connection appear as an additional login option.
+
+## API
+
+Keep App metadata within the existing administrator-only Connection endpoints:
+
+```text
+POST  /admin/github-connections
+PATCH /admin/github-connections/{id}
+```
+
+Use dedicated endpoints for private-key lifecycle so an ordinary metadata update
+cannot erase or echo the PEM:
+
+```text
+PUT    /admin/github-connections/{id}/github-app/private-key
+DELETE /admin/github-connections/{id}/github-app/private-key
+POST   /admin/github-connections/{id}/github-app/test
+```
+
+Example metadata update:
 
 ```json
 {
-  "id": "uuid",
-  "connection_id": "connection-uuid",
-  "team_id": "acme/platform",
-  "app_id": 123456,
-  "private_key_source": "encrypted",
-  "private_key_configured": true,
-  "enabled": true,
-  "updated_at": "2026-09-10T12:00:00Z"
+  "github_app": {
+    "app_id": 123456,
+    "private_key_source": "encrypted"
+  }
 }
 ```
 
-Validation includes a positive numeric App ID, a parseable RSA or EC PEM private key,
-connection existence, allowed environment-variable names, and uniqueness of the
-connection/team pair. The `test` operation mints a token and calls the GitHub
-installation endpoint. Because there is no configured installation, its request
-must contain a repository such as `{"repository":"acme/api"}`. It returns App
-slug, account, repository selection, token expiry, and permission names, but not
-the resolved installation ID, token, or key.
+Example key upload:
 
-All endpoints must be added to `spec/openapi.json`. Client methods and frontend
-types should use the response DTO rather than sharing the persistence struct.
-
-## Authorization
-
-System administrators may manage and inspect every binding. Other users:
-
-- need `CanReadInTeam(team_id)` to list or get metadata;
-- need `CanCreateInTeam(team_id)` to create a binding;
-- need the team's update/delete permission for metadata, rotation, testing, and
-  deletion.
-
-The current authorization context has create/read helpers but no update/delete
-helpers. Add `CanUpdateInTeam` and `CanDeleteInTeam`; do not approximate those
-operations with membership or `CanCreateInTeam`.
-
-For every request, take the effective team from the authenticated authorization
-context and verify it against the path value. A service account is limited to its
-own `TeamID`. Neither `X-Forwarded-Team` nor a request body alone grants access.
-
-Reading connection metadata must not imply access to another team's binding.
-The global administrator page may show only a binding count by default; team IDs
-are returned only to callers authorized for those teams.
-
-## Persistence and encryption
-
-Add a repository port instead of expanding the already large controller:
-
-```go
-type TeamGitHubAppBindingRepository interface {
-    Upsert(context.Context, *TeamGitHubAppBinding, []byte) error
-    Get(context.Context, connectionID, teamID string) (*TeamGitHubAppBinding, error)
-    GetPrivateKey(context.Context, bindingID string) ([]byte, error)
-    List(context.Context, connectionID string, teamIDs []string) ([]*TeamGitHubAppBinding, error)
-    Delete(context.Context, connectionID, teamID string) error
+```json
+{
+  "value": "-----BEGIN RSA PRIVATE KEY-----\n..."
 }
 ```
 
-Store the record as an application KV Secret with labels for resource kind,
-connection ID, and a hash of team ID. Use a UUID-based object name; do not put the
-raw team ID into a Kubernetes object name. Keep `record.json` and `private_key`
-in the same versioned object so metadata and key rotation are atomic.
+Changing the App ID does not erase the current PEM, but the Connection is marked
+`untested` until the App is tested again. Deleting the key disables GitHub App
+use without affecting OAuth login.
 
-Encrypted key upload is available only when the configured KV backend provides
-encrypted-at-rest values, matching the existing GitHub OAuth secret rule.
-Environment references remain useful for externally managed secrets, but should
-be restricted to `GITHUB_APP_[A-Z0-9_]+_PRIVATE_KEY` and resolved only inside the
-proxy. A missing encryption capability or environment value is a hard validation
-error, not a silent downgrade.
+Validation requires a positive App ID, a parseable RSA or EC PEM private key,
+and an allowed environment-variable name. Encrypted key upload is available
+only when the configured KV backend supports encrypted-at-rest values.
 
-Use optimistic versions/ETags for PATCH, rotation, and deletion. Concurrent
-rotation must return `409 Conflict` rather than overwrite a newer key.
+The test endpoint takes a repository because no Installation ID is configured:
 
-## Runtime resolution
-
-Resolve GitHub credentials only after scope normalization and team authorization.
-Refactor token selection behind a `GitHubCredentialResolver` use case:
-
-```text
-team session
-  -> discover the team GitHub App Connection from the repository
-  -> mint an installation token from that Connection's App ID and PEM
-  -> legacy deployment-wide GitHub App fallback (migration period only)
-
-personal session
-  -> explicit connection_id + user's linked OAuth identity
-  -> organization-mapped connection + user's linked OAuth identity
-  -> authenticated user's forwarded token
+```json
+{
+  "repository": "acme/payments"
+}
 ```
 
-Team sessions always use a GitHub App. They must not fall back to the initiating
-user's linked OAuth identity or forwarded token. This makes the workload identity
-stable regardless of which team member starts the session. If a team request
-contains a caller-supplied `github_token`, reject it once this feature is enabled;
-accepting it would bypass team credential policy.
+It verifies the App identity, discovers the installation for that repository,
+and mints a repository-scoped token. The response may include App slug, account,
+repository selection, permission names, and token expiry, but never the PEM,
+token, or resolved Installation ID.
 
-### Selecting a Connection from a repository
+All endpoints and schemas must be added to `spec/openapi.json`.
 
-The repository is the authoritative selector. The existing connection
-`organizations` field is not used for team App selection because an organization
-may install several Apps with overlapping repository access.
+## Repository-to-Connection selection
 
-Given an authorized `team_id` and repository URL, resolve the Connection as
-follows:
+The existing GitHub Connection mapping remains the only source of truth for
+selecting a Connection. GitHub App installation probes do not participate in
+Connection selection.
 
-1. Normalize the repository to `(GitHub host, owner, name)`. Reject a URL whose
-   host does not belong to a configured GitHub Connection.
-2. Load all enabled team bindings for `team_id` whose Connection `api_url`
-   matches the repository's GitHub host and whose App ID and PEM are configured.
-3. For each candidate, create an App JWT and call that host's
-   `GET /repos/{owner}/{name}/installation` endpoint. Probe candidates in
-   parallel with a small concurrency limit and a shared request deadline.
-4. A `200` means that Connection's GitHub App can access the repository and is a
-   match. A `404` means it is not installed for that repository and is not a
-   match.
-5. Select the Connection only when exactly one candidate matches.
+For the current model, `organizations` maps a normalized repository owner to one
+Connection, and `validateOrganizationAssignments` prevents the same organization
+from being assigned to multiple Connections. The runtime should reuse that same
+lookup rather than implement a second mapping.
 
-The outcomes are deterministic:
+Given a team session repository, selection is:
 
-| Matching Connections | Result |
+1. Parse and normalize the repository URL into `(host, owner, name)`.
+2. Filter enabled Connections to the repository's GitHub host/API authority.
+3. Apply the existing repository-to-Connection mapping. With the current model,
+   match normalized `owner` against `connection.organizations`.
+4. Require exactly one mapped Connection.
+5. Load the GitHub App configuration from that Connection.
+
+Outcomes:
+
+| Mapping result | Runtime result |
 |---|---|
-| 1 | Select it and mint its repository-scoped installation token |
-| 0 | Return `github_app_not_installed` with the repository and team |
-| 2 or more | Return `github_connection_ambiguous` with the non-secret candidate IDs and names |
+| One enabled Connection with App ID and PEM | Use its GitHub App |
+| No mapped Connection | `github_connection_not_found` |
+| Mapped Connection has no complete App credential | `github_app_not_configured` |
+| More than one mapped Connection | Configuration error; do not choose by list order |
+| Mapped Connection is disabled | `github_connection_disabled` |
 
-Authentication failures (`401`/`403`), rate limits (`429`), timeouts, and GitHub
-`5xx` responses are candidate-resolution errors, not non-matches. If no unique
-answer can be proven because a probe failed, return `503` and do not silently
-select another App.
+The multiple-match case should normally be prevented at write time by the
+existing uniqueness validation, but runtime still checks it to protect against
+legacy or externally modified data.
 
-An optional request `connection_id` narrows step 2 to one Connection; it does not
-bypass the repository check. This is the explicit disambiguation mechanism when
-multiple Apps are intentionally installed on the same repository. The resolver
-returns `409` with candidate metadata first, and the caller retries with the
-chosen `connection_id`.
+If the Connection model later gains repository-exact or pattern mappings, the
+GitHub App resolver consumes the Connection selected by that model without
+changing credential storage. Mapping precedence belongs to the Connection
+model, not to GitHub App authentication.
 
 Example:
 
 ```text
-team: acme/platform
 repository: https://github.com/acme/payments
 
-Connection A / App 101 -> GET /repos/acme/payments/installation -> 404
-Connection B / App 202 -> GET /repos/acme/payments/installation -> 200
-Connection C / App 303 -> GET /repos/acme/payments/installation -> 404
+Connection A: organizations=["other-org"]
+Connection B: organizations=["acme"]
 
-selected connection: B
-credential: App 202 PEM -> short-lived token for acme/payments
+existing mapping selects Connection B
+Connection B has App ID 202 + PEM
+proxy discovers App 202's installation for acme/payments
+proxy mints a token restricted to acme/payments
 ```
 
-The resolver takes the already authorized `team_id`, optional connection ID, and
-required repository full name. After selecting the unique Connection, it loads
-that binding, resolves the private key, creates an App JWT, and discovers the
-installation with `GET /repos/{owner}/{repo}/installation`. It then calls the
-installation-token endpoint using the returned ID. Request a token restricted to
-the target repository and reject repositories not present in the installation. A
-team App binding cannot be used for a launch without a repository; return a
-validation error instead of guessing an installation.
+An optional explicit `connection_id` may continue to select a Connection where
+the current API already supports it. It must match the repository host and the
+Connection's repository mapping; it cannot bypass the mapping policy.
 
-Cache the discovered installation in memory by `(binding_id, repository)` for a
-short bounded period, and cache tokens by `(binding_id, repository, permissions)`
-until five minutes before expiry, with single-flight refresh. Invalidate both
-caches when the binding or private key changes. Installation IDs may appear only
-inside this ephemeral cache and GitHub request path; do not persist or return
-them.
+## Team-session runtime
 
-Return a typed result containing the token, connection ID, credential kind, and
-binding ID. Logs and session metadata record only those non-secret identifiers
-and token expiry. Never log the token hash: it adds little diagnostic value and
-creates a stable credential correlate.
+Team sessions use the GitHub App from the repository-selected Connection. They
+must not fall back to the initiating user's linked OAuth token or forwarded
+token. This keeps the workload identity independent of which team member starts
+the session.
 
-Failures are fail-closed when a binding was selected: a disabled binding,
-unreadable key, GitHub rejection, or repository mismatch returns an actionable
-4xx/503 and must not fall back to a person's OAuth token. The legacy
-deployment-wide GitHub App fallback is allowed only when the team has no App
-bindings at all, during the documented migration period. It is not used when
-bindings exist but none matches the repository.
+After Connection selection:
 
-## Runtime sequence
+1. Resolve the selected Connection's PEM inside the proxy.
+2. Create a short-lived App JWT from its App ID and PEM.
+3. Call `GET /repos/{owner}/{repo}/installation` on the selected Connection's
+   `api_url`.
+4. Use the returned ID only to call the installation-token endpoint.
+5. Request a token restricted to the target repository.
+6. Inject only that token as `GITHUB_TOKEN`.
+
+The Installation ID is transient protocol data. It may exist in memory and in a
+GitHub request path, but is not persisted, returned, or configured.
 
 ```text
-client -> POST /start (scope=team, team_id, repository)
-proxy  -> authorize team session creation
-proxy  -> load the team's enabled GitHub App Connections for the repository host
-proxy  -> probe each App for access to the target repository
-proxy  -> require exactly one match and select that Connection
-proxy  -> mint/cache short-lived installation token using private key
-proxy  -> create session with GITHUB_TOKEN only
-session -> clone/fetch repository
+client -> POST /start (scope=team, repository=acme/payments)
+proxy  -> authorize creation in the requested team
+proxy  -> existing repository mapping selects Connection B
+proxy  -> load App ID + PEM from Connection B
+proxy  -> discover the installation for acme/payments
+proxy  -> mint a repository-scoped installation token
+proxy  -> launch session with GITHUB_TOKEN only
+session -> clone/fetch acme/payments
 ```
 
-The existing `setTeamGitHubInstallationToken` path should move out of
-`KubernetesSessionManager`; authentication selection belongs in a use case before
-the Kubernetes or native runtime is chosen. This also gives all session managers
-identical behavior.
+A team App flow requires a repository. If none is present, return
+`github_repository_required`; do not guess a Connection or installation. If the
+App is not installed for the mapped repository, return
+`github_app_not_installed`. Authentication errors, rate limits, timeouts, and
+GitHub `5xx` responses fail closed and do not trigger personal-token fallback.
+
+Refactor this resolution into a `GitHubCredentialResolver` use case before the
+Kubernetes, native, or External Session Manager runtime is selected. The current
+`setTeamGitHubInstallationToken` implementation in `KubernetesSessionManager`
+should no longer combine team settings with deployment-wide App credentials.
+
+Cache installation lookup results by `(connection_id, repository)` for a short
+bounded period. Cache installation tokens by `(connection_id, repository,
+permissions)` until five minutes before expiry with single-flight refresh.
+Invalidate both caches when the Connection's App ID or PEM changes. Do not
+persist either value.
+
+## Authorization and secret handling
+
+GitHub App configuration is part of the existing administrator-owned GitHub
+Connection. Initially, only system administrators can create, update, rotate,
+test, or remove it. No new team-scoped CRUD authorization is introduced.
+
+The runtime may use the App only after the caller has been authorized to create
+the team session. Team membership controls session creation, not ownership of
+the Connection credential.
+
+Use optimistic versions/ETags for metadata updates, rotation, and deletion.
+Concurrent rotation returns `409 Conflict` instead of overwriting a newer key.
+
+Environment references, if supported, are restricted to
+`GITHUB_APP_[A-Z0-9_]+_PRIVATE_KEY` and resolved only inside the proxy. A missing
+encryption capability or environment value is a hard error, not a silent
+downgrade.
 
 ## UI
 
-Keep deployment-wide OAuth Connection management under the administrator page.
-Add a `Team GitHub App` panel when a team scope is selected:
+Extend the administrator GitHub Connection editor with a `GitHub App` section:
 
-- choose a GitHub Connection;
-- enter App ID;
-- enter a repository when testing so the installation can be discovered;
-- upload/rotate the PEM or select an environment reference;
-- show configured state, last rotation time, and test result;
-- require re-entry of the team name before deletion.
+- App ID;
+- PEM upload/rotation or environment reference;
+- configured state and last rotation time;
+- repository input for testing;
+- test result.
 
-Users must never be able to download or reveal an uploaded PEM. A test failure
-should distinguish invalid key, App not installed for the repository, insufficient repository
-access, GitHub rate limiting, and network failure without including GitHub's
-authorization headers or response bodies verbatim.
+There is no team selector. The team settings UI no longer needs
+`github_app_installation_id` after migration.
+
+Users must never be able to download or reveal an uploaded PEM. Test failures
+should distinguish invalid key, App not installed for the repository,
+insufficient repository access, rate limiting, and network failure without
+including authorization headers or GitHub response bodies verbatim.
 
 ## Audit and observability
 
-Emit audit events for binding create, metadata update, key rotation, enable/
-disable, test, use, and delete. Include actor ID, team ID, connection ID, binding
-ID, result, and request correlation ID. Exclude PEM and installation tokens.
+Emit audit events for App metadata update, key rotation, test, runtime use, and
+key deletion. Include actor ID, Connection ID, result, and request correlation
+ID. Runtime-use events may include the repository according to the deployment's
+audit policy. Exclude PEM, JWT, installation token, and Installation ID.
 
 Suggested metrics:
 
-- installation token mint count and latency by connection host and result;
-- cache hit/miss count;
-- binding resolution count by result (`found`, `not_found`, `disabled`);
+- repository-to-Connection resolution result;
+- installation discovery and token mint latency by GitHub host and result;
+- installation/token cache hit and miss count;
 - token expiry remaining at injection.
 
-Do not use team ID, repository name, App ID, or a discovered installation ID as unbounded
+Do not use repository, Connection ID, App ID, or Installation ID as unbounded
 metric labels.
 
 ## Migration
 
-Roll out in four compatible phases:
+Roll out in compatible phases:
 
-1. Add storage, API, authorization helpers, UI, and resolver. Keep existing
-   `github_app_installation_id` and deployment-wide App configuration as fallback.
-2. Let administrators create bindings with an App ID and PEM. Provide a dry-run
-   report listing teams that still have a legacy installation ID; do not carry
-   that ID into the new binding and do not copy a private key automatically.
-3. Warn when a team session uses the legacy path. Once a binding exists, it is
-   authoritative and failures do not fall back.
-4. After all teams migrate, remove `github_app_installation_id` from team settings
-   and stop passing deployment-wide App private keys into session construction.
+1. Add GitHub App fields and secret lifecycle endpoints to GitHub Connections.
+2. Add the central resolver while retaining the current deployment-wide App ID/
+   PEM plus team `github_app_installation_id` path as a legacy fallback.
+3. Configure App ID and PEM on each repository-mapped Connection and test with a
+   representative repository.
+4. Once a mapped Connection has App credentials, make it authoritative. Errors
+   do not fall back to deployment-wide or personal credentials.
+5. Warn on legacy fallback usage, then remove `github_app_installation_id` from
+   team settings and deployment-wide App credentials after migration.
 
-If one deployment-wide App key is intentionally shared, support an
-administrator-created, encrypted credential reference that multiple bindings
-can reference. This is an optimization after the initial per-binding model; it
-must preserve team-scoped authorization and must not make the secret retrievable.
+No Installation ID is copied into the new Connection model.
 
 ## Test plan
 
-- repository tests for uniqueness, optimistic concurrency, encrypted values, and
-  filtering by authorized team IDs;
-- authorization tests for admin, team create/read/update/delete permissions,
-  unrelated team members, and team service accounts;
-- PEM parsing and environment-name validation tests;
-- GitHub.com and GHES repository-installation discovery and token endpoint tests;
-- Connection selection tests for zero, one, and multiple matching Apps;
-- candidate probe tests proving `404` is a non-match while authentication,
-  rate-limit, timeout, and server failures prevent selection;
-- explicit `connection_id` disambiguation still verifies repository access;
-- team sessions reject a caller-supplied token and never use personal OAuth;
-- personal-session resolution tests for explicit connection, organization
-  mapping, linked identity, and forwarded token;
-- fail-closed tests for disabled binding, expired/revoked key, missing repository,
-  App not installed for the repository, repository restriction, and GitHub outage;
-- assertions that API responses, logs, events, session metadata, archives, and
-  workload environments never contain the PEM;
-- concurrent token requests use one mint operation and refresh before expiry;
-- Kubernetes, native, and External Session Manager launches receive identical
-  resolved token settings;
-- migration tests prove existing teams retain behavior until a binding is made.
+- Connection persistence encrypts PEM and response DTOs never contain it;
+- App ID and PEM rotation use optimistic concurrency;
+- existing organization/repository mapping selects the expected Connection;
+- host normalization works for GitHub.com and GitHub Enterprise Server;
+- zero, one, multiple, and disabled Connection mapping outcomes are deterministic;
+- the resolver never probes Apps to choose a Connection;
+- the selected Connection's App performs repository-installation discovery;
+- team sessions never use personal OAuth or forwarded tokens;
+- missing repository, incomplete App configuration, App-not-installed, rate
+  limit, timeout, and GitHub outage all fail closed;
+- tokens are restricted to the requested repository;
+- API responses, logs, events, session metadata, archives, and workload
+  environments never contain the PEM, JWT, or Installation ID;
+- concurrent launches use single-flight discovery/token minting;
+- Kubernetes, native, and External Session Manager launches resolve credentials
+  identically;
+- existing deployments retain legacy behavior until Connections are configured.
 
 ## Implementation slices
 
-1. Entity, repository port/adapter, authorization helpers, and OpenAPI schemas.
-2. Team binding controller/use cases and secret rotation/test endpoints.
-3. Central credential resolver and installation-token cache; adapt all launch
-   paths and retain legacy fallback.
-4. Team settings UI and API client.
-5. Migration report, deprecation warnings, audit events, and operator docs.
-
-Each slice can be released independently behind
-`team_github_app_connections`. Enable API/UI creation first, then runtime
-selection, and remove the feature flag only after migration telemetry is clean.
+1. Extend the Connection model, repository adapter, response DTO, OpenAPI, and
+   private-key lifecycle endpoints.
+2. Add the administrator UI and repository-based test operation.
+3. Centralize existing repository-to-Connection selection and add the GitHub App
+   token resolver/cache.
+4. Adapt all session launch paths and retain the legacy fallback.
+5. Add audit events, migration warnings, and remove legacy team Installation ID
+   settings after adoption.
