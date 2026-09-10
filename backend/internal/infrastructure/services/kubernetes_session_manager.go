@@ -527,6 +527,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	applySelectedAgentDefaultModel(req)
 	applySandboxDefaults(req)
 
 	// Attempt to adopt a stock session matching the requested pod capabilities
@@ -708,7 +709,7 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 		Sandbox: stockSandboxParams(),
 	}
 	if pool != "" && m.runnerParentURL != "" {
-		runnerToken, registerErr := m.registerSessionRunner(ctx, id, pool)
+		runnerToken, registerErr := m.registerSessionRunner(ctx, id, pool, dind)
 		if registerErr != nil {
 			cancel()
 			return fmt.Errorf("register stock session runner: %w", registerErr)
@@ -772,43 +773,62 @@ func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context
 		return fmt.Errorf("failed to create stock workload: %w", err)
 	}
 
+	// Creating the Kubernetes resources and publishing them as allocatable stock
+	// are deliberately separate operations. Pod startup can take longer than an
+	// HTTP proxy's request timeout, but the Service's stock=creating label is a
+	// durable reservation that can be reconciled or purged after a manager
+	// restart. Complete readiness and publication independently of the request.
+	go m.publishStockSession(session, cancel, dind)
+	return nil
+}
+
+func (m *KubernetesSessionManager) publishStockSession(session *KubernetesSession, cancel context.CancelFunc, dind bool) {
 	// Do not publish the stock session to allocators until every container is
 	// ready. In particular, adoption immediately POSTs the sandbox policy to the
 	// provisioner. Marking the Service stock=true before its readiness probe has
 	// passed lets a concurrent allocation claim it while port 9001 is still
 	// closed, causing the allocation (and the newly claimed stock session) to be
 	// deleted.
-	if err := m.waitForSessionWorkloadReady(ctx, session); err != nil {
+	if err := m.waitForSessionWorkloadReady(context.Background(), session); err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock workload readiness failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("stock workload did not become ready: %w", err)
+		log.Printf("[K8S_SESSION] Stock session %s did not become ready: %v", session.ID(), err)
+		return
 	}
 
-	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	stockSvc, err := m.client.CoreV1().Services(m.namespace).Get(context.Background(), session.ServiceName(), metav1.GetOptions{})
 	if err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service lookup failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("failed to get stock service: %w", err)
+		log.Printf("[K8S_SESSION] Failed to get stock service for session %s: %v", session.ID(), err)
+		return
 	}
 	stockSvc.Labels["agentapi.proxy/stock"] = "true"
-	if _, err := m.client.CoreV1().Services(m.namespace).Update(ctx, stockSvc, metav1.UpdateOptions{}); err != nil {
+	if _, err := m.client.CoreV1().Services(m.namespace).Update(context.Background(), stockSvc, metav1.UpdateOptions{}); err != nil {
 		if delErr := m.cleanupStockSessionResources(session); delErr != nil {
 			log.Printf("[K8S_SESSION] Failed to cleanup resources after stock service update failure: %v", delErr)
 		}
 		cancel()
-		return fmt.Errorf("failed to mark stock service ready: %w", err)
+		log.Printf("[K8S_SESSION] Failed to mark stock session %s ready: %v", session.ID(), err)
+		return
 	}
 	log.Printf("[K8S_SESSION] Stock session %s created successfully (dind=%t)",
-		id, dind)
-	return nil
+		session.ID(), dind)
 }
 
-func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string) (string, error) {
-	body, err := json.Marshal(map[string]string{"runner_id": runnerID, "pool": pool, "namespace": m.namespace})
+func (m *KubernetesSessionManager) registerSessionRunner(ctx context.Context, runnerID, pool string, dind bool) (string, error) {
+	body, err := json.Marshal(map[string]any{
+		"runner_id": runnerID,
+		"pool":      pool,
+		"namespace": m.namespace,
+		"capabilities": map[string]string{
+			"dind": fmt.Sprintf("%t", dind),
+		},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -954,7 +974,10 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 	return nil
 }
 
-// CountStockSessions returns the number of available (not being deleted) stock sessions.
+// CountStockSessions returns the number of available or currently creating
+// (and not being deleted) stock sessions. Creating sessions count as reserved
+// inventory so the replenisher does not start another target-sized batch on
+// every reconciliation tick while Pods are becoming ready.
 // Note: Sandbox (network filter) is always enabled, so only DinD capability is queried.
 func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind bool) (int, error) {
 	return m.CountStockSessionsForPool(ctx, "", dind)
@@ -963,7 +986,7 @@ func (m *KubernetesSessionManager) CountStockSessions(ctx context.Context, dind 
 func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context, pool string, dind bool) (int, error) {
 	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		"agentapi.proxy/stock in (true,creating),app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
 		dind,
 	)
 	if pool != "" {
@@ -975,9 +998,24 @@ func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context
 	if err != nil {
 		return 0, fmt.Errorf("failed to list stock services: %w", err)
 	}
+	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve allocated runners while counting stock: %w", err)
+	}
+	allocated := make(map[string]struct{}, len(allocatedRunnerIDs))
+	for _, id := range allocatedRunnerIDs {
+		allocated[id] = struct{}{}
+	}
 	count := 0
 	for i := range svcs.Items {
-		if svcs.Items[i].DeletionTimestamp == nil {
+		if svcs.Items[i].DeletionTimestamp != nil {
+			continue
+		}
+		// Direct-runtime runners intentionally retain their local stock labels
+		// after allocation. The parent runner registry is authoritative for their
+		// allocation state; counting these Services as idle suppresses pool
+		// replenishment even though they cannot accept another session.
+		if _, isAllocated := allocated[svcs.Items[i].Labels["agentapi.proxy/session-id"]]; !isAllocated {
 			count++
 		}
 	}
@@ -999,6 +1037,27 @@ func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Contex
 		}
 	}
 	return count, nil
+}
+
+// ListRunnerSessionIDs returns the IDs of all runner workloads currently backed
+// by a live Service in this manager's namespace.
+func (m *KubernetesSessionManager) ListRunnerSessionIDs(ctx context.Context) ([]string, error) {
+	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"
+	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runner services: %w", err)
+	}
+	ids := make([]string, 0, len(svcs.Items))
+	for i := range svcs.Items {
+		if svcs.Items[i].DeletionTimestamp != nil {
+			continue
+		}
+		if id := svcs.Items[i].Labels["agentapi.proxy/session-id"]; id != "" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 // DeleteRunnerSessionsNotRegistered removes local runner workloads whose
@@ -1036,6 +1095,10 @@ func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context
 // This also purges sessions stuck in the "claiming" state (stock=claiming) that
 // were abandoned mid-adoption due to a crash or restart.
 func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to resolve allocated runners for purge protection: %w", err)
+	}
 	// Use a set-based selector to match both stock=true (unclaimed) and
 	// stock=claiming (abandoned mid-adoption). Collect session IDs from every
 	// resource kind so a previous partial purge cannot leave orphaned stock
@@ -1071,13 +1134,30 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	if err != nil {
 		return fmt.Errorf("failed to list stock pvcs for purge: %w", err)
 	}
+	settingsSecrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/resource=session-settings,agentapi.proxy/session-id",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list session settings for purge protection: %w", err)
+	}
+	provisionRequests, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/provision-request=true,agentapi.proxy/session-id",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list provision requests for purge protection: %w", err)
+	}
 
 	deletePolicy := metav1.DeletePropagationForeground
 	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &deletePolicy}
 
 	var purgeErrs []string
 	sessionIDs := make(map[string]struct{})
-	adoptedSessionIDs := make(map[string]struct{})
+	allocatedSessionIDs := make(map[string]struct{})
+	for _, sessionID := range allocatedRunnerIDs {
+		if sessionID != "" {
+			allocatedSessionIDs[sessionID] = struct{}{}
+		}
+	}
 	for i := range allSessionSvcs.Items {
 		svc := &allSessionSvcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
@@ -1086,15 +1166,35 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 		}
 		stockState := svc.Labels["agentapi.proxy/stock"]
 		if stockState != "true" && stockState != "claiming" {
-			adoptedSessionIDs[sessionID] = struct{}{}
+			allocatedSessionIDs[sessionID] = struct{}{}
+		}
+	}
+	// An allocation creates durable session settings and a provision request
+	// before it updates the stock Service labels. Treat either Secret as proof
+	// that the stock has been allocated. This closes the adoption window where
+	// a manager restart could otherwise purge a running session whose Service is
+	// still labeled stock=true or stock=claiming.
+	for i := range settingsSecrets.Items {
+		if sessionID := settingsSecrets.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			allocatedSessionIDs[sessionID] = struct{}{}
+		}
+	}
+	for i := range provisionRequests.Items {
+		if sessionID := provisionRequests.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
+			allocatedSessionIDs[sessionID] = struct{}{}
 		}
 	}
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
-		if sessionID != "" {
-			sessionIDs[sessionID] = struct{}{}
+		if sessionID == "" {
+			continue
 		}
+		if _, allocated := allocatedSessionIDs[sessionID]; allocated {
+			log.Printf("[STOCK_INVENTORY] Skipping allocated session %s during stock purge (matched allocation artifact)", sessionID)
+			continue
+		}
+		sessionIDs[sessionID] = struct{}{}
 
 		// Delete Service
 		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
@@ -1103,7 +1203,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range deployments.Items {
 		if sessionID := deployments.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
-			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+			if _, adopted := allocatedSessionIDs[sessionID]; adopted {
 				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale deployment label)", sessionID)
 				continue
 			}
@@ -1112,7 +1212,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range pods.Items {
 		if sessionID := pods.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
-			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+			if _, adopted := allocatedSessionIDs[sessionID]; adopted {
 				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pod label)", sessionID)
 				continue
 			}
@@ -1121,7 +1221,7 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	for i := range pvcs.Items {
 		if sessionID := pvcs.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
-			if _, adopted := adoptedSessionIDs[sessionID]; adopted {
+			if _, adopted := allocatedSessionIDs[sessionID]; adopted {
 				log.Printf("[STOCK_INVENTORY] Skipping adopted session %s during stock purge (matched stale pvc label)", sessionID)
 				continue
 			}
@@ -1156,6 +1256,43 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 	log.Printf("[STOCK_INVENTORY] Purged %d stock session(s)", len(sessionIDs))
 	return nil
+}
+
+// fetchAllocatedRunnerIDs asks the parent control plane which local runners
+// have already accepted an allocation. Direct-runtime runners keep their local
+// Kubernetes resources labeled as stock while serving a session, so the parent
+// runner state is the durable authority that distinguishes them from idle stock.
+func (m *KubernetesSessionManager) fetchAllocatedRunnerIDs(ctx context.Context) ([]string, error) {
+	m.mutex.RLock()
+	parentURL := m.runnerParentURL
+	managerID := m.runnerManagerID
+	managerToken := m.runnerManagerToken
+	m.mutex.RUnlock()
+	if parentURL == "" || managerID == "" || managerToken == "" {
+		return nil, nil
+	}
+
+	endpoint := parentURL + "/internal/session-managers/" + url.PathEscape(managerID) + "/heartbeat"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+managerToken)
+	resp, err := instrumentedHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("parent heartbeat returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		AllocatedRunnerIDs []string `json:"allocated_runner_ids"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode parent heartbeat: %w", err)
+	}
+	return result.AllocatedRunnerIDs, nil
 }
 
 // findStockSession lists Services labeled agentapi.proxy/stock=true and returns the
@@ -2798,25 +2935,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// - GitHubConfigSecretName: Contains GITHUB_API, GITHUB_URL (configuration for Enterprise Server)
 	var envFrom []corev1.EnvFromSource
 
-	if req.GithubToken != "" {
-		// When params.github_token is provided:
-		// - GITHUB_TOKEN is embedded directly in session-settings env (no per-session secret)
-		// - Mount GitHubConfigSecretName for GITHUB_API/GITHUB_URL settings only
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
-				},
-			})
-			log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
-		}
-	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided:
-		// - Mount GitHubSecretName for full GitHub App authentication
-		// - Also mount GitHubConfigSecretName (config values will override auth secret if same keys exist)
+	// params.github_token overrides shared authentication, but the Enterprise
+	// Server URL configuration is independent and must always be mounted when set.
+	if req.GithubToken == "" && m.k8sConfig.GitHubSecretName != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{
 			SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{
@@ -2825,18 +2946,18 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 				Optional: boolPtr(true),
 			},
 		})
+	}
 
-		// Mount GitHub config Secret if available (for any additional config)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			envFrom = append(envFrom, corev1.EnvFromSource{
-				SecretRef: &corev1.SecretEnvSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: m.k8sConfig.GitHubConfigSecretName,
-					},
-					Optional: boolPtr(true),
+	if m.k8sConfig.GitHubConfigSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: m.k8sConfig.GitHubConfigSecretName,
 				},
-			})
-		}
+				Optional: boolPtr(true),
+			},
+		})
+		log.Printf("[K8S_SESSION] Mounting GitHub config Secret %s for session %s", m.k8sConfig.GitHubConfigSecretName, session.id)
 	}
 
 	// Build container spec.
@@ -5804,6 +5925,18 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
 	}
+	// The parent API resolves Helm-provided GitHub configuration into the
+	// SessionSettings sent to dedicated/external session managers. Those
+	// managers must not need access to the parent's Kubernetes Secrets.
+	githubEnvVars := []string{"GITHUB_API", "GITHUB_URL"}
+	if req.GithubToken == "" {
+		githubEnvVars = append(githubEnvVars, "GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_APP_PEM", "REPOSITORY_RESTRICTION")
+	}
+	for _, envName := range githubEnvVars {
+		if value := os.Getenv(envName); value != "" {
+			env[envName] = value
+		}
+	}
 	if req.ResumeFrom != "" {
 		env["AGENTAPI_RESUME_FROM"] = req.ResumeFrom
 	}
@@ -5864,17 +5997,13 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	var secretNames []string
 
 	if req.GithubToken != "" {
-		// When params.github_token is provided: embed token directly, no per-session secret needed
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
-		}
+		// When params.github_token is provided: embed token directly, no shared authentication secret needed
 		env["GITHUB_TOKEN"] = req.GithubToken
 	} else if m.k8sConfig.GitHubSecretName != "" {
-		// When params.github_token is NOT provided
 		secretNames = append(secretNames, m.k8sConfig.GitHubSecretName)
-		if m.k8sConfig.GitHubConfigSecretName != "" {
-			secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
-		}
+	}
+	if m.k8sConfig.GitHubConfigSecretName != "" {
+		secretNames = append(secretNames, m.k8sConfig.GitHubConfigSecretName)
 	}
 
 	// Expand secrets into env map (GitHub secrets only)
@@ -6087,7 +6216,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			Token:            req.GithubToken,
 			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
 		}
-	} else if m.k8sConfig.GitHubSecretName != "" {
+	} else if m.k8sConfig.GitHubSecretName != "" || m.k8sConfig.GitHubConfigSecretName != "" {
 		settings.Github = &sessionsettings.GithubConfig{
 			SecretName:       m.k8sConfig.GitHubSecretName,
 			ConfigSecretName: m.k8sConfig.GitHubConfigSecretName,
@@ -6880,6 +7009,8 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 		return nil, err
 	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
+	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	applySelectedAgentDefaultModel(req)
 	// Create a temporary session with the provided ID to satisfy buildSessionSettings
 	tempSession := &KubernetesSession{
 		id:          sessionID,

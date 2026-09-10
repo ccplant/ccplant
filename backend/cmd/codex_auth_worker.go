@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -72,6 +73,7 @@ func executeCodexDeviceAuth(ctx context.Context, request codexauth.WorkloadReque
 	if err != nil {
 		return codexauth.Result{}, errors.New("codex CLI is unavailable")
 	}
+	log.Printf("[CODEX_AUTH_WORKER] Starting Codex device login (executable=%q)", path)
 	cmd := exec.CommandContext(ctx, path, "login", "--device-auth")
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -81,11 +83,13 @@ func executeCodexDeviceAuth(ctx context.Context, request codexauth.WorkloadReque
 	if err := cmd.Start(); err != nil {
 		return codexauth.Result{}, err
 	}
+	log.Printf("[CODEX_AUTH_WORKER] Codex device login started (pid=%d)", cmd.Process.Pid)
 	challengeCh := make(chan codexauth.Challenge, 1)
 	parseErrCh := make(chan error, 1)
 	go parseCodexAuthChallenge(pipe, challengeCh, parseErrCh)
 	select {
 	case challenge := <-challengeCh:
+		log.Printf("[CODEX_AUTH_WORKER] Device challenge parsed; reporting callback")
 		versionCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		version, _ := exec.CommandContext(versionCtx, path, "--version").Output()
 		cancel()
@@ -95,11 +99,14 @@ func executeCodexDeviceAuth(ctx context.Context, request codexauth.WorkloadReque
 			_ = cmd.Wait()
 			return codexauth.Result{}, err
 		}
+		log.Printf("[CODEX_AUTH_WORKER] Device challenge callback accepted")
 	case err := <-parseErrCh:
+		log.Printf("[CODEX_AUTH_WORKER] Device challenge parser failed: %v", err)
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return codexauth.Result{}, err
 	case <-ctx.Done():
+		log.Printf("[CODEX_AUTH_WORKER] Timed out waiting for device challenge: %v", ctx.Err())
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return codexauth.Result{}, ctx.Err()
@@ -133,24 +140,31 @@ func parseCodexAuthChallenge(reader io.Reader, result chan<- codexauth.Challenge
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), 16<<10)
 	var code, uri string
+	lineNumber := 0
 	for scanner.Scan() {
-		line := codexAuthANSIRegex.ReplaceAllString(scanner.Text(), "")
+		lineNumber++
+		rawLine := scanner.Text()
+		line := codexAuthANSIRegex.ReplaceAllString(rawLine, "")
 		if uri == "" {
 			uri = codexAuthURLRegex.FindString(line)
 		}
 		if code == "" {
 			code = codexAuthCodeRegex.FindString(line)
 		}
+		log.Printf("[CODEX_AUTH_WORKER] Read CLI output line (line=%d bytes=%d stripped_bytes=%d uri_seen=%t code_seen=%t)", lineNumber, len(rawLine), len(line), uri != "", code != "")
 		if code != "" && uri != "" {
+			log.Printf("[CODEX_AUTH_WORKER] Device challenge fields found (line=%d)", lineNumber)
 			result <- codexauth.Challenge{UserCode: code, VerificationURI: uri}
 			_, _ = io.Copy(io.Discard, reader)
 			return
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		log.Printf("[CODEX_AUTH_WORKER] CLI output scan failed after %d lines: %v", lineNumber, err)
 		errs <- err
 		return
 	}
+	log.Printf("[CODEX_AUTH_WORKER] CLI output ended after %d lines without a complete challenge (uri_seen=%t code_seen=%t)", lineNumber, uri != "", code != "")
 	errs <- errors.New("Codex login ended before returning a device challenge")
 }
 

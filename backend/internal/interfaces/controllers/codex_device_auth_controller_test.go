@@ -94,7 +94,7 @@ func TestCodexDeviceAuthWorkloadFlow(t *testing.T) {
 	startContext.Set("internal_user", user)
 	require.NoError(t, controller.StartDeviceAuth(startContext))
 	assert.Equal(t, http.StatusAccepted, startRecorder.Code)
-	require.NotEmpty(t, launcher.request.AttemptID)
+	require.Regexp(t, `^cda-[0-9a-f]{32}$`, launcher.request.AttemptID)
 	assert.Equal(t, "https://proxy.example/internal/codex-device-auth", launcher.request.CallbackURL)
 
 	challengeRecorder := httptest.NewRecorder()
@@ -117,4 +117,28 @@ func TestCodexDeviceAuthWorkloadFlow(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, resultRecorder.Code)
 	require.NotNil(t, repo.saved)
 	assert.Equal(t, "alice", repo.saved.Name())
+}
+
+func TestDeviceAuthCallbackURLUsesForwardedPrefix(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/codex/device-auth", nil)
+	req.Host = "backend.internal"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
+	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
+
+	got, err := deviceAuthCallbackURL(e.NewContext(req, httptest.NewRecorder()))
+	require.NoError(t, err)
+	assert.Equal(t, "https://dev.ccplant.com/api/proxy/internal/codex-device-auth", got)
+}
+
+func TestDeviceAuthCallbackURLRejectsInvalidForwardedPrefix(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/codex/device-auth", nil)
+	req.Host = "proxy.example"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Prefix", "/api/../admin")
+
+	_, err := deviceAuthCallbackURL(e.NewContext(req, httptest.NewRecorder()))
+	require.Error(t, err)
 }

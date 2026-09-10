@@ -19,7 +19,7 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 		k8sConfig: &config.KubernetesSessionConfig{Image: "example/session:dev", ImagePullPolicy: "IfNotPresent"},
 	}
 	request := codexauth.WorkloadRequest{
-		AttemptID: "cda_0123456789abcdef", CallbackURL: "https://proxy.example/internal/codex-device-auth",
+		AttemptID: "cda-0123456789abcdef", CallbackURL: "https://proxy.example/internal/codex-device-auth",
 		Token: "secret-token", ExpiresAt: time.Now().Add(5 * time.Minute),
 	}
 	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
@@ -32,6 +32,11 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Fatal("service account token must not be mounted")
+	}
+	if pod.Spec.SecurityContext == nil || pod.Spec.SecurityContext.RunAsUser == nil || *pod.Spec.SecurityContext.RunAsUser != 999 ||
+		pod.Spec.SecurityContext.RunAsGroup == nil || *pod.Spec.SecurityContext.RunAsGroup != 999 ||
+		pod.Spec.SecurityContext.FSGroup == nil || *pod.Spec.SecurityContext.FSGroup != 999 {
+		t.Fatalf("auth pod must run with the image runtime UID/GID: %#v", pod.Spec.SecurityContext)
 	}
 	if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Image != "example/session:dev" {
 		t.Fatalf("unexpected containers: %#v", pod.Spec.Containers)
@@ -58,7 +63,7 @@ func TestStartCodexDeviceAuthCreatesIsolatedPod(t *testing.T) {
 func TestCancelCodexDeviceAuthDeletesResources(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	manager := &KubernetesSessionManager{client: client, namespace: "test", k8sConfig: &config.KubernetesSessionConfig{Image: "session"}}
-	request := codexauth.WorkloadRequest{AttemptID: "cda_deadbeef", CallbackURL: "https://proxy.example/internal/codex-device-auth", Token: "token", ExpiresAt: time.Now().Add(time.Minute)}
+	request := codexauth.WorkloadRequest{AttemptID: "cda-deadbeef", CallbackURL: "https://proxy.example/internal/codex-device-auth", Token: "token", ExpiresAt: time.Now().Add(time.Minute)}
 	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}

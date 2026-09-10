@@ -20,7 +20,7 @@ func (s *SessionSettings) ApplyModelConnections() {
 	keys := modelprovider.ConnectionEnvKeys(agent)
 	// OAuth/Bedrock use the existing materializer; only remove the gateway fields.
 	if agent == "claude" && !c.Compatible() {
-		keys = []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}
+		keys = []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}
 		if c.Mode == "bedrock" {
 			keys = append(keys, "CLAUDE_CODE_OAUTH_TOKEN")
 			s.Env["CLAUDE_CODE_USE_BEDROCK"] = "1"
@@ -42,11 +42,7 @@ func (s *SessionSettings) ApplyModelConnections() {
 	} else {
 		s.Env["ANTHROPIC_BASE_URL"] = c.BaseURL
 		s.Env["ANTHROPIC_MODEL"] = c.Model
-		if c.Authentication == "api_key" {
-			s.Env["ANTHROPIC_API_KEY"] = c.APIKey
-		} else {
-			s.Env["ANTHROPIC_AUTH_TOKEN"] = c.APIKey
-		}
+		s.Env["ANTHROPIC_API_KEY"] = c.APIKey
 		for alias, key := range map[string]string{"sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL", "opus": "ANTHROPIC_DEFAULT_OPUS_MODEL", "haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL"} {
 			model := c.Model
 			if c.ModelAliases[alias] != "" {

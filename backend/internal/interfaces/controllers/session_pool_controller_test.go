@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,81 @@ import (
 
 type testManagerLiveness struct {
 	connected map[string]bool
+}
+
+type countingRunnerStore struct {
+	core.Store
+	claimCalls atomic.Int32
+}
+
+func (s *countingRunnerStore) ClaimNext(ctx context.Context, pool, runnerID string, lease time.Duration) (*core.Allocation, bool, error) {
+	s.claimCalls.Add(1)
+	return s.Store.ClaimNext(ctx, pool, runnerID, lease)
+}
+
+func TestRunnerLongPollClaimsOnlyAfterPoolNotification(t *testing.T) {
+	baseStore := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	store := &countingRunnerStore{Store: baseStore}
+	notifier := infra.NewLocalAllocationNotifier()
+	controller := NewSessionPoolController(store, nil).WithAllocationNotifier(notifier)
+	now := time.Now().UTC()
+	_, managerTokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runnerToken, runnerTokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateManager(context.Background(), &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: managerTokenHash, LastHeartbeatAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateRunner(context.Background(), &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "managed", TokenHash: runnerTokenHash, Status: core.RunnerIdle}); err != nil {
+		t.Fatal(err)
+	}
+
+	resultCh := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		resultCh <- callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=2s", nil, nil,
+			map[string]string{"Authorization": "Bearer " + runnerToken, "X-Session-Runner-ID": "runner-a"})
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for store.claimCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := store.claimCalls.Load(); got != 1 {
+		t.Fatalf("claim calls before notification = %d, want 1", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := store.claimCalls.Load(); got != 1 {
+		t.Fatalf("long poll queried the store without a notification: calls=%d", got)
+	}
+	if err := notifier.Notify(context.Background(), "other-pool"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(25 * time.Millisecond)
+	if got := store.claimCalls.Load(); got != 1 {
+		t.Fatalf("notification for another pool triggered a claim: calls=%d", got)
+	}
+	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "managed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := notifier.Notify(context.Background(), "managed"); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.Code != http.StatusOK {
+			t.Fatalf("claim status=%d body=%s", result.Code, result.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not wake after allocation notification")
+	}
+	if got := store.claimCalls.Load(); got != 2 {
+		t.Fatalf("claim calls after notification = %d, want 2", got)
+	}
 }
 
 func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
@@ -191,6 +267,96 @@ func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	}
 }
 
+func TestSessionManagerHeartbeatReportsAllocatedRunnerIDs(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, runner := range []*core.Runner{
+		{ID: "idle-runner", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle},
+		{ID: "allocated-runner", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerRunning},
+	} {
+		if err := store.CreateRunner(ctx, runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		AllocatedRunnerIDs []string `json:"allocated_runner_ids"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if len(heartbeat.AllocatedRunnerIDs) != 1 || heartbeat.AllocatedRunnerIDs[0] != "allocated-runner" {
+		t.Fatalf("allocated_runner_ids = %v", heartbeat.AllocatedRunnerIDs)
+	}
+}
+
+func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, runner := range []*core.Runner{
+		{ID: "live-running", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerRunning},
+		{ID: "missing-running", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerRunning},
+		{ID: "missing-idle", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle},
+	} {
+		if err := store.CreateRunner(ctx, runner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "stale-session", Pool: "linux", RunnerID: "missing-running"}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"local_runner_ids": []string{"live-running", "missing-idle"}}, map[string]string{"id": manager.ID},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "missing-running"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("missing running runner was not deleted: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "stale-session"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("stale allocation was not deleted: %v", err)
+	}
+	for _, id := range []string{"live-running", "missing-idle"} {
+		if _, err := store.GetRunner(ctx, id); err != nil {
+			t.Fatalf("runner %s was unexpectedly deleted: %v", id, err)
+		}
+	}
+}
+
 func TestSessionManagerHeartbeatRepairsMissingRunnerRoute(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
@@ -326,7 +492,7 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	}
 
 	registerResult := callSessionPoolHandler(t, controller.RegisterRunner, http.MethodPost, "/internal/session-runners/register",
-		map[string]any{"runner_id": "runner-a", "pool": "linux", "pod_name": "pod-a"}, nil,
+		map[string]any{"runner_id": "runner-a", "pool": "linux", "pod_name": "pod-a", "capabilities": map[string]string{"dind": "true"}}, nil,
 		map[string]string{"Authorization": "Bearer " + created.ConnectionToken, "X-Session-Manager-ID": "manager-a"})
 	if registerResult.Code != http.StatusCreated {
 		t.Fatalf("register runner status=%d body=%s", registerResult.Code, registerResult.Body.String())
@@ -335,8 +501,12 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 		RunnerToken string `json:"runner_token"`
 	}
 	decodeRecorder(t, registerResult, &registered)
+	runner, err := store.GetRunner(context.Background(), "runner-a")
+	if err != nil || runner.Capabilities["dind"] != "true" {
+		t.Fatalf("runner capabilities not persisted: runner=%+v err=%v", runner, err)
+	}
 
-	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "linux", RuntimeToken: "runtime-secret"}); err != nil {
+	if err := store.Enqueue(context.Background(), &core.Allocation{SessionID: "session-a", Pool: "linux", RuntimeToken: "runtime-secret", Requirements: map[string]string{"dind": "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	claimResult := callSessionPoolHandler(t, controller.ClaimRunnerAllocation, http.MethodGet, "/internal/session-runners/allocations/next?wait=0s",
@@ -359,7 +529,7 @@ func TestSessionPoolRunnerClaimLifecycle(t *testing.T) {
 	if ackResult.Code != http.StatusOK {
 		t.Fatalf("ack status=%d body=%s", ackResult.Code, ackResult.Body.String())
 	}
-	runner, err := store.GetRunner(context.Background(), "runner-a")
+	runner, err = store.GetRunner(context.Background(), "runner-a")
 	if err != nil || runner.Status != core.RunnerRunning {
 		t.Fatalf("runner should be running: runner=%+v err=%v", runner, err)
 	}

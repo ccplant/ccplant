@@ -88,11 +88,23 @@ type CodexAuthConfigResponse struct {
 	ExecutionMode string `json:"execution_mode,omitempty"`
 }
 
+// workloadAvailability is implemented by launchers that can report whether an
+// execution plane is currently reachable.
+type workloadAvailability interface {
+	Available(context.Context) bool
+}
+
 func (c *CodexDeviceAuthController) GetConfig(ctx echo.Context) error {
 	if auth.GetUserFromContext(ctx) == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
-	return ctx.JSON(http.StatusOK, CodexAuthConfigResponse{Configured: c.launcher != nil, ExecutionMode: "auth_workload"})
+	configured := c.launcher != nil
+	if configured {
+		if provider, ok := c.launcher.(workloadAvailability); ok {
+			configured = provider.Available(ctx.Request().Context())
+		}
+	}
+	return ctx.JSON(http.StatusOK, CodexAuthConfigResponse{Configured: configured, ExecutionMode: "auth_workload"})
 }
 
 func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
@@ -123,7 +135,7 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create device auth token")
 	}
-	attemptID := "cda_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	attemptID := "cda-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	attempt := &deviceAuthAttempt{ID: attemptID, UserID: string(user.ID()), CredentialName: credentialName, TokenHash: tokenHash, Status: codexauth.StatusStarting, ExpiresAt: time.Now().UTC().Add(deviceAuthTTL)}
 	if c.store != nil {
 		if err := c.store.Create(ctx.Request().Context(), durableAttempt(attempt)); err != nil {
@@ -420,7 +432,11 @@ func deviceAuthCallbackURL(ctx echo.Context) (string, error) {
 	if host == "" || strings.ContainsAny(host, "\r\n/") {
 		return "", fmt.Errorf("invalid callback host")
 	}
-	return scheme + "://" + host + "/internal/codex-device-auth", nil
+	prefix := strings.TrimSuffix(ctx.Request().Header.Get("X-Forwarded-Prefix"), "/")
+	if prefix != "" && (!strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.ContainsAny(prefix, "\r\n?#")) {
+		return "", fmt.Errorf("invalid callback prefix")
+	}
+	return scheme + "://" + host + prefix + "/internal/codex-device-auth", nil
 }
 
 func validVerificationURI(raw string) bool {

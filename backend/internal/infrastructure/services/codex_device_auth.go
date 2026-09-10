@@ -16,8 +16,8 @@ import (
 const codexDeviceAuthLabel = "agentapi.proxy/codex-device-auth"
 
 func codexDeviceAuthResourceName(attemptID string) string {
-	id := strings.TrimPrefix(attemptID, "cda_")
-	id = strings.ToLower(strings.ReplaceAll(id, "_", "-"))
+	id := strings.TrimPrefix(attemptID, "cda-")
+	id = strings.ToLower(id)
 	if len(id) > 40 {
 		id = id[:40]
 	}
@@ -57,6 +57,7 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 	noPrivilegeEscalation := false
 	readOnlyRoot := true
 	runAsNonRoot := true
+	runtimeID := int64(999)
 	zero := int64(0)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -68,7 +69,12 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 			AutomountServiceAccountToken:  &noPrivilegeEscalation,
 			ActiveDeadlineSeconds:         &deadline,
 			TerminationGracePeriodSeconds: &zero,
-			SecurityContext:               &corev1.PodSecurityContext{RunAsNonRoot: &runAsNonRoot},
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: &runAsNonRoot,
+				RunAsUser:    &runtimeID,
+				RunAsGroup:   &runtimeID,
+				FSGroup:      &runtimeID,
+			},
 			Volumes: []corev1.Volume{
 				{Name: "request", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: name, DefaultMode: int32Ptr(0400)}}},
 				{Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},

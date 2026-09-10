@@ -299,6 +299,10 @@ async function handleProxyRequest(
       apiKey,
       options.passThroughAuthorization,
     )
+    // Let backend-generated callback URLs return through this public BFF
+    // route. The incoming value is stripped by proxy-transport so callers
+    // cannot choose an arbitrary callback prefix.
+    headers.set('X-Forwarded-Prefix', options.publicPrefix)
     const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
     const targetUrl = `${backendBaseUrl}/${path}${request.nextUrl.search}`
     const isSSE = isServerSentEventsRequest(headers)

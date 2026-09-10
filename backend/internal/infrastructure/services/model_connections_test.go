@@ -3,11 +3,11 @@ package services
 import (
 	"context"
 	"encoding/json"
-	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"k8s.io/client-go/kubernetes/fake"
@@ -16,7 +16,7 @@ import (
 func TestResolveConnectionsAndProfileModel(t *testing.T) {
 	personal := entities.NewSettings("user")
 	personal.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://personal.example/v1", Model: "default", Authentication: "api_key", APIKey: "personal-key"})
-	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://personal.example/anthropic", Model: "claude-default", Authentication: "bearer_token", APIKey: "claude-key"})
+	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://personal.example/anthropic", Model: "claude-default", Authentication: "api_key", APIKey: "claude-key"})
 	team := entities.NewSettings("org/team")
 	team.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://team.example/v1", Model: "team-model", Authentication: "api_key", APIKey: "team-key"})
 	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": personal, "org/team": team}}}
@@ -41,7 +41,8 @@ func TestResolveConnectionsAndProfileModel(t *testing.T) {
 	req = &entities.RunServerRequest{AgentType: "", ClaudeConnection: personal.ClaudeConnection()}
 	legacy := &sessionsettings.SessionSettings{}
 	applyModelConnections(legacy, req)
-	require.Equal(t, "claude-key", legacy.Env["ANTHROPIC_AUTH_TOKEN"])
+	require.Equal(t, "claude-key", legacy.Env["ANTHROPIC_API_KEY"])
+	require.NotContains(t, legacy.Env, "ANTHROPIC_AUTH_TOKEN")
 	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none"}
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
 	require.Nil(t, req.CodexConnection)
@@ -72,6 +73,63 @@ func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 	pi := &sessionsettings.SessionSettings{}
 	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi-ollama", Model: "ollama/model"})
 	require.Equal(t, "ollama/model", pi.Env["PI_OLLAMA_MODEL"])
+}
+
+func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentType string
+		explicit  string
+		want      string
+	}{
+		{name: "auto selected codex", agentType: "codex-acp", want: "openai-default"},
+		{name: "auto selected claude", agentType: "claude-acp", want: "anthropic-default"},
+		{name: "explicit override wins", agentType: "codex-acp", explicit: "profile-model", want: "profile-model"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &entities.RunServerRequest{
+				AgentType:        tt.agentType,
+				Model:            tt.explicit,
+				CodexConnection:  &modelprovider.Connection{Mode: "auth_json", Model: "openai-default"},
+				ClaudeConnection: &modelprovider.Connection{Mode: "oauth", Model: "anthropic-default"},
+			}
+			applySelectedAgentDefaultModel(req)
+			require.Equal(t, tt.want, req.Model)
+		})
+	}
+}
+
+func TestSelectedClaudeProfileModelOverridesTeamConnectionDefault(t *testing.T) {
+	req := &entities.RunServerRequest{
+		AgentType: "claude-acp",
+		ClaudeConnection: &modelprovider.Connection{
+			Mode:  "oauth",
+			Model: "team-model",
+		},
+		ProfileEnvironment: map[string]string{"ANTHROPIC_MODEL": "profile-model"},
+	}
+
+	applySelectedAgentDefaultModel(req)
+
+	require.Equal(t, "profile-model", req.Model)
+	settings := &sessionsettings.SessionSettings{}
+	applyModelConnections(settings, req)
+	require.Equal(t, "profile-model", settings.Env["ANTHROPIC_MODEL"])
+}
+
+func TestBuiltInAuthDefaultModelAllowsLegacyCredentialEnvironment(t *testing.T) {
+	personal := entities.NewSettings("user")
+	personal.SetClaudeConnection(&modelprovider.Connection{Mode: "oauth", Model: "anthropic-default"})
+	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": personal}}}
+	req := &entities.RunServerRequest{
+		UserID:             "user",
+		AgentType:          "claude-acp",
+		ProfileEnvironment: map[string]string{"ANTHROPIC_API_KEY": "legacy-key"},
+	}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	applySelectedAgentDefaultModel(req)
+	require.Equal(t, "anthropic-default", req.Model)
 }
 
 func TestSessionAuthenticationOverrides(t *testing.T) {

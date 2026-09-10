@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -473,6 +474,9 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 	for i := range candidates {
 		item := &candidates[i]
 		allocation := item.allocation
+		if !runnerMatchesAllocation(runner, &allocation) {
+			continue
+		}
 		claimable := allocation.Status == core.AllocationPending || (allocation.Status == core.AllocationLeased && now.After(allocation.LeaseExpiresAt))
 		if !claimable {
 			continue
@@ -499,6 +503,20 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 		return &allocation, true, nil
 	}
 	return nil, false, nil
+}
+
+func runnerMatchesAllocation(runner *core.Runner, allocation *core.Allocation) bool {
+	if runner == nil || allocation == nil {
+		return false
+	}
+	// DinD changes the Pod shape and cannot be enabled after a stock runner has
+	// started. Treat omitted values as false for records created before
+	// capability-aware matching was introduced.
+	return capabilityEnabled(runner.Capabilities, "dind") == capabilityEnabled(allocation.Requirements, "dind")
+}
+
+func capabilityEnabled(values map[string]string, name string) bool {
+	return strings.EqualFold(values[name], "true")
 }
 
 func (s *Store) Acknowledge(ctx context.Context, sessionID, runnerID, leaseID string) (*core.Allocation, error) {

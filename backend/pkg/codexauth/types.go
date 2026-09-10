@@ -64,8 +64,10 @@ type AttemptStore interface {
 	Release(context.Context, *Attempt) error
 }
 
-// WorkloadLauncher is implemented by local Kubernetes managers and by the
-// private session-manager API client used by an isolated parent API process.
+// WorkloadLauncher is implemented by execution-plane session managers (the
+// Kubernetes manager that creates the authentication Pod) and by the parent's
+// outbound-control launcher that reaches those managers through the ESM
+// control tunnel.
 type WorkloadLauncher interface {
 	StartCodexDeviceAuth(context.Context, WorkloadRequest) error
 	CancelCodexDeviceAuth(context.Context, string) error

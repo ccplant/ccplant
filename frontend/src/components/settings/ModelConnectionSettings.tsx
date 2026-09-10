@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { ModelConnection } from '@/types/settings'
+import { CodexModelMetadataFields } from './CodexModelMetadataFields'
 
 interface Props {
   agent: 'codex' | 'claude'
   connection?: ModelConnection
+  defaultBaseURL?: string
   legacyMode?: ModelConnection['mode']
   onSave: (connection: ModelConnection) => Promise<void>
 }
@@ -18,7 +20,7 @@ const modeLabels: Record<ModelConnection['mode'], string> = {
   anthropic_compatible: 'Anthropic 互換 API',
 }
 
-export function ModelConnectionSettings({ agent, connection, legacyMode, onSave }: Props) {
+export function ModelConnectionSettings({ agent, connection, defaultBaseURL, legacyMode, onSave }: Props) {
   const initialMode = connection?.mode || (agent === 'codex' ? 'auth_json' : legacyMode || 'oauth')
   const [draft, setDraft] = useState<ModelConnection>({ mode: initialMode, authentication: 'api_key', ...connection })
   const [key, setKey] = useState('')
@@ -34,6 +36,9 @@ export function ModelConnectionSettings({ agent, connection, legacyMode, onSave 
   const compatible = draft.mode === 'openai_compatible' || draft.mode === 'anthropic_compatible'
   const fieldClass = 'w-full rounded-md border border-gray-300 bg-white p-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white'
   const change = (patch: Partial<ModelConnection>) => { setDraft(prev => ({ ...prev, ...patch })); setSaved(false) }
+  const changeMode = (mode: ModelConnection['mode']) => {
+    change({ mode, ...(mode.endsWith('_compatible') && !draft.base_url ? { base_url: defaultBaseURL || '' } : {}) })
+  }
   const save = async () => {
     setSaving(true); setError(''); setSaved(false)
     try {
@@ -47,7 +52,7 @@ export function ModelConnectionSettings({ agent, connection, legacyMode, onSave 
       <legend className="font-medium">{agent === 'codex' ? 'Codex の接続方式' : 'Claude Code 認証'}</legend>
       <p className="text-sm text-gray-500">現在: {modeLabels[initialMode]}。保存した設定は次のセッションから適用されます。</p>
       <label className="block text-sm">接続方式
-        <select aria-label={`${agent} 接続方式`} className={fieldClass} value={draft.mode} onChange={e => change({ mode: e.target.value as ModelConnection['mode'] })}>
+        <select aria-label={`${agent} 接続方式`} className={fieldClass} value={draft.mode} onChange={e => changeMode(e.target.value as ModelConnection['mode'])}>
           {agent === 'codex' ? <>
             <option value="auth_json">既存の認証（auth.json）</option>
             <option value="openai_compatible">OpenAI 互換 API（Responses API）</option>
@@ -57,30 +62,28 @@ export function ModelConnectionSettings({ agent, connection, legacyMode, onSave 
           </>}
         </select>
       </label>
+      <label className="block text-sm">デフォルトモデル ID
+        <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.model || ''} onChange={e => change({ model: e.target.value })} />
+      </label>
+      <p className="text-xs text-gray-500">自動選択時も、選ばれたエージェントに対応するこのモデルを使用します。セッションプロファイルの指定がある場合は上書きされます。</p>
       {compatible && <>
         <label className="block text-sm">Base URL
           <input aria-label={`${agent} Base URL`} className={fieldClass} value={draft.base_url || ''} onChange={e => change({ base_url: e.target.value })} placeholder={agent === 'codex' ? 'https://llm.example.com/v1' : 'https://llm.example.com/anthropic'} />
         </label>
         <p className="text-xs text-gray-500">{agent === 'codex' ? 'Responses API 対応の接続先を指定します。' : 'Messages API のルートを指定します。末尾の /v1/messages は不要です。'} localhost はセッションの実行環境を指します。</p>
-        <label className="block text-sm">デフォルトモデル ID
-          <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.model || ''} onChange={e => change({ model: e.target.value })} />
-        </label>
-        <p className="text-xs text-gray-500">セッションプロファイルでモデルを指定すると、このデフォルトを上書きします。</p>
-        <label className="block text-sm">認証
+        {agent === 'codex' && <label className="block text-sm">認証
           <select aria-label={`${agent} 認証`} className={fieldClass} value={draft.authentication || 'api_key'} onChange={e => change({ authentication: e.target.value as ModelConnection['authentication'] })}>
-            <option value="api_key">API キー{agent === 'claude' ? '（x-api-key）' : ''}</option>
-            {agent === 'codex' ? <option value="none">認証なし</option> : <option value="bearer_token">Bearer トークン</option>}
+            <option value="api_key">API キー</option>
+            <option value="none">認証なし</option>
           </select>
-        </label>
+        </label>}
         {draft.authentication !== 'none' && <label className="block text-sm">API キー / トークン {connection?.has_api_key ? '（保存済み・未入力なら保持）' : '（未設定）'}
           <input aria-label={`${agent} API キー`} type="password" autoComplete="new-password" className={fieldClass} value={key} onChange={e => { setKey(e.target.value); setClearKey(false); setSaved(false) }} />
         </label>}
         <details><summary className="cursor-pointer text-sm">詳細設定</summary>
           <div className="space-y-3 pt-3">
             {agent === 'codex' ? <>
-              <label className="block text-sm">コンテキスト長<input type="number" min="1" className={fieldClass} value={draft.context_window ?? ''} onChange={e => change({ context_window: e.target.value ? Number(e.target.value) : null })} /></label>
-              <label className="block text-sm">自動圧縮開始トークン数<input type="number" min="1" className={fieldClass} value={draft.auto_compact_token_limit ?? ''} onChange={e => change({ auto_compact_token_limit: e.target.value ? Number(e.target.value) : null })} /></label>
-              <label className="block text-sm">Reasoning summaries<select className={fieldClass} value={draft.supports_reasoning_summaries == null ? '' : String(draft.supports_reasoning_summaries)} onChange={e => change({ supports_reasoning_summaries: e.target.value === '' ? null : e.target.value === 'true' })}><option value="">未指定</option><option value="true">対応</option><option value="false">非対応</option></select></label>
+              <CodexModelMetadataFields value={draft} onChange={change} fieldClass={fieldClass} idPrefix="settings-codex" />
             </> : <>
               <p className="text-xs text-gray-500">未指定の別名には、プロファイル上書き後のモデルを使用します。</p>
               {(['sonnet', 'opus', 'haiku'] as const).map(alias => <label className="block text-sm" key={alias}>{alias} モデル ID<input className={fieldClass} value={draft.model_aliases?.[alias] || ''} onChange={e => { const aliases = { ...draft.model_aliases }; if (e.target.value) aliases[alias] = e.target.value; else delete aliases[alias]; change({ model_aliases: aliases }) }} /></label>)}

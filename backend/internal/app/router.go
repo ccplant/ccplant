@@ -14,7 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
-	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
@@ -84,6 +84,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	if server.esmControlStore != nil {
 		sessionPoolController.WithManagerLiveness(server.esmControlStore)
 	}
+	if server.sessionAllocationNotifier != nil {
+		sessionPoolController.WithAllocationNotifier(server.sessionAllocationNotifier)
+	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
@@ -98,7 +101,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		encryptedStorage := false
 		if cfg := server.GetConfig(); cfg != nil {
-			encryptedStorage = cfg.KVStore.Backend == "libsql-encrypted" || (cfg.KVStore.Primary != nil && cfg.KVStore.Primary.Backend == "libsql-encrypted")
+			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
 	}
@@ -118,11 +121,13 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] Credentials controller initialized")
 	}
 
-	// Create Codex device auth controller (requires credentials repo)
+	// Create Codex device auth controller (requires credentials repo).
+	// Workloads are always delegated to an external session manager over the
+	// outbound control tunnel; there is deliberately no in-process launcher.
 	var codexDeviceAuthController *controllers.CodexDeviceAuthController
 	if server.credentialsRepo != nil {
-		if launcher, ok := server.sessionManager.(codexauth.WorkloadLauncher); ok {
-			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo, launcher)
+		if server.codexDeviceAuthLauncher != nil {
+			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo, server.codexDeviceAuthLauncher)
 		} else {
 			codexDeviceAuthController = controllers.NewCodexDeviceAuthController(server.credentialsRepo)
 		}
@@ -343,6 +348,11 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			customHandlers:                 make([]CustomHandler, 0),
 		},
 	}
+}
+
+func supportsGitHubSecretStorage(cfg config.KVStoreConfig) bool {
+	backend := configuredKVBackend(cfg)
+	return backend == "libsql-encrypted" || backend == "kubernetes"
 }
 
 // AddCustomHandler adds a custom handler to the registry

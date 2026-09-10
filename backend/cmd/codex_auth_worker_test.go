@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"log"
 	"strings"
 	"testing"
 
@@ -8,6 +10,11 @@ import (
 )
 
 func TestParseCodexAuthChallenge(t *testing.T) {
+	var logs bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousWriter) })
+
 	result := make(chan codexauth.Challenge, 1)
 	errs := make(chan error, 1)
 	parseCodexAuthChallenge(strings.NewReader("Open https://auth.openai.com/codex/device\nEnter ABCD-EFGH\n"), result, errs)
@@ -18,6 +25,9 @@ func TestParseCodexAuthChallenge(t *testing.T) {
 		}
 	case err := <-errs:
 		t.Fatal(err)
+	}
+	if output := logs.String(); strings.Contains(output, "ABCD-EFGH") || strings.Contains(output, "auth.openai.com") {
+		t.Fatalf("diagnostic logs leaked challenge data: %q", output)
 	}
 }
 

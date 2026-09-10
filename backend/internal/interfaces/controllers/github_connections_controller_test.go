@@ -35,6 +35,30 @@ func TestCreateConnectionRequiresEncryptedKVForStoredSecret(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, httpErr.Code)
 }
 
+func TestCreateConnectionStoresSecretWithKubernetesBackend(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "", true)
+	body := map[string]any{
+		"name": "corp", "base_url": "https://github.example.com", "api_url": "https://github.example.com/api/v3", "oauth_client_id": "client",
+		"oauth_client_secret": map[string]any{"source": "encrypted", "value": "super-sensitive-value"},
+	}
+	payload, err := json.Marshal(body)
+	require.NoError(t, err)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/admin/github-connections", bytes.NewReader(payload))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	recorder := httptest.NewRecorder()
+	require.NoError(t, controller.Create(e.NewContext(req, recorder)))
+	require.Equal(t, http.StatusCreated, recorder.Code)
+
+	connections, err := client.CoreV1().Secrets("test").List(context.Background(), metav1.ListOptions{LabelSelector: githubConnectionLabel + "=true"})
+	require.NoError(t, err)
+	require.Len(t, connections.Items, 1)
+	require.Equal(t, "super-sensitive-value", string(connections.Items[0].Data["client_secret"]))
+	require.NotContains(t, string(connections.Items[0].Data["record.json"]), "super-sensitive-value")
+}
+
 func TestNormalizeGitHubURL(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +116,36 @@ func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
 	resolved, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice-enterprise"}, "token", nil)
 	require.NoError(t, err)
 	require.Equal(t, principal.ID, resolved.ID)
+}
+
+func TestResolveLoginPrincipalRejectsUnlinkedUserWhenCreationDisabled(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com"}
+
+	_, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
+	require.ErrorContains(t, err, "user creation is disabled")
+
+	_, principalErr := controller.loadPrincipal(context.Background(), "github-connection:enterprise:42")
+	require.Error(t, principalErr)
+	var identity githubIdentity
+	_, identityErr := controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.Error(t, identityErr)
+}
+
+func TestResolveLoginPrincipalCreatesUnlinkedUserWhenCreationEnabled(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "enterprise", BaseURL: "https://github.example.com", AllowUserCreation: true}
+
+	principal, err := controller.resolveLoginPrincipal(context.Background(), connection, githubOAuthUser{ID: 42, Login: "alice"}, "token", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, principal.ID)
+
+	var identity githubIdentity
+	_, err = controller.loadObject(context.Background(), identitySecretName(connection.ID, 42), &identity)
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, identity.PrincipalID)
 }
 
 func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {

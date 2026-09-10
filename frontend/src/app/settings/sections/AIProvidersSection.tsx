@@ -23,8 +23,8 @@ export function AIProvidersSection() {
   return (
     <>
       <SettingsPageHeader
-        title="AI プロバイダ"
-        description="セッションで使う AI プロバイダと認証方法を設定します。"
+        title="Claude Code 認証"
+        description="Claude Code で使う OAuth、Amazon Bedrock、Anthropic 互換 API の認証方法を設定します。"
       />
 
       {isPersonal && userTeams.length > 0 && (
@@ -50,7 +50,7 @@ export function AIProvidersSection() {
         </SettingsSubsection>
       )}
 
-      <ModelConnectionSettings agent="claude" connection={settings.claude_connection} legacyMode={settings.auth_mode} onSave={connection => saveConnection('claude', connection)} />
+      <ModelConnectionSettings agent="claude" connection={settings.claude_connection} defaultBaseURL={settings.default_anthropic_base_url} legacyMode={settings.auth_mode} onSave={connection => saveConnection('claude', connection)} />
 
       {isPersonal && settings.claude_connection?.mode !== 'anthropic_compatible' && (
         <SettingsSubsection

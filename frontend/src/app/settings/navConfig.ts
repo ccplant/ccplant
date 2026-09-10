@@ -47,7 +47,7 @@ export const settingsNavItems: SettingsNavItem[] = [
   },
   {
     slug: 'ai-providers',
-    label: 'AI プロバイダ',
+    label: 'Claude Code 認証',
     icon: Sparkles,
     group: 'AI とエージェント',
     scopes: ['personal', 'team'],

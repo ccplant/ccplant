@@ -46,6 +46,7 @@ import (
 	serviceaccountuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/service_account"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/notification"
@@ -71,8 +72,9 @@ type Server struct {
 	notificationSvc             *notification.Service
 	container                   *di.Container            // Internal DI container
 	sessionManager              portrepos.SessionManager // Session lifecycle manager
-	persistenceClient           kubernetes.Interface     // Secret/ConfigMap client for non-session application data
-	kvStore                     kvstore.Store            // non-nil when persistenceClient is backed by libSQL
+	codexDeviceAuthLauncher     codexauth.WorkloadLauncher
+	persistenceClient           kubernetes.Interface // Secret/ConfigMap client for non-session application data
+	kvStore                     kvstore.Store        // non-nil when persistenceClient is backed by libSQL
 	usageRepo                   portrepos.UsageRepository
 	settingsRepo                portrepos.SettingsRepository                    // Settings repository
 	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
@@ -83,8 +85,10 @@ type Server struct {
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
-	userFileRepo                portrepos.UserFileRepository                    // User-managed files repository
-	sessionProfileRepo          portrepos.SessionProfileRepository              // Session profile repository
+	sessionAllocationNotifier   sessionrunnercore.AllocationNotifier            // Wakes long-polling runners when durable allocations are created
+	sessionAllocationRedis      *redis.Client
+	userFileRepo                portrepos.UserFileRepository       // User-managed files repository
+	sessionProfileRepo          portrepos.SessionProfileRepository // Session profile repository
 	scheduleManager             schedule.Manager
 	apiTokenRepo                portrepos.APITokenRepository // Named API token repository
 	localUserRepo               portrepos.LocalUserRepository
@@ -207,9 +211,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var shareRepo portrepos.ShareRepository
 	namespace := resolveApplicationNamespace(cfg.KVStore.Namespace)
 	var k8sSessionManager *services.KubernetesSessionManager
+	var remoteSessionManager *sessionmanagerapi.Client
 	var sessionManager portrepos.SessionManager
 	var persistenceClient kubernetes.Interface
 	var applicationKVStore kvstore.Store
+	var codexDeviceAuthLauncher codexauth.WorkloadLauncher
 	var err error
 	if cfg.SessionManager.APIURL != "" {
 		if err := validateAPIKVStore(cfg.KVStore); err != nil {
@@ -236,6 +242,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("[SERVER] Session manager is unavailable after startup grace period: %v", healthErr)
 		}
 		sessionManager = remoteManager
+		remoteSessionManager = remoteManager
 		var apiKVClient kubernetes.Interface = fake.NewSimpleClientset()
 		if configuredKVBackend(cfg.KVStore) == "kubernetes" {
 			restConfig, configErr := ctrlconfig.GetConfig()
@@ -297,6 +304,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	runtimeConfigCtx, runtimeConfigCancel := context.WithCancel(context.Background())
 	runtimeProvider.Start(runtimeConfigCtx, 30*time.Second, func(err error) { log.Printf("[RUNTIME_CONFIG] Reload failed: %v", err) })
+	sessionAllocationNotifier, sessionAllocationRedis := buildSessionAllocationNotifier(cfg)
 	var usageRepo portrepos.UsageRepository
 	if cfg.Usage.Enabled {
 		usageRepo, err = repositories.NewLibSQLUsageRepository(context.Background(), cfg.Usage.DatabaseURL, cfg.Usage.AuthToken)
@@ -488,6 +496,23 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetSessionProfileRepository(sessionProfileRepo)
 	}
+	if remoteSessionManager != nil {
+		// The API owns persistence encryption. Build the complete ephemeral
+		// provision payload here and send it to the isolated session manager;
+		// the manager never receives encryption keys or decrypts stored records.
+		settingsBuilder, builderErr := services.NewKubernetesSessionManagerWithClient(cfg, false, lgr, fake.NewSimpleClientset())
+		if builderErr != nil {
+			log.Fatalf("[SERVER] Failed to initialize API-side provision settings builder: %v", builderErr)
+		}
+		settingsBuilder.SetSettingsRepository(settingsRepo)
+		settingsBuilder.SetCredentialsRepository(credentialsRepo)
+		settingsBuilder.SetTeamConfigRepository(teamConfigRepo)
+		settingsBuilder.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
+		settingsBuilder.SetSandboxPolicyRepository(sandboxPolicyRepo)
+		settingsBuilder.SetUserFileRepository(userFileRepo)
+		settingsBuilder.SetSessionProfileRepository(sessionProfileRepo)
+		remoteSessionManager.SetProvisionSettingsBuilder(settingsBuilder)
+	}
 	log.Printf("[SERVER] Session profile repository initialized")
 
 	assetStore, err := services.NewAssetStore(context.Background(), cfg.Asset)
@@ -515,6 +540,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	if esmControlStore != nil {
 		esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
 	}
+	// Codex device auth workloads always run on a session manager's execution
+	// plane, never inside the API process (whose Kubernetes client may be a
+	// fake in compositions without cluster access). Route every attempt to an
+	// enrolled, connected external session manager over the outbound control
+	// tunnel; the manager creates the short-lived authentication Pod.
+	if esmControlTunnel != nil && sessionRunnerStore != nil {
+		codexDeviceAuthLauncher = infraesmcontrol.NewCodexDeviceAuthLauncher(esmControlTunnel, sessionRunnerStore)
+		log.Printf("[SERVER] Codex device auth workloads are delegated to external session managers")
+	}
 
 	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
 	scheduleManager := schedule.NewKubernetesManager(persistenceClient, namespace)
@@ -528,6 +562,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		logger:                      lgr,
 		container:                   container,
 		sessionManager:              sessionManager,
+		codexDeviceAuthLauncher:     codexDeviceAuthLauncher,
 		persistenceClient:           persistenceClient,
 		kvStore:                     applicationKVStore,
 		usageRepo:                   usageRepo,
@@ -540,6 +575,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sandboxDomainRepo:           sandboxDomainRepo,
 		sessionRouteRepo:            sessionRouteRepo,
 		sessionRunnerStore:          sessionRunnerStore,
+		sessionAllocationNotifier:   sessionAllocationNotifier,
+		sessionAllocationRedis:      sessionAllocationRedis,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
 		scheduleManager:             scheduleManager,
@@ -774,6 +811,34 @@ func buildSessionControlStore(cfg *config.Config) sessioncontrol.Store {
 	}
 	log.Printf("[SESSION_CONTROL] Redis Streams control channel enabled")
 	return infrasessioncontrol.NewRedisStore(client)
+}
+
+func buildSessionAllocationNotifier(cfg *config.Config) (sessionrunnercore.AllocationNotifier, *redis.Client) {
+	local := infrasessionrunner.NewLocalAllocationNotifier()
+	if cfg.Redis.Addr == "" {
+		log.Printf("[SESSION_POOL] Redis not configured; runner allocation notifications are process-local")
+		return local, nil
+	}
+	opts := &redis.Options{Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ReadTimeout: 35 * time.Second}
+	if d, err := time.ParseDuration(cfg.Redis.DialTimeout); err == nil && d > 0 {
+		opts.DialTimeout = d
+	}
+	if d, err := time.ParseDuration(cfg.Redis.WriteTimeout); err == nil && d > 0 {
+		opts.WriteTimeout = d
+	}
+	if cfg.Redis.TLSEnabled {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Printf("[SESSION_POOL] Redis unavailable; runner allocation notifications are process-local: %v", err)
+		_ = client.Close()
+		return local, nil
+	}
+	log.Printf("[SESSION_POOL] Redis runner allocation notifications enabled")
+	return infrasessionrunner.NewRedisAllocationNotifier(client), client
 }
 
 func buildESMControlStore(cfg *config.Config) esmcontrol.Store {
@@ -1350,12 +1415,16 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model string
 	var oneshot bool
 	var authProxy *bool
+	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
 	var unsyncedFilePaths []string
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
 		oneshot = startReq.Params.Oneshot
 		authProxy = startReq.Params.AuthProxy
+		sandbox = startReq.Params.Sandbox
+		docker = startReq.Params.Docker
 		credentialSource = startReq.Params.CredentialSource
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
@@ -1368,6 +1437,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
+		Sandbox: sandbox, Docker: docker,
 		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
@@ -1400,7 +1470,10 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	allocation := &sessionrunnercore.Allocation{
 		SessionID: sessionID, Pool: pool, BindingID: resolved.Binding.ID, Generation: 1,
-		Requirements: map[string]string{"agent_type": agentType}, RuntimeToken: token,
+		Requirements: map[string]string{
+			"agent_type": agentType,
+			"dind":       fmt.Sprintf("%t", docker != nil && docker.Enabled),
+		}, RuntimeToken: token,
 		RuntimeTokenHash: tokenHash, ProvisionSettings: settingsRaw,
 	}
 	if err := s.sessionRunnerStore.Enqueue(ctx, allocation); err != nil {
@@ -1413,6 +1486,11 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		TeamID: startReq.TeamID, Tags: startReq.Tags, StartedAt: startedAt, InitialMessage: initialMessage,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
+	}
+	if s.sessionAllocationNotifier != nil {
+		if err := s.sessionAllocationNotifier.Notify(ctx, pool); err != nil {
+			log.Printf("[SESSION_POOL] Warning: failed to notify runners for allocation %s: %v", sessionID, err)
+		}
 	}
 	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
 }
@@ -1798,10 +1876,14 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.usageRepo != nil {
 		usageErr = s.usageRepo.Close()
 	}
-	if s.kvStore != nil {
-		return errors.Join(managerErr, usageErr, s.kvStore.Close())
+	var notifierErr error
+	if s.sessionAllocationRedis != nil {
+		notifierErr = s.sessionAllocationRedis.Close()
 	}
-	return errors.Join(managerErr, usageErr)
+	if s.kvStore != nil {
+		return errors.Join(managerErr, usageErr, notifierErr, s.kvStore.Close())
+	}
+	return errors.Join(managerErr, usageErr, notifierErr)
 }
 
 // GetEcho returns the Echo instance for external access

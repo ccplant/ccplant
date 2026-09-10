@@ -1,12 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -76,6 +78,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if err != nil {
 		return nil, fmt.Errorf("initialize Kubernetes session manager: %w", err)
 	}
+	if cfg.SessionManager.RunnerPool != "" {
+		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
+	}
 	// Stock workloads belong to the session-manager revision that created them.
 	// Purge the complete inventory at the process boundary instead of relying
 	// only on template-hash reconciliation: a manager replacement can otherwise
@@ -87,9 +92,6 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		return nil, fmt.Errorf("purge stock sessions on session-manager startup: %w", err)
 	}
 	purgeCancel()
-	if cfg.SessionManager.RunnerPool != "" {
-		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
-	}
 
 	persistence := manager.GetClient()
 	applicationStore, wrapped, err := buildApplicationKVStore(cfg.KVStore, persistence)
@@ -132,12 +134,14 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace)
 	personalKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace)
 	sandboxPolicyRepo := repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace)
+	sessionProfileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, applicationNamespace, registry)
 	manager.SetSettingsRepository(settingsRepo)
 	manager.SetCredentialsRepository(credentialsRepo)
 	manager.SetUserFileRepository(userFileRepo)
 	manager.SetTeamConfigRepository(teamConfigRepo)
 	manager.SetPersonalAPIKeyRepository(personalKeyRepo)
 	manager.SetSandboxPolicyRepository(sandboxPolicyRepo)
+	manager.SetSessionProfileRepository(sessionProfileRepo)
 	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(persistence, applicationNamespace)
 	manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
 		cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())
@@ -397,9 +401,25 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		} else if revision != "" {
 			appliedRevision = revision
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", nil)
+		localRunnerIDs, inventoryErr := manager.ListRunnerSessionIDs(ctx)
+		if inventoryErr != nil {
+			log.Printf("[SESSION_MANAGER] List local runner inventory: %v", inventoryErr)
+		}
+		var heartbeatBody io.Reader
+		if inventoryErr == nil {
+			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs})
+			if marshalErr != nil {
+				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
+			} else {
+				heartbeatBody = bytes.NewReader(payload)
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(upstream, "/")+"/internal/session-managers/"+url.PathEscape(managerID)+"/heartbeat", heartbeatBody)
 		if err == nil {
 			req.Header.Set("Authorization", "Bearer "+token)
+			if heartbeatBody != nil {
+				req.Header.Set("Content-Type", "application/json")
+			}
 			if resp, doErr := client.Do(req); doErr != nil {
 				log.Printf("[SESSION_MANAGER] Runner pool heartbeat failed: %v", doErr)
 			} else {
@@ -584,29 +604,29 @@ func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfra
 			if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
 				continue
 			}
-			localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, false)
-			if err != nil {
-				log.Printf("[SESSION_MANAGER] Count pool %s idle runners: %v", pool.Pool, err)
-				continue
-			}
 			localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)
 			if err != nil {
 				log.Printf("[SESSION_MANAGER] Count pool %s runners: %v", pool.Pool, err)
 				continue
 			}
-			// A stock Service can survive after its runner registration has gone
-			// stale. Conversely, the parent registry can briefly outlive a deleted
-			// Service. Treat capacity as idle only when both inventories agree so a
-			// stale record on either side cannot permanently suppress replenishment.
-			idle := min(localIdle, pool.IdleRunners)
+			// The local Service inventory is authoritative for capability-specific
+			// idle counts. The parent only reports aggregate pool counts, which cannot
+			// distinguish DinD from non-DinD runners.
 			total := max(localTotal, pool.TotalRunners)
-			for idle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
-				if err := manager.CreateStockSessionForPool(ctx, pool.Pool, false); err != nil {
-					log.Printf("[SESSION_MANAGER] Create pool %s runner: %v", pool.Pool, err)
-					break
+			for _, dind := range []bool{false, true} {
+				localIdle, err := manager.CountStockSessionsForPool(ctx, pool.Pool, dind)
+				if err != nil {
+					log.Printf("[SESSION_MANAGER] Count pool %s idle runners (dind=%t): %v", pool.Pool, dind, err)
+					continue
 				}
-				idle++
-				total++
+				for localIdle < pool.MinIdle && (pool.MaxRunners <= 0 || total < pool.MaxRunners) {
+					if err := manager.CreateStockSessionForPool(ctx, pool.Pool, dind); err != nil {
+						log.Printf("[SESSION_MANAGER] Create pool %s runner (dind=%t): %v", pool.Pool, dind, err)
+						break
+					}
+					localIdle++
+					total++
+				}
 			}
 		}
 	})

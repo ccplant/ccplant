@@ -112,16 +112,18 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if c == nil {
 			continue
 		}
-		if c.Compatible() {
-			c.Model = modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment, req.Environment)
-		}
+		c.Model = modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment, req.Environment)
 		if err := c.Validate(agent); err != nil {
 			return fmt.Errorf("invalid %s connection: %w", agent, err)
 		}
-		for _, layer := range []map[string]string{req.ProfileEnvironment, req.Environment} {
-			for _, key := range modelprovider.ConnectionEnvKeys(agent) {
-				if _, ok := layer[key]; ok {
-					return fmt.Errorf("%s conflicts with managed %s connection; only model overrides are allowed", key, agent)
+		// Built-in authentication modes may coexist with legacy environment
+		// credentials. Only compatible API connections own these variables.
+		if c.Compatible() {
+			for _, layer := range []map[string]string{req.ProfileEnvironment, req.Environment} {
+				for _, key := range modelprovider.ConnectionEnvKeys(agent) {
+					if _, ok := layer[key]; ok {
+						return fmt.Errorf("%s conflicts with managed %s connection; only model overrides are allowed", key, agent)
+					}
 				}
 			}
 		}
@@ -129,6 +131,33 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 	req.CodexConnection, req.ClaudeConnection = codexConnection, claudeConnection
 	req.ModelConnectionsResolved = true
 	return nil
+}
+
+// applySelectedAgentDefaultModel resolves the provider-specific default only
+// after auto agent selection. An explicit session/profile model always wins.
+func applySelectedAgentDefaultModel(req *entities.RunServerRequest) {
+	if req == nil || req.Model != "" {
+		return
+	}
+	agent := "claude"
+	fallback := ""
+	switch req.AgentType {
+	case "codex-acp":
+		agent = "codex"
+		if req.CodexConnection != nil {
+			fallback = req.CodexConnection.Model
+		}
+	case "", "claude-acp", "claude-legacy", "claude":
+		if req.ClaudeConnection != nil {
+			fallback = req.ClaudeConnection.Model
+		}
+	default:
+		return
+	}
+	// Resolve the model for the selected agent again at the final selection
+	// boundary. This keeps profile/request model overrides authoritative even
+	// when the inherited team connection already carries its default model.
+	req.Model = modelprovider.ModelForLayers(agent, fallback, req.ProfileEnvironment, req.Environment)
 }
 
 func applyModelConnections(settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) {

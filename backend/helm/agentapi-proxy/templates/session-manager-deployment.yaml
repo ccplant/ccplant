@@ -19,6 +19,13 @@
       allocated sessions inherit the same sidecar configuration. */}}
 {{- $scia := .Values.scia | default dict }}
 {{- $github := $manager.github | default dict }}
+{{- $rootGitHub := .Values.github | default dict }}
+{{- $githubApp := dig "app" (dict) $github }}
+{{- if and (not (dig "id" "" $githubApp)) (not (dig "privateKey" "secretName" "" $githubApp)) }}
+{{- $githubApp = dig "app" (dict) $rootGitHub }}
+{{- end }}
+{{- $githubEnterpriseApiUrl := dig "enterprise" "apiUrl" "" $github | default (dig "enterprise" "apiUrl" "" $rootGitHub) }}
+{{- $githubEnterpriseBaseUrl := dig "enterprise" "baseUrl" "" $github | default (dig "enterprise" "baseUrl" "" $rootGitHub) }}
 {{- $k8s := $manager.kubernetesSession | default dict }}
 {{- $provisioner := $k8s.provisioner | default dict }}
 {{- $provisionerToken := $provisioner.tokenSecretRef | default dict }}
@@ -147,6 +154,18 @@ spec:
                 secretKeyRef:
                   name: {{ required "sessionManager.runner.connectionTokenSecretRef.name is required when runner mode is enabled" (dig "connectionTokenSecretRef" "name" "" $runner) | quote }}
                   key: {{ dig "connectionTokenSecretRef" "key" "connection-token" $runner | quote }}
+            {{- /* The outbound control worker signs local commands with the
+                  HMAC secret, falling back to the connection token. Without an
+                  explicit secret the HMAC forwarding surface (session lifecycle
+                  and codex device auth workloads) never registers, so every
+                  tunneled command 404s. Default to the runner connection token
+                  so runner-mode managers keep the surface enabled. */}}
+            {{- $runnerHMACName := dig "hmacSecretRef" "name" "" $runner }}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ ternary $runnerHMACName (dig "connectionTokenSecretRef" "name" "" $runner) (ne $runnerHMACName "") | quote }}
+                  key: {{ ternary (dig "hmacSecretRef" "key" "hmac-secret" $runner) (dig "connectionTokenSecretRef" "key" "connection-token" $runner) (ne $runnerHMACName "") | quote }}
             {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}
@@ -276,11 +295,11 @@ spec:
                 secretKeyRef:
                   name: {{ required "sessionManager.kubernetesSession.provisioner.tokenSecretRef.name is required" $provisionerToken.name | quote }}
                   key: {{ $provisionerToken.key | default "provisioner-token" | quote }}
-            {{- if or (dig "token" "" $github) (dig "tokenRef" "name" "" $github) (and (dig "app" "id" "" $github) (dig "app" "privateKey" "secretName" "" $github)) }}
+            {{- if or (dig "token" "" $github) (dig "tokenRef" "name" "" $github) (and (dig "id" "" $githubApp) (dig "privateKey" "secretName" "" $githubApp)) }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_SECRET_NAME
               value: {{ printf "%s-github-session" (include "agentapi-proxy.fullname" .) | quote }}
             {{- end }}
-            {{- if or (dig "enterprise" "apiUrl" "" $github) (dig "enterprise" "baseUrl" "" $github) }}
+            {{- if or $githubEnterpriseApiUrl $githubEnterpriseBaseUrl }}
             - name: AGENTAPI_K8S_SESSION_GITHUB_CONFIG_SECRET_NAME
               value: {{ printf "%s-github-config" (include "agentapi-proxy.fullname" .) | quote }}
             {{- end }}

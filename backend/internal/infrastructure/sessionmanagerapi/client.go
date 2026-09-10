@@ -16,7 +16,6 @@ import (
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
-	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -39,9 +38,17 @@ func (e *HTTPError) Error() string {
 // Client is the API-side implementation of the session lifecycle and allocation
 // ports. It has no Kubernetes dependency.
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL                  string
+	token                    string
+	http                     *http.Client
+	provisionSettingsBuilder portrepos.RemoteProvisionSettingsBuilder
+}
+
+// SetProvisionSettingsBuilder installs the API-side settings resolver. The
+// public API owns credential decryption; the isolated session manager receives
+// only the already-resolved, ephemeral provision payload.
+func (c *Client) SetProvisionSettingsBuilder(builder portrepos.RemoteProvisionSettingsBuilder) {
+	c.provisionSettingsBuilder = builder
 }
 
 type ClientOption func(*Client)
@@ -93,15 +100,6 @@ var _ SessionAnnotationUpdater = (*Client)(nil)
 var _ StockManager = (*Client)(nil)
 var _ PendingAllocationDeleter = (*Client)(nil)
 var _ ProvisionRequestDeleter = (*Client)(nil)
-var _ codexauth.WorkloadLauncher = (*Client)(nil)
-
-func (c *Client) StartCodexDeviceAuth(ctx context.Context, request codexauth.WorkloadRequest) error {
-	return c.do(ctx, http.MethodPost, "/codex-device-auth", request, nil)
-}
-
-func (c *Client) CancelCodexDeviceAuth(ctx context.Context, attemptID string) error {
-	return c.do(ctx, http.MethodDelete, "/codex-device-auth/"+url.PathEscape(attemptID), nil, nil)
-}
 
 func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/health", nil, nil)
@@ -195,6 +193,14 @@ func (c *Client) CreateSession(ctx context.Context, id string, request *entities
 }
 
 func (c *Client) createSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	if c.provisionSettingsBuilder != nil && request.ProvisionSettings == nil {
+		settings, err := c.provisionSettingsBuilder.BuildRemoteProvisionSettings(ctx, id, request)
+		if err != nil {
+			return nil, fmt.Errorf("build API-side provision settings: %w", err)
+		}
+		request = cloneRunServerRequest(request)
+		request.ProvisionSettings = settings
+	}
 	var response SessionDTO
 	input := createSessionRequest{Request: request, WebhookPayload: webhookPayload}
 	if err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id), input, &response); err != nil {
@@ -204,12 +210,23 @@ func (c *Client) createSession(ctx context.Context, id string, request *entities
 }
 
 func (c *Client) BuildRemoteProvisionSettings(ctx context.Context, id string, request *entities.RunServerRequest) (*sessionsettings.SessionSettings, error) {
+	if c.provisionSettingsBuilder != nil {
+		return c.provisionSettingsBuilder.BuildRemoteProvisionSettings(ctx, id, request)
+	}
 	var response sessionsettings.SessionSettings
 	input := provisionSettingsRequest{Request: request}
 	if err := c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/provision-settings", input, &response); err != nil {
 		return nil, err
 	}
 	return &response, nil
+}
+
+func cloneRunServerRequest(request *entities.RunServerRequest) *entities.RunServerRequest {
+	if request == nil {
+		return nil
+	}
+	copy := *request
+	return &copy
 }
 
 func (c *Client) GetSession(id string) entities.Session {

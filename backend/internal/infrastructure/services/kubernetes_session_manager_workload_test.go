@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -133,6 +135,28 @@ func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) 
 	}
 	if len(deployments.Items) != 0 {
 		t.Fatalf("Expected no deployments, got %d", len(deployments.Items))
+	}
+}
+
+func TestBuildDeploymentMountsGitHubConfigSecretWithoutAuthentication(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.GitHubConfigSecretName = "github-config"
+	session := newWorkloadTestSession()
+
+	deployment, err := manager.buildDeployment(context.Background(), session, session.Request())
+	if err != nil {
+		t.Fatalf("buildDeployment() error = %v", err)
+	}
+
+	envFrom := deployment.Spec.Template.Spec.Containers[0].EnvFrom
+	if len(envFrom) != 1 {
+		t.Fatalf("EnvFrom = %+v, want only github-config", envFrom)
+	}
+	if envFrom[0].SecretRef == nil || envFrom[0].SecretRef.Name != "github-config" {
+		t.Fatalf("EnvFrom[0] = %+v, want github-config SecretRef", envFrom[0])
+	}
+	if envFrom[0].SecretRef.Optional == nil || !*envFrom[0].SecretRef.Optional {
+		t.Fatalf("github-config SecretRef Optional = %v, want true", envFrom[0].SecretRef.Optional)
 	}
 }
 
@@ -450,6 +474,91 @@ func TestPurgeStockSessionsKeepsAdoptedSessionWithStaleStockWorkloadLabels(t *te
 	}
 }
 
+func TestPurgeStockSessionsKeepsAllocatedSessionWithStaleStockServiceLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		stockState   string
+		secretLabels map[string]string
+		parentRunner bool
+	}{
+		{
+			name:       "session settings",
+			stockState: "true",
+			secretLabels: map[string]string{
+				"agentapi.proxy/resource": "session-settings",
+			},
+		},
+		{
+			name:       "provision request",
+			stockState: "claiming",
+			secretLabels: map[string]string{
+				"agentapi.proxy/provision-request": "true",
+			},
+		},
+		{
+			name:         "parent runner allocation",
+			stockState:   "true",
+			parentRunner: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newWorkloadTestManager(t, false)
+			ctx := context.Background()
+			sessionID := "allocated-stock-session"
+			name := "agentapi-session-" + sessionID
+			if tc.parentRunner {
+				parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if got := r.Header.Get("Authorization"); got != "Bearer manager-token" {
+						t.Errorf("Authorization = %q", got)
+					}
+					_, _ = w.Write([]byte(`{"allocated_runner_ids":["` + sessionID + `"]}`))
+				}))
+				t.Cleanup(parent.Close)
+				manager.ConfigureSessionRunnerPool(parent.URL, "manager-a", "manager-token", "test-pool")
+			}
+			stockLabels := map[string]string{
+				"app.kubernetes.io/name":       "agentapi-session",
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"agentapi.proxy/session-id":    sessionID,
+				"agentapi.proxy/stock":         tc.stockState,
+			}
+
+			if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: stockLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create stale-labeled service: %v", err)
+			}
+			if _, err := manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: stockLabels},
+			}, metav1.CreateOptions{}); err != nil {
+				t.Fatalf("Failed to create stale-labeled pod: %v", err)
+			}
+
+			if tc.secretLabels != nil {
+				secretLabels := map[string]string{"agentapi.proxy/session-id": sessionID}
+				for key, value := range tc.secretLabels {
+					secretLabels[key] = value
+				}
+				if _, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: name + "-allocation-proof", Namespace: "test-ns", Labels: secretLabels},
+				}, metav1.CreateOptions{}); err != nil {
+					t.Fatalf("Failed to create allocation artifact: %v", err)
+				}
+			}
+
+			if err := manager.PurgeStockSessions(ctx); err != nil {
+				t.Fatalf("PurgeStockSessions failed: %v", err)
+			}
+			if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); err != nil {
+				t.Fatalf("Expected allocated service to remain, got err=%v", err)
+			}
+			if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+				t.Fatalf("Expected allocated pod to remain, got err=%v", err)
+			}
+		})
+	}
+}
+
 func TestPurgeStaleStockSessionsUsesEffectiveSessionPodTemplateHash(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	ctx := context.Background()
@@ -544,6 +653,108 @@ func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
 	}
 	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-current-creating-svc", metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected current creating stock to remain, got %v", err)
+	}
+}
+
+func TestCountStockSessionsIncludesCreatingReservations(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		id    string
+		state string
+		dind  string
+	}{
+		{id: "ready-plain", state: "true", dind: "false"},
+		{id: "creating-plain", state: "creating", dind: "false"},
+		{id: "claiming-plain", state: "claiming", dind: "false"},
+		{id: "creating-dind", state: "creating", dind: "true"},
+	} {
+		labels := map[string]string{
+			"app.kubernetes.io/managed-by":      "agentapi-proxy",
+			"agentapi.proxy/stock":              tc.state,
+			"agentapi.proxy/capability-sandbox": "true",
+			"agentapi.proxy/capability-dind":    tc.dind,
+		}
+		_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + tc.id + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create service %s: %v", tc.id, err)
+		}
+	}
+
+	plain, err := manager.CountStockSessions(ctx, false)
+	if err != nil {
+		t.Fatalf("CountStockSessions(false): %v", err)
+	}
+	if plain != 2 {
+		t.Fatalf("CountStockSessions(false) = %d, want 2", plain)
+	}
+	dind, err := manager.CountStockSessions(ctx, true)
+	if err != nil {
+		t.Fatalf("CountStockSessions(true): %v", err)
+	}
+	if dind != 1 {
+		t.Fatalf("CountStockSessions(true) = %d, want 1", dind)
+	}
+}
+
+func TestCountStockSessionsExcludesAllocatedDirectRunners(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/session-managers/manager-a/heartbeat" {
+			t.Errorf("heartbeat path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"allocated_runner_ids":["allocated-stock"]}`))
+	}))
+	t.Cleanup(parent.Close)
+	manager.ConfigureSessionRunnerPool(parent.URL, "manager-a", "manager-token", "test-pool")
+
+	for _, id := range []string{"allocated-stock", "idle-stock"} {
+		_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + id + "-svc", Namespace: "test-ns", Labels: map[string]string{
+				"app.kubernetes.io/managed-by":      "agentapi-proxy",
+				"agentapi.proxy/stock":              "true",
+				"agentapi.proxy/session-id":         id,
+				"agentapi.proxy/session-pool":       "test-pool",
+				"agentapi.proxy/capability-sandbox": "true",
+				"agentapi.proxy/capability-dind":    "false",
+			}}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create service %s: %v", id, err)
+		}
+	}
+
+	count, err := manager.CountStockSessionsForPool(context.Background(), "test-pool", false)
+	if err != nil {
+		t.Fatalf("CountStockSessionsForPool: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("CountStockSessionsForPool = %d, want 1", count)
+	}
+}
+
+func TestCreateStockSessionReturnsBeforeWorkloadIsReady(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.PodStartTimeout = 1
+
+	started := time.Now()
+	if err := manager.CreateStockSession(context.Background(), false); err != nil {
+		t.Fatalf("CreateStockSession: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("CreateStockSession waited %s for workload readiness", elapsed)
+	}
+
+	services, err := manager.client.CoreV1().Services("test-ns").List(context.Background(), metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/stock=creating",
+	})
+	if err != nil {
+		t.Fatalf("list creating stock services: %v", err)
+	}
+	if len(services.Items) != 1 {
+		t.Fatalf("creating stock services = %d, want 1", len(services.Items))
 	}
 }
 

@@ -74,7 +74,8 @@ export default function SessionProfileEditor({
   const [pool, setPool] = useState('')
   const [availablePools, setAvailablePools] = useState<LogicalSessionPool[]>([])
   const [agentType, setAgentType] = useState('')
-  const [model, setModel] = useState('')
+  const [codexModel, setCodexModel] = useState('')
+  const [claudeModel, setClaudeModel] = useState('')
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
 
   // Docker / DinD fields
@@ -141,11 +142,16 @@ export default function SessionProfileEditor({
       const cfg = editingProfile.config
       setPool(cfg?.pool ?? '')
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
-      setModel(cfg?.params?.model ?? '')
+      setCodexModel(cfg?.environment?.CODEX_MODEL ?? '')
+      setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
       setMcpServers(cfg?.mcp_servers ?? {})
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
-        setEnvPairs(Object.entries(cfg.environment).map(([key, value]) => ({ key, value })))
+        const generalEnvironment = Object.entries(cfg.environment)
+          .filter(([key]) => key !== 'CODEX_MODEL' && key !== 'ANTHROPIC_MODEL')
+        setEnvPairs(generalEnvironment.length > 0
+          ? generalEnvironment.map(([key, value]) => ({ key, value }))
+          : [{ key: '', value: '' }])
       } else {
         setEnvPairs([{ key: '', value: '' }])
       }
@@ -199,7 +205,8 @@ export default function SessionProfileEditor({
       setTagPairs([{ key: '', value: '' }])
       setPool('')
       setAgentType('')
-      setModel('')
+      setCodexModel('')
+      setClaudeModel('')
       setMcpServers({})
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -279,7 +286,11 @@ export default function SessionProfileEditor({
     try {
       const client = createAgentAPIProxyClientFromStorage()
 
-      const environment = pairsToRecord(envPairs)
+      const environment = {
+        ...pairsToRecord(envPairs),
+        ...(codexModel.trim() ? { CODEX_MODEL: codexModel.trim() } : {}),
+        ...(claudeModel.trim() ? { ANTHROPIC_MODEL: claudeModel.trim() } : {}),
+      }
       const tags = pairsToRecord(tagPairs)
       const parsedUnsyncedFilePaths = unsyncedFilePaths
         .split('\n')
@@ -313,7 +324,6 @@ export default function SessionProfileEditor({
       const params = {
         ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
-        ...(model.trim() ? { model: model.trim() } : {}),
         sandbox: sandboxConfig,
         ...(dockerConfig ? { docker: dockerConfig } : {}),
         ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
@@ -534,11 +544,16 @@ export default function SessionProfileEditor({
             </div>}
             {active.slug === 'models' && <div className="space-y-5">
                   <div className="space-y-3">
-                    <p className="text-sm font-medium">モデルの上書き</p>
-                    <p className="text-xs text-gray-500">空欄なら接続設定のデフォルトモデルを使用します。指定値は選択されたエージェントに応じて適用されます。</p>
-                    <label className="block text-sm">モデル ID
-                      <input aria-label="モデル ID" value={model}
-                        onChange={e => { setModel(e.target.value); setDirty(true) }}
+                    <p className="text-sm font-medium">エージェントごとのモデル</p>
+                    <p className="text-xs text-gray-500">このプロファイルから開始するセッションのモデルをまとめて設定します。空欄のエージェントは、個人・チームの接続設定にあるデフォルトモデルを継承します。</p>
+                    <label className="block text-sm">Codex モデル ID
+                      <input aria-label="Codex モデル ID" value={codexModel}
+                        onChange={e => { setCodexModel(e.target.value); setDirty(true) }}
+                        placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
+                    </label>
+                    <label className="block text-sm">Claude Code (Anthropic) モデル ID
+                      <input aria-label="Claude Code (Anthropic) モデル ID" value={claudeModel}
+                        onChange={e => { setClaudeModel(e.target.value); setDirty(true) }}
                         placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
                     </label>
                   </div>

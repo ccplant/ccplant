@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 type SessionPoolController struct {
 	store    core.Store
 	resolver *core.Resolver
+	notifier core.AllocationNotifier
 	liveness managerLiveness
 	routes   portrepos.SessionRouteRepository
 	profile  interface {
@@ -61,6 +63,11 @@ func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRep
 func (c *SessionPoolController) WithManagerLiveness(liveness managerLiveness) *SessionPoolController {
 	c.liveness = liveness
 	c.resolver.WithManagerLiveness(liveness)
+	return c
+}
+
+func (c *SessionPoolController) WithAllocationNotifier(notifier core.AllocationNotifier) *SessionPoolController {
+	c.notifier = notifier
 	return c
 }
 
@@ -944,10 +951,11 @@ func (c *SessionPoolController) ListAvailablePools(ctx echo.Context) error {
 }
 
 type runnerRegisterRequest struct {
-	RunnerID  string `json:"runner_id"`
-	Pool      string `json:"pool"`
-	PodName   string `json:"pod_name,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
+	RunnerID     string            `json:"runner_id"`
+	Pool         string            `json:"pool"`
+	PodName      string            `json:"pod_name,omitempty"`
+	Namespace    string            `json:"namespace,omitempty"`
+	Capabilities map[string]string `json:"capabilities,omitempty"`
 }
 
 func (c *SessionPoolController) RegisterRunner(ctx echo.Context) error {
@@ -971,7 +979,7 @@ func (c *SessionPoolController) RegisterRunner(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create runner token")
 	}
-	runner := &core.Runner{ID: input.RunnerID, ManagerID: manager.ID, Pool: pool.Pool, TokenHash: tokenHash, Status: core.RunnerIdle, PodName: input.PodName, Namespace: input.Namespace}
+	runner := &core.Runner{ID: input.RunnerID, ManagerID: manager.ID, Pool: pool.Pool, Capabilities: input.Capabilities, TokenHash: tokenHash, Status: core.RunnerIdle, PodName: input.PodName, Namespace: input.Namespace}
 	if err := c.store.CreateRunner(ctx.Request().Context(), runner); err != nil {
 		return sessionRunnerStoreError(err)
 	}
@@ -998,6 +1006,16 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 	}
 	wait := parseRunnerWait(ctx.QueryParam("wait"))
 	deadline := c.now().Add(wait)
+	var notifications <-chan struct{}
+	if wait > 0 && c.notifier != nil {
+		var subscribeErr error
+		var cancelSubscription func()
+		notifications, cancelSubscription, subscribeErr = c.notifier.Subscribe(ctx.Request().Context(), runner.Pool)
+		if subscribeErr != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "allocation notifications are unavailable").SetInternal(subscribeErr)
+		}
+		defer cancelSubscription()
+	}
 	for {
 		allocation, found, claimErr := c.store.ClaimNext(ctx.Request().Context(), runner.Pool, runner.ID, 45*time.Second)
 		if claimErr != nil {
@@ -1014,10 +1032,32 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 		if wait <= 0 || c.now().After(deadline) {
 			return ctx.NoContent(http.StatusNoContent)
 		}
+		remaining := deadline.Sub(c.now())
+		if remaining <= 0 {
+			return ctx.NoContent(http.StatusNoContent)
+		}
+		timer := time.NewTimer(remaining)
 		select {
 		case <-ctx.Request().Context().Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return ctx.Request().Context().Err()
-		case <-time.After(250 * time.Millisecond):
+		case <-timer.C:
+			return ctx.NoContent(http.StatusNoContent)
+		case _, ok := <-notifications:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if !ok {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "allocation notifications are unavailable")
+			}
 		}
 	}
 }
@@ -1077,12 +1117,26 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return sessionRunnerStoreError(err)
 		}
 	}
+	var heartbeat struct {
+		LocalRunnerIDs *[]string `json:"local_runner_ids"`
+	}
+	if ctx.Request().Body != nil && ctx.Request().Body != http.NoBody {
+		if err := ctx.Bind(&heartbeat); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid heartbeat request")
+		}
+	}
+	if heartbeat.LocalRunnerIDs != nil {
+		if err := c.reconcileMissingManagerRunners(ctx.Request().Context(), manager.ID, *heartbeat.LocalRunnerIDs); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
 	pools, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
 	owned := make([]*core.PoolSupplier, 0)
 	registeredRunnerIDs := make([]string, 0)
+	allocatedRunnerIDs := make([]string, 0)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -1107,6 +1161,8 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
 				if runner.Status == core.RunnerIdle {
 					copy.IdleRunners++
+				} else if runner.Status == core.RunnerRunning {
+					allocatedRunnerIDs = append(allocatedRunnerIDs, runner.ID)
 				}
 			}
 			owned = append(owned, &copy)
@@ -1115,8 +1171,48 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
 		"registered_runner_ids": registeredRunnerIDs,
+		"allocated_runner_ids":  allocatedRunnerIDs,
 		"upstream_version":      buildinfo.Version,
 	})
+}
+
+func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
+	local := make(map[string]struct{}, len(localRunnerIDs))
+	for _, id := range localRunnerIDs {
+		local[id] = struct{}{}
+	}
+	runners, err := c.store.ListRunners(ctx, "")
+	if err != nil {
+		return err
+	}
+	allocations, err := c.store.ListAllocations(ctx, "")
+	if err != nil {
+		return err
+	}
+	allocationsByRunner := make(map[string][]string)
+	for _, allocation := range allocations {
+		if allocation.RunnerID != "" {
+			allocationsByRunner[allocation.RunnerID] = append(allocationsByRunner[allocation.RunnerID], allocation.SessionID)
+		}
+	}
+	for _, runner := range runners {
+		if runner.ManagerID != managerID || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
+			continue
+		}
+		if _, ok := local[runner.ID]; ok {
+			continue
+		}
+		for _, sessionID := range allocationsByRunner[runner.ID] {
+			if err := c.store.DeleteAllocation(ctx, sessionID); err != nil && !errors.Is(err, core.ErrNotFound) {
+				return err
+			}
+		}
+		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
+			return err
+		}
+		log.Printf("[SESSION_RUNNER] Removed stale %s runner %s absent from manager %s inventory", runner.Status, runner.ID, managerID)
+	}
+	return nil
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {

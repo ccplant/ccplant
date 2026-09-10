@@ -32,6 +32,7 @@ describe('proxy transport helpers', () => {
       Cookie: 'agentapi_token=encrypted',
       Authorization: 'Bearer browser-supplied',
       'X-API-Key': 'browser-supplied',
+      'X-Forwarded-Prefix': '/attacker-controlled',
     })
 
     const result = buildUpstreamRequestHeaders(source, 'cookie-token')
@@ -44,6 +45,7 @@ describe('proxy transport helpers', () => {
     expect(result.get('acp-session-id')).toBe('acp-1')
     expect(result.get('cookie')).toBeNull()
     expect(result.get('x-api-key')).toBeNull()
+    expect(result.get('x-forwarded-prefix')).toBeNull()
     expect(result.get('authorization')).toBe('Bearer cookie-token')
   })
 

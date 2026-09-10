@@ -23,6 +23,11 @@ describe('navItemsForScope', () => {
       expect(navItemsForScope(scope).map((item) => item.slug)).toContain(DEFAULT_SETTINGS_SLUG)
     }
   })
+
+  it('labels the Claude authentication page by its actual purpose', () => {
+    expect(navItemsForScope('personal').find((item) => item.slug === 'ai-providers')?.label)
+      .toBe('Claude Code 認証')
+  })
 })
 
 describe('settingsHref', () => {

@@ -20,7 +20,7 @@ func connectionPatch(t *testing.T, body string) map[string]json.RawMessage {
 	return p
 }
 func TestConnectionKeyLifecycle(t *testing.T) {
-	original := &modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://gateway.example", Model: "default", Authentication: "bearer_token", APIKey: "secret", ModelAliases: map[string]string{"haiku": "old"}}
+	original := &modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://gateway.example", Model: "default", Authentication: "api_key", APIKey: "secret", ModelAliases: map[string]string{"haiku": "old"}}
 	kept, err := mergeModelConnection(original, connectionPatch(t, `{"mode":"anthropic_compatible","model":"new","model_aliases":{}}`), "claude")
 	require.NoError(t, err)
 	require.Equal(t, "secret", kept.APIKey)
@@ -73,6 +73,20 @@ func TestCompatibleConnectionUsesSystemBaseURLDefault(t *testing.T) {
 	claude, err := mergeModelConnection(nil, connectionPatch(t, `{"mode":"anthropic_compatible","model":"default","authentication":"api_key","api_key":"secret"}`), "claude")
 	require.NoError(t, err)
 	require.Equal(t, "https://system-anthropic.example", claude.BaseURL)
+}
+
+func TestSettingsResponseIncludesSystemBaseURLDefaults(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", " https://system-openai.example/v1 ")
+	t.Setenv("ANTHROPIC_BASE_URL", " https://system-anthropic.example ")
+
+	response := (&SettingsController{}).toResponse(entities.NewSettings("user"))
+	require.Equal(t, "https://system-openai.example/v1", response.DefaultOpenAIBaseURL)
+	require.Equal(t, "https://system-anthropic.example", response.DefaultAnthropicBaseURL)
+}
+
+func TestClaudeCompatibleConnectionRejectsBearerAuthentication(t *testing.T) {
+	_, err := mergeModelConnection(nil, connectionPatch(t, `{"mode":"anthropic_compatible","base_url":"https://gateway.example","model":"default","authentication":"bearer_token","api_key":"secret"}`), "claude")
+	require.ErrorContains(t, err, "invalid connection authentication")
 }
 
 func TestRejectedModelMetadataDoesNotMutateStoredConnection(t *testing.T) {
