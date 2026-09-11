@@ -5950,19 +5950,35 @@
     },
     "/session-managers/{id}/logs": {
       "get": {
-        "summary": "Read session manager or runner logs",
-        "description": "Requires manage access to at least one pool supplied by the manager. Omit runner_id for manager logs.",
+        "summary": "Read session manager logs",
+        "description": "Requires manage access to at least one pool supplied by the manager.",
         "operationId": "getSessionManagerLogs",
         "tags": ["Session Pools"],
         "parameters": [
           {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "runner_id", "in": "query", "required": false, "schema": {"type": "string"}},
           {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
         ],
         "responses": {
           "200": {"description": "Log lines and source"},
-          "404": {"description": "Manager or runner is not manageable by the caller"},
+          "404": {"description": "Manager is not manageable by the caller"},
           "503": {"description": "Manager control channel is offline"}
+        }
+      }
+    },
+    "/session-runners/{id}/logs": {
+      "get": {
+        "summary": "Read session runner logs",
+        "description": "Requires manage access to the runner's pool.",
+        "operationId": "getSessionRunnerLogs",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+        ],
+        "responses": {
+          "200": {"description": "Runner log lines and source"},
+          "404": {"description": "Runner is not manageable by the caller"},
+          "503": {"description": "Runner's manager control channel is offline"}
         }
       }
     },

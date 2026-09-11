@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,12 +25,48 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-type statusTestTunnel struct{ connected map[string]bool }
+type statusTestTunnel struct {
+	connected map[string]bool
+	mu        sync.Mutex
+	requests  []string
+}
 
 func (t *statusTestTunnel) IsConnected(_ context.Context, id string) bool { return t.connected[id] }
 func (t *statusTestTunnel) Do(_ context.Context, id, _, _ string, req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.requests = append(t.requests, req.URL.String())
+	t.mu.Unlock()
 	body := `{"version":"v1.2.3","running_runners":2,"used_runners":1}`
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
+}
+
+func TestManagerAndRunnerLogsUseSeparateEndpoints(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	requestCtx := context.Background()
+	requireNoError(t, store.CreateLogicalPool(requestCtx, &core.LogicalPool{Name: "managed", Enabled: true}))
+	requireNoError(t, store.CreateManager(requestCtx, &core.Manager{ID: "manager-a", Enabled: true}))
+	requireNoError(t, store.CreatePoolSupplier(requestCtx, &core.PoolSupplier{Pool: "managed", ManagerID: "manager-a", Enabled: true}))
+	requireNoError(t, store.CreateBinding(requestCtx, &core.Binding{Pool: "managed", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleManage, Enabled: true}))
+	requireNoError(t, store.CreateRunner(requestCtx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "managed", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(requestCtx, &core.Allocation{SessionID: "session-a", Pool: "managed", ManagerID: "manager-a", RunnerID: "runner-a", Status: core.AllocationRunning}))
+	tunnel := &statusTestTunnel{connected: map[string]bool{"manager-a": true}}
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
+	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
+
+	managerLogs := callSessionPoolHandlerAs(t, controller.GetManagerLogs, http.MethodGet, "/session-managers/manager-a/logs?tail=10", nil, map[string]string{"id": "manager-a"}, nil, user)
+	if managerLogs.Code != http.StatusOK {
+		t.Fatalf("manager logs status=%d body=%s", managerLogs.Code, managerLogs.Body.String())
+	}
+	runnerLogs := callSessionPoolHandlerAs(t, controller.GetRunnerLogs, http.MethodGet, "/session-runners/runner-a/logs?tail=20", nil, map[string]string{"id": "runner-a"}, nil, user)
+	if runnerLogs.Code != http.StatusOK {
+		t.Fatalf("runner logs status=%d body=%s", runnerLogs.Code, runnerLogs.Body.String())
+	}
+
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if len(tunnel.requests) != 2 || tunnel.requests[0] != "http://manager/internal/esm-management/logs?tail=10" || tunnel.requests[1] != "http://manager/internal/esm-management/logs?session_id=session-a&tail=20" {
+		t.Fatalf("requests=%v", tunnel.requests)
+	}
 }
 
 func TestListManageablePoolStatusFiltersPoolsAndFetchesLiveManagerStatus(t *testing.T) {

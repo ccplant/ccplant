@@ -104,6 +104,35 @@ func (c *SessionPoolController) GetManagerLogs(ctx echo.Context) error {
 	if err := c.requireManageableManager(ctx, managerID); err != nil {
 		return err
 	}
+	return c.proxyManagerLogs(ctx, managerID, "")
+}
+
+func (c *SessionPoolController) GetRunnerLogs(ctx echo.Context) error {
+	runnerID := ctx.Param("id")
+	runner, err := c.store.GetRunner(ctx.Request().Context(), runnerID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "runner not found")
+	}
+	if ok, checkErr := c.canManagePool(ctx.Request().Context(), auth.GetUserFromContext(ctx), runner.Pool); checkErr != nil {
+		return sessionRunnerStoreError(checkErr)
+	} else if !ok {
+		return echo.NewHTTPError(http.StatusNotFound, "runner not found")
+	}
+	sessionID := runnerID
+	allocations, listErr := c.store.ListAllocations(ctx.Request().Context(), runner.Pool)
+	if listErr != nil {
+		return sessionRunnerStoreError(listErr)
+	}
+	for _, allocation := range allocations {
+		if allocation.RunnerID == runnerID {
+			sessionID = allocation.SessionID
+			break
+		}
+	}
+	return c.proxyManagerLogs(ctx, runner.ManagerID, sessionID)
+}
+
+func (c *SessionPoolController) proxyManagerLogs(ctx echo.Context, managerID, sessionID string) error {
 	if c.managerTunnel == nil || !c.managerTunnel.IsConnected(ctx.Request().Context(), managerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager control channel is offline")
 	}
@@ -113,24 +142,8 @@ func (c *SessionPoolController) GetManagerLogs(ctx echo.Context) error {
 		tail = 200
 	}
 	values.Set("tail", strconv.Itoa(tail))
-	if runnerID := ctx.QueryParam("runner_id"); runnerID != "" {
-		runner, err := c.store.GetRunner(ctx.Request().Context(), runnerID)
-		if err != nil || runner.ManagerID != managerID {
-			return echo.NewHTTPError(http.StatusNotFound, "runner not found")
-		}
-		allocations, listErr := c.store.ListAllocations(ctx.Request().Context(), runner.Pool)
-		if listErr != nil {
-			return sessionRunnerStoreError(listErr)
-		}
-		for _, allocation := range allocations {
-			if allocation.RunnerID == runnerID {
-				values.Set("session_id", allocation.SessionID)
-				break
-			}
-		}
-		if values.Get("session_id") == "" {
-			values.Set("session_id", runnerID)
-		}
+	if sessionID != "" {
+		values.Set("session_id", sessionID)
 	}
 	req, _ := http.NewRequestWithContext(ctx.Request().Context(), http.MethodGet, "http://manager/internal/esm-management/logs?"+values.Encode(), nil)
 	resp, err := c.managerTunnel.Do(ctx.Request().Context(), managerID, "", "", req)
