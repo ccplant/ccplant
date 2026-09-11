@@ -75,6 +75,11 @@ func (n *NoopStatusRepository) UpdateSessionInCache(_ context.Context, _ string,
 	return nil
 }
 
+// UpdateSessionStatusInCache does nothing (no-op).
+func (n *NoopStatusRepository) UpdateSessionStatusInCache(_ context.Context, _, _, _ string, _ time.Time, _ time.Duration) error {
+	return nil
+}
+
 // DeleteSessionFromCache does nothing (no-op).
 func (n *NoopStatusRepository) DeleteSessionFromCache(_ context.Context, _ string, _ string, _ time.Duration) error {
 	return nil

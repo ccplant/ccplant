@@ -160,6 +160,7 @@ type KubernetesSessionManager struct {
 	// When Redis is configured this reduces Kubernetes API calls for frequent
 	// ListSessions requests.
 	sessionListCacheRepo portrepos.SessionListCacheRepository
+	sessionListLoad      singleflight.Group
 	allocationListMu     sync.RWMutex
 	allocationListCache  *corev1.SecretList
 	allocationListUntil  time.Time
@@ -1877,27 +1878,30 @@ func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) [
 			m.hydrateSessionStatusMessages(ctx, sessions)
 			return m.withSessionAllocations(ctx, sessions, filter)
 		}
+
+		// Coalesce concurrent misses for the same selector. Returning DTOs keeps
+		// callers from sharing mutable Session objects produced by the loader.
+		value, _, _ := m.sessionListLoad.Do(cacheKey, func() (interface{}, error) {
+			if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
+				return cached, nil
+			}
+			allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
+			m.hydrateSessionStatusMessages(ctx, allSessions)
+			dtos := sessionsToCacheDTOs(allSessions)
+			if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
+				log.Printf("[K8S_SESSION] Warning: failed to populate session list cache: %v", err)
+			}
+			return dtos, nil
+		})
+		cached := value.([]portrepos.CachedSessionDTO)
+		sessions := m.filterSessionsFromCache(cached, filter)
+		return m.withSessionAllocations(ctx, sessions, filter)
 	}
 
 	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
 	m.hydrateSessionStatusMessages(ctx, allSessions)
 	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
-
-	// Populate the cache with the full result set (before in-memory filters)
-	// so that different filter combinations that share the same labelSelector
-	// can reuse the same cached K8s data.
-	// Do not cache a pre-Service snapshot while allocation requests are still
-	// present. Otherwise /search can serve an empty stale cache after the
-	// allocation Secret is deleted and before the next cache miss observes the
-	// newly-created Service.
-	if m.sessionListCacheRepo != nil && len(allocationSessions) == 0 {
-		cacheKey := m.buildSessionListCacheKey(labelSelector)
-		dtos := sessionsToCacheDTOs(allSessions)
-		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to populate session list cache: %v", err)
-		}
-	}
 
 	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
 }
@@ -4896,13 +4900,7 @@ func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status 
 	}
 	m.globalSubsMu.Unlock()
 
-	// Invalidate session-list cache so the updated status is reflected immediately
-	// on this pod as well (the originating pod already invalidated its own cache).
-	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on cross-pod status change session=%s: %v", sessionID, err)
-		}
-	}
+	m.updateCachedSessionStatus(sessionID, status)
 }
 
 // broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
@@ -4945,11 +4943,17 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 		}
 	}
 
-	// Invalidate session-list cache so the updated status is reflected immediately.
-	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on status change session=%s: %v", sessionID, err)
-		}
+	m.updateCachedSessionStatus(sessionID, status)
+}
+
+func (m *KubernetesSessionManager) updateCachedSessionStatus(sessionID, status string) {
+	if m.sessionListCacheRepo == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := m.sessionListCacheRepo.UpdateSessionStatusInCache(ctx, m.namespace, sessionID, status, time.Now(), redisSessionListCacheTTL); err != nil {
+		log.Printf("[K8S_SESSION] Warning: failed to update cached session status session=%s: %v", sessionID, err)
 	}
 }
 

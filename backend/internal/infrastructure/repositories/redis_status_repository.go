@@ -303,6 +303,69 @@ func (r *RedisStatusRepository) UpdateSessionInCache(ctx context.Context, namesp
 	return nil
 }
 
+// UpdateSessionStatusInCache updates only status and updated_at in every
+// cached list containing sessionID. Redis WATCH makes the read/modify/write
+// atomic with concurrent status, annotation and delete updates.
+func (r *RedisStatusRepository) UpdateSessionStatusInCache(ctx context.Context, namespace, sessionID, status string, updatedAt time.Time, ttl time.Duration) error {
+	pattern := sessionListCachePattern(namespace)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := r.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis UpdateSessionStatusInCache scan: %w", err)
+		}
+		for _, key := range keys {
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				err = r.client.Watch(ctx, func(tx *redis.Tx) error {
+					payload, err := tx.Get(ctx, key).Bytes()
+					if err == redis.Nil {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					var sessions []portrepos.CachedSessionDTO
+					if err := json.Unmarshal(payload, &sessions); err != nil {
+						return err
+					}
+					found := false
+					for i := range sessions {
+						if sessions[i].ID == sessionID {
+							sessions[i].Status = status
+							sessions[i].UpdatedAt = updatedAt
+							found = true
+							break
+						}
+					}
+					if !found {
+						return nil
+					}
+					updated, err := json.Marshal(sessions)
+					if err != nil {
+						return err
+					}
+					_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+						pipe.Set(ctx, key, updated, ttl)
+						return nil
+					})
+					return err
+				}, key)
+				if err != redis.TxFailedErr {
+					break
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("redis UpdateSessionStatusInCache update %s: %w", key, err)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			return nil
+		}
+	}
+}
+
 // DeleteSessionFromCache removes a single session from all cache entries for the namespace.
 // This is more efficient than invalidating the entire cache when only one session is deleted.
 func (r *RedisStatusRepository) DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string, ttl time.Duration) error {

@@ -504,7 +504,7 @@ func TestSessionAllocationInvalidatesSessionListCache(t *testing.T) {
 	}
 }
 
-func TestListSessionsDoesNotPopulateCacheWhileAllocationExists(t *testing.T) {
+func TestListSessionsCachesBaseSessionsWhileAllocationExists(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 
 	cfg := config.DefaultConfig()
@@ -537,8 +537,8 @@ func TestListSessionsDoesNotPopulateCacheWhileAllocationExists(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Fatalf("ListSessions() returned %d sessions, want 1", len(sessions))
 	}
-	if cache.setCalls != 0 {
-		t.Fatalf("SetSessionListCache calls = %d, want 0 while allocation exists", cache.setCalls)
+	if cache.setCalls != 1 {
+		t.Fatalf("SetSessionListCache calls = %d, want 1 for the base session list", cache.setCalls)
 	}
 }
 
@@ -562,6 +562,10 @@ func (r *recordingSessionListCacheRepo) InvalidateSessionListCache(context.Conte
 }
 
 func (r *recordingSessionListCacheRepo) UpdateSessionInCache(context.Context, string, portrepos.CachedSessionDTO, time.Duration) error {
+	return nil
+}
+
+func (r *recordingSessionListCacheRepo) UpdateSessionStatusInCache(context.Context, string, string, string, time.Time, time.Duration) error {
 	return nil
 }
 
