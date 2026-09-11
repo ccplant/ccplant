@@ -31,6 +31,7 @@ type Query struct {
 	Kind          Kind
 	Namespace     string
 	LabelSelector string
+	KeyPrefix     string
 }
 
 // Store is the single persistence boundary for Kubernetes-backed KV data.
