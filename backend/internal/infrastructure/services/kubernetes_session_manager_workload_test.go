@@ -262,6 +262,56 @@ func TestSessionResourcesUseServiceOwnerReferenceWithPVC(t *testing.T) {
 	assertOwnedByService(t, deployment, session.ServiceName())
 }
 
+func TestDeleteSessionResourcesDeletesAllSessionLabeledSecrets(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	session := newWorkloadTestSession()
+	ctx := context.Background()
+
+	for _, secret := range []*corev1.Secret{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agentapi-provision-request-" + session.ID(),
+				Namespace: "test-ns",
+				Labels: map[string]string{
+					"agentapi.proxy/session-id":        session.ID(),
+					"agentapi.proxy/provision-request": "true",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "future-session-secret",
+				Namespace: "test-ns",
+				Labels:    map[string]string{"agentapi.proxy/session-id": session.ID()},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "other-session-secret",
+				Namespace: "test-ns",
+				Labels:    map[string]string{"agentapi.proxy/session-id": "other-session"},
+			},
+		},
+	} {
+		if _, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create Secret %s: %v", secret.Name, err)
+		}
+	}
+
+	if err := manager.deleteSessionResources(ctx, session); err != nil {
+		t.Fatalf("deleteSessionResources() error = %v", err)
+	}
+
+	for _, name := range []string{"agentapi-provision-request-" + session.ID(), "future-session-secret"} {
+		if _, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Errorf("expected session Secret %s to be deleted, got %v", name, err)
+		}
+	}
+	if _, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, "other-session-secret", metav1.GetOptions{}); err != nil {
+		t.Errorf("expected another session's Secret to remain, got %v", err)
+	}
+}
+
 func TestPurgeStockSessionsDeletesMixedWorkloadKindsAndPVC(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	ctx := context.Background()

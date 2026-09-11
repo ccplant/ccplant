@@ -4440,10 +4440,43 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("provision-request-secret: %v", err))
 	}
 
+	// Delete every Secret associated with the session, including allocation,
+	// runner credential, and any resource types added in the future. Owner
+	// references normally let Kubernetes garbage-collect these with the Service,
+	// but they can be absent when creation only partially completed. Keeping this
+	// label-based sweep makes explicit session deletion deterministic even for
+	// those partially-created resources.
+	if err := m.deleteSessionSecrets(ctx, session.id); err != nil {
+		errs = append(errs, fmt.Sprintf("session-secrets: %v", err))
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to delete resources: %s", strings.Join(errs, ", "))
 	}
 
+	return nil
+}
+
+// deleteSessionSecrets removes all Secrets carrying this session's identity label.
+// Session-scoped Secret creators must set agentapi.proxy/session-id.
+func (m *KubernetesSessionManager) deleteSessionSecrets(ctx context.Context, sessionID string) error {
+	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-id=" + sessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("list session secrets: %w", err)
+	}
+
+	var errs []string
+	for i := range secrets.Items {
+		name := secrets.Items[i].Name
+		if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("delete session secrets: %s", strings.Join(errs, ", "))
+	}
 	return nil
 }
 
