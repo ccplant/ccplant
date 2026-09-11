@@ -92,6 +92,7 @@ type SessionController struct {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+		ResolveConnectionURLs(context.Context, string) (string, string, error)
 		RevokeBrokerLeases(context.Context, string) error
 	}
 	sessionTokenDebug bool
@@ -101,6 +102,7 @@ func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 	IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+	ResolveConnectionURLs(context.Context, string) (string, string, error)
 	RevokeBrokerLeases(context.Context, string) error
 }) SessionControllerOption {
 	return func(c *SessionController) { c.githubTokenResolver = resolver }
@@ -253,8 +255,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			brokerConfigured = true
-			if startReq.Environment == nil {
-				startReq.Environment = make(map[string]string)
+			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
 			brokerURL, err := githubBrokerURL(ctx, sessionID)
 			if err != nil {
@@ -279,6 +282,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		startReq.Params.GithubToken = token
+		if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, startReq.Params.ConnectionID); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
 	} else if !brokerConfigured && (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
 		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(sessionRepository(startReq)))
@@ -287,6 +293,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			startReq.Params.GithubToken = token
+			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
 			c.logSessionTokenRouting(sessionID, "organization", connectionID, token)
 		} else {
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)
@@ -496,6 +505,21 @@ func (c *SessionController) logSessionTokenRouting(sessionID, source, connection
 		fingerprint = fmt.Sprintf("%x", sum[:6])
 	}
 	log.Printf("[SESSION_TOKEN_DEBUG] session_id=%s source=%s connection_id=%q token_fingerprint=%s token_present=%t", sessionID, source, connectionID, fingerprint, token != "")
+}
+
+func (c *SessionController) applyGitHubConnectionURLs(ctx context.Context, startReq *entities.StartRequest, connectionID string) error {
+	baseURL, apiURL, err := c.githubTokenResolver.ResolveConnectionURLs(ctx, connectionID)
+	if err != nil {
+		return err
+	}
+	if startReq.Environment == nil {
+		startReq.Environment = make(map[string]string)
+	}
+	// These are part of the selected credential's routing context. Overwrite
+	// request-provided values so a token is never sent to a different GitHub host.
+	startReq.Environment["GITHUB_URL"] = baseURL
+	startReq.Environment["GITHUB_API"] = apiURL
+	return nil
 }
 
 func repositoryOwner(repoFullName string) string {

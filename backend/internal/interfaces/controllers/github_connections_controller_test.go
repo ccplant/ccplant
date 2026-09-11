@@ -363,7 +363,7 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
 	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
 	require.NoError(t, err)
-	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, Organizations: []string{"example-org"}}
+	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, BaseURL: "https://github.corp.example", APIURL: "https://github.corp.example/api/v3", Organizations: []string{"example-org"}}
 	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
 	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "corp-token", nil)
 	require.NoError(t, err)
@@ -373,6 +373,10 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	require.True(t, matched)
 	require.Equal(t, "corp-token", token)
 	require.Equal(t, "corp", connectionID)
+	baseURL, apiURL, err := controller.ResolveConnectionURLs(context.Background(), connectionID)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.corp.example", baseURL)
+	require.Equal(t, "https://github.corp.example/api/v3", apiURL)
 	_, connectionID, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
 	require.NoError(t, err)
 	require.False(t, matched)

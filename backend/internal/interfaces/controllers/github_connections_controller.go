@@ -830,6 +830,21 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
+// ResolveConnectionURLs returns the runtime web and API endpoints for a
+// selected connection. Session workloads must use these endpoints together
+// with the selected credential instead of inheriting the deployment-wide
+// GitHub Enterprise configuration.
+func (c *GitHubConnectionsController) ResolveConnectionURLs(ctx context.Context, connectionID string) (string, string, error) {
+	connection, _, _, err := c.loadConnection(ctx, connectionID)
+	if err != nil {
+		return "", "", fmt.Errorf("load GitHub connection: %w", err)
+	}
+	if !connection.Enabled {
+		return "", "", fmt.Errorf("GitHub connection %q is disabled", connection.Name)
+	}
+	return connection.BaseURL, connection.APIURL, nil
+}
+
 // ResolveAccessTokenForOrganization returns the credential mapped to an organization.
 // The boolean is false when no connection mapping exists for the organization.
 func (c *GitHubConnectionsController) ResolveAccessTokenForOrganization(ctx context.Context, user *entities.User, organization string) (string, string, bool, error) {
