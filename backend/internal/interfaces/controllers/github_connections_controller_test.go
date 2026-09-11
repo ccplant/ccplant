@@ -296,6 +296,39 @@ func TestSanitizeReturnTo(t *testing.T) {
 	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("//evil.example.com"))
 }
 
+func TestResolveGitHubConnectionCallbackURLsAcceptAPIV1(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
+	req.Header.Set("Origin", "https://ui.example.test")
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	callbackURL := "https://ui.example.test/api/v1/auth/github-connections/callback"
+
+	resolved, err := controller.resolveCallbackURL(ctx, callbackURL)
+	require.NoError(t, err)
+	require.Equal(t, callbackURL, resolved)
+
+	resolved, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
+	require.NoError(t, err)
+	require.Equal(t, callbackURL, resolved)
+}
+
+func TestResolveGitHubConnectionCallbackURLsRejectDifferentOrigin(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
+	req.Header.Set("Origin", "https://ui.example.test")
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	callbackURL := "https://evil.example.test/api/v1/auth/github-connections/callback"
+
+	_, err := controller.resolveCallbackURL(ctx, callbackURL)
+	require.Error(t, err)
+	_, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
+	require.Error(t, err)
+}
+
 func TestNormalizeOAuthScope(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "read:user read:org project", normalizeOAuthScope(""))
