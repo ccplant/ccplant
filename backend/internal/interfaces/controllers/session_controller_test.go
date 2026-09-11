@@ -178,13 +178,13 @@ func TestGitHubBrokerURLUsesForwardedPrefix(t *testing.T) {
 	req.Host = "backend.internal"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
-	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
+	req.Header.Set("X-Forwarded-Prefix", "/api/v1")
 
 	got, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session/id")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "https://dev.ccplant.com/api/proxy/internal/sessions/session%2Fid/github-credentials"
+	want := "https://dev.ccplant.com/api/v1/internal/sessions/session%2Fid/github-credentials"
 	if got != want {
 		t.Fatalf("githubBrokerURL() = %q, want %q", got, want)
 	}

@@ -9,7 +9,7 @@ function getAPIConfig(): { baseURL: string; apiKey?: string } {
   if (typeof window === 'undefined') {
     // Server-side rendering or Node.js environment - use default proxy endpoint
     return {
-      baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000/api/proxy',
+      baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000/api/v1',
       apiKey: process.env.NEXT_PUBLIC_API_KEY || process.env.AGENTAPI_API_KEY,
     };
   }
@@ -20,13 +20,13 @@ function getAPIConfig(): { baseURL: string; apiKey?: string } {
     const proxySettings = globalSettings.agentApiProxy || getDefaultProxySettings();
 
     return {
-      baseURL: proxySettings.endpoint || process.env.NEXT_PUBLIC_API_BASE_URL || `${window.location.protocol}//${window.location.host}/api/proxy`,
+      baseURL: proxySettings.endpoint || process.env.NEXT_PUBLIC_API_BASE_URL || `${window.location.protocol}//${window.location.host}/api/v1`,
       apiKey: proxySettings.apiKey || process.env.NEXT_PUBLIC_API_KEY || process.env.AGENTAPI_API_KEY,
     };
   } catch (error) {
     console.warn('Failed to load settings from storage for chat API, using fallback:', error);
     return {
-      baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || `${window.location.protocol}//${window.location.host}/api/proxy`,
+      baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || `${window.location.protocol}//${window.location.host}/api/v1`,
       apiKey: process.env.NEXT_PUBLIC_API_KEY || process.env.AGENTAPI_API_KEY,
     };
   }

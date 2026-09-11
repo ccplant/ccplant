@@ -125,11 +125,11 @@ func TestDeviceAuthCallbackURLUsesForwardedPrefix(t *testing.T) {
 	req.Host = "backend.internal"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
-	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
+	req.Header.Set("X-Forwarded-Prefix", "/api/v1")
 
 	got, err := deviceAuthCallbackURL(e.NewContext(req, httptest.NewRecorder()))
 	require.NoError(t, err)
-	assert.Equal(t, "https://dev.ccplant.com/api/proxy/internal/codex-device-auth", got)
+	assert.Equal(t, "https://dev.ccplant.com/api/v1/internal/codex-device-auth", got)
 }
 
 func TestDeviceAuthCallbackURLRejectsInvalidForwardedPrefix(t *testing.T) {

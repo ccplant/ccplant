@@ -23,7 +23,7 @@ export default function UsageExportPage() {
     const from = new Date(Date.now() - selectedRange.days * 86_400_000).toISOString()
     const params = new URLSearchParams({ from })
     if (selectedTeam) params.set('team_id', selectedTeam)
-    return `/api/proxy/usage/export.parquet?${params}`
+    return `/api/v1/usage/export.parquet?${params}`
   }, [range, selectedTeam])
 
   return (
