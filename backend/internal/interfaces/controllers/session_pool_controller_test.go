@@ -64,7 +64,7 @@ func TestManagerAndRunnerLogsUseSeparateEndpoints(t *testing.T) {
 
 	tunnel.mu.Lock()
 	defer tunnel.mu.Unlock()
-	if len(tunnel.requests) != 2 || tunnel.requests[0] != "http://manager/internal/esm-management/logs?tail=10" || tunnel.requests[1] != "http://manager/internal/esm-management/logs?session_id=session-a&tail=20" {
+	if len(tunnel.requests) != 2 || tunnel.requests[0] != "http://manager/internal/esm-management/logs?tail=10" || tunnel.requests[1] != "http://manager/internal/esm-management/logs?runner_id=runner-a&session_id=session-a&tail=20" {
 		t.Fatalf("requests=%v", tunnel.requests)
 	}
 }

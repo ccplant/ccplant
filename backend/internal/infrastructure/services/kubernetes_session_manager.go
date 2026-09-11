@@ -4751,6 +4751,17 @@ func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools 
 	if err != nil {
 		return nil, err
 	}
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"})
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[string]bool, len(pods.Items))
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning {
+			live[pod.Labels["agentapi.proxy/session-id"]] = true
+		}
+	}
 	running, used := 0, 0
 	runningIDs, usedIDs := make([]string, 0), make([]string, 0)
 	allowedPools := make(map[string]bool, len(pools))
@@ -4762,16 +4773,17 @@ func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools 
 		if len(allowedPools) > 0 && !allowedPools[service.Labels["agentapi.proxy/session-pool"]] {
 			continue
 		}
-		if service.DeletionTimestamp != nil {
+		id := service.Labels["agentapi.proxy/session-id"]
+		if service.DeletionTimestamp != nil || !live[id] {
 			continue
 		}
 		running++
-		if id := service.Labels["agentapi.proxy/session-id"]; id != "" {
+		if id != "" {
 			runningIDs = append(runningIDs, id)
 		}
 		if service.Labels["agentapi.proxy/stock"] != "true" {
 			used++
-			if id := service.Labels["agentapi.proxy/session-id"]; id != "" {
+			if id != "" {
 				usedIDs = append(usedIDs, id)
 			}
 		}
@@ -4785,9 +4797,12 @@ func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools 
 	return map[string]interface{}{"status": "online", "version": version, "running_runners": running, "used_runners": used, "running_runner_ids": runningIDs, "used_runner_ids": usedIDs}, nil
 }
 
-func (m *KubernetesSessionManager) OperationalLogs(ctx context.Context, sessionID string, tail int) ([]string, string, error) {
+func (m *KubernetesSessionManager) OperationalLogs(ctx context.Context, runnerID, sessionID string, tail int) ([]string, string, error) {
 	podName := strings.TrimSpace(os.Getenv("HOSTNAME"))
 	container := "session-manager"
+	if runnerID != "" {
+		sessionID = runnerID
+	}
 	if sessionID != "" {
 		pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "agentapi.proxy/session-id=" + sessionID})
 		if err != nil {

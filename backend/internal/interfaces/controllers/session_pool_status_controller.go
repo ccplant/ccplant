@@ -104,7 +104,7 @@ func (c *SessionPoolController) GetManagerLogs(ctx echo.Context) error {
 	if err := c.requireManageableManager(ctx, managerID); err != nil {
 		return err
 	}
-	return c.proxyManagerLogs(ctx, managerID, "")
+	return c.proxyManagerLogs(ctx, managerID, "", "")
 }
 
 func (c *SessionPoolController) GetRunnerLogs(ctx echo.Context) error {
@@ -129,10 +129,10 @@ func (c *SessionPoolController) GetRunnerLogs(ctx echo.Context) error {
 			break
 		}
 	}
-	return c.proxyManagerLogs(ctx, runner.ManagerID, sessionID)
+	return c.proxyManagerLogs(ctx, runner.ManagerID, runnerID, sessionID)
 }
 
-func (c *SessionPoolController) proxyManagerLogs(ctx echo.Context, managerID, sessionID string) error {
+func (c *SessionPoolController) proxyManagerLogs(ctx echo.Context, managerID, runnerID, sessionID string) error {
 	if c.managerTunnel == nil || !c.managerTunnel.IsConnected(ctx.Request().Context(), managerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager control channel is offline")
 	}
@@ -142,6 +142,9 @@ func (c *SessionPoolController) proxyManagerLogs(ctx echo.Context, managerID, se
 		tail = 200
 	}
 	values.Set("tail", strconv.Itoa(tail))
+	if runnerID != "" {
+		values.Set("runner_id", runnerID)
+	}
 	if sessionID != "" {
 		values.Set("session_id", sessionID)
 	}

@@ -41,7 +41,7 @@ type Handlers struct {
 
 type operationalProvider interface {
 	OperationalStatus(context.Context, []string) (map[string]interface{}, error)
-	OperationalLogs(context.Context, string, int) ([]string, string, error)
+	OperationalLogs(context.Context, string, string, int) ([]string, string, error)
 }
 
 // NewHandlers creates a new Handlers instance.
@@ -126,7 +126,7 @@ func (h *Handlers) GetOperationalLogs(c echo.Context) error {
 	if tail < 1 || tail > 5000 {
 		tail = 200
 	}
-	lines, source, err := provider.OperationalLogs(c.Request().Context(), c.QueryParam("session_id"), tail)
+	lines, source, err := provider.OperationalLogs(c.Request().Context(), c.QueryParam("runner_id"), c.QueryParam("session_id"), tail)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read logs").SetInternal(err)
 	}

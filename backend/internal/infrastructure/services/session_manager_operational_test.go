@@ -18,8 +18,14 @@ func TestOperationalStatusUsesLiveInventoryAndFiltersPools(t *testing.T) {
 			"agentapi.proxy/session-id": id, "agentapi.proxy/session-pool": pool, "agentapi.proxy/stock": stock,
 		}}}
 	}
+	pod := func(id, pool string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: "test", Labels: map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy", "app.kubernetes.io/name": "agentapi-session",
+			"agentapi.proxy/session-id": id, "agentapi.proxy/session-pool": pool,
+		}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	}
 	manager := &KubernetesSessionManager{
-		client:    fake.NewSimpleClientset(service("idle-a", "allowed", "true"), service("used-a", "allowed", "false"), service("hidden", "hidden", "false")),
+		client:    fake.NewSimpleClientset(service("idle-a", "allowed", "true"), service("used-a", "allowed", "false"), service("hidden", "hidden", "false"), pod("idle-a", "allowed"), pod("used-a", "allowed"), pod("hidden", "hidden")),
 		namespace: "test", config: &config.Config{SessionManager: config.SessionManagerConfig{CurrentVersion: "v1.2.3"}},
 	}
 	status, err := manager.OperationalStatus(context.Background(), []string{"allowed"})
