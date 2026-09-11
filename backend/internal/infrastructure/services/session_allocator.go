@@ -163,6 +163,7 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 		}
 		_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
 		if err == nil {
+			m.invalidateSessionAllocationListCache()
 			m.invalidateSessionListCache("session allocation save")
 		}
 		return err
@@ -177,6 +178,7 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 	sec.Data[sessionAllocationDataKey] = data
 	_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
 	if err == nil {
+		m.invalidateSessionAllocationListCache()
 		m.invalidateSessionListCache("session allocation save")
 	}
 	return err
@@ -188,6 +190,7 @@ func (m *KubernetesSessionManager) deleteSessionAllocation(ctx context.Context, 
 		return nil
 	}
 	if err == nil {
+		m.invalidateSessionAllocationListCache()
 		m.invalidateSessionListCache("session allocation delete")
 	}
 	return err
