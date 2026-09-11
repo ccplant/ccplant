@@ -22,7 +22,7 @@ rules:
     resources: ["services"]
     # patch: required for UpdateSlackLastMessageAt (agentapi.proxy/slack-last-message-at annotation)
     # update: required for UpdateServiceAnnotation (e.g. agentapi.proxy/updated-at annotation)
-    verbs: ["get", "list", "create", "delete", "patch", "update"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
   - apiGroups: [""]
     resources: ["endpoints"]
     # Lazy chat recovery checks whether the session Service has a ready Pod.
@@ -38,7 +38,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "create", "update", "delete", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "delete", "patch"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]

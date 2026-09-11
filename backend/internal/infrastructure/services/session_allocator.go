@@ -161,8 +161,10 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{sessionAllocationDataKey: data},
 		}
-		_, err = m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
+		created, createErr := m.client.CoreV1().Secrets(m.namespace).Create(ctx, sec, metav1.CreateOptions{})
+		err = createErr
 		if err == nil {
+			m.updateAllocationInformer(created, req.Status)
 			m.invalidateSessionAllocationListCache()
 			m.invalidateSessionListCache("session allocation save")
 		}
@@ -176,8 +178,10 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 		sec.Data = make(map[string][]byte)
 	}
 	sec.Data[sessionAllocationDataKey] = data
-	_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
+	updated, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, sec, metav1.UpdateOptions{})
+	err = updateErr
 	if err == nil {
+		m.updateAllocationInformer(updated, req.Status)
 		m.invalidateSessionAllocationListCache()
 		m.invalidateSessionListCache("session allocation save")
 	}
@@ -190,10 +194,33 @@ func (m *KubernetesSessionManager) deleteSessionAllocation(ctx context.Context, 
 		return nil
 	}
 	if err == nil {
+		m.deleteAllocationFromInformer(sessionID)
 		m.invalidateSessionAllocationListCache()
 		m.invalidateSessionListCache("session allocation delete")
 	}
 	return err
+}
+
+func (m *KubernetesSessionManager) updateAllocationInformer(secret *corev1.Secret, status sessionallocation.Status) {
+	if m.allocationInformer == nil || secret == nil {
+		return
+	}
+	switch status {
+	case sessionallocation.StatusPending, sessionallocation.StatusAllocating, sessionallocation.StatusError:
+		_ = m.allocationInformer.GetStore().Update(secret.DeepCopy())
+	default:
+		_ = m.allocationInformer.GetStore().Delete(secret)
+	}
+}
+
+func (m *KubernetesSessionManager) deleteAllocationFromInformer(sessionID string) {
+	if m.allocationInformer == nil {
+		return
+	}
+	_ = m.allocationInformer.GetStore().Delete(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name:      sessionAllocationSecretName(sessionID),
+		Namespace: m.namespace,
+	}})
 }
 
 // DeletePendingSessionAllocation removes an allocation that has not produced a

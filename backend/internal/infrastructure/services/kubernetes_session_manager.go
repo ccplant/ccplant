@@ -41,10 +41,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
 )
@@ -156,10 +159,16 @@ type KubernetesSessionManager struct {
 	statusSubCancel context.CancelFunc
 	suspendCancel   context.CancelFunc
 
-	// sessionListCacheRepo is the short-lived session-list cache backend.
-	// When Redis is configured this reduces Kubernetes API calls for frequent
-	// ListSessions requests.
+	// sessionListCacheRepo is retained for invalidating legacy Redis list keys
+	// written by older replicas during a rolling upgrade. ListSessions itself
+	// reads from the informer stores below.
 	sessionListCacheRepo portrepos.SessionListCacheRepository
+	sessionInformerOnce  sync.Once
+	sessionInformerCtx   context.Context
+	sessionInformerStop  context.CancelFunc
+	serviceInformer      cache.SharedIndexInformer
+	workloadInformer     cache.SharedIndexInformer
+	allocationInformer   cache.SharedIndexInformer
 	allocationListMu     sync.RWMutex
 	allocationListCache  *corev1.SecretList
 	allocationListUntil  time.Time
@@ -261,6 +270,7 @@ func NewKubernetesSessionManagerWithClient(
 	}
 
 	subCtx, subCancel := context.WithCancel(context.Background())
+	informerCtx, informerCancel := context.WithCancel(context.Background())
 
 	manager := &KubernetesSessionManager{
 		config:                    cfg,
@@ -275,6 +285,8 @@ func NewKubernetesSessionManagerWithClient(
 		podID:                     podID,
 		statusSubCtx:              subCtx,
 		statusSubCancel:           subCancel,
+		sessionInformerCtx:        informerCtx,
+		sessionInformerStop:       informerCancel,
 		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
 	}
 
@@ -1861,43 +1873,14 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 }
 
 // ListSessions returns all sessions matching the filter.
-// Sessions are retrieved from a Redis cache when available, falling back to
-// Kubernetes API calls on a cache miss.  The cache is keyed by the label
-// selector (which encodes user-id, scope and team-id) so each filter
-// combination has its own independent cache entry.
+// Sessions are read from label-filtered Kubernetes informer stores. The
+// initial LIST establishes each store, then WATCH events keep it current.
 func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
 	labelSelector := m.buildLabelSelector(filter)
 	ctx := context.Background()
-
-	// --- cache-first path ---------------------------------------------------
-	if m.sessionListCacheRepo != nil {
-		cacheKey := m.buildSessionListCacheKey(labelSelector)
-		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
-			sessions := m.filterSessionsFromCache(cached, filter)
-			m.hydrateSessionStatusMessages(ctx, sessions)
-			return m.withSessionAllocations(ctx, sessions, filter)
-		}
-	}
-
-	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
 	m.hydrateSessionStatusMessages(ctx, allSessions)
 	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
-
-	// Populate the cache with the full result set (before in-memory filters)
-	// so that different filter combinations that share the same labelSelector
-	// can reuse the same cached K8s data.
-	// Do not cache a pre-Service snapshot while allocation requests are still
-	// present. Otherwise /search can serve an empty stale cache after the
-	// allocation Secret is deleted and before the next cache miss observes the
-	// newly-created Service.
-	if m.sessionListCacheRepo != nil && len(allocationSessions) == 0 {
-		cacheKey := m.buildSessionListCacheKey(labelSelector)
-		dtos := sessionsToCacheDTOs(allSessions)
-		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to populate session list cache: %v", err)
-		}
-	}
 
 	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
 }
@@ -1914,10 +1897,6 @@ func (m *KubernetesSessionManager) hydrateSessionStatusMessages(ctx context.Cont
 		}
 		ks.SetStatusMessage(request.Message)
 	}
-}
-
-func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
-	return mergeSessionAllocations(sessions, m.fetchSessionAllocationsFromK8s(ctx, filter))
 }
 
 func mergeSessionAllocations(sessions []entities.Session, allocationSessions []entities.Session) []entities.Session {
@@ -1996,6 +1975,20 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 const sessionAllocationListCacheTTL = 2 * time.Second
 
 func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (*corev1.SecretList, error) {
+	if err := m.ensureSessionInformers(ctx); err == nil {
+		items := m.allocationInformer.GetStore().List()
+		secrets := &corev1.SecretList{Items: make([]corev1.Secret, 0, len(items))}
+		for _, item := range items {
+			secret, ok := item.(*corev1.Secret)
+			if ok {
+				secrets.Items = append(secrets.Items, *secret.DeepCopy())
+			}
+		}
+		return secrets, nil
+	}
+
+	// Startup fallback: retain availability if the informer cannot complete its
+	// initial sync. Once synced, all subsequent reads use the local store.
 	if secrets, ok := m.cachedSessionAllocations(); ok {
 		return secrets, nil
 	}
@@ -2021,6 +2014,45 @@ func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (
 	return value.(*corev1.SecretList).DeepCopy(), nil
 }
 
+const sessionInformerSyncTimeout = 15 * time.Second
+
+func (m *KubernetesSessionManager) ensureSessionInformers(ctx context.Context) error {
+	m.sessionInformerOnce.Do(func() {
+		resourceFactory := informers.NewSharedInformerFactoryWithOptions(
+			m.client,
+			0,
+			informers.WithNamespace(m.namespace),
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				options.LabelSelector = "agentapi.proxy/session-id"
+			}),
+		)
+		allocationFactory := informers.NewSharedInformerFactoryWithOptions(
+			m.client,
+			0,
+			informers.WithNamespace(m.namespace),
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				options.LabelSelector = "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)"
+			}),
+		)
+		m.serviceInformer = resourceFactory.Core().V1().Services().Informer()
+		if m.isPVCEnabled() {
+			m.workloadInformer = resourceFactory.Apps().V1().Deployments().Informer()
+		} else {
+			m.workloadInformer = resourceFactory.Core().V1().Pods().Informer()
+		}
+		m.allocationInformer = allocationFactory.Core().V1().Secrets().Informer()
+		resourceFactory.Start(m.sessionInformerCtx.Done())
+		allocationFactory.Start(m.sessionInformerCtx.Done())
+	})
+
+	waitCtx, cancel := context.WithTimeout(ctx, sessionInformerSyncTimeout)
+	defer cancel()
+	if !cache.WaitForCacheSync(waitCtx.Done(), m.serviceInformer.HasSynced, m.workloadInformer.HasSynced, m.allocationInformer.HasSynced) {
+		return fmt.Errorf("timed out waiting for Kubernetes session informer cache sync")
+	}
+	return nil
+}
+
 func (m *KubernetesSessionManager) cachedSessionAllocations() (*corev1.SecretList, bool) {
 	m.allocationListMu.RLock()
 	defer m.allocationListMu.RUnlock()
@@ -2042,18 +2074,65 @@ func (m *KubernetesSessionManager) invalidateSessionAllocationListCache() {
 // reasonable freshness for session list queries.
 const redisSessionListCacheTTL = 60 * time.Second
 
-// buildSessionListCacheKey returns a stable Redis cache key for the given
-// (namespace, labelSelector) combination.
-func (m *KubernetesSessionManager) buildSessionListCacheKey(labelSelector string) string {
-	h := sha256.Sum256([]byte(m.namespace + "|" + labelSelector))
-	return "agentapi:sessions:list:" + m.namespace + ":" + hex.EncodeToString(h[:8])
+// fetchSessionsFromK8s reads the Kubernetes Service and workload informer
+// stores and returns all sessions that match the label selector. A direct LIST
+// is used only when the initial informer sync cannot complete.
+// In-memory-only filters (status, teamIDs, tags) are NOT applied here so
+// callers can reuse the broad informer snapshot across filter variants.
+func (m *KubernetesSessionManager) fetchSessionsFromK8s(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
+	if err := m.ensureSessionInformers(ctx); err == nil {
+		return m.fetchSessionsFromInformer(labelSelector, filter)
+	} else {
+		log.Printf("[K8S_SESSION] Session informer unavailable, falling back to Kubernetes LIST: %v", err)
+	}
+	return m.fetchSessionsDirect(ctx, labelSelector, filter)
 }
 
-// fetchSessionsFromK8s performs the Kubernetes Services + workload list
-// calls and returns all sessions that match the label selector.
-// In-memory-only filters (status, teamIDs, tags) are NOT applied here so
-// the caller can cache the full result and reuse it across filter variants.
-func (m *KubernetesSessionManager) fetchSessionsFromK8s(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
+func (m *KubernetesSessionManager) fetchSessionsFromInformer(labelSelector string, filter entities.SessionFilter) []entities.Session {
+	selector, err := labels.Parse(labelSelector)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to parse session label selector %q: %v", labelSelector, err)
+		return []entities.Session{}
+	}
+
+	deploymentMap := make(map[string]*appsv1.Deployment)
+	podMap := make(map[string]*corev1.Pod)
+	for _, item := range m.workloadInformer.GetStore().List() {
+		switch workload := item.(type) {
+		case *appsv1.Deployment:
+			if sid := workload.Labels["agentapi.proxy/session-id"]; sid != "" {
+				deploymentMap[sid] = workload
+			}
+		case *corev1.Pod:
+			if sid := workload.Labels["agentapi.proxy/session-id"]; sid != "" {
+				podMap[sid] = workload
+			}
+		}
+	}
+
+	result := make([]entities.Session, 0)
+	for _, item := range m.serviceInformer.GetStore().List() {
+		svc, ok := item.(*corev1.Service)
+		if !ok || svc.DeletionTimestamp != nil || !selector.Matches(labels.Set(svc.Labels)) {
+			continue
+		}
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			continue
+		}
+		userID := svc.Labels["agentapi.proxy/user-id"]
+		if filter.UserID != "" && userID != filter.UserID {
+			continue
+		}
+		session := m.getOrRestoreSessionWithWorkload(svc.DeepCopy(), deploymentMap[sessionID], podMap[sessionID])
+		if session != nil {
+			result = append(result, session)
+		}
+	}
+	return result
+}
+
+func (m *KubernetesSessionManager) fetchSessionsDirect(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
 	services, err := m.client.CoreV1().Services(m.namespace).List(
 		ctx,
 		metav1.ListOptions{LabelSelector: labelSelector})
@@ -2164,36 +2243,6 @@ func (m *KubernetesSessionManager) applySessionListFilters(sessions []entities.S
 		result = append(result, session)
 	}
 	return result
-}
-
-// filterSessionsFromCache reconstructs sessions from cached DTOs – preferring
-// the live in-memory session where available (for up-to-date status) – and
-// then applies the in-memory-only filters.
-func (m *KubernetesSessionManager) filterSessionsFromCache(dtos []portrepos.CachedSessionDTO, filter entities.SessionFilter) []entities.Session {
-	// Snapshot the live sessions map once to avoid repeated lock acquisitions.
-	m.mutex.RLock()
-	live := make(map[string]*KubernetesSession, len(m.sessions))
-	for id, s := range m.sessions {
-		live[id] = s
-	}
-	m.mutex.RUnlock()
-
-	sessions := make([]entities.Session, 0, len(dtos))
-	for _, dto := range dtos {
-		if filter.UserID != "" && dto.UserID != filter.UserID {
-			continue
-		}
-		var s entities.Session
-		if ls, ok := live[dto.ID]; ok {
-			ls.SetAnnotations(dto.Annotations)
-			s = ls // use live in-memory session for current status
-		} else {
-			s = newCachedSession(dto)
-		}
-		sessions = append(sessions, s)
-	}
-
-	return m.applySessionListFilters(sessions, filter)
 }
 
 // sessionsToCacheDTOs converts a slice of entities.Session to cache DTOs.
@@ -2372,6 +2421,9 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 // Resources are preserved so sessions can be restored when the proxy restarts.
 // Use DeleteSession to explicitly delete a session and its resources.
 func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
+	if m.sessionInformerStop != nil {
+		m.sessionInformerStop()
+	}
 	if m.suspendCancel != nil {
 		m.suspendCancel()
 	}
@@ -4896,13 +4948,6 @@ func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status 
 	}
 	m.globalSubsMu.Unlock()
 
-	// Invalidate session-list cache so the updated status is reflected immediately
-	// on this pod as well (the originating pod already invalidated its own cache).
-	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on cross-pod status change session=%s: %v", sessionID, err)
-		}
-	}
 }
 
 // broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
@@ -4945,12 +4990,6 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 		}
 	}
 
-	// Invalidate session-list cache so the updated status is reflected immediately.
-	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on status change session=%s: %v", sessionID, err)
-		}
-	}
 }
 
 // broadcastMessageUpdate notifies all active per-session subscribers that a message_update
