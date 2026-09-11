@@ -169,7 +169,7 @@ export class PushNotificationManager {
       // userName: 'user-name'
     };
 
-    const response = await fetch('/api/proxy/notification/subscribe', {
+    const response = await fetch('/api/v1/notification/subscribe', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -189,7 +189,7 @@ export class PushNotificationManager {
   }
 
   async removeSubscriptionFromServer(subscription: PushSubscription): Promise<void> {
-    const response = await fetch('/api/proxy/notification/subscribe', {
+    const response = await fetch('/api/v1/notification/subscribe', {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',

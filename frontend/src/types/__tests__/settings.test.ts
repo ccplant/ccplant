@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Window } from 'happy-dom'
 
-import { getEnterKeyBehavior, setEnterKeyBehavior } from '../settings'
+import { getEnterKeyBehavior, loadFullGlobalSettings, setEnterKeyBehavior } from '../settings'
 
 const testWindow = new Window()
 Object.defineProperty(globalThis, 'window', { value: testWindow, configurable: true })
@@ -33,5 +33,18 @@ describe('Enter key behavior settings', () => {
     setEnterKeyBehavior('send')
 
     expect(getEnterKeyBehavior()).toBe('send')
+  })
+
+  it('migrates the removed /api/proxy endpoint to /api/v1', () => {
+    localStorage.setItem('agentapi-full-global-settings', JSON.stringify({
+      agentApiProxy: {
+        endpoint: 'https://app.example.com/api/proxy',
+        enabled: true,
+        timeout: 30000,
+        apiKey: '',
+      },
+    }))
+
+    expect(loadFullGlobalSettings().agentApiProxy.endpoint).toBe('https://app.example.com/api/v1')
   })
 })

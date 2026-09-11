@@ -473,12 +473,12 @@ export function getCurrentHostProxyUrlFromHeaders(requestHeaders?: HeadersInit):
                     (headersObj.get('x-forwarded-ssl') === 'on' ? 'https' : 'http')
     
     if (host) {
-      return `${protocol}://${host}/api/proxy`
+      return `${protocol}://${host}/api/v1`
     }
   }
   
   // Fallback to localhost for development
-  return 'http://localhost:3000/api/proxy'
+  return 'http://localhost:3000/api/v1'
 }
 
 // Get the current hostname for proxy URL
@@ -486,7 +486,7 @@ function getCurrentHostProxyUrl(): string {
   if (typeof window === 'undefined') {
     // Server-side: fallback to localhost for development
     // Note: headers() is async in Next.js 15, so we can't use it here
-    return 'http://localhost:3000/api/proxy'
+    return 'http://localhost:3000/api/v1'
   }
   
   // Client-side: construct URL from current hostname
@@ -500,7 +500,7 @@ function getCurrentHostProxyUrl(): string {
     baseUrl += `:${port}`
   }
   
-  return `${baseUrl}/api/proxy`
+  return `${baseUrl}/api/v1`
 }
 
 // Async version for server-side use with Next.js 15
@@ -516,7 +516,7 @@ export async function getCurrentHostProxyUrlAsync(): Promise<string> {
                       (headersList.get('x-forwarded-ssl') === 'on' ? 'https' : 'http')
       
       if (host) {
-        return `${protocol}://${host}/api/proxy`
+        return `${protocol}://${host}/api/v1`
       }
     } catch (error) {
       // headers() might not be available in all contexts
@@ -524,7 +524,7 @@ export async function getCurrentHostProxyUrlAsync(): Promise<string> {
     }
     
     // Fallback to localhost for development
-    return 'http://localhost:3000/api/proxy'
+    return 'http://localhost:3000/api/v1'
   }
   
   // Client-side: construct URL from current hostname
@@ -538,7 +538,7 @@ export async function getCurrentHostProxyUrlAsync(): Promise<string> {
     baseUrl += `:${port}`
   }
   
-  return `${baseUrl}/api/proxy`
+  return `${baseUrl}/api/v1`
 }
 
 // Default proxy settings for profiles
@@ -688,6 +688,12 @@ export const loadFullGlobalSettings = (): GlobalSettings => {
             ...item,
             lastUsed: new Date(item.lastUsed)
           })
+        )
+      }
+      if (typeof parsedSettings.agentApiProxy?.endpoint === 'string') {
+        parsedSettings.agentApiProxy.endpoint = parsedSettings.agentApiProxy.endpoint.replace(
+          /\/api\/proxy\/?$/,
+          '/api/v1',
         )
       }
       return {

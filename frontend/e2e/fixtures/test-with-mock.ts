@@ -12,7 +12,7 @@ export const test = base.extend({
       const pathname = url.pathname;
 
       // Handle different API endpoints
-      if (pathname === '/api/proxy/messages' && method === 'POST') {
+      if (pathname === '/api/v1/messages' && method === 'POST') {
         // Mock streaming response
         const encoder = new TextEncoder();
         const stream = new ReadableStream({

@@ -269,7 +269,7 @@ export class ACPServerClient {
   private requestId = 1;
 
   constructor(baseURL: string, apiKey?: string) {
-    // baseURL is the proxy base, e.g. "http://localhost:3000/api/proxy"
+    // baseURL is the proxy base, e.g. "http://localhost:3000/api/v1"
     // We append /acp to reach the global ACP server endpoint.
     this.baseURL = baseURL;
     this.apiKey = apiKey;
@@ -737,19 +737,19 @@ export class ACPServerClient {
 
 export function createACPServerClientFromStorage(): ACPServerClient {
   if (typeof window === 'undefined') {
-    return new ACPServerClient('http://localhost:3000/api/proxy');
+    return new ACPServerClient('http://localhost:3000/api/v1');
   }
 
   try {
     const globalSettings = loadFullGlobalSettings();
     const proxySettings = globalSettings.agentApiProxy || getDefaultProxySettings();
     return new ACPServerClient(
-      proxySettings.endpoint || `${window.location.protocol}//${window.location.host}/api/proxy`,
+      proxySettings.endpoint || `${window.location.protocol}//${window.location.host}/api/v1`,
       proxySettings.apiKey || undefined
     );
   } catch {
     return new ACPServerClient(
-      `${window.location.protocol}//${window.location.host}/api/proxy`
+      `${window.location.protocol}//${window.location.host}/api/v1`
     );
   }
 }

@@ -108,7 +108,7 @@ ALTER TABLE api_route_events ADD COLUMN app_icon BLOB;
 ALTER TABLE api_route_events ADD COLUMN app_icon_content_type TEXT;
 ```
 
-`/api/v1/*` と `/api/proxy/*` はどちらも、`Authorization` ヘッダーが指定されている
+`/api/v1/*` は、`Authorization` ヘッダーが指定されている
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを
 復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。
 

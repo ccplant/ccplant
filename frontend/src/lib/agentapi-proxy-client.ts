@@ -1292,9 +1292,9 @@ export class AgentAPIProxyClient {
     options?: SessionEventsOptions
   ): EventSubscription {
     // For SSE, we need to construct the full URL - check if we're using proxy
-    const isUsingProxy = this.baseURL.includes('/api/proxy');
+    const isUsingProxy = this.baseURL.includes('/api/v1');
     const eventSourceUrl = isUsingProxy 
-      ? `/api/proxy/${sessionId}/events`
+      ? `/api/v1/${sessionId}/events`
       : `${this.baseURL}/${sessionId}/events`;
     
     if (this.debug) {
@@ -1402,9 +1402,9 @@ export class AgentAPIProxyClient {
     onEvent: (event: ProxySessionStatusEvent) => void,
     onError?: (error: Error) => void
   ): EventSource {
-    const isUsingProxy = this.baseURL.includes('/api/proxy');
+    const isUsingProxy = this.baseURL.includes('/api/v1');
     const eventSourceUrl = isUsingProxy
-      ? `/api/proxy/sessions/status/stream`
+      ? `/api/v1/sessions/status/stream`
       : `${this.baseURL}/sessions/status/stream`;
 
     if (this.debug) {
@@ -2689,9 +2689,9 @@ export class AgentAPIProxyClient {
     initialLastEventId?: number,
     deferUntilHistory = false
   ): EventSubscription {
-    const isUsingProxy = this.baseURL.includes('/api/proxy');
+    const isUsingProxy = this.baseURL.includes('/api/v1');
     const sseUrl = isUsingProxy
-      ? `/api/proxy/${sessionId}/sse`
+      ? `/api/v1/${sessionId}/sse`
       : `${this.baseURL}/${sessionId}/sse`;
 
     if (this.debug) {
@@ -3309,7 +3309,7 @@ export function getAgentAPIProxyConfigFromStorage(repoFullname?: string): AgentA
     // Use proxy configuration
     const baseURL = proxySettings.enabled
       ? proxySettings.endpoint
-      : `${window.location.protocol}//${window.location.host}/api/proxy`;
+      : `${window.location.protocol}//${window.location.host}/api/v1`;
 
     const timeout = proxySettings.enabled
       ? proxySettings.timeout
@@ -3329,7 +3329,7 @@ export function getAgentAPIProxyConfigFromStorage(repoFullname?: string): AgentA
     }
     // Fallback if storage access fails
     return {
-      baseURL: `${window.location.protocol}//${window.location.host}/api/proxy`,
+      baseURL: `${window.location.protocol}//${window.location.host}/api/v1`,
       apiKey: process.env.AGENTAPI_API_KEY,
       timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
       maxSessions: parseInt(process.env.AGENTAPI_PROXY_MAX_SESSIONS || '10'),
@@ -3357,7 +3357,7 @@ export function createCurrentDeploymentAgentAPIProxyClient(): AgentAPIProxyClien
   const browser = typeof window !== 'undefined'
   return new AgentAPIProxyClient({
     baseURL: browser
-      ? `${window.location.protocol}//${window.location.host}/api/proxy`
+      ? `${window.location.protocol}//${window.location.host}/api/v1`
       : process.env.AGENTAPI_PROXY_URL || 'http://localhost:8080',
     apiKey: browser ? undefined : process.env.AGENTAPI_API_KEY,
     timeout: parseInt(process.env.AGENTAPI_TIMEOUT || '10000'),
