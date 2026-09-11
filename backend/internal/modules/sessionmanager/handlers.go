@@ -65,6 +65,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.POST("", h.CreateSession)
 	g.GET("", h.ListSessions)
 	g.GET("/:sessionId", h.GetSession)
+	g.POST("/:sessionId/suspend", h.SuspendSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
 
 	// Codex device auth workloads are manager-level operations addressed by the
@@ -89,6 +90,17 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+func (h *Handlers) SuspendSession(c echo.Context) error {
+	suspender, ok := h.sessionManager.(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session suspend is not supported")
+	}
+	if err := suspender.SuspendSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // ProxySession forwards an authenticated parent request to the concrete

@@ -337,6 +337,86 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	return nil
 }
 
+// SuspendSession checkpoints persistent ACP state under the manager's policy
+// and only then removes the workload. Callers request suspension; checkpointing
+// remains an execution-plane concern.
+func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
+	}
+	if session.Status() == "running" {
+		return fmt.Errorf("session is busy")
+	}
+	if session.Status() == "suspended" {
+		return nil
+	}
+	if m.requiresSessionCheckpoint(ks) {
+		if err := m.checkpointSessionState(ctx, sessionID); err != nil {
+			return fmt.Errorf("checkpoint session state: %w", err)
+		}
+	}
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get canonical session service: %w", err)
+	}
+	return m.suspendSessionWorkload(ctx, sessionID, svc)
+}
+
+func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *KubernetesSession) bool {
+	if m.config.SessionPersistence.Backend == "" || session == nil || session.Request() == nil {
+		return false
+	}
+	agentType := session.Request().AgentType
+	return agentType == "claude-acp" || agentType == "codex-acp"
+}
+
+func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, sessionID string) error {
+	store := m.connectedSessionControlStore(ctx, sessionID)
+	if store == nil {
+		return fmt.Errorf("session control is unavailable")
+	}
+	commandID := uuid.NewString()
+	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{ID: commandID, Type: "checkpoint_session_state", CreatedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
+	cursor := "0-0"
+	for {
+		events, err := store.ReadEvents(ctx, sessionID, cursor, 30*time.Second, 100)
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			if event.CommandID != commandID {
+				continue
+			}
+			if event.Type == "command_completed" {
+				return nil
+			}
+			if event.Type == "command_failed" {
+				var payload struct {
+					Error string `json:"error"`
+				}
+				_ = json.Unmarshal(event.Payload, &payload)
+				if payload.Error == "" {
+					payload.Error = "checkpoint command failed"
+				}
+				return fmt.Errorf("%s", payload.Error)
+			}
+		}
+		if len(events) > 0 {
+			cursor = events[len(events)-1].StreamID
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+}
+
 func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -373,7 +453,7 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			_ = m.ScheduleSessionSuspend(ctx, sessionID)
 			continue
 		}
-		if err := m.suspendSessionWorkload(ctx, sessionID, svc); err != nil {
+		if err := m.SuspendSession(ctx, sessionID); err != nil {
 			log.Printf("[K8S_SESSION] Failed to suspend session %s: %v", sessionID, err)
 		}
 	}

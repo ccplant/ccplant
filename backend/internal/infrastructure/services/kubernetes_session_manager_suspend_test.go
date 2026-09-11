@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -12,10 +13,32 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
+	coresessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/core/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
+
+type suspendCheckpointStore struct {
+	events []coresessioncontrol.Event
+}
+
+func (s *suspendCheckpointStore) TouchConnection(context.Context, string) error     { return nil }
+func (s *suspendCheckpointStore) IsConnected(context.Context, string) (bool, error) { return true, nil }
+func (s *suspendCheckpointStore) EnqueueCommand(_ context.Context, _ string, command coresessioncontrol.Command) (string, error) {
+	s.events = append(s.events, coresessioncontrol.Event{StreamID: "1-0", Type: "command_completed", CommandID: command.ID, Payload: json.RawMessage(`{}`)})
+	return "1-0", nil
+}
+func (s *suspendCheckpointStore) ReadCommands(context.Context, string, string, time.Duration, int64) ([]coresessioncontrol.Command, error) {
+	return nil, nil
+}
+func (s *suspendCheckpointStore) AckCommand(context.Context, string, string) error { return nil }
+func (s *suspendCheckpointStore) AppendEvents(context.Context, string, []coresessioncontrol.Event) (string, error) {
+	return "", nil
+}
+func (s *suspendCheckpointStore) ReadEvents(context.Context, string, string, time.Duration, int64) ([]coresessioncontrol.Event, error) {
+	return s.events, nil
+}
 
 func newSuspendTestManager(t *testing.T, objects ...runtime.Object) *KubernetesSessionManager {
 	t.Helper()
@@ -45,6 +68,7 @@ func TestScheduleAndReconcileSessionSuspend(t *testing.T) {
 	session := NewKubernetesSession("session-1", &entities.RunServerRequest{UserID: "user-1", AgentType: "codex-acp"},
 		deployment.Name, service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
 	manager.sessions[session.id] = session
+	manager.SetSessionControlStore(&suspendCheckpointStore{})
 
 	if err := manager.ScheduleSessionSuspend(context.Background(), session.id); err != nil {
 		t.Fatal(err)

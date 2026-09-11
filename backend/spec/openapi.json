@@ -975,6 +975,44 @@
         }
       }
     },
+    "/sessions/{sessionId}/suspend": {
+      "post": {
+        "summary": "Suspend a session",
+        "description": "Requests suspension from the owning session manager. The manager decides whether a persistence checkpoint is required before removing the runtime workload.",
+        "operationId": "suspendSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session workload was suspended"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "501": {
+            "description": "Suspend is not supported by the configured session manager"
+          },
+          "503": {
+            "description": "Session is busy, checkpoint failed, or its manager is unavailable"
+          }
+        }
+      }
+    },
     "/sessions/{sessionId}/resume": {
       "post": {
         "summary": "Resume a suspended session",

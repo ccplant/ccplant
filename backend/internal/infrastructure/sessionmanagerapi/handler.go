@@ -84,6 +84,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.GET("/sessions/:sessionId/messages", h.getMessages)
 	g.POST("/sessions/:sessionId/stop", h.stopAgent)
 	g.POST("/sessions/:sessionId/ensure", h.ensureWorkload)
+	g.POST("/sessions/:sessionId/suspend", h.suspendSession)
 	g.POST("/sessions/:sessionId/provision-settings", h.provisionSettings)
 	g.POST("/sessions/:sessionId/touch", h.touchSession)
 	g.GET("/sessions/:sessionId/sandbox-domains", h.sandboxDomains)
@@ -102,6 +103,17 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.GET("/allocations/external/next", h.nextExternalAllocation)
 	g.POST("/allocations/external/:sessionId/result", h.completeExternalAllocation)
 	g.POST("/allocations/external/:sessionId", h.submitExternalAllocation)
+}
+
+func (h *Handler) suspendSession(c echo.Context) error {
+	suspender, ok := h.manager.(portrepos.SessionSuspender)
+	if !ok {
+		return unsupported(c, "session suspend is not supported")
+	}
+	if err := suspender.SuspendSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return internalError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (h *Handler) authenticate(next echo.HandlerFunc) echo.HandlerFunc {

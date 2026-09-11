@@ -1117,6 +1117,62 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 	return ctx.JSON(code, map[string]interface{}{"session_id": sessionID, "status": status})
 }
 
+// SuspendSession asks the owning session manager to suspend the workload. The
+// manager owns any checkpoint policy and does not expose it through this API.
+func (c *SessionController) SuspendSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil && c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to look up session route")
+		}
+		if route != nil && route.ManagerID != "" {
+			return c.suspendRemoteSession(ctx, route)
+		}
+	}
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	suspender, ok := c.getSessionManager().(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session suspend is not supported by this session manager")
+	}
+	if err := suspender.SuspendSession(ctx.Request().Context(), sessionID); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to suspend session: %v", err))
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID, "status": "suspended"})
+}
+
+func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
+	}
+	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+}
+
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.RouteToSession", func(requestCtx context.Context) error {

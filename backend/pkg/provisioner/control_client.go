@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 )
 
 type controlCommand struct {
@@ -149,6 +151,15 @@ func executeControlCommand(ctx context.Context, client *http.Client, agentType s
 			endpoint = localBase + "/rpc"
 			payload = map[string]interface{}{"jsonrpc": "2.0", "id": command.ID, "method": "session/cancel", "params": map[string]string{"sessionId": sessionID}}
 		}
+	case "checkpoint_session_state":
+		binary := proxybinary.Resolve(os.Getenv(proxybinary.EnvName))
+		cmd := exec.CommandContext(ctx, binary, "client", "backup-session-state")
+		cmd.Env = append(os.Environ(), "AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("backup session state: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported command type %q", command.Type)
 	}

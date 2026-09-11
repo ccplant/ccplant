@@ -68,6 +68,12 @@ type SessionWorkloadEnsurer interface {
 	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
 }
 
+// SessionSuspender is implemented by managers that can checkpoint, when
+// required by their persistence policy, and suspend a session workload.
+type SessionSuspender interface {
+	SuspendSession(ctx context.Context, id string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`
