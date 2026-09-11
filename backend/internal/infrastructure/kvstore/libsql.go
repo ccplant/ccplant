@@ -322,6 +322,10 @@ func libSQLListQuery(query Query, selector labels.Selector) (string, []any) {
 	statement.WriteString(`SELECT key, version, metadata, value FROM agentapi_kv
 WHERE kind = ? AND namespace = ?`)
 	args := []any{query.Kind, query.Namespace}
+	if query.KeyPrefix != "" {
+		statement.WriteString(" AND substr(key, 1, length(?)) = ?")
+		args = append(args, query.KeyPrefix, query.KeyPrefix)
+	}
 	requirements, selectable := selector.Requirements()
 	if !selectable {
 		statement.WriteString(" AND 0")

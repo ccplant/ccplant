@@ -57,6 +57,13 @@ func TestEncryptedStoreRoundTripAndMetadataFilter(t *testing.T) {
 	if len(records) != 1 || records[0].Key != "user" || !bytes.Equal(records[0].Value, userValue) {
 		t.Fatalf("filtered records = %#v", records)
 	}
+	rawRecords, err := backend.List(ctx, Query{Kind: KindSecret, Namespace: "ns", KeyPrefix: "us"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rawRecords) != 1 || rawRecords[0].Key != "user" {
+		t.Fatalf("prefix-filtered records = %#v", rawRecords)
+	}
 }
 
 func TestLibSQLBackfillsMetadataForLegacyRows(t *testing.T) {
