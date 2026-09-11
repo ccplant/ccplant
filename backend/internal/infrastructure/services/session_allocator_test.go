@@ -17,7 +17,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestFetchSessionAllocationsCachesSecretListAndInvalidatesOnWrite(t *testing.T) {
+func TestFetchSessionAllocationsUsesInformerAndObservesWritesWithoutRelist(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 	cfg := config.DefaultConfig()
 	cfg.KubernetesSession.Namespace = "test-ns"
@@ -41,8 +41,8 @@ func TestFetchSessionAllocationsCachesSecretListAndInvalidatesOnWrite(t *testing
 	if len(sessions) != 1 || sessions[0].ID() != "session-a" {
 		t.Fatalf("allocations after save = %#v", sessions)
 	}
-	if got := countSecretListActions(client.Actions()); got != 2 {
-		t.Fatalf("Secret LIST calls after save = %d, want 2", got)
+	if got := countSecretListActions(client.Actions()); got != 1 {
+		t.Fatalf("Secret LIST calls after save = %d, want 1", got)
 	}
 }
 
@@ -504,7 +504,7 @@ func TestSessionAllocationInvalidatesSessionListCache(t *testing.T) {
 	}
 }
 
-func TestListSessionsCachesBaseSessionsWhileAllocationExists(t *testing.T) {
+func TestListSessionsDoesNotUseRedisListCacheWithInformer(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 
 	cfg := config.DefaultConfig()
@@ -537,8 +537,8 @@ func TestListSessionsCachesBaseSessionsWhileAllocationExists(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Fatalf("ListSessions() returned %d sessions, want 1", len(sessions))
 	}
-	if cache.setCalls != 1 {
-		t.Fatalf("SetSessionListCache calls = %d, want 1 for the base session list", cache.setCalls)
+	if cache.setCalls != 0 {
+		t.Fatalf("SetSessionListCache calls = %d, want 0", cache.setCalls)
 	}
 }
 
@@ -562,10 +562,6 @@ func (r *recordingSessionListCacheRepo) InvalidateSessionListCache(context.Conte
 }
 
 func (r *recordingSessionListCacheRepo) UpdateSessionInCache(context.Context, string, portrepos.CachedSessionDTO, time.Duration) error {
-	return nil
-}
-
-func (r *recordingSessionListCacheRepo) UpdateSessionStatusInCache(context.Context, string, string, string, time.Time, time.Duration) error {
 	return nil
 }
 

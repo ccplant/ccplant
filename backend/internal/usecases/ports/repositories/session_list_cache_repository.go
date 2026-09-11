@@ -55,12 +55,6 @@ type SessionListCacheRepository interface {
 	// different label selector, because that would pollute filtered list results.
 	UpdateSessionInCache(ctx context.Context, namespace string, session CachedSessionDTO, ttl time.Duration) error
 
-	// UpdateSessionStatusInCache updates only the volatile status fields for a
-	// session already present in cached lists. This avoids invalidating every
-	// list on each status event and therefore prevents Kubernetes API cache
-	// stampedes during busy session transitions.
-	UpdateSessionStatusInCache(ctx context.Context, namespace, sessionID, status string, updatedAt time.Time, ttl time.Duration) error
-
 	// DeleteSessionFromCache removes a single session from all cache entries for the namespace.
 	// This is more efficient than invalidating the entire cache when only one session is deleted.
 	DeleteSessionFromCache(ctx context.Context, namespace string, sessionID string, ttl time.Duration) error
