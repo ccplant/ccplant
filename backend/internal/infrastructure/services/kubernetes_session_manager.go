@@ -4746,6 +4746,96 @@ func (m *KubernetesSessionManager) GetNamespace() string {
 	return m.namespace
 }
 
+func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools []string) (map[string]interface{}, error) {
+	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"})
+	if err != nil {
+		return nil, err
+	}
+	// The pool label is assigned to the runner Service when stock is created;
+	// older and adopted Pod templates do not necessarily carry it. Join Pods to
+	// Services by session ID instead of filtering Pods by pool.
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"})
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[string]bool, len(pods.Items))
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning {
+			live[pod.Labels["agentapi.proxy/session-id"]] = true
+		}
+	}
+	running, used := 0, 0
+	runningIDs, usedIDs := make([]string, 0), make([]string, 0)
+	allowedPools := make(map[string]bool, len(pools))
+	for _, pool := range pools {
+		allowedPools[pool] = true
+	}
+	for i := range services.Items {
+		service := &services.Items[i]
+		if len(allowedPools) > 0 && !allowedPools[service.Labels["agentapi.proxy/session-pool"]] {
+			continue
+		}
+		id := service.Labels["agentapi.proxy/session-id"]
+		if service.DeletionTimestamp != nil || !live[id] {
+			continue
+		}
+		running++
+		if id != "" {
+			runningIDs = append(runningIDs, id)
+		}
+		if service.Labels["agentapi.proxy/stock"] != "true" {
+			used++
+			if id != "" {
+				usedIDs = append(usedIDs, id)
+			}
+		}
+	}
+	sort.Strings(runningIDs)
+	sort.Strings(usedIDs)
+	version := "unknown"
+	if m.config != nil && m.config.SessionManager.CurrentVersion != "" {
+		version = m.config.SessionManager.CurrentVersion
+	}
+	return map[string]interface{}{"status": "online", "version": version, "running_runners": running, "used_runners": used, "running_runner_ids": runningIDs, "used_runner_ids": usedIDs}, nil
+}
+
+func (m *KubernetesSessionManager) OperationalLogs(ctx context.Context, runnerID, sessionID string, tail int) ([]string, string, error) {
+	podName := strings.TrimSpace(os.Getenv("HOSTNAME"))
+	container := "session-manager"
+	if runnerID != "" {
+		sessionID = runnerID
+	}
+	if sessionID != "" {
+		pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "agentapi.proxy/session-id=" + sessionID})
+		if err != nil {
+			return nil, "", err
+		}
+		if len(pods.Items) == 0 {
+			return nil, "", fmt.Errorf("runner %s not found", sessionID)
+		}
+		podName, container = pods.Items[0].Name, "agentapi"
+		if len(pods.Items[0].Spec.Containers) > 0 {
+			container = pods.Items[0].Spec.Containers[0].Name
+		}
+	}
+	if podName == "" {
+		return nil, "", fmt.Errorf("pod name is unavailable")
+	}
+	count := int64(tail)
+	stream, err := m.client.CoreV1().Pods(m.namespace).GetLogs(podName, &corev1.PodLogOptions{Container: container, TailLines: &count}).Stream(ctx)
+	if err != nil {
+		return nil, podName + "/" + container, err
+	}
+	defer func() { _ = stream.Close() }()
+	data, err := io.ReadAll(io.LimitReader(stream, 2<<20))
+	if err != nil {
+		return nil, podName + "/" + container, err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\r\n"), "\n")
+	return lines, podName + "/" + container, nil
+}
+
 // SetSettingsRepository sets the settings repository for Bedrock configuration
 func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.SettingsRepository) {
 	m.settingsRepo = repo

@@ -84,6 +84,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	if server.esmControlStore != nil {
 		sessionPoolController.WithManagerLiveness(server.esmControlStore)
 	}
+	if server.esmControlTunnel != nil {
+		sessionPoolController.WithManagerTunnel(server.esmControlTunnel)
+	}
 	if server.sessionAllocationNotifier != nil {
 		sessionPoolController.WithAllocationNotifier(server.sessionAllocationNotifier)
 	}
@@ -645,6 +648,9 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.POST("/session-managers/registration-tokens", r.handlers.sessionPoolController.IssueManagerRegistrationToken, poolWrite)
 		r.echo.POST("/session-managers/enroll", r.handlers.sessionPoolController.EnrollManager)
 		r.echo.GET("/session-managers", r.handlers.sessionPoolController.ListOwnedManagers, poolRead)
+		r.echo.GET("/session-pools/status", r.handlers.sessionPoolController.ListManageablePoolStatus, poolRead)
+		r.echo.GET("/session-managers/:id/logs", r.handlers.sessionPoolController.GetManagerLogs, poolRead)
+		r.echo.GET("/session-runners/:id/logs", r.handlers.sessionPoolController.GetRunnerLogs, poolRead)
 		r.echo.GET("/session-managers/:id", r.handlers.sessionPoolController.GetOwnedManager, poolRead)
 		r.echo.PATCH("/session-managers/:id", r.handlers.sessionPoolController.PatchOwnedManager, poolWrite)
 		r.echo.DELETE("/session-managers/:id", r.handlers.sessionPoolController.DeleteOwnedManager, poolWrite)

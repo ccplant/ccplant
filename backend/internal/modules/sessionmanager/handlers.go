@@ -13,12 +13,14 @@ package sessionmanager
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,11 @@ import (
 type Handlers struct {
 	sessionManager repositories.SessionManager
 	hmacSecret     []byte
+}
+
+type operationalProvider interface {
+	OperationalStatus(context.Context, []string) (map[string]interface{}, error)
+	OperationalLogs(context.Context, string, string, int) ([]string, string, error)
 }
 
 // NewHandlers creates a new Handlers instance.
@@ -75,6 +82,13 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	auth.POST("", h.StartCodexDeviceAuth)
 	auth.DELETE("/:attemptId", h.CancelCodexDeviceAuth)
 
+	if _, ok := h.sessionManager.(operationalProvider); ok {
+		management := e.Group("/internal/esm-management")
+		management.Use(h.hmacMiddleware())
+		management.GET("/status", h.GetOperationalStatus)
+		management.GET("/logs", h.GetOperationalLogs)
+	}
+
 	// Runtime traffic is addressed by the parent as
 	// /<remote-id>/<agent-endpoint>, rather than through the management API
 	// prefix. Register the finite AgentAPI/ACP surface explicitly. Echo's final
@@ -89,6 +103,34 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+func (h *Handlers) GetOperationalStatus(c echo.Context) error {
+	provider, ok := h.sessionManager.(operationalProvider)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "operational status is unavailable")
+	}
+	status, err := provider.OperationalStatus(c.Request().Context(), c.QueryParams()["pool"])
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to inspect session manager").SetInternal(err)
+	}
+	return c.JSON(http.StatusOK, status)
+}
+
+func (h *Handlers) GetOperationalLogs(c echo.Context) error {
+	provider, ok := h.sessionManager.(operationalProvider)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "operational logs are unavailable")
+	}
+	tail, _ := strconv.Atoi(c.QueryParam("tail"))
+	if tail < 1 || tail > 5000 {
+		tail = 200
+	}
+	lines, source, err := provider.OperationalLogs(c.Request().Context(), c.QueryParam("runner_id"), c.QueryParam("session_id"), tail)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read logs").SetInternal(err)
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"lines": lines, "source": source})
 }
 
 // ProxySession forwards an authenticated parent request to the concrete

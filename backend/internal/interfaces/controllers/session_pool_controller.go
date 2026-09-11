@@ -34,7 +34,13 @@ type SessionPoolController struct {
 	profile  interface {
 		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
 	}
-	now func() time.Time
+	now           func() time.Time
+	managerTunnel ESMControlTunnel
+}
+
+func (c *SessionPoolController) WithManagerTunnel(tunnel ESMControlTunnel) *SessionPoolController {
+	c.managerTunnel = tunnel
+	return c
 }
 
 type managerLiveness interface {
