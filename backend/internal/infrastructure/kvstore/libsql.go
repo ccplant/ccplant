@@ -348,7 +348,7 @@ WHERE kind = ? AND namespace = ?`)
 			if requirement.Operator() == selection.LessThan {
 				comparison = "<"
 			}
-			statement.WriteString(fmt.Sprintf(" AND EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ? AND CAST(%s.value AS INTEGER) %s ?)", alias, alias, alias, comparison))
+			fmt.Fprintf(&statement, " AND EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ? AND CAST(%s.value AS INTEGER) %s ?)", alias, alias, alias, comparison)
 			args = append(args, key, values[0])
 		}
 	}
@@ -362,10 +362,10 @@ func writeLibSQLLabelExists(statement *strings.Builder, args *[]any, alias, key 
 	} else {
 		statement.WriteString(" AND")
 	}
-	statement.WriteString(fmt.Sprintf(" EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ?", alias, alias))
+	fmt.Fprintf(statement, " EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ?", alias, alias)
 	*args = append(*args, key)
 	if len(values) > 0 {
-		statement.WriteString(fmt.Sprintf(" AND %s.value IN (%s)", alias, strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")))
+		fmt.Fprintf(statement, " AND %s.value IN (%s)", alias, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
 		for _, value := range values {
 			*args = append(*args, value)
 		}
