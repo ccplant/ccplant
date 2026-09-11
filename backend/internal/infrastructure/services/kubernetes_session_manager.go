@@ -4751,7 +4751,10 @@ func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools 
 	if err != nil {
 		return nil, err
 	}
-	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"})
+	// The pool label is assigned to the runner Service when stock is created;
+	// older and adopted Pod templates do not necessarily carry it. Join Pods to
+	// Services by session ID instead of filtering Pods by pool.
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"})
 	if err != nil {
 		return nil, err
 	}
