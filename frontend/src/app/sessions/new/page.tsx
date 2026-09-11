@@ -155,7 +155,14 @@ export default function NewSessionPage() {
   const loadAvailablePools = async () => {
     try {
       const client = createAgentAPIProxyClientFromStorage()
-      setAvailablePools(await client.getAvailableSessionPools())
+      const pools = await client.getAvailableSessionPools()
+      setAvailablePools(pools)
+      // A remote-only deployment (for example Fly) cannot create a session on
+      // the API host itself. When there is exactly one usable pool, select it
+      // by default so the first submission is routed to its session manager.
+      if (pools.length === 1) {
+        setSelectedManagerId(current => current || pools[0].name)
+      }
     } catch (error) {
       console.error('Failed to load available pools:', error)
     }
