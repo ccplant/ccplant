@@ -282,6 +282,45 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	}
 }
 
+func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
+	allocated := &fakeSession{id: "remote-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
+	unrelated := &fakeSession{id: "other-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"remote-id": allocated,
+		"other-id":  unrelated,
+	}}
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/suspend", "public-id")
+
+	if err := controller.SuspendSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.path != "/api/v1/sessions/remote-id/suspend" {
+		t.Fatalf("suspend path = %q, want allocated session path", tunnel.path)
+	}
+	if !routeRepo.saved || routeRepo.route.Status != "suspended" || routeRepo.route.StatusUpdatedAt.IsZero() {
+		t.Fatalf("route status was not persisted: %#v", routeRepo.route)
+	}
+	if allocated.status != "suspended" {
+		t.Fatalf("allocated cache status = %q, want suspended", allocated.status)
+	}
+	if unrelated.status != "active" {
+		t.Fatalf("unrelated cache status = %q, want active", unrelated.status)
+	}
+}
+
 func TestRouteToSessionRequiresOutboundManagerConnection(t *testing.T) {
 	manager := &ensuringSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}
 	controller := controllers.NewSessionController(

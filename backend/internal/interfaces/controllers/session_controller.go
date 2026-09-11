@@ -45,6 +45,10 @@ type sessionStatusMessageProvider interface {
 	StatusMessage() string
 }
 
+type sessionStatusCacheUpdater interface {
+	SetStatusSilent(string)
+}
+
 // SessionManagerProvider provides access to the session manager
 // This allows the session manager to be swapped at runtime (e.g., for testing)
 type SessionManagerProvider interface {
@@ -1170,7 +1174,24 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist suspended session status")
+	}
 	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+}
+
+// recordRemoteLifecycleStatus keeps the public route and only the allocated
+// session's local cache entry in sync after a remote lifecycle command.
+func (c *SessionController) recordRemoteLifecycleStatus(ctx context.Context, route *repositories.SessionRoute, status string) error {
+	if err := c.RecordRemoteSessionStatus(ctx, route, status); err != nil {
+		return err
+	}
+	if session := c.getSessionManager().GetSession(route.RemoteSessionID); session != nil {
+		if updater, ok := session.(sessionStatusCacheUpdater); ok {
+			updater.SetStatusSilent(status)
+		}
+	}
+	return nil
 }
 
 // RouteToSession routes requests to the appropriate agentapi server instance
