@@ -14,7 +14,47 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
+
+func TestFetchSessionAllocationsCachesSecretListAndInvalidatesOnWrite(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	client := fake.NewSimpleClientset()
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager.fetchSessionAllocationsFromK8s(context.Background(), entities.SessionFilter{})
+	manager.fetchSessionAllocationsFromK8s(context.Background(), entities.SessionFilter{})
+	if got := countSecretListActions(client.Actions()); got != 1 {
+		t.Fatalf("Secret LIST calls = %d, want 1", got)
+	}
+
+	req := &sessionallocation.AllocationRequest{SessionID: "session-a", Request: &entities.RunServerRequest{UserID: "alice"}, Status: sessionallocation.StatusPending}
+	if err := manager.saveSessionAllocation(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	sessions := manager.fetchSessionAllocationsFromK8s(context.Background(), entities.SessionFilter{})
+	if len(sessions) != 1 || sessions[0].ID() != "session-a" {
+		t.Fatalf("allocations after save = %#v", sessions)
+	}
+	if got := countSecretListActions(client.Actions()); got != 2 {
+		t.Fatalf("Secret LIST calls after save = %d, want 2", got)
+	}
+}
+
+func countSecretListActions(actions []ktesting.Action) int {
+	count := 0
+	for _, action := range actions {
+		if action.GetVerb() == "list" && action.GetResource().Resource == "secrets" {
+			count++
+		}
+	}
+	return count
+}
 
 func TestAllocationProxyURLUsesStableControlPlaneServiceByDefault(t *testing.T) {
 	manager := &KubernetesSessionManager{

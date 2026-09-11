@@ -35,6 +35,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/sync/singleflight"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -159,6 +160,10 @@ type KubernetesSessionManager struct {
 	// When Redis is configured this reduces Kubernetes API calls for frequent
 	// ListSessions requests.
 	sessionListCacheRepo portrepos.SessionListCacheRepository
+	allocationListMu     sync.RWMutex
+	allocationListCache  *corev1.SecretList
+	allocationListUntil  time.Time
+	allocationListLoad   singleflight.Group
 
 	// sessionAllocatorEnabled routes CreateSession through the leader-elected
 	// SessionAllocator when the server has started that worker.
@@ -1942,9 +1947,7 @@ func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
 }
 
 func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {
-	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)",
-	})
+	secrets, err := m.listSessionAllocations(ctx)
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list session allocations: %v", err)
 		return nil
@@ -1988,6 +1991,50 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 		sessions = append(sessions, session)
 	}
 	return sessions
+}
+
+const sessionAllocationListCacheTTL = 2 * time.Second
+
+func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (*corev1.SecretList, error) {
+	if secrets, ok := m.cachedSessionAllocations(); ok {
+		return secrets, nil
+	}
+	value, err, _ := m.allocationListLoad.Do("active", func() (interface{}, error) {
+		if secrets, ok := m.cachedSessionAllocations(); ok {
+			return secrets, nil
+		}
+		secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)",
+		})
+		if err != nil {
+			return nil, err
+		}
+		m.allocationListMu.Lock()
+		m.allocationListCache = secrets.DeepCopy()
+		m.allocationListUntil = time.Now().Add(sessionAllocationListCacheTTL)
+		m.allocationListMu.Unlock()
+		return secrets.DeepCopy(), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value.(*corev1.SecretList).DeepCopy(), nil
+}
+
+func (m *KubernetesSessionManager) cachedSessionAllocations() (*corev1.SecretList, bool) {
+	m.allocationListMu.RLock()
+	defer m.allocationListMu.RUnlock()
+	if m.allocationListCache == nil || time.Now().After(m.allocationListUntil) {
+		return nil, false
+	}
+	return m.allocationListCache.DeepCopy(), true
+}
+
+func (m *KubernetesSessionManager) invalidateSessionAllocationListCache() {
+	m.allocationListMu.Lock()
+	m.allocationListCache = nil
+	m.allocationListUntil = time.Time{}
+	m.allocationListMu.Unlock()
 }
 
 // redisSessionListCacheTTL is the TTL passed to the cache repository.
