@@ -43,6 +43,12 @@ func TestEncryptedStoreRoundTripAndMetadataFilter(t *testing.T) {
 	if raw.Labels["scope"] != "user" {
 		t.Fatalf("stored labels = %#v", raw.Labels)
 	}
+	// A non-matching value must be excluded by SQL before it is downloaded and
+	// validated. This deliberately invalid encrypted value would fail List if
+	// label filtering happened only after rows.Scan.
+	if _, err := backend.db.ExecContext(ctx, `UPDATE agentapi_kv SET value = 'not-encrypted' WHERE key = 'team'`); err != nil {
+		t.Fatal(err)
+	}
 
 	records, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns", LabelSelector: "scope=user"})
 	if err != nil {
