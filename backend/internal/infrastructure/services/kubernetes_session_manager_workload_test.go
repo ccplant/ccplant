@@ -806,6 +806,36 @@ func TestCountStockSessionsExcludesAllocatedDirectRunners(t *testing.T) {
 	}
 }
 
+func TestCountRunnerSessionsForPoolExcludesSuspendedServices(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	for _, id := range []string{"running", "suspended"} {
+		_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + id + "-svc", Namespace: "test-ns", Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "agentapi-proxy",
+				"agentapi.proxy/session-id":    id,
+				"agentapi.proxy/session-pool":  "test-pool",
+			}},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("create service %s: %v", id, err)
+		}
+	}
+	_, err := manager.client.CoreV1().Pods("test-ns").Create(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-running", Namespace: "test-ns"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create running pod: %v", err)
+	}
+
+	count, err := manager.CountRunnerSessionsForPool(context.Background(), "test-pool")
+	if err != nil {
+		t.Fatalf("CountRunnerSessionsForPool: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("CountRunnerSessionsForPool = %d, want 1", count)
+	}
+}
+
 func TestCreateStockSessionReturnsBeforeWorkloadIsReady(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	manager.k8sConfig.PodStartTimeout = 1
