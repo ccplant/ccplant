@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -48,6 +49,7 @@ type directRuntimeTunnel struct {
 
 type lifecycleTunnel struct {
 	path     string
+	body     []byte
 	enqueued bool
 	done     bool
 	status   int
@@ -59,7 +61,19 @@ func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool 
 
 func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
 	t.path = req.URL.Path
+	if req.Body != nil {
+		t.body, _ = io.ReadAll(req.Body)
+	}
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+}
+
+type allocationReader struct {
+	allocation *sessionrunnercore.Allocation
+	err        error
+}
+
+func (s *allocationReader) GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error) {
+	return s.allocation, s.err
 }
 
 func (t *lifecycleTunnel) Enqueue(_ context.Context, _, _, _ string, req *http.Request) (string, error) {
@@ -298,6 +312,10 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 		&routeSessionManagerProvider{manager: manager}, nil,
 		controllers.WithSessionRouteRepository(routeRepo),
 		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{
+			SessionID: "public-id", RuntimeToken: "runtime-token", Generation: 2,
+			ProvisionSettings: []byte(`{"session":{"user_id":"user-1","scope":"user"}}`),
+		}}),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/suspend", "public-id")
 
@@ -309,6 +327,9 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 	}
 	if tunnel.path != "/api/v1/sessions/remote-id/suspend" {
 		t.Fatalf("suspend path = %q, want allocated session path", tunnel.path)
+	}
+	if !strings.Contains(string(tunnel.body), `"token":"runtime-token"`) || !strings.Contains(string(tunnel.body), `"generation":2`) {
+		t.Fatalf("suspend body does not contain resume data: %s", tunnel.body)
 	}
 	if !routeRepo.saved || routeRepo.route.Status != "suspended" || routeRepo.route.StatusUpdatedAt.IsZero() {
 		t.Fatalf("route status was not persisted: %#v", routeRepo.route)

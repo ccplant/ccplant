@@ -82,13 +82,34 @@ func TestSuspendSessionUsesManagerPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/api/v1/sessions/remote-1/suspend"
+	body := []byte(`{"session":{"user_id":"user","scope":"user"}}`)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodPost, path, ts, body)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.suspendedID != "remote-1" {
+		t.Fatalf("status=%d suspended=%q body=%s", rec.Code, manager.suspendedID, rec.Body.String())
+	}
+}
+
+func TestSuspendSessionRejectsMissingResumeSettingsWithoutStoppingWorkload(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/sessions/remote-1/suspend"
 	req := httptest.NewRequest(http.MethodPost, path, nil)
 	ts := hmacutil.NowTimestamp()
 	req.Header.Set(hmacutil.TimestampHeader, ts)
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodPost, path, ts, nil)))
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNoContent || manager.suspendedID != "remote-1" {
+	if rec.Code != http.StatusBadRequest || manager.suspendedID != "" {
 		t.Fatalf("status=%d suspended=%q body=%s", rec.Code, manager.suspendedID, rec.Body.String())
 	}
 }

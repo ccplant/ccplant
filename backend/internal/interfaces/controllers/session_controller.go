@@ -89,7 +89,7 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
-	sessionRunnerStore     sessionrunnercore.Store
+	sessionRunnerStore     sessionRunnerAllocationStore
 	esmControlTunnel       ESMControlTunnel
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
@@ -165,7 +165,11 @@ func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
 	return func(c *SessionController) { c.esmControlTunnel = tunnel }
 }
 
-func WithSessionRunnerStore(store sessionrunnercore.Store) SessionControllerOption {
+type sessionRunnerAllocationStore interface {
+	GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error)
+}
+
+func WithSessionRunnerStore(store sessionRunnerAllocationStore) SessionControllerOption {
 	return func(c *SessionController) { c.sessionRunnerStore = store }
 }
 
@@ -1167,36 +1171,39 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
-	var body io.Reader
-	var settingsBody []byte
-	if c.sessionRunnerStore != nil {
-		if allocation, allocationErr := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID); allocationErr == nil && len(allocation.ProvisionSettings) > 0 {
-			var settings sessionsettings.SessionSettings
-			if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
-				scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
-				if scheme == "" {
-					scheme = "https"
-				}
-				host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
-				if host == "" {
-					host = ctx.Request().Host
-				}
-				prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
-				settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
-				settingsBody, _ = json.Marshal(&settings)
-			}
-			if len(settingsBody) > 0 {
-				body = bytes.NewReader(settingsBody)
-			}
-		}
+	if c.sessionRunnerStore == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session resume data store is unavailable")
 	}
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, body)
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is unavailable; the session was not suspended")
+	}
+	if len(allocation.ProvisionSettings) == 0 || strings.TrimSpace(allocation.RuntimeToken) == "" || allocation.Generation <= 0 {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is incomplete; the session was not suspended")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to decode session resume data; the session was not suspended")
+	}
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
+	settingsBody, err := json.Marshal(&settings)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
