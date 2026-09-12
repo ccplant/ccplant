@@ -19,4 +19,7 @@ func TestSetHistoryFileRestoresRawMessages(t *testing.T) {
 	if len(b.history) != 1 || len(b.userMessageIndices) != 1 {
 		t.Fatalf("history=%d user messages=%d", len(b.history), len(b.userMessageIndices))
 	}
+	if !b.suppressRestoredUserEcho {
+		t.Fatal("restored bridge must suppress the session/load user echo")
+	}
 }

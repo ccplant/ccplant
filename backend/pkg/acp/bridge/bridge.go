@@ -74,11 +74,12 @@ type Bridge struct {
 
 	// Message history: every broadcast message is appended so that reconnecting
 	// SSE clients can replay missed events via GET /messages.
-	histMu                  sync.RWMutex
-	history                 []json.RawMessage
-	lastUserMessageIdx      int
-	userMessageIndices      []int // history indices of each user_message_chunk
-	lastHistoryWasUserChunk bool
+	histMu                   sync.RWMutex
+	history                  []json.RawMessage
+	lastUserMessageIdx       int
+	userMessageIndices       []int // history indices of each user_message_chunk
+	lastHistoryWasUserChunk  bool
+	suppressRestoredUserEcho bool
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -127,6 +128,7 @@ func (b *Bridge) SetHistoryFile(path string) error {
 		}
 		b.history = append(b.history, raw)
 	}
+	b.suppressRestoredUserEcho = len(b.userMessageIndices) > 0
 	return nil
 }
 
@@ -140,6 +142,23 @@ func isUserMessageRaw(raw json.RawMessage) bool {
 		} `json:"params"`
 	}
 	return json.Unmarshal(raw, &msg) == nil && msg.Method == "session/update" && msg.Params.Update.SessionUpdate == "user_message_chunk"
+}
+
+func userMessageText(raw json.RawMessage) string {
+	var msg struct {
+		Params struct {
+			Update struct {
+				SessionUpdate string `json:"sessionUpdate"`
+				Content       struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(raw, &msg) != nil || msg.Params.Update.SessionUpdate != "user_message_chunk" {
+		return ""
+	}
+	return msg.Params.Update.Content.Text
 }
 
 type statusSubscriber struct {
@@ -779,6 +798,17 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	isUserChunk := isUserMessageUpdate(msg)
+	if isUserChunk && b.suppressRestoredUserEcho && len(b.userMessageIndices) > 0 {
+		previous := b.history[b.userMessageIndices[len(b.userMessageIndices)-1]]
+		if userMessageText(previous) == userMessageText(raw) {
+			b.suppressRestoredUserEcho = false
+			b.histMu.Unlock()
+			return
+		}
+	}
+	if isUserChunk {
+		b.suppressRestoredUserEcho = false
+	}
 	if isUserChunk && !b.lastHistoryWasUserChunk {
 		b.lastUserMessageIdx = len(b.history)
 		b.userMessageIndices = append(b.userMessageIndices, len(b.history))
