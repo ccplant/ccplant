@@ -346,6 +346,30 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	return nil
 }
 
+// ApplyRunnerAutoSuspendPolicy reconciles allocation-specific policy onto a
+// pre-warmed runner. Stock workloads start with the manager default and only
+// learn the owning user's policy after the parent assigns an allocation.
+func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Context, sessionID string, enabled *bool, minutes int) error {
+	if enabled == nil {
+		return nil
+	}
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	req := session.Request()
+	if req == nil {
+		req = &entities.RunServerRequest{}
+		session.SetRequest(req)
+	}
+	if req.ProvisionSettings == nil {
+		req.ProvisionSettings = &sessionsettings.SessionSettings{}
+	}
+	req.ProvisionSettings.Session.AutoSuspendEnabled = enabled
+	req.ProvisionSettings.Session.AutoSuspendMinutes = minutes
+	return m.ScheduleSessionSuspend(ctx, sessionID)
+}
+
 func (m *KubernetesSessionManager) resolveAutoSuspendPolicy(ctx context.Context, session *KubernetesSession) (time.Duration, bool, error) {
 	if req := session.Request(); req != nil {
 		if req.ProvisionSettings != nil && req.ProvisionSettings.Session.AutoSuspendEnabled != nil {

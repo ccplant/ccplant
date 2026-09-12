@@ -37,6 +37,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -428,10 +429,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
-						ManagerID           string                            `json:"manager_id"`
-						Pools               []*sessionrunnercore.PoolSupplier `json:"pools"`
-						RegisteredRunnerIDs *[]string                         `json:"registered_runner_ids"`
-						UpstreamVersion     string                            `json:"upstream_version"`
+						ManagerID               string                                 `json:"manager_id"`
+						Pools                   []*sessionrunnercore.PoolSupplier      `json:"pools"`
+						RegisteredRunnerIDs     *[]string                              `json:"registered_runner_ids"`
+						UpstreamVersion         string                                 `json:"upstream_version"`
+						AllocatedRunnerPolicies map[string]sessionsettings.SessionMeta `json:"allocated_runner_policies"`
 					}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
@@ -443,6 +445,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						manager.ConfigureSessionRunnerPool(upstream, managerID, token, cfg.SessionManager.RunnerPool)
 					}
 					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
+					for runnerID, policy := range result.AllocatedRunnerPolicies {
+						if err := manager.ApplyRunnerAutoSuspendPolicy(ctx, runnerID, policy.AutoSuspendEnabled, policy.AutoSuspendMinutes); err != nil {
+							log.Printf("[SESSION_MANAGER] Apply runner %s auto-suspend policy: %v", runnerID, err)
+						}
+					}
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
 					}
