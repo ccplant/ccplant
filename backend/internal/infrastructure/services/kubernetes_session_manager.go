@@ -1773,6 +1773,9 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	} else {
 		log.Printf("[K8S_SESSION] Stock session %s skipped SetStatus(active): agent already running", session.id)
 	}
+	if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+		log.Printf("[K8S_SESSION] Failed to schedule initial suspend for stock session %s: %v", session.id, err)
+	}
 
 	// Continue watching deployment health and agentapi runtime status.
 	go m.watchAgentAPIStatus(ctx, session)
@@ -5748,6 +5751,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Start watching deployment health and agentapi runtime status.
 	go m.watchDeploymentStatus(ctx, session)
 	go m.watchAgentAPIStatus(ctx, session)
+	go m.scheduleSuspendWhenRestoredWorkloadReady(session)
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
 
@@ -5881,6 +5885,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	if status != "suspended" {
 		go m.watchDeploymentStatus(ctx, session)
 		go m.watchAgentAPIStatus(ctx, session)
+		go m.scheduleSuspendWhenRestoredWorkloadReady(session)
 	}
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service (with pre-fetched workload)", sessionID)
