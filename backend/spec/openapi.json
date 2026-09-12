@@ -7544,7 +7544,9 @@
           "starting",
           "running",
           "active",
+          "suspending",
           "suspended",
+          "resuming",
           "unhealthy",
           "stopped",
           "error",
@@ -8557,6 +8559,9 @@
             ],
             "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
           },
+          "auto_suspend": {
+            "$ref": "#/components/schemas/AutoSuspendSettings"
+          },
           "codex_connection": {
             "$ref": "#/components/schemas/CodexConnectionRequest"
           },
@@ -8754,6 +8759,9 @@
             ],
             "description": "Default agent type for sessions in this settings scope."
           },
+          "auto_suspend": {
+            "$ref": "#/components/schemas/AutoSuspendSettings"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -8775,6 +8783,21 @@
           "default_anthropic_base_url": {
             "type": "string",
             "description": "Instance-level ANTHROPIC_BASE_URL used to prefill compatible API settings."
+          }
+        }
+      },
+      "AutoSuspendSettings": {
+        "type": "object",
+        "required": ["enabled", "idle_timeout_minutes"],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "idle_timeout_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10080,
+            "description": "Idle timeout in minutes. Any whole-minute value from 1 minute through 7 days is accepted."
           }
         }
       },

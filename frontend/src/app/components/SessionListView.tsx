@@ -442,6 +442,12 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (session.status === 'suspended') {
       return { status: 'suspended' as const, colorClass: 'bg-violet-500', text: 'Suspended' }
     }
+    if (session.status === 'resuming' || session.status === 'restoring') {
+      return { status: 'starting' as const, colorClass: 'bg-blue-500 animate-pulse', text: '再開中' }
+    }
+    if (session.status === 'suspending') {
+      return { status: 'starting' as const, colorClass: 'bg-violet-500 animate-pulse', text: 'サスペンド中' }
+    }
     if (session.status === 'error' || session.status === 'timeout') {
       return { status: 'error' as const, colorClass: 'bg-red-500', text: session.status === 'timeout' ? '起動タイムアウト' : '起動失敗' }
     }

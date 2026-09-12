@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -25,6 +26,19 @@ type capturingPoolSettingsManager struct {
 	portrepos.SessionManager
 	request *entities.RunServerRequest
 }
+
+type poolSettingsRepository struct{ settings *entities.Settings }
+
+func (r *poolSettingsRepository) Save(context.Context, *entities.Settings) error { return nil }
+func (r *poolSettingsRepository) FindByName(_ context.Context, name string) (*entities.Settings, error) {
+	if r.settings != nil && r.settings.Name() == name {
+		return r.settings, nil
+	}
+	return nil, errors.New("not found")
+}
+func (r *poolSettingsRepository) Delete(context.Context, string) error               { return nil }
+func (r *poolSettingsRepository) Exists(context.Context, string) (bool, error)       { return false, nil }
+func (r *poolSettingsRepository) List(context.Context) ([]*entities.Settings, error) { return nil, nil }
 
 func (m *capturingPoolSettingsManager) BuildRemoteProvisionSettings(_ context.Context, _ string, request *entities.RunServerRequest) (*sessionsettings.SessionSettings, error) {
 	m.request = request
@@ -59,6 +73,29 @@ func TestPoolSessionDoesNotIgnoreSettingsAuthorizationError(t *testing.T) {
 	result, err := server.createPoolSession(context.Background(), &sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}}, "session", entities.StartRequest{ResolvedSessionProfileID: "profile"}, "user", nil)
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "team membership is required")
+}
+
+func TestPoolSessionOverlaysScopedAutoSuspendPolicy(t *testing.T) {
+	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	manager := &capturingPoolSettingsManager{}
+	userSettings := entities.NewSettings("user")
+	userSettings.SetAutoSuspend(&entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 1})
+	server := &Server{
+		sessionManager: manager, sessionRunnerStore: store, sessionRouteRepo: &recordingSessionRouteRepository{},
+		settingsRepo: &poolSettingsRepository{settings: userSettings},
+	}
+
+	_, err := server.createPoolSession(context.Background(),
+		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		"session", entities.StartRequest{Scope: entities.ScopeUser}, "user", nil)
+	require.NoError(t, err)
+	allocation, err := store.GetAllocation(context.Background(), "session")
+	require.NoError(t, err)
+	var settings sessionsettings.SessionSettings
+	require.NoError(t, json.Unmarshal(allocation.ProvisionSettings, &settings))
+	require.NotNil(t, settings.Session.AutoSuspendEnabled)
+	require.True(t, *settings.Session.AutoSuspendEnabled)
+	require.Equal(t, 1, settings.Session.AutoSuspendMinutes)
 }
 
 func TestPoolSessionDoesNotAddDeprecatedPoolTag(t *testing.T) {

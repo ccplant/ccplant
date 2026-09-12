@@ -59,6 +59,7 @@ type settingsJSON struct {
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
 	DefaultSessionProfileID string                                 `json:"default_session_profile_id,omitempty"`
 	DefaultAgentType        string                                 `json:"default_agent_type,omitempty"`
+	AutoSuspend             *entities.AutoSuspendSettings          `json:"auto_suspend,omitempty"`
 	CreatedAt               time.Time                              `json:"created_at"`
 	UpdatedAt               time.Time                              `json:"updated_at"`
 }
@@ -367,6 +368,7 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if agentType := settings.DefaultAgentType(); agentType != "" {
 		sj.DefaultAgentType = agentType
 	}
+	sj.AutoSuspend = settings.AutoSuspend()
 
 	return json.Marshal(sj)
 }
@@ -540,6 +542,10 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 	}
 	if sj.DefaultAgentType != "" {
 		settings.SetDefaultAgentType(sj.DefaultAgentType)
+	}
+	if sj.AutoSuspend != nil {
+		settings.SetAutoSuspend(sj.AutoSuspend)
+		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 
 	return settings, nil

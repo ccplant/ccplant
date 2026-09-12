@@ -38,7 +38,7 @@ export async function waitForSessionResume(
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     throwIfCancelled(options.cancelled)
     const result = await client.resumeSession(sessionId)
-    if (result.status !== 'restoring') return result
+    if (result.status !== 'restoring' && result.status !== 'resuming') return result
     if (attempt + 1 < maxAttempts) {
       await wait(intervalMs)
       throwIfCancelled(options.cancelled)

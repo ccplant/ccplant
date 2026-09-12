@@ -1118,7 +1118,8 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		}
 	}
 	var heartbeat struct {
-		LocalRunnerIDs *[]string `json:"local_runner_ids"`
+		LocalRunnerIDs  *[]string         `json:"local_runner_ids"`
+		SessionStatuses map[string]string `json:"session_statuses"`
 	}
 	if ctx.Request().Body != nil && ctx.Request().Body != http.NoBody {
 		if err := ctx.Bind(&heartbeat); err != nil {
@@ -1130,6 +1131,11 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return sessionRunnerStoreError(err)
 		}
 	}
+	if len(heartbeat.SessionStatuses) > 0 {
+		if err := c.reconcileManagerSessionStatuses(ctx.Request().Context(), manager.ID, heartbeat.SessionStatuses); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
 	pools, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -1137,6 +1143,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	owned := make([]*core.PoolSupplier, 0)
 	registeredRunnerIDs := make([]string, 0)
 	allocatedRunnerIDs := make([]string, 0)
+	allocatedRunnerPolicies := make(map[string]sessionsettings.SessionMeta)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -1146,6 +1153,19 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	for _, pool := range pools {
 		if pool.ManagerID == manager.ID {
+			allocations, listErr := c.store.ListAllocations(ctx.Request().Context(), pool.Pool)
+			if listErr != nil {
+				return sessionRunnerStoreError(listErr)
+			}
+			for _, allocation := range allocations {
+				if allocation.ManagerID != manager.ID || allocation.RunnerID == "" || len(allocation.ProvisionSettings) == 0 {
+					continue
+				}
+				var settings sessionsettings.SessionSettings
+				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
+					allocatedRunnerPolicies[allocation.RunnerID] = settings.Session
+				}
+			}
 			copy := *pool
 			for _, runner := range runners {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
@@ -1170,10 +1190,39 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
-		"registered_runner_ids": registeredRunnerIDs,
-		"allocated_runner_ids":  allocatedRunnerIDs,
-		"upstream_version":      buildinfo.Version,
+		"registered_runner_ids":     registeredRunnerIDs,
+		"allocated_runner_ids":      allocatedRunnerIDs,
+		"allocated_runner_policies": allocatedRunnerPolicies,
+		"upstream_version":          buildinfo.Version,
 	})
+}
+
+func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Context, managerID string, statuses map[string]string) error {
+	if c.routes == nil {
+		return nil
+	}
+	routes, err := c.routes.List(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, route := range routes {
+		status, ok := statuses[route.RemoteSessionID]
+		if !ok || route.ManagerID != managerID || status == "" || route.DeletionRequestID != "" {
+			continue
+		}
+		if status == "stable" {
+			status = "active"
+		}
+		if route.Status == status {
+			continue
+		}
+		route.Status = status
+		route.StatusUpdatedAt = c.now()
+		if err := c.routes.Save(ctx, route); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {

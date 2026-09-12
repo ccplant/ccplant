@@ -371,7 +371,7 @@ func (c *ACPController) handleSessionResume(ctx echo.Context, req acpRequest) er
 			session = ensured
 		}
 		if restoring {
-			return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, map[string]string{"status": "restoring"}))
+			return ctx.JSON(http.StatusOK, acpSuccessResp(req.ID, map[string]string{"status": "resuming"}))
 		}
 	}
 

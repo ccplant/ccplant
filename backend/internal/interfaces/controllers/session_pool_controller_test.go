@@ -307,6 +307,39 @@ func TestSessionManagerHeartbeatReportsAllocatedRunnerIDs(t *testing.T) {
 	}
 }
 
+func TestSessionManagerHeartbeatReconcilesSuspendedSessionStatus(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	route := &portrepos.SessionRoute{SessionID: "public-a", RemoteSessionID: "remote-a", ManagerID: manager.ID, Status: "active"}
+	if err := routes.Save(ctx, route); err != nil {
+		t.Fatal(err)
+	}
+	controller := NewSessionPoolController(store, routes)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"session_statuses": map[string]string{"remote-a": "suspended"}}, map[string]string{"id": manager.ID},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	updated, err := routes.Get(ctx, "public-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "suspended" || updated.StatusUpdatedAt.IsZero() {
+		t.Fatalf("route status=%q updated_at=%v", updated.Status, updated.StatusUpdatedAt)
+	}
+}
+
 func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")

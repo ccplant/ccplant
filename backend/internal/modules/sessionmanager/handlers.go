@@ -116,7 +116,7 @@ func (h *Handlers) ResumeSession(c echo.Context) error {
 	status := "active"
 	code := http.StatusOK
 	if restoring {
-		status = "restoring"
+		status = "resuming"
 		code = http.StatusAccepted
 		c.Response().Header().Set("Retry-After", "2")
 	} else if session != nil {
