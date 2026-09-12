@@ -1461,6 +1461,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: unsyncedFilePaths,
 		}
 	}
+	s.applyPoolAutoSuspendPolicy(ctx, settings, startReq.Scope, userID, startReq.TeamID)
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {
 		return nil, fmt.Errorf("marshal pool provision settings: %w", err)
@@ -1507,6 +1508,23 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		}
 	}
 	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
+}
+
+func (s *Server) applyPoolAutoSuspendPolicy(ctx context.Context, settings *sessionsettings.SessionSettings, scope entities.ResourceScope, userID, teamID string) {
+	if settings == nil || s.settingsRepo == nil {
+		return
+	}
+	settingsName := userID
+	if scope == entities.ScopeTeam && teamID != "" {
+		settingsName = teamID
+	}
+	stored, err := s.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil || stored == nil || stored.AutoSuspend() == nil {
+		return
+	}
+	policy := stored.AutoSuspend()
+	settings.Session.AutoSuspendEnabled = &policy.Enabled
+	settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 }
 
 func (s *Server) checkSessionPoolQuota(ctx context.Context, binding *sessionrunnercore.Binding) error {
