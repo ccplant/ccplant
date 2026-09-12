@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -48,6 +49,7 @@ type directRuntimeTunnel struct {
 
 type lifecycleTunnel struct {
 	path     string
+	body     []byte
 	enqueued bool
 	done     bool
 	status   int
@@ -59,7 +61,19 @@ func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool 
 
 func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
 	t.path = req.URL.Path
+	if req.Body != nil {
+		t.body, _ = io.ReadAll(req.Body)
+	}
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+}
+
+type allocationReader struct {
+	allocation *sessionrunnercore.Allocation
+	err        error
+}
+
+func (s *allocationReader) GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error) {
+	return s.allocation, s.err
 }
 
 func (t *lifecycleTunnel) Enqueue(_ context.Context, _, _, _ string, req *http.Request) (string, error) {
@@ -279,6 +293,77 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK || !routeRepo.deleted {
 		t.Fatalf("completed deletion was not finalized: status=%d repo=%#v", rec.Code, routeRepo)
+	}
+}
+
+func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
+	allocated := &fakeSession{id: "remote-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
+	unrelated := &fakeSession{id: "other-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"remote-id": allocated,
+		"other-id":  unrelated,
+	}}
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{
+			SessionID: "public-id", RuntimeToken: "runtime-token", Generation: 2,
+			ProvisionSettings: []byte(`{"session":{"user_id":"user-1","scope":"user"}}`),
+		}}),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/suspend", "public-id")
+
+	if err := controller.SuspendSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.path != "/api/v1/sessions/remote-id/suspend" {
+		t.Fatalf("suspend path = %q, want allocated session path", tunnel.path)
+	}
+	if !strings.Contains(string(tunnel.body), `"token":"runtime-token"`) || !strings.Contains(string(tunnel.body), `"generation":2`) {
+		t.Fatalf("suspend body does not contain resume data: %s", tunnel.body)
+	}
+	if !routeRepo.saved || routeRepo.route.Status != "suspended" || routeRepo.route.StatusUpdatedAt.IsZero() {
+		t.Fatalf("route status was not persisted: %#v", routeRepo.route)
+	}
+	if allocated.status != "suspended" {
+		t.Fatalf("allocated cache status = %q, want suspended", allocated.status)
+	}
+	if unrelated.status != "active" {
+		t.Fatalf("unrelated cache status = %q, want active", unrelated.status)
+	}
+}
+
+func TestResumeRemoteSessionUsesSessionManagerAPIPath(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
+
+	if err := controller.ResumeSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if tunnel.path != "/api/v1/sessions/remote-id/resume" {
+		t.Fatalf("resume path = %q, want session manager API path", tunnel.path)
 	}
 }
 

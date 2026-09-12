@@ -50,6 +50,11 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	if err != nil {
 		return err
 	}
+	srv.SetRestartSettingsHandler(func(settings *sessionsettings.SessionSettings) {
+		if settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+			go runDirectRuntimeClient(ctx, client.Transport, settings.ParentRuntime, cfg.PodName)
+		}
+	})
 	if cfg.RunnerPool != "" {
 		return runRunnerClaimClient(ctx, srv, client, cfg)
 	}

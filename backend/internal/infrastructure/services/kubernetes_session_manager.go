@@ -337,6 +337,110 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	return nil
 }
 
+// SuspendSession checkpoints persistent ACP state under the manager's policy
+// and only then removes the workload. Callers request suspension; checkpointing
+// remains an execution-plane concern.
+func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
+	}
+	if session.Status() == "running" {
+		return fmt.Errorf("session is busy")
+	}
+	if session.Status() == "suspended" {
+		return nil
+	}
+	if m.requiresSessionCheckpoint(ks) {
+		if err := m.checkpointSessionState(ctx, sessionID); err != nil {
+			return fmt.Errorf("checkpoint session state: %w", err)
+		}
+	}
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get canonical session service: %w", err)
+	}
+	return m.suspendSessionWorkload(ctx, sessionID, svc)
+}
+
+func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *KubernetesSession) bool {
+	if m.config.SessionPersistence.Backend == "" || session == nil || session.Request() == nil {
+		return false
+	}
+	agentType := session.Request().AgentType
+	return agentType == "claude-acp" || agentType == "codex-acp"
+}
+
+func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, sessionID string) error {
+	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
+		if settings := session.ProvisionSettings(); settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime)
+		}
+	}
+	store := m.connectedSessionControlStore(ctx, sessionID)
+	if store == nil {
+		return fmt.Errorf("session control is unavailable")
+	}
+	commandID := uuid.NewString()
+	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{ID: commandID, Type: "checkpoint_session_state", CreatedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
+	cursor := "0-0"
+	for {
+		events, err := store.ReadEvents(ctx, sessionID, cursor, 30*time.Second, 100)
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			if event.CommandID != commandID {
+				continue
+			}
+			if event.Type == "command_completed" {
+				return nil
+			}
+			if event.Type == "command_failed" {
+				var payload struct {
+					Error string `json:"error"`
+				}
+				_ = json.Unmarshal(event.Payload, &payload)
+				if payload.Error == "" {
+					payload.Error = "checkpoint command failed"
+				}
+				return fmt.Errorf("%s", payload.Error)
+			}
+		}
+		if len(events) > 0 {
+			cursor = events[len(events)-1].StreamID
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+}
+
+func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig) error {
+	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(runtime.SessionID) + "/checkpoint?generation=" + strconv.FormatInt(runtime.Generation, 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+runtime.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("parent checkpoint returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -373,7 +477,7 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			_ = m.ScheduleSessionSuspend(ctx, sessionID)
 			continue
 		}
-		if err := m.suspendSessionWorkload(ctx, sessionID, svc); err != nil {
+		if err := m.SuspendSession(ctx, sessionID); err != nil {
 			log.Printf("[K8S_SESSION] Failed to suspend session %s: %v", sessionID, err)
 		}
 	}
@@ -639,7 +743,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	// directly instead of resolving secrets from this cluster.
 	var sessionSettings *sessionsettings.SessionSettings
 	if req.ProvisionSettings != nil {
-		sessionSettings = req.ProvisionSettings
+		sessionSettings = m.normalizeProvisionSettings(req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
@@ -1460,7 +1564,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	// direct parent runtime bootstrap, and must not be re-resolved locally.
 	var sessionSettings *sessionsettings.SessionSettings
 	if req.ProvisionSettings != nil {
-		sessionSettings = req.ProvisionSettings
+		sessionSettings = m.normalizeProvisionSettings(req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
@@ -1770,6 +1874,51 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	go m.watchDeploymentStatus(context.Background(), ks)
 	go m.scheduleSuspendWhenRestoredWorkloadReady(ks)
 	return session, true, nil
+}
+
+func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id string, settings *sessionsettings.SessionSettings) error {
+	session, ok := m.GetSession(id).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session %s not found", id)
+	}
+	settings = m.normalizeProvisionSettings(settings)
+	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil && !errors.IsNotFound(getErr) {
+		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
+	}
+	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	if settings.Repository != nil {
+		req.RepoInfo = &entities.RepositoryInfo{FullName: settings.Repository.FullName, CloneDir: settings.Repository.CloneDir, Branch: settings.Repository.Branch, PR: settings.Repository.PR}
+	}
+	session.SetRequest(req)
+	session.SetProvisionSettings(settings)
+	if getErr == nil {
+		yamlData, err := sessionsettings.MarshalYAML(settings)
+		if err != nil {
+			return fmt.Errorf("marshal restart settings: %w", err)
+		}
+		if existing.Data == nil {
+			existing.Data = map[string][]byte{}
+		}
+		existing.Data["settings.yaml"] = yamlData
+		_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		return err
+	}
+	return m.createSessionSettingsSecretFromSettings(ctx, session, req, settings)
+}
+
+// normalizeProvisionSettings applies execution-plane capabilities to settings
+// resolved by the parent API. Keep the parent's public session ID as the stable
+// snapshot key so state survives allocation to a different local runner.
+func (m *KubernetesSessionManager) normalizeProvisionSettings(settings *sessionsettings.SessionSettings) *sessionsettings.SessionSettings {
+	if settings == nil {
+		return nil
+	}
+	normalized := *settings
+	normalized.Session = settings.Session
+	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
+	return &normalized
 }
 
 func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
@@ -4653,6 +4802,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	}
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
+		corev1.EnvVar{Name: "SESSION_STATE_PROXY_URL", Value: proxyURL},
 		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
 		corev1.EnvVar{
 			Name: "POD_NAME",

@@ -50,3 +50,11 @@ func TestPollControlCommandsNoContent(t *testing.T) {
 		t.Fatalf("expected no commands, got %#v", commands)
 	}
 }
+
+func TestExecuteControlCommandCheckpointsThroughProxyBinary(t *testing.T) {
+	t.Setenv("CCPLANT_BINARY_PATH", "/bin/true")
+	err := executeControlCommand(context.Background(), http.DefaultClient, "codex-acp", controlCommand{Type: "checkpoint_session_state"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

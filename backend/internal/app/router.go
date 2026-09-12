@@ -146,6 +146,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
+		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
 	}
 	if githubConnectionsController != nil {
@@ -422,6 +423,7 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
+	r.echo.POST("/sessions/:sessionId/suspend", r.handlers.sessionController.SuspendSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
@@ -506,6 +508,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)
 		r.echo.POST("/internal/session-runtime/:sessionId/frames", r.handlers.sessionRuntimeController.AppendFrames)
 		r.echo.POST("/internal/session-runtime/:sessionId/status", r.handlers.sessionRuntimeController.UpdateStatus)
+		r.echo.POST("/internal/session-runtime/:sessionId/checkpoint", r.handlers.sessionRuntimeController.Checkpoint)
 		log.Printf("[ROUTES] Direct Session Pod runtime endpoints registered")
 	}
 

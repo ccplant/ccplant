@@ -150,7 +150,6 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
 	normalizeNativeSettings(settings)
 	injectUsageReportingHook(settings)
-	injectSessionPersistenceHook(settings)
 	startedAt := time.Now()
 	s.setPhase("provision:start")
 	log.Printf("[PROVISIONER] Starting provisioning for session %s", settings.Session.ID)
@@ -424,32 +423,6 @@ func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettin
 	return settings != nil && settings.Session.PersistenceEnabled && strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) == ""
 }
 
-func injectSessionPersistenceHook(settings *sessionsettings.SessionSettings) {
-	if settings == nil || !settings.Session.PersistenceEnabled || (settings.Session.AgentType != "claude-acp" && settings.Session.AgentType != "codex-acp") {
-		return
-	}
-	// Return from the Stop hook before checkpointing: Codex commits its local
-	// thread state only after synchronous Stop hooks finish.
-	binary := proxybinary.ShellReference()
-	command := fmt.Sprintf("nohup sh -c 'sleep 2; AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1 %s client backup-session-state && %s client schedule-session-suspend' >/tmp/session-state-backup.log 2>&1 &", binary, binary)
-	hook := map[string]interface{}{"hooks": []interface{}{map[string]interface{}{"type": "command", "command": command, "timeout": 10}}}
-	appendStop := func(root map[string]interface{}) map[string]interface{} {
-		if root == nil {
-			root = map[string]interface{}{}
-		}
-		hooks, _ := root["hooks"].(map[string]interface{})
-		if hooks == nil {
-			hooks = map[string]interface{}{}
-		}
-		stops := asInterfaceSlice(hooks["Stop"])
-		hooks["Stop"] = append(stops, hook)
-		root["hooks"] = hooks
-		return root
-	}
-	settings.Claude.SettingsJSON = appendStop(settings.Claude.SettingsJSON)
-	settings.Codex.HooksJSON = appendStop(settings.Codex.HooksJSON)
-}
-
 func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {
 	if settings == nil || !settings.UsageReportingEnabled {
 		return
@@ -479,7 +452,10 @@ func shellQuote(value string) string {
 }
 
 func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
-	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
 	token := os.Getenv("PROVISIONER_TOKEN")
 	if proxy == "" || token == "" {
 		return false, fmt.Errorf("provisioner proxy credentials are missing")
@@ -1240,6 +1216,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--output-file", acpHistoryPath,
 			"--",
 			"claude-agent-acp",
@@ -1252,6 +1229,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--auto-approve",
 			"--",
 			"codex-acp",

@@ -65,6 +65,8 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.POST("", h.CreateSession)
 	g.GET("", h.ListSessions)
 	g.GET("/:sessionId", h.GetSession)
+	g.POST("/:sessionId/resume", h.ResumeSession)
+	g.POST("/:sessionId/suspend", h.SuspendSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
 
 	// Codex device auth workloads are manager-level operations addressed by the
@@ -89,6 +91,63 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+func (h *Handlers) ResumeSession(c echo.Context) error {
+	if c.Request().ContentLength != 0 {
+		var settings sessionsettings.SessionSettings
+		if err := c.Bind(&settings); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid resume settings")
+		}
+		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
+			if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+			}
+		}
+	}
+	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session resume is not supported")
+	}
+	session, restoring, err := ensurer.EnsureSessionWorkload(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	status := "active"
+	code := http.StatusOK
+	if restoring {
+		status = "restoring"
+		code = http.StatusAccepted
+		c.Response().Header().Set("Retry-After", "2")
+	} else if session != nil {
+		status = session.Status()
+	}
+	return c.JSON(code, map[string]string{"session_id": c.Param("sessionId"), "status": status})
+}
+
+func (h *Handlers) SuspendSession(c echo.Context) error {
+	if c.Request().ContentLength == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "suspend settings are required")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := c.Bind(&settings); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid suspend settings")
+	}
+	preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session resume preparation is not supported")
+	}
+	if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	suspender, ok := h.sessionManager.(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session suspend is not supported")
+	}
+	if err := suspender.SuspendSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // ProxySession forwards an authenticated parent request to the concrete

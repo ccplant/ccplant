@@ -46,7 +46,10 @@ func runScheduleSessionSuspend(_ *cobra.Command, _ []string) error {
 }
 
 func runBackupSessionState(_ *cobra.Command, _ []string) error {
-	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
 	token := os.Getenv("PROVISIONER_TOKEN")
 	id := os.Getenv("AGENTAPI_SESSION_ID")
 	agentType := os.Getenv("AGENTAPI_AGENT_TYPE")

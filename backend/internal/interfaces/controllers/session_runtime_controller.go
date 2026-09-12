@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
+	infraesmcontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
@@ -23,6 +25,31 @@ type SessionRuntimeController struct {
 	status interface {
 		RecordRemoteSessionStatus(context.Context, *repositories.SessionRoute, string) error
 	}
+}
+
+// Checkpoint asks the connected runtime to persist its workspace and ACP state.
+// External session managers call this parent-owned endpoint instead of joining
+// the parent's Redis control stream.
+func (c *SessionRuntimeController) Checkpoint(ctx echo.Context) error {
+	route, status := c.authorize(ctx)
+	if status != http.StatusOK {
+		return ctx.NoContent(status)
+	}
+	tunnel := infraesmcontrol.NewTunnel(c.store)
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/internal/checkpoint-session-state", nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	resp, err := tunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return echo.NewHTTPError(resp.StatusCode, string(body))
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func NewSessionRuntimeController(store core.Store, routes repositories.SessionRouteRepository, recorders ...interface {

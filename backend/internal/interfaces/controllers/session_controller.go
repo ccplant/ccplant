@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -43,6 +44,10 @@ type pendingSessionAllocationDeleter interface {
 
 type sessionStatusMessageProvider interface {
 	StatusMessage() string
+}
+
+type sessionStatusCacheUpdater interface {
+	SetStatusSilent(string)
 }
 
 // SessionManagerProvider provides access to the session manager
@@ -84,6 +89,7 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
+	sessionRunnerStore     sessionRunnerAllocationStore
 	esmControlTunnel       ESMControlTunnel
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
@@ -157,6 +163,14 @@ func WithSessionProfileRepository(repo repositories.SessionProfileRepository) Se
 
 func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
 	return func(c *SessionController) { c.esmControlTunnel = tunnel }
+}
+
+type sessionRunnerAllocationStore interface {
+	GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error)
+}
+
+func WithSessionRunnerStore(store sessionRunnerAllocationStore) SessionControllerOption {
+	return func(c *SessionController) { c.sessionRunnerStore = store }
 }
 
 // getSessionManager returns the current session manager
@@ -1117,6 +1131,108 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 	return ctx.JSON(code, map[string]interface{}{"session_id": sessionID, "status": status})
 }
 
+// SuspendSession asks the owning session manager to suspend the workload. The
+// manager owns any checkpoint policy and does not expose it through this API.
+func (c *SessionController) SuspendSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil && c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to look up session route")
+		}
+		if route != nil && route.ManagerID != "" {
+			return c.suspendRemoteSession(ctx, route)
+		}
+	}
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	suspender, ok := c.getSessionManager().(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session suspend is not supported by this session manager")
+	}
+	if err := suspender.SuspendSession(ctx.Request().Context(), sessionID); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to suspend session: %v", err))
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID, "status": "suspended"})
+}
+
+func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
+	if c.sessionRunnerStore == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session resume data store is unavailable")
+	}
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is unavailable; the session was not suspended")
+	}
+	if len(allocation.ProvisionSettings) == 0 || strings.TrimSpace(allocation.RuntimeToken) == "" || allocation.Generation <= 0 {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is incomplete; the session was not suspended")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to decode session resume data; the session was not suspended")
+	}
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
+	settingsBody, err := json.Marshal(&settings)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist suspended session status")
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+}
+
+// recordRemoteLifecycleStatus keeps the public route and only the allocated
+// session's local cache entry in sync after a remote lifecycle command.
+func (c *SessionController) recordRemoteLifecycleStatus(ctx context.Context, route *repositories.SessionRoute, status string) error {
+	if err := c.RecordRemoteSessionStatus(ctx, route, status); err != nil {
+		return err
+	}
+	if session := c.getSessionManager().GetSession(route.RemoteSessionID); session != nil {
+		if updater, ok := session.(sessionStatusCacheUpdater); ok {
+			updater.SetStatusSilent(status)
+		}
+	}
+	return nil
+}
+
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
 	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.RouteToSession", func(requestCtx context.Context) error {
@@ -1399,7 +1515,7 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	targetURL := "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
