@@ -98,7 +98,7 @@ interface SessionListViewProps {
 
 export default function SessionListView({ tagFilters, onSessionsUpdate, creatingSessions = [] }: SessionListViewProps) {
   const router = useRouter()
-  const { selectedTeam } = useTeamScope()
+  const { selectedTeam, isLoading: isTeamScopeLoading } = useTeamScope()
 
   // Create global API clients
   const [agentAPI] = useState(() => createAgentAPIProxyClientFromStorage())
@@ -108,6 +108,10 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   
   const [sessions, setSessions] = useState<Session[]>([])
   const sessionsRef = useRef<Session[]>([])
+  const requestedScopeRef = useRef<string | null>(null)
+  requestedScopeRef.current = isTeamScopeLoading
+    ? null
+    : selectedTeam ? `team:${selectedTeam}` : 'user'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -135,6 +139,8 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   })
 
   const fetchSessions = useCallback(async (silent = false) => {
+    if (isTeamScopeLoading) return
+    const requestedScope = selectedTeam ? `team:${selectedTeam}` : 'user'
     try {
       if (!silent) setLoading(true)
       setError(null)
@@ -154,10 +160,13 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
         sessionList = response.sessions || []
       }
 
+      if (requestedScopeRef.current !== requestedScope) return
+
       sessionsRef.current = sessionList
       setSessions(sessionList)
       setSessionAgentStatus(createAgentStatusMapFromSessions(sessionList))
     } catch (err) {
+      if (requestedScopeRef.current !== requestedScope) return
       if (err instanceof AgentAPIProxyError) {
         setError(`セッション一覧の取得に失敗しました: ${err.message}`)
       } else {
@@ -168,9 +177,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
       setSessions(mockSessions)
       setSessionAgentStatus(createAgentStatusMapFromSessions(mockSessions))
     } finally {
-      setLoading(false)
+      if (requestedScopeRef.current === requestedScope) setLoading(false)
     }
-  }, [acpMode, acpClient, agentAPI, selectedTeam])
+  }, [acpMode, acpClient, agentAPI, isTeamScopeLoading, selectedTeam])
 
   // SSE でセッションステータス変化を受信したときの処理
   const handleProxyStatusEvent = useCallback((event: ProxySessionStatusEvent) => {

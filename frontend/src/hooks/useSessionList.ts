@@ -29,12 +29,12 @@ async function fetchSessionList(params: SessionListParams, client?: AgentAPIProx
  * @param config - SWR configuration options
  */
 export function useSessionList(
-  params: SessionListParams,
+  params: SessionListParams | null,
   client?: AgentAPIProxyClient,
   config?: SWRConfiguration
 ) {
   // Create a stable key for SWR based on params
-  const key = [
+  const key = params ? [
     'session-list',
     params.user_id || '',
     params.scope || '',
@@ -42,11 +42,11 @@ export function useSessionList(
     params.status || '',
     params.page || '',
     params.limit || '',
-  ]
+  ] : null
   
   const { data, error, isLoading, mutate } = useSWR<Session[], AgentAPIProxyError>(
     key,
-    () => fetchSessionList(params, client),
+    () => fetchSessionList(params!, client),
     {
       // Refresh interval for near real-time updates (30 seconds)
       refreshInterval: 30000,

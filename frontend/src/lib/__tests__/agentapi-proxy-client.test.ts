@@ -83,6 +83,51 @@ describe('AgentAPIProxyClient concurrent reads', () => {
   });
 });
 
+describe('AgentAPIProxyClient session scope isolation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps only sessions from the requested team', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        sessions: [
+          { session_id: 'team-a', scope: 'team', team_id: 'acme/a' },
+          { session_id: 'team-b', scope: 'team', team_id: 'acme/b' },
+          { session_id: 'personal', scope: 'user' },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.search({ scope: 'team', team_id: 'acme/a' })).resolves.toEqual({
+      sessions: [{ session_id: 'team-a', scope: 'team', team_id: 'acme/a' }],
+    });
+  });
+
+  it('treats legacy sessions without a scope as personal', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        sessions: [
+          { session_id: 'legacy-personal' },
+          { session_id: 'team', scope: 'team', team_id: 'acme/a' },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.search({ scope: 'user' })).resolves.toEqual({
+      sessions: [{ session_id: 'legacy-personal' }],
+    });
+  });
+});
+
 describe('AgentAPIProxyClient ACP message history', () => {
   afterEach(() => {
     vi.restoreAllMocks();
