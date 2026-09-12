@@ -49,14 +49,15 @@ type Server struct {
 	httpClient   *http.Client
 	filterURL    string
 
-	mu          sync.RWMutex
-	status      Status
-	message     string
-	phase       string
-	phaseTime   time.Time
-	serverCtx   context.Context // long-lived context for provisioning goroutines
-	reporter    func(Status, string)
-	startupDone chan struct{}
+	mu                     sync.RWMutex
+	status                 Status
+	message                string
+	phase                  string
+	phaseTime              time.Time
+	serverCtx              context.Context // long-lived context for provisioning goroutines
+	reporter               func(Status, string)
+	restartSettingsHandler func(*sessionsettings.SessionSettings)
+	startupDone            chan struct{}
 }
 
 // New creates a new Server.
@@ -118,6 +119,12 @@ func (s *Server) Start(ctx context.Context) error {
 						return
 					}
 					log.Printf("[PROVISIONER] No initial provision request claimed; auto-provisioning from %s", s.settingsFile)
+					s.mu.RLock()
+					handler := s.restartSettingsHandler
+					s.mu.RUnlock()
+					if handler != nil {
+						handler(settings)
+					}
 					s.runProvision(ctx, settings)
 				}()
 			}
@@ -149,6 +156,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) SetRestartSettingsHandler(handler func(*sessionsettings.SessionSettings)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.restartSettingsHandler = handler
 }
 
 func (s *Server) handleLivez(w http.ResponseWriter, _ *http.Request) {
