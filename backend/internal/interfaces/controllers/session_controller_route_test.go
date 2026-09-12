@@ -105,6 +105,19 @@ type deletionRouteRepo struct {
 	deleted bool
 }
 
+type listRouteRepo struct {
+	routes []*repositories.SessionRoute
+}
+
+func (r *listRouteRepo) Save(context.Context, *repositories.SessionRoute) error { return nil }
+func (r *listRouteRepo) Get(context.Context, string) (*repositories.SessionRoute, error) {
+	return nil, nil
+}
+func (r *listRouteRepo) List(context.Context, string) ([]*repositories.SessionRoute, error) {
+	return r.routes, nil
+}
+func (r *listRouteRepo) Delete(context.Context, string) error { return nil }
+
 func (r *deletionRouteRepo) Save(_ context.Context, route *repositories.SessionRoute) error {
 	r.route = route
 	r.saved = true
@@ -156,6 +169,51 @@ func routeContext(e *echo.Echo, method, path, sessionID string) (echo.Context, *
 		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true},
 	})
 	return ctx, rec
+}
+
+func TestSearchSessionsIsolatesRequestedTeamAcrossLocalAndRoutedSessions(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"local-a":  {id: "local-a", userID: "user-1", scope: entities.ScopeTeam, teamID: "acme/a", status: "active"},
+		"local-b":  {id: "local-b", userID: "user-1", scope: entities.ScopeTeam, teamID: "acme/b", status: "active"},
+		"personal": {id: "personal", userID: "user-1", scope: entities.ScopeUser, status: "active"},
+	}}
+	routeRepo := &listRouteRepo{routes: []*repositories.SessionRoute{
+		{SessionID: "routed-a", UserID: "user-1", Scope: string(entities.ScopeTeam), TeamID: "acme/a"},
+		{SessionID: "routed-b", UserID: "user-1", Scope: string(entities.ScopeTeam), TeamID: "acme/b"},
+		{SessionID: "routed-personal", UserID: "user-1", Scope: string(entities.ScopeUser)},
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+	)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/search?scope=team&team_id=acme%2Fa", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true},
+		TeamScope:     auth.TeamScopeAuth{Teams: []string{"acme/a", "acme/b"}},
+	})
+
+	if err := controller.SearchSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]bool, len(response.Sessions))
+	for _, session := range response.Sessions {
+		got[session.SessionID] = true
+	}
+	if len(got) != 2 || !got["local-a"] || !got["routed-a"] {
+		t.Fatalf("session IDs = %v, want only local-a and routed-a", got)
+	}
 }
 
 func TestRouteToSessionEnsuresLocalAliasWorkloadOnGet(t *testing.T) {

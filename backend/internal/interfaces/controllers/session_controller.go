@@ -635,6 +635,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			if sessionScope != entities.ScopeTeam {
 				continue
 			}
+			if teamIDFilter != "" && session.TeamID() != teamIDFilter {
+				continue
+			}
 		} else {
 			if sessionScope == entities.ScopeTeam {
 				continue
@@ -744,6 +747,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			continue
 		}
 		if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+			continue
+		}
+		if teamIDFilter != "" && route.TeamID != teamIDFilter {
 			continue
 		}
 		if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {

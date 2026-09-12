@@ -1129,10 +1129,18 @@ export class AgentAPIProxyClient {
 
     const endpoint = `/search${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
     const result = await this.makeRequest<SessionListResponse>(endpoint);
+
+    // Keep the UI scope isolated even when an older proxy or an external
+    // session manager returns a broader result set than requested.
+    const sessions = (result.sessions || []).filter(session => {
+      if (params?.scope && (session.scope || 'user') !== params.scope) return false;
+      if (params?.team_id && session.team_id !== params.team_id) return false;
+      return true;
+    });
     
     return {
       ...result,
-      sessions: result.sessions || []
+      sessions
     };
   }
 
