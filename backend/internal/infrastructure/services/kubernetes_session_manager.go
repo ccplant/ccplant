@@ -357,6 +357,15 @@ func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Cont
 	if !ok || session == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
+	service, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get session service: %w", err)
+	}
+	desiredEnabled := strconv.FormatBool(*enabled)
+	desiredSeconds := strconv.FormatInt(int64(time.Duration(minutes)*time.Minute/time.Second), 10)
+	policyAlreadyScheduled := service.Annotations[sessionAutoSuspendEnabledAnnotation] == desiredEnabled &&
+		(!*enabled || service.Annotations[sessionAutoSuspendIdleSecondsAnnotation] == desiredSeconds) &&
+		(service.Annotations[sessionSuspendAtAnnotation] != "" || service.Annotations[sessionSuspendedAtAnnotation] != "")
 	req := session.Request()
 	if req == nil {
 		req = &entities.RunServerRequest{}
@@ -367,6 +376,9 @@ func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Cont
 	}
 	req.ProvisionSettings.Session.AutoSuspendEnabled = enabled
 	req.ProvisionSettings.Session.AutoSuspendMinutes = minutes
+	if policyAlreadyScheduled {
+		return nil
+	}
 	return m.ScheduleSessionSuspend(ctx, sessionID)
 }
 
