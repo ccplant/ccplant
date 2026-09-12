@@ -4788,6 +4788,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	}
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
+		corev1.EnvVar{Name: "SESSION_STATE_PROXY_URL", Value: proxyURL},
 		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
 		corev1.EnvVar{
 			Name: "POD_NAME",
