@@ -1476,7 +1476,7 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	targetURL := "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
