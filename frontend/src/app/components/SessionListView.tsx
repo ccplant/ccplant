@@ -1077,21 +1077,6 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                           </button>
                         )}
 
-                        {!acpMode && ['active', 'running'].includes(session.status) && (
-                          <button
-                            onClick={() => suspendSession(session.session_id)}
-                            disabled={suspendingSession === session.session_id}
-                            aria-label={`${suspendingSession === session.session_id ? 'サスペンド中' : 'サスペンド'}: ${session.metadata?.description || `セッション ${session.session_id.substring(0, 8)}`}`}
-                            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-violet-300 px-3 py-2 text-sm font-medium text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-600 dark:text-violet-300 dark:hover:bg-violet-900/30 sm:min-h-0 sm:py-1.5"
-                            title="セッションをサスペンド"
-                          >
-                            {suspendingSession === session.session_id
-                              ? <LoaderCircle className="h-4 w-4 animate-spin sm:mr-1.5" aria-hidden="true" />
-                              : <Pause className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />}
-                            <span className="hidden sm:inline">サスペンド</span>
-                          </button>
-                        )}
-                        
                         {session.metadata?.claude_login_url ? (
                           <a
                             href={String(session.metadata.claude_login_url).replace(/\s+/g, '')}
@@ -1106,7 +1091,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                           </a>
                         ) : null}
 
-                        {(annotations.prUrl || annotations.issueUrl) && (
+                        {(annotations.prUrl || annotations.issueUrl || (!acpMode && ['active', 'running'].includes(session.status))) && (
                           <div className="relative">
                             <button
                               type="button"
@@ -1144,6 +1129,22 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                     <CircleDot className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
                                     {issueNumber ? `Issue #${issueNumber}` : 'Issue'}
                                   </a>
+                                )}
+                                {!acpMode && ['active', 'running'].includes(session.status) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenAnnotationMenuId(null)
+                                      void suspendSession(session.session_id)
+                                    }}
+                                    disabled={suspendingSession === session.session_id}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-violet-300 dark:hover:bg-violet-900/30"
+                                  >
+                                    {suspendingSession === session.session_id
+                                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                      : <Pause className="h-3.5 w-3.5" aria-hidden="true" />}
+                                    {suspendingSession === session.session_id ? 'サスペンド中...' : 'サスペンド'}
+                                  </button>
                                 )}
                               </div>
                             )}
