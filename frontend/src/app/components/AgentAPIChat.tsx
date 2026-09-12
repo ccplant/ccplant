@@ -490,9 +490,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               // legacy status request until we know there is no ACP bridge. A status
               // request is redundant for ACP and otherwise competes with the much
               // larger history response.
+              let historyError: unknown = null;
               const historyPromise = agentAPIRef.current
                 .getACPMessageHistory(sessionId, '')
-                .catch(() => null);
+                .catch((err) => {
+                  historyError = err;
+                  return null;
+                });
               // Open the real subscription as the ACP fast-path probe. Incoming
               // events stay buffered until history is installed, so a concurrent
               // history response cannot overwrite live updates.
@@ -545,7 +549,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // bridge detection and history were started in parallel above.
                 const historyResult = await historyPromise;
                 if (!historyResult) {
-                  throw new Error('Failed to restore ACP message history');
+                  // Preserve structured proxy errors such as session_resuming so
+                  // the outer initializer can render the recovery screen.
+                  throw historyError ?? new Error('Failed to restore ACP message history');
                 }
                 setMessages(historyResult.messages);
                 acpTurnRunningRef.current = historyResult.isTurnRunning;

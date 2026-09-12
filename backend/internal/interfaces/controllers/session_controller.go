@@ -1448,8 +1448,8 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || route.ManagerID == "") {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
-	if route.Status == "suspended" && ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") {
-		return ctx.JSON(http.StatusOK, map[string]string{"status": "suspended"})
+	if (route.Status == "suspended" || route.Status == "resuming") && ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") {
+		return ctx.JSON(http.StatusOK, map[string]string{"status": route.Status})
 	}
 	if route.Status == "suspended" {
 		resp, err := c.requestRemoteResume(ctx, route)
@@ -1461,6 +1461,12 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
 		}
 		_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+		ctx.Response().Header().Set("Retry-After", "2")
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+		})
+	}
+	if route.Status == "resuming" {
 		ctx.Response().Header().Set("Retry-After", "2")
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
 			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},

@@ -540,6 +540,28 @@ func TestRouteToSuspendedRemoteSessionStatusDoesNotResume(t *testing.T) {
 	}
 }
 
+func TestRouteToResumingRemoteSessionReturnsStructuredRecoveryResponse(t *testing.T) {
+	tunnel := &lifecycleTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+			UserID: "user-1", Scope: string(entities.ScopeUser), Status: "resuming",
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/messages", "public-id")
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" || !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
+		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+	if tunnel.path != "" {
+		t.Fatalf("resuming request unexpectedly called manager path %q", tunnel.path)
+	}
+}
+
 func TestRemoteStatusChangeReachesStatusWait(t *testing.T) {
 	manager := &statusWatchingSessionManager{
 		fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}},
