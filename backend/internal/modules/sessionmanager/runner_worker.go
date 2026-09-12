@@ -82,8 +82,15 @@ func (w *RunnerWorker) reconcile(ctx context.Context) {
 func (w *RunnerWorker) reconcileOnce(ctx context.Context) {
 	// Native managers communicate only with the backend. The backend owns the
 	// shared Redis connection used for liveness, pool state, and control traffic.
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", nil)
+	sessions := w.manager.ListSessions(entities.SessionFilter{})
+	statuses := make(map[string]string, len(sessions))
+	for _, session := range sessions {
+		statuses[session.ID()] = session.Status()
+	}
+	body, _ := json.Marshal(map[string]any{"session_statuses": statuses})
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.upstream+"/internal/session-managers/"+url.PathEscape(w.managerID)+"/heartbeat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+w.token)
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := w.client.Do(req)
 	if err != nil {
 		log.Printf("[SESSION_RUNNER] heartbeat failed: %v", err)
@@ -100,7 +107,7 @@ func (w *RunnerWorker) reconcileOnce(ctx context.Context) {
 	if json.NewDecoder(resp.Body).Decode(&result) != nil {
 		return
 	}
-	active := len(w.manager.ListSessions(entities.SessionFilter{}))
+	active := len(sessions)
 	for _, p := range result.Pools {
 		if !p.Enabled || p.Draining {
 			continue
