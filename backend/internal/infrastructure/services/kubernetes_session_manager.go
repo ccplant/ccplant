@@ -347,9 +347,6 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 }
 
 func (m *KubernetesSessionManager) resolveAutoSuspendPolicy(ctx context.Context, session *KubernetesSession) (time.Duration, bool, error) {
-	if m.config.SessionPersistence.Backend == "" {
-		return 0, false, nil
-	}
 	if req := session.Request(); req != nil {
 		if req.ProvisionSettings != nil && req.ProvisionSettings.Session.AutoSuspendEnabled != nil {
 			return time.Duration(req.ProvisionSettings.Session.AutoSuspendMinutes) * time.Minute, *req.ProvisionSettings.Session.AutoSuspendEnabled, nil
@@ -369,6 +366,9 @@ func (m *KubernetesSessionManager) resolveAutoSuspendPolicy(ctx context.Context,
 			}
 			return time.Duration(policy.IdleTimeoutMinutes) * time.Minute, true, nil
 		}
+	}
+	if m.config.SessionPersistence.Backend == "" {
+		return 0, false, nil
 	}
 	return m.defaultAutoSuspendPolicy()
 }

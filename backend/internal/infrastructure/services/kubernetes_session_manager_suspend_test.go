@@ -136,3 +136,21 @@ func TestScheduleSessionSuspendUsesScopedSettings(t *testing.T) {
 		t.Fatalf("disabled policy retained a deadline: %#v", stored.Annotations)
 	}
 }
+
+func TestResolveAutoSuspendPolicyForRemoteSessionWithoutLocalPersistence(t *testing.T) {
+	manager := newSuspendTestManager(t)
+	manager.config.SessionPersistence.Backend = ""
+	settings := entities.NewSettings("user-1")
+	settings.SetAutoSuspend(&entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 1})
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{"user-1": settings}})
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{UserID: "user-1", Scope: entities.ScopeUser},
+		"agentapi-session-session-1", "agentapi-session-session-1-svc", "session-1-pvc", "test-ns", 9000, nil, nil)
+
+	after, enabled, err := manager.resolveAutoSuspendPolicy(context.Background(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled || after != time.Minute {
+		t.Fatalf("remote policy = (%v, %v), want (1m, true)", after, enabled)
+	}
+}
