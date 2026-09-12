@@ -65,6 +65,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.POST("", h.CreateSession)
 	g.GET("", h.ListSessions)
 	g.GET("/:sessionId", h.GetSession)
+	g.POST("/:sessionId/resume", h.ResumeSession)
 	g.POST("/:sessionId/suspend", h.SuspendSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
 
@@ -90,6 +91,27 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+func (h *Handlers) ResumeSession(c echo.Context) error {
+	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session resume is not supported")
+	}
+	session, restoring, err := ensurer.EnsureSessionWorkload(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	status := "active"
+	code := http.StatusOK
+	if restoring {
+		status = "restoring"
+		code = http.StatusAccepted
+		c.Response().Header().Set("Retry-After", "2")
+	} else if session != nil {
+		status = session.Status()
+	}
+	return c.JSON(code, map[string]string{"session_id": c.Param("sessionId"), "status": status})
 }
 
 func (h *Handlers) SuspendSession(c echo.Context) error {
