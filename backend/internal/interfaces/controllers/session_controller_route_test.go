@@ -423,7 +423,7 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 			UserID: "user-1", Scope: string(entities.ScopeUser),
 		}}),
 		controllers.WithESMControlTunnel(tunnel),
-		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{ProvisionSettings: oldProvisionSettings}}),
+		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{ProvisionSettings: oldProvisionSettings, RuntimeToken: "runtime-token", Generation: 2}}),
 		controllers.WithSettingsRepository(&resumeSettingsRepo{settings: settings}),
 	)
 	ctx, _ := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
@@ -436,6 +436,9 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 	}
 	if got.Session.AutoSuspendEnabled == nil || !*got.Session.AutoSuspendEnabled || got.Session.AutoSuspendMinutes != 1 {
 		t.Fatalf("resume auto-suspend policy = enabled %v minutes %d, want true/1", got.Session.AutoSuspendEnabled, got.Session.AutoSuspendMinutes)
+	}
+	if got.ParentRuntime == nil || !got.ParentRuntime.Enabled || got.ParentRuntime.SessionID != "public-id" || got.ParentRuntime.ManagerID != "manager-a" || got.ParentRuntime.Token != "runtime-token" || got.ParentRuntime.Generation != 2 {
+		t.Fatalf("resume parent runtime = %#v, want restored allocation credentials", got.ParentRuntime)
 	}
 }
 

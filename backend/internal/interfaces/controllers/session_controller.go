@@ -1566,7 +1566,7 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
-	body := c.remoteResumeSettings(ctx.Request().Context(), route)
+	body := c.remoteResumeSettings(ctx, route)
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
@@ -1598,11 +1598,11 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 // remoteResumeSettings refreshes mutable policy values before an existing pool
 // allocation is restored. This prevents a session created under an older idle
 // timeout from reverting to that timeout after every resume.
-func (c *SessionController) remoteResumeSettings(ctx context.Context, route *repositories.SessionRoute) []byte {
+func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) []byte {
 	if c.sessionRunnerStore == nil {
 		return nil
 	}
-	allocation, err := c.sessionRunnerStore.GetAllocation(ctx, route.SessionID)
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
 	if err != nil || allocation == nil || len(allocation.ProvisionSettings) == 0 {
 		return nil
 	}
@@ -1615,11 +1615,24 @@ func (c *SessionController) remoteResumeSettings(ctx context.Context, route *rep
 		if route.Scope == string(entities.ScopeTeam) && route.TeamID != "" {
 			settingsName = route.TeamID
 		}
-		if stored, findErr := c.settingsRepo.FindByName(ctx, settingsName); findErr == nil && stored != nil && stored.AutoSuspend() != nil {
+		if stored, findErr := c.settingsRepo.FindByName(ctx.Request().Context(), settingsName); findErr == nil && stored != nil && stored.AutoSuspend() != nil {
 			policy := stored.AutoSuspend()
 			settings.Session.AutoSuspendEnabled = &policy.Enabled
 			settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 		}
+	}
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID,
+		ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation,
 	}
 	body, err := json.Marshal(&settings)
 	if err != nil {
