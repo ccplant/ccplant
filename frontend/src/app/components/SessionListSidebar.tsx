@@ -71,14 +71,20 @@ export default function SessionListSidebar({
   isVisible = true,
 }: SessionListSidebarProps) {
   const router = useRouter()
-  const { selectedTeam } = useTeamScope()
+  const { selectedTeam, isLoading: isTeamScopeLoading } = useTeamScope()
   const [client] = useState(() => createAgentAPIProxyClientFromStorage())
   const [sessions, setSessions] = useState<Session[]>([])
   const sessionsRef = useRef<Session[]>([])
+  const requestedScopeRef = useRef<string | null>(null)
+  requestedScopeRef.current = isTeamScopeLoading
+    ? null
+    : selectedTeam ? `team:${selectedTeam}` : 'user'
   const [loading, setLoading] = useState(true)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
 
   const fetchSessions = useCallback(async () => {
+    if (isTeamScopeLoading) return
+    const requestedScope = selectedTeam ? `team:${selectedTeam}` : 'user'
     try {
       const scopeParams: { scope: 'user' | 'team'; team_id?: string } = selectedTeam
         ? { scope: 'team', team_id: selectedTeam }
@@ -88,15 +94,17 @@ export default function SessionListSidebar({
         new Date(b.updated_at || b.started_at).getTime() -
         new Date(a.updated_at || a.started_at).getTime()
       )
+      if (requestedScopeRef.current !== requestedScope) return
       sessionsRef.current = sorted
       setSessions(sorted)
 
     } catch (err) {
+      if (requestedScopeRef.current !== requestedScope) return
       console.error('[SessionListSidebar] Failed to fetch sessions:', err)
     } finally {
-      setLoading(false)
+      if (requestedScopeRef.current === requestedScope) setLoading(false)
     }
-  }, [client, selectedTeam])
+  }, [client, isTeamScopeLoading, selectedTeam])
 
   // SSE でリアルタイム更新: ステータス変化をインプレース反映し、active になったらフルリフレッシュ
   const handleProxyStatusEvent = useCallback((event: ProxySessionStatusEvent) => {

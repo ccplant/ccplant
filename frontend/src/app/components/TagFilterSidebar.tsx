@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { agentAPI } from '../../lib/api'
 import NavigationTabs from './NavigationTabs'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
@@ -27,12 +27,18 @@ export default function TagFilterSidebar({
   isVisible = true,
   onToggleVisibility
 }: TagFilterSidebarProps) {
-  const { selectedTeam } = useTeamScope()
+  const { selectedTeam, isLoading: isTeamScopeLoading } = useTeamScope()
   const [tags, setTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set())
+  const requestedScopeRef = useRef<string | null>(null)
+  requestedScopeRef.current = isTeamScopeLoading
+    ? null
+    : selectedTeam ? `team:${selectedTeam}` : 'user'
 
   const fetchTags = useCallback(async () => {
+    if (isTeamScopeLoading) return
+    const requestedScope = selectedTeam ? `team:${selectedTeam}` : 'user'
     try {
       setLoading(true)
 
@@ -83,8 +89,10 @@ export default function TagFilterSidebar({
         values: Array.from(values).sort()
       }))
 
+      if (requestedScopeRef.current !== requestedScope) return
       setTags(extractedTags)
     } catch (error) {
+      if (requestedScopeRef.current !== requestedScope) return
       console.error('Failed to fetch tags:', error)
       // モックデータを使用
       setTags([
@@ -102,9 +110,9 @@ export default function TagFilterSidebar({
         }
       ])
     } finally {
-      setLoading(false)
+      if (requestedScopeRef.current === requestedScope) setLoading(false)
     }
-  }, [selectedTeam])
+  }, [isTeamScopeLoading, selectedTeam])
 
   useEffect(() => {
     fetchTags()
