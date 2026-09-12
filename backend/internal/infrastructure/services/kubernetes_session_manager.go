@@ -4572,6 +4572,9 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 
 				session.SetStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
+				if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+					log.Printf("[K8S_SESSION] Failed to schedule initial suspend for session %s: %v", session.id, err)
+				}
 
 				// Continue watching deployment health and agentapi runtime status.
 				go m.watchAgentAPIStatus(ctx, session)
