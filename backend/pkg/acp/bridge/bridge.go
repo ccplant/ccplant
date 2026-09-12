@@ -4,6 +4,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,6 +67,7 @@ type Bridge struct {
 	autoApprove bool // when true, permission requests are auto-approved without broadcasting to the UI
 	serverCtx   context.Context
 	outputFile  string // path to append conversation history in acp-posts format
+	historyFile string // raw JSON-RPC JSONL used to restore GET /messages
 
 	subsMu sync.Mutex
 	subs   []*subscriber
@@ -98,6 +100,46 @@ type Bridge struct {
 	currentStatus string
 	statusSubsMu  sync.Mutex
 	statusSubs    []*statusSubscriber
+}
+
+// SetHistoryFile restores prior raw bridge events and persists future events.
+func (b *Bridge) SetHistoryFile(path string) error {
+	b.historyFile = path
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || !json.Valid(line) {
+			continue
+		}
+		raw := append(json.RawMessage(nil), line...)
+		if isUserMessageRaw(raw) {
+			b.lastUserMessageIdx = len(b.history)
+			b.userMessageIndices = append(b.userMessageIndices, len(b.history))
+		}
+		b.history = append(b.history, raw)
+	}
+	return nil
+}
+
+func isUserMessageRaw(raw json.RawMessage) bool {
+	var msg struct {
+		Method string `json:"method"`
+		Params struct {
+			Update struct {
+				SessionUpdate string `json:"sessionUpdate"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	return json.Unmarshal(raw, &msg) == nil && msg.Method == "session/update" && msg.Params.Update.SessionUpdate == "user_message_chunk"
 }
 
 type statusSubscriber struct {
@@ -743,6 +785,14 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	}
 	b.lastHistoryWasUserChunk = isUserChunk
 	b.history = append(b.history, raw)
+	if b.historyFile != "" {
+		if err := os.MkdirAll(filepath.Dir(b.historyFile), 0o700); err == nil {
+			if f, openErr := os.OpenFile(b.historyFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); openErr == nil {
+				_, _ = f.Write(append(append([]byte(nil), raw...), '\n'))
+				_ = f.Close()
+			}
+		}
+	}
 	b.histMu.Unlock()
 
 	for _, sub := range b.subs {

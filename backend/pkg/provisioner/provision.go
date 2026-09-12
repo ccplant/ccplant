@@ -1216,6 +1216,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--output-file", acpHistoryPath,
 			"--",
 			"claude-agent-acp",
@@ -1228,6 +1229,7 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
+			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--auto-approve",
 			"--",
 			"codex-acp",
