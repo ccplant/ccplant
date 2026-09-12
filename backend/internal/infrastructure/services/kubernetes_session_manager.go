@@ -513,6 +513,17 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 	now := time.Now()
 	for i := range services.Items {
 		svc := &services.Items[i]
+		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
+			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
+				sessionID := svc.Labels["agentapi.proxy/session-id"]
+				if sessionID != "" {
+					if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
+						log.Printf("[K8S_SESSION] Failed to initialize suspend timer for session %s: %v", sessionID, err)
+					}
+				}
+				continue
+			}
+		}
 		deadline, err := time.Parse(time.RFC3339Nano, svc.Annotations[sessionSuspendAtAnnotation])
 		if err != nil || deadline.After(now) {
 			continue
