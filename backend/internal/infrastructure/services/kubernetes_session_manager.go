@@ -5418,6 +5418,11 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 					continue
 				}
 				applyAgentRuntimeStatus(session, body.Status)
+				if body.Status == "stable" && session.Status() != "stopped" {
+					if scheduleErr := m.ScheduleSessionSuspend(ctx, session.ID()); scheduleErr != nil {
+						log.Printf("[AGENT_STATUS] Failed to schedule suspend for stable session %s: %v", session.id, scheduleErr)
+					}
+				}
 			case "message_update":
 				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
 				m.broadcastMessageUpdate(session.id)
