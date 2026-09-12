@@ -518,6 +518,34 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 	}
 }
 
+func TestRouteToActiveDirectRuntimeWithoutTunnelStartsResume(t *testing.T) {
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser), Status: "active",
+		Transport: repositories.SessionRouteTransportDirectRuntime,
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/messages", "public-id")
+
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" {
+		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+	if tunnel.path != "/api/v1/sessions/remote-id/resume" || !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
+		t.Fatalf("resume path=%q body=%s", tunnel.path, rec.Body.String())
+	}
+	if routeRepo.route.Status != "resuming" {
+		t.Fatalf("route status=%q, want resuming", routeRepo.route.Status)
+	}
+}
+
 func TestRouteToSuspendedRemoteSessionStatusDoesNotResume(t *testing.T) {
 	tunnel := &lifecycleTunnel{}
 	controller := controllers.NewSessionController(

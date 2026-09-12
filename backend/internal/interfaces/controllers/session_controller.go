@@ -1498,6 +1498,26 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 
 	if route.Transport == repositories.SessionRouteTransportDirectRuntime {
 		if c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.SessionID) {
+			// The runtime tunnel disappears as soon as a remotely managed workload is
+			// suspended. Lifecycle status updates are asynchronous, so the durable
+			// route can still say "active" here. Treat a missing runtime tunnel on a
+			// read as a stale suspended route and ask the manager to resume it. Status
+			// polling must remain side-effect free.
+			if c.esmControlTunnel != nil && ctx.Request().Method == http.MethodGet && suffix != "/status" {
+				resp, resumeErr := c.requestRemoteResume(ctx, route)
+				if resumeErr != nil {
+					return resumeErr
+				}
+				_ = resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
+				}
+				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+				ctx.Response().Header().Set("Retry-After", "2")
+				return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+					"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+				})
+			}
 			ctx.Response().Header().Set("Retry-After", "2")
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "Session runtime connection is unavailable")
 		}
