@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal } from 'lucide-react'
+import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
@@ -116,6 +116,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [deletingSession, setDeletingSession] = useState<string | null>(null)
+  const [suspendingSession, setSuspendingSession] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(false)
   const [sessionAgentStatus, setSessionAgentStatus] = useState<{ [sessionId: string]: AgentStatus }>({})
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
@@ -328,6 +329,28 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
       setError('セッションの削除に失敗しました')
     } finally {
       setDeletingSession(null)
+    }
+  }
+
+  const suspendSession = async (sessionId: string) => {
+    if (!confirm('このセッションをサスペンドしますか？保存後、チャットを開くと再開できます。')) return
+
+    try {
+      setSuspendingSession(sessionId)
+      setError(null)
+      setSuccess(null)
+      const result = await agentAPI.suspendSession(sessionId)
+      setSessions(current => current.map(session =>
+        session.session_id === sessionId ? { ...session, status: result.status as Session['status'] } : session
+      ))
+      setSuccess('セッションのサスペンドを開始しました')
+      setTimeout(() => setSuccess(null), 3000)
+      void fetchSessions(true)
+    } catch (err) {
+      console.error('Failed to suspend session:', err)
+      setError('セッションのサスペンドに失敗しました')
+    } finally {
+      setSuspendingSession(null)
     }
   }
 
@@ -1051,6 +1074,21 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                             </svg>
                             <span className="hidden sm:inline">チャット</span>
+                          </button>
+                        )}
+
+                        {!acpMode && ['active', 'running'].includes(session.status) && (
+                          <button
+                            onClick={() => suspendSession(session.session_id)}
+                            disabled={suspendingSession === session.session_id}
+                            aria-label={`${suspendingSession === session.session_id ? 'サスペンド中' : 'サスペンド'}: ${session.metadata?.description || `セッション ${session.session_id.substring(0, 8)}`}`}
+                            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-violet-300 px-3 py-2 text-sm font-medium text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-600 dark:text-violet-300 dark:hover:bg-violet-900/30 sm:min-h-0 sm:py-1.5"
+                            title="セッションをサスペンド"
+                          >
+                            {suspendingSession === session.session_id
+                              ? <LoaderCircle className="h-4 w-4 animate-spin sm:mr-1.5" aria-hidden="true" />
+                              : <Pause className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />}
+                            <span className="hidden sm:inline">サスペンド</span>
                           </button>
                         )}
                         
