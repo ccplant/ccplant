@@ -94,6 +94,17 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 }
 
 func (h *Handlers) ResumeSession(c echo.Context) error {
+	if c.Request().ContentLength != 0 {
+		var settings sessionsettings.SessionSettings
+		if err := c.Bind(&settings); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid resume settings")
+		}
+		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
+			if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+			}
+		}
+	}
 	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotImplemented, "session resume is not supported")
@@ -115,6 +126,17 @@ func (h *Handlers) ResumeSession(c echo.Context) error {
 }
 
 func (h *Handlers) SuspendSession(c echo.Context) error {
+	if c.Request().ContentLength != 0 {
+		var settings sessionsettings.SessionSettings
+		if err := c.Bind(&settings); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid suspend settings")
+		}
+		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
+			if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+			}
+		}
+	}
 	suspender, ok := h.sessionManager.(repositories.SessionSuspender)
 	if !ok {
 		return echo.NewHTTPError(http.StatusNotImplemented, "session suspend is not supported")

@@ -1852,6 +1852,26 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	return session, true, nil
 }
 
+func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id string, settings *sessionsettings.SessionSettings) error {
+	session, ok := m.GetSession(id).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session %s not found", id)
+	}
+	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
+	if _, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+		return nil
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("get restart settings secret %s: %w", name, err)
+	}
+	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	if settings.Repository != nil {
+		req.RepoInfo = &entities.RepositoryInfo{FullName: settings.Repository.FullName, CloneDir: settings.Repository.CloneDir, Branch: settings.Repository.Branch, PR: settings.Repository.PR}
+	}
+	session.SetRequest(req)
+	session.SetProvisionSettings(settings)
+	return m.createSessionSettingsSecretFromSettings(ctx, session, req, settings)
+}
+
 func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
 	timeout := time.Duration(m.k8sConfig.PodStartTimeout) * time.Second
 	if timeout <= 0 {

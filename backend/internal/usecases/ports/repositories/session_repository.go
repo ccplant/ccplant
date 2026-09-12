@@ -5,7 +5,15 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+// SessionResumePreparer persists parent-owned settings needed to recreate a
+// suspended workload. Stock runners receive these settings directly from the
+// parent and therefore may not have a local restart Secret yet.
+type SessionResumePreparer interface {
+	PrepareSessionResume(context.Context, string, *sessionsettings.SessionSettings) error
+}
 
 // Message represents a message in a conversation
 type Message struct {

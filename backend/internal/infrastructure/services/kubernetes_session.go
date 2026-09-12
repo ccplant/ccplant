@@ -298,6 +298,8 @@ func (s *KubernetesSession) Request() *entities.RunServerRequest {
 	return s.request
 }
 
+func (s *KubernetesSession) SetRequest(request *entities.RunServerRequest) { s.request = request }
+
 // SetResolvedAPIKey stores the API key resolved during session creation.
 // This is used by the memory-sync sidecar to authenticate with the proxy.
 func (s *KubernetesSession) SetResolvedAPIKey(key string) {

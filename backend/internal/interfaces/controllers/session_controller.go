@@ -88,6 +88,7 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
+	sessionRunnerStore     sessionrunnercore.Store
 	esmControlTunnel       ESMControlTunnel
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
@@ -161,6 +162,10 @@ func WithSessionProfileRepository(repo repositories.SessionProfileRepository) Se
 
 func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
 	return func(c *SessionController) { c.esmControlTunnel = tunnel }
+}
+
+func WithSessionRunnerStore(store sessionrunnercore.Store) SessionControllerOption {
+	return func(c *SessionController) { c.sessionRunnerStore = store }
 }
 
 // getSessionManager returns the current session manager
@@ -1161,9 +1166,20 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	var body io.Reader
+	var settingsBody []byte
+	if c.sessionRunnerStore != nil {
+		if allocation, allocationErr := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID); allocationErr == nil && len(allocation.ProvisionSettings) > 0 {
+			settingsBody = allocation.ProvisionSettings
+			body = bytes.NewReader(settingsBody)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, body)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
