@@ -79,7 +79,8 @@ type Bridge struct {
 	lastUserMessageIdx       int
 	userMessageIndices       []int // history indices of each user_message_chunk
 	lastHistoryWasUserChunk  bool
-	suppressRestoredUserEcho bool
+	restoredReplaySignatures []string
+	restoredReplayIndex      int
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -127,9 +128,43 @@ func (b *Bridge) SetHistoryFile(path string) error {
 			b.userMessageIndices = append(b.userMessageIndices, len(b.history))
 		}
 		b.history = append(b.history, raw)
+		if signature, ok := restoredReplaySignature(raw); ok {
+			b.restoredReplaySignatures = append(b.restoredReplaySignatures, signature)
+		}
 	}
-	b.suppressRestoredUserEcho = len(b.userMessageIndices) > 0
 	return nil
+}
+
+// restoredReplaySignature identifies transcript updates that session/load may
+// replay after the bridge has already restored the same events from disk.
+// Envelope fields such as sessionId and time intentionally do not participate.
+func restoredReplaySignature(raw json.RawMessage) (string, bool) {
+	var msg struct {
+		Method string `json:"method"`
+		Params struct {
+			Update json.RawMessage `json:"update"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(raw, &msg) != nil || msg.Method != "session/update" {
+		return "", false
+	}
+	var kind struct {
+		SessionUpdate string `json:"sessionUpdate"`
+	}
+	if json.Unmarshal(msg.Params.Update, &kind) != nil {
+		return "", false
+	}
+	switch kind.SessionUpdate {
+	case "user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan":
+		var update any
+		if json.Unmarshal(msg.Params.Update, &update) != nil {
+			return "", false
+		}
+		canonical, err := json.Marshal(update)
+		return string(canonical), err == nil
+	default:
+		return "", false
+	}
 }
 
 func isUserMessageRaw(raw json.RawMessage) bool {
@@ -142,23 +177,6 @@ func isUserMessageRaw(raw json.RawMessage) bool {
 		} `json:"params"`
 	}
 	return json.Unmarshal(raw, &msg) == nil && msg.Method == "session/update" && msg.Params.Update.SessionUpdate == "user_message_chunk"
-}
-
-func userMessageText(raw json.RawMessage) string {
-	var msg struct {
-		Params struct {
-			Update struct {
-				SessionUpdate string `json:"sessionUpdate"`
-				Content       struct {
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"update"`
-		} `json:"params"`
-	}
-	if json.Unmarshal(raw, &msg) != nil || msg.Params.Update.SessionUpdate != "user_message_chunk" {
-		return ""
-	}
-	return msg.Params.Update.Content.Text
 }
 
 type statusSubscriber struct {
@@ -798,16 +816,15 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	isUserChunk := isUserMessageUpdate(msg)
-	if isUserChunk && b.suppressRestoredUserEcho && len(b.userMessageIndices) > 0 {
-		previous := b.history[b.userMessageIndices[len(b.userMessageIndices)-1]]
-		if userMessageText(previous) == userMessageText(raw) {
-			b.suppressRestoredUserEcho = false
+	if signature, replayable := restoredReplaySignature(raw); replayable && b.restoredReplayIndex < len(b.restoredReplaySignatures) {
+		if signature == b.restoredReplaySignatures[b.restoredReplayIndex] {
+			b.restoredReplayIndex++
 			b.histMu.Unlock()
 			return
 		}
-	}
-	if isUserChunk {
-		b.suppressRestoredUserEcho = false
+		// A different transcript update is new live output, so stop treating
+		// subsequent events as session/load replay.
+		b.restoredReplayIndex = len(b.restoredReplaySignatures)
 	}
 	if isUserChunk && !b.lastHistoryWasUserChunk {
 		b.lastUserMessageIdx = len(b.history)
