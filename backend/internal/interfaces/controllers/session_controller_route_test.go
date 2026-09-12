@@ -16,6 +16,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type ensuringSessionManager struct {
@@ -70,6 +71,18 @@ func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Reques
 type allocationReader struct {
 	allocation *sessionrunnercore.Allocation
 	err        error
+}
+
+type resumeSettingsRepo struct{ settings *entities.Settings }
+
+func (r *resumeSettingsRepo) Save(context.Context, *entities.Settings) error { return nil }
+func (r *resumeSettingsRepo) FindByName(context.Context, string) (*entities.Settings, error) {
+	return r.settings, nil
+}
+func (r *resumeSettingsRepo) Delete(context.Context, string) error         { return nil }
+func (r *resumeSettingsRepo) Exists(context.Context, string) (bool, error) { return true, nil }
+func (r *resumeSettingsRepo) List(context.Context) ([]*entities.Settings, error) {
+	return []*entities.Settings{r.settings}, nil
 }
 
 func (s *allocationReader) GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error) {
@@ -388,6 +401,41 @@ func TestResumeRemoteSessionUsesSessionManagerAPIPath(t *testing.T) {
 	}
 	if tunnel.path != "/api/v1/sessions/remote-id/resume" {
 		t.Fatalf("resume path = %q, want session manager API path", tunnel.path)
+	}
+}
+
+func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	settings := entities.NewSettings("user-1")
+	settings.SetAutoSuspend(&entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 1})
+	oldEnabled := true
+	oldProvisionSettings, err := json.Marshal(&sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		UserID: "user-1", Scope: string(entities.ScopeUser), AutoSuspendEnabled: &oldEnabled, AutoSuspendMinutes: 60,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+			UserID: "user-1", Scope: string(entities.ScopeUser),
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{ProvisionSettings: oldProvisionSettings}}),
+		controllers.WithSettingsRepository(&resumeSettingsRepo{settings: settings}),
+	)
+	ctx, _ := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
+	if err := controller.ResumeSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var got sessionsettings.SessionSettings
+	if err := json.Unmarshal(tunnel.body, &got); err != nil {
+		t.Fatalf("resume body is invalid: %v; body=%s", err, tunnel.body)
+	}
+	if got.Session.AutoSuspendEnabled == nil || !*got.Session.AutoSuspendEnabled || got.Session.AutoSuspendMinutes != 1 {
+		t.Fatalf("resume auto-suspend policy = enabled %v minutes %d, want true/1", got.Session.AutoSuspendEnabled, got.Session.AutoSuspendMinutes)
 	}
 }
 

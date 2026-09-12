@@ -1566,16 +1566,20 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	body := c.remoteResumeSettings(ctx.Request().Context(), route)
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+	}
+	if len(body) != 0 {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	ts := hmacutil.NowTimestamp()
 	parsedTarget, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
 	}
-	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, nil)
+	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, body)
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
 	req.Header.Set(hmacutil.TimestampHeader, ts)
 	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
@@ -1589,6 +1593,39 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
 	return resp, nil
+}
+
+// remoteResumeSettings refreshes mutable policy values before an existing pool
+// allocation is restored. This prevents a session created under an older idle
+// timeout from reverting to that timeout after every resume.
+func (c *SessionController) remoteResumeSettings(ctx context.Context, route *repositories.SessionRoute) []byte {
+	if c.sessionRunnerStore == nil {
+		return nil
+	}
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx, route.SessionID)
+	if err != nil || allocation == nil || len(allocation.ProvisionSettings) == 0 {
+		return nil
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return nil
+	}
+	if c.settingsRepo != nil {
+		settingsName := route.UserID
+		if route.Scope == string(entities.ScopeTeam) && route.TeamID != "" {
+			settingsName = route.TeamID
+		}
+		if stored, findErr := c.settingsRepo.FindByName(ctx, settingsName); findErr == nil && stored != nil && stored.AutoSuspend() != nil {
+			policy := stored.AutoSuspend()
+			settings.Session.AutoSuspendEnabled = &policy.Enabled
+			settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
+		}
+	}
+	body, err := json.Marshal(&settings)
+	if err != nil {
+		return nil
+	}
+	return body
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
