@@ -7347,6 +7347,7 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	tempSession := &KubernetesSession{
 		id:          sessionID,
 		serviceName: fmt.Sprintf("agentapi-session-%s-svc", sessionID),
+		request:     req,
 	}
 	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
 	return settings, nil
