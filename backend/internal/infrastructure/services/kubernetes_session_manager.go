@@ -376,6 +376,11 @@ func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *Kubernetes
 }
 
 func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, sessionID string) error {
+	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
+		if settings := session.ProvisionSettings(); settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime)
+		}
+	}
 	store := m.connectedSessionControlStore(ctx, sessionID)
 	if store == nil {
 		return fmt.Errorf("session control is unavailable")
@@ -415,6 +420,25 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 			return err
 		}
 	}
+}
+
+func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig) error {
+	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(runtime.SessionID) + "/checkpoint?generation=" + strconv.FormatInt(runtime.Generation, 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+runtime.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("parent checkpoint returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Context) {

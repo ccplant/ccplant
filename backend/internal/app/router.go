@@ -508,6 +508,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)
 		r.echo.POST("/internal/session-runtime/:sessionId/frames", r.handlers.sessionRuntimeController.AppendFrames)
 		r.echo.POST("/internal/session-runtime/:sessionId/status", r.handlers.sessionRuntimeController.UpdateStatus)
+		r.echo.POST("/internal/session-runtime/:sessionId/checkpoint", r.handlers.sessionRuntimeController.Checkpoint)
 		log.Printf("[ROUTES] Direct Session Pod runtime endpoints registered")
 	}
 

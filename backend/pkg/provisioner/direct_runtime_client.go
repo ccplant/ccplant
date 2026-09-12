@@ -230,6 +230,15 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 }
 
 func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command core.Command) {
+	if command.Method == http.MethodPost && command.Path == "/internal/checkpoint-session-state" {
+		err := executeControlCommand(commandCtx, w.client, os.Getenv("AGENTAPI_AGENT_TYPE"), controlCommand{Type: "checkpoint_session_state"})
+		if err != nil {
+			w.postExecutionError(commandCtx, command, err)
+			return
+		}
+		_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
+		return
+	}
 	target := w.localURL + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
