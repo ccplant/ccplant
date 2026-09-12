@@ -40,7 +40,9 @@ func (s githubConnectionURLResolverStub) ResolveConnectionURLs(context.Context, 
 	return s.baseURL, s.apiURL, nil
 }
 
-func (s githubConnectionURLResolverStub) RevokeBrokerLeases(context.Context, string) error { return nil }
+func (s githubConnectionURLResolverStub) RevokeBrokerLeases(context.Context, string) error {
+	return nil
+}
 
 func TestSessionTokenDebugLogging(t *testing.T) {
 	var output bytes.Buffer
