@@ -69,6 +69,27 @@ func assertOwnedByService(t *testing.T, obj metav1.Object, serviceName string) {
 	}
 }
 
+func TestNormalizeProvisionSettingsUsesManagerIdentityAndPersistence(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionPersistence.Backend = "s3"
+	original := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		ID:                 "public-session",
+		PersistenceEnabled: false,
+	}}
+
+	normalized := manager.normalizeProvisionSettings("allocated-session", original)
+
+	if normalized.Session.ID != "allocated-session" {
+		t.Fatalf("session ID = %q, want allocated-session", normalized.Session.ID)
+	}
+	if !normalized.Session.PersistenceEnabled {
+		t.Fatal("manager persistence must enable implicit restore")
+	}
+	if original.Session.ID != "public-session" || original.Session.PersistenceEnabled {
+		t.Fatal("normalization mutated parent-owned settings")
+	}
+}
+
 func TestSessionWorkloadReadyFallsBackToReadyPodWhenDeploymentStatusLags(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()

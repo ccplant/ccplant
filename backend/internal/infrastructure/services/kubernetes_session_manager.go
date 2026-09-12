@@ -743,7 +743,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	// directly instead of resolving secrets from this cluster.
 	var sessionSettings *sessionsettings.SessionSettings
 	if req.ProvisionSettings != nil {
-		sessionSettings = req.ProvisionSettings
+		sessionSettings = m.normalizeProvisionSettings(session.id, req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
@@ -1564,7 +1564,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	// direct parent runtime bootstrap, and must not be re-resolved locally.
 	var sessionSettings *sessionsettings.SessionSettings
 	if req.ProvisionSettings != nil {
-		sessionSettings = req.ProvisionSettings
+		sessionSettings = m.normalizeProvisionSettings(session.id, req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
@@ -1881,6 +1881,7 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 	if !ok || session == nil {
 		return fmt.Errorf("session %s not found", id)
 	}
+	settings = m.normalizeProvisionSettings(id, settings)
 	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
 	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if getErr != nil && !errors.IsNotFound(getErr) {
@@ -1905,6 +1906,21 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		return err
 	}
 	return m.createSessionSettingsSecretFromSettings(ctx, session, req, settings)
+}
+
+// normalizeProvisionSettings applies execution-plane identity and capabilities
+// to settings resolved by the parent API. The parent stores the public session
+// ID and does not own the manager's persistence backend; snapshots, however,
+// are written under the manager-local allocated session ID.
+func (m *KubernetesSessionManager) normalizeProvisionSettings(id string, settings *sessionsettings.SessionSettings) *sessionsettings.SessionSettings {
+	if settings == nil {
+		return nil
+	}
+	normalized := *settings
+	normalized.Session = settings.Session
+	normalized.Session.ID = id
+	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
+	return &normalized
 }
 
 func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
