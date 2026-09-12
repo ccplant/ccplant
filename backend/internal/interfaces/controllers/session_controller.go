@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -1170,8 +1171,23 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	var settingsBody []byte
 	if c.sessionRunnerStore != nil {
 		if allocation, allocationErr := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID); allocationErr == nil && len(allocation.ProvisionSettings) > 0 {
-			settingsBody = allocation.ProvisionSettings
-			body = bytes.NewReader(settingsBody)
+			var settings sessionsettings.SessionSettings
+			if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
+				scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+				if scheme == "" {
+					scheme = "https"
+				}
+				host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+				if host == "" {
+					host = ctx.Request().Host
+				}
+				prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+				settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
+				settingsBody, _ = json.Marshal(&settings)
+			}
+			if len(settingsBody) > 0 {
+				body = bytes.NewReader(settingsBody)
+			}
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, body)
