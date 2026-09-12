@@ -1858,10 +1858,9 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		return fmt.Errorf("session %s not found", id)
 	}
 	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
-	if _, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
-		return nil
-	} else if !errors.IsNotFound(err) {
-		return fmt.Errorf("get restart settings secret %s: %w", name, err)
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil && !errors.IsNotFound(getErr) {
+		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
 	}
 	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
 	if settings.Repository != nil {
@@ -1869,6 +1868,18 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 	}
 	session.SetRequest(req)
 	session.SetProvisionSettings(settings)
+	if getErr == nil {
+		yamlData, err := sessionsettings.MarshalYAML(settings)
+		if err != nil {
+			return fmt.Errorf("marshal restart settings: %w", err)
+		}
+		if existing.Data == nil {
+			existing.Data = map[string][]byte{}
+		}
+		existing.Data["settings.yaml"] = yamlData
+		_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		return err
+	}
 	return m.createSessionSettingsSecretFromSettings(ctx, session, req, settings)
 }
 
