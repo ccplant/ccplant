@@ -5732,6 +5732,11 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		cancel,
 		nil, // No webhook payload for restored sessions
 	)
+	if sessionMeta != nil {
+		restoredSettings := &sessionsettings.SessionSettings{Session: *sessionMeta}
+		session.Request().ProvisionSettings = restoredSettings
+		session.SetProvisionSettings(restoredSettings)
+	}
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
@@ -5861,6 +5866,11 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 		cancel,
 		nil, // No webhook payload for restored sessions
 	)
+	if sessionMeta != nil {
+		restoredSettings := &sessionsettings.SessionSettings{Session: *sessionMeta}
+		session.Request().ProvisionSettings = restoredSettings
+		session.SetProvisionSettings(restoredSettings)
+	}
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
