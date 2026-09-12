@@ -41,7 +41,7 @@ Settings に次の値オブジェクトを追加する。
 
 - `enabled`: 自動サスペンドの有効／無効。省略時は deployment の既存設定から移行した既定値を使う。
 - `idle_timeout_minutes`: 最後に activity が完了してから suspend までの分数。
-- API で許容する値は `15, 30, 60, 120, 240, 480, 720, 1440`。フロントも同じ選択肢を提示する。
+- API とフロントは `1`〜`10080` 分（7日）の整数を許容し、カスタム値を入力できる。
 - `enabled=false` の場合も timeout は保存し、再度有効化した際に以前の選択を維持する。
 - `enabled=true` で timeout が未指定または許容外なら `400 invalid_auto_suspend_settings` とする。
 

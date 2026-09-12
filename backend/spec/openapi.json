@@ -8795,7 +8795,9 @@
           },
           "idle_timeout_minutes": {
             "type": "integer",
-            "enum": [15, 30, 60, 120, 240, 480, 720, 1440]
+            "minimum": 1,
+            "maximum": 10080,
+            "description": "Idle timeout in minutes. Any whole-minute value from 1 minute through 7 days is accepted."
           }
         }
       },

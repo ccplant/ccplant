@@ -131,10 +131,18 @@ func TestAutoSuspendSettingsValidation(t *testing.T) {
 		t.Fatal("AutoSuspend must return a defensive copy")
 	}
 	settings.SetAutoSuspend(copy)
-	if err := settings.Validate(); err == nil {
-		t.Fatal("invalid timeout was accepted")
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("custom timeout was rejected: %v", err)
 	}
-	settings.SetAutoSuspend(&AutoSuspendSettings{Enabled: false, IdleTimeoutMinutes: 17})
+	settings.SetAutoSuspend(&AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 0})
+	if err := settings.Validate(); err == nil {
+		t.Fatal("zero timeout was accepted")
+	}
+	settings.SetAutoSuspend(&AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: maxAutoSuspendMinutes + 1})
+	if err := settings.Validate(); err == nil {
+		t.Fatal("timeout above the maximum was accepted")
+	}
+	settings.SetAutoSuspend(&AutoSuspendSettings{Enabled: false, IdleTimeoutMinutes: 0})
 	if err := settings.Validate(); err != nil {
 		t.Fatalf("disabled policy should preserve any timeout: %v", err)
 	}

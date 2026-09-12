@@ -7,7 +7,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
-var allowedAutoSuspendMinutes = map[int]struct{}{15: {}, 30: {}, 60: {}, 120: {}, 240: {}, 480: {}, 720: {}, 1440: {}}
+const maxAutoSuspendMinutes = 7 * 24 * 60
 
 // AutoSuspendSettings controls automatic suspension of idle persistent sessions.
 type AutoSuspendSettings struct {
@@ -19,8 +19,8 @@ func (a *AutoSuspendSettings) Validate() error {
 	if a == nil || !a.Enabled {
 		return nil
 	}
-	if _, ok := allowedAutoSuspendMinutes[a.IdleTimeoutMinutes]; !ok {
-		return fmt.Errorf("idle_timeout_minutes must be one of 15, 30, 60, 120, 240, 480, 720, 1440")
+	if a.IdleTimeoutMinutes < 1 || a.IdleTimeoutMinutes > maxAutoSuspendMinutes {
+		return fmt.Errorf("idle_timeout_minutes must be between 1 and %d", maxAutoSuspendMinutes)
 	}
 	return nil
 }

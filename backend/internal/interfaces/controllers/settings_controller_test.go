@@ -341,7 +341,7 @@ func TestUpdateSettingsAutoSuspend(t *testing.T) {
 func TestUpdateSettingsRejectsInvalidAutoSuspend(t *testing.T) {
 	repo := newMockSettingsRepository()
 	h := NewSettingsController(repo, nil)
-	body, err := json.Marshal(UpdateSettingsRequest{AutoSuspend: &entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 17}})
+	body, err := json.Marshal(UpdateSettingsRequest{AutoSuspend: &entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 0}})
 	require.NoError(t, err)
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))

@@ -1,18 +1,7 @@
 'use client'
 
-import { FieldGroup, FieldRow, SelectField, SettingsPageHeader, ToggleSwitch } from '@/components/settings'
+import { FieldGroup, FieldRow, SettingsPageHeader, ToggleSwitch } from '@/components/settings'
 import { useSettingsScope } from '../SettingsScopeContext'
-
-const timeoutOptions = [
-  { value: '15', label: '15分' },
-  { value: '30', label: '30分' },
-  { value: '60', label: '1時間' },
-  { value: '120', label: '2時間' },
-  { value: '240', label: '4時間' },
-  { value: '480', label: '8時間' },
-  { value: '720', label: '12時間' },
-  { value: '1440', label: '24時間' },
-]
 
 export function SessionsSection() {
   const { scopeKind, settings, update } = useSettingsScope()
@@ -38,13 +27,25 @@ export function SessionsSection() {
           htmlFor="auto-suspend-timeout"
           description="最後の操作が完了してからの時間"
           control={
-            <SelectField
-              id="auto-suspend-timeout"
-              value={String(policy.idle_timeout_minutes)}
-              disabled={!policy.enabled}
-              onChange={(value) => update({ auto_suspend: { ...policy, idle_timeout_minutes: Number(value) } })}
-              options={timeoutOptions}
-            />
+            <div className="flex items-center gap-2">
+              <input
+                id="auto-suspend-timeout"
+                type="number"
+                min={1}
+                max={10080}
+                step={1}
+                value={policy.idle_timeout_minutes}
+                disabled={!policy.enabled}
+                onChange={(event) => {
+                  const minutes = Number(event.target.value)
+                  if (Number.isInteger(minutes) && minutes >= 1 && minutes <= 10080) {
+                    update({ auto_suspend: { ...policy, idle_timeout_minutes: minutes } })
+                  }
+                }}
+                className="w-28 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              />
+              <span className="text-sm text-gray-600 dark:text-gray-300">分</span>
+            </div>
           }
         />
       </FieldGroup>
