@@ -98,6 +98,7 @@ type UpdateSettingsRequest struct {
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
 	DefaultSessionProfileID *string                          `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 	DefaultAgentType        *string                          `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
+	AutoSuspend             *entities.AutoSuspendSettings    `json:"auto_suspend,omitempty"`
 }
 
 // ExternalSessionManagerRequest represents updates to an already-enrolled manager.
@@ -154,6 +155,7 @@ type SettingsResponse struct {
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
 	DefaultSessionProfileID string                           `json:"default_session_profile_id,omitempty"` // Default session profile ID for this settings scope
 	DefaultAgentType        string                           `json:"default_agent_type,omitempty"`         // Default agent type for sessions in this settings scope
+	AutoSuspend             *entities.AutoSuspendSettings    `json:"auto_suspend,omitempty"`
 	CreatedAt               string                           `json:"created_at"`
 	UpdatedAt               string                           `json:"updated_at"`
 }
@@ -535,6 +537,12 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		}
 		settings.SetDefaultAgentType(*req.DefaultAgentType)
 	}
+	if req.AutoSuspend != nil {
+		if err := req.AutoSuspend.Validate(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid_auto_suspend_settings: "+err.Error())
+		}
+		settings.SetAutoSuspend(req.AutoSuspend)
+	}
 
 	// Determine and set auth_mode
 	authMode := c.determineAuthMode(settings, req.AuthMode)
@@ -789,6 +797,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 	resp.NotificationChannels = settings.NotificationChannels()
 	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()
 	resp.DefaultAgentType = settings.DefaultAgentType()
+	resp.AutoSuspend = settings.AutoSuspend()
 
 	// External session managers: never return the HMAC secret — indicate only whether one is set.
 	if managers := settings.ExternalSessionManagers(); len(managers) > 0 {

@@ -119,6 +119,27 @@ func TestNewSettings(t *testing.T) {
 	}
 }
 
+func TestAutoSuspendSettingsValidation(t *testing.T) {
+	settings := NewSettings("test-user")
+	settings.SetAutoSuspend(&AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 60})
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("valid policy rejected: %v", err)
+	}
+	copy := settings.AutoSuspend()
+	copy.IdleTimeoutMinutes = 17
+	if settings.AutoSuspend().IdleTimeoutMinutes != 60 {
+		t.Fatal("AutoSuspend must return a defensive copy")
+	}
+	settings.SetAutoSuspend(copy)
+	if err := settings.Validate(); err == nil {
+		t.Fatal("invalid timeout was accepted")
+	}
+	settings.SetAutoSuspend(&AutoSuspendSettings{Enabled: false, IdleTimeoutMinutes: 17})
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("disabled policy should preserve any timeout: %v", err)
+	}
+}
+
 func TestSettings_SetBedrock(t *testing.T) {
 	settings := NewSettings("test-user")
 	originalUpdatedAt := settings.UpdatedAt()

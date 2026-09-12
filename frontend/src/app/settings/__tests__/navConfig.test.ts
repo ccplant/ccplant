@@ -7,6 +7,10 @@ import {
 } from '../navConfig'
 
 describe('navItemsForScope', () => {
+  it('offers automatic session suspension in personal and team settings', () => {
+    expect(navItemsForScope('personal').some((item) => item.slug === 'sessions')).toBe(true)
+    expect(navItemsForScope('team').some((item) => item.slug === 'sessions')).toBe(true)
+  })
   it('keeps personal-only pages out of the team sidebar', () => {
     const teamSlugs = navItemsForScope('team').map((item) => item.slug)
     expect(teamSlugs).not.toContain('notifications')

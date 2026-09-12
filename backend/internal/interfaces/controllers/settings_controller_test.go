@@ -310,6 +310,53 @@ func TestUpdateSettings_DefaultSessionProfileID(t *testing.T) {
 	assert.Equal(t, "profile-1", resp.DefaultSessionProfileID)
 }
 
+func TestUpdateSettingsAutoSuspend(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil)
+	policy := &entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 120}
+	body, err := json.Marshal(UpdateSettingsRequest{AutoSuspend: policy})
+	require.NoError(t, err)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("test-user")
+	c.Set("internal_user", createTestUser("test-user", true))
+
+	require.NoError(t, h.UpdateSettings(c))
+	assert.Equal(t, http.StatusOK, rec.Code)
+	saved, err := repo.FindByName(context.Background(), "test-user")
+	require.NoError(t, err)
+	require.NotNil(t, saved.AutoSuspend())
+	assert.Equal(t, 120, saved.AutoSuspend().IdleTimeoutMinutes)
+
+	var response SettingsResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.Equal(t, policy, response.AutoSuspend)
+}
+
+func TestUpdateSettingsRejectsInvalidAutoSuspend(t *testing.T) {
+	repo := newMockSettingsRepository()
+	h := NewSettingsController(repo, nil)
+	body, err := json.Marshal(UpdateSettingsRequest{AutoSuspend: &entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 17}})
+	require.NoError(t, err)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/settings/test-user", bytes.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues("test-user")
+	c.Set("internal_user", createTestUser("test-user", true))
+
+	err = h.UpdateSettings(c)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusBadRequest, err.(*echo.HTTPError).Code)
+}
+
 func TestUpdateSettingsRejectsDirectExternalSessionManagerRegistration(t *testing.T) {
 	repo := newMockSettingsRepository()
 	h := NewSettingsController(repo, nil)

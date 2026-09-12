@@ -145,7 +145,7 @@ func routeContext(e *echo.Echo, method, path, sessionID string) (echo.Context, *
 	return ctx, rec
 }
 
-func TestRouteToSessionDoesNotWakeLocalAliasOnGet(t *testing.T) {
+func TestRouteToSessionEnsuresLocalAliasWorkloadOnGet(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/status" {
 			t.Errorf("upstream path = %q, want /status", r.URL.Path)
@@ -173,12 +173,12 @@ func TestRouteToSessionDoesNotWakeLocalAliasOnGet(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if len(manager.ensuredIDs) != 0 {
-		t.Fatalf("GET unexpectedly woke sessions: %v", manager.ensuredIDs)
+	if len(manager.ensuredIDs) != 1 || manager.ensuredIDs[0] != "remote-id" {
+		t.Fatalf("ensured IDs = %v, want [remote-id]", manager.ensuredIDs)
 	}
 }
 
-func TestRouteToSessionDoesNotWakeRegularLocalSessionOnGet(t *testing.T) {
+func TestRouteToSessionEnsuresRegularLocalWorkloadOnGet(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -196,8 +196,29 @@ func TestRouteToSessionDoesNotWakeRegularLocalSessionOnGet(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if len(manager.ensuredIDs) != 0 {
-		t.Fatalf("GET unexpectedly woke sessions: %v", manager.ensuredIDs)
+	if len(manager.ensuredIDs) != 1 || manager.ensuredIDs[0] != "local-id" {
+		t.Fatalf("ensured IDs = %v, want [local-id]", manager.ensuredIDs)
+	}
+}
+
+func TestRouteToSessionReturnsStructuredResumingResponse(t *testing.T) {
+	manager := &ensuringSessionManager{
+		fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{
+			"local-id": {id: "local-id", userID: "user-1", scope: entities.ScopeUser},
+		}},
+		restoring: true,
+	}
+	controller := controllers.NewSessionController(&routeSessionManagerProvider{manager: manager}, nil)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/local-id/status", "local-id")
+
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" {
+		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -229,6 +250,9 @@ func TestResumeSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
 	}
 	if response["session_id"] != "public-id" {
 		t.Fatalf("response session_id = %v, want public-id", response["session_id"])
+	}
+	if response["status"] != "resuming" {
+		t.Fatalf("response status = %v, want resuming", response["status"])
 	}
 	if len(manager.ensuredIDs) != 1 || manager.ensuredIDs[0] != "remote-id" {
 		t.Fatalf("ensured IDs = %v, want [remote-id]", manager.ensuredIDs)
@@ -412,6 +436,34 @@ func TestRouteToSessionUsesDirectSessionRuntime(t *testing.T) {
 	}
 	if routeRepo.route.Status != "active" || routeRepo.route.StatusUpdatedAt.IsZero() {
 		t.Fatalf("persisted route status=%q updated_at=%v, want active with timestamp", routeRepo.route.Status, routeRepo.route.StatusUpdatedAt)
+	}
+}
+
+func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+		UserID: "user-1", Scope: string(entities.ScopeUser), Status: "suspended",
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "2" {
+		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+	if tunnel.path != "/api/v1/sessions/remote-id/resume" || !strings.Contains(rec.Body.String(), `"code":"session_resuming"`) {
+		t.Fatalf("resume path=%q body=%s", tunnel.path, rec.Body.String())
+	}
+	if routeRepo.route.Status != "resuming" {
+		t.Fatalf("route status=%q, want resuming", routeRepo.route.Status)
 	}
 }
 

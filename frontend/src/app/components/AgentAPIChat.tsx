@@ -382,6 +382,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       // Reset initial load flag when session changes
       setIsInitialLoadComplete(false);
       setIsStarting(true);
+      setIsResuming(false);
       setIsConnected(false);
       setAgentStatus(null);
       setAgentType(null);
@@ -672,6 +673,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               console.error('Failed to load session messages:', err);
               setIsConnected(false); // Only set disconnected on actual error
               if (err instanceof AgentAPIProxyError && (err.status === 404 || err.status === 502 || err.status === 503)) {
+                setIsResuming((current) => current || err.code === 'session_resuming');
                 // 404: セッションがまだセッションマネージャーに登録されていない可能性がある（プロビジョニング中の race condition）
                 // 502/503: サービス起動中の可能性がある
                 // いずれの場合もプロビジョナーのステータスを確認してから再試行
@@ -709,6 +711,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           console.error('Failed to initialize chat:', err);
           setIsConnected(false);
           if (err instanceof AgentAPIProxyError && (err.status === 404 || err.status === 502 || err.status === 503)) {
+            setIsResuming((current) => current || err.code === 'session_resuming');
             // サービス起動中またはセッション登録中の可能性があるため、処理中として扱い再試行
             setIsStarting(true);
             retryTimerRef.current = setTimeout(initializeChat, 2000);
@@ -754,12 +757,17 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [isConnected, setIsConnected] = useState(false);
   const [messageSSEConnectionStatus, setMessageSSEConnectionStatus] = useState<MessageSSEConnectionStatus>('connecting');
   const [isStarting, setIsStarting] = useState(false);
+  const [isResuming, setIsResuming] = useState(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
+
+  useEffect(() => {
+    if (isInitialLoadComplete) setIsResuming(false);
+  }, [isInitialLoadComplete]);
 
   // Restore sidebar visibility from localStorage after mount
   useEffect(() => {
@@ -1886,6 +1894,17 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       default: return 'text-gray-600 dark:text-gray-400';
     }
   };
+
+  if (isResuming) {
+    return (
+      <div className="flex h-full min-h-[320px] flex-col items-center justify-center bg-white px-6 text-center dark:bg-gray-900">
+        <div className="mb-5 h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">セッションを再開しています</h2>
+        <p className="mt-2 max-w-md text-sm text-gray-500 dark:text-gray-400">保存された会話と実行環境を復元しています。準備ができると自動的にチャットへ戻ります。</p>
+        <Link href="/chats" className="mt-6 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400">セッション一覧へ戻る</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900" style={{ position: 'relative', minHeight: 0 }}>

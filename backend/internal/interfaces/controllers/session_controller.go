@@ -1122,7 +1122,7 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 	status := "active"
 	code := http.StatusOK
 	if restoring {
-		status = "restoring"
+		status = "resuming"
 		code = http.StatusAccepted
 		ctx.Response().Header().Set("Retry-After", "2")
 	} else if ensured != nil {
@@ -1277,6 +1277,27 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 		}
 	}
 
+	// Runtime access is the resume boundary. Listing and proxy-level status
+	// endpoints never reach this handler, so background polling cannot wake all
+	// suspended sessions.
+	if ctx.Request().Method != "OPTIONS" {
+		if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok {
+			ensured, resuming, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), session.ID())
+			if err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume session workload").SetInternal(err)
+			}
+			if ensured != nil {
+				session = ensured
+			}
+			if resuming {
+				ctx.Response().Header().Set("Retry-After", "2")
+				return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+					"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": sessionID, "status": "resuming"},
+				})
+			}
+		}
+	}
+
 	// Determine target URL using session address
 	targetURL := fmt.Sprintf("http://%s", session.Addr())
 	target, err := url.Parse(targetURL)
@@ -1424,6 +1445,21 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || route.ManagerID == "") {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
+	if route.Status == "suspended" {
+		resp, err := c.requestRemoteResume(ctx, route)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
+		}
+		_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+		ctx.Response().Header().Set("Retry-After", "2")
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+		})
+	}
 
 	// Check authorization
 	if ctx.Request().Method != "OPTIONS" {
@@ -1506,24 +1542,38 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 }
 
 func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	resp, err := c.requestRemoteResume(ctx, route)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			ctx.Response().Header().Add(key, value)
+		}
+	}
+	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+}
+
+func (c *SessionController) requestRemoteResume(ctx echo.Context, route *repositories.SessionRoute) (*http.Response, error) {
 	if route.RemoteSessionID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
 	}
 	if c.esmControlTunnel == nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
 	}
 	ts := hmacutil.NowTimestamp()
 	parsedTarget, err := url.Parse(targetURL)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
 	}
 	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, nil)
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
@@ -1536,15 +1586,9 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
-	defer func() { _ = resp.Body.Close() }()
-	for key, values := range resp.Header {
-		for _, value := range values {
-			ctx.Response().Header().Add(key, value)
-		}
-	}
-	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+	return resp, nil
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
