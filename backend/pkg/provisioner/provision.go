@@ -452,7 +452,10 @@ func shellQuote(value string) string {
 }
 
 func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
-	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
 	token := os.Getenv("PROVISIONER_TOKEN")
 	if proxy == "" || token == "" {
 		return false, fmt.Errorf("provisioner proxy credentials are missing")

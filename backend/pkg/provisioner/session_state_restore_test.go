@@ -54,6 +54,28 @@ func TestRestoreSessionStateUnavailableCanBeSkipped(t *testing.T) {
 	}
 }
 
+func TestRestoreSessionStatePrefersDedicatedStateProxy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/session-state/session-1/download-url" {
+			w.WriteHeader(http.StatusNotImplemented)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	t.Setenv("SESSION_STATE_PROXY_URL", server.URL)
+	t.Setenv("PROVISIONER_PROXY_URL", "http://parent-api.invalid")
+	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
+
+	found, err := (&Server{httpClient: server.Client()}).restoreSessionState(context.Background(), "session-1", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("missing snapshot was reported as restored")
+	}
+}
+
 func TestNativeSessionDoesNotImplicitlyRestoreNewSession(t *testing.T) {
 	t.Setenv("AGENTAPI_NATIVE_SESSION_ROOT", t.TempDir())
 	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{PersistenceEnabled: true}}
