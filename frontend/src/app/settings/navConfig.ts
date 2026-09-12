@@ -143,6 +143,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     fields: ['github_app_installation_id'],
   },
   {
+    slug: 'github-teams',
+    label: 'GitHub チーム',
+    icon: Github,
+    group: 'アクセス',
+    scopes: ['team'],
+    fields: [],
+  },
+  {
     slug: 'pools',
     label: 'プール',
     icon: Layers3,

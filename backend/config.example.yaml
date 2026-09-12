@@ -41,6 +41,7 @@ auth:
   # GitHub OAuth authentication
   github:
     enabled: false
+    connection_id: "github"
     base_url: "https://api.github.com"
     token_header: "Authorization"
     
@@ -56,6 +57,12 @@ auth:
       client_secret: "${AGENTAPI_AUTH_GITHUB_OAUTH_CLIENT_SECRET}"
       scope: "read:user read:org project"
       base_url: ""  # Defaults to auth.github.base_url
+
+# Lazily create/adopt ccplant teams from connection-aware GitHub membership.
+# The matched organization/team-slug is preserved as the ccplant team ID.
+team_discovery:
+  - connection_id: "ghes"
+    team_pattern: "*/cc-users"
 # Dedicated libSQL persistence for response-level token usage.
 usage:
   enabled: false

@@ -42,6 +42,7 @@ type GitHubOrganization struct {
 
 // GitHubTeamMembership represents GitHub team membership
 type GitHubTeamMembership struct {
+	ConnectionID string `json:"connection_id,omitempty"`
 	Organization string `json:"organization"`
 	TeamSlug     string `json:"team_slug"`
 	TeamName     string `json:"team_name"`
@@ -201,6 +202,13 @@ func (p *GitHubAuthProvider) authenticateUncached(ctx context.Context, token str
 		log.Printf("Warning: Failed to get user teams for %s: %v", user.Login, err)
 		teams = []GitHubTeamMembership{}
 	}
+	connectionID := p.config.ConnectionID
+	if connectionID == "" {
+		connectionID = "github"
+	}
+	for i := range teams {
+		teams[i].ConnectionID = connectionID
+	}
 
 	user.Teams = teams
 
@@ -352,10 +360,7 @@ func (p *GitHubAuthProvider) getUserTeamsWithWildcard(ctx context.Context, token
 	}
 
 	// Get all configured patterns
-	patterns := make([]string, 0, len(p.config.UserMapping.TeamRoleMapping))
-	for pattern := range p.config.UserMapping.TeamRoleMapping {
-		patterns = append(patterns, pattern)
-	}
+	patterns := p.configuredTeamPatterns()
 
 	log.Printf("[AUTH_DEBUG] Configured patterns: %v", patterns)
 
@@ -382,7 +387,7 @@ func (p *GitHubAuthProvider) getUserTeamsWithWildcard(ctx context.Context, token
 func (p *GitHubAuthProvider) getUserTeamsExactMatch(ctx context.Context, token, username string) ([]GitHubTeamMembership, error) {
 	// Extract unique organizations from configured team mappings
 	configuredOrgs := make(map[string][]string) // org -> []teamSlugs
-	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+	for _, teamKey := range p.configuredTeamPatterns() {
 		if strings.Contains(teamKey, "*") {
 			continue
 		}
@@ -725,12 +730,29 @@ func matchTeamPattern(pattern, org, teamSlug string) bool {
 
 // hasWildcardPatterns checks if any team mappings contain wildcard patterns
 func (p *GitHubAuthProvider) hasWildcardPatterns() bool {
-	for teamKey := range p.config.UserMapping.TeamRoleMapping {
+	for _, teamKey := range p.configuredTeamPatterns() {
 		if strings.Contains(teamKey, "*") {
 			return true
 		}
 	}
 	return false
+}
+
+func (p *GitHubAuthProvider) configuredTeamPatterns() []string {
+	patterns := make([]string, 0, len(p.config.UserMapping.TeamRoleMapping)+len(p.config.TeamDiscoveryPatterns))
+	seen := make(map[string]struct{})
+	for pattern := range p.config.UserMapping.TeamRoleMapping {
+		seen[pattern] = struct{}{}
+		patterns = append(patterns, pattern)
+	}
+	for _, pattern := range p.config.TeamDiscoveryPatterns {
+		if _, ok := seen[pattern]; ok {
+			continue
+		}
+		seen[pattern] = struct{}{}
+		patterns = append(patterns, pattern)
+	}
+	return patterns
 }
 
 // getAllUserTeams retrieves all teams the user belongs to using /user/teams API

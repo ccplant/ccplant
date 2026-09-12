@@ -393,6 +393,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		persistenceClient,
 		namespace,
 	)
+	if simpleAuth, ok := container.AuthService.(*services.SimpleAuthService); ok {
+		simpleAuth.SetTeamMembershipResolver(teamConfigRepo, cfg.TeamDiscovery)
+	}
 	// Set team config repository in session manager for service account integration
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetTeamConfigRepository(teamConfigRepo)
@@ -605,6 +608,15 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var githubAuthProvider *auth.GitHubAuthProvider
 	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
+		connectionID := cfg.Auth.GitHub.ConnectionID
+		if connectionID == "" {
+			connectionID = "github"
+		}
+		for _, rule := range cfg.TeamDiscovery {
+			if rule.ConnectionID == connectionID {
+				cfg.Auth.GitHub.TeamDiscoveryPatterns = append(cfg.Auth.GitHub.TeamDiscoveryPatterns, rule.TeamPattern)
+			}
+		}
 		githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
 
 		// Inject ConfigMap-backed team mapping cache (1 user = 1 key in the ConfigMap)
