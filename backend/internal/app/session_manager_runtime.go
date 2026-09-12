@@ -408,7 +408,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		}
 		var heartbeatBody io.Reader
 		if inventoryErr == nil {
-			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs})
+			sessionStatuses := make(map[string]string)
+			for _, session := range manager.ListSessions(entities.SessionFilter{}) {
+				sessionStatuses[session.ID()] = session.Status()
+			}
+			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs, "session_statuses": sessionStatuses})
 			if marshalErr != nil {
 				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
 			} else {
