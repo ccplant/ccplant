@@ -1245,8 +1245,10 @@ func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context
 	return count, nil
 }
 
-// CountRunnerSessionsForPool counts all live runner Services, including claimed
-// sessions. It is used to enforce a pool's total concurrency limit.
+// CountRunnerSessionsForPool counts runner workloads that currently consume
+// compute capacity. Suspended sessions retain their Service as canonical state,
+// so counting Services alone can permanently exhaust max_runners even though
+// no Pod or Deployment exists.
 func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Context, pool string) (int, error) {
 	selector := "app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/session-pool=" + pool
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
@@ -1255,8 +1257,29 @@ func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Contex
 	}
 	count := 0
 	for i := range svcs.Items {
-		if svcs.Items[i].DeletionTimestamp == nil {
+		svc := &svcs.Items[i]
+		if svc.DeletionTimestamp != nil {
+			continue
+		}
+		id := svc.Labels["agentapi.proxy/session-id"]
+		if id == "" {
+			continue
+		}
+		workloadName := "agentapi-session-" + id
+		if m.isPVCEnabled() {
+			deployment, getErr := m.client.AppsV1().Deployments(m.namespace).Get(ctx, workloadName, metav1.GetOptions{})
+			if getErr == nil && deployment.DeletionTimestamp == nil {
+				count++
+			} else if getErr != nil && !errors.IsNotFound(getErr) {
+				return 0, fmt.Errorf("failed to get runner deployment %s: %w", workloadName, getErr)
+			}
+			continue
+		}
+		pod, getErr := m.client.CoreV1().Pods(m.namespace).Get(ctx, workloadName, metav1.GetOptions{})
+		if getErr == nil && pod.DeletionTimestamp == nil {
 			count++
+		} else if getErr != nil && !errors.IsNotFound(getErr) {
+			return 0, fmt.Errorf("failed to get runner pod %s: %w", workloadName, getErr)
 		}
 	}
 	return count, nil
