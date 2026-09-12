@@ -180,4 +180,20 @@ func TestReconcileInitializesMissingSuspendTimer(t *testing.T) {
 	}
 }
 
+func TestReconcileRestoresSuspendedSessionForStatusHeartbeat(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels:      map[string]string{"agentapi.proxy/session-id": "session-1", "agentapi.proxy/user-id": "user-1"},
+		Annotations: map[string]string{sessionSuspendedAtAnnotation: time.Now().UTC().Format(time.RFC3339Nano)},
+	}}
+	manager := newSuspendTestManager(t, service)
+
+	manager.reconcileSessionSuspends(context.Background())
+
+	session := manager.GetSession("session-1")
+	if session == nil || session.Status() != "suspended" {
+		t.Fatalf("restored session = %#v, want suspended", session)
+	}
+}
+
 func boolPointer(value bool) *bool { return &value }

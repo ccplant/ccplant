@@ -513,9 +513,15 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 	now := time.Now()
 	for i := range services.Items {
 		svc := &services.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID != "" {
+			// Suspended workloads have no Pod/Deployment watcher to recreate their
+			// in-memory session. Restore them from the canonical Service so manager
+			// heartbeats can propagate the suspended lifecycle state upstream.
+			_ = m.GetSession(sessionID)
+		}
 		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
 			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
-				sessionID := svc.Labels["agentapi.proxy/session-id"]
 				if sessionID != "" {
 					if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
 						log.Printf("[K8S_SESSION] Failed to initialize suspend timer for session %s: %v", sessionID, err)
@@ -528,7 +534,6 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 		if err != nil || deadline.After(now) {
 			continue
 		}
-		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID == "" {
 			continue
 		}
@@ -5752,7 +5757,11 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
 	session.SetLastMessageAt(lastMessageAt)
-	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
+	status := m.getSessionStatusFromDeployment(sessionID)
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+		status = "suspended"
+	}
+	session.SetStatus(status)
 	session.SetDescription(initialMessage) // Cache initial message as description
 	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 
