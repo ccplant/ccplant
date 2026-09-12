@@ -502,7 +502,7 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 		controllers.WithSessionRouteRepository(routeRepo),
 		controllers.WithESMControlTunnel(tunnel),
 	)
-	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/messages", "public-id")
 
 	if err := controller.RouteToSession(ctx); err != nil {
 		t.Fatal(err)
@@ -515,6 +515,28 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 	}
 	if routeRepo.route.Status != "resuming" {
 		t.Fatalf("route status=%q, want resuming", routeRepo.route.Status)
+	}
+}
+
+func TestRouteToSuspendedRemoteSessionStatusDoesNotResume(t *testing.T) {
+	tunnel := &lifecycleTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+			UserID: "user-1", Scope: string(entities.ScopeUser), Status: "suspended",
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodGet, "/public-id/status", "public-id")
+	if err := controller.RouteToSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"suspended"`) {
+		t.Fatalf("status=%d body=%s, want suspended status", rec.Code, rec.Body.String())
+	}
+	if tunnel.path != "" {
+		t.Fatalf("status polling unexpectedly called manager path %q", tunnel.path)
 	}
 }
 

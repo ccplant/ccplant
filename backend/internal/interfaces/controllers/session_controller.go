@@ -1281,6 +1281,9 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 	// endpoints never reach this handler, so background polling cannot wake all
 	// suspended sessions.
 	if ctx.Request().Method != "OPTIONS" {
+		if ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") && session.Status() == "suspended" {
+			return ctx.JSON(http.StatusOK, map[string]string{"status": "suspended"})
+		}
 		if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok {
 			ensured, resuming, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), session.ID())
 			if err != nil {
@@ -1444,6 +1447,9 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 	sessionID := ctx.Param("sessionId")
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || route.ManagerID == "") {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
+	}
+	if route.Status == "suspended" && ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") {
+		return ctx.JSON(http.StatusOK, map[string]string{"status": "suspended"})
 	}
 	if route.Status == "suspended" {
 		resp, err := c.requestRemoteResume(ctx, route)
