@@ -1901,17 +1901,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     }
   };
 
-  if (isResuming) {
-    return (
-      <div className="flex h-full min-h-[320px] flex-col items-center justify-center bg-white px-6 text-center dark:bg-gray-900">
-        <div className="mb-5 h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">セッションを再開しています</h2>
-        <p className="mt-2 max-w-md text-sm text-gray-500 dark:text-gray-400">保存された会話と実行環境を復元しています。準備ができると自動的にチャットへ戻ります。</p>
-        <Link href="/chats" className="mt-6 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400">セッション一覧へ戻る</Link>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900" style={{ position: 'relative', minHeight: 0 }}>
       {/* ── Unified full-width header ── */}
@@ -2137,14 +2126,18 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         )}
 
         {!isInitialLoadComplete && agentStatus?.status !== 'error' && (
-          <div className="text-center text-gray-500 dark:text-gray-400 py-12">
-            <div className="mb-3">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-6 text-gray-500 dark:text-gray-400 sm:px-6">
+            <div className="h-5 w-5 flex-none animate-spin rounded-full border-2 border-gray-200 border-t-blue-500 dark:border-gray-700 dark:border-t-blue-400" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                {isResuming ? 'セッションを再開しています' : 'チャットを準備しています'}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {isResuming
+                  ? '保存された会話と実行環境を復元しています。準備ができると自動的に表示されます。'
+                  : acpInfo ? 'メッセージ履歴を読み込んでいます' : 'セッションへの接続を待機しています'}
+              </p>
             </div>
-            <p className="text-lg font-medium">処理中...</p>
-            <p className="text-sm mt-1">
-              {acpInfo ? 'メッセージ履歴を読み込んでいます' : 'セッションへの接続を待機しています'}
-            </p>
           </div>
         )}
 
