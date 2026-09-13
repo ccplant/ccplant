@@ -20,8 +20,31 @@ func TestSetHistoryFileRestoresRawMessages(t *testing.T) {
 	if len(b.history) != 1 || len(b.userMessageIndices) != 1 {
 		t.Fatalf("history=%d user messages=%d", len(b.history), len(b.userMessageIndices))
 	}
-	if len(b.restoredReplaySignatures) != 1 {
+	if len(b.restoredReplaySignatures) != 1 || !b.suppressRestoredReplay {
 		t.Fatalf("restored replay signatures=%d, want 1", len(b.restoredReplaySignatures))
+	}
+}
+
+func TestBroadcastSuppressesRestoredSessionLoadTranscriptSubset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	user := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"old","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello"}},"time":"old"}}`
+	agent := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"old","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}},"time":"old"}}`
+	if err := os.WriteFile(path, []byte(user+"\n"+agent+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := New(nil, "session", false, "", false)
+	if err := b.SetHistoryFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Some agents replay only the final assistant message from session/load.
+	var replay jsonRPCMsg
+	if err := json.Unmarshal([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"new","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}},"time":"new"}}`), &replay); err != nil {
+		t.Fatal(err)
+	}
+	b.broadcast(replay)
+	if len(b.history) != 2 {
+		t.Fatalf("history=%d, want restored history only", len(b.history))
 	}
 }
 

@@ -79,8 +79,8 @@ type Bridge struct {
 	lastUserMessageIdx       int
 	userMessageIndices       []int // history indices of each user_message_chunk
 	lastHistoryWasUserChunk  bool
-	restoredReplaySignatures []string
-	restoredReplayIndex      int
+	restoredReplaySignatures map[string]int
+	suppressRestoredReplay   bool
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -129,7 +129,11 @@ func (b *Bridge) SetHistoryFile(path string) error {
 		}
 		b.history = append(b.history, raw)
 		if signature, ok := restoredReplaySignature(raw); ok {
-			b.restoredReplaySignatures = append(b.restoredReplaySignatures, signature)
+			if b.restoredReplaySignatures == nil {
+				b.restoredReplaySignatures = make(map[string]int)
+			}
+			b.restoredReplaySignatures[signature]++
+			b.suppressRestoredReplay = true
 		}
 	}
 	return nil
@@ -632,6 +636,13 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, blocks=%d)", b.sessionId, clientID, len(prompt))
 
+	// session/load has completed before the HTTP bridge accepts prompts. From
+	// this point onward, matching transcript content is a legitimate new turn,
+	// even when the user deliberately repeats an earlier message.
+	b.histMu.Lock()
+	b.suppressRestoredReplay = false
+	b.histMu.Unlock()
+
 	// Broadcast the user's prompt blocks as synthetic session/update notifications.
 	// The ACP server does not echo user messages, so we emit it here to ensure
 	// it appears in both the SSE live stream and GET /messages history.
@@ -816,15 +827,16 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	isUserChunk := isUserMessageUpdate(msg)
-	if signature, replayable := restoredReplaySignature(raw); replayable && b.restoredReplayIndex < len(b.restoredReplaySignatures) {
-		if signature == b.restoredReplaySignatures[b.restoredReplayIndex] {
-			b.restoredReplayIndex++
+	if signature, replayable := restoredReplaySignature(raw); replayable && b.suppressRestoredReplay {
+		if remaining := b.restoredReplaySignatures[signature]; remaining > 0 {
+			if remaining == 1 {
+				delete(b.restoredReplaySignatures, signature)
+			} else {
+				b.restoredReplaySignatures[signature] = remaining - 1
+			}
 			b.histMu.Unlock()
 			return
 		}
-		// A different transcript update is new live output, so stop treating
-		// subsequent events as session/load replay.
-		b.restoredReplayIndex = len(b.restoredReplaySignatures)
 	}
 	if isUserChunk && !b.lastHistoryWasUserChunk {
 		b.lastUserMessageIdx = len(b.history)
