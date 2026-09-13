@@ -526,6 +526,10 @@ func (c *SessionController) applyGitHubConnectionURLs(ctx context.Context, start
 	if err != nil {
 		return err
 	}
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil || parsedBaseURL.Host == "" {
+		return fmt.Errorf("selected GitHub connection has an invalid base URL")
+	}
 	if startReq.Environment == nil {
 		startReq.Environment = make(map[string]string)
 	}
@@ -533,6 +537,9 @@ func (c *SessionController) applyGitHubConnectionURLs(ctx context.Context, start
 	// request-provided values so a token is never sent to a different GitHub host.
 	startReq.Environment["GITHUB_URL"] = baseURL
 	startReq.Environment["GITHUB_API"] = apiURL
+	// GH_HOST may already be present in deployment or team settings. Set it even
+	// for github.com so gh cannot keep using a deployment-wide Enterprise host.
+	startReq.Environment["GH_HOST"] = parsedBaseURL.Host
 	return nil
 }
 
