@@ -39,6 +39,27 @@ case. The primary invariant this design establishes is:
 > Updating one installation MUST rotate credentials or configuration on the same
 > Manager record; it MUST NOT create a new Manager ID.
 
+### Current trigger conditions
+
+The ID changes when the installer enters enrollment and the registration token is
+bound to a newly created Manager. In the current implementation this happens in
+the following update scenarios:
+
+| Update scenario | Current result |
+| --- | --- |
+| Existing Secret and no registration token; stored pool/upstream unchanged; credential probe succeeds | Reuses the existing ID. |
+| Existing Secret and a generic registration token is supplied | Enrolls the newly created Manager behind that token and overwrites the Secret with its new ID. |
+| Existing Secret but pool or upstream differs | Skips the reuse path. Automatic token resolution can create a new Manager when its name/pool/namespace/release lookup no longer matches. |
+| Existing Secret but credential probe fails and metadata lookup finds no exact parent match | Automatic recovery creates a new Manager and replaces the ID. |
+| Connection Secret was deleted, renamed, or is absent in a replacement cluster | Treats the run as an initial enrollment and creates a new Manager unless the supplied token targets an existing ID. |
+| Helm-only upgrade or Pod restart with the retained Secret and values | Keeps the existing ID. |
+
+Issuing a generic token alone creates a pending Manager, but the running
+installation changes identity only when that token is subsequently consumed by
+the installer and the returned credentials are written to its Secret. A targeted
+`POST /session-managers/{id}/registration-token` token rotates credentials on the
+specified Manager and therefore does not change its ID.
+
 ## Goals
 
 - Detect an unknown manager ID or rejected connection token during install and
