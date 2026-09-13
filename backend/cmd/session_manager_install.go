@@ -189,6 +189,9 @@ func ensureManagerCredentials(ctx context.Context, client kubernetes.Interface, 
 	secrets := client.CoreV1().Secrets(opts.namespace)
 	existing, err := secrets.Get(ctx, opts.connectionSecret, metav1.GetOptions{})
 	if err == nil {
+		if opts.registrationToken != "" {
+			return nil, fmt.Errorf("connection Secret %s/%s already exists; --registration-token is only valid for the initial install; omit it for an upgrade, or remove the Secret in a controlled maintenance window to replace credentials", opts.namespace, opts.connectionSecret)
+		}
 		managerID, token := string(existing.Data["manager-id"]), string(existing.Data["connection-token"])
 		if managerID == "" || token == "" {
 			return nil, fmt.Errorf("secret %s/%s is missing manager-id or connection-token", opts.namespace, opts.connectionSecret)
