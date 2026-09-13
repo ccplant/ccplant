@@ -332,6 +332,22 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	if err != nil {
 		return err
 	}
+	// The Service is the canonical cross-replica policy. A non-leader replica
+	// may still have the pre-allocation request cached in memory; do not let it
+	// overwrite a newer policy applied by the elected control loop.
+	hasCachedPolicy := ks.Request() != nil && ks.Request().ProvisionSettings != nil && ks.Request().ProvisionSettings.Session.AutoSuspendEnabled != nil
+	if svc, getErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); hasCachedPolicy && getErr == nil {
+		if rawEnabled, ok := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; ok {
+			if parsedEnabled, parseErr := strconv.ParseBool(rawEnabled); parseErr == nil {
+				enabled = parsedEnabled
+			}
+		}
+		if rawSeconds := svc.Annotations[sessionAutoSuspendIdleSecondsAnnotation]; enabled && rawSeconds != "" {
+			if seconds, parseErr := strconv.ParseInt(rawSeconds, 10, 64); parseErr == nil && seconds > 0 {
+				after = time.Duration(seconds) * time.Second
+			}
+		}
+	}
 	if !enabled {
 		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":"false","%s":null}}}`, sessionSuspendAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation))
 		_, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
@@ -379,7 +395,15 @@ func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Cont
 	if policyAlreadyScheduled {
 		return nil
 	}
-	return m.ScheduleSessionSuspend(ctx, sessionID)
+	if !*enabled {
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":null,"%s":"false","%s":null}}}`, sessionSuspendAtAnnotation, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation))
+		_, err = m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
+		return err
+	}
+	deadline := time.Now().Add(time.Duration(minutes) * time.Minute).UTC().Format(time.RFC3339Nano)
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null,"%s":%q,"%s":%q}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, desiredEnabled, sessionAutoSuspendIdleSecondsAnnotation, desiredSeconds))
+	_, err = m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
+	return err
 }
 
 func (m *KubernetesSessionManager) resolveAutoSuspendPolicy(ctx context.Context, session *KubernetesSession) (time.Duration, bool, error) {

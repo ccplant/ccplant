@@ -1220,6 +1220,12 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		if route.Status == "suspended" && status != "suspended" {
 			continue
 		}
+		// While resume owns the lifecycle transition, stale replicas can still
+		// report the deleted pre-resume workload as stopped. Only a live status
+		// may complete the transition.
+		if route.Status == "resuming" && status != "active" && status != "running" && status != "stable" && status != "resuming" {
+			continue
+		}
 		if route.Status == status {
 			continue
 		}
