@@ -15,11 +15,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
@@ -40,8 +42,18 @@ func registerNativeManagementRoutes(e *echo.Echo, options struct {
 }, manager *services.NativeSessionManager, secret []byte) {
 	group := e.Group("/internal/esm-management", nativeManagementAuth(secret))
 	group.GET("/status", func(c echo.Context) error {
+		active := manager.ActiveSessionCount()
+		usedRunnerIDs := make([]string, 0, active)
+		for _, session := range manager.ListSessions(entities.SessionFilter{}) {
+			if session != nil && session.Status() != "stopped" && session.Status() != "failed" {
+				usedRunnerIDs = append(usedRunnerIDs, session.ID())
+			}
+		}
+		sort.Strings(usedRunnerIDs)
 		return c.JSON(http.StatusOK, map[string]interface{}{
-			"status": "online", "version": nativeBuildVersion(), "active_sessions": manager.ActiveSessionCount(),
+			"status": "online", "version": nativeBuildVersion(), "active_sessions": active,
+			"running_runners": active, "used_runners": active,
+			"running_runner_ids": usedRunnerIDs, "used_runner_ids": usedRunnerIDs,
 			"uptime_seconds": int64(time.Since(nativeManagementStartedAt).Seconds()),
 			"capabilities":   []string{"status", "logs", "restart", "upgrade"},
 		})
@@ -52,6 +64,12 @@ func registerNativeManagementRoutes(e *echo.Echo, options struct {
 			tail = 200
 		}
 		logPath := nativeDaemonLogPath(options.configPath)
+		if sessionID := strings.TrimSpace(c.QueryParam("session_id")); sessionID != "" {
+			if manager.GetSession(sessionID) == nil {
+				return echo.NewHTTPError(http.StatusNotFound, "runner not found")
+			}
+			logPath = filepath.Join(options.stateDir, sessionID, "runtime", "provisioner.log")
+		}
 		lines, err := tailFile(logPath, tail, 2<<20)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
