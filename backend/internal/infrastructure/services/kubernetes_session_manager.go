@@ -2022,6 +2022,14 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 	}
 	session.SetRequest(req)
 	session.SetProvisionSettings(settings)
+	if settings.Session.AutoSuspendEnabled != nil {
+		enabled := strconv.FormatBool(*settings.Session.AutoSuspendEnabled)
+		seconds := strconv.FormatInt(int64(time.Duration(settings.Session.AutoSuspendMinutes)*time.Minute/time.Second), 10)
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":%q}}}`, sessionAutoSuspendEnabledAnnotation, enabled, sessionAutoSuspendIdleSecondsAnnotation, seconds))
+		if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("persist resume auto-suspend policy: %w", err)
+		}
+	}
 	if getErr == nil {
 		yamlData, err := sessionsettings.MarshalYAML(settings)
 		if err != nil {
