@@ -23,10 +23,28 @@ re-enroll with an owner API key. The remaining gaps are an unambiguous identity
 match, safe credential cutover, rollout verification, and actionable runtime
 diagnostics.
 
+### Primary root cause
+
+A generic registration-token request creates a new Manager record. The store
+assigns a new UUID when that record has no ID. If a deployment pipeline obtains a
+fresh generic registration token for every update and passes it to
+`session-manager install`, the installer enrolls that new record even when the
+Kubernetes Secret already contains credentials for the previous installation.
+The resulting manager ID change is therefore expected from the current API
+semantics, but incorrect for an update workflow.
+
+Credential drift after an independent datastore or Secret restore is a secondary
+case. The primary invariant this design establishes is:
+
+> Updating one installation MUST rotate credentials or configuration on the same
+> Manager record; it MUST NOT create a new Manager ID.
+
 ## Goals
 
 - Detect an unknown manager ID or rejected connection token during install and
   upgrade.
+- Keep the manager ID stable across ordinary install reruns, Helm upgrades,
+  credential rotation, and re-enrollment.
 - Reconcile to the existing, owned parent manager while retaining its ID, pool
   suppliers, and bindings.
 - Avoid exposing credentials in API responses, logs, events, and command output.
@@ -61,6 +79,38 @@ Possession of `installation_id` proves nothing. Reconciliation requires both:
 
 1. authentication as an owner or administrator, and
 2. authorization to manage the matched registration.
+
+## Idempotent registration
+
+Generic `POST /session-managers/registration-tokens` remains a create operation and
+is used only for the first installation. Updates use an owner-authenticated,
+idempotent installation endpoint:
+
+```text
+PUT /session-manager-installations/{installationId}/registration-token
+```
+
+The request contains ownership scope, display metadata, and the intended pool. In
+one datastore transaction the parent:
+
+1. finds a Manager with the same `(scope, owner_id, installation_id)`;
+2. creates one only when no such Manager exists;
+3. otherwise issues a registration token bound to that existing Manager ID; and
+4. returns `manager_id`, `created`, and the one-time registration token.
+
+Concurrent requests for the same installation are serialized by the unique
+identity constraint. Both callers observe the same manager ID; the newest token
+supersedes any older unused registration token.
+
+Enrollment consumes the token and rotates credentials on the token's Manager
+record. It never generates or substitutes a manager ID. Changes to name, labels,
+pool supply, or chart version do not affect identity.
+
+For callers which already know the manager ID,
+`POST /session-managers/{id}/registration-token` remains supported and has the same
+update semantics. The UI and generated deployment commands must use one of these
+targeted operations after initial creation; they must not generate a fresh generic
+registration for an update.
 
 ## Parent API
 
@@ -146,20 +196,26 @@ outcome, and timestamp, but no credential material.
 who do not want a chart version change.
 
 1. Read the retained Secret and validate all required fields locally.
-2. Probe the exact configured manager ID with its connection token.
-3. If valid, run Helm and proceed to rollout verification.
-4. If the probe returns a credential drift code, stop with a concrete recovery
+2. If the Secret exists and its credential is valid, reject a generic create token
+   supplied by an update pipeline with guidance to use the targeted
+   installation-token endpoint. Configuration-only updates reuse the Secret.
+3. Probe the exact configured manager ID with its connection token.
+4. If valid, run Helm and proceed to rollout verification.
+5. If the probe returns a credential drift code, stop with a concrete recovery
    message unless an owner API key is available or `--reconcile` was supplied.
-5. Call the reconciliation endpoint using the Secret's installation ID. Refuse an
+6. Call the reconciliation endpoint using the Secret's installation ID. Refuse an
    ambiguous or missing match; never fall back to name/pool/labels automatically.
-6. Update the Secret with the returned existing manager ID and pending token using
+7. Assert that the returned manager ID equals the existing Secret's manager ID.
+   Changing it requires a separate explicit `--replace-manager` workflow and is
+   never part of an update or reconciliation.
+8. Update the Secret with the returned existing manager ID and pending token using
    Kubernetes `resourceVersion` as a compare-and-swap guard. Preserve a local
    in-memory copy of the prior Secret for rollback during this command.
-7. Run `helm upgrade --install` so `runner.managerId` is rendered from the same
+9. Run `helm upgrade --install` so `runner.managerId` is rendered from the same
    credential result written to the Secret.
-8. Wait for the Deployment rollout, then probe with the new ID/token and wait for
+10. Wait for the Deployment rollout, then probe with the new ID/token and wait for
    the parent to observe a heartbeat from that manager generation.
-9. Commit the reconciliation. If steps 6-8 fail, restore the prior Secret where
+11. Commit the reconciliation. If steps 8-10 fail, restore the prior Secret where
    safe, abort the pending generation, and report both the primary and rollback
    outcomes.
 
@@ -221,6 +277,11 @@ they can continue with the old generation until commit or pending expiry.
   and concurrent reconciliation.
 - Installer tests for Secret compare-and-swap conflict, Helm failure rollback,
   rollout timeout, failed commit, ambiguous legacy identity, and token redaction.
+- Repeated-update integration test: request an installation-scoped token and run
+  install multiple times, asserting every response, Secret, Helm value, supplier,
+  and heartbeat uses the original manager ID.
+- Regression test: pass a generic create token while an existing valid Secret is
+  present and assert that install refuses to replace the manager implicitly.
 - Runtime tests proving readiness becomes false without a liveness restart loop and
   that diagnostic events are rate limited.
 - Integration test: retain the Kubernetes Secret, restore a parent snapshot whose
@@ -234,6 +295,7 @@ they can continue with the old generation until commit or pending expiry.
 
 - Install/upgrade detects missing or mismatched parent state through the exact-ID
   probe and rollout heartbeat check.
+- Repeated updates retain the first enrollment's manager ID.
 - Operators receive a coded error and a copyable reconciliation command instead of
   an indefinitely unexplained offline state.
 - Reconciliation updates credentials on the existing manager, so suppliers and
