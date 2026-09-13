@@ -62,10 +62,11 @@ const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
 var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 const (
-	sessionSuspendAtAnnotation              = "agentapi.proxy/suspend-at"
-	sessionSuspendedAtAnnotation            = "agentapi.proxy/suspended-at"
-	sessionAutoSuspendEnabledAnnotation     = "agentapi.proxy/auto-suspend-enabled"
-	sessionAutoSuspendIdleSecondsAnnotation = "agentapi.proxy/auto-suspend-idle-seconds"
+	sessionSuspendAtAnnotation               = "agentapi.proxy/suspend-at"
+	sessionSuspendedAtAnnotation             = "agentapi.proxy/suspended-at"
+	sessionAutoSuspendEnabledAnnotation      = "agentapi.proxy/auto-suspend-enabled"
+	sessionAutoSuspendIdleSecondsAnnotation  = "agentapi.proxy/auto-suspend-idle-seconds"
+	sessionAutoSuspendPolicySourceAnnotation = "agentapi.proxy/auto-suspend-policy-source"
 )
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
@@ -376,6 +377,9 @@ func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Cont
 	service, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get session service: %w", err)
+	}
+	if service.Annotations[sessionAutoSuspendPolicySourceAnnotation] == "resume" {
+		return nil
 	}
 	desiredEnabled := strconv.FormatBool(*enabled)
 	desiredSeconds := strconv.FormatInt(int64(time.Duration(minutes)*time.Minute/time.Second), 10)
@@ -2025,7 +2029,7 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 	if settings.Session.AutoSuspendEnabled != nil {
 		enabled := strconv.FormatBool(*settings.Session.AutoSuspendEnabled)
 		seconds := strconv.FormatInt(int64(time.Duration(settings.Session.AutoSuspendMinutes)*time.Minute/time.Second), 10)
-		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":%q}}}`, sessionAutoSuspendEnabledAnnotation, enabled, sessionAutoSuspendIdleSecondsAnnotation, seconds))
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":%q,"%s":"resume"}}}`, sessionAutoSuspendEnabledAnnotation, enabled, sessionAutoSuspendIdleSecondsAnnotation, seconds, sessionAutoSuspendPolicySourceAnnotation))
 		if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 			return fmt.Errorf("persist resume auto-suspend policy: %w", err)
 		}
