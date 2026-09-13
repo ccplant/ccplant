@@ -155,7 +155,8 @@ export default function NewSessionPage() {
   const loadAvailablePools = async () => {
     try {
       const client = createAgentAPIProxyClientFromStorage()
-      setAvailablePools(await client.getAvailableSessionPools())
+      const pools = await client.getAvailableSessionPools()
+      setAvailablePools(pools)
     } catch (error) {
       console.error('Failed to load available pools:', error)
     }
@@ -735,7 +736,7 @@ export default function NewSessionPage() {
                     <div>
                       <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">実行Pool</p>
                       <div className="space-y-1.5">
-                        {/* ローカル（マネージャーなし）オプション */}
+                        {/* Pool の自動選択 */}
                         <label
                           className={`flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
                             selectedManagerId === ''
@@ -753,8 +754,8 @@ export default function NewSessionPage() {
                             className="mt-0.5 w-3.5 h-3.5 text-blue-600 border-gray-300 dark:border-gray-600 focus:ring-blue-500 flex-shrink-0"
                           />
                           <span className="flex-1 min-w-0">
-                            <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">ローカル</span>
-                            <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">このサーバー上で作成</span>
+                            <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">自動選択</span>
+                            <span className="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">利用可能なPoolから自動的に選択</span>
                           </span>
                         </label>
                         {/* 各Poolオプション */}

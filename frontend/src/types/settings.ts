@@ -134,6 +134,10 @@ export interface SettingsData {
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers
   default_session_profile_id?: string;  // Default session profile ID for this settings scope
   default_agent_type?: Exclude<AgentApiType, 'default' | 'claude-legacy'>;  // Personal or team default for sessions without an explicit agent type
+  auto_suspend?: {
+    enabled: boolean;
+    idle_timeout_minutes: number;
+  };
 }
 
 // External session manager configuration
@@ -441,6 +445,10 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
 
   if (data.default_session_profile_id !== undefined) {
     prepared.default_session_profile_id = data.default_session_profile_id
+  }
+
+  if (data.auto_suspend !== undefined) {
+    prepared.auto_suspend = data.auto_suspend
   }
 
   return prepared

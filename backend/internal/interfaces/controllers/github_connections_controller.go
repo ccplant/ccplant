@@ -830,6 +830,21 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
+// ResolveConnectionURLs returns the runtime web and API endpoints for a
+// selected connection. Session workloads must use these endpoints together
+// with the selected credential instead of inheriting the deployment-wide
+// GitHub Enterprise configuration.
+func (c *GitHubConnectionsController) ResolveConnectionURLs(ctx context.Context, connectionID string) (string, string, error) {
+	connection, _, _, err := c.loadConnection(ctx, connectionID)
+	if err != nil {
+		return "", "", fmt.Errorf("load GitHub connection: %w", err)
+	}
+	if !connection.Enabled {
+		return "", "", fmt.Errorf("GitHub connection %q is disabled", connection.Name)
+	}
+	return connection.BaseURL, connection.APIURL, nil
+}
+
 // ResolveAccessTokenForOrganization returns the credential mapped to an organization.
 // The boolean is false when no connection mapping exists for the organization.
 func (c *GitHubConnectionsController) ResolveAccessTokenForOrganization(ctx context.Context, user *entities.User, organization string) (string, string, bool, error) {
@@ -1404,7 +1419,7 @@ func (c *GitHubConnectionsController) resolveCallbackURL(ctx echo.Context, reque
 	if requested != "" {
 		callback, err := url.Parse(requested)
 		origin, originErr := url.Parse(ctx.Request().Header.Get("Origin"))
-		allowedPath := callback != nil && (callback.Path == "/auth/github-connections/callback" || callback.Path == "/api/proxy/auth/github-connections/callback")
+		allowedPath := callback != nil && (callback.Path == "/auth/github-connections/callback" || callback.Path == "/api/v1/auth/github-connections/callback" || callback.Path == "/api/proxy/auth/github-connections/callback")
 		if err != nil || originErr != nil || callback.Scheme != origin.Scheme || callback.Host != origin.Host || !allowedPath || callback.RawQuery != "" || callback.Fragment != "" {
 			return "", errors.New("callback URL must use the request origin and the GitHub connection callback path")
 		}
@@ -1424,7 +1439,7 @@ func (c *GitHubConnectionsController) resolveCallbackURL(ctx echo.Context, reque
 func (c *GitHubConnectionsController) resolveLoginCallbackURL(ctx echo.Context, requested string) (string, error) {
 	callback, err := url.Parse(requested)
 	origin, originErr := url.Parse(ctx.Request().Header.Get("Origin"))
-	allowedPath := callback != nil && callback.Path == "/api/proxy/auth/github-connections/callback"
+	allowedPath := callback != nil && (callback.Path == "/api/v1/auth/github-connections/callback" || callback.Path == "/api/proxy/auth/github-connections/callback")
 	if err != nil || originErr != nil || callback.Scheme != origin.Scheme || callback.Host != origin.Host || !allowedPath || callback.RawQuery != "" || callback.Fragment != "" {
 		return "", errors.New("callback URL must use the request origin and the GitHub login callback path")
 	}

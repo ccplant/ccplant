@@ -42,7 +42,7 @@ export function AccountConnectionsSection() {
       const response = await createCurrentDeploymentAgentAPIProxyClient().startGitHubIdentityLink(
         connection.id,
         window.location.pathname,
-        `${window.location.origin}/api/proxy/auth/github-connections/callback`,
+        `${window.location.origin}/api/v1/auth/github-connections/callback`,
       )
       window.location.assign(response.authorization_url)
     } catch { showToast('OAuth連携を開始できませんでした', 'error'); setBusy(null) }

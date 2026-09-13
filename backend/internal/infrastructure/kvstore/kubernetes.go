@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -110,6 +111,9 @@ func (s *KubernetesStore) List(ctx context.Context, query Query) ([]Record, erro
 			return nil, translateKubernetesError(err)
 		}
 		for i := range list.Items {
+			if !strings.HasPrefix(list.Items[i].Name, query.KeyPrefix) {
+				continue
+			}
 			record, err := secretRecord(&list.Items[i], nil)
 			if err != nil {
 				return nil, err
@@ -126,6 +130,9 @@ func (s *KubernetesStore) List(ctx context.Context, query Query) ([]Record, erro
 			return nil, translateKubernetesError(err)
 		}
 		for i := range list.Items {
+			if !strings.HasPrefix(list.Items[i].Name, query.KeyPrefix) {
+				continue
+			}
 			record, err := configMapRecord(&list.Items[i], nil)
 			if err != nil {
 				return nil, err

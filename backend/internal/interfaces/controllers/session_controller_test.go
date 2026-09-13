@@ -12,11 +12,35 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
+
+type githubConnectionURLResolverStub struct {
+	baseURL string
+	apiURL  string
+}
+
+func (s githubConnectionURLResolverStub) ResolveAccessToken(context.Context, *entities.User, string) (string, error) {
+	return "", nil
+}
+
+func (s githubConnectionURLResolverStub) ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error) {
+	return "", "", false, nil
+}
+
+func (s githubConnectionURLResolverStub) IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error) {
+	return "", "", false, nil
+}
+
+func (s githubConnectionURLResolverStub) ResolveConnectionURLs(context.Context, string) (string, string, error) {
+	return s.baseURL, s.apiURL, nil
+}
+
+func (s githubConnectionURLResolverStub) RevokeBrokerLeases(context.Context, string) error { return nil }
 
 func TestSessionTokenDebugLogging(t *testing.T) {
 	var output bytes.Buffer
@@ -128,6 +152,21 @@ func TestRepositoryOwner(t *testing.T) {
 			t.Fatalf("repositoryOwner(%q) = %q, want empty", value, got)
 		}
 	}
+}
+
+func TestApplyGitHubConnectionURLsOverridesDeploymentDefaults(t *testing.T) {
+	controller := &SessionController{githubTokenResolver: githubConnectionURLResolverStub{
+		baseURL: "https://github.selected.example",
+		apiURL:  "https://github.selected.example/api/v3",
+	}}
+	startReq := entities.StartRequest{Environment: map[string]string{
+		"GITHUB_URL": "https://github.enterprise.example",
+		"GITHUB_API": "https://github.enterprise.example/api/v3",
+	}}
+
+	require.NoError(t, controller.applyGitHubConnectionURLs(context.Background(), &startReq, "selected"))
+	require.Equal(t, "https://github.selected.example", startReq.Environment["GITHUB_URL"])
+	require.Equal(t, "https://github.selected.example/api/v3", startReq.Environment["GITHUB_API"])
 }
 
 func TestSessionRepository(t *testing.T) {

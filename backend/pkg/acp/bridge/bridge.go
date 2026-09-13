@@ -4,6 +4,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,17 +67,22 @@ type Bridge struct {
 	autoApprove bool // when true, permission requests are auto-approved without broadcasting to the UI
 	serverCtx   context.Context
 	outputFile  string // path to append conversation history in acp-posts format
+	historyFile string // raw JSON-RPC JSONL used to restore GET /messages
 
 	subsMu sync.Mutex
 	subs   []*subscriber
 
 	// Message history: every broadcast message is appended so that reconnecting
 	// SSE clients can replay missed events via GET /messages.
-	histMu                  sync.RWMutex
-	history                 []json.RawMessage
-	lastUserMessageIdx      int
-	userMessageIndices      []int // history indices of each user_message_chunk
-	lastHistoryWasUserChunk bool
+	histMu                   sync.RWMutex
+	history                  []json.RawMessage
+	lastUserMessageIdx       int
+	userMessageIndices       []int // history indices of each user_message_chunk
+	lastHistoryWasUserChunk  bool
+	restoredReplaySignatures map[string]int
+	suppressRestoredReplay   bool
+	sendingPromptUserEcho    bool
+	awaitingLiveOutput       bool
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -98,6 +104,85 @@ type Bridge struct {
 	currentStatus string
 	statusSubsMu  sync.Mutex
 	statusSubs    []*statusSubscriber
+}
+
+// SetHistoryFile restores prior raw bridge events and persists future events.
+func (b *Bridge) SetHistoryFile(path string) error {
+	b.historyFile = path
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || !json.Valid(line) {
+			continue
+		}
+		raw := append(json.RawMessage(nil), line...)
+		if isUserMessageRaw(raw) {
+			b.lastUserMessageIdx = len(b.history)
+			b.userMessageIndices = append(b.userMessageIndices, len(b.history))
+		}
+		b.history = append(b.history, raw)
+		if signature, ok := restoredReplaySignature(raw); ok {
+			if b.restoredReplaySignatures == nil {
+				b.restoredReplaySignatures = make(map[string]int)
+			}
+			b.restoredReplaySignatures[signature]++
+			b.suppressRestoredReplay = true
+		}
+	}
+	return nil
+}
+
+// restoredReplaySignature identifies transcript updates that session/load may
+// replay after the bridge has already restored the same events from disk.
+// Envelope fields such as sessionId and time intentionally do not participate.
+func restoredReplaySignature(raw json.RawMessage) (string, bool) {
+	var msg struct {
+		Method string `json:"method"`
+		Params struct {
+			Update json.RawMessage `json:"update"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(raw, &msg) != nil || msg.Method != "session/update" {
+		return "", false
+	}
+	var kind struct {
+		SessionUpdate string `json:"sessionUpdate"`
+	}
+	if json.Unmarshal(msg.Params.Update, &kind) != nil {
+		return "", false
+	}
+	switch kind.SessionUpdate {
+	case "user_message_chunk", "agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update", "plan":
+		var update any
+		if json.Unmarshal(msg.Params.Update, &update) != nil {
+			return "", false
+		}
+		canonical, err := json.Marshal(update)
+		return string(canonical), err == nil
+	default:
+		return "", false
+	}
+}
+
+func isUserMessageRaw(raw json.RawMessage) bool {
+	var msg struct {
+		Method string `json:"method"`
+		Params struct {
+			Update struct {
+				SessionUpdate string `json:"sessionUpdate"`
+			} `json:"update"`
+		} `json:"params"`
+	}
+	return json.Unmarshal(raw, &msg) == nil && msg.Method == "session/update" && msg.Params.Update.SessionUpdate == "user_message_chunk"
 }
 
 type statusSubscriber struct {
@@ -553,6 +638,11 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, blocks=%d)", b.sessionId, clientID, len(prompt))
 
+	b.histMu.Lock()
+	b.sendingPromptUserEcho = true
+	b.awaitingLiveOutput = true
+	b.histMu.Unlock()
+
 	// Broadcast the user's prompt blocks as synthetic session/update notifications.
 	// The ACP server does not echo user messages, so we emit it here to ensure
 	// it appears in both the SSE live stream and GET /messages history.
@@ -574,6 +664,9 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 			},
 		})
 	}
+	b.histMu.Lock()
+	b.sendingPromptUserEcho = false
+	b.histMu.Unlock()
 
 	b.setStatus("running")
 
@@ -737,12 +830,38 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	isUserChunk := isUserMessageUpdate(msg)
+	if signature, replayable := restoredReplaySignature(raw); replayable && b.suppressRestoredReplay && !(isUserChunk && b.sendingPromptUserEcho) {
+		if remaining := b.restoredReplaySignatures[signature]; remaining > 0 {
+			if remaining == 1 {
+				delete(b.restoredReplaySignatures, signature)
+			} else {
+				b.restoredReplaySignatures[signature] = remaining - 1
+			}
+			b.histMu.Unlock()
+			return
+		}
+		// After a new prompt, the first transcript update that is not restored
+		// content marks the boundary between delayed session/load replay and
+		// genuinely live output.
+		if b.awaitingLiveOutput && !isUserChunk {
+			b.suppressRestoredReplay = false
+			b.awaitingLiveOutput = false
+		}
+	}
 	if isUserChunk && !b.lastHistoryWasUserChunk {
 		b.lastUserMessageIdx = len(b.history)
 		b.userMessageIndices = append(b.userMessageIndices, len(b.history))
 	}
 	b.lastHistoryWasUserChunk = isUserChunk
 	b.history = append(b.history, raw)
+	if b.historyFile != "" {
+		if err := os.MkdirAll(filepath.Dir(b.historyFile), 0o700); err == nil {
+			if f, openErr := os.OpenFile(b.historyFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); openErr == nil {
+				_, _ = f.Write(append(append([]byte(nil), raw...), '\n'))
+				_ = f.Close()
+			}
+		}
+	}
 	b.histMu.Unlock()
 
 	for _, sub := range b.subs {

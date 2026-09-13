@@ -5,7 +5,15 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+// SessionResumePreparer persists parent-owned settings needed to recreate a
+// suspended workload. Stock runners receive these settings directly from the
+// parent and therefore may not have a local restart Secret yet.
+type SessionResumePreparer interface {
+	PrepareSessionResume(context.Context, string, *sessionsettings.SessionSettings) error
+}
 
 // Message represents a message in a conversation
 type Message struct {
@@ -66,6 +74,12 @@ type SessionWorkloadEnsurer interface {
 	// EnsureSessionWorkload returns restoring=true while the workload is being
 	// created or is not ready yet. A missing canonical session is an error.
 	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
+}
+
+// SessionSuspender is implemented by managers that can checkpoint, when
+// required by their persistence policy, and suspend a session workload.
+type SessionSuspender interface {
+	SuspendSession(ctx context.Context, id string) error
 }
 
 // SandboxDomains is execution-plane network-filter state for a session.

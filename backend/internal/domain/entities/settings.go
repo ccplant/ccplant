@@ -1,10 +1,29 @@
 package entities
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
+
+const maxAutoSuspendMinutes = 7 * 24 * 60
+
+// AutoSuspendSettings controls automatic suspension of idle persistent sessions.
+type AutoSuspendSettings struct {
+	Enabled            bool `json:"enabled"`
+	IdleTimeoutMinutes int  `json:"idle_timeout_minutes"`
+}
+
+func (a *AutoSuspendSettings) Validate() error {
+	if a == nil || !a.Enabled {
+		return nil
+	}
+	if a.IdleTimeoutMinutes < 1 || a.IdleTimeoutMinutes > maxAutoSuspendMinutes {
+		return fmt.Errorf("idle_timeout_minutes must be between 1 and %d", maxAutoSuspendMinutes)
+	}
+	return nil
+}
 
 // AuthMode represents the authentication mode for Claude Code
 type AuthMode string
@@ -155,6 +174,7 @@ type Settings struct {
 	externalSessionManagers []ExternalSessionManagerEntry
 	defaultSessionProfileID string // ID of the default session profile for this tenant
 	defaultAgentType        string // Agent type used when a session does not specify one
+	autoSuspend             *AutoSuspendSettings
 	createdAt               time.Time
 	updatedAt               time.Time
 }
@@ -384,6 +404,9 @@ func (s *Settings) Validate() error {
 			return err
 		}
 	}
+	if err := s.autoSuspend.Validate(); err != nil {
+		return fmt.Errorf("invalid auto_suspend settings: %w", err)
+	}
 
 	return nil
 }
@@ -405,6 +428,26 @@ func (s *Settings) DefaultAgentType() string { return s.defaultAgentType }
 // SetDefaultAgentType sets the agent type used for sessions that do not specify one.
 func (s *Settings) SetDefaultAgentType(agentType string) {
 	s.defaultAgentType = agentType
+	s.updatedAt = time.Now()
+}
+
+// AutoSuspend returns a copy of the automatic suspension policy.
+func (s *Settings) AutoSuspend() *AutoSuspendSettings {
+	if s.autoSuspend == nil {
+		return nil
+	}
+	copy := *s.autoSuspend
+	return &copy
+}
+
+// SetAutoSuspend sets the automatic suspension policy.
+func (s *Settings) SetAutoSuspend(value *AutoSuspendSettings) {
+	if value == nil {
+		s.autoSuspend = nil
+	} else {
+		copy := *value
+		s.autoSuspend = &copy
+	}
 	s.updatedAt = time.Now()
 }
 

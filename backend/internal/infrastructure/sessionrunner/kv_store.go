@@ -18,9 +18,15 @@ import (
 )
 
 const (
-	labelResource = "agentapi.proxy/session-runner-resource"
-	labelPoolHash = "agentapi.proxy/session-runner-pool-hash"
-	dataKey       = "resource.json"
+	labelResource    = "agentapi.proxy/session-runner-resource"
+	labelPoolHash    = "agentapi.proxy/session-runner-pool-hash"
+	dataKey          = "resource.json"
+	managerPrefix    = "agentapi-session-manager-"
+	logicalPrefix    = "agentapi-session-logical-pool-"
+	supplierPrefix   = "agentapi-session-pool-supplier-"
+	bindingPrefix    = "agentapi-session-pool-binding-"
+	runnerPrefix     = "agentapi-session-runner-"
+	allocationPrefix = "agentapi-session-allocation-pool-"
 )
 
 type Store struct {
@@ -52,14 +58,33 @@ func hashName(value string) string {
 	return hex.EncodeToString(digest[:8])
 }
 
-func managerName(id string) string       { return "agentapi-session-manager-" + hashName(id) }
-func logicalPoolName(pool string) string { return "agentapi-session-logical-pool-" + hashName(pool) }
+func managerName(id string) string       { return managerPrefix + hashName(id) }
+func logicalPoolName(pool string) string { return logicalPrefix + hashName(pool) }
 func poolSupplierName(managerID, pool string) string {
-	return "agentapi-session-pool-supplier-" + hashName(managerID+"\x00"+pool)
+	return supplierPrefix + hashName(managerID+"\x00"+pool)
 }
-func bindingName(id string) string    { return "agentapi-session-pool-binding-" + hashName(id) }
-func runnerName(id string) string     { return "agentapi-session-runner-" + hashName(id) }
-func allocationName(id string) string { return "agentapi-session-allocation-pool-" + hashName(id) }
+func bindingName(id string) string    { return bindingPrefix + hashName(id) }
+func runnerName(id string) string     { return runnerPrefix + hashName(id) }
+func allocationName(id string) string { return allocationPrefix + hashName(id) }
+
+func resourcePrefix(resource string) string {
+	switch resource {
+	case "manager":
+		return managerPrefix
+	case "logical-pool":
+		return logicalPrefix
+	case "pool-supplier":
+		return supplierPrefix
+	case "binding":
+		return bindingPrefix
+	case "runner":
+		return runnerPrefix
+	case "allocation":
+		return allocationPrefix
+	default:
+		return ""
+	}
+}
 
 func (s *Store) create(ctx context.Context, name, resource, pool string, value any) error {
 	raw, err := json.Marshal(value)
@@ -76,7 +101,7 @@ func (s *Store) create(ctx context.Context, name, resource, pool string, value a
 	if err != nil {
 		return err
 	}
-	_, err = s.kv.Create(ctx, kvstore.Record{Kind: kvstore.KindSecret, Namespace: s.namespace, Key: name, Value: document})
+	_, err = s.kv.Create(ctx, kvstore.Record{Kind: kvstore.KindSecret, Namespace: s.namespace, Key: name, Labels: labels, Value: document})
 	if errors.Is(err, kvstore.ErrConflict) {
 		return core.ErrConflict
 	}
@@ -150,7 +175,7 @@ func (s *Store) delete(ctx context.Context, name string) error {
 }
 
 func (s *Store) list(ctx context.Context, resource string, decode func([]byte) error) error {
-	items, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace})
+	items, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace, KeyPrefix: resourcePrefix(resource)})
 	if err != nil {
 		return err
 	}
@@ -445,7 +470,7 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 	if runner.Pool != pool {
 		return nil, false, core.ErrUnauthorized
 	}
-	records, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace})
+	records, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace, KeyPrefix: allocationPrefix})
 	if err != nil {
 		return nil, false, err
 	}

@@ -51,6 +51,7 @@ func (s *fakeSession) LastMessageAt() time.Time            { return s.updatedAt 
 func (s *fakeSession) Description() string                 { return s.description }
 func (s *fakeSession) Cancel()                             {}
 func (s *fakeSession) Request() *entities.RunServerRequest { return s.request }
+func (s *fakeSession) SetStatusSilent(status string)       { s.status = status }
 
 // fakeSessionManager implements repositories.SessionManager for tests.
 type fakeSessionManager struct {

@@ -292,6 +292,8 @@ type SessionMeta struct {
 	MemoryKey          map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
 	ResumeFrom         string            `yaml:"resume_from,omitempty" json:"resume_from,omitempty"`
 	PersistenceEnabled bool              `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
+	AutoSuspendEnabled *bool             `yaml:"auto_suspend_enabled,omitempty" json:"auto_suspend_enabled,omitempty"`
+	AutoSuspendMinutes int               `yaml:"auto_suspend_minutes,omitempty" json:"auto_suspend_minutes,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.

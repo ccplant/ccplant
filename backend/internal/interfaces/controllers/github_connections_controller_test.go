@@ -296,6 +296,39 @@ func TestSanitizeReturnTo(t *testing.T) {
 	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("//evil.example.com"))
 }
 
+func TestResolveGitHubConnectionCallbackURLsAcceptAPIV1(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
+	req.Header.Set("Origin", "https://ui.example.test")
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	callbackURL := "https://ui.example.test/api/v1/auth/github-connections/callback"
+
+	resolved, err := controller.resolveCallbackURL(ctx, callbackURL)
+	require.NoError(t, err)
+	require.Equal(t, callbackURL, resolved)
+
+	resolved, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
+	require.NoError(t, err)
+	require.Equal(t, callbackURL, resolved)
+}
+
+func TestResolveGitHubConnectionCallbackURLsRejectDifferentOrigin(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
+	req.Header.Set("Origin", "https://ui.example.test")
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	callbackURL := "https://evil.example.test/api/v1/auth/github-connections/callback"
+
+	_, err := controller.resolveCallbackURL(ctx, callbackURL)
+	require.Error(t, err)
+	_, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
+	require.Error(t, err)
+}
+
 func TestNormalizeOAuthScope(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "read:user read:org project", normalizeOAuthScope(""))
@@ -330,7 +363,7 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
 	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
 	require.NoError(t, err)
-	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, Organizations: []string{"example-org"}}
+	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, BaseURL: "https://github.corp.example", APIURL: "https://github.corp.example/api/v3", Organizations: []string{"example-org"}}
 	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
 	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "corp-token", nil)
 	require.NoError(t, err)
@@ -340,6 +373,10 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	require.True(t, matched)
 	require.Equal(t, "corp-token", token)
 	require.Equal(t, "corp", connectionID)
+	baseURL, apiURL, err := controller.ResolveConnectionURLs(context.Background(), connectionID)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.corp.example", baseURL)
+	require.Equal(t, "https://github.corp.example/api/v3", apiURL)
 	_, connectionID, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
 	require.NoError(t, err)
 	require.False(t, matched)

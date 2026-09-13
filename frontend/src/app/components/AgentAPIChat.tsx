@@ -382,6 +382,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       // Reset initial load flag when session changes
       setIsInitialLoadComplete(false);
       setIsStarting(true);
+      setIsResuming(false);
       setIsConnected(false);
       setAgentStatus(null);
       setAgentType(null);
@@ -489,9 +490,13 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               // legacy status request until we know there is no ACP bridge. A status
               // request is redundant for ACP and otherwise competes with the much
               // larger history response.
+              let historyError: unknown = null;
               const historyPromise = agentAPIRef.current
                 .getACPMessageHistory(sessionId, '')
-                .catch(() => null);
+                .catch((err) => {
+                  historyError = err;
+                  return null;
+                });
               // Open the real subscription as the ACP fast-path probe. Incoming
               // events stay buffered until history is installed, so a concurrent
               // history response cannot overwrite live updates.
@@ -544,7 +549,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 // bridge detection and history were started in parallel above.
                 const historyResult = await historyPromise;
                 if (!historyResult) {
-                  throw new Error('Failed to restore ACP message history');
+                  // Preserve structured proxy errors such as session_resuming so
+                  // the outer initializer can render the recovery screen.
+                  throw historyError ?? new Error('Failed to restore ACP message history');
                 }
                 setMessages(historyResult.messages);
                 acpTurnRunningRef.current = historyResult.isTurnRunning;
@@ -672,6 +679,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               console.error('Failed to load session messages:', err);
               setIsConnected(false); // Only set disconnected on actual error
               if (err instanceof AgentAPIProxyError && (err.status === 404 || err.status === 502 || err.status === 503)) {
+                setIsResuming((current) => current || err.code === 'session_resuming');
                 // 404: セッションがまだセッションマネージャーに登録されていない可能性がある（プロビジョニング中の race condition）
                 // 502/503: サービス起動中の可能性がある
                 // いずれの場合もプロビジョナーのステータスを確認してから再試行
@@ -709,6 +717,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           console.error('Failed to initialize chat:', err);
           setIsConnected(false);
           if (err instanceof AgentAPIProxyError && (err.status === 404 || err.status === 502 || err.status === 503)) {
+            setIsResuming((current) => current || err.code === 'session_resuming');
             // サービス起動中またはセッション登録中の可能性があるため、処理中として扱い再試行
             setIsStarting(true);
             retryTimerRef.current = setTimeout(initializeChat, 2000);
@@ -754,12 +763,17 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [isConnected, setIsConnected] = useState(false);
   const [messageSSEConnectionStatus, setMessageSSEConnectionStatus] = useState<MessageSSEConnectionStatus>('connecting');
   const [isStarting, setIsStarting] = useState(false);
+  const [isResuming, setIsResuming] = useState(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
+
+  useEffect(() => {
+    if (isInitialLoadComplete) setIsResuming(false);
+  }, [isInitialLoadComplete]);
 
   // Restore sidebar visibility from localStorage after mount
   useEffect(() => {
@@ -2112,14 +2126,18 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         )}
 
         {!isInitialLoadComplete && agentStatus?.status !== 'error' && (
-          <div className="text-center text-gray-500 dark:text-gray-400 py-12">
-            <div className="mb-3">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-6 text-gray-500 dark:text-gray-400 sm:px-6">
+            <div className="h-5 w-5 flex-none animate-spin rounded-full border-2 border-gray-200 border-t-blue-500 dark:border-gray-700 dark:border-t-blue-400" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                {isResuming ? 'セッションを再開しています' : 'チャットを準備しています'}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {isResuming
+                  ? '保存された会話と実行環境を復元しています。準備ができると自動的に表示されます。'
+                  : acpInfo ? 'メッセージ履歴を読み込んでいます' : 'セッションへの接続を待機しています'}
+              </p>
             </div>
-            <p className="text-lg font-medium">処理中...</p>
-            <p className="text-sm mt-1">
-              {acpInfo ? 'メッセージ履歴を読み込んでいます' : 'セッションへの接続を待機しています'}
-            </p>
           </div>
         )}
 

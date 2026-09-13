@@ -31,7 +31,7 @@ type SortOrder = 'asc' | 'desc'
 export default function ConversationList() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const { selectedTeam } = useTeamScope()
+  const { selectedTeam, isLoading: isTeamScopeLoading } = useTeamScope()
 
   // Extract repository from query parameters
   const repositoryParam = searchParams.get('repository')
@@ -73,7 +73,7 @@ export default function ConversationList() {
   }, [selectedTeam])
 
   // Use SWR hook for data fetching with caching
-  const { sessions: allSessions, isLoading, isError, error: swrError, mutate } = useSessionList(scopeParams, agentAPI, {
+  const { sessions: allSessions, isLoading, isError, error: swrError, mutate } = useSessionList(isTeamScopeLoading ? null : scopeParams, agentAPI, {
     revalidateOnFocus: true,
     revalidateOnReconnect: true,
     refreshInterval: 30000, // Refresh every 30 seconds
@@ -123,7 +123,7 @@ export default function ConversationList() {
   const totalPages = Math.ceil(filteredSessions.length / pageState.limit)
 
   // Loading state from SWR
-  const loading = isLoading
+  const loading = isTeamScopeLoading || isLoading
 
   // Refresh sessions using SWR mutate
   const fetchSessions = useCallback(() => {

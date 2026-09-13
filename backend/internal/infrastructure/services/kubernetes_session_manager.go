@@ -35,15 +35,19 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/startup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/sync/singleflight"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
 )
@@ -58,8 +62,11 @@ const stockPodTemplateHashLabel = "agentapi.proxy/pod-template-hash"
 var instrumentedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 const (
-	sessionSuspendAtAnnotation   = "agentapi.proxy/suspend-at"
-	sessionSuspendedAtAnnotation = "agentapi.proxy/suspended-at"
+	sessionSuspendAtAnnotation               = "agentapi.proxy/suspend-at"
+	sessionSuspendedAtAnnotation             = "agentapi.proxy/suspended-at"
+	sessionAutoSuspendEnabledAnnotation      = "agentapi.proxy/auto-suspend-enabled"
+	sessionAutoSuspendIdleSecondsAnnotation  = "agentapi.proxy/auto-suspend-idle-seconds"
+	sessionAutoSuspendPolicySourceAnnotation = "agentapi.proxy/auto-suspend-policy-source"
 )
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
@@ -155,10 +162,20 @@ type KubernetesSessionManager struct {
 	statusSubCancel context.CancelFunc
 	suspendCancel   context.CancelFunc
 
-	// sessionListCacheRepo is the short-lived session-list cache backend.
-	// When Redis is configured this reduces Kubernetes API calls for frequent
-	// ListSessions requests.
+	// sessionListCacheRepo is retained for invalidating legacy Redis list keys
+	// written by older replicas during a rolling upgrade. ListSessions itself
+	// reads from the informer stores below.
 	sessionListCacheRepo portrepos.SessionListCacheRepository
+	sessionInformerOnce  sync.Once
+	sessionInformerCtx   context.Context
+	sessionInformerStop  context.CancelFunc
+	serviceInformer      cache.SharedIndexInformer
+	workloadInformer     cache.SharedIndexInformer
+	allocationInformer   cache.SharedIndexInformer
+	allocationListMu     sync.RWMutex
+	allocationListCache  *corev1.SecretList
+	allocationListUntil  time.Time
+	allocationListLoad   singleflight.Group
 
 	// sessionAllocatorEnabled routes CreateSession through the leader-elected
 	// SessionAllocator when the server has started that worker.
@@ -256,6 +273,7 @@ func NewKubernetesSessionManagerWithClient(
 	}
 
 	subCtx, subCancel := context.WithCancel(context.Background())
+	informerCtx, informerCancel := context.WithCancel(context.Background())
 
 	manager := &KubernetesSessionManager{
 		config:                    cfg,
@@ -270,6 +288,8 @@ func NewKubernetesSessionManagerWithClient(
 		podID:                     podID,
 		statusSubCtx:              subCtx,
 		statusSubCancel:           subCancel,
+		sessionInformerCtx:        informerCtx,
+		sessionInformerStop:       informerCancel,
 		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
 	}
 
@@ -284,9 +304,11 @@ func NewKubernetesSessionManagerWithClient(
 		log.Printf("[K8S_SESSION] Warning: Failed to ensure otelcol ConfigMap: %v", err)
 		// Don't fail initialization if ConfigMap creation fails
 	}
-	if cfg.SessionPersistence.Backend != "" && cfg.SessionPersistence.SuspendAfter != "" && cfg.SessionPersistence.SuspendAfter != "0" {
-		if _, err := time.ParseDuration(cfg.SessionPersistence.SuspendAfter); err != nil {
-			return nil, fmt.Errorf("invalid session_persistence.suspend_after: %w", err)
+	if cfg.SessionPersistence.Backend != "" {
+		if cfg.SessionPersistence.SuspendAfter != "" && cfg.SessionPersistence.SuspendAfter != "0" {
+			if _, err := time.ParseDuration(cfg.SessionPersistence.SuspendAfter); err != nil {
+				return nil, fmt.Errorf("invalid session_persistence.suspend_after: %w", err)
+			}
 		}
 		suspendCtx, suspendCancel := context.WithCancel(context.Background())
 		manager.suspendCancel = suspendCancel
@@ -299,10 +321,6 @@ func NewKubernetesSessionManagerWithClient(
 // ScheduleSessionSuspend persists the deadline on the canonical Service. The
 // annotation survives proxy restarts and is reconciled by every proxy replica.
 func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, sessionID string) error {
-	after, err := time.ParseDuration(m.config.SessionPersistence.SuspendAfter)
-	if err != nil || after <= 0 {
-		return fmt.Errorf("session suspend timer is disabled")
-	}
 	session := m.GetSession(sessionID)
 	if session == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
@@ -311,12 +329,229 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	if !ok {
 		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
 	}
+	after, enabled, err := m.resolveAutoSuspendPolicy(ctx, ks)
+	if err != nil {
+		return err
+	}
+	// The Service is the canonical cross-replica policy. A non-leader replica
+	// may still have the pre-allocation request cached in memory; do not let it
+	// overwrite a newer policy applied by the elected control loop.
+	hasCachedPolicy := ks.Request() != nil && ks.Request().ProvisionSettings != nil && ks.Request().ProvisionSettings.Session.AutoSuspendEnabled != nil
+	if svc, getErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); hasCachedPolicy && getErr == nil {
+		if rawEnabled, ok := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; ok {
+			if parsedEnabled, parseErr := strconv.ParseBool(rawEnabled); parseErr == nil {
+				enabled = parsedEnabled
+			}
+		}
+		if rawSeconds := svc.Annotations[sessionAutoSuspendIdleSecondsAnnotation]; enabled && rawSeconds != "" {
+			if seconds, parseErr := strconv.ParseInt(rawSeconds, 10, 64); parseErr == nil && seconds > 0 {
+				after = time.Duration(seconds) * time.Second
+			}
+		}
+	}
+	if !enabled {
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":"false","%s":null}}}`, sessionSuspendAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation))
+		_, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
+		return err
+	}
 	deadline := time.Now().Add(after).UTC().Format(time.RFC3339Nano)
-	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation))
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null,"%s":"true","%s":%q}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation, strconv.FormatInt(int64(after/time.Second), 10)))
 	if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("persist suspend deadline: %w", err)
 	}
 	log.Printf("[K8S_SESSION] Session %s scheduled to suspend at %s", sessionID, deadline)
+	return nil
+}
+
+// ApplyRunnerAutoSuspendPolicy reconciles allocation-specific policy onto a
+// pre-warmed runner. Stock workloads start with the manager default and only
+// learn the owning user's policy after the parent assigns an allocation.
+func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Context, sessionID string, enabled *bool, minutes int) error {
+	if enabled == nil {
+		return nil
+	}
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	service, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get session service: %w", err)
+	}
+	if service.Annotations[sessionAutoSuspendPolicySourceAnnotation] == "resume" {
+		return nil
+	}
+	desiredEnabled := strconv.FormatBool(*enabled)
+	desiredSeconds := strconv.FormatInt(int64(time.Duration(minutes)*time.Minute/time.Second), 10)
+	policyAlreadyScheduled := service.Annotations[sessionAutoSuspendEnabledAnnotation] == desiredEnabled &&
+		(!*enabled || service.Annotations[sessionAutoSuspendIdleSecondsAnnotation] == desiredSeconds) &&
+		(service.Annotations[sessionSuspendAtAnnotation] != "" || service.Annotations[sessionSuspendedAtAnnotation] != "")
+	req := session.Request()
+	if req == nil {
+		req = &entities.RunServerRequest{}
+		session.SetRequest(req)
+	}
+	if req.ProvisionSettings == nil {
+		req.ProvisionSettings = &sessionsettings.SessionSettings{}
+	}
+	req.ProvisionSettings.Session.AutoSuspendEnabled = enabled
+	req.ProvisionSettings.Session.AutoSuspendMinutes = minutes
+	if policyAlreadyScheduled {
+		return nil
+	}
+	if !*enabled {
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":null,"%s":"false","%s":null}}}`, sessionSuspendAtAnnotation, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation))
+		_, err = m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
+		return err
+	}
+	deadline := time.Now().Add(time.Duration(minutes) * time.Minute).UTC().Format(time.RFC3339Nano)
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null,"%s":%q,"%s":%q}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, desiredEnabled, sessionAutoSuspendIdleSecondsAnnotation, desiredSeconds))
+	_, err = m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
+	return err
+}
+
+func (m *KubernetesSessionManager) resolveAutoSuspendPolicy(ctx context.Context, session *KubernetesSession) (time.Duration, bool, error) {
+	if req := session.Request(); req != nil {
+		if req.ProvisionSettings != nil && req.ProvisionSettings.Session.AutoSuspendEnabled != nil {
+			return time.Duration(req.ProvisionSettings.Session.AutoSuspendMinutes) * time.Minute, *req.ProvisionSettings.Session.AutoSuspendEnabled, nil
+		}
+		if m.settingsRepo == nil {
+			return m.defaultAutoSuspendPolicy()
+		}
+		settingsName := req.UserID
+		if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+			settingsName = req.TeamID
+		}
+		settings, err := m.settingsRepo.FindByName(ctx, settingsName)
+		if err == nil && settings.AutoSuspend() != nil {
+			policy := settings.AutoSuspend()
+			if !policy.Enabled {
+				return 0, false, nil
+			}
+			return time.Duration(policy.IdleTimeoutMinutes) * time.Minute, true, nil
+		}
+	}
+	if m.config.SessionPersistence.Backend == "" {
+		return 0, false, nil
+	}
+	return m.defaultAutoSuspendPolicy()
+}
+
+func (m *KubernetesSessionManager) defaultAutoSuspendPolicy() (time.Duration, bool, error) {
+	if m.config.SessionPersistence.SuspendAfter == "" || m.config.SessionPersistence.SuspendAfter == "0" {
+		return 0, false, nil
+	}
+	after, err := time.ParseDuration(m.config.SessionPersistence.SuspendAfter)
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid session suspend timer: %w", err)
+	}
+	if after <= 0 {
+		return 0, false, fmt.Errorf("invalid session suspend timer: duration must be positive")
+	}
+	return after, true, nil
+}
+
+// SuspendSession checkpoints persistent ACP state under the manager's policy
+// and only then removes the workload. Callers request suspension; checkpointing
+// remains an execution-plane concern.
+func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID string) error {
+	session := m.GetSession(sessionID)
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	ks, ok := session.(*KubernetesSession)
+	if !ok {
+		return fmt.Errorf("session suspend is only supported by the Kubernetes session manager")
+	}
+	if session.Status() == "running" {
+		return fmt.Errorf("session is busy")
+	}
+	if session.Status() == "suspended" {
+		return nil
+	}
+	if m.requiresSessionCheckpoint(ks) {
+		if err := m.checkpointSessionState(ctx, sessionID); err != nil {
+			return fmt.Errorf("checkpoint session state: %w", err)
+		}
+	}
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get canonical session service: %w", err)
+	}
+	return m.suspendSessionWorkload(ctx, sessionID, svc)
+}
+
+func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *KubernetesSession) bool {
+	if m.config.SessionPersistence.Backend == "" || session == nil || session.Request() == nil {
+		return false
+	}
+	agentType := session.Request().AgentType
+	return agentType == "claude-acp" || agentType == "codex-acp"
+}
+
+func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, sessionID string) error {
+	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
+		if settings := session.ProvisionSettings(); settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime)
+		}
+	}
+	store := m.connectedSessionControlStore(ctx, sessionID)
+	if store == nil {
+		return fmt.Errorf("session control is unavailable")
+	}
+	commandID := uuid.NewString()
+	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{ID: commandID, Type: "checkpoint_session_state", CreatedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
+	cursor := "0-0"
+	for {
+		events, err := store.ReadEvents(ctx, sessionID, cursor, 30*time.Second, 100)
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			if event.CommandID != commandID {
+				continue
+			}
+			if event.Type == "command_completed" {
+				return nil
+			}
+			if event.Type == "command_failed" {
+				var payload struct {
+					Error string `json:"error"`
+				}
+				_ = json.Unmarshal(event.Payload, &payload)
+				if payload.Error == "" {
+					payload.Error = "checkpoint command failed"
+				}
+				return fmt.Errorf("%s", payload.Error)
+			}
+		}
+		if len(events) > 0 {
+			cursor = events[len(events)-1].StreamID
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+}
+
+func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig) error {
+	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(runtime.SessionID) + "/checkpoint?generation=" + strconv.FormatInt(runtime.Generation, 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+runtime.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("parent checkpoint returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	return nil
 }
 
@@ -342,11 +577,27 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 	now := time.Now()
 	for i := range services.Items {
 		svc := &services.Items[i]
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID != "" {
+			// Suspended workloads have no Pod/Deployment watcher to recreate their
+			// in-memory session. Restore them from the canonical Service so manager
+			// heartbeats can propagate the suspended lifecycle state upstream.
+			_ = m.GetSession(sessionID)
+		}
+		if svc.Annotations[sessionSuspendAtAnnotation] == "" && svc.Annotations[sessionSuspendedAtAnnotation] == "" {
+			if _, policyKnown := svc.Annotations[sessionAutoSuspendEnabledAnnotation]; !policyKnown {
+				if sessionID != "" {
+					if err := m.ScheduleSessionSuspend(ctx, sessionID); err != nil {
+						log.Printf("[K8S_SESSION] Failed to initialize suspend timer for session %s: %v", sessionID, err)
+					}
+				}
+				continue
+			}
+		}
 		deadline, err := time.Parse(time.RFC3339Nano, svc.Annotations[sessionSuspendAtAnnotation])
 		if err != nil || deadline.After(now) {
 			continue
 		}
-		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID == "" {
 			continue
 		}
@@ -356,7 +607,7 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 			_ = m.ScheduleSessionSuspend(ctx, sessionID)
 			continue
 		}
-		if err := m.suspendSessionWorkload(ctx, sessionID, svc); err != nil {
+		if err := m.SuspendSession(ctx, sessionID); err != nil {
 			log.Printf("[K8S_SESSION] Failed to suspend session %s: %v", sessionID, err)
 		}
 	}
@@ -622,7 +873,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	// directly instead of resolving secrets from this cluster.
 	var sessionSettings *sessionsettings.SessionSettings
 	if req.ProvisionSettings != nil {
-		sessionSettings = req.ProvisionSettings
+		sessionSettings = m.normalizeProvisionSettings(req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
@@ -1443,7 +1694,7 @@ func (m *KubernetesSessionManager) adoptStockSession(
 	// direct parent runtime bootstrap, and must not be re-resolved locally.
 	var sessionSettings *sessionsettings.SessionSettings
 	if req.ProvisionSettings != nil {
-		sessionSettings = req.ProvisionSettings
+		sessionSettings = m.normalizeProvisionSettings(req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
 	}
@@ -1602,6 +1853,9 @@ func (m *KubernetesSessionManager) watchStockSession(ctx context.Context, sessio
 	} else {
 		log.Printf("[K8S_SESSION] Stock session %s skipped SetStatus(active): agent already running", session.id)
 	}
+	if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+		log.Printf("[K8S_SESSION] Failed to schedule initial suspend for stock session %s: %v", session.id, err)
+	}
 
 	// Continue watching deployment health and agentapi runtime status.
 	go m.watchAgentAPIStatus(ctx, session)
@@ -1755,6 +2009,59 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	return session, true, nil
 }
 
+func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id string, settings *sessionsettings.SessionSettings) error {
+	session, ok := m.GetSession(id).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session %s not found", id)
+	}
+	settings = m.normalizeProvisionSettings(settings)
+	name := strings.TrimSuffix(session.ServiceName(), "-svc") + "-settings"
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil && !errors.IsNotFound(getErr) {
+		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
+	}
+	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	if settings.Repository != nil {
+		req.RepoInfo = &entities.RepositoryInfo{FullName: settings.Repository.FullName, CloneDir: settings.Repository.CloneDir, Branch: settings.Repository.Branch, PR: settings.Repository.PR}
+	}
+	session.SetRequest(req)
+	session.SetProvisionSettings(settings)
+	if settings.Session.AutoSuspendEnabled != nil {
+		enabled := strconv.FormatBool(*settings.Session.AutoSuspendEnabled)
+		seconds := strconv.FormatInt(int64(time.Duration(settings.Session.AutoSuspendMinutes)*time.Minute/time.Second), 10)
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":%q,"%s":"resume"}}}`, sessionAutoSuspendEnabledAnnotation, enabled, sessionAutoSuspendIdleSecondsAnnotation, seconds, sessionAutoSuspendPolicySourceAnnotation))
+		if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("persist resume auto-suspend policy: %w", err)
+		}
+	}
+	if getErr == nil {
+		yamlData, err := sessionsettings.MarshalYAML(settings)
+		if err != nil {
+			return fmt.Errorf("marshal restart settings: %w", err)
+		}
+		if existing.Data == nil {
+			existing.Data = map[string][]byte{}
+		}
+		existing.Data["settings.yaml"] = yamlData
+		_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, existing, metav1.UpdateOptions{})
+		return err
+	}
+	return m.createSessionSettingsSecretFromSettings(ctx, session, req, settings)
+}
+
+// normalizeProvisionSettings applies execution-plane capabilities to settings
+// resolved by the parent API. Keep the parent's public session ID as the stable
+// snapshot key so state survives allocation to a different local runner.
+func (m *KubernetesSessionManager) normalizeProvisionSettings(settings *sessionsettings.SessionSettings) *sessionsettings.SessionSettings {
+	if settings == nil {
+		return nil
+	}
+	normalized := *settings
+	normalized.Session = settings.Session
+	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
+	return &normalized
+}
+
 func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
 	timeout := time.Duration(m.k8sConfig.PodStartTimeout) * time.Second
 	if timeout <= 0 {
@@ -1856,43 +2163,14 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 }
 
 // ListSessions returns all sessions matching the filter.
-// Sessions are retrieved from a Redis cache when available, falling back to
-// Kubernetes API calls on a cache miss.  The cache is keyed by the label
-// selector (which encodes user-id, scope and team-id) so each filter
-// combination has its own independent cache entry.
+// Sessions are read from label-filtered Kubernetes informer stores. The
+// initial LIST establishes each store, then WATCH events keep it current.
 func (m *KubernetesSessionManager) ListSessions(filter entities.SessionFilter) []entities.Session {
 	labelSelector := m.buildLabelSelector(filter)
 	ctx := context.Background()
-
-	// --- cache-first path ---------------------------------------------------
-	if m.sessionListCacheRepo != nil {
-		cacheKey := m.buildSessionListCacheKey(labelSelector)
-		if cached, err := m.sessionListCacheRepo.GetSessionListCache(ctx, cacheKey); err == nil && cached != nil {
-			sessions := m.filterSessionsFromCache(cached, filter)
-			m.hydrateSessionStatusMessages(ctx, sessions)
-			return m.withSessionAllocations(ctx, sessions, filter)
-		}
-	}
-
-	// --- cache miss: fetch from Kubernetes ----------------------------------
 	allSessions := m.fetchSessionsFromK8s(ctx, labelSelector, filter)
 	m.hydrateSessionStatusMessages(ctx, allSessions)
 	allocationSessions := m.fetchSessionAllocationsFromK8s(ctx, filter)
-
-	// Populate the cache with the full result set (before in-memory filters)
-	// so that different filter combinations that share the same labelSelector
-	// can reuse the same cached K8s data.
-	// Do not cache a pre-Service snapshot while allocation requests are still
-	// present. Otherwise /search can serve an empty stale cache after the
-	// allocation Secret is deleted and before the next cache miss observes the
-	// newly-created Service.
-	if m.sessionListCacheRepo != nil && len(allocationSessions) == 0 {
-		cacheKey := m.buildSessionListCacheKey(labelSelector)
-		dtos := sessionsToCacheDTOs(allSessions)
-		if err := m.sessionListCacheRepo.SetSessionListCache(ctx, cacheKey, dtos, redisSessionListCacheTTL); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to populate session list cache: %v", err)
-		}
-	}
 
 	return mergeSessionAllocations(m.applySessionListFilters(allSessions, filter), allocationSessions)
 }
@@ -1909,10 +2187,6 @@ func (m *KubernetesSessionManager) hydrateSessionStatusMessages(ctx context.Cont
 		}
 		ks.SetStatusMessage(request.Message)
 	}
-}
-
-func (m *KubernetesSessionManager) withSessionAllocations(ctx context.Context, sessions []entities.Session, filter entities.SessionFilter) []entities.Session {
-	return mergeSessionAllocations(sessions, m.fetchSessionAllocationsFromK8s(ctx, filter))
 }
 
 func mergeSessionAllocations(sessions []entities.Session, allocationSessions []entities.Session) []entities.Session {
@@ -1942,9 +2216,7 @@ func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
 }
 
 func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {
-	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)",
-	})
+	secrets, err := m.listSessionAllocations(ctx)
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list session allocations: %v", err)
 		return nil
@@ -1990,23 +2262,167 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 	return sessions
 }
 
+const sessionAllocationListCacheTTL = 2 * time.Second
+
+func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (*corev1.SecretList, error) {
+	if err := m.ensureSessionInformers(ctx); err == nil {
+		items := m.allocationInformer.GetStore().List()
+		secrets := &corev1.SecretList{Items: make([]corev1.Secret, 0, len(items))}
+		for _, item := range items {
+			secret, ok := item.(*corev1.Secret)
+			if ok {
+				secrets.Items = append(secrets.Items, *secret.DeepCopy())
+			}
+		}
+		return secrets, nil
+	}
+
+	// Startup fallback: retain availability if the informer cannot complete its
+	// initial sync. Once synced, all subsequent reads use the local store.
+	if secrets, ok := m.cachedSessionAllocations(); ok {
+		return secrets, nil
+	}
+	value, err, _ := m.allocationListLoad.Do("active", func() (interface{}, error) {
+		if secrets, ok := m.cachedSessionAllocations(); ok {
+			return secrets, nil
+		}
+		secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)",
+		})
+		if err != nil {
+			return nil, err
+		}
+		m.allocationListMu.Lock()
+		m.allocationListCache = secrets.DeepCopy()
+		m.allocationListUntil = time.Now().Add(sessionAllocationListCacheTTL)
+		m.allocationListMu.Unlock()
+		return secrets.DeepCopy(), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value.(*corev1.SecretList).DeepCopy(), nil
+}
+
+const sessionInformerSyncTimeout = 15 * time.Second
+
+func (m *KubernetesSessionManager) ensureSessionInformers(ctx context.Context) error {
+	m.sessionInformerOnce.Do(func() {
+		resourceFactory := informers.NewSharedInformerFactoryWithOptions(
+			m.client,
+			0,
+			informers.WithNamespace(m.namespace),
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				options.LabelSelector = "agentapi.proxy/session-id"
+			}),
+		)
+		allocationFactory := informers.NewSharedInformerFactoryWithOptions(
+			m.client,
+			0,
+			informers.WithNamespace(m.namespace),
+			informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+				options.LabelSelector = "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)"
+			}),
+		)
+		m.serviceInformer = resourceFactory.Core().V1().Services().Informer()
+		if m.isPVCEnabled() {
+			m.workloadInformer = resourceFactory.Apps().V1().Deployments().Informer()
+		} else {
+			m.workloadInformer = resourceFactory.Core().V1().Pods().Informer()
+		}
+		m.allocationInformer = allocationFactory.Core().V1().Secrets().Informer()
+		resourceFactory.Start(m.sessionInformerCtx.Done())
+		allocationFactory.Start(m.sessionInformerCtx.Done())
+	})
+
+	waitCtx, cancel := context.WithTimeout(ctx, sessionInformerSyncTimeout)
+	defer cancel()
+	if !cache.WaitForCacheSync(waitCtx.Done(), m.serviceInformer.HasSynced, m.workloadInformer.HasSynced, m.allocationInformer.HasSynced) {
+		return fmt.Errorf("timed out waiting for Kubernetes session informer cache sync")
+	}
+	return nil
+}
+
+func (m *KubernetesSessionManager) cachedSessionAllocations() (*corev1.SecretList, bool) {
+	m.allocationListMu.RLock()
+	defer m.allocationListMu.RUnlock()
+	if m.allocationListCache == nil || time.Now().After(m.allocationListUntil) {
+		return nil, false
+	}
+	return m.allocationListCache.DeepCopy(), true
+}
+
+func (m *KubernetesSessionManager) invalidateSessionAllocationListCache() {
+	m.allocationListMu.Lock()
+	m.allocationListCache = nil
+	m.allocationListUntil = time.Time{}
+	m.allocationListMu.Unlock()
+}
+
 // redisSessionListCacheTTL is the TTL passed to the cache repository.
 // Extended from 15s to 60s to reduce Kubernetes API calls while still ensuring
 // reasonable freshness for session list queries.
 const redisSessionListCacheTTL = 60 * time.Second
 
-// buildSessionListCacheKey returns a stable Redis cache key for the given
-// (namespace, labelSelector) combination.
-func (m *KubernetesSessionManager) buildSessionListCacheKey(labelSelector string) string {
-	h := sha256.Sum256([]byte(m.namespace + "|" + labelSelector))
-	return "agentapi:sessions:list:" + m.namespace + ":" + hex.EncodeToString(h[:8])
+// fetchSessionsFromK8s reads the Kubernetes Service and workload informer
+// stores and returns all sessions that match the label selector. A direct LIST
+// is used only when the initial informer sync cannot complete.
+// In-memory-only filters (status, teamIDs, tags) are NOT applied here so
+// callers can reuse the broad informer snapshot across filter variants.
+func (m *KubernetesSessionManager) fetchSessionsFromK8s(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
+	if err := m.ensureSessionInformers(ctx); err == nil {
+		return m.fetchSessionsFromInformer(labelSelector, filter)
+	} else {
+		log.Printf("[K8S_SESSION] Session informer unavailable, falling back to Kubernetes LIST: %v", err)
+	}
+	return m.fetchSessionsDirect(ctx, labelSelector, filter)
 }
 
-// fetchSessionsFromK8s performs the Kubernetes Services + workload list
-// calls and returns all sessions that match the label selector.
-// In-memory-only filters (status, teamIDs, tags) are NOT applied here so
-// the caller can cache the full result and reuse it across filter variants.
-func (m *KubernetesSessionManager) fetchSessionsFromK8s(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
+func (m *KubernetesSessionManager) fetchSessionsFromInformer(labelSelector string, filter entities.SessionFilter) []entities.Session {
+	selector, err := labels.Parse(labelSelector)
+	if err != nil {
+		log.Printf("[K8S_SESSION] Failed to parse session label selector %q: %v", labelSelector, err)
+		return []entities.Session{}
+	}
+
+	deploymentMap := make(map[string]*appsv1.Deployment)
+	podMap := make(map[string]*corev1.Pod)
+	for _, item := range m.workloadInformer.GetStore().List() {
+		switch workload := item.(type) {
+		case *appsv1.Deployment:
+			if sid := workload.Labels["agentapi.proxy/session-id"]; sid != "" {
+				deploymentMap[sid] = workload
+			}
+		case *corev1.Pod:
+			if sid := workload.Labels["agentapi.proxy/session-id"]; sid != "" {
+				podMap[sid] = workload
+			}
+		}
+	}
+
+	result := make([]entities.Session, 0)
+	for _, item := range m.serviceInformer.GetStore().List() {
+		svc, ok := item.(*corev1.Service)
+		if !ok || svc.DeletionTimestamp != nil || !selector.Matches(labels.Set(svc.Labels)) {
+			continue
+		}
+		sessionID := svc.Labels["agentapi.proxy/session-id"]
+		if sessionID == "" {
+			continue
+		}
+		userID := svc.Labels["agentapi.proxy/user-id"]
+		if filter.UserID != "" && userID != filter.UserID {
+			continue
+		}
+		session := m.getOrRestoreSessionWithWorkload(svc.DeepCopy(), deploymentMap[sessionID], podMap[sessionID])
+		if session != nil {
+			result = append(result, session)
+		}
+	}
+	return result
+}
+
+func (m *KubernetesSessionManager) fetchSessionsDirect(ctx context.Context, labelSelector string, filter entities.SessionFilter) []entities.Session {
 	services, err := m.client.CoreV1().Services(m.namespace).List(
 		ctx,
 		metav1.ListOptions{LabelSelector: labelSelector})
@@ -2117,36 +2533,6 @@ func (m *KubernetesSessionManager) applySessionListFilters(sessions []entities.S
 		result = append(result, session)
 	}
 	return result
-}
-
-// filterSessionsFromCache reconstructs sessions from cached DTOs – preferring
-// the live in-memory session where available (for up-to-date status) – and
-// then applies the in-memory-only filters.
-func (m *KubernetesSessionManager) filterSessionsFromCache(dtos []portrepos.CachedSessionDTO, filter entities.SessionFilter) []entities.Session {
-	// Snapshot the live sessions map once to avoid repeated lock acquisitions.
-	m.mutex.RLock()
-	live := make(map[string]*KubernetesSession, len(m.sessions))
-	for id, s := range m.sessions {
-		live[id] = s
-	}
-	m.mutex.RUnlock()
-
-	sessions := make([]entities.Session, 0, len(dtos))
-	for _, dto := range dtos {
-		if filter.UserID != "" && dto.UserID != filter.UserID {
-			continue
-		}
-		var s entities.Session
-		if ls, ok := live[dto.ID]; ok {
-			ls.SetAnnotations(dto.Annotations)
-			s = ls // use live in-memory session for current status
-		} else {
-			s = newCachedSession(dto)
-		}
-		sessions = append(sessions, s)
-	}
-
-	return m.applySessionListFilters(sessions, filter)
 }
 
 // sessionsToCacheDTOs converts a slice of entities.Session to cache DTOs.
@@ -2325,6 +2711,9 @@ func (m *KubernetesSessionManager) DeleteSession(id string) error {
 // Resources are preserved so sessions can be restored when the proxy restarts.
 // Use DeleteSession to explicitly delete a session and its resources.
 func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
+	if m.sessionInformerStop != nil {
+		m.sessionInformerStop()
+	}
 	if m.suspendCancel != nil {
 		m.suspendCancel()
 	}
@@ -4274,6 +4663,9 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 
 				session.SetStatus("active")
 				log.Printf("[K8S_SESSION] Session %s is now active", session.id)
+				if err := m.ScheduleSessionSuspend(ctx, session.ID()); err != nil {
+					log.Printf("[K8S_SESSION] Failed to schedule initial suspend for session %s: %v", session.id, err)
+				}
 
 				// Continue watching deployment health and agentapi runtime status.
 				go m.watchAgentAPIStatus(ctx, session)
@@ -4393,10 +4785,43 @@ func (m *KubernetesSessionManager) deleteSessionResources(ctx context.Context, s
 		errs = append(errs, fmt.Sprintf("provision-request-secret: %v", err))
 	}
 
+	// Delete every Secret associated with the session, including allocation,
+	// runner credential, and any resource types added in the future. Owner
+	// references normally let Kubernetes garbage-collect these with the Service,
+	// but they can be absent when creation only partially completed. Keeping this
+	// label-based sweep makes explicit session deletion deterministic even for
+	// those partially-created resources.
+	if err := m.deleteSessionSecrets(ctx, session.id); err != nil {
+		errs = append(errs, fmt.Sprintf("session-secrets: %v", err))
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to delete resources: %s", strings.Join(errs, ", "))
 	}
 
+	return nil
+}
+
+// deleteSessionSecrets removes all Secrets carrying this session's identity label.
+// Session-scoped Secret creators must set agentapi.proxy/session-id.
+func (m *KubernetesSessionManager) deleteSessionSecrets(ctx context.Context, sessionID string) error {
+	secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-id=" + sessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("list session secrets: %w", err)
+	}
+
+	var errs []string
+	for i := range secrets.Items {
+		name := secrets.Items[i].Name
+		if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("delete session secrets: %s", strings.Join(errs, ", "))
+	}
 	return nil
 }
 
@@ -4521,6 +4946,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	}
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
+		corev1.EnvVar{Name: "SESSION_STATE_PROXY_URL", Value: proxyURL},
 		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
 		corev1.EnvVar{
 			Name: "POD_NAME",
@@ -4939,13 +5365,6 @@ func (m *KubernetesSessionManager) broadcastStatusChangeLocal(sessionID, status 
 	}
 	m.globalSubsMu.Unlock()
 
-	// Invalidate session-list cache so the updated status is reflected immediately
-	// on this pod as well (the originating pod already invalidated its own cache).
-	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on cross-pod status change session=%s: %v", sessionID, err)
-		}
-	}
 }
 
 // broadcastStatusChange broadcasts a SessionStatusEvent to all active proxy-wide subscribers.
@@ -4988,12 +5407,6 @@ func (m *KubernetesSessionManager) broadcastStatusChange(sessionID, status strin
 		}
 	}
 
-	// Invalidate session-list cache so the updated status is reflected immediately.
-	if m.sessionListCacheRepo != nil {
-		if err := m.sessionListCacheRepo.InvalidateSessionListCache(context.Background(), m.namespace); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to invalidate session list cache on status change session=%s: %v", sessionID, err)
-		}
-	}
 }
 
 // broadcastMessageUpdate notifies all active per-session subscribers that a message_update
@@ -5189,6 +5602,11 @@ func (m *KubernetesSessionManager) streamAgentAPIEvents(ctx context.Context, ses
 					continue
 				}
 				applyAgentRuntimeStatus(session, body.Status)
+				if body.Status == "stable" && session.Status() != "stopped" {
+					if scheduleErr := m.ScheduleSessionSuspend(ctx, session.ID()); scheduleErr != nil {
+						log.Printf("[AGENT_STATUS] Failed to schedule suspend for stable session %s: %v", session.id, scheduleErr)
+					}
+				}
 			case "message_update":
 				log.Printf("[AGENT_MSG] Session %s: message_update received", session.id)
 				m.broadcastMessageUpdate(session.id)
@@ -5492,11 +5910,20 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 		cancel,
 		nil, // No webhook payload for restored sessions
 	)
+	if sessionMeta != nil {
+		restoredSettings := &sessionsettings.SessionSettings{Session: *sessionMeta}
+		session.Request().ProvisionSettings = restoredSettings
+		session.SetProvisionSettings(restoredSettings)
+	}
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
 	session.SetLastMessageAt(lastMessageAt)
-	session.SetStatus(m.getSessionStatusFromDeployment(sessionID))
+	status := m.getSessionStatusFromDeployment(sessionID)
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+		status = "suspended"
+	}
+	session.SetStatus(status)
 	session.SetDescription(initialMessage) // Cache initial message as description
 	session.SetAnnotations(sessionAnnotationsFromMap(svc.Annotations))
 
@@ -5511,6 +5938,7 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	// Start watching deployment health and agentapi runtime status.
 	go m.watchDeploymentStatus(ctx, session)
 	go m.watchAgentAPIStatus(ctx, session)
+	go m.scheduleSuspendWhenRestoredWorkloadReady(session)
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service", sessionID)
 
@@ -5620,6 +6048,11 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 		cancel,
 		nil, // No webhook payload for restored sessions
 	)
+	if sessionMeta != nil {
+		restoredSettings := &sessionsettings.SessionSettings{Session: *sessionMeta}
+		session.Request().ProvisionSettings = restoredSettings
+		session.SetProvisionSettings(restoredSettings)
+	}
 	// Set restored values
 	session.SetStartedAt(createdAt)
 	session.SetUpdatedAt(updatedAt)
@@ -5644,6 +6077,7 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	if status != "suspended" {
 		go m.watchDeploymentStatus(ctx, session)
 		go m.watchAgentAPIStatus(ctx, session)
+		go m.scheduleSuspendWhenRestoredWorkloadReady(session)
 	}
 
 	log.Printf("[K8S_SESSION] Restored session %s from Service (with pre-fetched workload)", sessionID)
@@ -6012,6 +6446,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		MemoryKey:          req.MemoryKey,
 		ResumeFrom:         req.ResumeFrom,
 		PersistenceEnabled: m.config.SessionPersistence.Backend != "",
+	}
+	if after, enabled, err := m.resolveAutoSuspendPolicy(ctx, session); err == nil {
+		settings.Session.AutoSuspendEnabled = &enabled
+		settings.Session.AutoSuspendMinutes = int(after / time.Minute)
 	}
 	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
 
@@ -7114,6 +7552,7 @@ func (m *KubernetesSessionManager) BuildRemoteProvisionSettings(
 	tempSession := &KubernetesSession{
 		id:          sessionID,
 		serviceName: fmt.Sprintf("agentapi-session-%s-svc", sessionID),
+		request:     req,
 	}
 	settings := m.buildSessionSettings(ctx, tempSession, req, nil)
 	return settings, nil

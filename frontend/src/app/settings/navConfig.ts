@@ -12,6 +12,7 @@ import {
   Store,
   Terminal,
   Ticket,
+  TimerOff,
 } from 'lucide-react'
 import { SettingsData } from '@/types/settings'
 
@@ -37,6 +38,14 @@ export interface SettingsNavItem {
  * 並び順がそのままサイドバーの並び順になる。
  */
 export const settingsNavItems: SettingsNavItem[] = [
+  {
+    slug: 'sessions',
+    label: 'セッション',
+    icon: TimerOff,
+    group: '',
+    scopes: ['personal', 'team'],
+    fields: ['auto_suspend'],
+  },
   {
     slug: 'notifications',
     label: '通知',

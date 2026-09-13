@@ -90,6 +90,7 @@ func NewClient(baseURL, bearerToken string, options ...ClientOption) (*Client, e
 
 var _ portrepos.SessionManager = (*Client)(nil)
 var _ portrepos.SessionWorkloadEnsurer = (*Client)(nil)
+var _ portrepos.SessionSuspender = (*Client)(nil)
 var _ portrepos.SessionToucher = (*Client)(nil)
 var _ portrepos.SessionSandboxDomainReader = (*Client)(nil)
 var _ portrepos.SessionStatusWatcher = (*Client)(nil)
@@ -306,6 +307,10 @@ func (c *Client) SendMessage(ctx context.Context, id, message string) error {
 
 func (c *Client) StopAgent(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/stop", nil, nil)
+}
+
+func (c *Client) SuspendSession(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/suspend", nil, nil)
 }
 
 func (c *Client) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {

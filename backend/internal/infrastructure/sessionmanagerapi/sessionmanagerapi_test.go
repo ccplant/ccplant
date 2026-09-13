@@ -58,6 +58,7 @@ type fakeManager struct {
 	sentID         string
 	sentMessage    string
 	stoppedID      string
+	suspendedID    string
 	lastFilter     entities.SessionFilter
 	messages       []portrepos.Message
 
@@ -143,6 +144,11 @@ func (m *fakeManager) SendMessage(_ context.Context, id, message string) error {
 
 func (m *fakeManager) StopAgent(_ context.Context, id string) error {
 	m.stoppedID = id
+	return nil
+}
+
+func (m *fakeManager) SuspendSession(_ context.Context, id string) error {
+	m.suspendedID = id
 	return nil
 }
 
@@ -385,6 +391,17 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	missing, err := client.GetSessionContext(ctx, session.ID())
 	if err != nil || missing != nil {
 		t.Fatalf("missing session = (%#v, %v)", missing, err)
+	}
+}
+
+func TestClientRequestsManagerOwnedSuspend(t *testing.T) {
+	manager := newFakeManager()
+	client, _ := newTestClient(t, manager)
+	if err := client.SuspendSession(context.Background(), "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if manager.suspendedID != "session-1" {
+		t.Fatalf("suspended session = %q", manager.suspendedID)
 	}
 }
 

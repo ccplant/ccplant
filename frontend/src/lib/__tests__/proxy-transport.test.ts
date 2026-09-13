@@ -15,6 +15,7 @@ describe('proxy transport helpers', () => {
     expect(isUnauthenticatedProxyPath('s/share-token/messages')).toBe(true)
     expect(isUnauthenticatedProxyPath('oauth/callback')).toBe(true)
     expect(isUnauthenticatedProxyPath('auth/status')).toBe(true)
+    expect(isUnauthenticatedProxyPath('auth/github-connections/callback')).toBe(true)
     expect(isUnauthenticatedProxyPath('sessions')).toBe(false)
     expect(isUnauthenticatedProxyPath('sessions/something')).toBe(false)
     expect(isUnauthenticatedProxyPath('session-managers')).toBe(false)

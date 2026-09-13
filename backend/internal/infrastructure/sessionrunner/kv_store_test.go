@@ -3,6 +3,7 @@ package sessionrunner
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -218,7 +219,7 @@ func (s *versionedMemoryStore) List(_ context.Context, query kvstore.Query) ([]k
 	defer s.mu.Unlock()
 	result := make([]kvstore.Record, 0)
 	for _, record := range s.records {
-		if record.Kind == query.Kind && record.Namespace == query.Namespace {
+		if record.Kind == query.Kind && record.Namespace == query.Namespace && strings.HasPrefix(record.Key, query.KeyPrefix) {
 			result = append(result, cloneRecord(record))
 		}
 	}

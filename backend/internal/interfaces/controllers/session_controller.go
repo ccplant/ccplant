@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -43,6 +44,10 @@ type pendingSessionAllocationDeleter interface {
 
 type sessionStatusMessageProvider interface {
 	StatusMessage() string
+}
+
+type sessionStatusCacheUpdater interface {
+	SetStatusSilent(string)
 }
 
 // SessionManagerProvider provides access to the session manager
@@ -84,6 +89,7 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
+	sessionRunnerStore     sessionRunnerAllocationStore
 	esmControlTunnel       ESMControlTunnel
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
@@ -92,6 +98,7 @@ type SessionController struct {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+		ResolveConnectionURLs(context.Context, string) (string, string, error)
 		RevokeBrokerLeases(context.Context, string) error
 	}
 	sessionTokenDebug bool
@@ -101,6 +108,7 @@ func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 	IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+	ResolveConnectionURLs(context.Context, string) (string, string, error)
 	RevokeBrokerLeases(context.Context, string) error
 }) SessionControllerOption {
 	return func(c *SessionController) { c.githubTokenResolver = resolver }
@@ -155,6 +163,14 @@ func WithSessionProfileRepository(repo repositories.SessionProfileRepository) Se
 
 func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
 	return func(c *SessionController) { c.esmControlTunnel = tunnel }
+}
+
+type sessionRunnerAllocationStore interface {
+	GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error)
+}
+
+func WithSessionRunnerStore(store sessionRunnerAllocationStore) SessionControllerOption {
+	return func(c *SessionController) { c.sessionRunnerStore = store }
 }
 
 // getSessionManager returns the current session manager
@@ -253,8 +269,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			brokerConfigured = true
-			if startReq.Environment == nil {
-				startReq.Environment = make(map[string]string)
+			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
 			brokerURL, err := githubBrokerURL(ctx, sessionID)
 			if err != nil {
@@ -279,6 +296,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		startReq.Params.GithubToken = token
+		if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, startReq.Params.ConnectionID); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
 	} else if !brokerConfigured && (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
 		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(sessionRepository(startReq)))
@@ -287,6 +307,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			startReq.Params.GithubToken = token
+			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
 			c.logSessionTokenRouting(sessionID, "organization", connectionID, token)
 		} else {
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)
@@ -498,6 +521,21 @@ func (c *SessionController) logSessionTokenRouting(sessionID, source, connection
 	log.Printf("[SESSION_TOKEN_DEBUG] session_id=%s source=%s connection_id=%q token_fingerprint=%s token_present=%t", sessionID, source, connectionID, fingerprint, token != "")
 }
 
+func (c *SessionController) applyGitHubConnectionURLs(ctx context.Context, startReq *entities.StartRequest, connectionID string) error {
+	baseURL, apiURL, err := c.githubTokenResolver.ResolveConnectionURLs(ctx, connectionID)
+	if err != nil {
+		return err
+	}
+	if startReq.Environment == nil {
+		startReq.Environment = make(map[string]string)
+	}
+	// These are part of the selected credential's routing context. Overwrite
+	// request-provided values so a token is never sent to a different GitHub host.
+	startReq.Environment["GITHUB_URL"] = baseURL
+	startReq.Environment["GITHUB_API"] = apiURL
+	return nil
+}
+
 func repositoryOwner(repoFullName string) string {
 	parts := strings.SplitN(strings.TrimSpace(repoFullName), "/", 2)
 	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
@@ -595,6 +633,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		sessionScope := session.Scope()
 		if scopeFilter == string(entities.ScopeTeam) {
 			if sessionScope != entities.ScopeTeam {
+				continue
+			}
+			if teamIDFilter != "" && session.TeamID() != teamIDFilter {
 				continue
 			}
 		} else {
@@ -706,6 +747,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			continue
 		}
 		if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+			continue
+		}
+		if teamIDFilter != "" && route.TeamID != teamIDFilter {
 			continue
 		}
 		if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
@@ -1084,13 +1128,115 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 	status := "active"
 	code := http.StatusOK
 	if restoring {
-		status = "restoring"
+		status = "resuming"
 		code = http.StatusAccepted
 		ctx.Response().Header().Set("Retry-After", "2")
 	} else if ensured != nil {
 		status = ensured.Status()
 	}
 	return ctx.JSON(code, map[string]interface{}{"session_id": sessionID, "status": status})
+}
+
+// SuspendSession asks the owning session manager to suspend the workload. The
+// manager owns any checkpoint policy and does not expose it through this API.
+func (c *SessionController) SuspendSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil && c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to look up session route")
+		}
+		if route != nil && route.ManagerID != "" {
+			return c.suspendRemoteSession(ctx, route)
+		}
+	}
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	suspender, ok := c.getSessionManager().(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session suspend is not supported by this session manager")
+	}
+	if err := suspender.SuspendSession(ctx.Request().Context(), sessionID); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to suspend session: %v", err))
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID, "status": "suspended"})
+}
+
+func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
+	if c.sessionRunnerStore == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session resume data store is unavailable")
+	}
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is unavailable; the session was not suspended")
+	}
+	if len(allocation.ProvisionSettings) == 0 || strings.TrimSpace(allocation.RuntimeToken) == "" || allocation.Generation <= 0 {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is incomplete; the session was not suspended")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to decode session resume data; the session was not suspended")
+	}
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
+	settingsBody, err := json.Marshal(&settings)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist suspended session status")
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+}
+
+// recordRemoteLifecycleStatus keeps the public route and only the allocated
+// session's local cache entry in sync after a remote lifecycle command.
+func (c *SessionController) recordRemoteLifecycleStatus(ctx context.Context, route *repositories.SessionRoute, status string) error {
+	if err := c.RecordRemoteSessionStatus(ctx, route, status); err != nil {
+		return err
+	}
+	if session := c.getSessionManager().GetSession(route.RemoteSessionID); session != nil {
+		if updater, ok := session.(sessionStatusCacheUpdater); ok {
+			updater.SetStatusSilent(status)
+		}
+	}
+	return nil
 }
 
 // RouteToSession routes requests to the appropriate agentapi server instance
@@ -1134,6 +1280,30 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 		if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 			log.Printf("User does not have access to session %s", sessionID)
 			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+		}
+	}
+
+	// Runtime access is the resume boundary. Listing and proxy-level status
+	// endpoints never reach this handler, so background polling cannot wake all
+	// suspended sessions.
+	if ctx.Request().Method != "OPTIONS" {
+		if ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") && session.Status() == "suspended" {
+			return ctx.JSON(http.StatusOK, map[string]string{"status": "suspended"})
+		}
+		if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok {
+			ensured, resuming, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), session.ID())
+			if err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume session workload").SetInternal(err)
+			}
+			if ensured != nil {
+				session = ensured
+			}
+			if resuming {
+				ctx.Response().Header().Set("Retry-After", "2")
+				return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+					"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": sessionID, "status": "resuming"},
+				})
+			}
 		}
 	}
 
@@ -1284,6 +1454,30 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || route.ManagerID == "") {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
+	if (route.Status == "suspended" || route.Status == "resuming") && ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") {
+		return ctx.JSON(http.StatusOK, map[string]string{"status": route.Status})
+	}
+	if route.Status == "suspended" {
+		resp, err := c.requestRemoteResume(ctx, route)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
+		}
+		_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+		ctx.Response().Header().Set("Retry-After", "2")
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+		})
+	}
+	if route.Status == "resuming" {
+		ctx.Response().Header().Set("Retry-After", "2")
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+		})
+	}
 
 	// Check authorization
 	if ctx.Request().Method != "OPTIONS" {
@@ -1366,26 +1560,44 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 }
 
 func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	resp, err := c.requestRemoteResume(ctx, route)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			ctx.Response().Header().Add(key, value)
+		}
+	}
+	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+}
+
+func (c *SessionController) requestRemoteResume(ctx echo.Context, route *repositories.SessionRoute) (*http.Response, error) {
 	if route.RemoteSessionID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
 	}
 	if c.esmControlTunnel == nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	targetURL := "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
+	body := c.remoteResumeSettings(ctx, route)
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+	}
+	if len(body) != 0 {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	ts := hmacutil.NowTimestamp()
 	parsedTarget, err := url.Parse(targetURL)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
 	}
-	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, nil)
+	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, body)
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
 	req.Header.Set(hmacutil.TimestampHeader, ts)
 	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
@@ -1396,15 +1608,55 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
-	defer func() { _ = resp.Body.Close() }()
-	for key, values := range resp.Header {
-		for _, value := range values {
-			ctx.Response().Header().Add(key, value)
+	return resp, nil
+}
+
+// remoteResumeSettings refreshes mutable policy values before an existing pool
+// allocation is restored. This prevents a session created under an older idle
+// timeout from reverting to that timeout after every resume.
+func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) []byte {
+	if c.sessionRunnerStore == nil {
+		return nil
+	}
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
+	if err != nil || allocation == nil || len(allocation.ProvisionSettings) == 0 {
+		return nil
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return nil
+	}
+	if c.settingsRepo != nil {
+		settingsName := route.UserID
+		if route.Scope == string(entities.ScopeTeam) && route.TeamID != "" {
+			settingsName = route.TeamID
+		}
+		if stored, findErr := c.settingsRepo.FindByName(ctx.Request().Context(), settingsName); findErr == nil && stored != nil && stored.AutoSuspend() != nil {
+			policy := stored.AutoSuspend()
+			settings.Session.AutoSuspendEnabled = &policy.Enabled
+			settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 		}
 	}
-	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID,
+		ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation,
+	}
+	body, err := json.Marshal(&settings)
+	if err != nil {
+		return nil
+	}
+	return body
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.

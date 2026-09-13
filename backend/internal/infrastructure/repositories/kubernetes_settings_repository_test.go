@@ -569,6 +569,23 @@ func TestSanitizeSecretName(t *testing.T) {
 	}
 }
 
+func TestKubernetesSettingsRepositoryAutoSuspendRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := NewKubernetesSettingsRepository(fake.NewSimpleClientset(), "default")
+	settings := entities.NewSettings("user-1")
+	settings.SetAutoSuspend(&entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 240})
+	if err := repo.Save(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := repo.FindByName(ctx, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AutoSuspend() == nil || !loaded.AutoSuspend().Enabled || loaded.AutoSuspend().IdleTimeoutMinutes != 240 {
+		t.Fatalf("auto suspend policy was not preserved: %#v", loaded.AutoSuspend())
+	}
+}
+
 func TestSanitizeLabelValue(t *testing.T) {
 	tests := []struct {
 		input    string
