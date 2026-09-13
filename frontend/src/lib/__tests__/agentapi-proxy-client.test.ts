@@ -153,6 +153,25 @@ describe('AgentAPIProxyClient ACP message history', () => {
     );
   });
 
+  it('suspends a session through the explicit suspend endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ session_id: 'session-1', status: 'suspending' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.suspendSession('session-1')).resolves.toEqual({
+      session_id: 'session-1',
+      status: 'suspending',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/sessions/session-1/suspend',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('rejects when history cannot be fetched instead of returning an empty history', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('connection lost'));
     const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });

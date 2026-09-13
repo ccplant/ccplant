@@ -138,6 +138,26 @@ func TestScheduleSessionSuspendUsesScopedSettings(t *testing.T) {
 	}
 }
 
+func TestScheduleSessionSuspendPreservesCanonicalPolicyAcrossReplicas(t *testing.T) {
+	enabled := true
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels:      map[string]string{"agentapi.proxy/session-id": "session-1"},
+		Annotations: map[string]string{sessionAutoSuspendEnabledAnnotation: "true", sessionAutoSuspendIdleSecondsAnnotation: "3600"},
+	}}
+	manager := newSuspendTestManager(t, service)
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{ProvisionSettings: &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{AutoSuspendEnabled: &enabled, AutoSuspendMinutes: 1}}},
+		"agentapi-session-session-1", service.Name, "session-1-pvc", "test-ns", 9000, nil, nil)
+	manager.sessions[session.id] = session
+	if err := manager.ScheduleSessionSuspend(context.Background(), session.id); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if stored.Annotations[sessionAutoSuspendIdleSecondsAnnotation] != "3600" {
+		t.Fatalf("canonical policy overwritten: %#v", stored.Annotations)
+	}
+}
+
 func TestResolveAutoSuspendPolicyForRemoteSessionWithoutLocalPersistence(t *testing.T) {
 	manager := newSuspendTestManager(t)
 	manager.config.SessionPersistence.Backend = ""

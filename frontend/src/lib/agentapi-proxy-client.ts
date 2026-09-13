@@ -1168,6 +1168,12 @@ export class AgentAPIProxyClient {
     });
   }
 
+  async suspendSession(sessionId: string): Promise<{ session_id: string; status: string }> {
+    return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/suspend`, {
+      method: 'POST',
+    });
+  }
+
 
   // Session message operations
 

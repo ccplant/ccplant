@@ -79,8 +79,10 @@ type Bridge struct {
 	lastUserMessageIdx       int
 	userMessageIndices       []int // history indices of each user_message_chunk
 	lastHistoryWasUserChunk  bool
-	restoredReplaySignatures []string
-	restoredReplayIndex      int
+	restoredReplaySignatures map[string]int
+	suppressRestoredReplay   bool
+	sendingPromptUserEcho    bool
+	awaitingLiveOutput       bool
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -129,7 +131,11 @@ func (b *Bridge) SetHistoryFile(path string) error {
 		}
 		b.history = append(b.history, raw)
 		if signature, ok := restoredReplaySignature(raw); ok {
-			b.restoredReplaySignatures = append(b.restoredReplaySignatures, signature)
+			if b.restoredReplaySignatures == nil {
+				b.restoredReplaySignatures = make(map[string]int)
+			}
+			b.restoredReplaySignatures[signature]++
+			b.suppressRestoredReplay = true
 		}
 	}
 	return nil
@@ -632,6 +638,11 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, blocks=%d)", b.sessionId, clientID, len(prompt))
 
+	b.histMu.Lock()
+	b.sendingPromptUserEcho = true
+	b.awaitingLiveOutput = true
+	b.histMu.Unlock()
+
 	// Broadcast the user's prompt blocks as synthetic session/update notifications.
 	// The ACP server does not echo user messages, so we emit it here to ensure
 	// it appears in both the SSE live stream and GET /messages history.
@@ -653,6 +664,9 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 			},
 		})
 	}
+	b.histMu.Lock()
+	b.sendingPromptUserEcho = false
+	b.histMu.Unlock()
 
 	b.setStatus("running")
 
@@ -816,15 +830,23 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	isUserChunk := isUserMessageUpdate(msg)
-	if signature, replayable := restoredReplaySignature(raw); replayable && b.restoredReplayIndex < len(b.restoredReplaySignatures) {
-		if signature == b.restoredReplaySignatures[b.restoredReplayIndex] {
-			b.restoredReplayIndex++
+	if signature, replayable := restoredReplaySignature(raw); replayable && b.suppressRestoredReplay && !(isUserChunk && b.sendingPromptUserEcho) {
+		if remaining := b.restoredReplaySignatures[signature]; remaining > 0 {
+			if remaining == 1 {
+				delete(b.restoredReplaySignatures, signature)
+			} else {
+				b.restoredReplaySignatures[signature] = remaining - 1
+			}
 			b.histMu.Unlock()
 			return
 		}
-		// A different transcript update is new live output, so stop treating
-		// subsequent events as session/load replay.
-		b.restoredReplayIndex = len(b.restoredReplaySignatures)
+		// After a new prompt, the first transcript update that is not restored
+		// content marks the boundary between delayed session/load replay and
+		// genuinely live output.
+		if b.awaitingLiveOutput && !isUserChunk {
+			b.suppressRestoredReplay = false
+			b.awaitingLiveOutput = false
+		}
 	}
 	if isUserChunk && !b.lastHistoryWasUserChunk {
 		b.lastUserMessageIdx = len(b.history)

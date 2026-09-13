@@ -1213,6 +1213,19 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		if status == "stable" {
 			status = "active"
 		}
+		// Suspension is a parent-controlled lifecycle state. A manager may still
+		// report the workload's terminal status from a watcher that observed the
+		// Pod deletion after suspension completed. Keep the route resumable until
+		// an explicit resume changes it to resuming.
+		if route.Status == "suspended" && status != "suspended" {
+			continue
+		}
+		// While resume owns the lifecycle transition, stale replicas can still
+		// report the deleted pre-resume workload as stopped. Only a live status
+		// may complete the transition.
+		if route.Status == "resuming" && status != "active" && status != "running" && status != "stable" && status != "resuming" {
+			continue
+		}
 		if route.Status == status {
 			continue
 		}

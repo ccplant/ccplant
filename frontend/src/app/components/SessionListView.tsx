@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal } from 'lucide-react'
+import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
@@ -116,6 +116,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [deletingSession, setDeletingSession] = useState<string | null>(null)
+  const [suspendingSession, setSuspendingSession] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(false)
   const [sessionAgentStatus, setSessionAgentStatus] = useState<{ [sessionId: string]: AgentStatus }>({})
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
@@ -331,6 +332,28 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }
   }
 
+  const suspendSession = async (sessionId: string) => {
+    if (!confirm('このセッションをサスペンドしますか？保存後、チャットを開くと再開できます。')) return
+
+    try {
+      setSuspendingSession(sessionId)
+      setError(null)
+      setSuccess(null)
+      const result = await agentAPI.suspendSession(sessionId)
+      setSessions(current => current.map(session =>
+        session.session_id === sessionId ? { ...session, status: result.status as Session['status'] } : session
+      ))
+      setSuccess('セッションのサスペンドを開始しました')
+      setTimeout(() => setSuccess(null), 3000)
+      void fetchSessions(true)
+    } catch (err) {
+      console.error('Failed to suspend session:', err)
+      setError('セッションのサスペンドに失敗しました')
+    } finally {
+      setSuspendingSession(null)
+    }
+  }
+
   const toggleSessionSelection = (sessionId: string) => {
     setSelectedSessions(prev => {
       const next = new Set(prev)
@@ -450,6 +473,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }
     if (session.status === 'suspended') {
       return { status: 'suspended' as const, colorClass: 'bg-violet-500', text: 'Suspended' }
+    }
+    if (session.status === 'stopped') {
+      return { status: 'stopped' as const, colorClass: 'bg-gray-400', text: 'Stopped' }
     }
     if (session.status === 'resuming' || session.status === 'restoring') {
       return { status: 'starting' as const, colorClass: 'bg-blue-500 animate-pulse', text: '再開中' }
@@ -1053,7 +1079,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                             <span className="hidden sm:inline">チャット</span>
                           </button>
                         )}
-                        
+
                         {session.metadata?.claude_login_url ? (
                           <a
                             href={String(session.metadata.claude_login_url).replace(/\s+/g, '')}
@@ -1068,7 +1094,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                           </a>
                         ) : null}
 
-                        {(annotations.prUrl || annotations.issueUrl) && (
+                        {(annotations.prUrl || annotations.issueUrl || (!acpMode && ['active', 'running'].includes(session.status))) && (
                           <div className="relative">
                             <button
                               type="button"
@@ -1106,6 +1132,22 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                     <CircleDot className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
                                     {issueNumber ? `Issue #${issueNumber}` : 'Issue'}
                                   </a>
+                                )}
+                                {!acpMode && ['active', 'running'].includes(session.status) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenAnnotationMenuId(null)
+                                      void suspendSession(session.session_id)
+                                    }}
+                                    disabled={suspendingSession === session.session_id}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-violet-300 dark:hover:bg-violet-900/30"
+                                  >
+                                    {suspendingSession === session.session_id
+                                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                      : <Pause className="h-3.5 w-3.5" aria-hidden="true" />}
+                                    {suspendingSession === session.session_id ? 'サスペンド中...' : 'サスペンド'}
+                                  </button>
                                 )}
                               </div>
                             )}
