@@ -40,7 +40,9 @@ func (s githubConnectionURLResolverStub) ResolveConnectionURLs(context.Context, 
 	return s.baseURL, s.apiURL, nil
 }
 
-func (s githubConnectionURLResolverStub) RevokeBrokerLeases(context.Context, string) error { return nil }
+func (s githubConnectionURLResolverStub) RevokeBrokerLeases(context.Context, string) error {
+	return nil
+}
 
 func TestSessionTokenDebugLogging(t *testing.T) {
 	var output bytes.Buffer
@@ -162,11 +164,30 @@ func TestApplyGitHubConnectionURLsOverridesDeploymentDefaults(t *testing.T) {
 	startReq := entities.StartRequest{Environment: map[string]string{
 		"GITHUB_URL": "https://github.enterprise.example",
 		"GITHUB_API": "https://github.enterprise.example/api/v3",
+		"GH_HOST":    "github.enterprise.example",
 	}}
 
 	require.NoError(t, controller.applyGitHubConnectionURLs(context.Background(), &startReq, "selected"))
 	require.Equal(t, "https://github.selected.example", startReq.Environment["GITHUB_URL"])
 	require.Equal(t, "https://github.selected.example/api/v3", startReq.Environment["GITHUB_API"])
+	require.Equal(t, "github.selected.example", startReq.Environment["GH_HOST"])
+}
+
+func TestApplyGitHubConnectionURLsClearsEnterpriseHostForGitHubDotCom(t *testing.T) {
+	controller := &SessionController{githubTokenResolver: githubConnectionURLResolverStub{
+		baseURL: "https://github.com",
+		apiURL:  "https://api.github.com",
+	}}
+	startReq := entities.StartRequest{Environment: map[string]string{
+		"GITHUB_URL": "https://github.enterprise.example",
+		"GITHUB_API": "https://github.enterprise.example/api/v3",
+		"GH_HOST":    "github.enterprise.example",
+	}}
+
+	require.NoError(t, controller.applyGitHubConnectionURLs(context.Background(), &startReq, "selected"))
+	require.Equal(t, "https://github.com", startReq.Environment["GITHUB_URL"])
+	require.Equal(t, "https://api.github.com", startReq.Environment["GITHUB_API"])
+	require.Equal(t, "github.com", startReq.Environment["GH_HOST"])
 }
 
 func TestSessionRepository(t *testing.T) {
