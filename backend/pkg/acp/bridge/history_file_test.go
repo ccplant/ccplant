@@ -48,6 +48,33 @@ func TestBroadcastSuppressesRestoredSessionLoadTranscriptSubset(t *testing.T) {
 	}
 }
 
+func TestBroadcastSuppressesReplayArrivingAfterNewPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	agent := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"old","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old answer"}},"time":"old"}}`
+	if err := os.WriteFile(path, []byte(agent+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := New(nil, "session", false, "", false)
+	if err := b.SetHistoryFile(path); err != nil {
+		t.Fatal(err)
+	}
+	b.awaitingLiveOutput = true
+
+	for _, input := range []string{
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"new","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"old answer"}},"time":"new"}}`,
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"new","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"new answer"}},"time":"new"}}`,
+	} {
+		var msg jsonRPCMsg
+		if err := json.Unmarshal([]byte(input), &msg); err != nil {
+			t.Fatal(err)
+		}
+		b.broadcast(msg)
+	}
+	if len(b.history) != 2 {
+		t.Fatalf("history=%d, want old and new answers", len(b.history))
+	}
+}
+
 func TestBroadcastSuppressesRestoredSessionLoadTranscript(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.jsonl")
 	user := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"old","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"hello"}},"time":"old"}}`

@@ -81,6 +81,8 @@ type Bridge struct {
 	lastHistoryWasUserChunk  bool
 	restoredReplaySignatures map[string]int
 	suppressRestoredReplay   bool
+	sendingPromptUserEcho    bool
+	awaitingLiveOutput       bool
 
 	// Agent-initiated RPCs (e.g. session/request_permission):
 	// We assign local sequential ids, emit them via SSE, and await replies on POST /rpc.
@@ -636,11 +638,9 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 
 	log.Printf("[bridge] SendPrompt (session=%s, clientID=%s, blocks=%d)", b.sessionId, clientID, len(prompt))
 
-	// session/load has completed before the HTTP bridge accepts prompts. From
-	// this point onward, matching transcript content is a legitimate new turn,
-	// even when the user deliberately repeats an earlier message.
 	b.histMu.Lock()
-	b.suppressRestoredReplay = false
+	b.sendingPromptUserEcho = true
+	b.awaitingLiveOutput = true
 	b.histMu.Unlock()
 
 	// Broadcast the user's prompt blocks as synthetic session/update notifications.
@@ -664,6 +664,9 @@ func (b *Bridge) SendPrompt(clientID json.RawMessage, prompt []acp.ContentBlock)
 			},
 		})
 	}
+	b.histMu.Lock()
+	b.sendingPromptUserEcho = false
+	b.histMu.Unlock()
 
 	b.setStatus("running")
 
@@ -827,7 +830,7 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 	// Persist to history inside subsMu so SubscribeFrom sees a consistent snapshot.
 	b.histMu.Lock()
 	isUserChunk := isUserMessageUpdate(msg)
-	if signature, replayable := restoredReplaySignature(raw); replayable && b.suppressRestoredReplay {
+	if signature, replayable := restoredReplaySignature(raw); replayable && b.suppressRestoredReplay && !(isUserChunk && b.sendingPromptUserEcho) {
 		if remaining := b.restoredReplaySignatures[signature]; remaining > 0 {
 			if remaining == 1 {
 				delete(b.restoredReplaySignatures, signature)
@@ -836,6 +839,13 @@ func (b *Bridge) broadcast(msg jsonRPCMsg) {
 			}
 			b.histMu.Unlock()
 			return
+		}
+		// After a new prompt, the first transcript update that is not restored
+		// content marks the boundary between delayed session/load replay and
+		// genuinely live output.
+		if b.awaitingLiveOutput && !isUserChunk {
+			b.suppressRestoredReplay = false
+			b.awaitingLiveOutput = false
 		}
 	}
 	if isUserChunk && !b.lastHistoryWasUserChunk {
