@@ -474,6 +474,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     if (session.status === 'suspended') {
       return { status: 'suspended' as const, colorClass: 'bg-violet-500', text: 'Suspended' }
     }
+    if (session.status === 'stopped') {
+      return { status: 'stopped' as const, colorClass: 'bg-gray-400', text: 'Stopped' }
+    }
     if (session.status === 'resuming' || session.status === 'restoring') {
       return { status: 'starting' as const, colorClass: 'bg-blue-500 animate-pulse', text: '再開中' }
     }
