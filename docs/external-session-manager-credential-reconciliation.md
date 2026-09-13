@@ -41,6 +41,15 @@ case. The primary invariant this design establishes is:
 
 ### Current trigger conditions
 
+There is a direct contract mismatch in the current release. The operator
+documentation says that an upgrade must omit the registration token and that
+passing one while the Secret exists is rejected. The CLI flag also describes the
+token as `initial install only`. However, `ensureManagerCredentials` does not
+enforce that rule: a non-empty registration token bypasses credential reuse,
+enrolls the token, and overwrites the existing Secret. Consequently, a deployment
+workflow which supplies a freshly created token on every invocation changes the
+manager ID despite appearing to use the supported `upgrade --install` command.
+
 The ID changes when the installer enters enrollment and the registration token is
 bound to a newly created Manager. In the current implementation this happens in
 the following update scenarios:
