@@ -91,6 +91,9 @@ func TestHeartbeatPreservesClaimBeforeAcknowledgement(t *testing.T) {
 				t.Fatalf("route changed: %+v", r)
 			}
 			if tc.expired {
+				r.Status = "stopped"
+				r.StatusUpdatedAt = time.Now().Add(-time.Hour)
+				must(routes.Save(ctx, r))
 				must(store.CreateRunner(ctx, &core.Runner{ID: "replacement", ManagerID: "manager", Pool: "pool", Status: core.RunnerIdle}))
 				next, found, err := store.ClaimNext(ctx, "pool", "replacement", 45*time.Second)
 				must(err)
@@ -105,6 +108,9 @@ func TestHeartbeatPreservesClaimBeforeAcknowledgement(t *testing.T) {
 				must(err)
 				if recovered.RemoteSessionID != "replacement" {
 					t.Fatal("route not repaired")
+				}
+				if recovered.Status != "starting" || !recovered.StatusUpdatedAt.After(r.StatusUpdatedAt) {
+					t.Fatal("replacement inherited old completion TTL")
 				}
 				_, err = store.Acknowledge(ctx, a.SessionID, a.RunnerID, a.LeaseID)
 				if !errors.Is(err, core.ErrConflict) {

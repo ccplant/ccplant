@@ -1323,6 +1323,11 @@ func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocatio
 	if err != nil || route == nil {
 		return err
 	}
+	if route.Generation != allocation.Generation {
+		// A replacement must not inherit the previous runtime's completion TTL.
+		route.Status = "starting"
+		route.StatusUpdatedAt = c.now()
+	}
 	route.ManagerID = runner.ManagerID
 	route.RemoteSessionID = runner.ID
 	route.Generation = allocation.Generation
