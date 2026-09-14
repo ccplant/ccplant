@@ -28,14 +28,18 @@ AGENTAPI_GITHUB_BROKER_BASE_URL=http://agentapi-proxy.example.svc.cluster.local:
 ```
 
 設定ファイルでは `github_broker_base_url` を指定します。環境変数が優先されます。
-Helm の場合は既存の `api.env` を使えます。
+Helm で同じクラスター内の API Service に接続する場合は、次の切り替えだけで指定できます。
 
 ```yaml
 api:
-  env:
-    - name: AGENTAPI_GITHUB_BROKER_BASE_URL
-      value: "http://agentapi-proxy.example.svc.cluster.local:8080"
+  githubBroker:
+    inCluster: true
 ```
+
+ccplant 親チャートでは `backend.api.githubBroker.inCluster: true` を指定します。
+Service 名、namespace、Service ポートからベース URL を自動生成します。
+既定は `false` で、セッションが API のクラスター内ネットワークへ到達できる場合に有効にします。
+`true` は `env` / `api.env` に指定したベース URL より優先されます。
 
 生成されるセッション用 URL は次の形式です。
 

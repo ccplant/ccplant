@@ -13,6 +13,9 @@ backend:
     repository: ghcr.io/ccplant/ccplant-backend
   # Lightweight image used only by the backend API Deployment.
   api:
+    githubBroker:
+      # Use the backend Service directly for session GitHub token requests.
+      inCluster: false
     image:
       repository: ghcr.io/ccplant/ccplant-api
   ingress:

@@ -20,6 +20,7 @@
 {{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
 {{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 {{- $api := .Values.api | default dict }}
+{{- $githubBroker := $api.githubBroker | default dict }}
 {{- $apiImage := $api.image | default .Values.image }}
 {{- $apiPodAnnotations := $api.podAnnotations | default .Values.podAnnotations }}
 {{- $apiPodLabels := $api.podLabels | default .Values.podLabels }}
@@ -51,6 +52,7 @@
 {{- $apiEnv = $unexcludedApiEnv }}
 {{- /* Prefer canonical structured values over their legacy env entries. */}}
 {{- $canonicalApiEnv := dict }}
+{{- if $githubBroker.inCluster }}{{- $_ := set $canonicalApiEnv "AGENTAPI_GITHUB_BROKER_BASE_URL" true }}{{- end }}
 {{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}
 {{- with .Values.config.auth.github.oauth.allowedRedirectUris }}{{- $_ := set $canonicalApiEnv "OAUTH_ALLOWED_REDIRECT_URIS" true }}{{- end }}
 {{- with .Values.config.vapid.publicKey }}{{- $_ := set $canonicalApiEnv "VAPID_PUBLIC_KEY" true }}{{- end }}
@@ -213,6 +215,10 @@ spec:
             - {name: AGENTAPI_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - name: HOME
               value: "/home/agentapi"
+            {{- if $githubBroker.inCluster }}
+            - name: AGENTAPI_GITHUB_BROKER_BASE_URL
+              value: {{ printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port | quote }}
+            {{- end }}
             {{- if (dig "enabled" false $openTelemetry) }}
             - name: POD_NAME
               valueFrom:

@@ -7,6 +7,19 @@ SCIA・asset server・永続PVC・各種background worker・Redis無効の最小
 
 frontendの認証Cookie用Secretを先に作成してください。
 
+## GitHub token broker をクラスター内で呼び出す
+
+```yaml
+backend:
+  api:
+    githubBroker:
+      inCluster: true
+```
+
+backend の Service 名・namespace・ポートから broker のベース URL を自動生成します。
+セッションから同じクラスター内の API Service に到達できる場合に有効にしてください。
+既定は `false` です。変更は API の更新後、新しく起動する broker 利用セッションに反映されます。
+
 ## 推奨: installer CLI
 
 導入は、抽象化された設定ファイルの生成、編集、適用の順で行います。設定の `spec` は

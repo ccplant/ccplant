@@ -29,6 +29,33 @@ assert_not_contains() {
   fi
 }
 
+# Broker sessions can bypass the public ingress using the API Service. The
+# opt-in value must track the actual Service name, namespace and port, and
+# must not leave a duplicate override in the API environment.
+assert_not_contains 'AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/ccplant-default.yaml"
+"$HELM_BIN" template broker "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --namespace broker-test --show-only templates/deployment.yaml \
+  --set api.githubBroker.inCluster=true >"$TMP_DIR/broker-in-cluster.yaml"
+assert_contains 'value: "http://broker-agentapi-proxy.broker-test.svc.cluster.local:8080"' "$TMP_DIR/broker-in-cluster.yaml"
+"$HELM_BIN" template broker "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --namespace broker-test --show-only templates/deployment.yaml \
+  --set api.githubBroker.inCluster=true --set fullnameOverride=broker-api --set service.port=9090 \
+  --set 'env[0].name=AGENTAPI_GITHUB_BROKER_BASE_URL' --set 'env[0].value=https://legacy.example' \
+  --set 'api.env[0].name=AGENTAPI_GITHUB_BROKER_BASE_URL' --set 'api.env[0].value=https://custom.example' \
+  >"$TMP_DIR/broker-in-cluster-overrides.yaml"
+assert_contains 'value: "http://broker-api.broker-test.svc.cluster.local:9090"' "$TMP_DIR/broker-in-cluster-overrides.yaml"
+assert_not_contains 'https://(legacy|custom).example' "$TMP_DIR/broker-in-cluster-overrides.yaml"
+if [[ $(grep -c 'name: AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/broker-in-cluster-overrides.yaml") -ne 1 ]]; then
+  echo "expected exactly one broker base URL environment entry" >&2
+  exit 1
+fi
+"$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" \
+  --namespace broker-test --set backend.api.githubBroker.inCluster=true \
+  --set backend.fullnameOverride=broker-api --set backend.service.port=9090 \
+  >"$TMP_DIR/ccplant-broker-in-cluster.yaml"
+assert_contains 'value: "http://broker-api.broker-test.svc.cluster.local:9090"' "$TMP_DIR/ccplant-broker-in-cluster.yaml"
+
 "$HELM_BIN" template backend-kv-encryption "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --set api.kvStore.primary.encryption.activeKeyId=current \
   --set api.kvStore.primary.encryption.keysSecretRef.name=agentapi-kv-keys >"$TMP_DIR/backend-kv-encryption.yaml"
