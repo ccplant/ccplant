@@ -127,6 +127,9 @@ type KubernetesSessionManager struct {
 	sandboxPolicyRepo  portrepos.SandboxPolicyRepository
 	userFileRepo       portrepos.UserFileRepository
 
+	settingsSecretClient    kubernetes.Interface
+	settingsSecretNamespace string
+
 	slackTokenClient    kubernetes.Interface
 	slackTokenNamespace string
 
@@ -5271,6 +5274,14 @@ func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.Settings
 	m.settingsRepo = repo
 }
 
+// SetSettingsSecretClient selects the application persistence store for raw
+// settings patches, including the configured base Secret. The API settings
+// builder has no workload client; its persistence client may be a KV adapter.
+func (m *KubernetesSessionManager) SetSettingsSecretClient(client kubernetes.Interface, namespace string) {
+	m.settingsSecretClient = client
+	m.settingsSecretNamespace = namespace
+}
+
 // SetSlackTokenClient selects the application store holding Slack credentials.
 // API-side settings builders have no runtime Kubernetes client; tokens must be
 // resolved here before the complete provision settings are sent to a runner.
@@ -7312,7 +7323,11 @@ func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Conte
 // readSettingsPatch reads the settings.json from an agentapi-settings-* Secret
 // and returns it as a SettingsPatch. Returns nil if the secret does not exist or cannot be parsed.
 func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secretName string) *settingspatch.SettingsPatch {
-	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	client, namespace := m.client, m.namespace
+	if m.settingsSecretClient != nil {
+		client, namespace = m.settingsSecretClient, m.settingsSecretNamespace
+	}
+	secret, err := client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			log.Printf("[K8S_SESSION] Warning: failed to read settings secret %s: %v", secretName, err)
