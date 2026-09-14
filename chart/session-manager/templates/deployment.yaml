@@ -64,6 +64,8 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ .Values.leaderElection.renewDeadline | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ .Values.leaderElection.retryPeriod | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
+              value: {{ .Values.session.cliImage | default (include "session-manager.image" .) | quote }}
             - {name: AGENTAPI_K8S_SESSION_IMAGE, value: {{ .Values.session.image | default (include "session-manager.image" .) | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ .Values.session.networkFilterImage | quote }}}
             - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ .Values.session.imagePullPolicy | quote }}}

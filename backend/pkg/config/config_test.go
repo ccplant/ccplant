@@ -648,3 +648,10 @@ func TestInitializeConfigStructsFromEnv_AllSettingsFromEnvironment(t *testing.T)
 	}
 
 }
+
+func TestSessionCLIImageConfig(t *testing.T) {
+	t.Setenv("AGENTAPI_K8S_SESSION_CLI_IMAGE", "example/cli:v2")
+	loaded, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "example/cli:v2", loaded.KubernetesSession.CLIImage)
+}

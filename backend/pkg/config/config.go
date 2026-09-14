@@ -253,6 +253,8 @@ type KubernetesSessionConfig struct {
 	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// Image is the container image for session pods
 	Image string `json:"image" mapstructure:"image"`
+	// CLIImage supplies /usr/local/bin/ccplant through an initContainer. Empty disables injection.
+	CLIImage string `json:"cli_image" mapstructure:"cli_image"`
 	// ImagePullPolicy is the image pull policy for session pods
 	ImagePullPolicy string `json:"image_pull_policy" mapstructure:"image_pull_policy"`
 	// ServiceAccount is the service account for session pods
@@ -1094,6 +1096,7 @@ func bindEnvVars(v *viper.Viper) {
 	// Kubernetes session configuration
 	_ = v.BindEnv("kubernetes_session.namespace", "AGENTAPI_K8S_SESSION_NAMESPACE")
 	_ = v.BindEnv("kubernetes_session.image", "AGENTAPI_K8S_SESSION_IMAGE")
+	_ = v.BindEnv("kubernetes_session.cli_image", "AGENTAPI_K8S_SESSION_CLI_IMAGE")
 	_ = v.BindEnv("kubernetes_session.image_pull_policy", "AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY")
 	_ = v.BindEnv("kubernetes_session.service_account", "AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT")
 	_ = v.BindEnv("kubernetes_session.base_port", "AGENTAPI_K8S_SESSION_BASE_PORT")
@@ -1281,6 +1284,7 @@ func setDefaults(v *viper.Viper) {
 	// Kubernetes session defaults
 	v.SetDefault("kubernetes_session.namespace", "")
 	v.SetDefault("kubernetes_session.image", "")
+	v.SetDefault("kubernetes_session.cli_image", "")
 	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
 	v.SetDefault("kubernetes_session.service_account", "agentapi-proxy-session")
 	v.SetDefault("kubernetes_session.base_port", 9000)

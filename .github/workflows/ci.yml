@@ -14,6 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  agent-image:
+    uses: ./.github/workflows/agent-image.yml
+
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -349,12 +352,13 @@ jobs:
             "ghcr.io/ccplant/ccplant-frontend:${RELEASE_TAG}"
 
   publish-dev-charts:
-    needs: [changes, carry-forward-images]
+    needs: [changes, carry-forward-images, agent-image]
     # carry-forward-images is skipped when every component is rebuilt.
     # always() lets chart publishing proceed in that case, but not after a failure.
     if: >-
       always() &&
       needs.changes.result == 'success' &&
+      needs.agent-image.result == 'success' &&
       (needs.carry-forward-images.result == 'success' || needs.carry-forward-images.result == 'skipped') &&
       github.event_name == 'pull_request' &&
       (needs.changes.outputs.backend == 'true' ||
