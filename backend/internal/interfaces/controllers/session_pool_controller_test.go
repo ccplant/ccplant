@@ -1098,3 +1098,42 @@ func decodeRecorder(t *testing.T, recorder *httptest.ResponseRecorder, out any) 
 		t.Fatalf("decode response %q: %v", recorder.Body.String(), err)
 	}
 }
+
+func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
+	for _, reported := range []string{"active", "stable", "running"} {
+		t.Run(reported, func(t *testing.T) {
+			ctx := context.Background()
+			client := fake.NewSimpleClientset()
+			routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+			completedAt := time.Now().Add(-2 * time.Minute).UTC()
+			route := &portrepos.SessionRoute{
+				SessionID: "oneshot", RemoteSessionID: "runtime", ManagerID: "manager",
+				Transport: portrepos.SessionRouteTransportDirectRuntime,
+				Tags:      map[string]string{"oneshot": "true"}, Status: "stopped", StatusUpdatedAt: completedAt,
+			}
+			if err := routes.Save(ctx, route); err != nil {
+				t.Fatal(err)
+			}
+			controller := NewSessionPoolController(nil, routes)
+			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := routes.Get(ctx, "oneshot")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != "stopped" || !got.StatusUpdatedAt.Equal(completedAt) {
+				t.Fatalf("heartbeat %q changed completion: status=%s updated=%s", reported, got.Status, got.StatusUpdatedAt)
+			}
+			// An actual runtime running event may still begin a new turn.
+			runtimeController := NewSessionController(nil, nil, WithSessionRouteRepository(routes))
+			if err := runtimeController.RecordRemoteSessionStatus(ctx, got, "running"); err != nil {
+				t.Fatal(err)
+			}
+			got, err = routes.Get(ctx, "oneshot")
+			if err != nil || got.Status != "running" {
+				t.Fatalf("runtime status not accepted: %v %v", got, err)
+			}
+		})
+	}
+}
