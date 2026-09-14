@@ -101,7 +101,8 @@ type SessionController struct {
 		ResolveConnectionURLs(context.Context, string) (string, string, error)
 		RevokeBrokerLeases(context.Context, string) error
 	}
-	sessionTokenDebug bool
+	sessionTokenDebug   bool
+	githubBrokerBaseURL string
 }
 
 func WithGitHubTokenResolver(resolver interface {
@@ -117,6 +118,11 @@ func WithGitHubTokenResolver(resolver interface {
 // WithSessionTokenDebug enables safe token-routing diagnostics. Token values are never logged.
 func WithSessionTokenDebug(enabled bool) SessionControllerOption {
 	return func(c *SessionController) { c.sessionTokenDebug = enabled }
+}
+
+// WithGitHubBrokerBaseURL sets the session-reachable broker base URL, including any API prefix.
+func WithGitHubBrokerBaseURL(baseURL string) SessionControllerOption {
+	return func(c *SessionController) { c.githubBrokerBaseURL = baseURL }
 }
 
 // NewSessionController creates a new SessionController instance
@@ -273,7 +279,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
-			brokerURL, err := githubBrokerURL(ctx, sessionID)
+			brokerURL, err := githubBrokerURL(ctx, sessionID, c.githubBrokerBaseURL)
 			if err != nil {
 				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -468,7 +474,18 @@ func shouldUseGitHubBroker(startReq entities.StartRequest, repository string) bo
 	return startReq.Params == nil || (startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "")
 }
 
-func githubBrokerURL(ctx echo.Context, sessionID string) (string, error) {
+func githubBrokerURL(ctx echo.Context, sessionID, baseURL string) (string, error) {
+	endpoint := "/internal/sessions/" + url.PathEscape(sessionID) + "/github-credentials"
+	if baseURL = strings.TrimSpace(baseURL); baseURL != "" {
+		base, err := url.Parse(baseURL)
+		if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Hostname() == "" ||
+			base.User != nil || strings.ContainsAny(baseURL, "?#") {
+			return "", errors.New("github_broker_base_url must be an absolute HTTP(S) URL without userinfo, query, or fragment")
+		}
+		// The configured base is authoritative; do not append forwarded prefixes
+		// from the browser-facing route when sessions use a different endpoint.
+		return strings.TrimRight(base.String(), "/") + endpoint, nil
+	}
 	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
 	if scheme == "" {
 		if ctx.Request().TLS != nil {
@@ -491,7 +508,7 @@ func githubBrokerURL(ctx echo.Context, sessionID string) (string, error) {
 	if prefix != "" && (!strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.ContainsAny(prefix, "\r\n?#")) {
 		return "", errors.New("invalid GitHub broker prefix")
 	}
-	return scheme + "://" + host + prefix + "/internal/sessions/" + url.PathEscape(sessionID) + "/github-credentials", nil
+	return scheme + "://" + host + prefix + endpoint, nil
 }
 
 func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.StartRequest) {

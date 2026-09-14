@@ -6,6 +6,11 @@ binary_path: ccplant
 # This file demonstrates all available configuration options
 # Values can be overridden by environment variables with AGENTAPI_ prefix
 
+# Base URL reachable from sessions for GitHub App token broker requests.
+# Set on the API server via AGENTAPI_GITHUB_BROKER_BASE_URL, optionally with an
+# API path prefix. Empty uses the session creation request's forwarded headers.
+github_broker_base_url: ""
+
 # Persistence for application KV data represented as Secrets and ConfigMaps.
 # Inject auth_token with AGENTAPI_KV_STORE_AUTH_TOKEN in production.
 kv_store:
