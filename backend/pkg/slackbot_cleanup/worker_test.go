@@ -94,3 +94,28 @@ func TestPruneSessionsWithTTLExplicitTTLOverridesOneshotDefault(t *testing.T) {
 		t.Fatalf("deleted = %v", mgr.deletedIDs)
 	}
 }
+
+func TestOneshotCleanupRegardlessOfOriginAndExplicitTTL(t *testing.T) {
+	for _, slack := range []bool{false, true} {
+		for _, explicitTTL := range []bool{false, true} {
+			stale := completedOneshotSession("stale", time.Now().Add(-2*time.Minute))
+			fresh := completedOneshotSession("fresh", time.Now().Add(-30*time.Second))
+			running := entities.NewProxySessionWithStatus("running", "user", entities.ScopeUser, "", map[string]string{"oneshot": "true", "session_ttl": "1m"}, time.Now().Add(-100*time.Hour), "running")
+			for _, session := range []entities.Session{stale, fresh, running} {
+				if slack {
+					session.Tags()["slackbot_id"] = "bot"
+				}
+				if !explicitTTL {
+					delete(session.Tags(), "session_ttl")
+				}
+			}
+			mgr := &mockSessionManager{sessions: []entities.Session{stale, fresh, running}}
+			worker := NewCleanupWorker(mgr, CleanupWorkerConfig{SessionTTL: 72 * time.Hour})
+			worker.pruneStaleSlackbotSessions(context.Background())
+			worker.pruneSessionsWithTTL(context.Background())
+			if len(mgr.deletedIDs) != 1 || mgr.deletedIDs[0] != "stale" {
+				t.Fatalf("slack=%v explicitTTL=%v: deleted=%v, want [stale]", slack, explicitTTL, mgr.deletedIDs)
+			}
+		}
+	}
+}

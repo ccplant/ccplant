@@ -87,12 +87,33 @@ func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
 	require.Equal(t, []string{"public-session"}, routes.deletedIDs)
 }
 
+func TestWorkerSessionListPreservesPoolOneshotRequest(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"runtime": {id: "runtime", status: "stopped", request: &entities.RunServerRequest{Oneshot: true, SessionTTL: "2m"}},
+	}}
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{SessionID: "public", RemoteSessionID: "runtime"}}
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
+	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	var sessions []struct {
+		ID   string            `json:"id"`
+		Tags map[string]string `json:"tags"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "public", sessions[0].ID)
+	require.Equal(t, "true", sessions[0].Tags["oneshot"])
+	require.Equal(t, "2m", sessions[0].Tags["session_ttl"])
+}
+
 func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
 	startedAt := time.Now().Add(-2 * time.Minute)
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
 		SessionID: "public-session", RemoteSessionID: "runtime-session",
 		Transport: portrepos.SessionRouteTransportDirectRuntime, UserID: "alice",
-		Scope: string(entities.ScopeUser), StartedAt: startedAt, Status: "stopped",
+		Scope: string(entities.ScopeUser), StartedAt: startedAt, Status: "stopped", StatusUpdatedAt: startedAt.Add(time.Minute),
 		Tags: map[string]string{"oneshot": "true", "session_ttl": "1m"},
 	}}
 	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes)
@@ -103,15 +124,38 @@ func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
 	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
 	require.Equal(t, http.StatusOK, rec.Code)
 	var sessions []struct {
-		ID     string            `json:"id"`
-		Status string            `json:"status"`
-		Tags   map[string]string `json:"tags"`
+		ID        string            `json:"id"`
+		UpdatedAt time.Time         `json:"updated_at"`
+		Status    string            `json:"status"`
+		Tags      map[string]string `json:"tags"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
 	require.Len(t, sessions, 1)
 	require.Equal(t, "public-session", sessions[0].ID)
 	require.Equal(t, "stopped", sessions[0].Status)
+	require.True(t, sessions[0].UpdatedAt.Equal(routes.route.StatusUpdatedAt), "cleanup must use the completion time")
 	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
+
+	// Older routes may have the oneshot marker without an explicit TTL.
+	delete(routes.route.Tags, "session_ttl")
+	rec = httptest.NewRecorder()
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	sessions = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "true", sessions[0].Tags["oneshot"])
+}
+
+func TestRepeatedOneshotStatusPreservesCompletionTime(t *testing.T) {
+	completedAt := time.Now().Add(-2 * time.Minute)
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "oneshot", Status: "stopped", StatusUpdatedAt: completedAt,
+		Tags: map[string]string{"oneshot": "true"},
+	}}
+	controller := controllers.NewSessionController(nil, nil, controllers.WithSessionRouteRepository(routes))
+	require.NoError(t, controller.RecordRemoteSessionStatus(context.Background(), routes.route, "stable"))
+	require.Equal(t, "stopped", routes.route.Status)
+	require.True(t, routes.route.StatusUpdatedAt.Equal(completedAt), "repeated status reads must not postpone cleanup")
 }
 
 func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {

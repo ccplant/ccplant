@@ -1219,6 +1219,17 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		if status == "stable" {
 			status = "active"
 		}
+		// Direct runtimes report turn completion themselves. The manager can
+		// still see a healthy, active Pod after a oneshot turn has finished;
+		// that coarse heartbeat must not undo completion and prevent TTL cleanup.
+		// Runtime status is authoritative even while running, so a heartbeat
+		// cannot race completion using an earlier route snapshot. A new turn is
+		// reported through RecordRemoteSessionStatus instead.
+		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
+			route.Tags["oneshot"] == "true" &&
+			(status == "active" || status == "running") {
+			continue
+		}
 		// Suspension is a parent-controlled lifecycle state. A manager may still
 		// report the workload's terminal status from a watcher that observed the
 		// Pod deletion after suspension completed. Keep the route resumable until

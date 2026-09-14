@@ -295,8 +295,12 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
-			} else if route.Tags["session_ttl"] != "" {
-				sessions = append(sessions, entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, route.Status))
+			} else if route.Tags["session_ttl"] != "" || route.Tags["oneshot"] == "true" {
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, route.Status)
+				if !route.StatusUpdatedAt.IsZero() {
+					session.SetUpdatedAt(route.StatusUpdatedAt)
+				}
+				sessions = append(sessions, session)
 			}
 		}
 		filtered := make([]entities.Session, 0, len(sessions))
@@ -377,6 +381,16 @@ type workerAliasSession struct {
 }
 
 func (s *workerAliasSession) ID() string { return s.id }
+
+// Preserve cleanup settings that are not part of the embedded Session interface.
+func (s *workerAliasSession) Request() *entities.RunServerRequest {
+	if provider, ok := s.Session.(interface {
+		Request() *entities.RunServerRequest
+	}); ok {
+		return provider.Request()
+	}
+	return nil
+}
 
 func (wc *WorkerControlController) Stock(c echo.Context) error {
 	if !wc.authorized(c) {
