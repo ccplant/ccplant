@@ -365,6 +365,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Set settings repository in session manager for Bedrock integration
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetSettingsRepository(settingsRepo)
+		k8sSessionManager.SetSlackTokenClient(persistenceClient, namespace)
 	}
 	log.Printf("[SERVER] Settings repository initialized")
 
@@ -505,6 +506,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("[SERVER] Failed to initialize API-side provision settings builder: %v", builderErr)
 		}
 		settingsBuilder.SetSettingsRepository(settingsRepo)
+		settingsBuilder.SetSlackTokenClient(persistenceClient, namespace)
 		settingsBuilder.SetCredentialsRepository(credentialsRepo)
 		settingsBuilder.SetTeamConfigRepository(teamConfigRepo)
 		settingsBuilder.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
