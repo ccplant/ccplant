@@ -22,6 +22,26 @@ are delegated to the backend control API. Enabling `worker` requires either
 libSQL or Kubernetes KV persistence, bundled or external Redis, and a
 worker-control Secret shared only with the API.
 
+## GitHub token broker routing
+
+To let sessions reach the GitHub token broker through the Kubernetes API Service,
+enable:
+
+```yaml
+api:
+  githubBroker:
+    inCluster: true
+```
+
+The chart generates `AGENTAPI_GITHUB_BROKER_BASE_URL` as
+`http://<API Service name>.<release namespace>.svc.cluster.local:<service.port>`.
+This respects `fullnameOverride` and replaces any base URL supplied through
+`env` or `api.env`. Enable it only when sessions can reach that cluster network.
+The default is `false`, which leaves the existing URL selection unchanged.
+The change applies to newly created broker sessions after the API rollout.
+
+For the ccplant umbrella chart, use `backend.api.githubBroker.inCluster`.
+
 ## Cloud Run manifest
 
 The same application values can render the API as a Google Cloud Run Knative

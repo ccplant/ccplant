@@ -151,6 +151,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
 		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
+		controllers.WithGitHubBrokerBaseURL(server.config.GitHubBrokerBaseURL),
 	}
 	if githubConnectionsController != nil {
 		sessionControllerOptions = append(sessionControllerOptions, controllers.WithGitHubTokenResolver(githubConnectionsController))

@@ -11,6 +11,49 @@
 5. [チーム・組織ベースの権限設定](#チーム組織ベースの権限設定)
 6. [使用方法](#使用方法)
 7. [トラブルシューティング](#トラブルシューティング)
+8. [GitHub App token broker の接続先](#github-app-token-broker-の接続先)
+
+## GitHub App token broker の接続先
+
+team セッションで Connection の GitHub App を使う場合、API サーバーが
+`AGENTAPI_GITHUB_BROKER_URL` を生成してセッションへ渡します。既定ではセッション
+作成リクエストのホストと `X-Forwarded-Proto`、`X-Forwarded-Host`、
+`X-Forwarded-Prefix` から生成します。
+
+セッションから内部 Service へ直接接続したい場合や、公開 URL の前段にリダイレクト・
+認証プロキシがある場合は、**API サーバー側**でベース URL を指定できます。
+
+```sh
+AGENTAPI_GITHUB_BROKER_BASE_URL=http://agentapi-proxy.example.svc.cluster.local:8080
+```
+
+設定ファイルでは `github_broker_base_url` を指定します。環境変数が優先されます。
+Helm で同じクラスター内の API Service に接続する場合は、次の切り替えだけで指定できます。
+
+```yaml
+api:
+  githubBroker:
+    inCluster: true
+```
+
+ccplant 親チャートでは `backend.api.githubBroker.inCluster: true` を指定します。
+Service 名、namespace、Service ポートからベース URL を自動生成します。
+既定は `false` で、セッションが API のクラスター内ネットワークへ到達できる場合に有効にします。
+`true` は `env` / `api.env` に指定したベース URL より優先されます。
+
+生成されるセッション用 URL は次の形式です。
+
+```text
+http://agentapi-proxy.example.svc.cluster.local:8080/internal/sessions/<session-id>/github-credentials
+```
+
+ベース URL に `https://broker.example.com/api/proxy` のようなパスを含めることもできます。
+指定時はリクエスト由来のホスト・スキーム・パスプレフィックスを使いません。
+HTTP または HTTPS の絶対 URL を指定し、ユーザー情報・クエリ・フラグメントは含めないでください。
+接続先はセッションから到達でき、broker の Bearer 認証をそのまま backend に渡す必要があります。
+
+設定は API サーバーの再起動後、新しく起動する broker 利用セッションに反映されます。
+既存セッションの URL は書き換わりません。空または未指定なら従来の URL 生成を維持します。
 
 ## 前提条件
 

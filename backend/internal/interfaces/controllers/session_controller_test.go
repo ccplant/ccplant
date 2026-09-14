@@ -240,7 +240,7 @@ func TestGitHubBrokerURLUsesForwardedPrefix(t *testing.T) {
 	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
 	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
 
-	got, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session/id")
+	got, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session/id", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,8 +257,52 @@ func TestGitHubBrokerURLRejectsInvalidForwardedPrefix(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Prefix", "/api/../admin")
 
-	if _, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session-1"); err == nil {
+	if _, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session-1", ""); err == nil {
 		t.Fatal("githubBrokerURL() accepted an invalid forwarded prefix")
+	}
+}
+
+func TestGitHubBrokerURLConfiguredBase(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		want string
+	}{
+		{name: "internal service", base: "http://backend.internal:8080", want: "http://backend.internal:8080"},
+		{name: "public API prefix", base: "https://broker.example.test/api/proxy/", want: "https://broker.example.test/api/proxy"},
+		{name: "trailing slashes", base: "https://broker.example.test///", want: "https://broker.example.test"},
+		{name: "surrounding whitespace", base: " https://broker.example.test/api/v1/ \n", want: "https://broker.example.test/api/v1"},
+		{name: "escaped prefix", base: "https://broker.example.test/team%20api", want: "https://broker.example.test/team%20api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodPost, "https://ui.example.test/start", nil)
+			req.Header.Set("X-Forwarded-Host", "ui.example.test")
+			req.Header.Set("X-Forwarded-Proto", "https")
+			req.Header.Set("X-Forwarded-Prefix", "/browser-api")
+			controller := NewSessionController(nil, nil, WithGitHubBrokerBaseURL(tt.base))
+			got, err := githubBrokerURL(e.NewContext(req, httptest.NewRecorder()), "session/id", controller.githubBrokerBaseURL)
+			require.NoError(t, err)
+			require.Equal(t, tt.want+"/internal/sessions/session%2Fid/github-credentials", got)
+		})
+	}
+}
+
+func TestGitHubBrokerURLRejectsInvalidConfiguredBase(t *testing.T) {
+	for _, base := range []string{
+		"/api/proxy", "//broker.example.test", "ftp://broker.example.test", "https:///api",
+		"https://user:secret@broker.example.test", "https://broker.example.test?token=secret",
+		"https://broker.example.test#fragment", "https://broker.example.test?", "https://broker.example.test#",
+		"https://broker.example.test/%zz", "https://broker.example.test\r\nInjected: value",
+	} {
+		t.Run(base, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "https://ui.example.test/start", nil)
+			got, err := githubBrokerURL(echo.New().NewContext(req, httptest.NewRecorder()), "session-1", base)
+			require.ErrorContains(t, err, "github_broker_base_url")
+			require.Empty(t, got, "invalid configuration must not fall back to request headers")
+			require.NotContains(t, err.Error(), "secret")
+		})
 	}
 }
 
