@@ -66,3 +66,25 @@ func TestSlackExecutionToken(t *testing.T) {
 		t.Fatal("accepted ambiguous trigger")
 	}
 }
+
+func TestWebhookExecutionToken(t *testing.T) {
+	now := time.Now()
+	claims := ExecutionClaims{WebhookID: "webhook", ExecutionID: "execution", SessionID: "session", UserID: "owner", TriggeredUserID: "actor", ExpiresAt: now.Add(time.Minute).Unix()}
+	token, _ := SignExecutionToken([]byte("secret"), claims)
+	got, err := VerifyExecutionToken([]byte("secret"), token, now)
+	if err != nil || got.WebhookID != "webhook" || got.TriggeredUserID != "actor" {
+		t.Fatalf("claims=%+v err=%v", got, err)
+	}
+	for _, origin := range []string{"schedule", "slackbot"} {
+		mixed := claims
+		if origin == "schedule" {
+			mixed.ScheduleID = origin
+		} else {
+			mixed.SlackBotID = origin
+		}
+		token, _ = SignExecutionToken([]byte("secret"), mixed)
+		if _, err := VerifyExecutionToken([]byte("secret"), token, now); err == nil {
+			t.Fatal("mixed trigger identities accepted")
+		}
+	}
+}

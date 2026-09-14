@@ -16,12 +16,13 @@ func (m *SessionManager) WithSessionAPIURL(apiURL string) *SessionManager {
 	return m
 }
 
-func (m *SessionManager) startSlackSession(ctx context.Context, id string, req *entities.RunServerRequest) (entities.Session, error) {
+func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	if m.token == "" {
 		return nil, fmt.Errorf("worker execution signing key is required")
 	}
 	claims := executiontoken.ExecutionClaims{
 		SlackBotID: req.Tags["slackbot_id"], ExecutionID: id, SessionID: id,
+		ScheduleID: req.Tags["schedule_id"], WebhookID: req.Tags["webhook_id"],
 		UserID: req.UserID, TriggeredUserID: req.TriggeredUserID,
 		Scope: req.Scope, TeamID: req.TeamID, Teams: req.Teams,
 		ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
@@ -50,6 +51,7 @@ func (m *SessionManager) startSlackSession(ctx context.Context, id string, req *
 	start := entities.StartRequest{
 		Environment: req.Environment, Tags: tags, Params: params, Scope: req.Scope, TeamID: req.TeamID,
 		MemoryKey: req.MemoryKey, SessionProfileID: req.ResolvedSessionProfileID,
+		WebhookPayload: webhookPayload,
 	}
 	apiURL := m.sessionAPIURL
 	if apiURL == "" {

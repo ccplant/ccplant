@@ -1100,7 +1100,7 @@ func decodeRecorder(t *testing.T, recorder *httptest.ResponseRecorder, out any) 
 }
 
 func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
-	for _, reported := range []string{"active", "stable", "running"} {
+	for _, reported := range []string{"active", "stable", "running", "starting", "creating"} {
 		t.Run(reported, func(t *testing.T) {
 			ctx := context.Background()
 			client := fake.NewSimpleClientset()
@@ -1134,7 +1134,7 @@ func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
 			if err != nil || got.Status != "running" {
 				t.Fatalf("runtime status not accepted: %v %v", got, err)
 			}
-			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": "active"}); err != nil {
+			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
 				t.Fatal(err)
 			}
 			got, err = routes.Get(ctx, "oneshot")

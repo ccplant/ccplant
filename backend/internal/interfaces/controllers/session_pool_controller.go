@@ -1225,9 +1225,11 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		// Runtime status is authoritative even while running, so a heartbeat
 		// cannot race completion using an earlier route snapshot. A new turn is
 		// reported through RecordRemoteSessionStatus instead.
+		// A lagging manager replica may still report startup after the turn has
+		// finished; those statuses must not reset the completion/TTL timestamp.
 		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
 			route.Tags["oneshot"] == "true" &&
-			(status == "active" || status == "running") {
+			(status == "active" || status == "running" || status == "starting" || status == "creating") {
 			continue
 		}
 		// Suspension is a parent-controlled lifecycle state. A manager may still

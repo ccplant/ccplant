@@ -17,7 +17,7 @@ import (
 )
 
 // SessionManager is a worker-side port that delegates every session operation
-// to HTTP APIs. SlackBot creation uses the normal /start API; lifecycle
+// to HTTP APIs. Trigger-backed creation uses the normal /start API; lifecycle
 // operations use the control API. It has no Kubernetes dependency.
 type SessionManager struct {
 	baseURL, token string
@@ -101,9 +101,9 @@ func NewSessionManager(baseURL, token string) *SessionManager {
 	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 150 * time.Second}}
 }
 
-func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, _ []byte) (entities.Session, error) {
-	if request.Tags["slackbot_id"] != "" {
-		return m.startSlackSession(ctx, id, request)
+func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	if request.Tags["slackbot_id"] != "" || request.Tags["schedule_id"] != "" || request.Tags["webhook_id"] != "" {
+		return m.startTriggerSession(ctx, id, request, webhookPayload)
 	}
 	var info sessionInfo
 	if err := m.do(ctx, http.MethodPost, "/internal/worker/sessions/"+url.PathEscape(id), request, &info); err != nil {

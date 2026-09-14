@@ -12,11 +12,12 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
-// ExecutionClaims authorizes a schedule or SlackBot call to the normal session
+// ExecutionClaims authorizes a schedule, webhook, or SlackBot call to the normal session
 // creation API. It carries identity, not session configuration.
 type ExecutionClaims struct {
 	ScheduleID      string                 `json:"schedule_id,omitempty"`
 	SlackBotID      string                 `json:"slackbot_id,omitempty"`
+	WebhookID       string                 `json:"webhook_id,omitempty"`
 	TriggeredUserID string                 `json:"triggered_user_id,omitempty"`
 	ExecutionID     string                 `json:"execution_id"`
 	SessionID       string                 `json:"session_id"`
@@ -60,7 +61,13 @@ func VerifyExecutionToken(secret []byte, token string, now time.Time) (Execution
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return claims, errors.New("invalid execution token")
 	}
-	if (claims.ScheduleID == "") == (claims.SlackBotID == "") || claims.ExecutionID == "" || claims.SessionID == "" || claims.UserID == "" || now.Unix() >= claims.ExpiresAt {
+	origins := 0
+	for _, id := range []string{claims.ScheduleID, claims.SlackBotID, claims.WebhookID} {
+		if id != "" {
+			origins++
+		}
+	}
+	if origins != 1 || claims.ExecutionID == "" || claims.SessionID == "" || claims.UserID == "" || now.Unix() >= claims.ExpiresAt {
 		return claims, errors.New("expired or incomplete execution token")
 	}
 	return claims, nil

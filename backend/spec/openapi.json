@@ -7082,6 +7082,11 @@
       "StartRequest": {
         "type": "object",
         "properties": {
+          "webhook_payload": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64-encoded original webhook body to mount in the session."
+          },
           "environment": {
             "type": "object",
             "additionalProperties": {

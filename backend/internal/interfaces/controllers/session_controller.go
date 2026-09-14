@@ -228,7 +228,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
 	}
-	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok && claims.SlackBotID != "" {
+	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok {
 		// Bind worker-triggered identity and ownership to the signed claims.
 		startReq.Scope = claims.Scope
 		startReq.TeamID = claims.TeamID
@@ -236,7 +236,12 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		if startReq.Tags == nil {
 			startReq.Tags = make(map[string]string)
 		}
-		startReq.Tags["slackbot_id"] = claims.SlackBotID
+		for key, id := range map[string]string{"slackbot_id": claims.SlackBotID, "schedule_id": claims.ScheduleID, "webhook_id": claims.WebhookID} {
+			delete(startReq.Tags, key)
+			if id != "" {
+				startReq.Tags[key] = id
+			}
+		}
 	}
 	explicitSandbox := startReq.Params != nil && startReq.Params.Sandbox != nil
 	explicitDocker := startReq.Params != nil && startReq.Params.Docker != nil
