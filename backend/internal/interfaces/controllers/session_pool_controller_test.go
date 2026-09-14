@@ -1134,6 +1134,13 @@ func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
 			if err != nil || got.Status != "running" {
 				t.Fatalf("runtime status not accepted: %v %v", got, err)
 			}
+			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": "active"}); err != nil {
+				t.Fatal(err)
+			}
+			got, err = routes.Get(ctx, "oneshot")
+			if err != nil || got.Status != "running" {
+				t.Fatalf("manager replaced authoritative runtime status: %v %v", got, err)
+			}
 		})
 	}
 }
