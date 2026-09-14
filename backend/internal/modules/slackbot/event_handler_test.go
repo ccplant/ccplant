@@ -46,6 +46,7 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *en
 		scope:          req.Scope,
 		initialMessage: req.InitialMessage,
 		repoInfo:       req.RepoInfo,
+		slackParams:    req.SlackParams,
 	}
 	m.mu.Lock()
 	m.createdSessions = append(m.createdSessions, sess)
@@ -141,6 +142,7 @@ type mockSession struct {
 	status         string // defaults to "active" when empty
 	initialMessage string // captured from RunServerRequest.InitialMessage
 	repoInfo       *entities.RepositoryInfo
+	slackParams    *entities.SlackParams
 }
 
 func (s *mockSession) ID() string                    { return s.id }
@@ -1723,4 +1725,35 @@ func TestProcessEvent_NoConfiguredRepo_FallsBackToMessageDetection(t *testing.T)
 		"message-detected repository should be used when repo_full_name is not configured")
 	require.NotNil(t, sess.repoInfo, "RepoInfo should be set from message-detected repo")
 	assert.Equal(t, "myorg/detected-repo", sess.repoInfo.FullName)
+}
+
+func TestProcessEvent_ForwardsSlackCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name, customName, customKey, wantName, wantKey string
+	}{
+		{"worker default", "", "", "worker-slack", "bot-token"},
+		{"custom token", "custom-slack", "custom-token", "custom-slack", "custom-token"},
+		{"custom name with default key", "custom-slack", "", "custom-slack", "bot-token"},
+		{"custom key with default name", "", "custom-token", "worker-slack", "custom-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockSlackBotRepository()
+			bot := entities.NewSlackBot("bot", "Bot", "user")
+			bot.SetBotTokenSecretName(tc.customName)
+			bot.SetBotTokenSecretKey(tc.customKey)
+			repo.bots[bot.ID()] = bot
+			manager := &mockSessionManager{}
+			handler := NewSlackBotEventHandler(repo, manager, "worker-slack", "worker-token", nil, "", false, nil, nil)
+			payload := buildEventPayload("channel", "hello")
+			payload.Event.ThreadTs = "123.456"
+			require.NoError(t, handler.ProcessEvent(context.Background(), bot.ID(), payload))
+			require.Eventually(t, func() bool { return manager.createdCount() == 1 }, 2*time.Second, 10*time.Millisecond)
+			params := manager.getCreatedSession(0).slackParams
+			require.NotNil(t, params)
+			assert.Equal(t, "channel", params.Channel)
+			assert.Equal(t, "123.456", params.ThreadTS)
+			assert.Equal(t, tc.wantName, params.BotTokenSecretName)
+			assert.Equal(t, tc.wantKey, params.BotTokenSecretKey)
+		})
+	}
 }
