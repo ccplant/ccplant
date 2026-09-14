@@ -2,6 +2,8 @@
 
 Investigated on 2026-09-14 against code `7adad9be4dbfbfe7a39973d20352b3d6495d4f04`, following the [Fly development E2E run](../../oneshot-fly-dev-verification.md).
 
+This report records the pre-fix investigation. See [fix verification](verification.md) for the subsequent implementation and validation.
+
 The allocation was explicitly deleted by heartbeat inventory reconciliation. This is not a schedule-specific failure: the same runner lifecycle is used by `/start`. A single missing inventory entry removes an in-flight allocation, bypasses its lease recovery, and leaves its public session route in `starting`.
 
 ## Evidence from the failed live run
