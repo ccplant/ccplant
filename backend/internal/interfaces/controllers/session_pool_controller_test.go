@@ -491,7 +491,7 @@ func TestSessionManagerHeartbeatDoesNotOverwriteResumingRouteWithStopped(t *test
 	}
 }
 
-func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
+func TestSessionManagerHeartbeatPreservesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
@@ -528,11 +528,11 @@ func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory
 	if result.Code != http.StatusOK {
 		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
 	}
-	if _, err := store.GetRunner(ctx, "missing-running"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("missing running runner was not deleted: %v", err)
+	if _, err := store.GetRunner(ctx, "missing-running"); err != nil {
+		t.Fatalf("missing running runner was deleted: %v", err)
 	}
-	if _, err := store.GetAllocation(ctx, "stale-session"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("stale allocation was not deleted: %v", err)
+	if _, err := store.GetAllocation(ctx, "stale-session"); err != nil {
+		t.Fatalf("allocation was deleted: %v", err)
 	}
 	for _, id := range []string{"live-running", "missing-idle"} {
 		if _, err := store.GetRunner(ctx, id); err != nil {
