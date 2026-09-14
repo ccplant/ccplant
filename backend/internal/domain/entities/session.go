@@ -157,7 +157,9 @@ type UpdateSessionAnnotationsRequest struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
-	Environment map[string]string `json:"environment,omitempty"`
+	// TriggeredUserID is restored from a signed execution token, never from request JSON.
+	TriggeredUserID string            `json:"-"`
+	Environment     map[string]string `json:"environment,omitempty"`
 	// ProfileEnvironment is resolved from SessionProfileID and is never accepted from the API.
 	ProfileEnvironment map[string]string `json:"-"`
 	Tags               map[string]string `json:"tags,omitempty"`

@@ -118,3 +118,21 @@ func TestPoolSessionDoesNotAddDeprecatedPoolTag(t *testing.T) {
 	require.Equal(t, tags, routes.route.Tags)
 	require.NotContains(t, routes.route.Tags, "allocator.pool")
 }
+
+func TestPoolSessionPreservesSlackLaunchParameters(t *testing.T) {
+	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	manager := &capturingPoolSettingsManager{}
+	server := &Server{sessionManager: manager, sessionRunnerStore: store, sessionRouteRepo: &recordingSessionRouteRepository{}}
+	slack := &entities.SlackParams{Channel: "channel", ThreadTS: "123.45", BotTokenSecretName: "custom-bot"}
+	delay := 5
+	_, err := server.createPoolSession(context.Background(),
+		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		"session", entities.StartRequest{TriggeredUserID: "actor", Params: &entities.SessionParams{Slack: slack, ResumeFrom: "previous", InitialMessageWaitSecond: &delay, CycleMessage: "continue", CycleMaxCount: 3}}, "owner", nil)
+	require.NoError(t, err)
+	require.Equal(t, slack, manager.request.SlackParams)
+	require.Equal(t, "actor", manager.request.TriggeredUserID)
+	require.Equal(t, "previous", manager.request.ResumeFrom)
+	require.Equal(t, &delay, manager.request.InitialMessageWaitSecond)
+	require.Equal(t, "continue", manager.request.CycleMessage)
+	require.Equal(t, 3, manager.request.CycleMaxCount)
+}

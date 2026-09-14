@@ -1359,6 +1359,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		WithMemoryRepository(s.memoryRepo)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
 		ResumeFrom:               resumeFrom,
+		TriggeredUserID:          startReq.TriggeredUserID,
 		UserID:                   userID,
 		Environment:              startReq.Environment,
 		ProfileEnvironment:       startReq.ProfileEnvironment,
@@ -1436,7 +1437,8 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
+		TriggeredUserID: startReq.TriggeredUserID,
+		Pool:            pool, AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
@@ -1445,6 +1447,13 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
+	}
+	if startReq.Params != nil {
+		runReq.SlackParams = startReq.Params.Slack
+		runReq.ResumeFrom = startReq.Params.ResumeFrom
+		runReq.InitialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
+		runReq.CycleMessage = startReq.Params.CycleMessage
+		runReq.CycleMaxCount = startReq.Params.CycleMaxCount
 	}
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {

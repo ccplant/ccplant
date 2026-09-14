@@ -40,7 +40,7 @@ func TestAuthenticateScheduleExecution(t *testing.T) {
 	req := httptest.NewRequest("POST", "/start", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	ctx := e.NewContext(req, httptest.NewRecorder())
-	if !authenticateScheduleExecution(ctx, "secret", now) {
+	if !authenticateTriggerExecution(ctx, "secret", now) {
 		t.Fatal("valid execution token rejected")
 	}
 	if user := GetUserFromContext(ctx); user == nil || string(user.ID()) != "alice" {

@@ -217,7 +217,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
 	sessionID := uuid.New().String()
-	if claims, ok := ctx.Get("schedule_execution_claims").(executiontoken.ExecutionClaims); ok {
+	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok {
 		sessionID = claims.SessionID
 		if existing := c.getSessionManager().GetSession(sessionID); existing != nil {
 			return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID})
@@ -227,6 +227,16 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	var startReq entities.StartRequest
 	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
+	}
+	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok && claims.SlackBotID != "" {
+		// Bind worker-triggered identity and ownership to the signed claims.
+		startReq.Scope = claims.Scope
+		startReq.TeamID = claims.TeamID
+		startReq.TriggeredUserID = claims.TriggeredUserID
+		if startReq.Tags == nil {
+			startReq.Tags = make(map[string]string)
+		}
+		startReq.Tags["slackbot_id"] = claims.SlackBotID
 	}
 	explicitSandbox := startReq.Params != nil && startReq.Params.Sandbox != nil
 	explicitDocker := startReq.Params != nil && startReq.Params.Docker != nil
