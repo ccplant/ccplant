@@ -17,9 +17,11 @@ import (
 )
 
 // SessionManager is a worker-side port that delegates every session operation
-// to the control API. It has no Kubernetes dependency.
+// to HTTP APIs. SlackBot creation uses the normal /start API; lifecycle
+// operations use the control API. It has no Kubernetes dependency.
 type SessionManager struct {
 	baseURL, token string
+	sessionAPIURL  string
 	client         *http.Client
 }
 
@@ -52,7 +54,11 @@ func (m *SessionManager) ClaimDueSchedules(ctx context.Context) ([]ScheduleJob, 
 }
 
 func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL string, job ScheduleJob) (string, error) {
-	body, err := json.Marshal(job.StartRequest)
+	return m.startSession(ctx, apiURL, job.StartRequest, job.ExecutionToken, job.ExecutionID)
+}
+
+func (m *SessionManager) startSession(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, error) {
+	body, err := json.Marshal(start)
 	if err != nil {
 		return "", err
 	}
@@ -60,9 +66,9 @@ func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL strin
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+job.ExecutionToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", job.ExecutionID)
+	req.Header.Set("Idempotency-Key", executionID)
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return "", err
@@ -96,6 +102,9 @@ func NewSessionManager(baseURL, token string) *SessionManager {
 }
 
 func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, _ []byte) (entities.Session, error) {
+	if request.Tags["slackbot_id"] != "" {
+		return m.startSlackSession(ctx, id, request)
+	}
 	var info sessionInfo
 	if err := m.do(ctx, http.MethodPost, "/internal/worker/sessions/"+url.PathEscape(id), request, &info); err != nil {
 		return nil, err
