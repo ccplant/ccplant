@@ -157,7 +157,9 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 
 	deleted := 0
 	for _, session := range sessions {
-		if session.Tags()["slackbot_id"] == "" {
+		// Oneshot lifetime starts at completion and is handled by the short
+		// TTL loop, even when the session originated from Slack.
+		if session.Tags()["slackbot_id"] == "" || session.Tags()["oneshot"] == "true" {
 			continue
 		}
 		sessionID := session.ID()
@@ -213,8 +215,8 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 
 // pruneSessionsWithTTL scans all agentapi-proxy sessions (regardless of Slackbot label)
 // that have an explicit session TTL or are marked oneshot. Explicit TTLs take priority;
-// oneshot sessions are deleted one minute after their completed turn. Slackbot sessions are skipped
-// here because they are already handled by pruneStaleSlackbotSessions.
+// oneshot sessions are deleted one minute after their completed turn. Interactive
+// Slackbot sessions are handled by pruneStaleSlackbotSessions.
 func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	now := time.Now()
 
@@ -226,16 +228,18 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	sessions := w.sessionManager.ListSessions(entities.SessionFilter{})
 	deleted := 0
 	for _, session := range sessions {
-		// Skip Slackbot sessions — they are managed by pruneStaleSlackbotSessions.
-		if session.Tags()["slackbot_id"] != "" {
+		oneshot := session.Tags()["oneshot"] == "true"
+		if session.Tags()["slackbot_id"] != "" && !oneshot {
 			continue
 		}
 
 		ttlStr := session.Tags()["session_ttl"]
+		if ttlStr == "" && oneshot {
+			ttlStr = "1m"
+		}
 		if ttlStr == "" {
 			continue
 		}
-		oneshot := session.Tags()["oneshot"] == "true"
 		if oneshot && session.Status() != "stopped" {
 			continue
 		}
