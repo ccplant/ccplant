@@ -510,6 +510,10 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 		if err != nil {
 			return nil, false, err
 		}
+		if allocation.Status == core.AllocationLeased {
+			// Fence late runtime updates from the expired owner.
+			allocation.Generation++
+		}
 		allocation.Status = core.AllocationLeased
 		allocation.ManagerID = runner.ManagerID
 		allocation.RunnerID = runnerID

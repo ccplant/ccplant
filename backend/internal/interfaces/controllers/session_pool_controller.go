@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1132,9 +1131,12 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid heartbeat request")
 		}
 	}
+	// An inventory is a snapshot, not a deletion acknowledgement. In particular,
+	// never erase a leased allocation: its expiry is what permits recovery.
+	localRunners := make(map[string]bool)
 	if heartbeat.LocalRunnerIDs != nil {
-		if err := c.reconcileMissingManagerRunners(ctx.Request().Context(), manager.ID, *heartbeat.LocalRunnerIDs); err != nil {
-			return sessionRunnerStoreError(err)
+		for _, id := range *heartbeat.LocalRunnerIDs {
+			localRunners[id] = true
 		}
 	}
 	if len(heartbeat.SessionStatuses) > 0 {
@@ -1149,6 +1151,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	owned := make([]*core.PoolSupplier, 0)
 	registeredRunnerIDs := make([]string, 0)
 	allocatedRunnerIDs := make([]string, 0)
+	protectedRunners := make(map[string]bool)
 	allocatedRunnerPolicies := make(map[string]sessionsettings.SessionMeta)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
@@ -1164,8 +1167,13 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				return sessionRunnerStoreError(listErr)
 			}
 			for _, allocation := range allocations {
-				if allocation.ManagerID != manager.ID || allocation.RunnerID == "" || len(allocation.ProvisionSettings) == 0 {
+				if allocation.ManagerID != manager.ID || allocation.RunnerID == "" {
 					continue
+				}
+				// ClaimNext persists the lease before updating the runner status.
+				// Include that window in stock-purge protection as well.
+				if allocation.Status == core.AllocationLeased || allocation.Status == core.AllocationClaimed || allocation.Status == core.AllocationRunning {
+					protectedRunners[allocation.RunnerID] = true
 				}
 				var settings sessionsettings.SessionSettings
 				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
@@ -1177,22 +1185,31 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
 				}
-				if runner.Status == core.RunnerIdle && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
+				if runner.Status == core.RunnerIdle && !protectedRunners[runner.ID] && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
 					if err := c.store.DeleteRunner(ctx.Request().Context(), runner.ID); err != nil {
 						return sessionRunnerStoreError(err)
 					}
 					continue
 				}
-				copy.TotalRunners++
 				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
-				if runner.Status == core.RunnerIdle {
+				if runner.Status == core.RunnerRunning || runner.Status == core.RunnerClaiming {
+					protectedRunners[runner.ID] = true
+				}
+				// Missing workloads must not consume capacity and prevent a replacement
+				// from reclaiming an expired lease. Retain their durable registration.
+				if heartbeat.LocalRunnerIDs != nil && !localRunners[runner.ID] {
+					continue
+				}
+				copy.TotalRunners++
+				if runner.Status == core.RunnerIdle && !protectedRunners[runner.ID] {
 					copy.IdleRunners++
-				} else if runner.Status == core.RunnerRunning {
-					allocatedRunnerIDs = append(allocatedRunnerIDs, runner.ID)
 				}
 			}
 			owned = append(owned, &copy)
 		}
+	}
+	for id := range protectedRunners {
+		allocatedRunnerIDs = append(allocatedRunnerIDs, id)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
@@ -1253,45 +1270,6 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		if err := c.routes.Save(ctx, route); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
-	local := make(map[string]struct{}, len(localRunnerIDs))
-	for _, id := range localRunnerIDs {
-		local[id] = struct{}{}
-	}
-	runners, err := c.store.ListRunners(ctx, "")
-	if err != nil {
-		return err
-	}
-	allocations, err := c.store.ListAllocations(ctx, "")
-	if err != nil {
-		return err
-	}
-	allocationsByRunner := make(map[string][]string)
-	for _, allocation := range allocations {
-		if allocation.RunnerID != "" {
-			allocationsByRunner[allocation.RunnerID] = append(allocationsByRunner[allocation.RunnerID], allocation.SessionID)
-		}
-	}
-	for _, runner := range runners {
-		if runner.ManagerID != managerID || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
-			continue
-		}
-		if _, ok := local[runner.ID]; ok {
-			continue
-		}
-		for _, sessionID := range allocationsByRunner[runner.ID] {
-			if err := c.store.DeleteAllocation(ctx, sessionID); err != nil && !errors.Is(err, core.ErrNotFound) {
-				return err
-			}
-		}
-		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
-			return err
-		}
-		log.Printf("[SESSION_RUNNER] Removed stale %s runner %s absent from manager %s inventory", runner.Status, runner.ID, managerID)
 	}
 	return nil
 }
