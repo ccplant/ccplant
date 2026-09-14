@@ -136,3 +136,22 @@ func TestPoolSessionPreservesSlackLaunchParameters(t *testing.T) {
 	require.Equal(t, "continue", manager.request.CycleMessage)
 	require.Equal(t, 3, manager.request.CycleMaxCount)
 }
+
+func TestPoolSessionPreservesWebhookPayloadAndOneshot(t *testing.T) {
+	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	routes := &recordingSessionRouteRepository{}
+	server := &Server{sessionRunnerStore: store, sessionRouteRepo: routes}
+	payload := []byte(`{"action":"opened"}`)
+	_, err := server.createPoolSession(context.Background(), &sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}}, "session", entities.StartRequest{WebhookPayload: payload, Params: &entities.SessionParams{Oneshot: true, Message: "finish"}}, "owner", nil)
+	require.NoError(t, err)
+	allocation, err := store.GetAllocation(context.Background(), "session")
+	require.NoError(t, err)
+	var settings sessionsettings.SessionSettings
+	require.NoError(t, json.Unmarshal(allocation.ProvisionSettings, &settings))
+	require.Equal(t, string(payload), settings.WebhookPayload)
+	require.True(t, settings.Session.Oneshot)
+	require.Equal(t, "finish", settings.InitialMessage)
+	require.NotNil(t, routes.route)
+	require.Equal(t, "true", routes.route.Tags["oneshot"])
+	require.Equal(t, "1m", routes.route.Tags["session_ttl"])
+}

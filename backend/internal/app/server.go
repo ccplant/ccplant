@@ -1359,6 +1359,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
 		WithMemoryRepository(s.memoryRepo)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
+		WebhookPayload:           startReq.WebhookPayload,
 		ResumeFrom:               resumeFrom,
 		TriggeredUserID:          startReq.TriggeredUserID,
 		UserID:                   userID,
@@ -1473,6 +1474,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: unsyncedFilePaths,
 		}
 	}
+	settings.WebhookPayload = string(startReq.WebhookPayload)
 	s.applyPoolAutoSuspendPolicy(ctx, settings, startReq.Scope, userID, startReq.TeamID)
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {

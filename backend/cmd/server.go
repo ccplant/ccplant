@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
@@ -229,6 +230,17 @@ func validateServerRedis(cfg *config.Config) error {
 	return nil
 }
 
+// newTriggerSessionManager routes API-side triggers through the same /start
+// endpoint as workers, so pool selection and provisioning remain API-owned.
+func newTriggerSessionManager(cfg *config.Config) *controlapi.SessionManager {
+	localURL := "http://127.0.0.1:" + port
+	apiURL := cfg.Worker.SessionAPIURL
+	if apiURL == "" {
+		apiURL = localURL
+	}
+	return controlapi.NewSessionManager(localURL, cfg.Worker.ControlAPIToken).WithSessionAPIURL(apiURL)
+}
+
 // registerScheduleHandlers registers schedule REST API handlers
 func registerScheduleHandlers(proxyServer *app.Server) {
 	log.Printf("[SCHEDULE_HANDLERS] Registering schedule handlers...")
@@ -237,7 +249,7 @@ func registerScheduleHandlers(proxyServer *app.Server) {
 	scheduleManager := proxyServer.GetScheduleManager()
 
 	// Create and register schedule handlers
-	scheduleHandlers := schedule.NewHandlers(scheduleManager, proxyServer.GetSessionManager(), proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
+	scheduleHandlers := schedule.NewHandlers(scheduleManager, newTriggerSessionManager(proxyServer.GetConfig()), proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(scheduleHandlers)
 
 	log.Printf("[SCHEDULE_HANDLERS] Schedule handlers registered successfully")
@@ -519,7 +531,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	}
 
 	// Create and register webhook handlers with baseURL from config
-	webhookHandlers := webhook.NewHandlers(webhookRepo, proxyServer.GetSessionManager(), configData.Webhook.BaseURL, proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
+	webhookHandlers := webhook.NewHandlers(webhookRepo, newTriggerSessionManager(configData), configData.Webhook.BaseURL, proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(webhookHandlers)
 
 	if configData.Webhook.BaseURL != "" {
