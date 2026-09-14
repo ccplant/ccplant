@@ -321,8 +321,8 @@ func isApplicationKVSecret(secret *corev1.Secret) bool {
 	if hasAgentAPILabel(secret.Labels) {
 		return true
 	}
-	// Fixed-name stores may have been provisioned manually without app labels.
-	return secret.Name == "agentapi-schedules" || secret.Name == "agentapi-settings-base"
+	// The pre-v2 schedule store was a fixed-name Secret without labels.
+	return secret.Name == "agentapi-schedules"
 }
 
 func hasAgentAPILabel(labels map[string]string) bool {

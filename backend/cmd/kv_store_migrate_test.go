@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -74,39 +72,6 @@ func TestMigrateKubernetesKVIsIdempotent(t *testing.T) {
 	}
 	if second.Copied != 0 || second.Skipped != 1 {
 		t.Fatalf("unexpected second result: %#v", second)
-	}
-}
-
-func TestMigrateAndVerifyUnlabeledBaseSettings(t *testing.T) {
-	ctx := context.Background()
-	data := []byte(`{"mcp_servers":{"base":{"type":"http","url":"https://base.example/mcp"}}}`)
-	primary := kvstore.NewKubernetesStore(fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-settings-base", Namespace: "test"},
-		Data:       map[string][]byte{"settings.json": data},
-	}))
-	secondary := newMemoryKVStore()
-	before, err := verifyKVStores(ctx, primary, secondary, "test")
-	if err == nil || before.MissingSecondary != 1 {
-		t.Fatalf("unmigrated base settings were not detected: result=%#v err=%v", before, err)
-	}
-	result, err := migrateKVStores(ctx, primary, secondary, kvStoreMigrateOptions{namespace: "test"})
-	if err != nil || result.Copied != 1 {
-		t.Fatalf("base settings not migrated: result=%#v err=%v", result, err)
-	}
-	record, err := secondary.Get(ctx, kvstore.KindSecret, "test", "agentapi-settings-base")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var copied corev1.Secret
-	if err := json.Unmarshal(record.Value, &copied); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(copied.Data["settings.json"], data) {
-		t.Fatal("base MCP settings changed during migration")
-	}
-	after, err := verifyKVStores(ctx, primary, secondary, "test")
-	if err != nil || after.Matched != 1 || after.mismatchCount() != 0 {
-		t.Fatalf("migrated base settings do not match: result=%#v err=%v", after, err)
 	}
 }
 
