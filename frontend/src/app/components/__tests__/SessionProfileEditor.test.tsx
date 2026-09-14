@@ -17,6 +17,34 @@ vi.mock('../../../lib/agentapi-proxy-client', () => ({ createAgentAPIProxyClient
 vi.mock('../../../components/settings/MCPServerSettings', () => ({ MCPServerSettings: () => null }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
+describe('SessionProfileEditor legacy pool settings', () => {
+  it('shows a legacy pool and removes it when automatic selection is saved', async () => {
+    render(<SessionProfileEditor section="pool" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config: { params: { pool: 'managed', auth_proxy: true } } }} />)
+    const select = screen.getByLabelText('Session Runner Pool')
+    expect(select).toHaveValue('managed')
+    fireEvent.change(select, { target: { value: '' } })
+    fireEvent.submit(select.closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    const config = mocks.update.mock.calls[0][1].config
+    expect(config).not.toHaveProperty('pool')
+    expect(config.params).not.toHaveProperty('pool')
+    expect(config.params.auth_proxy).toBe(true)
+  })
+
+  it.each([
+    { config: { params: { pool: 'managed' } }, expected: 'managed' },
+    { config: { pool: 'fly-dev', params: { pool: 'managed' } }, expected: 'fly-dev' },
+  ])('saves the effective pool in the canonical field: $expected', async ({ config, expected }) => {
+    render(<SessionProfileEditor section="pool" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config }} />)
+    const select = screen.getByLabelText('Session Runner Pool')
+    expect(select).toHaveValue(expected)
+    fireEvent.submit(select.closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.pool).toBe(expected)
+    expect(mocks.update.mock.calls[0][1].config.params).not.toHaveProperty('pool')
+  })
+})
+
 describe('SessionProfileEditor authentication', () => {
   it('loads selections, saves changes, and restores inheritance', async () => {
     render(<SessionProfileEditor section="authentication" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Test', created_at: '', updated_at: '', config: { params: { codex_auth_mode: 'openai_compatible', claude_auth_mode: 'bedrock' } } }} />)

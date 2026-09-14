@@ -3,6 +3,8 @@ import type { APIMCPServerConfig, ModelConnection } from './settings';
 
 // Session profile params
 export interface SessionProfileParams {
+  /** Legacy pool location; the editor saves this as SessionProfileConfig.pool. */
+  pool?: string;
   initial_message?: string;
   github_token?: string;
   agent_type?: string;
