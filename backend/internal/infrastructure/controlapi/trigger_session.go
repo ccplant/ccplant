@@ -58,9 +58,11 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 	if apiURL == "" {
 		apiURL = m.baseURL
 	}
-	sessionID, err := m.startSession(ctx, apiURL, start, token, id)
+	sessionID, reused, err := m.startSession(ctx, apiURL, start, token, id)
 	if err != nil {
 		return nil, err
 	}
-	return entities.NewProxySessionWithStatus(sessionID, req.UserID, req.Scope, req.TeamID, tags, time.Now(), "creating"), nil
+	session := entities.NewProxySessionWithStatus(sessionID, req.UserID, req.Scope, req.TeamID, tags, time.Now(), "creating")
+	session.SetSessionReused(reused)
+	return session, nil
 }

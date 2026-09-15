@@ -54,40 +54,42 @@ func (m *SessionManager) ClaimDueSchedules(ctx context.Context) ([]ScheduleJob, 
 }
 
 func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL string, job ScheduleJob) (string, error) {
-	return m.startSession(ctx, apiURL, job.StartRequest, job.ExecutionToken, job.ExecutionID)
+	id, _, err := m.startSession(ctx, apiURL, job.StartRequest, job.ExecutionToken, job.ExecutionID)
+	return id, err
 }
 
-func (m *SessionManager) startSession(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, error) {
+func (m *SessionManager) startSession(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, bool, error) {
 	body, err := json.Marshal(start)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(apiURL, "/")+"/start", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", executionID)
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("session creation API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return "", false, fmt.Errorf("session creation API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	var result struct {
-		SessionID string `json:"session_id"`
+		SessionID     string `json:"session_id"`
+		SessionReused bool   `json:"session_reused"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if result.SessionID == "" {
-		return "", fmt.Errorf("session creation API returned no session_id")
+		return "", false, fmt.Errorf("session creation API returned no session_id")
 	}
-	return result.SessionID, nil
+	return result.SessionID, result.SessionReused, nil
 }
 
 func (m *SessionManager) FinalizeSchedule(ctx context.Context, job ScheduleJob, status, sessionID, message string) error {

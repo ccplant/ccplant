@@ -257,7 +257,11 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	if err != nil {
 		return LaunchResult{}, err
 	}
-	return LaunchResult{SessionID: session.ID(), SessionReused: false, Session: session}, nil
+	reused := false
+	if aware, ok := session.(interface{ SessionReused() bool }); ok {
+		reused = aware.SessionReused()
+	}
+	return LaunchResult{SessionID: session.ID(), SessionReused: reused, Session: session}, nil
 }
 
 // ensureMemoryExists checks whether a memory with all tags in req.MemoryKey already exists

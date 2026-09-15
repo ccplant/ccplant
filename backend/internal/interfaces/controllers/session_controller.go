@@ -442,14 +442,11 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime queue is unavailable")
 			}
 			body, _ := json.Marshal(map[string]string{"content": startReq.ReuseMessage, "type": "user"})
-			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/message", bytes.NewReader(body))
+			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/internal/session-prompt", bytes.NewReader(body))
 			if reqErr != nil {
 				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to build reusable session message").SetInternal(reqErr)
 			}
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-			if _, err := enqueuer.Enqueue(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req); err != nil {
-				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to queue reusable session message").SetInternal(err)
-			}
 			if strings.EqualFold(route.Status, "suspended") {
 				resp, resumeErr := c.requestRemoteResume(ctx, route)
 				if resumeErr != nil {
@@ -460,6 +457,9 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 					return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to resume reusable session")
 				}
 				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+			}
+			if _, err := enqueuer.Enqueue(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req); err != nil {
+				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to queue reusable session prompt").SetInternal(err)
 			}
 			log.Printf("[SESSION_REUSE] Reused direct runtime %s for tags %v", route.SessionID, startReq.ReuseMatchTags)
 			return route.SessionID, true, nil

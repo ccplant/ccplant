@@ -118,7 +118,10 @@ func pollControlCommands(ctx context.Context, client *http.Client, cfg PullClien
 }
 
 func executeControlCommand(ctx context.Context, client *http.Client, agentType string, command controlCommand) error {
-	localBase := "http://127.0.0.1:9000"
+	return executeControlCommandAtBase(ctx, client, agentType, command, "http://127.0.0.1:9000")
+}
+
+func executeControlCommandAtBase(ctx context.Context, client *http.Client, agentType string, command controlCommand, localBase string) error {
 	var endpoint string
 	var payload interface{}
 	switch command.Type {

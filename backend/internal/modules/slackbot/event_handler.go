@@ -470,8 +470,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
 			return
 		}
-		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
-		if bot.NotifyOnSessionCreated() {
+		if result.SessionReused {
+			log.Printf("[SLACKBOT] Reused session %s for thread %s", result.SessionID, threadKey)
+		} else {
+			log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
+		}
+		if !result.SessionReused && bot.NotifyOnSessionCreated() {
 			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, tags["repository"], bot)
 		}
 	}()

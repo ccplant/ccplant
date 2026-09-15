@@ -65,7 +65,11 @@ func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Reques
 	if req.Body != nil {
 		t.body, _ = io.ReadAll(req.Body)
 	}
-	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	status := t.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
 }
 
 type allocationReader struct {
@@ -102,7 +106,7 @@ func (t *lifecycleTunnel) CommandResult(_ context.Context, _ string) (bool, int,
 	return t.done, t.status, nil
 }
 
-func TestStartSessionReusesMatchingDirectRuntimeThroughDurableQueue(t *testing.T) {
+func TestStartSessionReusesMatchingDirectRuntimeThroughPromptCommand(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
 		"existing": {id: "existing", userID: "user-1", scope: entities.ScopeUser, status: "active", tags: map[string]string{"slack_thread_ts": "123", "slackbot_id": "bot-1"}},
 	}}
@@ -133,7 +137,7 @@ func TestStartSessionReusesMatchingDirectRuntimeThroughDurableQueue(t *testing.T
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"session_id":"existing"`) || !strings.Contains(rec.Body.String(), `"session_reused":true`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !tunnel.enqueued || tunnel.path != "/message" {
+	if !tunnel.enqueued || tunnel.path != "/internal/session-prompt" {
 		t.Fatalf("enqueued=%t path=%q", tunnel.enqueued, tunnel.path)
 	}
 	if got := string(tunnel.body); got != `{"content":"follow up","type":"user"}` {

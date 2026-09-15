@@ -15,6 +15,7 @@ type ProxySession struct {
 	updatedAt     time.Time
 	lastMessageAt time.Time
 	statusMessage string
+	sessionReused bool
 }
 
 // SetStatusMessage attaches a human-readable explanation to the current status.
@@ -22,6 +23,12 @@ func (p *ProxySession) SetStatusMessage(message string) { p.statusMessage = mess
 
 // StatusMessage returns a human-readable explanation for terminal states.
 func (p *ProxySession) StatusMessage() string { return p.statusMessage }
+
+// SetSessionReused records that a trigger launch resolved to an existing session.
+func (p *ProxySession) SetSessionReused(reused bool) { p.sessionReused = reused }
+
+// SessionReused reports whether a trigger launch resolved to an existing session.
+func (p *ProxySession) SessionReused() bool { return p.sessionReused }
 
 // NewProxySession creates a new ProxySession
 func NewProxySession(id, userID string, scope ResourceScope, teamID string, tags map[string]string, startedAt time.Time) *ProxySession {
