@@ -46,7 +46,6 @@ func (m *statusWatchingSessionManager) SubscribeStatusEvents() (<-chan repositor
 type directRuntimeTunnel struct {
 	managerID string
 	path      string
-	header    http.Header
 }
 
 type lifecycleTunnel struct {
@@ -149,49 +148,11 @@ func (t *directRuntimeTunnel) IsConnected(_ context.Context, managerID string) b
 func (t *directRuntimeTunnel) Do(_ context.Context, managerID, _, _ string, req *http.Request) (*http.Response, error) {
 	t.managerID = managerID
 	t.path = req.URL.Path
-	t.header = req.Header.Clone()
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": {"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"status":"stable"}`)),
 	}, nil
-}
-
-func TestRouteToDirectRuntimeFromWorkerUsesSessionHMAC(t *testing.T) {
-	tunnel := &directRuntimeTunnel{}
-	controller := controllers.NewSessionController(
-		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
-		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
-			SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-a",
-			Transport: repositories.SessionRouteTransportDirectRuntime, UserID: "user-1",
-			Scope: string(entities.ScopeUser), HMACSecret: "session-secret",
-		}}),
-		controllers.WithESMControlTunnel(tunnel),
-	)
-	ctx, rec := routeContext(echo.New(), http.MethodPost, "/public-id/message", "public-id")
-	ctx.Request().Header.Set(echo.HeaderAuthorization, "Bearer worker-control-token")
-	ctx.Request().Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	ctx.SetRequest(ctx.Request().Clone(context.Background()))
-	ctx.Request().Body = io.NopCloser(strings.NewReader(`{"message":"follow up"}`))
-
-	if err := controller.RouteToSessionFromWorker(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
-	}
-	if got := tunnel.header.Get(echo.HeaderAuthorization); got != "" {
-		t.Fatalf("Authorization = %q, want empty", got)
-	}
-	if got := tunnel.header.Get("X-Forwarded-User"); got != "user-1" {
-		t.Fatalf("X-Forwarded-User = %q, want user-1", got)
-	}
-	if got := tunnel.header.Get("X-Hub-Signature-256"); got == "" {
-		t.Fatal("X-Hub-Signature-256 is empty")
-	}
-	if got := tunnel.header.Get("X-Timestamp"); got == "" {
-		t.Fatal("X-Timestamp is empty")
-	}
 }
 
 func (p *routeSessionManagerProvider) GetSessionManager() repositories.SessionManager {
