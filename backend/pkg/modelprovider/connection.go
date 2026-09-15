@@ -9,6 +9,8 @@ import (
 )
 
 type Connection struct {
+	EndpointPath               string            `json:"endpoint_path,omitempty"`
+	WebSearchEnabled           *bool             `json:"web_search_enabled,omitempty"`
 	Mode                       string            `json:"mode"`
 	BaseURL                    string            `json:"base_url,omitempty"`
 	Model                      string            `json:"model,omitempty"`
@@ -26,6 +28,10 @@ func (c *Connection) Clone() *Connection {
 		return nil
 	}
 	copy := *c
+	if c.WebSearchEnabled != nil {
+		value := *c.WebSearchEnabled
+		copy.WebSearchEnabled = &value
+	}
 	if c.ContextWindow != nil {
 		value := *c.ContextWindow
 		copy.ContextWindow = &value
@@ -72,6 +78,9 @@ func (c *Connection) Validate(agent string) error {
 			return fmt.Errorf("model_aliases is only supported for Claude Code")
 		}
 	case "claude":
+		if c.WebSearchEnabled != nil {
+			return fmt.Errorf("web_search_enabled is only supported for Codex")
+		}
 		if c.Mode != "oauth" && c.Mode != "bedrock" && c.Mode != "anthropic_compatible" {
 			return fmt.Errorf("invalid Claude connection mode")
 		}
@@ -89,6 +98,9 @@ func (c *Connection) Validate(agent string) error {
 	if !c.Compatible() {
 		return nil
 	}
+	if err := ValidateEndpointPath(c.EndpointPath); err != nil {
+		return err
+	}
 	u, err := url.Parse(c.BaseURL)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return fmt.Errorf("base_url must be an absolute HTTP(S) URL without credentials, query or fragment")
@@ -99,7 +111,7 @@ func (c *Connection) Validate(agent string) error {
 			return fmt.Errorf("base_url must be an API base, not an endpoint")
 		}
 	}
-	if agent == "claude" && strings.HasSuffix(path, "/v1") {
+	if agent == "claude" && c.EndpointPath == "" && strings.HasSuffix(path, "/v1") {
 		return fmt.Errorf("Claude base_url must omit the trailing /v1")
 	}
 	if err := ValidateModel(c.Model); err != nil {
@@ -127,6 +139,27 @@ func (c *Connection) Validate(agent string) error {
 		}
 		if err := ValidateModel(v); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// EndpointPath is appended to BaseURL without replacing its existing prefix.
+// Reject ambiguous/escaping paths so the persisted route has one interpretation.
+func ValidateEndpointPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	u, err := url.Parse(path)
+	if err != nil || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || u.IsAbs() || u.Host != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(path, "\\%?#") || strings.IndexFunc(path, unicode.IsSpace) >= 0 || strings.IndexFunc(path, unicode.IsControl) >= 0 {
+		return fmt.Errorf("endpoint_path must be an absolute URL path without query, fragment or escapes")
+	}
+	if path == "/" {
+		return nil
+	}
+	for _, part := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/"), "/") {
+		if part == "." || part == ".." || part == "" {
+			return fmt.Errorf("endpoint_path must not contain empty or dot segments")
 		}
 	}
 	return nil

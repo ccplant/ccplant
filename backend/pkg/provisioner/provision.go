@@ -286,6 +286,12 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	envMap := cloneEnvironment(settings.Env)
 	log.Printf("[PROVISIONER] Prepared %d in-memory env vars", len(envMap))
 	prepareSciaCABundle(ctx, envMap)
+	stopEndpoint, err := prepareModelEndpoint(settings, compileOpts.OutputDir, envMap)
+	if err != nil {
+		s.setStatus(StatusError, err.Error())
+		return
+	}
+	defer stopEndpoint()
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
 	s.setPhase("provision:fetch-memory")

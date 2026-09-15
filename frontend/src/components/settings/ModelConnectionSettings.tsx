@@ -80,6 +80,14 @@ export function ModelConnectionSettings({ agent, connection, defaultBaseURL, leg
         {draft.authentication !== 'none' && <label className="block text-sm">API キー / トークン {connection?.has_api_key ? '（保存済み・未入力なら保持）' : '（未設定）'}
           <input aria-label={`${agent} API キー`} type="password" autoComplete="new-password" className={fieldClass} value={key} onChange={e => { setKey(e.target.value); setClearKey(false); setSaved(false) }} />
         </label>}
+        {agent === 'codex' && <label className="block text-sm">Web search tool
+          <select aria-label="codex Web search tool" className={fieldClass} value={draft.web_search_enabled == null ? '' : String(draft.web_search_enabled)} onChange={e => change({ web_search_enabled: e.target.value === '' ? null : e.target.value === 'true' })}>
+            <option value="">既定の設定を使用</option>
+            <option value="true">有効</option>
+            <option value="false">無効</option>
+          </select>
+          <span className="text-xs text-gray-500">接続先が Web search に対応していない場合は無効にしてください。次のセッションから適用されます。</span>
+        </label>}
         <details><summary className="cursor-pointer text-sm">詳細設定</summary>
           <div className="space-y-3 pt-3">
             {agent === 'codex' ? <>

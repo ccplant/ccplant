@@ -24,7 +24,11 @@ export default function ProfileConnectionFields({ agent, value, onChange }: {
       <label className="block text-sm">{label} Base URL
         <input type="url" required value={value.base_url ?? ''} onChange={e => onChange({ ...value, base_url: e.target.value })} placeholder={agent === 'codex' ? 'https://ollama.com/v1' : 'https://ollama.com'} className={fieldClass} />
       </label>
-      <p className="text-xs text-gray-500">{agent === 'codex' ? '/responses を付けない API のベース URL を指定します。' : '/v1 や /messages を付けない URL を指定します。'}</p>
+      <label className="block text-sm">{label} API パス
+        <input value={value.endpoint_path ?? ''} onChange={e => onChange({ ...value, endpoint_path: e.target.value })} placeholder={agent === 'codex' ? '/responses' : '/v1/messages'} className={fieldClass} />
+      </label>
+      <p className="text-xs text-gray-500">Base URL に続くパスを / から指定します。空欄なら {agent === 'codex' ? '/responses' : '/v1/messages'} を使用します。API の形式は {agent === 'codex' ? 'Responses API' : 'Messages API'} のままです。</p>
+      {value.base_url && <p className="break-all text-xs text-gray-500">送信先: {value.base_url.replace(/\/+$/, '')}{value.endpoint_path || (agent === 'codex' ? '/responses' : '/v1/messages')}</p>}
       {agent === 'codex' && <label className="block text-sm">{label} API 認証方式
         <select value={value.authentication ?? 'api_key'} onChange={e => onChange({ ...value, authentication: e.target.value as ModelConnection['authentication'] })} className={fieldClass}>
           <option value="api_key">API キー</option>
@@ -37,6 +41,14 @@ export default function ProfileConnectionFields({ agent, value, onChange }: {
       <label className="block text-sm">{label} 接続のデフォルトモデル
         <input value={value.model ?? ''} onChange={e => onChange({ ...value, model: e.target.value })} placeholder="空欄ならベースのデフォルトモデルを使用" className={fieldClass} />
       </label>
+      {agent === 'codex' && <label className="block text-sm">Web search tool
+        <select value={value.web_search_enabled == null ? '' : String(value.web_search_enabled)} onChange={e => onChange({ ...value, web_search_enabled: e.target.value === '' ? null : e.target.value === 'true' })} className={fieldClass}>
+          <option value="">既定の設定を使用</option>
+          <option value="true">有効</option>
+          <option value="false">無効</option>
+        </select>
+        <span className="text-xs text-gray-500">接続先が Web search に対応していない場合は無効にしてください。</span>
+      </label>}
       {agent === 'codex' && <details>
         <summary className="cursor-pointer text-sm">モデルメタデータ</summary>
         <div className="pt-3">
