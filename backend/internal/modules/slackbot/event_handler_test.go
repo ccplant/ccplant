@@ -1062,6 +1062,26 @@ func TestProcessEvent_SequentialDuplicateCallbacks_CreateOneSession(t *testing.T
 	assert.Equal(t, 1, sessionMgr.createdCount())
 }
 
+func TestProcessEvent_SameMessageForDifferentBots_CreatesOneSessionPerBot(t *testing.T) {
+	const firstBotID = "first-bot"
+	const secondBotID = "second-bot"
+	repo := newMockSlackBotRepository()
+	repo.bots[firstBotID] = entities.NewSlackBot(firstBotID, "First Bot", "user-1")
+	repo.bots[secondBotID] = entities.NewSlackBot(secondBotID, "Second Bot", "user-1")
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
+	payload := SlackPayload{Type: "event_callback", Event: &SlackEvent{
+		Type: "app_mention", Text: "<@UBOT> hello", User: "U1",
+		Channel: "C-shared", Ts: "720.001", ThreadTs: "720.000",
+	}}
+
+	require.NoError(t, handler.ProcessEvent(context.Background(), firstBotID, payload))
+	require.NoError(t, handler.ProcessEvent(context.Background(), secondBotID, payload))
+	require.True(t, waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 2
+	}))
+}
+
 // ---- Tests for /stop command ----
 
 // TestIsStopCommand verifies that isStopCommand correctly identifies /stop messages

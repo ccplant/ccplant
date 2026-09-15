@@ -204,7 +204,10 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// The message and app_mention callbacks generated for one Slack post share
 	// channel+ts. Retain this key beyond session creation so a delayed callback
 	// cannot create a second session while ListSessions is still stale.
-	eventKey := event.Channel + ":" + event.Ts
+	// The handler is shared by every configured bot in this process. Include the
+	// bot ID so two bots receiving the same Slack message do not suppress each
+	// other merely because channel and timestamp match.
+	eventKey := botID + ":" + event.Channel + ":" + event.Ts
 	if _, duplicate := h.processedEvents.LoadOrStore(eventKey, struct{}{}); duplicate {
 		log.Printf("[SLACKBOT] Duplicate Slack event ignored: id=%s, channel=%s, ts=%s", botID, event.Channel, event.Ts)
 		return nil
@@ -376,7 +379,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// doesn't exist yet when they run concurrently) and would each spawn a new session.
 	// Use LoadOrStore so that only the first event proceeds; the second is dropped.
 	// The key is released once session creation completes (success or failure).
-	pendingKey := channel + ":" + threadKey + ":" + triggeredUserID
+	pendingKey := botID + ":" + channel + ":" + threadKey + ":" + triggeredUserID
 	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
 		h.processedEvents.Delete(eventKey)
 		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
