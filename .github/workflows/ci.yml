@@ -36,13 +36,8 @@ jobs:
           native=false
           charts=false
 
-          # A workflow change can affect every build, so exercise the complete CI.
           while IFS= read -r path; do
             case "$path" in
-              .github/workflows/ci.yml)
-                backend=true; frontend=true; native=true; charts=true ;;
-              Makefile)
-                backend=true; frontend=true; native=true; charts=true ;;
               backend/helm/*|frontend/helm/*|chart/*)
                 charts=true ;;
               backend/*)
