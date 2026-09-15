@@ -7136,6 +7136,11 @@
       "StartRequest": {
         "type": "object",
         "properties": {
+          "webhook_payload": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64-encoded original webhook body to mount in the session."
+          },
           "environment": {
             "type": "object",
             "additionalProperties": {
@@ -8367,6 +8372,15 @@
         "additionalProperties": false,
         "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
+          "web_search_enabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True selects live web search; false disables it; null uses the base Codex config. Omission preserves the stored value."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8426,6 +8440,15 @@
       "CodexConnectionResponse": {
         "type": "object",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
+          "web_search_enabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True selects live web search; false disables it; null uses the base Codex config. Omission preserves the stored value."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8479,6 +8502,10 @@
         "additionalProperties": false,
         "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8537,6 +8564,10 @@
       "ClaudeConnectionResponse": {
         "type": "object",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
           "mode": {
             "type": "string",
             "enum": [

@@ -65,6 +65,28 @@ func TestProfileConnectionSecretLifecycle(t *testing.T) {
 	require.NotContains(t, string(encoded), `"api_key":`)
 }
 
+func TestProfileConnectionEndpointAndWebSearch(t *testing.T) {
+	c, err := mergeProfileConnection(nil, []byte(`{"mode":"openai_compatible","base_url":"https://gateway.example","endpoint_path":"/api/generate","authentication":"none","web_search_enabled":false}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, "/api/generate", c.EndpointPath)
+	require.NotNil(t, c.WebSearchEnabled)
+	require.False(t, *c.WebSearchEnabled)
+	kept, err := mergeProfileConnection(c, []byte(`{"mode":"openai_compatible"}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, c, kept)
+	cleared, err := mergeProfileConnection(c, []byte(`{"mode":"openai_compatible","endpoint_path":"","web_search_enabled":null}`), "codex")
+	require.NoError(t, err)
+	require.Empty(t, cleared.EndpointPath)
+	require.Nil(t, cleared.WebSearchEnabled)
+	require.False(t, *c.WebSearchEnabled)
+	for _, path := range []string{"relative", "//other.example/path", "/../secret", "/api?key=secret", "/api#fragment", "/api/%2e%2e/path", "/api//path"} {
+		raw, err := json.Marshal(map[string]interface{}{"mode": "openai_compatible", "endpoint_path": path})
+		require.NoError(t, err)
+		_, err = mergeProfileConnection(c, raw, "codex")
+		require.Error(t, err, path)
+	}
+}
+
 func TestProfileTeamSettingsAccess(t *testing.T) {
 	user := entities.NewUser("user", entities.UserTypeGitHub, "user")
 	user.SetGitHubInfo(entities.NewGitHubUserInfo(1, "user", "", "", "", "", ""), []entities.GitHubTeamMembership{{Organization: "org", TeamSlug: "team"}})

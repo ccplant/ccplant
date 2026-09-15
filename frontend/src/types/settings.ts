@@ -46,6 +46,8 @@ export interface ModelConnection {
  base_url?: string; model?: string; authentication?: 'api_key' | 'none';
  api_key?: string; clear_api_key?: boolean; has_api_key?: boolean;
  context_window?: number | null; auto_compact_token_limit?: number | null; supports_reasoning_summaries?: boolean | null;
+ web_search_enabled?: boolean | null;
+ endpoint_path?: string;
  model_aliases?: Partial<Record<'sonnet' | 'opus' | 'haiku', string>> | null;
 }
 

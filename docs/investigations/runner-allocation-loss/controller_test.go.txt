@@ -1,0 +1,77 @@
+package controllers
+
+import (
+	"context"
+	"errors"
+	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
+	infra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"k8s.io/client-go/kubernetes/fake"
+	"net/http"
+	"testing"
+	"time"
+)
+
+func TestInvestigationMissingClaimingRunner(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, hash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(store.CreateManager(ctx, &core.Manager{ID: "manager", Enabled: true, ConnectionTokenHash: hash}))
+	must(store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "pool", Enabled: true}))
+	must(store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "pool", ManagerID: "manager", Enabled: true}))
+	must(store.CreateRunner(ctx, &core.Runner{ID: "runner", ManagerID: "manager", Pool: "pool", Status: core.RunnerClaiming, LastSeen: time.Now()}))
+	must(store.Enqueue(ctx, &core.Allocation{SessionID: "session", Pool: "pool"}))
+	a, found, err := store.ClaimNext(ctx, "pool", "runner", 45*time.Second)
+	must(err)
+	if !found {
+		t.Fatal("not claimed")
+	}
+	must(routes.Save(ctx, &portrepos.SessionRoute{SessionID: "session", RemoteSessionID: "runner", ManagerID: "manager", Status: "starting"}))
+	c := NewSessionPoolController(store, routes)
+	heartbeat := func(body any) ([]string, []string) {
+		r := callSessionPoolHandler(t, c.HeartbeatManager, http.MethodPost, "/heartbeat", body, map[string]string{"id": "manager"}, map[string]string{"Authorization": "Bearer " + token})
+		if r.Code != http.StatusOK {
+			t.Fatalf("heartbeat %d: %s", r.Code, r.Body.String())
+		}
+		var d struct {
+			RegisteredRunnerIDs []string `json:"registered_runner_ids"`
+			AllocatedRunnerIDs  []string `json:"allocated_runner_ids"`
+		}
+		decodeRecorder(t, r, &d)
+		return d.RegisteredRunnerIDs, d.AllocatedRunnerIDs
+	}
+	registered, allocated := heartbeat(nil)
+	if len(registered) != 1 || len(allocated) != 0 {
+		t.Fatalf("unexpected heartbeat: %v %v", registered, allocated)
+	}
+	t.Log("claiming runner registered but omitted from allocated_runner_ids (purge protection)")
+	if !time.Now().Before(a.LeaseExpiresAt) {
+		t.Fatal("lease already expired")
+	}
+	heartbeat(map[string]any{"local_runner_ids": []string{}})
+	if _, err := store.GetRunner(ctx, "runner"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("runner not removed: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "session"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("allocation not removed: %v", err)
+	}
+	r, err := routes.Get(ctx, "session")
+	must(err)
+	if r == nil || r.Status != "starting" || r.RemoteSessionID != "runner" {
+		t.Fatalf("route changed: %+v", r)
+	}
+	t.Log("single missing inventory deleted unexpired 45s lease and runner, leaving starting route")
+}

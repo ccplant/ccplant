@@ -34,6 +34,7 @@ func TestMissingRunnerRequeuesUnstartedButPreservesStarted(t *testing.T) {
 			}
 			require.NoError(t, routes.Save(ctx, &ports.SessionRoute{SessionID: a.SessionID, ManagerID: "manager", RemoteSessionID: "old", Generation: a.Generation, UserID: "alice", InitialMessage: "hello"}))
 			c := NewSessionPoolController(s, routes)
+			c.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
 			require.NoError(t, s.DeleteRunner(ctx, "old"))
 			require.NoError(t, c.reconcileMissingManagerRunners(ctx, "manager", []string{}))
 			recovered, err := s.GetAllocation(ctx, a.SessionID)

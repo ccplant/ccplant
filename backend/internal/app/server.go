@@ -365,6 +365,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Set settings repository in session manager for Bedrock integration
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetSettingsRepository(settingsRepo)
+		k8sSessionManager.SetSlackTokenClient(persistenceClient, namespace)
 	}
 	log.Printf("[SERVER] Settings repository initialized")
 
@@ -505,6 +506,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("[SERVER] Failed to initialize API-side provision settings builder: %v", builderErr)
 		}
 		settingsBuilder.SetSettingsRepository(settingsRepo)
+		settingsBuilder.SetSettingsSecretClient(persistenceClient, namespace)
+		settingsBuilder.SetSlackTokenClient(persistenceClient, namespace)
 		settingsBuilder.SetCredentialsRepository(credentialsRepo)
 		settingsBuilder.SetTeamConfigRepository(teamConfigRepo)
 		settingsBuilder.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
@@ -1356,7 +1359,9 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
 		WithMemoryRepository(s.memoryRepo)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
+		WebhookPayload:           startReq.WebhookPayload,
 		ResumeFrom:               resumeFrom,
+		TriggeredUserID:          startReq.TriggeredUserID,
 		UserID:                   userID,
 		Environment:              startReq.Environment,
 		ProfileEnvironment:       startReq.ProfileEnvironment,
@@ -1434,7 +1439,8 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
+		TriggeredUserID: startReq.TriggeredUserID,
+		Pool:            pool, AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
@@ -1443,6 +1449,13 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
+	}
+	if startReq.Params != nil {
+		runReq.SlackParams = startReq.Params.Slack
+		runReq.ResumeFrom = startReq.Params.ResumeFrom
+		runReq.InitialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
+		runReq.CycleMessage = startReq.Params.CycleMessage
+		runReq.CycleMaxCount = startReq.Params.CycleMaxCount
 	}
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
@@ -1461,6 +1474,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: unsyncedFilePaths,
 		}
 	}
+	settings.WebhookPayload = string(startReq.WebhookPayload)
 	s.applyPoolAutoSuspendPolicy(ctx, settings, startReq.Scope, userID, startReq.TeamID)
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {

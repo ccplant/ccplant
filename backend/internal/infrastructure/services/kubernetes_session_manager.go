@@ -126,6 +126,13 @@ type KubernetesSessionManager struct {
 	personalAPIKeyRepo portrepos.PersonalAPIKeyRepository
 	sandboxPolicyRepo  portrepos.SandboxPolicyRepository
 	userFileRepo       portrepos.UserFileRepository
+
+	settingsSecretClient    kubernetes.Interface
+	settingsSecretNamespace string
+
+	slackTokenClient    kubernetes.Interface
+	slackTokenNamespace string
+
 	// credentialsRepo reads managed credential files (e.g. ~/.codex/auth.json,
 	// ~/.claude/.credentials.json) from the application KV store, which is the
 	// canonical store written to by the credentials/Codex device-auth flows.
@@ -5368,6 +5375,22 @@ func (m *KubernetesSessionManager) SetSettingsRepository(repo portrepos.Settings
 	m.settingsRepo = repo
 }
 
+// SetSettingsSecretClient selects the application persistence store for raw
+// settings patches, including the configured base Secret. The API settings
+// builder has no workload client; its persistence client may be a KV adapter.
+func (m *KubernetesSessionManager) SetSettingsSecretClient(client kubernetes.Interface, namespace string) {
+	m.settingsSecretClient = client
+	m.settingsSecretNamespace = namespace
+}
+
+// SetSlackTokenClient selects the application store holding Slack credentials.
+// API-side settings builders have no runtime Kubernetes client; tokens must be
+// resolved here before the complete provision settings are sent to a runner.
+func (m *KubernetesSessionManager) SetSlackTokenClient(client kubernetes.Interface, namespace string) {
+	m.slackTokenClient = client
+	m.slackTokenNamespace = namespace
+}
+
 // SetTeamConfigRepository sets the team config repository for service account configuration
 func (m *KubernetesSessionManager) SetTeamConfigRepository(repo portrepos.TeamConfigRepository) {
 	m.teamConfigRepo = repo
@@ -6936,7 +6959,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	// Slack integration: embed SlackParams so the provisioner can launch
-	// claude-posts as a subprocess. This enables stock sessions (which have no
+	// acp-posts as a subprocess. This enables stock sessions (which have no
 	// slack-integration sidecar) to forward agent output to Slack.
 	// Use per-bot token secret if provided, fall back to server default.
 	if req.SlackParams != nil && req.SlackParams.Channel != "" {
@@ -6952,7 +6975,11 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			if botTokenSecretKey == "" {
 				botTokenSecretKey = defaultSlackBotTokenSecretKey
 			}
-			secret, err := m.client.CoreV1().Secrets(m.namespace).Get(
+			client, namespace := m.client, m.namespace
+			if m.slackTokenClient != nil {
+				client, namespace = m.slackTokenClient, m.slackTokenNamespace
+			}
+			secret, err := client.CoreV1().Secrets(namespace).Get(
 				ctx,
 				slackSecretName,
 				metav1.GetOptions{},
@@ -7400,7 +7427,11 @@ func (m *KubernetesSessionManager) deleteOneshotSettingsSecret(ctx context.Conte
 // readSettingsPatch reads the settings.json from an agentapi-settings-* Secret
 // and returns it as a SettingsPatch. Returns nil if the secret does not exist or cannot be parsed.
 func (m *KubernetesSessionManager) readSettingsPatch(ctx context.Context, secretName string) *settingspatch.SettingsPatch {
-	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	client, namespace := m.client, m.namespace
+	if m.settingsSecretClient != nil {
+		client, namespace = m.settingsSecretClient, m.settingsSecretNamespace
+	}
+	secret, err := client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			log.Printf("[K8S_SESSION] Warning: failed to read settings secret %s: %v", secretName, err)

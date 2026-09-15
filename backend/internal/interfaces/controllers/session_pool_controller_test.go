@@ -491,7 +491,7 @@ func TestSessionManagerHeartbeatDoesNotOverwriteResumingRouteWithStopped(t *test
 	}
 }
 
-func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
+func TestSessionManagerHeartbeatPreservesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
@@ -528,8 +528,8 @@ func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory
 	if result.Code != http.StatusOK {
 		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
 	}
-	if _, err := store.GetRunner(ctx, "missing-running"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("missing running runner was not deleted: %v", err)
+	if _, err := store.GetRunner(ctx, "missing-running"); err != nil {
+		t.Fatalf("missing running runner was deleted: %v", err)
 	}
 	if _, err := store.GetAllocation(ctx, "stale-session"); err != nil {
 		t.Fatalf("allocation recovery data was deleted: %v", err)
@@ -1100,7 +1100,7 @@ func decodeRecorder(t *testing.T, recorder *httptest.ResponseRecorder, out any) 
 }
 
 func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
-	for _, reported := range []string{"active", "stable", "running"} {
+	for _, reported := range []string{"active", "stable", "running", "starting", "creating"} {
 		t.Run(reported, func(t *testing.T) {
 			ctx := context.Background()
 			client := fake.NewSimpleClientset()
@@ -1134,7 +1134,7 @@ func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
 			if err != nil || got.Status != "running" {
 				t.Fatalf("runtime status not accepted: %v %v", got, err)
 			}
-			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": "active"}); err != nil {
+			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
 				t.Fatal(err)
 			}
 			got, err = routes.Get(ctx, "oneshot")

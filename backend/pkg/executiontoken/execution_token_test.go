@@ -42,3 +42,49 @@ func TestExecutionTokenRejectsTamperingAndExpiry(t *testing.T) {
 		t.Fatal("expired token was accepted")
 	}
 }
+
+func TestSlackExecutionToken(t *testing.T) {
+	now := time.Now()
+	claims := ExecutionClaims{SlackBotID: "bot", ExecutionID: "event", SessionID: "session", UserID: "owner", TriggeredUserID: "actor", ExpiresAt: now.Add(time.Minute).Unix()}
+	token, err := SignExecutionToken([]byte("secret"), claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := VerifyExecutionToken([]byte("secret"), token, now)
+	if err != nil || got.SlackBotID != "bot" || got.TriggeredUserID != "actor" {
+		t.Fatalf("claims=%+v err=%v", got, err)
+	}
+	if _, err := VerifyExecutionToken([]byte("wrong"), token, now); err == nil {
+		t.Fatal("accepted wrong signing key")
+	}
+	if _, err := VerifyExecutionToken([]byte("secret"), token, now.Add(time.Minute)); err == nil {
+		t.Fatal("accepted expired token")
+	}
+	claims.ScheduleID = "schedule"
+	token, _ = SignExecutionToken([]byte("secret"), claims)
+	if _, err := VerifyExecutionToken([]byte("secret"), token, now); err == nil {
+		t.Fatal("accepted ambiguous trigger")
+	}
+}
+
+func TestWebhookExecutionToken(t *testing.T) {
+	now := time.Now()
+	claims := ExecutionClaims{WebhookID: "webhook", ExecutionID: "execution", SessionID: "session", UserID: "owner", TriggeredUserID: "actor", ExpiresAt: now.Add(time.Minute).Unix()}
+	token, _ := SignExecutionToken([]byte("secret"), claims)
+	got, err := VerifyExecutionToken([]byte("secret"), token, now)
+	if err != nil || got.WebhookID != "webhook" || got.TriggeredUserID != "actor" {
+		t.Fatalf("claims=%+v err=%v", got, err)
+	}
+	for _, origin := range []string{"schedule", "slackbot"} {
+		mixed := claims
+		if origin == "schedule" {
+			mixed.ScheduleID = origin
+		} else {
+			mixed.SlackBotID = origin
+		}
+		token, _ = SignExecutionToken([]byte("secret"), mixed)
+		if _, err := VerifyExecutionToken([]byte("secret"), token, now); err == nil {
+			t.Fatal("mixed trigger identities accepted")
+		}
+	}
+}

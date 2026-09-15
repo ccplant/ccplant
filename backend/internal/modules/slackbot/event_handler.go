@@ -459,11 +459,15 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			}(),
 			SlackParams: func() *entities.SlackParams {
 				sp := &entities.SlackParams{
-					Channel:  channel,
-					ThreadTS: threadKey,
+					Channel:            channel,
+					ThreadTS:           threadKey,
+					BotTokenSecretName: h.defaultBotTokenSecretName,
+					BotTokenSecretKey:  h.defaultBotTokenSecretKey,
 				}
 				if bot != nil && bot.BotTokenSecretName() != "" {
 					sp.BotTokenSecretName = bot.BotTokenSecretName()
+				}
+				if bot != nil && bot.BotTokenSecretKey() != "" {
 					sp.BotTokenSecretKey = bot.BotTokenSecretKey()
 				}
 				return sp

@@ -140,7 +140,7 @@ export default function SessionProfileEditor({
       setIsDefault(editingProfile.is_default ?? false)
 
       const cfg = editingProfile.config
-      setPool(cfg?.pool ?? '')
+      setPool(cfg?.pool || cfg?.params?.pool || '')
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
       setCodexModel(cfg?.environment?.CODEX_MODEL ?? '')
       setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
@@ -320,7 +320,7 @@ export default function SessionProfileEditor({
       // Build params if any param is set
       // Preserve fields managed through the API that are not exposed in this editor.
       const extraParams = { ...editingProfile?.config?.params }
-      for (const key of ['agent_type', 'model', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      for (const key of ['pool', 'agent_type', 'model', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const params = {
         ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),

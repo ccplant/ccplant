@@ -108,3 +108,22 @@ func TestScheduleClientClaimsStartsAndFinalizes(t *testing.T) {
 		t.Fatal("execution was not finalized")
 	}
 }
+
+func TestSlackStartFailureDoesNotFallBackToControlAPI(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/start" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	_, err := NewSessionManager(server.URL, "secret").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"}}, nil)
+	if err == nil {
+		t.Fatal("start failure ignored")
+	}
+	if calls != 1 {
+		t.Fatalf("requests=%d want 1", calls)
+	}
+}

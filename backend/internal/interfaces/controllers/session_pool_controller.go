@@ -1125,6 +1125,14 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid heartbeat request")
 		}
 	}
+	// An inventory is a snapshot, not a deletion acknowledgement. In particular,
+	// never erase a leased allocation: its expiry is what permits recovery.
+	localRunners := make(map[string]bool)
+	if heartbeat.LocalRunnerIDs != nil {
+		for _, id := range *heartbeat.LocalRunnerIDs {
+			localRunners[id] = true
+		}
+	}
 	if heartbeat.LocalRunnerIDs != nil {
 		if err := c.reconcileMissingManagerRunners(ctx.Request().Context(), manager.ID, *heartbeat.LocalRunnerIDs); err != nil {
 			return sessionRunnerStoreError(err)
@@ -1142,6 +1150,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	owned := make([]*core.PoolSupplier, 0)
 	registeredRunnerIDs := make([]string, 0)
 	allocatedRunnerIDs := make([]string, 0)
+	protectedRunners := make(map[string]bool)
 	allocatedRunnerPolicies := make(map[string]sessionsettings.SessionMeta)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
@@ -1157,8 +1166,13 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				return sessionRunnerStoreError(listErr)
 			}
 			for _, allocation := range allocations {
-				if allocation.ManagerID != manager.ID || allocation.RunnerID == "" || len(allocation.ProvisionSettings) == 0 {
+				if allocation.ManagerID != manager.ID || allocation.RunnerID == "" {
 					continue
+				}
+				// ClaimNext persists the lease before updating the runner status.
+				// Include that window in stock-purge protection as well.
+				if allocation.Status == core.AllocationLeased || allocation.Status == core.AllocationClaimed || allocation.Status == core.AllocationRunning {
+					protectedRunners[allocation.RunnerID] = true
 				}
 				var settings sessionsettings.SessionSettings
 				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
@@ -1170,7 +1184,7 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
 				}
-				if runner.Status == core.RunnerIdle && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
+				if runner.Status == core.RunnerIdle && !protectedRunners[runner.ID] && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
 					if err := c.store.RetireRunner(ctx.Request().Context(), manager.ID, runner.ID); err != nil && !errors.Is(err, core.ErrConflict) {
 						return sessionRunnerStoreError(err)
 					}
@@ -1179,17 +1193,25 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				if runner.Status == core.RunnerDraining {
 					continue
 				}
-				copy.TotalRunners++
 				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
-				switch runner.Status {
-				case core.RunnerIdle:
+				if runner.Status == core.RunnerRunning || runner.Status == core.RunnerClaiming {
+					protectedRunners[runner.ID] = true
+				}
+				// Missing workloads must not consume capacity and prevent a replacement
+				// from reclaiming an expired lease. Retain their durable registration.
+				if heartbeat.LocalRunnerIDs != nil && !localRunners[runner.ID] {
+					continue
+				}
+				copy.TotalRunners++
+				if runner.Status == core.RunnerIdle && !protectedRunners[runner.ID] {
 					copy.IdleRunners++
-				case core.RunnerClaiming, core.RunnerRunning:
-					allocatedRunnerIDs = append(allocatedRunnerIDs, runner.ID)
 				}
 			}
 			owned = append(owned, &copy)
 		}
+	}
+	for id := range protectedRunners {
+		allocatedRunnerIDs = append(allocatedRunnerIDs, id)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
@@ -1222,9 +1244,11 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		// Runtime status is authoritative even while running, so a heartbeat
 		// cannot race completion using an earlier route snapshot. A new turn is
 		// reported through RecordRemoteSessionStatus instead.
+		// A lagging manager replica may still report startup after the turn has
+		// finished; those statuses must not reset the completion/TTL timestamp.
 		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
 			route.Tags["oneshot"] == "true" &&
-			(status == "active" || status == "running") {
+			(status == "active" || status == "running" || status == "starting" || status == "creating") {
 			continue
 		}
 		// Suspension is a parent-controlled lifecycle state. A manager may still
@@ -1257,16 +1281,18 @@ func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Conte
 	for _, id := range localRunnerIDs {
 		local[id] = true
 	}
-	runners, err := c.store.ListRunners(ctx, "")
-	if err != nil {
-		return err
-	}
 	allocations, err := c.store.ListAllocations(ctx, "")
 	if err != nil {
 		return err
 	}
 	for _, allocation := range allocations {
 		if allocation.ManagerID != managerID || allocation.RunnerID == "" || local[allocation.RunnerID] {
+			continue
+		}
+		// A heartbeat is only a snapshot. Preserve in-flight leases and wait
+		// through the startup lease before considering an acknowledged but
+		// never-connected runtime for recovery.
+		if allocation.Status != core.AllocationClaimed || c.now().Before(allocation.LeaseExpiresAt) {
 			continue
 		}
 		// Preserve legacy sessions that reported a status before start fencing existed.
@@ -1292,15 +1318,7 @@ func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Conte
 			}
 		}
 	}
-	for _, runner := range runners {
-		if runner.ManagerID != managerID || local[runner.ID] || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
-			continue
-		}
-		// Allocations are retained even if their runner is no longer registered.
-		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
-			return err
-		}
-	}
+
 	return nil
 }
 
@@ -1363,6 +1381,11 @@ func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocatio
 	route, err := c.routes.Get(ctx, allocation.SessionID)
 	if err != nil || route == nil {
 		return err
+	}
+	if route.Generation != allocation.Generation {
+		// A replacement must not inherit the previous runtime's completion TTL.
+		route.Status = "starting"
+		route.StatusUpdatedAt = c.now()
 	}
 	route.ManagerID = runner.ManagerID
 	route.RemoteSessionID = runner.ID
