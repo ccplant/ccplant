@@ -247,6 +247,11 @@ type SciaConfig struct {
 	TodoistPaths []string `json:"todoist_paths" mapstructure:"todoist_paths"`
 }
 
+// DefaultKubernetesSessionImage is the immutable agent-assets revision used by
+// Kubernetes session Pods. Application releases supply the ccplant CLI from
+// the session-manager image independently.
+const DefaultKubernetesSessionImage = "ghcr.io/ccplant/ccplant-agent:assets-67550f1c68bcfc457200b242f2cd4c67"
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Namespace is the Kubernetes namespace where session resources are created
