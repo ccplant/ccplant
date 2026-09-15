@@ -204,7 +204,10 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// The message and app_mention callbacks generated for one Slack post share
 	// channel+ts. Retain this key beyond session creation so a delayed callback
 	// cannot create a second session while ListSessions is still stale.
-	eventKey := event.Channel + ":" + event.Ts
+	// The handler is shared by every configured bot in this process. Include the
+	// bot ID so two bots receiving the same Slack message do not suppress each
+	// other merely because channel and timestamp match.
+	eventKey := botID + ":" + event.Channel + ":" + event.Ts
 	if _, duplicate := h.processedEvents.LoadOrStore(eventKey, struct{}{}); duplicate {
 		log.Printf("[SLACKBOT] Duplicate Slack event ignored: id=%s, channel=%s, ts=%s", botID, event.Channel, event.Ts)
 		return nil
@@ -312,31 +315,13 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Try to reuse an existing live session for this channel+thread.
-	// Follow-up messages in the same Slack thread are routed to the existing session
-	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
-	// NOTE: The slackbot reuse path is handled here (rather than via LaunchUseCase)
-	// because it requires Slackbot-specific message construction (buildMessage).
 	reuseFilter := entities.SessionFilter{
 		Tags: map[string]string{
+			"slackbot_id":       botID,
 			"slack_channel":     channel,
 			"slack_thread_ts":   threadKey,
 			"triggered_user_id": triggeredUserID,
 		},
-	}
-	if liveSessions := liveSlackSessions(h.sessionManager.ListSessions(reuseFilter)); len(liveSessions) > 0 {
-		existingSession := liveSessions[0]
-		reuseMessage := h.buildMessage(bot, payloadMap, event.Text, true)
-		go func() {
-			bgCtx := context.Background()
-			if err := h.sessionManager.SendMessage(bgCtx, existingSession.ID(), reuseMessage); err != nil {
-				log.Printf("[SLACKBOT] Failed to route message to existing session %s: %v", existingSession.ID(), err)
-				return
-			}
-			// last-message-at is updated automatically inside SendMessage.
-			log.Printf("[SLACKBOT] Routed message to existing session %s for thread %s", existingSession.ID(), threadKey)
-		}()
-		return nil
 	}
 
 	// Determine scope and ownership.
@@ -355,20 +340,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		maxSessions = bot.MaxSessions()
 	}
 
-	// Check session limit synchronously so that the caller (and tests) can observe
-	// the error before a goroutine is launched.  LaunchUseCase receives MaxSessions=0
-	// to skip the duplicate check inside the goroutine.
-	if maxSessions > 0 {
-		limitFilter := entities.SessionFilter{
-			Tags: map[string]string{"slackbot_id": botID},
-		}
-		activeSessions := h.sessionManager.ListSessions(limitFilter)
-		if len(activeSessions) >= maxSessions {
-			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", botID, maxSessions)
-			return fmt.Errorf("session limit reached: maximum %d sessions", maxSessions)
-		}
-	}
-
 	sessionID := uuid.New().String()
 
 	// Dedup guard: Slack can emit both "message" and "app_mention" events for the same
@@ -376,7 +347,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// doesn't exist yet when they run concurrently) and would each spawn a new session.
 	// Use LoadOrStore so that only the first event proceeds; the second is dropped.
 	// The key is released once session creation completes (success or failure).
-	pendingKey := channel + ":" + threadKey + ":" + triggeredUserID
+	pendingKey := botID + ":" + channel + ":" + threadKey + ":" + triggeredUserID
 	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
 		h.processedEvents.Delete(eventKey)
 		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
@@ -454,6 +425,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			Environment:              env,
 			Tags:                     tags,
 			InitialMessage:           initialMessage,
+			ReuseSession:             true,
+			ReuseMatchTags:           reuseFilter.Tags,
+			ReuseMessage:             h.buildMessage(bot, payloadMap, event.Text, true),
+			DeferReuseToStart:        true,
+			MaxSessions:              maxSessions,
+			LimitMatchTags:           map[string]string{"slackbot_id": botID},
 			AgentType:                agentType,
 			Model:                    model,
 			MemoryKey:                memoryKey,
@@ -487,16 +464,18 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 				}
 				return sp
 			}(),
-			// MaxSessions=0: limit was already checked synchronously above so we
-			// skip the redundant check inside LaunchUseCase.
 		})
 		if err != nil {
 			h.processedEvents.Delete(eventKey)
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
 			return
 		}
-		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
-		if bot.NotifyOnSessionCreated() {
+		if result.SessionReused {
+			log.Printf("[SLACKBOT] Reused session %s for thread %s", result.SessionID, threadKey)
+		} else {
+			log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
+		}
+		if !result.SessionReused && bot.NotifyOnSessionCreated() {
 			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, tags["repository"], bot)
 		}
 	}()

@@ -127,3 +127,25 @@ func TestSlackStartFailureDoesNotFallBackToControlAPI(t *testing.T) {
 		t.Fatalf("requests=%d want 1", calls)
 	}
 }
+
+func TestSlackStartPreservesSessionReused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/start" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "existing", "session_reused": true})
+	}))
+	defer server.Close()
+
+	session, err := NewSessionManager(server.URL, "secret").CreateSession(context.Background(), "attempt", &entities.RunServerRequest{
+		UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused, ok := session.(interface{ SessionReused() bool })
+	if !ok || !reused.SessionReused() || session.ID() != "existing" {
+		t.Fatalf("session=%#v reused=%t", session, ok && reused.SessionReused())
+	}
+}

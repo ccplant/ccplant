@@ -289,14 +289,40 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 		}
 		aliasedRuntime := make(map[string]bool)
 		for _, route := range routes {
+			if route.Transport == repositories.SessionRouteTransportDirectRuntime && route.RemoteSessionID == "" {
+				// Direct-runtime sessions are represented by their durable public route;
+				// they do not have a separate remote session ID to alias. Excluding these
+				// routes makes worker-side consumers (SlackBot cleanup/reuse) see an empty
+				// session list while the session is queued or running.
+				if byID[route.SessionID] != nil {
+					continue
+				}
+				status := route.Status
+				if status == "" {
+					status = "creating"
+				}
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, status)
+				if !route.StatusUpdatedAt.IsZero() {
+					session.SetUpdatedAt(route.StatusUpdatedAt)
+				}
+				sessions = append(sessions, session)
+				continue
+			}
 			if route.RemoteSessionID == "" {
 				continue
 			}
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
-			} else if route.Tags["session_ttl"] != "" || route.Tags["oneshot"] == "true" {
-				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, route.Status)
+			} else if route.Transport == repositories.SessionRouteTransportDirectRuntime || route.Tags["session_ttl"] != "" || route.Tags["oneshot"] == "true" {
+				// A claimed direct-runtime route has a runner ID, but that runner is not
+				// necessarily present in the API session manager's local list. Keep the
+				// durable public route visible to worker-side Slack thread reuse.
+				status := route.Status
+				if status == "" {
+					status = "creating"
+				}
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, status)
 				if !route.StatusUpdatedAt.IsZero() {
 					session.SetUpdatedAt(route.StatusUpdatedAt)
 				}

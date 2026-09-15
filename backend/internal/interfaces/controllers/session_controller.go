@@ -364,6 +364,19 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
+	if existingID, reused, err := c.reuseStartSession(ctx, startReq, userID); err != nil {
+		return err
+	} else if reused {
+		return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": existingID, "session_reused": true})
+	}
+	if startReq.MaxSessions > 0 && len(c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.LimitMatchTags})) >= startReq.MaxSessions {
+		return echo.NewHTTPError(http.StatusTooManyRequests, fmt.Sprintf("session limit reached: maximum %d sessions", startReq.MaxSessions))
+	}
+	// Reuse and limit controls belong to this /start invocation and must not be
+	// persisted as part of the session's restart configuration.
+	startReq.ReuseMatchTags, startReq.ReuseMessage = nil, ""
+	startReq.LimitMatchTags, startReq.MaxSessions = nil, 0
+
 	// Persist the explicit input before profile defaults are merged.
 	startInput, err := json.Marshal(startReq)
 	if err != nil {
@@ -400,6 +413,91 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+// reuseStartSession makes tag-based trigger reuse authoritative at /start.
+// Direct-runtime prompts are appended to the durable reverse-RPC queue, so the
+// request is not lost while a matching session is still connecting.
+func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entities.StartRequest, ownerUserID string) (string, bool, error) {
+	if len(startReq.ReuseMatchTags) == 0 || startReq.ReuseMessage == "" {
+		return "", false, nil
+	}
+	// Direct runtimes are durable routes and are intentionally absent from the
+	// API process's local SessionManager. Search the route repository first.
+	if c.sessionRouteRepo != nil {
+		routes, err := c.sessionRouteRepo.List(ctx.Request().Context(), ownerUserID)
+		if err != nil {
+			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to list reusable sessions").SetInternal(err)
+		}
+		sort.SliceStable(routes, func(i, j int) bool { return routes[i].StartedAt.After(routes[j].StartedAt) })
+		for _, route := range routes {
+			if route.Transport != repositories.SessionRouteTransportDirectRuntime ||
+				route.Scope != string(startReq.Scope) || route.TeamID != startReq.TeamID ||
+				(startReq.Scope != entities.ScopeTeam && route.UserID != ownerUserID) ||
+				!tagsContain(route.Tags, startReq.ReuseMatchTags) || terminalReuseStatus(route.Status) {
+				continue
+			}
+			enqueuer, ok := c.esmControlTunnel.(esmControlEnqueuer)
+			if !ok {
+				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime queue is unavailable")
+			}
+			body, _ := json.Marshal(map[string]string{"content": startReq.ReuseMessage, "type": "user"})
+			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/internal/session-prompt", bytes.NewReader(body))
+			if reqErr != nil {
+				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to build reusable session message").SetInternal(reqErr)
+			}
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			if strings.EqualFold(route.Status, "suspended") {
+				resp, resumeErr := c.requestRemoteResume(ctx, route)
+				if resumeErr != nil {
+					return "", false, resumeErr
+				}
+				_ = resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to resume reusable session")
+				}
+				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+			}
+			if _, err := enqueuer.Enqueue(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req); err != nil {
+				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to queue reusable session prompt").SetInternal(err)
+			}
+			log.Printf("[SESSION_REUSE] Reused direct runtime %s for tags %v", route.SessionID, startReq.ReuseMatchTags)
+			return route.SessionID, true, nil
+		}
+	}
+
+	for _, existing := range c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.ReuseMatchTags}) {
+		if existing.Scope() != startReq.Scope || existing.TeamID() != startReq.TeamID || (startReq.Scope != entities.ScopeTeam && existing.UserID() != ownerUserID) {
+			continue
+		}
+		status := strings.ToLower(existing.Status())
+		if terminalReuseStatus(status) || status == "suspended" {
+			continue
+		}
+		if err := c.getSessionManager().SendMessage(ctx.Request().Context(), existing.ID(), startReq.ReuseMessage); err != nil {
+			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to route reusable session message").SetInternal(err)
+		}
+		return existing.ID(), true, nil
+	}
+	return "", false, nil
+}
+
+func tagsContain(tags, expected map[string]string) bool {
+	for key, value := range expected {
+		if tags[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func terminalReuseStatus(status string) bool {
+	switch strings.ToLower(status) {
+	case "stopped", "failed", "terminated", "terminating":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldUseGitHubBroker(startReq entities.StartRequest, repository string) bool {

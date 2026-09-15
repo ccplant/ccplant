@@ -51,15 +51,18 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 	start := entities.StartRequest{
 		Environment: req.Environment, Tags: tags, Params: params, Scope: req.Scope, TeamID: req.TeamID,
 		MemoryKey: req.MemoryKey, SessionProfileID: req.ResolvedSessionProfileID,
-		WebhookPayload: webhookPayload,
+		WebhookPayload: webhookPayload, ReuseMatchTags: req.ReuseMatchTags, ReuseMessage: req.ReuseMessage,
+		LimitMatchTags: req.LimitMatchTags, MaxSessions: req.MaxSessions,
 	}
 	apiURL := m.sessionAPIURL
 	if apiURL == "" {
 		apiURL = m.baseURL
 	}
-	sessionID, err := m.startSession(ctx, apiURL, start, token, id)
+	sessionID, reused, err := m.startSession(ctx, apiURL, start, token, id)
 	if err != nil {
 		return nil, err
 	}
-	return entities.NewProxySessionWithStatus(sessionID, req.UserID, req.Scope, req.TeamID, tags, time.Now(), "creating"), nil
+	session := entities.NewProxySessionWithStatus(sessionID, req.UserID, req.Scope, req.TeamID, tags, time.Now(), "creating")
+	session.SetSessionReused(reused)
+	return session, nil
 }
