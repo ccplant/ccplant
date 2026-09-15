@@ -1,229 +1,183 @@
-# セッション途中の認証情報切り替え・設定変更・再開
+# セッション設定全体の再読み込み・エージェント再起動
 
 Status: proposed（設計のみ。API 名・フィールドは追加提案）
 
 ## 1. 方針
 
-同じセッション ID、会話履歴、作業ディレクトリを保持したまま、エージェントを停止し、
-session settings を変更して再開できるようにする。操作は以下の二通りを提供する。
+**起動時と同じ設定生成処理で最新の `SessionSettings` 一式を作り直し、実行側に再送して
+エージェントを再起動する。** 認証情報の切り替えも、この設定再読み込みの一部として扱う。
 
-- **変更して再起動**: 新しい認証情報を選択 → 検証 → 停止 → 設定適用 → 再開。
-- **停止して編集**: 停止 → 設定を編集・保存 → 任意のタイミングで再開。
+同じセッション ID、会話履歴、作業ディレクトリを保持する。通常の操作は
+「設定を再読み込みして再起動」の一つとする。「停止 → 設定変更 → 再開」も同じ処理を使い、
+停止中に既存の個人・チーム設定やセッションプロファイル、認証情報を編集できるようにする。
+再開時にそれらの最新設定を解決して送る。
 
-両者は同じサーバー側の永続操作として実装する。ブラウザから suspend、設定更新、resume を
-順番に呼ぶだけにはしない。ブラウザ切断や proxy 再起動でも処理を追跡・再開できる必要がある。
-再開は会話を読み込んで入力待ちになることを指し、実行途中のツールや直前の prompt の再送はしない。
+認証専用の設定モデル、credential ID の新設、認証だけの patch／preview API は追加しない。
+起動と再起動で別々のマージ規則を持たず、同じ resolver と `SessionSettings` schema を使う。
+再送するのは過去の settings のコピーではなく、最新の設定元から生成した一式である。
 
-初期実装は、同じ agent・接続先・モデル・認証方式での認証情報の更新／参照元切り替えに対応する。
-接続先、agent 種別、モデル、認証方式の変更は既存の会話復元制約があるため別段階とする。
-GitHub、MCP、registry、ESM 自体の接続トークンの切り替えは初期対象外。
+## 2. 読み込む設定と保持する状態
 
-## 2. 現状の実装と不足点
-
-| 現状 | 設計への影響 |
+| 区分 | 再読み込み時の扱い |
 | --- | --- |
-| Kubernetes の `SuspendSession` は canonical resource を残して workload を停止する | 停止・再開の基盤として再利用する |
-| `PrepareSessionResume` は再開用 Secret の `settings.yaml` を更新する | revision と停止確認を追加して適用先に使う |
-| 外部 manager の resume は settings body を受け取る | 親で確定した settings を送る。manager が独自再解決しない |
-| 親の `remoteResumeSettings` は allocation の `ProvisionSettings` を読み、自動停止ポリシー等を更新する | Secret だけの編集では後の resume で古い認証へ戻る。親の保存内容も更新する |
-| runtime route へのアクセスで suspended session が自動再開する | 手動停止・編集用の durable hold が必要 |
-| `credentialOwnersForRequest` は `CredentialSource`、`SettingsTeamID` 等から参照元を解決する | 初回解決結果を明示的に保存し、閲覧者によって認証元を変えない |
-| provisioner は managed files を復元し、10 秒間隔で変更を同期する | 古い runtime の書き戻しを遮断し、書き戻し先を選択した認証元と一致させる |
-| `ManagedFilesController.Save` は `session.UserID()` 宛てに保存する | チーム認証等の切り替えではそのまま使えない |
-| `persistModelConnectionIdentity` は復元時に接続・モデルの一致を要求する | 初期版はこの検証を維持する |
+| 個人・チーム設定、選択中の session profile | 最新版から、起動時と同じ優先順位で全体を再生成 |
+| 認証情報、接続先、モデル、agent 設定、環境変数 | 最新版を適用。会話復元の互換性は停止前に検証 |
+| MCP、skills／plugins、managed files、GitHub 設定等 | 起動時の設定生成・適用対象を同じように再読み込み |
+| sandbox、Docker／registry 等の workload 設定 | 全体生成の対象。プロセスだけでは反映できない変更は manager が workload を再作成 |
+| session ID、owner、scope、team、作業ディレクトリ、既存会話 ID | 保持。設定の再読み込みによって別セッションへ変えない |
+| repository URL、branch 等の初期配置指示 | 既存 workdir を再 clone／checkout／reset しない。変更要求は停止前に拒否 |
+| initial message、webhook 起動イベント、初回セットアップ | 再送 payload に含まれても再実行しない |
+| 内部 runtime/control token、世代番号、manager の識別情報 | 制御側が生成・管理。ユーザー編集から上書きさせない |
 
-主要な参照箇所:
+「設定全体を生成すること」と「新規セッション作成の副作用を繰り返すこと」は分離する。
+設定を再生成する処理と、再開モードで設定を適用する処理を共通部品として切り出す。
 
-- [session controller](../backend/internal/interfaces/controllers/session_controller.go)
-- [Kubernetes manager](../backend/internal/infrastructure/services/kubernetes_session_manager.go)
-- [manager handlers](../backend/internal/modules/sessionmanager/handlers.go)
-- [settings schema](../backend/pkg/sessionsettings/types.go)
-- [provisioner](../backend/pkg/provisioner/provision.go)
-- [connection identity](../backend/pkg/provisioner/model_connections.go)
-- [managed files controller](../backend/internal/interfaces/controllers/managed_files_controller.go)
+既存の `persistModelConnectionIdentity` は会話復元時に接続先・モデル等の一致を要求する。
+この制約に違反する変更は停止前に理由を返す。設定生成対象を認証だけに限定する理由にはしない。
+agent 種別を変えて別形式の会話を読み込むことや、復元失敗時に空の会話で成功扱いすることはしない。
+互換性のない変更を受けたら設定全体の適用を拒否し、互換な項目だけを黙って部分適用しない。
 
-## 3. データモデルと責務
+## 3. 既存実装の利用
 
-親 proxy に session ごとの設定レコードと操作レコードを持たせる。local manager の場合も同じ
-repository interface を使う。Kubernetes Secret と runtime 内の設定ファイルは実行用の複製とする。
+- `SessionSettings` が起動設定全体の共通形式として既に存在する。
+- 外部 manager の `ResumeSession` は settings body を受け取り、`PrepareSessionResume` で保存できる。
+- Kubernetes manager は `settings.yaml` を再開用 Secret に保存する。
+- 親の `remoteResumeSettings` は allocation の `ProvisionSettings` を読み込む。
+  現在は主に自動停止ポリシー等を更新するため、明示的な再読み込みでは共通 resolver の出力へ置き換える。
+- provisioner は設定適用と agent 子プロセス起動を行う。ただし現在の `runProvision` は初回起動向けで、
+  agent の終了をエラーとして扱うため、そのまま二度呼ぶ実装にはしない。
+- 既存の suspend／checkpoint／resume を workload 再作成と手動停止に再利用する。
 
-### SessionConfiguration
+参照:
+[settings schema](../backend/pkg/sessionsettings/types.go)、
+[session controller](../backend/internal/interfaces/controllers/session_controller.go)、
+[Kubernetes manager](../backend/internal/infrastructure/services/kubernetes_session_manager.go)、
+[manager handlers](../backend/internal/modules/sessionmanager/handlers.go)、
+[provisioner](../backend/pkg/provisioner/provision.go)、
+[connection identity](../backend/pkg/provisioner/model_connections.go)。
 
-- `revision`: 編集可能な設定の単調増加番号。更新は期待 revision による CAS（条件付き更新）。
-- `active_revision`: 最後に会話復元まで成功した revision。
-- `desired_revision`: 次回起動に適用する revision。
-- `resume_hold`: `none | manual_edit | reconfigure | recovery`。一覧アクセス、透過 resume、
-  auto-suspend reconciler、通常の明示 resume は hold を解除できない。
-- `credential_binding`: agent 用認証の明示的参照（種別、user/team scope、owner ID、保存先の
-  credential ID、取得時の version）。認証値は公開レスポンスに含めない。
-- `overrides`: 許可された session 固有の変更。個人／チームの既定設定を書き換えない。
-- `compiled_settings_ref`: 実行用 settings の暗号化保存先。操作中は immutable revision として保持。
-- `runtime_generation`: 起動ごとの番号。設定 revision とは別で、同じ設定による再起動でも増加する。
+## 4. 設定生成と保存
 
-既存の credential repository に ID/version がない箇所には opaque version と参照解決を追加する。
-単なる owner の変更として実装せず、session owner、認証の参照元、同期の書き戻し先を分離する。
-解決時に通常設定全体を再マージせず、既存の session snapshot に指定された認証の変更だけを反映する。
+親 proxy が起動時の設定生成を共通化し、`ResolveSessionSettings(startInput, mode)` として呼ぶ。
+`mode` は `create`／`restart`。設定の解決順序は同一とし、restart では session の識別情報と
+既存 workdir を保持する。
 
-### SessionOperation
+再生成に必要な**起動入力**をセッションに保存する。解決済み settings から元の入力を逆算しない。
 
-`id`, `session_id`, `actor`, `idempotency_key`, `request_hash`, `base_revision`,
-`target_revision`, `phase`, `runtime_generation`, `checkpoint_ref`, `error_code`, timestamps を保存する。
-秘密を含む compiled settings は別の保護された保存領域を参照する。
+- 起動時に指定した設定の参照元と profile ID
+- 明示指定した起動オプション・session 固有の overrides
+- owner、scope、team、認可済みの認証参照元に関する起動コンテキスト
 
-セッション単位に一つの lifecycle operation だけを実行する。複数 proxy replica では永続 lease と
-CAS を利用し、古い worker の実行は generation で拒否する。HTTP 接続終了で操作を cancel しない。
+profile は作成時に実際に選ばれた ID を保存し、その最新版を読む。既定 profile の変更で既存 session の
+参照先を勝手に変更しない。別 profile を使う場合はユーザーが明示指定する。
+作成時の明示 override は引き続き優先する。最新の profile 値を使いたい項目は override を削除する。
+個人・チーム共通の設定画面での編集は、通常どおり他の利用者／セッションにも影響する設定変更である。
 
-## 4. API 案
+再起動要求には必要に応じて profile 選択と起動時と同じ公開オプションを渡せるようにする。
+内部 `SessionSettings` をブラウザに返して秘密ごと送り返させる必要はない。
+親が認可して解決した **完全な `SessionSettings`** を manager／provisioner に送る。
+設定の取得失敗や参照の削除・権限喪失はエラーとし、別の設定元に暗黙 fallback しない。
 
-すべて認可後に親 proxy が処理する。ここでの settings は公開編集用 DTO であり、内部
-`SessionSettings` 全体や raw YAML を直接受け入れない。
+既存の allocation／セッション保存領域に、起動入力、settings の revision、適用済み revision、
+再起動 phase、手動停止フラグを追加する。`ProvisionSettings` と再開 Secret に同じ revision の
+完全な settings を保存し、後日の resume や Pod 再起動でも古い設定へ戻らないようにする。
+秘密を含む保存は既存の保護された保存経路を使い、公開 status やログには全文を出さない。
+既存 session の起動入力を復元できない場合は再読み込み不可と表示し、明示的な起動入力の指定で補完する。
 
-| API | 意味 |
-| --- | --- |
-| `GET /sessions/:id/settings` | 秘密を除いた現在値、revision、hold、capabilities、選択可能な認証参照を返す。起動しない |
-| `POST /sessions/:id/reconfiguration-preview` | 同じ validation を実行し、非秘密の差分、互換性、再起動要否を返す。設定は保存しない |
-| `POST /sessions/:id/pause` | checkpoint と停止を行い、`manual_edit` hold を保持する |
-| `PATCH /sessions/:id/settings` | 停止確認済みの manual_edit／recovery hold 中に限り desired settings を保存する |
-| `POST /sessions/:id/restart` | patch を伴う一括操作、または保存済み revision による再起動／再開 |
-| `GET /sessions/:id/operations/:operationId` | 進捗・結果・復旧方法を返す。起動しない |
+## 5. API と UI
 
-PATCH / pause / restart は `If-Match` に設定 revision、操作 API は `Idempotency-Key` を必須とする。
-同一 key・同一 body は同じ操作を返し、同一 key・異なる body は `409`。
-pause/restart は永続受理後に `202` と operation ID / Location を返す。PATCH は `200` と新 revision。
-preview の結果は認可を予約するものではなく、保存時・起動直前にも再検証する。
-
-restart request 例（binding の ID は表示用ではなく server が認可可能な参照）:
+公開 API の追加は `POST /sessions/:id/restart` を中心にする。
 
 ```json
 {
-  "settings_patch": {
-    "credential_binding": {
-      "scope": "team",
-      "owner_id": "myorg/platform",
-      "credential_id": "cred-example"
-    }
-  },
+  "reload_settings": true,
   "busy_policy": "wait"
 }
 ```
 
-保存済み設定で再開するときは `settings_patch` を省略する。変更なしの restart は同じ認証 binding
-から最新版を再取得できるが、別 owner への fallback はしない。`busy_policy` は `wait`（既定）と
-`interrupt`。後者は現在の turn を中断する明示操作で、ツールの副作用を取り消すものではない。
+`reload_settings` は既定で true。false は保存済み settings で再起動する場合に使用する。
+必要な場合のみ、起動 API と共通の公開設定オプションを追加で指定する。
+同じ要求の再送を識別する request ID と期待 settings revision を受け取り、重複実行や古い画面からの
+更新を防ぐ。受理後は `202` を返し、既存の session status／SSE で phase と結果を追跡する。
 
-主なエラー: `409 operation_in_progress / session_not_paused / credential_version_changed`、
-`412 settings_revision_mismatch`、`422 incompatible_session_settings / credential_unavailable`、
-`501 reconfigure_not_supported`、`503 session_manager_unavailable`。
-hold 中の runtime 呼び出しには `423 session_paused` と operation ID を返し、prompt を送信しない。
-閲覧用共有リンクには設定編集・認証一覧・操作状況の機密メタデータを公開しない。
+手動停止は既存 suspend 経路に「明示再開まで停止を維持する」指定を追加する。
+手動停止からの resume に `reload_settings: true` を指定した場合も restart と同じ処理を使う。
+通常の自動 suspend／透過 resume は保存済み settings を使用し、ページを開いただけで設定全体が変わらない。
 
-## 5. 停止・設定反映・再開プロトコル
+UI は「設定を再読み込みして再起動」「停止」「設定を再読み込みして再開」を提供する。
+設定・認証の編集は既存画面を利用し、session 固有の profile／override は起動画面の入力部品を再利用する。
+設定元と明示 override が分かる表示を行う。実行中は完了待ちを既定とし、中断して再起動する選択肢を設ける。
+停止中・再起動中は prompt 送信と透過 resume を止め、タブを閉じてもサーバー側で進捗を保持する。
+
+## 6. 再起動の流れ
 
 ```text
-active → validating → waiting_idle → quiescing → checkpointing → stopping
-                                                                  ↓
-                                                        paused（manual_edit）
-                                                                  ↓
-                                            applying → resuming → ready
-                                                └──── failure → paused（recovery）
+最新設定を生成・検証 → 入力停止 → turn 終了／中断 → 状態保存・旧 agent 停止
+    → settings 一式を保存・再送 → 設定再適用 → agent 起動 → 同じ会話を復元
 ```
 
-一括 restart では paused から自動的に applying へ進む。pause ではそこで操作を完了する。
-既に自動 suspend 中なら hold を取得し、保存済み状態の完全性を確認して applying に進める。
-公開 session status は既存の `suspended/resuming` を活用し、細かい phase は operation に分離する。
+1. session の操作権限と設定元の利用権限を検証し、設定全体を生成する。参照元は保存された起動入力で
+   決定し、操作した閲覧者の個人設定に置き換えない。互換性と必要な再起動方式を停止前に判定する。
+2. セッション単位の lifecycle lock と永続 phase を取得し、再起動・削除・自動 resume を直列化する。
+   新規入力を止め、進行中の turn は待つか明示的に cancel する。待機期限切れで勝手に強制停止しない。
+3. 会話と workspace の状態を保存する。旧 agent、MCP 等の子プロセス、認証同期や付随 goroutine を
+   停止して終了を待つ。agent 停止は checkpoint の確定に必要な flush を行ってから完了させる。
+4. 遅延した旧認証同期の書き込みを失効した token／世代で拒否する。同期停止後に最新認証を再取得して
+   settings を最終確定する。この時点の入力バージョンに変更があれば設定全体を再生成・再検証する。
+5. 完全な settings を親の保存領域と manager の再開設定へ保存し、同じ revision の反映を確認する。
+   再送は revision と request ID で冪等に扱い、部分保存状態から起動しない。
+6. 新しい設定を適用して agent を起動する。再開モードでは初回 prompt、webhook、cycle の自動実行や
+   repository 初期化を繰り返さない。startup script は初回専用と、再起動時に実行可能な処理を分離する。
+7. 新世代での会話復元成功を確認して適用済み revision を更新し、入力を再開する。ready は外部 provider の
+   最初の推論成功までを保証しない。認証失敗と会話復元失敗は個別に表示する。
 
-1. **検証・予約**: session の編集権限、認証利用権限、復元対応、変更互換性を確認する。
-   operation と hold を原子的に記録する。認証値はサーバーで取得し、履歴に残さない。
-2. **入力停止**: prompt と新規 tool 実行の入口を閉じる。wait は進行中 turn の終了を待ち、
-   interrupt は既存の cancel 経路で中断する。待機には期限を設け、期限切れで強制 kill はしない。
-3. **静止化・保存**: agent の書き込みを止め、認証同期を停止して処理中の書き戻しを drain する。
-   会話・未コミット変更を含む workspace を checkpoint し、復元可能な snapshot を確認する。
-   pause 中に動き続ける子プロセスも manager 管理の process group / workload 単位で停止する。
-4. **停止確認**: workload を停止し、旧プロセスの終了を確認する。旧世代の認証同期・status 更新を
-   拒否する。停止が不明なまま別 runtime を作らない。
-5. **設定適用**: 選択した credential version を再確認し、変化していたら再検証する。
-   desired revision を確定して allocation `ProvisionSettings` と再開 Secret に複製する。
-   manager が同じ revision の保存完了を応答するまで起動しない。
-6. **再作成**: runtime generation と内部 runtime/control token を更新して起動する。
-   workspace／会話を復元後、新認証ファイルを atomic write し、`UnsetEnv` / `RemoveFiles` /
-   接続設定の cleanup を使って旧認証と衝突する値を除去する。初回 message と cycle の自動実行は抑止する。
-7. **完了**: 起動した generation・revision と ACP 会話復元成功を確認し、active revision を更新、
-   hold を解除する。SSE で通知し、UI は同じ会話へ再接続する。
+### エージェントプロセスの再起動
 
-ready はプロセス・会話の利用準備完了であり、外部 provider の課金枠や最初の推論成功まで保証しない。
-会話復元に失敗した場合、新規会話への暗黙 fallback は禁止する。
+provisioner 自身とその制御接続を残し、agent 実行用の context／process group を別に管理する。
+`StopAgent → ApplySettings → StartAgent` を初回起動と共有し、意図的な停止を異常終了として扱わない。
+agent に付随する同期・MCP 等は世代ごとに管理し、再起動のたびに多重起動しない。
 
-## 6. 認証同期と認可
+workload 構成が変わる場合は manager が既存 suspend／prepare／resume 経路で workload を再作成する。
+この場合も送る settings と公開 API は同じ。永続化や再作成に対応しない manager では、必要な方式を
+停止前に判定して未対応を返す。全設定を受け取ってプロセスだけ再起動し、workload 設定を未適用のまま
+成功と返すことはしない。
 
-- session の編集権限と credential の利用権限を別に検証する。共有閲覧権限だけでは切り替え不可。
-- 個人認証は本人の明示選択に限定し、他人の user ID を指定して利用することはできない。
-  初期版の team session は当該 team の認証に限定し、メンバーの個人認証を持ち込む導線は設けない。
-- `credential_binding` を使用する同期 API に generation、binding version、credential version の
-  条件付き更新を追加する。保存先は親の binding から決定し、runtime が owner を指定できないようにする。
-- OAuth refresh による更新は使用中の binding にのみ書き戻す。別 session が更新済みなら競合を返し、
-  古い値で上書きしない。同期対象外の API key や接続設定は書き戻さない。
-- generation を持たない旧同期経路にも失効可能な control token による遮断を追加する。
-  runtime SSE の generation 検証だけでは managed files の旧書き込みを止められない。
-- checkpoint の認証ファイル除外を確認・テストする。過去 snapshot や PVC に残る値も復元後 cleanup
-  の対象とする。Secret、旧 compiled revision、バックアップの保持期限を設け、操作ログには値を記録しない。
+### 完全な置換の意味
 
-## 7. 障害時と競合
+生成済み設定は古い出力への単純な追記ではなく、新しい出力で置き換える。削除された env、MCP、
+plugin、認証ファイルも実行環境に残さない。管理対象のファイル・設定キーを記録して cleanup し、
+ユーザーの作業ファイルや会話データを削除しない。既存の `UnsetEnv`／`RemoveFiles` と cleanup を
+拡張する。snapshot／PVC の復元は新設定適用より前に行い、旧認証を最後に復元してしまわないようにする。
 
-| 障害／競合 | 処理 |
-| --- | --- |
-| 検証失敗、busy timeout、停止前の checkpoint 失敗 | 設定は変更しない。旧 runtime が利用可能と確認できれば入力制限と hold を解除する |
-| 停止タイムアウト、manager 切断、旧 runtime 生存が不明 | recovery hold のまま観測・再試行。二重起動しない |
-| 停止後の設定保存失敗 | 停止維持。同じ operation で未完了段階から再試行 |
-| 新認証／会話復元／起動失敗 | recovery hold で失敗を表示。新 runtime を停止確認後に修正・再試行を許可 |
-| proxy／worker 再起動 | 永続 operation と manager の観測 revision/generation から再調整する |
-| Secret は更新済み、allocation の複製は未更新 | canonical desired revision から複製を修復し、一致するまで起動禁止 |
-| 別タブの編集、自動 resume、通常 resume | CAS／hold により競合を返す。SSE の古い世代も無視する |
-| セッション削除 | lifecycle lock の下で operation を終了させ、停止を確認して削除。worker の再作成を禁止する |
+## 7. 障害・認証同期
 
-旧認証への自動 rollback はしない。ユーザーが切り替えた認証を勝手に使い直さないためである。
-「前の設定で再開」は旧参照の現在の利用権限と有効性を再検証する新しい restart operation として提供する。
-停止前に失敗した場合と、停止後に失敗した場合を UI と API で明確に区別する。
+- 停止前の検証失敗や checkpoint 失敗では設定を適用せず、利用可能な旧 agent を維持する。
+- 停止後の保存・起動失敗では停止を維持し、設定画面で修正して再読み込みを再試行できる。
+  旧認証／旧設定へ自動で戻さない。
+- proxy や manager の再起動後は保存された phase と revision を確認して再調整する。
+  旧 agent の停止が不明なら新 agent を二重起動しない。
+- 手動停止・失敗停止の間は通常アクセスで再開しない。既存 status／SSE に理由を含める。
+- 認証の同期先は起動時の解決結果に一致させる。現状の `ManagedFilesController.Save` は
+  `session.UserID()` に保存するため、チーム等の設定元から取得した場合の同期先を修正する。
+  認証参照元の規則は起動と再起動で共通化し、再起動専用の認証モデルを作らない。
+- 同じ保存先を使う他 session の認証更新と競合した場合、保存バージョンの条件付き更新で
+  古い OAuth token の上書きを防ぐ。これは通常起動も含む同期処理の修正として扱う。
 
-## 8. UI
+## 8. 実装順序と受け入れ条件
 
-session メニューに「設定・認証情報」と「停止して編集」を追加する。設定画面には現在の認証元、
-変更候補、保存済み／適用済みの差分を表示する。秘密値は表示・編集せず、登録済み credential を選ぶ。
-新規登録が必要なら既存の認証管理画面を利用する。
+1. 起動入力の保存と settings resolver の共通化。通常起動との生成結果一致を確認する。
+2. provisioner の agent lifecycle と設定適用を再実行可能にする。削除された設定も反映する。
+3. manager／親の restart、手動停止、revision／phase の保存を追加し、必要時は workload 再作成へ渡す。
+4. UI／CLI を接続する。旧 manager は capability により停止前に未対応を返す。
 
-通常は「変更して再起動」、手動停止中は「設定を保存」「この設定で再開」を表示する。
-実行中なら既定で完了を待ち、「現在の処理を中断して切り替える」を明示選択できるようにする。
-処理中は operation phase を表示して入力を止める。タブを閉じても次回表示時に operation を取得する。
-manual_edit／recovery hold 中はチャットの bootstrap API を呼んで勝手に起動しない。
+検証する内容:
 
-## 9. 対応範囲と実装順序
-
-1. 親の configuration / operation 保存、認可、revision、hold、世代制御を追加する。
-2. 認証 resolver と同期書き戻し先の修正、旧 token の失効を実装する。
-3. Kubernetes manager に revision 付き prepare／停止確認／再開契約を実装する。
-4. 外部 manager に capability と generation/revision 応答を追加する。旧 manager は `501` を返す。
-5. API、UI、CLI に pause／settings／restart／operation status を追加する。
-6. 接続先や認証方式の変更は別途互換性テスト後に追加する。既存 identity 検証を単純に無効化しない。
-
-初期対応は永続 workspace と会話 checkpoint が利用できる Kubernetes local / external manager。
-native manager や ephemeral session は capability 不足として停止前に拒否する。native 対応には
-process group の停止・再生成、永続 workdir、同等の checkpoint と設定適用契約が必要。
-
-既存 session は保存済み settings と作成時メタデータから revision 1 を生成する。credential の参照元を
-一意に復元できない場合は `unknown` とし、ユーザーに参照元の選択を求める。推測で個人・チーム認証を選ばない。
-
-## 10. 検証・受け入れ条件
-
-- 同一 provider で個人／team の認証更新を行い、session ID、会話、未コミットファイルが保持される。
-- 「停止→編集→保存→再開」と一括 restart が同じ最終状態になる。
-- pause 後のページ再読込、履歴取得、status polling、自動 resume で起動しない。
-- busy wait／interrupt、checkpoint 失敗、manager 切断、proxy 再起動、各保存段階の失敗を注入して復旧できる。
-- 旧世代の token と遅延同期が、新認証や別 owner の credential を上書きできない。
-- runtime 環境変数、認証ファイル、restore snapshot、restart Secret、allocation に古い有効値が混在しない。
-- 同時操作、同じ Idempotency-Key の再送、削除競合でも runtime が二重起動しない。
-- 新規 provider 呼び出しの認証失敗を実際に検証し、ready と provider 認証成功を混同しない。
-- 復元時に初回 prompt や cycle を再実行せず、会話復元失敗を空の新規会話として成功扱いしない。
-- 認可、参照元不明の移行、旧 manager、native 非対応、接続先変更拒否を controller／統合テストで検証する。
-- UI E2E で操作中のタブ切断・再接続、失敗後の編集・再試行、手動停止からの再開を確認する。
-
-metrics は操作数、phase 所要時間、失敗理由、stale generation 拒否数を記録する。
-監査記録には actor、session、認証参照 ID、設定 revision、結果を含め、認証値や settings 全文を含めない。
+- 認証だけでなく env、MCP、plugins、managed files 等の変更・削除が再起動後に反映される。
+- 同じ起動入力から新規起動と再読み込みで同じ設定を生成する（固定 identity／再開モードの差分を除く）。
+- profile 更新と session override の優先順位、参照削除、認可、起動入力の移行を確認する。
+- 会話、session ID、未コミット変更を保持し、初回 prompt や repository 初期化を繰り返さない。
+- プロセス再起動と workload 再作成の双方で設定が反映され、後日の resume でも古い設定に戻らない。
+- 起動途中の障害、設定保存の部分失敗、二重要求、proxy 再起動から復旧できる。
+- 旧プロセスや同期 goroutine が残らず、古い認証の遅延書き戻しを拒否できる。
+- 手動停止中のページ再読込で起動せず、明示再開では最新設定を読み込める。
+- 接続先／agent 種別などの非互換変更と、manager が対応しない workload 変更を停止前に拒否する。
