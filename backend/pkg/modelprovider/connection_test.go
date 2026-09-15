@@ -19,6 +19,15 @@ func TestModelLayerPrecedence(t *testing.T) {
 	require.Equal(t, "request-legacy", ModelForLayers("codex", "default", map[string]string{"CODEX_MODEL": "profile"}, map[string]string{"OPENAI_MODEL": "request-legacy"}))
 	require.Equal(t, "codex", ModelForLayers("codex", "default", map[string]string{"CODEX_MODEL": "codex", "OPENAI_MODEL": "legacy"}))
 }
+
+func TestConnectionWebSearchClone(t *testing.T) {
+	enabled := false
+	c := &Connection{WebSearchEnabled: &enabled}
+	cloned := c.Clone()
+	*cloned.WebSearchEnabled = true
+	require.False(t, *c.WebSearchEnabled)
+	require.Error(t, (&Connection{Mode: "anthropic_compatible", WebSearchEnabled: &enabled}).Validate("claude"))
+}
 func TestConnectionValidation(t *testing.T) {
 	for _, agent := range []string{"codex", "claude"} {
 		mode := "openai_compatible"

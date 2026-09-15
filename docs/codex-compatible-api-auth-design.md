@@ -256,6 +256,17 @@ API キーは既存の暗号化サービスを使って保存し、暗号化が�
 内部 worker API には解決済みプロファイル ID を渡し、API 側で専用接続を解決する。
 モデルだけは専用接続 → 認証設定のデフォルトモデルの順に既定値を決定し、その上から既存のプロファイル環境変数・起動リクエストのモデル指定を適用する。
 
+### プロファイル専用の Web search / API パス
+
+プロファイルの「認証方法」で互換 API と専用接続を選ぶと、次の項目を設定できる。
+
+- Codex の `config.codex_connection.web_search_enabled`: 未指定／`null` はベースの Codex 設定を維持し、`true` は `web_search = "live"`、`false` は `web_search = "disabled"` を生成する。API 更新時の省略は保存済み値を保持する。接続先が Web search に非対応なら無効を指定する。設定値は [Codex Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference) に従う。
+- 両エージェントの `config.*_connection.endpoint_path`: Base URL に続く、`/` で始まる API パス。空文字列で既定に戻り、更新時の省略は保持する。既定は Codex が `/responses`、Claude Code が `/v1/messages`。たとえば Base URL `https://gateway.example/api` と API パス `/custom/generate` は `https://gateway.example/api/custom/generate` に送信する。
+
+パス変更はプロトコル変換ではない。Codex は引き続き Responses API、Claude Code は Messages API に対応した接続先が必要。`/compact` や `/count_tokens` は指定パスの後ろに付く。パスにはクエリ、フラグメント、別ホスト、ドットセグメントや URL エスケープを指定できない。
+
+パス指定時は provisioner がセッション専用の loopback HTTP relay を起動し、クライアントの固定パスを置き換える。認証ヘッダー・本文・ストリーミングは保持し、セッションの outbound proxy / CA 設定を使用する。パス未指定時は従来どおり直接接続する。relay はエージェント終了時に閉じる。復元用の接続情報には元の Base URL と API パスを保存し、別パスでの再開は拒否する。個人／チームの Settings API も同じ接続フィールドを受け付ける。
+
 ### チーム設定の継承
 
 `config.settings_team_id` に所属チームを指定すると、そのチームの認証設定・デフォルトモデル・環境変数・MCP 等を継承する。
