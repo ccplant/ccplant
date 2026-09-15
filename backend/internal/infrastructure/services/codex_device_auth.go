@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
@@ -32,6 +33,7 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 		return fmt.Errorf("attempt_id, callback_url, token, and expires_at are required")
 	}
 	name := codexDeviceAuthResourceName(req.AttemptID)
+	log.Printf("[CODEX_AUTH_K8S] Preparing attempt %s resource=%s namespace=%s", req.AttemptID, name, m.namespace)
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("encode Codex auth request: %w", err)
@@ -42,13 +44,19 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 		Data:       map[string][]byte{"request.json": payload},
 	}
 	if _, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		log.Printf("[CODEX_AUTH_K8S] Failed to create Secret for attempt %s resource=%s: %v", req.AttemptID, name, err)
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("create Codex auth Secret: %w", err)
 		}
 		return fmt.Errorf("Codex auth attempt already exists")
 	}
+	log.Printf("[CODEX_AUTH_K8S] Created Secret for attempt %s resource=%s", req.AttemptID, name)
 	cleanup := func() {
-		_ = m.client.CoreV1().Secrets(m.namespace).Delete(context.Background(), name, metav1.DeleteOptions{})
+		if err := m.client.CoreV1().Secrets(m.namespace).Delete(context.Background(), name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			log.Printf("[CODEX_AUTH_K8S] Failed to clean up Secret for attempt %s resource=%s: %v", req.AttemptID, name, err)
+			return
+		}
+		log.Printf("[CODEX_AUTH_K8S] Cleaned up Secret for attempt %s resource=%s after Pod creation failure", req.AttemptID, name)
 	}
 	deadline := int64(600)
 	if seconds := int64(req.ExpiresAt.Sub(metav1.Now().Time).Seconds()); seconds > 0 && seconds < deadline {
@@ -99,10 +107,13 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 			}},
 		},
 	}
+	log.Printf("[CODEX_AUTH_K8S] Creating Pod for attempt %s resource=%s image=%q deadline_seconds=%d", req.AttemptID, name, m.k8sConfig.Image, deadline)
 	if _, err := m.client.CoreV1().Pods(m.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		log.Printf("[CODEX_AUTH_K8S] Failed to create Pod for attempt %s resource=%s: %v", req.AttemptID, name, err)
 		cleanup()
 		return fmt.Errorf("create Codex auth Pod: %w", err)
 	}
+	log.Printf("[CODEX_AUTH_K8S] Created Pod for attempt %s resource=%s", req.AttemptID, name)
 	return nil
 }
 
