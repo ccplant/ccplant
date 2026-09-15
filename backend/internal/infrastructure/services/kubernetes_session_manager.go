@@ -108,6 +108,7 @@ type SessionMessageEvent = portrepos.SessionMessageEvent
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
+	restartHTTPClient  *http.Client
 	sessionProfileRepo portrepos.SessionProfileRepository
 	config             *config.Config
 	k8sConfig          *config.KubernetesSessionConfig
@@ -584,6 +585,9 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 	now := time.Now()
 	for i := range services.Items {
 		svc := &services.Items[i]
+		if svc.Annotations[restartHoldAnnotation] == "true" {
+			continue
+		}
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID != "" {
 			// Suspended workloads have no Pod/Deployment watcher to recreate their
@@ -1948,7 +1952,11 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	if !ok {
 		return session, false, nil
 	}
-	if _, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); err != nil {
+	svc, serviceErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if serviceErr == nil && svc.Annotations[restartHoldAnnotation] == "true" && ctx.Value(restartContextKey{}) != true {
+		return session, false, fmt.Errorf("session is manually paused or restarting")
+	}
+	if err := serviceErr; err != nil {
 		if errors.IsNotFound(err) {
 			return nil, false, fmt.Errorf("canonical service for session %s not found", id)
 		}
@@ -2028,6 +2036,16 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
 	}
 	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	if settings.Sandbox != nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: settings.Sandbox.Enabled, PolicyID: settings.Sandbox.PolicyID, AllowedDomains: settings.Sandbox.AllowedDomains, DeniedDomains: settings.Sandbox.DeniedDomains, CountMode: settings.Sandbox.CountMode}
+	}
+	if settings.Docker != nil {
+		req.Docker = &entities.DockerParams{Enabled: settings.Docker.Enabled}
+		for _, r := range settings.Docker.Registries {
+			req.Docker.Registries = append(req.Docker.Registries, entities.DockerRegistry{Server: r.Server, Username: r.Username, Password: r.Password, SecretName: r.SecretName, Insecure: r.Insecure})
+		}
+	}
+
 	if settings.Repository != nil {
 		req.RepoInfo = &entities.RepositoryInfo{FullName: settings.Repository.FullName, CloneDir: settings.Repository.CloneDir, Branch: settings.Repository.Branch, PR: settings.Repository.PR}
 	}
@@ -2739,6 +2757,16 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 // POST /rpc endpoint with session/prompt; for standard agentapi sessions it
 // uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
+	if ks, ok := m.GetSession(id).(*KubernetesSession); ok && ks != nil {
+		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if svc.Annotations[restartHoldAnnotation] == "true" {
+			return fmt.Errorf("session is paused or restarting")
+		}
+	}
+
 	session := m.GetSession(id)
 	if session == nil {
 		return fmt.Errorf("session not found: %s", id)
@@ -6971,6 +6999,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			continue
 		}
 		settings.Files = files
+		settings.CredentialOwner = credentialOwner
+		settings.CredentialSyncID = uuid.NewString()
 		log.Printf("[K8S_SESSION] Embedded %d managed file(s) for credential owner %s (Secret %s) for session %s",
 			len(settings.Files), credentialOwner, filesSecretName, session.id)
 		break

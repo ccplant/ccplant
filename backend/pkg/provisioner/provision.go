@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
@@ -147,7 +148,30 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  7. Wait for agentapi to become ready
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
-func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.SessionSettings) {
+func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
+	ctx, cancel := context.WithCancel(parent)
+	s.mu.Lock()
+	s.agentCancel = cancel
+	s.activeSettings = settings
+	s.restartID = settings.RestartID
+	s.provisionDone = make(chan struct{})
+	provisionDone := s.provisionDone
+	s.agentExited = make(chan struct{})
+	exited := s.agentExited
+	s.mu.Unlock()
+	defer close(provisionDone)
+	processStarted := false
+	defer func() {
+		if !processStarted {
+			cancel()
+			close(exited)
+		}
+	}()
+
+	if settings.Paused {
+		s.setStatus(Status("paused"), "")
+		return
+	}
 	normalizeNativeSettings(settings)
 	injectUsageReportingHook(settings)
 	startedAt := time.Now()
@@ -190,14 +214,14 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	}
 	log.Printf("[PROVISIONER] Session setup complete")
 	restoreSource := settings.Session.ResumeFrom
-	restoreRequired := restoreSource != ""
+	restoreRequired := restoreSource != "" || settings.Restart
 	restoredConnectionState := false
 	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
 		// Pod replacement keeps the proxy session ID. Use that stable ID as the
 		// implicit snapshot key so restart recovery needs no API parameter.
 		restoreSource = settings.Session.ID
 	}
-	if restoreSource != "" {
+	if restoreSource != "" && !settings.RestartInPlace {
 		s.setPhase("provision:restore-session-state")
 		// A missing marker in the archive must not reuse one left on disk.
 		if err := os.Remove(filepath.Join(runtimeHome, ".session", "model-connection.json")); err != nil && !os.IsNotExist(err) {
@@ -209,7 +233,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 			restoreCWD = workdirRepoPath
 		}
 		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
-		if errors.Is(err, errSessionStateBackendUnavailable) {
+		if errors.Is(err, errSessionStateBackendUnavailable) && !settings.Restart {
 			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
 		} else if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
@@ -223,10 +247,29 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 	}
 
+	if settings.Restart {
+		// Remove obsolete managed files before regenerating config at those paths.
+		for _, path := range settings.RemoveFiles {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				s.setStatus(StatusError, "failed to remove obsolete managed file")
+				return
+			}
+		}
+		settings.RemoveFiles = nil
+		if err := cleanRestartFiles(settings, compileOpts.OutputDir); err != nil {
+			s.setStatus(StatusError, "failed to remove obsolete settings")
+			return
+		}
+		if err := sessionsettings.CompileSettings(settings, compileOpts); err != nil {
+			s.setStatus(StatusError, "failed to apply restart settings")
+			return
+		}
+	}
 	// ── Step 2.3: docker login for DinD registries ───────────────────────────
 	s.setPhase("provision:post-setup")
 	if settings.Docker != nil && settings.Docker.Enabled {
-		go s.runDockerLogins(ctx, settings.Docker)
+		s.agentWorkers.Add(1)
+		go func() { defer s.agentWorkers.Done(); s.runDockerLogins(ctx, settings.Docker) }()
 	}
 
 	// ── Step 2.5: restore managed files from provision payload ───────────────
@@ -235,6 +278,10 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// Write each file to its path so agents can use them immediately.
 	if len(settings.Files) > 0 {
 		if err := writeFiles(settings.Files); err != nil {
+			if settings.Restart {
+				s.setStatus(StatusError, "failed to apply managed files")
+				return
+			}
 			log.Printf("[PROVISIONER] Warning: failed to write managed files: %v", err)
 		}
 		// Re-apply compiled hooks into settings.json in case a managed settings.json
@@ -320,7 +367,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// Executes the optional shell pre-script before starting the agent.
 	// Pre-scripts are used for setup tasks such as pre-fetching npm/bun packages.
 	// Failure is non-fatal: a warning is logged and provisioning continues.
-	if settings.Startup.PreScript != "" {
+	if settings.Startup.PreScript != "" && !settings.Restart {
 		s.setPhase("provision:pre-script")
 		log.Printf("[PROVISIONER] Running pre-script")
 		if err := s.runPreScript(ctx, settings.Startup.PreScript, envMap); err != nil {
@@ -334,15 +381,22 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	// Must be started before agentapi so metrics scraping begins as soon as
 	// Claude Code starts emitting metrics on its prometheus port.
 	if settings.OtelCollector != nil && settings.OtelCollector.Enabled {
-		go s.runOtelcol(ctx, settings.OtelCollector)
+		s.agentWorkers.Add(1)
+		go func() { defer s.agentWorkers.Done(); s.runOtelcol(ctx, settings.OtelCollector) }()
 	}
 
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
+	if settings.Restart {
+		agentArgs = append([]string{agentArgs[0], "--require-resume"}, agentArgs[1:]...)
+	}
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
 
 	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.WaitDelay = 10 * time.Second
 	cmd.Env = mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -352,9 +406,12 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 	log.Printf("[PROVISIONER] Agent process started (pid %d)", cmd.Process.Pid)
+	processStarted = true
 	agentDone := make(chan error, 1)
 	go func() {
 		agentDone <- cmd.Wait()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		close(exited)
 	}()
 
 	// ── Step 8: wait for agentapi to be ready ─────────────────────────────────
@@ -381,7 +438,7 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 	enableNetworkFilterPolicy()
 
 	// ── Step 9: send initial message ─────────────────────────────────────────
-	if settings.InitialMessage != "" {
+	if settings.InitialMessage != "" && !settings.Restart {
 		s.setPhase("provision:send-initial-message")
 		log.Printf("[PROVISIONER] Sending initial message")
 		agentType := settings.Session.AgentType
@@ -400,18 +457,30 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 
 	// ── Step 11: launch acp-posts subprocess if SlackParams provided ─────────
 	if settings.SlackParams != nil && settings.SlackParams.Channel != "" {
-		go s.runAcpPosts(ctx, settings.SlackParams, settings.Session.AgentType)
+		s.agentWorkers.Add(1)
+		go func() {
+			defer s.agentWorkers.Done()
+			s.runAcpPosts(ctx, settings.SlackParams, settings.Session.AgentType)
+		}()
 	}
 
 	// ── Step 12: start files sync goroutine ───────────────────────────────────
 	// Syncs managedFilePaths through the authenticated session control API.
 	// Runs in-process instead of as a sidecar so that UserID is always set
 	// (stock pool pods have empty UserID at pod creation time).
-	go s.runFilesSync(ctx, settings.Session.UserID, settings.UnsyncedFilePaths)
+	s.agentWorkers.Add(1)
+	go func() {
+		defer s.agentWorkers.Done()
+		s.runFilesSync(ctx, settings)
+	}()
 
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {
-		if err := <-agentDone; err != nil {
+		err := <-agentDone
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("agent process exited: %v", err))
 		} else {
 			s.setStatus(StatusError, "agent process exited with code 0")
@@ -943,7 +1012,9 @@ func writeCredentials(credentialsJSON string) error {
 // runFilesSync watches managed files and sends snapshots through the
 // session-scoped control API. Session Pods never receive Kubernetes write access.
 // The goroutine is tied to ctx: when ctx is cancelled the loop exits.
-func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePaths []string) {
+func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.SessionSettings) {
+	userID, unsyncedFilePaths := settings.Session.UserID, settings.UnsyncedFilePaths
+
 	const syncInterval = 10 * time.Second
 
 	if userID == "" {
@@ -970,6 +1041,10 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 
 	// Track last hash per file path to detect changes.
 	lastHashes := make(map[string]string, len(watchedPaths))
+	for _, file := range settings.Files {
+		sum := sha256.Sum256([]byte(file.Content))
+		lastHashes[file.Path] = fmt.Sprintf("%x", sum)
+	}
 
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
@@ -1024,7 +1099,7 @@ func (s *Server) runFilesSync(ctx context.Context, userID string, unsyncedFilePa
 			}
 
 			log.Printf("[FILES_SYNC] Files changed, syncing %d file(s) through control API", len(files))
-			if err := saveManagedFiles(ctx, client, proxyURL, sessionID, token, files); err != nil {
+			if err := saveManagedFilesVersioned(ctx, client, proxyURL, sessionID, token, files, settings.CredentialSyncID, lastHashes); err != nil {
 				log.Printf("[FILES_SYNC] ERROR: control API sync failed: %v", err)
 				// Do not update lastHashes so the next tick retries the sync.
 			} else {
@@ -1070,8 +1145,15 @@ func readFileWithHash(path string) ([]byte, string, error) {
 	return data, fmt.Sprintf("%x", sum), nil
 }
 
-func saveManagedFiles(ctx context.Context, client *http.Client, proxyURL, sessionID, token string, files []sessionsettings.ManagedFile) error {
-	body, err := json.Marshal(map[string]any{"files": files})
+func saveManagedFiles(ctx context.Context, client *http.Client, proxyURL, sessionID, token string, files []sessionsettings.ManagedFile, syncIDs ...string) error {
+	syncID := ""
+	if len(syncIDs) > 0 {
+		syncID = syncIDs[0]
+	}
+	return saveManagedFilesVersioned(ctx, client, proxyURL, sessionID, token, files, syncID, nil)
+}
+func saveManagedFilesVersioned(ctx context.Context, client *http.Client, proxyURL, sessionID, token string, files []sessionsettings.ManagedFile, syncID string, expected map[string]string) error {
+	body, err := json.Marshal(map[string]any{"files": files, "expected": expected})
 	if err != nil {
 		return err
 	}
@@ -1082,6 +1164,7 @@ func saveManagedFiles(ctx context.Context, client *http.Client, proxyURL, sessio
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Credential-Sync-ID", syncID)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

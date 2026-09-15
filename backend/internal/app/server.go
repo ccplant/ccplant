@@ -1417,46 +1417,9 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
 		return nil, err
 	}
-	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model, sessionTTL string
-	var oneshot bool
-	var authProxy *bool
-	var sandbox *entities.SandboxParams
-	var docker *entities.DockerParams
-	var unsyncedFilePaths []string
-	if startReq.Params != nil {
-		initialMessage = startReq.Params.Message
-		agentType = startReq.Params.AgentType
-		oneshot = startReq.Params.Oneshot
-		authProxy = startReq.Params.AuthProxy
-		sandbox = startReq.Params.Sandbox
-		docker = startReq.Params.Docker
-		credentialSource = startReq.Params.CredentialSource
-		codexAuthMode = startReq.Params.CodexAuthMode
-		claudeAuthMode = startReq.Params.ClaudeAuthMode
-		model = startReq.Params.Model
-		sessionTTL = startReq.Params.SessionTTL
-		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
-	}
-	runReq := &entities.RunServerRequest{
-		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		TriggeredUserID: startReq.TriggeredUserID,
-		Pool:            pool, AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
-		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
-		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
-		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
-		Sandbox: sandbox, Docker: docker,
-		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
-		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
-		ProfileMCPServers:        startReq.ProfileMCPServers,
-		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
-	}
-	if startReq.Params != nil {
-		runReq.SlackParams = startReq.Params.Slack
-		runReq.ResumeFrom = startReq.Params.ResumeFrom
-		runReq.InitialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
-		runReq.CycleMessage = startReq.Params.CycleMessage
-		runReq.CycleMaxCount = startReq.Params.CycleMaxCount
-	}
+	runReq := s.runRequestForStart(sessionID, startReq, userID, teams)
+	runReq.Pool = pool
+	initialMessage, agentType, oneshot, sessionTTL, docker := runReq.InitialMessage, runReq.AgentType, runReq.Oneshot, runReq.SessionTTL, runReq.Docker
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
 		var err error
@@ -1471,7 +1434,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	if settings == nil {
 		settings = &sessionsettings.SessionSettings{
 			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Oneshot: oneshot, Teams: teams, MemoryKey: startReq.MemoryKey},
-			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: unsyncedFilePaths,
+			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: runReq.UnsyncedFilePaths,
 		}
 	}
 	settings.WebhookPayload = string(startReq.WebhookPayload)
@@ -2159,4 +2122,56 @@ func buildWorkerLeaseClient(cfg *config.Config) schedule.LeaseClient {
 		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	return schedule.NewRedisLeaseClient(redis.NewClient(opts))
+}
+
+func (s *Server) runRequestForStart(sessionID string, startReq entities.StartRequest, userID string, teams []string) *entities.RunServerRequest {
+	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model, sessionTTL string
+	var oneshot bool
+	var authProxy *bool
+	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
+	var unsyncedFilePaths []string
+	if startReq.Params != nil {
+		initialMessage = startReq.Params.Message
+		agentType = startReq.Params.AgentType
+		oneshot = startReq.Params.Oneshot
+		authProxy = startReq.Params.AuthProxy
+		sandbox = startReq.Params.Sandbox
+		docker = startReq.Params.Docker
+		credentialSource = startReq.Params.CredentialSource
+		codexAuthMode = startReq.Params.CodexAuthMode
+		claudeAuthMode = startReq.Params.ClaudeAuthMode
+		model = startReq.Params.Model
+		sessionTTL = startReq.Params.SessionTTL
+		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
+	}
+	runReq := &entities.RunServerRequest{
+		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
+		TriggeredUserID: startReq.TriggeredUserID,
+		Pool:            requestedSessionPool(startReq), AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
+		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
+		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
+		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
+		Sandbox: sandbox, Docker: docker,
+		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
+		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
+		ProfileMCPServers:        startReq.ProfileMCPServers,
+		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
+	}
+	if startReq.Params != nil {
+		runReq.SlackParams = startReq.Params.Slack
+		runReq.ResumeFrom = startReq.Params.ResumeFrom
+		runReq.InitialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
+		runReq.CycleMessage = startReq.Params.CycleMessage
+		runReq.CycleMaxCount = startReq.Params.CycleMaxCount
+	}
+	return runReq
+}
+
+func (s *Server) ResolveRestartSettings(ctx context.Context, id string, input entities.StartRequest, userID string, teams []string) (*sessionsettings.SessionSettings, error) {
+	builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder)
+	if !ok {
+		return nil, fmt.Errorf("settings reload is not supported")
+	}
+	return builder.BuildRemoteProvisionSettings(ctx, id, s.runRequestForStart(id, input, userID, teams))
 }

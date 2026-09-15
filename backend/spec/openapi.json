@@ -15,6 +15,217 @@
     }
   ],
   "paths": {
+    "/sessions/{sessionId}/restart": {
+      "post": {
+        "summary": "Reload complete startup settings and restart the same conversation",
+        "operationId": "restartSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Reuse the same key only when retrying the same request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "startup_input": {"type": "object", "description": "Complete start request input. Replaces saved overrides and initializes legacy sessions; server-owned identity is preserved."},
+              "reload_settings": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "busy_policy": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "interrupt"
+                    ],
+                    "default": "wait"
+                  },
+                  "session_profile_id": {
+                    "type": "string",
+                    "description": "Explicitly select another authorized profile; empty disables the profile."
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Operation accepted; poll GET /sessions/{sessionId}/restart."
+          },
+          "403": {
+            "description": "Session or profile access denied"
+          },
+          "409": {
+            "description": "Operation conflict or legacy session has no saved startup input"
+          },
+          "412": {
+            "description": "Settings revision changed"
+          },
+          "422": {
+            "description": "Settings or conversation restoration incompatible"
+          },
+          "501": {
+            "description": "Manager does not support restart"
+          }
+        }
+      },
+      "get": {
+        "summary": "Read settings restart status without waking the runtime",
+        "operationId": "sessionRestartStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation status without credential values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string",
+                      "enum": [
+                        "",
+                        "waiting_idle",
+                        "pausing",
+                        "restarting",
+                        "paused",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "No saved startup input"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/pause": {
+      "post": {
+        "summary": "Stop the agent and retain a manual resume hold",
+        "operationId": "pauseSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Reuse the same key only when retrying the same request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "busy_policy": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "interrupt"
+                    ],
+                    "default": "wait"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Operation accepted; poll GET /sessions/{sessionId}/restart."
+          },
+          "403": {
+            "description": "Session or profile access denied"
+          },
+          "409": {
+            "description": "Operation conflict or legacy session has no saved startup input"
+          },
+          "412": {
+            "description": "Settings revision changed"
+          },
+          "422": {
+            "description": "Settings or conversation restoration incompatible"
+          },
+          "501": {
+            "description": "Manager does not support restart"
+          }
+        }
+      }
+    },
     "/internal/worker/schedules/claim-due": {
       "post": {
         "summary": "Claim due schedule jobs",

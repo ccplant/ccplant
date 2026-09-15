@@ -170,6 +170,14 @@ type RegistryConfig struct {
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
+	Paused           bool   `json:"paused,omitempty" yaml:"paused,omitempty"`
+	RestartID        string `json:"restart_id,omitempty" yaml:"restart_id,omitempty"`
+	RestartInPlace   bool   `json:"-" yaml:"-"`
+	CredentialOwner  string `json:"credential_owner,omitempty" yaml:"credential_owner,omitempty"`
+	CredentialSyncID string `json:"credential_sync_id,omitempty" yaml:"credential_sync_id,omitempty"`
+	// Restart requires restoration of the same conversation and suppresses first-launch actions.
+	Restart bool `json:"restart,omitempty" yaml:"restart,omitempty"`
+
 	CodexConnection       *modelprovider.Connection `json:"codex_connection,omitempty" yaml:"codex_connection,omitempty"`
 	ClaudeConnection      *modelprovider.Connection `json:"claude_connection,omitempty" yaml:"claude_connection,omitempty"`
 	UnsetEnv              []string                  `json:"unset_env,omitempty" yaml:"unset_env,omitempty"`

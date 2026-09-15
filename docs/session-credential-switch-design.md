@@ -181,3 +181,20 @@ plugin、認証ファイルも実行環境に残さない。管理対象のフ�
 - 旧プロセスや同期 goroutine が残らず、古い認証の遅延書き戻しを拒否できる。
 - 手動停止中のページ再読込で起動せず、明示再開では最新設定を読み込める。
 - 接続先／agent 種別などの非互換変更と、manager が対応しない workload 変更を停止前に拒否する。
+
+## 実装した操作
+
+- `POST /sessions/:id/restart`: 最新設定で再起動。`reload_settings: false` は保存済み設定を使用。
+- `POST /sessions/:id/pause`: agent と付随処理を停止し、checkpoint を保存して手動停止を維持。
+- `GET /sessions/:id/restart`: 再起動の phase、revision、失敗状態を取得。秘密値は返さない。
+- 手動停止からは restart API で再開する。通常の resume は手動停止を解除しない。
+- UI はセッション一覧メニューから操作する。CLI は `client restart`、`client pause`、
+  `client restart-status`。認証・設定の編集は既存の個人／チーム／profile 設定画面を使用する。
+- 同じ sandbox／Docker 設定ならプロセス再起動、変更がある場合は workload 再作成を行う。
+- Claude ACP／Codex ACP と checkpoint 対応 Kubernetes manager を対象とする。
+  旧セッションは `startup_input` に起動 API と同じ入力を渡して移行する。保存済み入力も同じフィールドで全置換できる。
+  CLI は `client restart --startup-input-file start.json` を使用する。省略時は保存済み入力を使う。
+  チームの操作で他人の個人認証を選択する変更は拒否する。proxy、manager、provisioner を合わせて更新する。
+- 操作中の API 接続切断では処理を継続する。proxy プロセス自体が終了した場合は保持した状態を
+  status API で確認し、12 分を過ぎた操作を再試行可能な失敗へ変更する。復旧は明示的な再試行で行う。
+- 認証・会話復元の実サービスとの組み合わせは、実際の provider を使う受け入れテストで検証する。
