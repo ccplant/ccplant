@@ -233,6 +233,9 @@ func cloneRepo(settings *SessionSettings) error {
 
 	// Skip clone if already present
 	if _, err := os.Stat(filepath.Join(cloneDir, ".git")); err == nil {
+		if settings.Restart {
+			return nil
+		}
 		log.Printf("[SETUP] Repository already cloned at %s, skipping", cloneDir)
 	} else {
 		if err := os.MkdirAll(filepath.Dir(cloneDir), 0755); err != nil {

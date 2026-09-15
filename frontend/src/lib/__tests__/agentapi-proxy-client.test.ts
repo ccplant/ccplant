@@ -586,3 +586,29 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
     subscription.close();
   });
 });
+
+describe('session settings reload', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('requests a complete reload with an idempotency key', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ session_id: 'one', request_id: 'operation' }),
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    await client.restartSession('one');
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://proxy.example.test/sessions/one/restart');
+    expect(JSON.parse(options!.body as string)).toEqual({ reload_settings: true, busy_policy: 'wait' });
+    expect(new Headers(options!.headers).get('Idempotency-Key')).toBeTruthy();
+  });
+  it('reads operation status without waking the session', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ phase: 'paused', revision: 2 }), { status: 200 },
+    ));
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    await expect(client.restartStatus('one')).resolves.toEqual({ phase: 'paused', revision: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://proxy.example.test/sessions/one/restart');
+    expect(fetchMock.mock.calls[0][1]?.method ?? 'GET').toBe('GET');
+  });
+});

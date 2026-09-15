@@ -1168,6 +1168,23 @@ export class AgentAPIProxyClient {
     });
   }
 
+  async restartSession(sessionId: string, reloadSettings = true): Promise<{ session_id: string; request_id: string }> {
+    return this.makeRequest(
+      `/sessions/${encodeURIComponent(sessionId)}/restart`,
+      { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ reload_settings: reloadSettings, busy_policy: 'wait' }) },
+    );
+  }
+
+  async pauseSession(sessionId: string): Promise<{ session_id: string; request_id: string }> {
+    return this.makeRequest(`/sessions/${encodeURIComponent(sessionId)}/pause`, {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ busy_policy: 'wait' }),
+    });
+  }
+
+  async restartStatus(sessionId: string): Promise<{ phase: string; revision: number; error?: string }> {
+    return this.makeRequest(`/sessions/${encodeURIComponent(sessionId)}/restart`);
+  }
+
   async suspendSession(sessionId: string): Promise<{ session_id: string; status: string }> {
     return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/suspend`, {
       method: 'POST',

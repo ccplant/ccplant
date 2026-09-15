@@ -15,6 +15,220 @@
     }
   ],
   "paths": {
+    "/sessions/{sessionId}/restart": {
+      "post": {
+        "summary": "Reload complete startup settings and restart the same conversation",
+        "operationId": "restartSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Reuse the same key only when retrying the same request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "startup_input": {
+                    "type": "object",
+                    "description": "Complete start request input. Replaces saved overrides and initializes legacy sessions; server-owned identity is preserved."
+                  },
+                  "reload_settings": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "busy_policy": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "interrupt"
+                    ],
+                    "default": "wait"
+                  },
+                  "session_profile_id": {
+                    "type": "string",
+                    "description": "Explicitly select another authorized profile; empty disables the profile."
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Operation accepted; poll GET /sessions/{sessionId}/restart."
+          },
+          "403": {
+            "description": "Session or profile access denied"
+          },
+          "409": {
+            "description": "Operation conflict or legacy session has no saved startup input"
+          },
+          "412": {
+            "description": "Settings revision changed"
+          },
+          "422": {
+            "description": "Settings or conversation restoration incompatible"
+          },
+          "501": {
+            "description": "Manager does not support restart"
+          }
+        }
+      },
+      "get": {
+        "summary": "Read settings restart status without waking the runtime",
+        "operationId": "sessionRestartStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation status without credential values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string",
+                      "enum": [
+                        "",
+                        "waiting_idle",
+                        "pausing",
+                        "restarting",
+                        "paused",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "No saved startup input"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/pause": {
+      "post": {
+        "summary": "Stop the agent and retain a manual resume hold",
+        "operationId": "pauseSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Reuse the same key only when retrying the same request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "busy_policy": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "interrupt"
+                    ],
+                    "default": "wait"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Operation accepted; poll GET /sessions/{sessionId}/restart."
+          },
+          "403": {
+            "description": "Session or profile access denied"
+          },
+          "409": {
+            "description": "Operation conflict or legacy session has no saved startup input"
+          },
+          "412": {
+            "description": "Settings revision changed"
+          },
+          "422": {
+            "description": "Settings or conversation restoration incompatible"
+          },
+          "501": {
+            "description": "Manager does not support restart"
+          }
+        }
+      }
+    },
     "/internal/session-managers/{id}/runners/{runnerId}/retire": {
       "post": {
         "tags": [
@@ -7245,7 +7459,7 @@
           },
           "session_ttl": {
             "type": "string",
-            "description": "Duration after the last message before this session is automatically deleted. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string means the global cleanup worker TTL is used for Slackbot sessions; non-Slackbot sessions without this field are not auto-deleted.",
+            "description": "Duration after processing ends before this session is automatically deleted. Running or starting sessions are never deleted by TTL. The clock restarts after each completed turn. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string uses a one-minute TTL for oneshot sessions and the global cleanup worker TTL for other Slackbot sessions; other sessions without this field are not auto-deleted.",
             "example": "48h"
           },
           "unsynced_file_paths": {
@@ -10172,7 +10386,7 @@
         },
         "session_ttl": {
           "type": "string",
-          "description": "Default TTL for sessions created with this profile. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
+          "description": "Default TTL after processing ends for sessions created with this profile. Running or starting sessions are never deleted by TTL. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
           "example": "72h"
         },
         "unsynced_file_paths": {

@@ -354,6 +354,30 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }
   }
 
+  const restartSessionWithSettings = async (sessionId: string) => {
+    try {
+      setSuspendingSession(sessionId)
+      setError(null)
+      await agentAPI.restartSession(sessionId)
+      setSuccess('設定を再読み込みしています。現在の処理が終了してから再起動します。')
+      for (let attempt = 0; attempt < 330; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        const operation = await agentAPI.restartStatus(sessionId)
+        if (operation.phase === 'failed' || operation.error) throw new Error(operation.error || '再起動に失敗しました')
+        if (operation.phase === 'ready') {
+          setSuccess('設定を再読み込みし、同じ会話を再開しました')
+          void fetchSessions(true)
+          return
+        }
+      }
+      setError('処理の完了待ちがタイムアウトしました。進行状況を確認してください。')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'セッション操作に失敗しました')
+    } finally {
+      setSuspendingSession(null)
+    }
+  }
+
   const toggleSessionSelection = (sessionId: string) => {
     setSelectedSessions(prev => {
       const next = new Set(prev)
@@ -1094,7 +1118,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                           </a>
                         ) : null}
 
-                        {(annotations.prUrl || annotations.issueUrl || (!acpMode && ['active', 'running'].includes(session.status))) && (
+                        {(annotations.prUrl || annotations.issueUrl || !acpMode) && (
                           <div className="relative">
                             <button
                               type="button"
@@ -1132,6 +1156,11 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                     <CircleDot className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" />
                                     {issueNumber ? `Issue #${issueNumber}` : 'Issue'}
                                   </a>
+                                )}
+                                {!acpMode && (
+                                  <>
+                                    <button type="button" disabled={suspendingSession === session.session_id} onClick={() => { setOpenAnnotationMenuId(null); void restartSessionWithSettings(session.session_id) }} className="block w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">設定を再読み込みして再起動</button>
+                                  </>
                                 )}
                                 {!acpMode && ['active', 'running'].includes(session.status) && (
                                   <button

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -91,15 +92,19 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 	defer cancel()
 	managers, err := l.candidates(ctx)
 	if err != nil {
+		log.Printf("[CODEX_AUTH_ESM] Failed to list candidate managers for attempt %s: %v", request.AttemptID, err)
 		return "", err
 	}
+	log.Printf("[CODEX_AUTH_ESM] Attempt %s has %d candidate manager(s)", request.AttemptID, len(managers))
 	lastErr := errors.New("no connected session manager is available for codex device auth")
 	for _, manager := range managers {
 		if !l.tunnel.IsConnected(ctx, manager.ID) {
+			log.Printf("[CODEX_AUTH_ESM] Skipping disconnected manager %s for attempt %s", manager.ID, request.AttemptID)
 			continue
 		}
 		resp, doErr := l.postWorkload(ctx, manager.ID, request)
 		if doErr != nil {
+			log.Printf("[CODEX_AUTH_ESM] Manager %s request failed for attempt %s: %v", manager.ID, request.AttemptID, doErr)
 			lastErr = fmt.Errorf("manager %s: %w", manager.ID, doErr)
 			continue
 		}
@@ -108,17 +113,21 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 		_ = resp.Body.Close()
 		switch {
 		case status == http.StatusAccepted:
+			log.Printf("[CODEX_AUTH_ESM] Manager %s accepted attempt %s", manager.ID, request.AttemptID)
 			l.active.Store(request.AttemptID, manager.ID)
 			return manager.ID, nil
 		case status == http.StatusNotFound || status == http.StatusNotImplemented:
+			log.Printf("[CODEX_AUTH_ESM] Manager %s does not support attempt %s (status=%d)", manager.ID, request.AttemptID, status)
 			// The manager cannot run auth workloads (unknown route on an older
 			// revision, or an execution plane without the capability). Try the
 			// next connected manager instead of failing the attempt.
 			lastErr = fmt.Errorf("manager %s does not support codex device auth workloads", manager.ID)
 		default:
+			log.Printf("[CODEX_AUTH_ESM] Manager %s rejected attempt %s (status=%d detail=%q)", manager.ID, request.AttemptID, status, strings.TrimSpace(string(detail)))
 			lastErr = fmt.Errorf("manager %s returned HTTP %d: %s", manager.ID, status, strings.TrimSpace(string(detail)))
 		}
 	}
+	log.Printf("[CODEX_AUTH_ESM] No manager accepted attempt %s: %v", request.AttemptID, lastErr)
 	return "", lastErr
 }
 

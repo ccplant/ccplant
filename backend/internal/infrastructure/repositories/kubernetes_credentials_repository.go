@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -297,4 +298,38 @@ func (r *KubernetesCredentialsRepository) secretName(name string) string {
 		sanitized = sanitized[:maxLen]
 	}
 	return AgentFilesSecretPrefix + sanitized
+}
+
+// SaveFilesIfUnchanged prevents an older runtime from overwriting an OAuth refresh
+// or a credential replacement performed by another session or the settings UI.
+func (r *KubernetesCredentialsRepository) SaveFilesIfUnchanged(ctx context.Context, owner string, files []sessionsettings.ManagedFile, expected map[string]string) error {
+	if owner == "" {
+		return fmt.Errorf("credential owner is required")
+	}
+	secret, err := r.client.CoreV1().Secrets(r.namespace).Get(ctx, r.secretName(owner), metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	existing := sessionsettings.SecretDataToFiles(secret.Data)
+	byPath := map[string]sessionsettings.ManagedFile{}
+	for _, file := range existing {
+		byPath[file.Path] = file
+	}
+	for _, file := range files {
+		hash := ""
+		if old, ok := byPath[file.Path]; ok {
+			hash = fmt.Sprintf("%x", sha256.Sum256([]byte(old.Content)))
+		}
+		if expected[file.Path] != hash {
+			return fmt.Errorf("credential version changed")
+		}
+		byPath[file.Path] = file
+	}
+	merged := make([]sessionsettings.ManagedFile, 0, len(byPath))
+	for _, file := range byPath {
+		merged = append(merged, file)
+	}
+	secret.Data = sessionsettings.FilesToSecretData(merged)
+	_, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	return err
 }

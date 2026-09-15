@@ -108,6 +108,7 @@ type SessionMessageEvent = portrepos.SessionMessageEvent
 type SessionDeletedHandler func(ctx context.Context, session entities.Session)
 
 type KubernetesSessionManager struct {
+	restartHTTPClient  *http.Client
 	sessionProfileRepo portrepos.SessionProfileRepository
 	config             *config.Config
 	k8sConfig          *config.KubernetesSessionConfig
@@ -225,11 +226,34 @@ func (m *KubernetesSessionManager) refreshConfig() {
 	if current.KubernetesSession.ProvisionerToken == "" && m.k8sConfig != nil {
 		current.KubernetesSession.ProvisionerToken = m.k8sConfig.ProvisionerToken
 	}
+	resolveLegacySessionRuntimeImages(current)
 	m.config = current
 	m.k8sConfig = &current.KubernetesSession
 	if m.inheritedRuntimeProfile != nil {
 		m.applyRuntimeProfileLocked(m.inheritedRuntimeProfile)
 	}
+}
+
+// resolveLegacySessionRuntimeImages upgrades the old single-image defaults in
+// memory. This lets an auto-upgraded manager create new Pods with immutable
+// agent assets and inject the ccplant CLI from its own release, even when the
+// installed Helm chart predates the split image configuration. Explicit custom
+// session or CLI images are preserved.
+func resolveLegacySessionRuntimeImages(cfg *config.Config) {
+	if cfg == nil || strings.TrimSpace(cfg.KubernetesSession.CLIImage) != "" {
+		return
+	}
+	repository := strings.TrimSuffix(strings.TrimSpace(cfg.SessionManager.ImageRepository), ":")
+	version := strings.TrimSpace(cfg.SessionManager.CurrentVersion)
+	if repository == "" || version == "" {
+		return
+	}
+	managerImage := repository + ":" + version
+	if strings.TrimSpace(cfg.KubernetesSession.Image) != managerImage {
+		return
+	}
+	cfg.KubernetesSession.Image = config.DefaultKubernetesSessionImage
+	cfg.KubernetesSession.CLIImage = managerImage
 }
 
 func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontrol.Store) {
@@ -266,6 +290,7 @@ func NewKubernetesSessionManagerWithClient(
 	lgr *logger.Logger,
 	client kubernetes.Interface,
 ) (*KubernetesSessionManager, error) {
+	resolveLegacySessionRuntimeImages(cfg)
 	k8sConfig := &cfg.KubernetesSession
 
 	// Determine namespace
@@ -584,6 +609,9 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 	now := time.Now()
 	for i := range services.Items {
 		svc := &services.Items[i]
+		if svc.Annotations[restartHoldAnnotation] == "true" {
+			continue
+		}
 		sessionID := svc.Labels["agentapi.proxy/session-id"]
 		if sessionID != "" {
 			// Suspended workloads have no Pod/Deployment watcher to recreate their
@@ -748,7 +776,7 @@ func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <
 			session, exists := m.sessions[evt.SessionID]
 			m.mutex.RUnlock()
 			if exists {
-				session.SetStatusSilent(evt.Status)
+				session.SetStatusSilentAt(evt.Status, evt.UpdatedAt)
 			}
 
 			// Forward to local SSE subscribers only.
@@ -1964,7 +1992,11 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	if !ok {
 		return session, false, nil
 	}
-	if _, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{}); err != nil {
+	svc, serviceErr := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+	if serviceErr == nil && svc.Annotations[restartHoldAnnotation] == "true" && ctx.Value(restartContextKey{}) != true {
+		return session, false, fmt.Errorf("session is manually paused or restarting")
+	}
+	if err := serviceErr; err != nil {
 		if errors.IsNotFound(err) {
 			return nil, false, fmt.Errorf("canonical service for session %s not found", id)
 		}
@@ -2044,6 +2076,16 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
 	}
 	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	if settings.Sandbox != nil {
+		req.Sandbox = &entities.SandboxParams{Enabled: settings.Sandbox.Enabled, PolicyID: settings.Sandbox.PolicyID, AllowedDomains: settings.Sandbox.AllowedDomains, DeniedDomains: settings.Sandbox.DeniedDomains, CountMode: settings.Sandbox.CountMode}
+	}
+	if settings.Docker != nil {
+		req.Docker = &entities.DockerParams{Enabled: settings.Docker.Enabled}
+		for _, r := range settings.Docker.Registries {
+			req.Docker.Registries = append(req.Docker.Registries, entities.DockerRegistry{Server: r.Server, Username: r.Username, Password: r.Password, SecretName: r.SecretName, Insecure: r.Insecure})
+		}
+	}
+
 	if settings.Repository != nil {
 		req.RepoInfo = &entities.RepositoryInfo{FullName: settings.Repository.FullName, CloneDir: settings.Repository.CloneDir, Branch: settings.Repository.Branch, PR: settings.Repository.PR}
 	}
@@ -2170,7 +2212,7 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	redisStatus, _, err := repo.GetStatus(ctx, ks.ID())
+	redisStatus, updatedAt, err := repo.GetStatus(ctx, ks.ID())
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to read Redis status for session=%s: %v", ks.ID(), err)
 		return
@@ -2185,8 +2227,8 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 		if redisStatus != currentStatus {
 			log.Printf("[K8S_SESSION] Overlaying Redis runtime status session=%s %s→%s",
 				ks.ID(), currentStatus, redisStatus)
-			ks.SetStatusSilent(redisStatus)
 		}
+		ks.SetStatusSilentAt(redisStatus, updatedAt)
 	}
 }
 
@@ -2760,6 +2802,16 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 // POST /rpc endpoint with session/prompt; for standard agentapi sessions it
 // uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
+	if ks, ok := m.GetSession(id).(*KubernetesSession); ok && ks != nil {
+		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if svc.Annotations[restartHoldAnnotation] == "true" {
+			return fmt.Errorf("session is paused or restarting")
+		}
+	}
+
 	session := m.GetSession(id)
 	if session == nil {
 		return fmt.Errorf("session not found: %s", id)
@@ -7075,6 +7127,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			continue
 		}
 		settings.Files = files
+		settings.CredentialOwner = credentialOwner
+		settings.CredentialSyncID = uuid.NewString()
 		log.Printf("[K8S_SESSION] Embedded %d managed file(s) for credential owner %s (Secret %s) for session %s",
 			len(settings.Files), credentialOwner, filesSecretName, session.id)
 		break
