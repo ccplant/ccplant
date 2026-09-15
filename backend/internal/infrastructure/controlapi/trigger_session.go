@@ -51,7 +51,8 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 	start := entities.StartRequest{
 		Environment: req.Environment, Tags: tags, Params: params, Scope: req.Scope, TeamID: req.TeamID,
 		MemoryKey: req.MemoryKey, SessionProfileID: req.ResolvedSessionProfileID,
-		WebhookPayload: webhookPayload,
+		WebhookPayload: webhookPayload, ReuseMatchTags: req.ReuseMatchTags, ReuseMessage: req.ReuseMessage,
+		LimitMatchTags: req.LimitMatchTags, MaxSessions: req.MaxSessions,
 	}
 	apiURL := m.sessionAPIURL
 	if apiURL == "" {

@@ -315,31 +315,13 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Try to reuse an existing live session for this channel+thread.
-	// Follow-up messages in the same Slack thread are routed to the existing session
-	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
-	// NOTE: The slackbot reuse path is handled here (rather than via LaunchUseCase)
-	// because it requires Slackbot-specific message construction (buildMessage).
 	reuseFilter := entities.SessionFilter{
 		Tags: map[string]string{
+			"slackbot_id":       botID,
 			"slack_channel":     channel,
 			"slack_thread_ts":   threadKey,
 			"triggered_user_id": triggeredUserID,
 		},
-	}
-	if liveSessions := liveSlackSessions(h.sessionManager.ListSessions(reuseFilter)); len(liveSessions) > 0 {
-		existingSession := liveSessions[0]
-		reuseMessage := h.buildMessage(bot, payloadMap, event.Text, true)
-		go func() {
-			bgCtx := context.Background()
-			if err := h.sessionManager.SendMessage(bgCtx, existingSession.ID(), reuseMessage); err != nil {
-				log.Printf("[SLACKBOT] Failed to route message to existing session %s: %v", existingSession.ID(), err)
-				return
-			}
-			// last-message-at is updated automatically inside SendMessage.
-			log.Printf("[SLACKBOT] Routed message to existing session %s for thread %s", existingSession.ID(), threadKey)
-		}()
-		return nil
 	}
 
 	// Determine scope and ownership.
@@ -356,20 +338,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		teamID = bot.TeamID()
 		teams = sessionuc.ResolveTeams(scope, teamID, bot.Teams())
 		maxSessions = bot.MaxSessions()
-	}
-
-	// Check session limit synchronously so that the caller (and tests) can observe
-	// the error before a goroutine is launched.  LaunchUseCase receives MaxSessions=0
-	// to skip the duplicate check inside the goroutine.
-	if maxSessions > 0 {
-		limitFilter := entities.SessionFilter{
-			Tags: map[string]string{"slackbot_id": botID},
-		}
-		activeSessions := h.sessionManager.ListSessions(limitFilter)
-		if len(activeSessions) >= maxSessions {
-			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", botID, maxSessions)
-			return fmt.Errorf("session limit reached: maximum %d sessions", maxSessions)
-		}
 	}
 
 	sessionID := uuid.New().String()
@@ -457,6 +425,12 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			Environment:              env,
 			Tags:                     tags,
 			InitialMessage:           initialMessage,
+			ReuseSession:             true,
+			ReuseMatchTags:           reuseFilter.Tags,
+			ReuseMessage:             h.buildMessage(bot, payloadMap, event.Text, true),
+			DeferReuseToStart:        true,
+			MaxSessions:              maxSessions,
+			LimitMatchTags:           map[string]string{"slackbot_id": botID},
 			AgentType:                agentType,
 			Model:                    model,
 			MemoryKey:                memoryKey,
@@ -490,8 +464,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 				}
 				return sp
 			}(),
-			// MaxSessions=0: limit was already checked synchronously above so we
-			// skip the redundant check inside LaunchUseCase.
 		})
 		if err != nil {
 			h.processedEvents.Delete(eventKey)
