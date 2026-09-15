@@ -785,7 +785,7 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 		status = "stopped"
 	}
 	previous := route.Status
-	// StatusUpdatedAt is the completion timestamp used by oneshot TTL cleanup.
+	// StatusUpdatedAt is the completion timestamp used by session TTL cleanup.
 	// Repeated /status reads and runtime retries must not move that deadline.
 	if previous == status && !route.StatusUpdatedAt.IsZero() {
 		return nil
@@ -1036,6 +1036,14 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+// DeleteSessionFromWorker runs the durable deletion path for a request that was
+// already authenticated by WorkerControlController. Worker cleanup is allowed
+// to delete expired sessions regardless of their user or team owner.
+func (c *SessionController) DeleteSessionFromWorker(ctx echo.Context) error {
+	ctx.Set(workerAuthorizedDeleteContextKey, true)
+	return c.DeleteSession(ctx)
 }
 
 func (c *SessionController) revokeGitHubBrokerLeases(ctx context.Context, sessionID string) {

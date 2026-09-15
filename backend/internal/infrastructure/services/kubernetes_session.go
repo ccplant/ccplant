@@ -204,9 +204,21 @@ func (s *KubernetesSession) StatusMessage() string {
 // received from Redis so that the local state is kept consistent without
 // triggering a redundant broadcast (the originating pod already did that).
 func (s *KubernetesSession) SetStatusSilent(status string) {
+	s.SetStatusSilentAt(status, time.Time{})
+}
+
+// SetStatusSilentAt preserves the originating status transition time when
+// synchronizing replicas, so TTL cleanup does not use the previous turn's time.
+func (s *KubernetesSession) SetStatusSilentAt(status string, updatedAt time.Time) {
 	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.status != status || updatedAt.After(s.updatedAt) {
+		if updatedAt.IsZero() {
+			updatedAt = time.Now()
+		}
+		s.updatedAt = updatedAt
+	}
 	s.status = status
-	s.mutex.Unlock()
 }
 
 // SetStartedAt sets the session start time (used for restored sessions)

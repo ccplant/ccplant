@@ -7459,7 +7459,7 @@
           },
           "session_ttl": {
             "type": "string",
-            "description": "Duration after the last message before this session is automatically deleted. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string means the global cleanup worker TTL is used for Slackbot sessions; non-Slackbot sessions without this field are not auto-deleted.",
+            "description": "Duration after processing ends before this session is automatically deleted. Running or starting sessions are never deleted by TTL. The clock restarts after each completed turn. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string uses a one-minute TTL for oneshot sessions and the global cleanup worker TTL for other Slackbot sessions; other sessions without this field are not auto-deleted.",
             "example": "48h"
           },
           "unsynced_file_paths": {
@@ -10386,7 +10386,7 @@
         },
         "session_ttl": {
           "type": "string",
-          "description": "Default TTL for sessions created with this profile. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
+          "description": "Default TTL after processing ends for sessions created with this profile. Running or starting sessions are never deleted by TTL. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
           "example": "72h"
         },
         "unsynced_file_paths": {

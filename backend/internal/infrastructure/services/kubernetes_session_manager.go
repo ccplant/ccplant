@@ -752,7 +752,7 @@ func (m *KubernetesSessionManager) consumeStatusEvents(ctx context.Context, ch <
 			session, exists := m.sessions[evt.SessionID]
 			m.mutex.RUnlock()
 			if exists {
-				session.SetStatusSilent(evt.Status)
+				session.SetStatusSilentAt(evt.Status, evt.UpdatedAt)
 			}
 
 			// Forward to local SSE subscribers only.
@@ -2188,7 +2188,7 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	redisStatus, _, err := repo.GetStatus(ctx, ks.ID())
+	redisStatus, updatedAt, err := repo.GetStatus(ctx, ks.ID())
 	if err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to read Redis status for session=%s: %v", ks.ID(), err)
 		return
@@ -2203,8 +2203,8 @@ func runtimeStatusOverrideFromRedis(repo portrepos.StatusEventRepository, sessio
 		if redisStatus != currentStatus {
 			log.Printf("[K8S_SESSION] Overlaying Redis runtime status session=%s %s→%s",
 				ks.ID(), currentStatus, redisStatus)
-			ks.SetStatusSilent(redisStatus)
 		}
+		ks.SetStatusSilentAt(redisStatus, updatedAt)
 	}
 }
 

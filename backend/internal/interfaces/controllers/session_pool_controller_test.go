@@ -1144,3 +1144,34 @@ func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
 		})
 	}
 }
+
+func TestManagerHeartbeatPreservesInteractiveTTLCompletion(t *testing.T) {
+	for _, status := range []string{"running", "active"} {
+		for _, reported := range []string{"active", "stable", "running", "starting", "creating"} {
+			t.Run(status+"/"+reported, func(t *testing.T) {
+				ctx := context.Background()
+				routes := repositories.NewKubernetesSessionRouteRepository(fake.NewSimpleClientset(), "test")
+				updatedAt := time.Now().Add(-2 * time.Hour).UTC()
+				route := &portrepos.SessionRoute{
+					SessionID: "interactive", RemoteSessionID: "runtime", ManagerID: "manager",
+					Transport: portrepos.SessionRouteTransportDirectRuntime,
+					Tags:      map[string]string{"session_ttl": "1h"}, Status: status, StatusUpdatedAt: updatedAt,
+				}
+				if err := routes.Save(ctx, route); err != nil {
+					t.Fatal(err)
+				}
+				controller := NewSessionPoolController(nil, routes)
+				if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
+					t.Fatal(err)
+				}
+				got, err := routes.Get(ctx, route.SessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Status != status || !got.StatusUpdatedAt.Equal(updatedAt) {
+					t.Fatalf("heartbeat replaced runtime TTL state: status=%s updated=%s", got.Status, got.StatusUpdatedAt)
+				}
+			})
+		}
+	}
+}

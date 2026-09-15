@@ -32,6 +32,8 @@ type restartSettingsResolver interface {
 	ResolveRestartSettings(context.Context, string, entities.StartRequest, string, []string) (*sessionsettings.SessionSettings, error)
 }
 
+const workerAuthorizedDeleteContextKey = "worker_authorized_session_delete"
+
 func (c *SessionController) restartConfiguration(ctx echo.Context) (sessionConfigurationStore, *core.Configuration, error) {
 	store, ok := c.sessionRunnerStore.(sessionConfigurationStore)
 	if !ok {
@@ -415,6 +417,9 @@ func (c *SessionController) waitRestartIdle(ctx context.Context, id string, rout
 
 // Blocks runtime access while settings are changing, including automatic resume.
 func (c *SessionController) checkRestartHold(ctx echo.Context) error {
+	if authorized, _ := ctx.Get(workerAuthorizedDeleteContextKey).(bool); authorized {
+		return nil
+	}
 	store, ok := c.sessionRunnerStore.(sessionConfigurationStore)
 	if !ok {
 		return nil

@@ -156,6 +156,16 @@ func TestRestartHoldAndOwnerAuthorization(t *testing.T) {
 	}
 }
 
+func TestRestartHoldAllowsAuthenticatedWorkerDeletion(t *testing.T) {
+	store := &restartStoreStub{cfg: core.Configuration{SessionID: "one", UserID: "alice", Scope: "user", Phase: "paused"}}
+	c := NewSessionController(nil, nil, WithSessionRunnerStore(store))
+	ctx, _ := restartContext(t, "bob", `{}`, "id")
+	ctx.Set(workerAuthorizedDeleteContextKey, true)
+	if err := c.checkRestartHold(ctx); err != nil {
+		t.Fatalf("worker deletion must bypass restart hold and owner check: %v", err)
+	}
+}
+
 func TestRestartRejectsAnotherUsersCredentials(t *testing.T) {
 	m := &restartManagerStub{}
 	c := NewSessionController(restartProviderStub{m}, restartCreatorStub{m: m})

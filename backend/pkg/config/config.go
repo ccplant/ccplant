@@ -140,13 +140,13 @@ type ScheduleWorkerConfig struct {
 }
 
 // SlackbotCleanupWorkerConfig represents Slackbot session cleanup worker configuration.
-// The worker deletes Slackbot sessions whose last message is older than SessionTTL.
+// The worker deletes Slackbot sessions whose processing ended more than SessionTTL ago.
 type SlackbotCleanupWorkerConfig struct {
 	// Enabled enables the Slackbot cleanup worker
 	Enabled bool `json:"enabled" mapstructure:"enabled"`
 	// CheckInterval is how often to scan for stale sessions (e.g., "1h", "30m")
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
-	// SessionTTL is the duration after the last message before a session is deleted (e.g., "72h")
+	// SessionTTL is the duration after processing ends before a session is deleted (e.g., "72h")
 	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
 	// SessionTTLCheckInterval is how often to scan for non-Slackbot sessions that have an
 	// explicit agentapi.proxy/session-ttl annotation. This can be much shorter than

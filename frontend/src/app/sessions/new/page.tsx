@@ -983,7 +983,7 @@ export default function NewSessionPage() {
                   {/* セッション TTL */}
                   <div>
                     <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">セッション自動削除 TTL</p>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">最後のメッセージからこの時間が経過するとセッションを自動削除します。例: <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">24h</code>、<code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">168h</code>（空欄 = 自動削除なし）</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">処理が終了してからこの時間が経過するとセッションを自動削除します。実行中は削除されず、次の処理が終了すると再計測します。例: <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">24h</code>、<code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">168h</code>（空欄 = 自動削除なし）</p>
                     <input
                       type="text"
                       value={sessionTTL}

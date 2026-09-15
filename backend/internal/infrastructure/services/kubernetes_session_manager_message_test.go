@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -314,5 +315,23 @@ func jsonResponse(statusCode int) *http.Response {
 		StatusCode: statusCode,
 		Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
 		Header:     make(http.Header),
+	}
+}
+
+func TestCrossPodCompletionPreservesTTLStart(t *testing.T) {
+	m := newTestManagerForCycle(t)
+	session := NewKubernetesSession("ttl-session", &entities.RunServerRequest{}, "deploy", "svc", "pvc", "ns", 9000, nil, nil)
+	session.SetStatus("running")
+	session.SetUpdatedAt(time.Now().Add(-100 * time.Hour))
+	m.sessions[session.ID()] = session
+	completedAt := time.Now().Add(-30 * time.Minute)
+	events := make(chan portrepos.StatusChangeEvent, 2)
+	event := portrepos.StatusChangeEvent{SessionID: session.ID(), Status: "active", UpdatedAt: completedAt, PodID: "other-pod"}
+	events <- event
+	events <- event // Duplicate delivery must not extend the TTL.
+	close(events)
+	m.consumeStatusEvents(context.Background(), events)
+	if session.Status() != "active" || !session.UpdatedAt().Equal(completedAt) {
+		t.Fatalf("completion metadata lost: status=%s updatedAt=%s", session.Status(), session.UpdatedAt())
 	}
 }
