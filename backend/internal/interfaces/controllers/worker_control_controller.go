@@ -400,7 +400,9 @@ func (wc *WorkerControlController) SendMessage(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		if route != nil && route.Transport == repositories.SessionRouteTransportDirectRuntime {
-			body, marshalErr := json.Marshal(req)
+			// Translate the manager abstraction's payload to the agentapi user
+			// message shape expected by the session runtime.
+			body, marshalErr := json.Marshal(map[string]string{"content": req.Message, "type": "user"})
 			if marshalErr != nil {
 				return c.JSON(http.StatusInternalServerError, map[string]string{"error": marshalErr.Error()})
 			}

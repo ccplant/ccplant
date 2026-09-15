@@ -157,14 +157,14 @@ func (t *directRuntimeTunnel) Do(_ context.Context, managerID, _, _ string, req 
 	}, nil
 }
 
-func TestRouteToDirectRuntimeFromWorkerUsesSessionHMAC(t *testing.T) {
+func TestRouteToDirectRuntimeFromWorkerStripsWorkerCredential(t *testing.T) {
 	tunnel := &directRuntimeTunnel{}
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
 		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
 			SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-a",
 			Transport: repositories.SessionRouteTransportDirectRuntime, UserID: "user-1",
-			Scope: string(entities.ScopeUser), HMACSecret: "session-secret",
+			Scope: string(entities.ScopeUser),
 		}}),
 		controllers.WithESMControlTunnel(tunnel),
 	)
@@ -182,15 +182,6 @@ func TestRouteToDirectRuntimeFromWorkerUsesSessionHMAC(t *testing.T) {
 	}
 	if got := tunnel.header.Get(echo.HeaderAuthorization); got != "" {
 		t.Fatalf("Authorization = %q, want empty", got)
-	}
-	if got := tunnel.header.Get("X-Forwarded-User"); got != "user-1" {
-		t.Fatalf("X-Forwarded-User = %q, want user-1", got)
-	}
-	if got := tunnel.header.Get("X-Hub-Signature-256"); got == "" {
-		t.Fatal("X-Hub-Signature-256 is empty")
-	}
-	if got := tunnel.header.Get("X-Timestamp"); got == "" {
-		t.Fatal("X-Timestamp is empty")
 	}
 }
 

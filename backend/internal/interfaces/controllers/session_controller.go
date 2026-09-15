@@ -1511,21 +1511,9 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 		req.Header = ctx.Request().Header.Clone()
 		if workerAuthorized {
 			// The worker-control token only authenticates the worker to the parent.
-			// It is not a user credential understood by the session runtime. Re-sign
-			// the tunneled request with the per-session HMAC secret and preserve the
-			// route owner as the trusted forwarded identity.
+			// It is not a credential understood by the local agentapi process.
 			req.Header.Del(echo.HeaderAuthorization)
 			req.Header.Del("X-API-Key")
-			ts := hmacutil.NowTimestamp()
-			msg := hmacutil.BuildMessage(req.Method, req.URL.RequestURI(), ts, body)
-			req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
-			req.Header.Set(hmacutil.TimestampHeader, ts)
-			if route.UserID != "" {
-				req.Header.Set("X-Forwarded-User", route.UserID)
-			}
-			if route.TeamID != "" {
-				req.Header.Set("X-Forwarded-Team", route.TeamID)
-			}
 		}
 		telemetry.InjectHTTP(ctx.Request().Context(), req)
 		resp, tunnelErr := c.esmControlTunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
