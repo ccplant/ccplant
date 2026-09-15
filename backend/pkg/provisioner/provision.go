@@ -160,6 +160,13 @@ func (s *Server) runProvision(ctx context.Context, settings *sessionsettings.Ses
 		}
 	}()
 
+	// Confirm the generation with the parent before setup or agent execution.
+	// A delayed Pod whose allocation was requeued must never run the old prompt.
+	if err := confirmRuntimeStart(ctx, settings.ParentRuntime); err != nil {
+		s.setStatus(StatusError, fmt.Sprintf("runtime start rejected: %v", err))
+		return
+	}
+
 	// ── Step 1.5: write webhook payload file ─────────────────────────────────
 	// For stock sessions the pod is pre-created without a webhook-payload
 	// Secret volume (payload unknown at pod creation time).  We write the

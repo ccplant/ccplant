@@ -177,3 +177,17 @@ func TestDirectRuntimeRetriesTemporaryUnauthorizedResponse(t *testing.T) {
 		t.Fatalf("polls = %d, want at least 2", polls.Load())
 	}
 }
+
+func TestConfirmRuntimeStartRejectsFencedGeneration(t *testing.T) {
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("generation") != "2" || r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("missing generation or runtime token")
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer parent.Close()
+	err := confirmRuntimeStart(context.Background(), &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: parent.URL, SessionID: "session", Token: "token", Generation: 2})
+	if err == nil {
+		t.Fatal("fenced runtime was allowed to provision")
+	}
+}

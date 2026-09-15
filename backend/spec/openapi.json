@@ -15,6 +15,60 @@
     }
   ],
   "paths": {
+    "/internal/session-managers/{id}/runners/{runnerId}/retire": {
+      "post": {
+        "tags": [
+          "Session Managers"
+        ],
+        "summary": "Fence an idle runner before workload deletion",
+        "operationId": "retireSessionRunner",
+        "description": "Authenticated with the owning manager connection token. Atomically transitions idle to draining; claiming and running runners return 409 and must not be deleted. Retirement is idempotent and leaves a tombstone that rejects delayed registration. Deploy the parent API before managers that use this endpoint.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runnerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bearer manager connection token"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Runner fenced; workload may be deleted"
+          },
+          "401": {
+            "description": "Invalid manager credential"
+          },
+          "403": {
+            "description": "Runner belongs to a different manager"
+          },
+          "409": {
+            "description": "Claiming or running runner; do not delete"
+          },
+          "500": {
+            "description": "Retirement failed; do not delete"
+          }
+        }
+      }
+    },
     "/internal/worker/schedules/claim-due": {
       "post": {
         "summary": "Claim due schedule jobs",

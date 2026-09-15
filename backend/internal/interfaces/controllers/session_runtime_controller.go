@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
+	runnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"io"
 	"net/http"
 	"strconv"
@@ -20,9 +22,10 @@ import (
 // SessionRuntimeController exposes a per-session reverse-RPC channel used by a
 // Session Pod to communicate directly with the parent proxy.
 type SessionRuntimeController struct {
-	store  core.Store
-	routes repositories.SessionRouteRepository
-	status interface {
+	store   core.Store
+	runners runnercore.Store
+	routes  repositories.SessionRouteRepository
+	status  interface {
 		RecordRemoteSessionStatus(context.Context, *repositories.SessionRoute, string) error
 	}
 }
@@ -59,6 +62,11 @@ func NewSessionRuntimeController(store core.Store, routes repositories.SessionRo
 	if len(recorders) > 0 {
 		c.status = recorders[0]
 	}
+	return c
+}
+
+func (c *SessionRuntimeController) WithRunnerStore(store runnercore.Store) *SessionRuntimeController {
+	c.runners = store
 	return c
 }
 
@@ -106,6 +114,14 @@ func (c *SessionRuntimeController) authorize(ctx echo.Context) (*repositories.Se
 	actual := hex.EncodeToString(digest[:])
 	if subtle.ConstantTimeCompare([]byte(actual), []byte(route.RuntimeTokenHash)) != 1 {
 		return nil, http.StatusUnauthorized
+	}
+	if c.runners != nil {
+		if err := c.runners.MarkStarted(ctx.Request().Context(), route.SessionID, generation); err != nil && !errors.Is(err, runnercore.ErrNotFound) {
+			if errors.Is(err, runnercore.ErrConflict) {
+				return route, http.StatusConflict
+			}
+			return route, http.StatusServiceUnavailable
+		}
 	}
 	return route, http.StatusOK
 }

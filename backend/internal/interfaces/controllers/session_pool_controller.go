@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1028,8 +1027,6 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 			return sessionRunnerStoreError(claimErr)
 		}
 		if found {
-			runner.Status, runner.LastSeen = core.RunnerClaiming, c.now()
-			_ = c.store.UpdateRunner(ctx.Request().Context(), runner)
 			if err := c.prepareClaimRoute(ctx.Request().Context(), allocation, runner); err != nil {
 				return sessionRunnerStoreError(err)
 			}
@@ -1083,8 +1080,6 @@ func (c *SessionPoolController) AckRunnerAllocation(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	runner.Status, runner.LastSeen = core.RunnerRunning, c.now()
-	_ = c.store.UpdateRunner(ctx.Request().Context(), runner)
 	return ctx.JSON(http.StatusOK, allocation)
 }
 
@@ -1103,8 +1098,6 @@ func (c *SessionPoolController) FailRunnerAllocation(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	runner.Status, runner.LastSeen = core.RunnerIdle, c.now()
-	_ = c.store.UpdateRunner(ctx.Request().Context(), runner)
 	return ctx.JSON(http.StatusOK, allocation)
 }
 
@@ -1178,16 +1171,20 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 					continue
 				}
 				if runner.Status == core.RunnerIdle && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
-					if err := c.store.DeleteRunner(ctx.Request().Context(), runner.ID); err != nil {
+					if err := c.store.RetireRunner(ctx.Request().Context(), manager.ID, runner.ID); err != nil && !errors.Is(err, core.ErrConflict) {
 						return sessionRunnerStoreError(err)
 					}
 					continue
 				}
+				if runner.Status == core.RunnerDraining {
+					continue
+				}
 				copy.TotalRunners++
 				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
-				if runner.Status == core.RunnerIdle {
+				switch runner.Status {
+				case core.RunnerIdle:
 					copy.IdleRunners++
-				} else if runner.Status == core.RunnerRunning {
+				case core.RunnerClaiming, core.RunnerRunning:
 					allocatedRunnerIDs = append(allocatedRunnerIDs, runner.ID)
 				}
 			}
@@ -1256,9 +1253,9 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 }
 
 func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
-	local := make(map[string]struct{}, len(localRunnerIDs))
+	local := make(map[string]bool, len(localRunnerIDs))
 	for _, id := range localRunnerIDs {
-		local[id] = struct{}{}
+		local[id] = true
 	}
 	runners, err := c.store.ListRunners(ctx, "")
 	if err != nil {
@@ -1268,30 +1265,55 @@ func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	allocationsByRunner := make(map[string][]string)
 	for _, allocation := range allocations {
-		if allocation.RunnerID != "" {
-			allocationsByRunner[allocation.RunnerID] = append(allocationsByRunner[allocation.RunnerID], allocation.SessionID)
+		if allocation.ManagerID != managerID || allocation.RunnerID == "" || local[allocation.RunnerID] {
+			continue
+		}
+		// Preserve legacy sessions that reported a status before start fencing existed.
+		if c.routes != nil {
+			route, e := c.routes.Get(ctx, allocation.SessionID)
+			if e != nil {
+				return e
+			}
+			if route != nil && route.Status != "" && route.Status != "starting" && route.Status != "creating" {
+				continue
+			}
+		}
+		retried, e := c.store.RequeueUnstarted(ctx, allocation.SessionID, allocation.RunnerID)
+		if errors.Is(e, core.ErrConflict) || errors.Is(e, core.ErrNotFound) {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		if c.notifier != nil {
+			if e = c.notifier.Notify(ctx, retried.Pool); e != nil {
+				return e
+			}
 		}
 	}
 	for _, runner := range runners {
-		if runner.ManagerID != managerID || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
+		if runner.ManagerID != managerID || local[runner.ID] || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
 			continue
 		}
-		if _, ok := local[runner.ID]; ok {
-			continue
-		}
-		for _, sessionID := range allocationsByRunner[runner.ID] {
-			if err := c.store.DeleteAllocation(ctx, sessionID); err != nil && !errors.Is(err, core.ErrNotFound) {
-				return err
-			}
-		}
+		// Allocations are retained even if their runner is no longer registered.
 		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
 			return err
 		}
-		log.Printf("[SESSION_RUNNER] Removed stale %s runner %s absent from manager %s inventory", runner.Status, runner.ID, managerID)
 	}
 	return nil
+}
+
+// RetireRunner must succeed before a manager deletes an idle workload.
+func (c *SessionPoolController) RetireRunner(ctx echo.Context) error {
+	manager, err := c.authenticateManager(ctx)
+	if err != nil {
+		return err
+	}
+	if err = c.store.RetireRunner(ctx.Request().Context(), manager.ID, ctx.Param("runnerId")); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {
@@ -1323,8 +1345,7 @@ func (c *SessionPoolController) authenticateRunner(ctx echo.Context) (*core.Runn
 	if err != nil || !verifySessionRunnerToken(runner.TokenHash, bearerToken(ctx.Request())) {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid runner token")
 	}
-	runner.LastSeen = c.now()
-	if err := c.store.UpdateRunner(ctx.Request().Context(), runner); err != nil {
+	if err := c.store.TouchRunner(ctx.Request().Context(), runner.ID, c.now()); err != nil {
 		return nil, sessionRunnerStoreError(err)
 	}
 	return runner, nil
@@ -1346,6 +1367,7 @@ func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocatio
 	route.ManagerID = runner.ManagerID
 	route.RemoteSessionID = runner.ID
 	route.Generation = allocation.Generation
+	route.RuntimeTokenHash = allocation.RuntimeTokenHash
 	return c.routes.Save(ctx, route)
 }
 
@@ -1359,19 +1381,20 @@ func (c *SessionPoolController) repairManagerRoutes(ctx context.Context, manager
 	}
 	for _, allocation := range allocations {
 		if allocation.ManagerID != managerID || allocation.RunnerID == "" ||
-			(allocation.Status != core.AllocationClaimed && allocation.Status != core.AllocationRunning) {
+			(allocation.Status != core.AllocationLeased && allocation.Status != core.AllocationClaimed && allocation.Status != core.AllocationRunning) {
 			continue
 		}
 		route, err := c.routes.Get(ctx, allocation.SessionID)
 		if err != nil {
 			return err
 		}
-		if route == nil || route.RemoteSessionID != "" {
+		if route == nil || (route.RemoteSessionID != "" && route.Generation >= allocation.Generation) {
 			continue
 		}
 		route.ManagerID = managerID
 		route.RemoteSessionID = allocation.RunnerID
 		route.Generation = allocation.Generation
+		route.RuntimeTokenHash = allocation.RuntimeTokenHash
 		if err := c.routes.Save(ctx, route); err != nil {
 			return err
 		}
