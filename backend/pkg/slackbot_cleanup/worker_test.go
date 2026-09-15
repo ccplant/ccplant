@@ -37,8 +37,9 @@ func testSession(id string, slack bool, lastMessageAt time.Time) entities.Sessio
 	if slack {
 		tags["slackbot_id"] = "bot"
 	}
-	session := entities.NewProxySession(id, "user", entities.ScopeUser, "", tags, lastMessageAt.Add(-time.Hour))
+	session := entities.NewProxySessionWithStatus(id, "user", entities.ScopeUser, "", tags, lastMessageAt.Add(-time.Hour), "active")
 	session.SetLastMessageAt(lastMessageAt)
+	session.SetUpdatedAt(lastMessageAt)
 	return session
 }
 
@@ -116,6 +117,107 @@ func TestOneshotCleanupRegardlessOfOriginAndExplicitTTL(t *testing.T) {
 			if len(mgr.deletedIDs) != 1 || mgr.deletedIDs[0] != "stale" {
 				t.Fatalf("slack=%v explicitTTL=%v: deleted=%v, want [stale]", slack, explicitTTL, mgr.deletedIDs)
 			}
+		}
+	}
+}
+
+func TestSessionTTLStartsAfterProcessingEnds(t *testing.T) {
+	for _, source := range []struct {
+		name string
+		tags map[string]string
+	}{
+		{"slack-global", map[string]string{"slackbot_id": "bot"}},
+		{"slack-explicit", map[string]string{"slackbot_id": "bot", "session_ttl": "1h"}},
+		{"session-explicit", map[string]string{"session_ttl": "1h"}},
+	} {
+		t.Run(source.name, func(t *testing.T) {
+			now := time.Now()
+			for _, tc := range []struct {
+				name       string
+				status     string
+				updatedAt  time.Time
+				wantDelete bool
+			}{
+				{"long-running", "running", now.Add(-100 * time.Hour), false},
+				{"starting", "starting", now.Add(-100 * time.Hour), false},
+				{"pending", "pending", now.Add(-100 * time.Hour), false},
+				{"resuming", "resuming", now.Add(-100 * time.Hour), false},
+				{"unknown-state", "unknown", now.Add(-100 * time.Hour), false},
+				{"unhealthy-is-not-completion", "unhealthy", now.Add(-100 * time.Hour), false},
+				{"just-finished-long-turn", "active", now.Add(-30 * time.Minute), false},
+				{"idle-past-ttl", "active", now.Add(-100 * time.Hour), true},
+				{"explicit-ttl-overrides-global", "active", now.Add(-2 * time.Hour), source.name != "slack-global"},
+				{"recently-stopped", "stopped", now.Add(-30 * time.Minute), false},
+				{"stopped-past-ttl", "stopped", now.Add(-100 * time.Hour), true},
+				{"recently-suspended", "suspended", now.Add(-30 * time.Minute), false},
+				{"suspended-past-ttl", "suspended", now.Add(-100 * time.Hour), true},
+				{"error-past-ttl", "error", now.Add(-100 * time.Hour), true},
+				{"timeout-past-ttl", "timeout", now.Add(-100 * time.Hour), true},
+				{"missing-completion-time", "active", time.Time{}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					session := entities.NewProxySessionWithStatus("session", "user", entities.ScopeUser, "", source.tags, now.Add(-200*time.Hour), tc.status)
+					session.SetLastMessageAt(now.Add(-150 * time.Hour))
+					session.SetUpdatedAt(tc.updatedAt)
+					mgr := &mockSessionManager{sessions: []entities.Session{session}}
+					worker := NewCleanupWorker(mgr, CleanupWorkerConfig{SessionTTL: 72 * time.Hour})
+					worker.pruneStaleSlackbotSessions(context.Background())
+					worker.pruneSessionsWithTTL(context.Background())
+					if got := len(mgr.deletedIDs) == 1; got != tc.wantDelete {
+						t.Fatalf("deleted=%v, wantDelete=%v", mgr.deletedIDs, tc.wantDelete)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSessionTTLRestartsAfterNextTurn(t *testing.T) {
+	for _, slack := range []bool{false, true} {
+		tags := map[string]string{"session_ttl": "1h"}
+		if slack {
+			tags["slackbot_id"] = "bot"
+		}
+		mgr := &mockSessionManager{}
+		worker := NewCleanupWorker(mgr, CleanupWorkerConfig{SessionTTL: 72 * time.Hour})
+		now := time.Now()
+		for _, phase := range []struct {
+			status     string
+			updatedAt  time.Time
+			wantDelete bool
+		}{
+			{"active", now.Add(-30 * time.Minute), false},
+			{"running", now.Add(-2 * time.Hour), false},
+			{"active", now.Add(-30 * time.Minute), false},
+			{"active", now.Add(-2 * time.Hour), true},
+		} {
+			session := entities.NewProxySessionWithStatus("session", "user", entities.ScopeUser, "", tags, now.Add(-100*time.Hour), phase.status)
+			session.SetUpdatedAt(phase.updatedAt)
+			mgr.sessions = []entities.Session{session}
+			worker.pruneStaleSlackbotSessions(context.Background())
+			worker.pruneSessionsWithTTL(context.Background())
+			if got := len(mgr.deletedIDs) == 1; got != phase.wantDelete {
+				t.Fatalf("slack=%v phase=%+v: deleted=%v", slack, phase, mgr.deletedIDs)
+			}
+		}
+	}
+}
+
+func TestExplicitSessionTTLDryRunAndMissingCompletion(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		completed := completedOneshotSession("completed", time.Now().Add(-2*time.Hour))
+		missing := completedOneshotSession("missing", time.Time{})
+		interactive := testSession("interactive", false, time.Now().Add(-100*time.Hour))
+		interactive.Tags()["session_ttl"] = "1h"
+		mgr := &mockSessionManager{sessions: []entities.Session{completed, missing, interactive}}
+		worker := NewCleanupWorker(mgr, CleanupWorkerConfig{DryRun: dryRun})
+		worker.pruneSessionsWithTTL(context.Background())
+		want := 2
+		if dryRun {
+			want = 0
+		}
+		if len(mgr.deletedIDs) != want {
+			t.Fatalf("dryRun=%v: deleted=%v, want %d", dryRun, mgr.deletedIDs, want)
 		}
 	}
 }

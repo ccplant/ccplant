@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -194,5 +195,26 @@ func TestOneshotSecretCreatedWithCorrectFormat(t *testing.T) {
 
 	if hook["command"] != `"${CCPLANT_BINARY_PATH:-ccplant}" client delete-session --confirm` {
 		t.Errorf("Expected delete-session command, got: %v", hook["command"])
+	}
+}
+
+func TestInteractiveCompletionUpdatesTTLClock(t *testing.T) {
+	session := NewKubernetesSession("interactive-ttl", &entities.RunServerRequest{}, "deploy", "svc", "", "ns", 9000, nil, nil)
+	applyAgentRuntimeStatus(session, "running")
+	session.SetUpdatedAt(time.Now().Add(-100 * time.Hour))
+	before := time.Now()
+	applyAgentRuntimeStatus(session, "stable")
+	completedAt := session.UpdatedAt()
+	if session.Status() != "active" || completedAt.Before(before) {
+		t.Fatalf("completion did not start TTL: status=%s updatedAt=%s", session.Status(), completedAt)
+	}
+	applyAgentRuntimeStatus(session, "stable")
+	if !session.UpdatedAt().Equal(completedAt) {
+		t.Fatal("repeated idle status extended TTL")
+	}
+	applyAgentRuntimeStatus(session, "running")
+	applyAgentRuntimeStatus(session, "stable")
+	if !session.UpdatedAt().After(completedAt) {
+		t.Fatal("next completed turn did not restart TTL")
 	}
 }

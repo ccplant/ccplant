@@ -865,7 +865,7 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 		status = "stopped"
 	}
 	previous := route.Status
-	// StatusUpdatedAt is the completion timestamp used by oneshot TTL cleanup.
+	// StatusUpdatedAt is the completion timestamp used by session TTL cleanup.
 	// Repeated /status reads and runtime retries must not move that deadline.
 	if previous == status && !route.StatusUpdatedAt.IsZero() {
 		return nil

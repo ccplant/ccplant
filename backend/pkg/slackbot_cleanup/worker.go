@@ -21,7 +21,7 @@ type CleanupWorkerConfig struct {
 	// to support short-lived sessions (e.g. 1m TTL).
 	// Default: 1m
 	SessionTTLCheckInterval time.Duration
-	// SessionTTL is the duration after the last message before a session is deleted.
+	// SessionTTL is the duration after processing ends before a session is deleted.
 	// Default: 72h (3 days)
 	SessionTTL time.Duration
 	// Enabled controls whether the worker actually runs.
@@ -43,9 +43,8 @@ func DefaultCleanupWorkerConfig() CleanupWorkerConfig {
 	}
 }
 
-// CleanupWorker periodically deletes Slackbot sessions whose last message is older
-// than SessionTTL. It uses the agentapi.proxy/last-message-at annotation to
-// determine when the last message occurred.
+// CleanupWorker periodically deletes idle or finished sessions after their TTL.
+// The clock starts at the latest status transition, never at message submission.
 type CleanupWorker struct {
 	sessionManager portrepos.SessionManager
 	config         CleanupWorkerConfig
@@ -140,8 +139,27 @@ func (w *CleanupWorker) run(ctx context.Context) {
 	}
 }
 
+// sessionTTLStart shares the completion-based lifetime rule across all session
+// origins and TTL settings. UpdatedAt tracks status transitions; resuming work
+// makes a session ineligible until it enters an idle or terminal state again.
+func sessionTTLStart(session entities.Session) (time.Time, bool) {
+	status := session.Status()
+	if session.Tags()["oneshot"] == "true" && status != "stopped" {
+		return time.Time{}, false
+	}
+	switch status {
+	case "active", "stopped", "suspended", "error", "timeout":
+		completedAt := session.UpdatedAt()
+		// Missing completion metadata must not fall back to creation or message
+		// time: either could expire while the agent is still processing a turn.
+		return completedAt, !completedAt.IsZero()
+	default:
+		return time.Time{}, false
+	}
+}
+
 // pruneStaleSlackbotSessions lists all Slackbot sessions and deletes those whose
-// last message time is older than SessionTTL.  When DryRun is enabled the
+// processing ended more than SessionTTL ago. When DryRun is enabled the
 // worker only logs which sessions would be deleted without touching them.
 // If a session has the agentapi.proxy/session-ttl annotation, that value overrides
 // the global SessionTTL for that individual session.
@@ -175,25 +193,20 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 		}
 		threshold := now.Add(-effectiveTTL)
 
-		// Determine the reference time for TTL calculation from last-message-at.
-		refTime := session.LastMessageAt()
-		if refTime.IsZero() {
-			refTime = session.StartedAt()
-		}
-
-		if refTime.After(threshold) {
+		refTime, eligible := sessionTTLStart(session)
+		if !eligible || refTime.After(threshold) {
 			// Session is still within TTL, skip
 			continue
 		}
 
 		if w.config.DryRun {
-			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete session %s (last message at %s, threshold %s, ttl %s)",
+			log.Printf("[SLACKBOT_CLEANUP] [DRY-RUN] Would delete session %s (processing ended at %s, threshold %s, ttl %s)",
 				sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), effectiveTTL)
 			deleted++
 			continue
 		}
 
-		log.Printf("[SLACKBOT_CLEANUP] Deleting session %s (last message at %s, threshold %s, ttl %s)",
+		log.Printf("[SLACKBOT_CLEANUP] Deleting session %s (processing ended at %s, threshold %s, ttl %s)",
 			sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), effectiveTTL)
 
 		if err := w.sessionManager.DeleteSession(sessionID); err != nil {
@@ -240,10 +253,6 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 		if ttlStr == "" {
 			continue
 		}
-		if oneshot && session.Status() != "stopped" {
-			continue
-		}
-
 		ttl, err := time.ParseDuration(ttlStr)
 		if err != nil {
 			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: invalid session-ttl %q: %v", dryRunPrefix, session.ID(), ttlStr, err)
@@ -254,26 +263,19 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 
 		threshold := now.Add(-ttl)
 
-		refTime := session.LastMessageAt()
-		if oneshot {
-			refTime = session.UpdatedAt()
-		}
-		if refTime.IsZero() {
-			refTime = session.StartedAt()
-		}
-
-		if refTime.After(threshold) {
+		refTime, eligible := sessionTTLStart(session)
+		if !eligible || refTime.After(threshold) {
 			continue
 		}
 
 		if w.config.DryRun {
-			log.Printf("[SESSION_TTL_CLEANUP] [DRY-RUN] Would delete session %s (last message at %s, threshold %s, ttl %s)",
+			log.Printf("[SESSION_TTL_CLEANUP] [DRY-RUN] Would delete session %s (processing ended at %s, threshold %s, ttl %s)",
 				sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), ttl)
 			deleted++
 			continue
 		}
 
-		log.Printf("[SESSION_TTL_CLEANUP] Deleting session %s (last message at %s, threshold %s, ttl %s)",
+		log.Printf("[SESSION_TTL_CLEANUP] Deleting session %s (processing ended at %s, threshold %s, ttl %s)",
 			sessionID, refTime.Format(time.RFC3339), threshold.Format(time.RFC3339), ttl)
 
 		if err := w.sessionManager.DeleteSession(sessionID); err != nil {

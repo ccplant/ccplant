@@ -121,10 +121,10 @@ type SessionParams struct {
 	// AuthProxy controls whether the session auth proxy sidecar is injected.
 	// nil means use the global server configuration.
 	AuthProxy *bool `json:"auth_proxy,omitempty"`
-	// SessionTTL is the duration after the last message before this session is automatically deleted.
-	// Accepted format: Go duration string (e.g. "48h", "7d" where d=24h, "168h").
-	// Empty string means the global cleanup worker TTL is used for Slackbot sessions;
-	// non-Slackbot sessions without this field are not auto-deleted.
+	// SessionTTL is the duration after processing ends before this session is automatically deleted.
+	// Accepted format: Go duration string (e.g. "48h", "168h").
+	// Empty uses one minute for oneshot sessions, the global cleanup TTL for other
+	// Slackbot sessions, and no automatic deletion for other sessions.
 	SessionTTL string `json:"session_ttl,omitempty"`
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
@@ -234,8 +234,8 @@ type RunServerRequest struct {
 	// ParentRuntime is internal bootstrap material for a Session Pod that
 	// connects directly to the parent proxy. It is never accepted from user JSON.
 	ParentRuntime *sessionsettings.ParentRuntimeConfig
-	// SessionTTL is the duration after the last message before this session is auto-deleted.
-	// Stored as a Go duration string (e.g. "48h"). Empty means use the global cleanup TTL.
+	// SessionTTL is the duration after processing ends before this session is auto-deleted.
+	// Stored as a Go duration string (e.g. "48h"). Empty uses the default for the session type.
 	SessionTTL string
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string
