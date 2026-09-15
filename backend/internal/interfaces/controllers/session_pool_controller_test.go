@@ -309,7 +309,7 @@ func TestSessionManagerHeartbeatResolvesCurrentManagerIDFromToken(t *testing.T) 
 	}
 }
 
-func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
+func TestSessionManagerHeartbeatRetiresStaleIdleRunners(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
@@ -337,8 +337,8 @@ func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	if result.Code != http.StatusOK {
 		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
 	}
-	if runners, err := store.ListRunners(ctx, "linux"); err != nil || len(runners) != 0 {
-		t.Fatalf("stale runners remain: runners=%+v err=%v", runners, err)
+	if runners, err := store.ListRunners(ctx, "linux"); err != nil || len(runners) != 1 || runners[0].Status != core.RunnerDraining {
+		t.Fatalf("stale runner must remain fenced: runners=%+v err=%v", runners, err)
 	}
 	var heartbeat struct {
 		Pools []*core.PoolSupplier `json:"pools"`
@@ -532,7 +532,7 @@ func TestSessionManagerHeartbeatPreservesAllocatedRunnersMissingFromLocalInvento
 		t.Fatalf("missing running runner was deleted: %v", err)
 	}
 	if _, err := store.GetAllocation(ctx, "stale-session"); err != nil {
-		t.Fatalf("allocation was deleted: %v", err)
+		t.Fatalf("allocation recovery data was deleted: %v", err)
 	}
 	for _, id := range []string{"live-running", "missing-idle"} {
 		if _, err := store.GetRunner(ctx, id); err != nil {

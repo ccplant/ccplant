@@ -1337,6 +1337,14 @@ func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context
 		if _, ok := registered[id]; ok {
 			continue
 		}
+		retired, err := m.retireStockRunner(ctx, id)
+		if err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("retire %s: %v", id, err))
+			continue
+		}
+		if !retired {
+			continue
+		}
 		if err := m.DeleteSession(id); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Sprintf("%s: %v", id, err))
 		}
@@ -1454,10 +1462,6 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 		}
 		sessionIDs[sessionID] = struct{}{}
 
-		// Delete Service
-		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, svc.Name, deleteOptions); err != nil && !errors.IsNotFound(err) {
-			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", svc.Name, err))
-		}
 	}
 	for i := range deployments.Items {
 		if sessionID := deployments.Items[i].Labels["agentapi.proxy/session-id"]; sessionID != "" {
@@ -1488,6 +1492,18 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	}
 
 	for sessionID := range sessionIDs {
+		retired, err := m.retireStockRunner(ctx, sessionID)
+		if err != nil {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("retire runner %s: %v", sessionID, err))
+			continue
+		}
+		if !retired {
+			continue
+		}
+		if err := m.client.CoreV1().Services(m.namespace).Delete(ctx, "agentapi-session-"+sessionID+"-svc", deleteOptions); err != nil && !errors.IsNotFound(err) {
+			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s: %v", sessionID, err))
+			continue
+		}
 		log.Printf("[STOCK_INVENTORY] Purging stock session %s", sessionID)
 
 		// Delete workload. Try both workload kinds so stock sessions created

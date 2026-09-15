@@ -38,9 +38,12 @@ type Store interface {
 
 	CreateRunner(context.Context, *Runner) error
 	GetRunner(context.Context, string) (*Runner, error)
-	UpdateRunner(context.Context, *Runner) error
+	TouchRunner(context.Context, string, time.Time) error
 	ListRunners(context.Context, string) ([]*Runner, error)
 	DeleteRunner(context.Context, string) error
+	RetireRunner(context.Context, string, string) error
+	RequeueUnstarted(context.Context, string, string) (*Allocation, error)
+	MarkStarted(context.Context, string, int64) error
 
 	Enqueue(context.Context, *Allocation) error
 	GetAllocation(context.Context, string) (*Allocation, error)
