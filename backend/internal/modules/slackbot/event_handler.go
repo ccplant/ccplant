@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
@@ -19,6 +20,8 @@ import (
 const (
 	// slackBotDefaultID is the special ID for the server-configured default SlackBot
 	slackBotDefaultID = "default"
+	// slackEventDedupTTL covers delayed duplicate Events API deliveries and informer lag.
+	slackEventDedupTTL = time.Minute
 )
 
 // slackMentionRe matches Slack user/bot mention tokens of the form <@UXXXXXXXX>.
@@ -49,6 +52,8 @@ type SlackBotEventHandler struct {
 	// pass the reuse check (no session exists yet) and spawn duplicate sessions.
 	// Key: "channel:threadKey"  Value: struct{}
 	pendingThreads sync.Map
+	// processedEvents tracks recently accepted Slack message timestamps.
+	processedEvents sync.Map
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -195,6 +200,16 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	if threadKey == "" {
 		threadKey = event.Ts
 	}
+
+	// The message and app_mention callbacks generated for one Slack post share
+	// channel+ts. Retain this key beyond session creation so a delayed callback
+	// cannot create a second session while ListSessions is still stale.
+	eventKey := event.Channel + ":" + event.Ts
+	if _, duplicate := h.processedEvents.LoadOrStore(eventKey, struct{}{}); duplicate {
+		log.Printf("[SLACKBOT] Duplicate Slack event ignored: id=%s, channel=%s, ts=%s", botID, event.Channel, event.Ts)
+		return nil
+	}
+	time.AfterFunc(slackEventDedupTTL, func() { h.processedEvents.Delete(eventKey) })
 
 	channel := event.Channel
 	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", botID, event.Type, channel, threadKey)
@@ -363,6 +378,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// The key is released once session creation completes (success or failure).
 	pendingKey := channel + ":" + threadKey + ":" + triggeredUserID
 	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
+		h.processedEvents.Delete(eventKey)
 		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
 		return nil
 	}
@@ -475,6 +491,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			// skip the redundant check inside LaunchUseCase.
 		})
 		if err != nil {
+			h.processedEvents.Delete(eventKey)
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
 			return
 		}

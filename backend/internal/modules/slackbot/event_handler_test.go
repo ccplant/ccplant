@@ -1037,6 +1037,31 @@ func TestProcessEvent_ConcurrentDuplicateEvents(t *testing.T) {
 	require.True(t, ok, "exactly one session should be created even when two events fire concurrently")
 }
 
+func TestProcessEvent_SequentialDuplicateCallbacks_CreateOneSession(t *testing.T) {
+	const botID = "sequential-duplicate-bot"
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot(botID, "Sequential Duplicate Bot", "user-1")
+	repo.bots[botID] = bot
+	sessionMgr := &mockSessionManager{}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
+	makePayload := func(eventType string) SlackPayload {
+		return SlackPayload{Type: "event_callback", Event: &SlackEvent{
+			Type: eventType, Text: "<@UBOT> hello", User: "U1",
+			Channel: "C-sequential", Ts: "710.001", ThreadTs: "710.000",
+		}}
+	}
+
+	require.NoError(t, handler.ProcessEvent(context.Background(), botID, makePayload("message")))
+	require.True(t, waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	}))
+	// Simulate app_mention arriving after CreateSession returned but before the
+	// session manager list/cache can expose the new session.
+	require.NoError(t, handler.ProcessEvent(context.Background(), botID, makePayload("app_mention")))
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, sessionMgr.createdCount())
+}
+
 // ---- Tests for /stop command ----
 
 // TestIsStopCommand verifies that isStopCommand correctly identifies /stop messages
