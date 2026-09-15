@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,6 +188,33 @@ func TestWorkerSessionListIncludesPendingDirectRuntimeRouteWithoutRemoteID(t *te
 	require.Equal(t, "direct-session", sessions[0].ID)
 	require.Equal(t, "creating", sessions[0].Status)
 	require.Equal(t, routes.route.Tags, sessions[0].Tags)
+}
+
+func TestWorkerSendMessageRoutesDirectRuntimeThroughSessionRouter(t *testing.T) {
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "direct-session", RemoteSessionID: "runner-1",
+		Transport: portrepos.SessionRouteTransportDirectRuntime,
+	}}
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	var routed bool
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes).WithSessionRouter(func(ctx echo.Context) error {
+		routed = true
+		require.Equal(t, "/direct-session/message", ctx.Request().URL.Path)
+		var body map[string]string
+		require.NoError(t, json.NewDecoder(ctx.Request().Body).Decode(&body))
+		require.Equal(t, "follow up", body["message"])
+		return ctx.NoContent(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/internal/worker/sessions/direct-session/messages", strings.NewReader(`{"message":"follow up"}`))
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("direct-session")
+
+	require.NoError(t, controller.SendMessage(ctx))
+	require.True(t, routed)
 }
 
 func TestRepeatedOneshotStatusPreservesCompletionTime(t *testing.T) {

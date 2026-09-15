@@ -299,7 +299,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController).WithRunnerStore(server.sessionRunnerStore)
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
-		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg)).WithSessionDeleter(sessionController.DeleteSessionFromWorker)
+		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg)).WithSessionDeleter(sessionController.DeleteSessionFromWorker).WithSessionRouter(sessionController.RouteToSessionFromWorker)
 		if server.scheduleManager != nil {
 			workerControlController.WithScheduleManager(server.scheduleManager)
 		}

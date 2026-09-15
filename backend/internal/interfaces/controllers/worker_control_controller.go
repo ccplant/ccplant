@@ -1,8 +1,11 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -26,6 +29,7 @@ type WorkerControlController struct {
 	leases          schedule.LeaseClient
 	scheduleManager schedule.Manager
 	sessionDeleter  func(echo.Context) error
+	sessionRouter   func(echo.Context) error
 }
 
 func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
@@ -35,6 +39,11 @@ func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager)
 
 func (wc *WorkerControlController) WithSessionDeleter(deleter func(echo.Context) error) *WorkerControlController {
 	wc.sessionDeleter = deleter
+	return wc
+}
+
+func (wc *WorkerControlController) WithSessionRouter(router func(echo.Context) error) *WorkerControlController {
+	wc.sessionRouter = router
 	return wc
 }
 
@@ -384,6 +393,21 @@ func (wc *WorkerControlController) SendMessage(c echo.Context) error {
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if wc.routes != nil && wc.sessionRouter != nil {
+		route, err := wc.routes.Get(c.Request().Context(), c.Param("sessionId"))
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if route != nil && route.Transport == repositories.SessionRouteTransportDirectRuntime {
+			body, marshalErr := json.Marshal(req)
+			if marshalErr != nil {
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": marshalErr.Error()})
+			}
+			c.Request().URL.Path = "/" + c.Param("sessionId") + "/message"
+			c.Request().Body = io.NopCloser(bytes.NewReader(body))
+			return wc.sessionRouter(c)
+		}
 	}
 	if err := wc.manager.SendMessage(c.Request().Context(), wc.runtimeID(c.Request().Context(), c.Param("sessionId")), req.Message); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})

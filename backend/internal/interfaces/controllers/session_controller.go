@@ -1046,6 +1046,16 @@ func (c *SessionController) DeleteSessionFromWorker(ctx echo.Context) error {
 	return c.DeleteSession(ctx)
 }
 
+const workerAuthorizedRouteContextKey = "worker-authorized-session-route"
+
+// RouteToSessionFromWorker routes a request that WorkerControlController has
+// already authenticated. This keeps direct-runtime delivery on the same tunnel
+// path as user-originated session requests without requiring user credentials.
+func (c *SessionController) RouteToSessionFromWorker(ctx echo.Context) error {
+	ctx.Set(workerAuthorizedRouteContextKey, true)
+	return c.RouteToSession(ctx)
+}
+
 func (c *SessionController) revokeGitHubBrokerLeases(ctx context.Context, sessionID string) {
 	if c.githubTokenResolver == nil {
 		return
@@ -1461,7 +1471,8 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 	}
 
 	// Check authorization
-	if ctx.Request().Method != "OPTIONS" {
+	workerAuthorized, _ := ctx.Get(workerAuthorizedRouteContextKey).(bool)
+	if ctx.Request().Method != "OPTIONS" && !workerAuthorized {
 		authzCtx := auth.GetAuthorizationContext(ctx)
 		if authzCtx == nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
