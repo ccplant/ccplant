@@ -1038,6 +1038,14 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	})
 }
 
+// DeleteSessionFromWorker runs the durable deletion path for a request that was
+// already authenticated by WorkerControlController. Worker cleanup is allowed
+// to delete expired sessions regardless of their user or team owner.
+func (c *SessionController) DeleteSessionFromWorker(ctx echo.Context) error {
+	ctx.Set(workerAuthorizedDeleteContextKey, true)
+	return c.DeleteSession(ctx)
+}
+
 func (c *SessionController) revokeGitHubBrokerLeases(ctx context.Context, sessionID string) {
 	if c.githubTokenResolver == nil {
 		return
