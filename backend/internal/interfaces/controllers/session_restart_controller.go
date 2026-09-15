@@ -185,7 +185,11 @@ func (c *SessionController) changeSessionRuntime(ctx echo.Context, pause bool) e
 	}
 	if route != nil {
 		if err := c.sendRestartToManager(ctx.Request().Context(), route, "restart/validate", requestID, next); err != nil {
-			return echo.NewHTTPError(422, "manager cannot restart this session").SetInternal(err)
+			var httpErr *echo.HTTPError
+			if errors.As(err, &httpErr) {
+				return httpErr
+			}
+			return echo.NewHTTPError(503, "manager control connection unavailable; check that the manager is online").SetInternal(err)
 		}
 	} else {
 		manager, ok := c.getSessionManager().(repositories.SessionRestarter)
@@ -363,8 +367,7 @@ func (c *SessionController) sendRestartToManager(ctx context.Context, route *rep
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("manager operation failed: HTTP %d", resp.StatusCode)
+		return restartManagerResponseError(resp)
 	}
 	return nil
 }
@@ -530,4 +533,36 @@ func (c *SessionController) saveLegacyStartupInput(ctx echo.Context, input *enti
 		return echo.NewHTTPError(409, "startup input already exists")
 	}
 	return nil
+}
+
+// Only forward known validation messages; arbitrary manager responses can contain
+// runtime details or secret values. Status still distinguishes unsupported peers.
+func restartManagerResponseError(resp *http.Response) error {
+	var body struct {
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+	message := fmt.Sprintf("manager restart request failed (HTTP %d)", resp.StatusCode)
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		message = "manager restart endpoint or session not found; check the manager version and session registration"
+	case http.StatusNotImplemented:
+		message = "manager does not support conversation restart; update the manager to a compatible version"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		message = "manager rejected control authentication; check the manager connection"
+	case http.StatusUnprocessableEntity:
+		switch body.Message {
+		case "session settings unavailable",
+			"conversation checkpoint storage is required for restart",
+			"conversation resume supports only Claude ACP and Codex ACP",
+			"agent type cannot change when resuming a conversation",
+			"oneshot sessions cannot restart",
+			"repository settings cannot change when resuming a conversation",
+			"model or provider routing cannot change when resuming",
+			"Codex connection or model cannot change when resuming",
+			"Claude connection or model cannot change when resuming":
+			message = body.Message
+		}
+	}
+	return echo.NewHTTPError(resp.StatusCode, message)
 }

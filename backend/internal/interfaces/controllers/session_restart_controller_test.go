@@ -3,12 +3,14 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,5 +188,24 @@ func TestRestartReplacesExplicitStartupInput(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("restart did not finish")
+	}
+}
+
+func TestRestartManagerErrorPreservesSafeFailureReason(t *testing.T) {
+	for _, tc := range []struct {
+		status     int
+		body, want string
+	}{
+		{404, `{"message":"Not Found"}`, "manager restart endpoint or session not found"},
+		{501, `{"message":"restart unavailable"}`, "manager does not support conversation restart"},
+		{422, `{"message":"conversation checkpoint storage is required for restart"}`, "conversation checkpoint storage is required for restart"},
+		{422, `{"message":"secret-token-value"}`, "manager restart request failed (HTTP 422)"},
+		{503, `{"message":"secret-token-value"}`, "manager restart request failed (HTTP 503)"},
+	} {
+		response := &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))}
+		err := restartManagerResponseError(response).(*echo.HTTPError)
+		if err.Code != tc.status || !strings.Contains(fmt.Sprint(err.Message), tc.want) || strings.Contains(fmt.Sprint(err.Message), "secret-token-value") {
+			t.Fatalf("unexpected error: %v", err)
+		}
 	}
 }
