@@ -3536,6 +3536,9 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 
 	// Copy the release-specific CLI into a writable volume as the Pod user.
 	// Agent assets and their image tag remain independent of application releases.
+	// Mount the destination outside /opt/ccplant/bin in the init container: the
+	// compatibility image's /usr/local/bin/ccplant symlink points there, and
+	// mounting an empty volume over it would hide the binary we need to copy.
 	if m.k8sConfig.CLIImage != "" {
 		volumes = append(volumes, corev1.Volume{
 			Name:         "ccplant-cli",
@@ -3545,8 +3548,8 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			Name:            "install-ccplant-cli",
 			Image:           m.k8sConfig.CLIImage,
 			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
-			Command:         []string{"/bin/sh", "-ec", "cp -f /usr/local/bin/ccplant /opt/ccplant/bin/ccplant && chmod 0555 /opt/ccplant/bin/ccplant"},
-			VolumeMounts:    []corev1.VolumeMount{{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin"}},
+			Command:         []string{"/bin/sh", "-ec", "cp -f /usr/local/bin/ccplant /ccplant-cli/ccplant && chmod 0555 /ccplant-cli/ccplant"},
+			VolumeMounts:    []corev1.VolumeMount{{Name: "ccplant-cli", MountPath: "/ccplant-cli"}},
 		})
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true,
