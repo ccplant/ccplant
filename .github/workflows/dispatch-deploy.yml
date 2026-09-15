@@ -70,6 +70,37 @@ jobs:
           cache-from: type=gha,scope=deploy-dev-api
           cache-to: type=gha,mode=max,scope=deploy-dev-api
 
+      - name: Smoke-test development API image
+        env:
+          API_IMAGE: ghcr.io/ccplant/ccplant-api:dev.ccplant.${{ github.event.workflow_run.head_sha }}
+          EXPECTED_VERSION: dev.ccplant.${{ github.event.workflow_run.head_sha }}
+        run: |
+          docker pull "$API_IMAGE"
+          network=$(docker network create ccplant-api-test)
+          redis_id=$(docker run --detach --network "$network" --name ccplant-api-test-redis redis:7-alpine)
+          container_id=$(docker run --detach --network "$network" --env AGENTAPI_REDIS_ADDR=ccplant-api-test-redis:6379 --publish 127.0.0.1::8080 "$API_IMAGE")
+          trap 'docker rm --force "$container_id" "$redis_id" >/dev/null; docker network rm "$network" >/dev/null' EXIT
+          host_port=$(docker port "$container_id" 8080/tcp | sed 's/.*://')
+          for attempt in {1..30}; do
+            if test "$(curl --fail --silent "http://127.0.0.1:${host_port}/health" | jq -r .version)" = "$EXPECTED_VERSION"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 1
+          done
+          docker run --rm "$API_IMAGE" worker --help >/dev/null
+          test "$(docker exec "$container_id" id -u)" = 999
+          docker exec "$container_id" codex --version
+          for command in claude cursor-agent docker git mise uv github-mcp-server otelcol node npm; do
+            if docker exec "$container_id" sh -c "command -v $command"; then
+              echo "unexpected runtime tool: $command"
+              exit 1
+            fi
+          done
+
       # Session managers follow the API version reported by /health and update
       # both themselves and newly provisioned Session Pods from this repository.
       # Publishing only the API target leaves that rollout in ImagePullBackOff.
