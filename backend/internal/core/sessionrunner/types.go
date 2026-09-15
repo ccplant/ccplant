@@ -166,3 +166,24 @@ type Claim struct {
 	Allocation *Allocation `json:"allocation"`
 	Runner     *Runner     `json:"runner"`
 }
+
+// Configuration preserves user input separately from resolved profile defaults.
+// Secret-bearing Input and Settings are never returned by the public status API.
+type Configuration struct {
+	TriggeredUserID string    `json:"triggered_user_id,omitempty"`
+	RequestHash     string    `json:"request_hash,omitempty"`
+	SessionID       string    `json:"session_id"`
+	UserID          string    `json:"user_id"`
+	Scope           string    `json:"scope"`
+	TeamID          string    `json:"team_id,omitempty"`
+	Teams           []string  `json:"teams,omitempty"`
+	Input           []byte    `json:"input"`
+	ProfileID       string    `json:"profile_id,omitempty"`
+	Settings        []byte    `json:"settings,omitempty"`
+	Revision        int64     `json:"revision"`
+	Phase           string    `json:"phase,omitempty"`
+	RequestID       string    `json:"request_id,omitempty"`
+	Error           string    `json:"error,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	Version         int64     `json:"-"`
+}

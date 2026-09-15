@@ -99,3 +99,11 @@ type SessionSandboxDomainReader interface {
 type SessionToucher interface {
 	TouchSession(ctx context.Context, id string, at time.Time) error
 }
+
+// SessionRestarter atomically holds a workload, checkpoints it and applies complete settings.
+type SessionRestarter interface {
+	ValidateSessionRestart(context.Context, string, *sessionsettings.SessionSettings) error
+	CurrentSessionSettings(context.Context, string) (*sessionsettings.SessionSettings, error)
+	RestartSession(context.Context, string, string, *sessionsettings.SessionSettings) error
+	PauseSession(context.Context, string) error
+}

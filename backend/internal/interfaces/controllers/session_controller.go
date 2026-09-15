@@ -196,6 +196,9 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
 	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
+	e.POST("/sessions/:sessionId/restart", c.RestartSession)
+	e.GET("/sessions/:sessionId/restart", c.RestartStatus)
+	e.POST("/sessions/:sessionId/pause", c.PauseSession)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -328,6 +331,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		if matched {
 			startReq.Params.GithubToken = token
+			startReq.Params.ConnectionID = connectionID
 			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
 				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
@@ -360,103 +364,19 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
-	// Resolve session profile: merge profile config into startReq fields.
-	// When SessionProfileID is set, use that profile. Otherwise fall back to the
-	// user/team's default profile. The profile is the base; explicit request fields override.
+	// Persist the explicit input before profile defaults are merged.
+	startInput, err := json.Marshal(startReq)
+	if err != nil {
+		return echo.NewHTTPError(500, "failed to preserve session input")
+	}
 	if c.sessionProfileRepo != nil {
 		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
-		if profile != nil {
-			if startReq.Tags == nil {
-				startReq.Tags = make(map[string]string)
-			}
-			startReq.Tags["session_profile_id"] = profile.ID()
-			cfg := profile.Config()
-			startReq.ProfileMCPServers = cfg.MCPServers()
-			startReq.ResolvedSessionProfileID = profile.ID()
-
-			// Keep profile environment separate so it can override team/user
-			// settings without overriding explicit request keys.
-			if len(cfg.Environment()) > 0 {
-				startReq.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
-				for k, v := range cfg.Environment() {
-					startReq.ProfileEnvironment[k] = v
-				}
-			}
-
-			// Tags: profile is base, request keys override
-			if len(cfg.Tags()) > 0 {
-				merged := make(map[string]string, len(cfg.Tags()))
-				for k, v := range cfg.Tags() {
-					merged[k] = v
-				}
-				for k, v := range startReq.Tags {
-					merged[k] = v
-				}
-				startReq.Tags = merged
-			}
-
-			// Params: profile is base, request fields override per-field
-			if cfg.Params() != nil {
-				if startReq.Params == nil {
-					startReq.Params = cfg.Params()
-				} else {
-					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
-				}
-			}
-			if cfg.Pool() != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if startReq.Params.Pool == "" {
-					startReq.Params.Pool = cfg.Pool()
-				}
-			}
-			if containsAllocatorSelector(startReq.Tags) || hasRequestedSessionPool(startReq) {
-				removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
-			}
-
-			// MemoryKey: profile is base, request keys override
-			if len(cfg.MemoryKey()) > 0 {
-				merged := make(map[string]string, len(cfg.MemoryKey()))
-				for k, v := range cfg.MemoryKey() {
-					merged[k] = v
-				}
-				for k, v := range startReq.MemoryKey {
-					merged[k] = v
-				}
-				startReq.MemoryKey = merged
-			}
-
-			// SandboxPolicyID: apply profile's policy when request does not already specify one.
-			if startReq.Params == nil {
-				startReq.Params = &entities.SessionParams{}
-			}
-			// Native allocator sessions intentionally do not support sandboxing.
-			// Do not let a profile's implicit sandbox default turn an otherwise valid
-			// allocator.* request into an unsupported-capability request. An explicit
-			// sandbox in the request remains intact and is rejected by the allocator
-			// selection layer.
-			if !containsAllocatorSelector(startReq.Tags) && !hasRequestedSessionPool(startReq) {
-				applyProfileSandboxDefaults(cfg, startReq.Params)
-			}
-
-			// SessionTTL: apply profile's TTL when request does not already specify one.
-			if cfg.SessionTTL() != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if startReq.Params.SessionTTL == "" {
-					startReq.Params.SessionTTL = cfg.SessionTTL()
-				}
-			}
-			if len(cfg.UnsyncedFilePaths()) > 0 {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if len(startReq.Params.UnsyncedFilePaths) == 0 {
-					startReq.Params.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
-				}
-			}
+		applySessionProfile(&startReq, profile, explicitSandbox, explicitDocker)
+	}
+	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
+		config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}
+		if err := store.CreateConfiguration(ctx.Request().Context(), config); err != nil {
+			return echo.NewHTTPError(503, "failed to preserve session input")
 		}
 	}
 
@@ -1023,6 +943,9 @@ func (c *SessionController) UpdateSessionAnnotations(ctx echo.Context) error {
 
 // DeleteSession handles DELETE /sessions/:sessionId requests to terminate a session
 func (c *SessionController) DeleteSession(ctx echo.Context) error {
+	if err := c.checkRestartHold(ctx); err != nil {
+		return err
+	}
 	c.setCORSHeaders(ctx)
 
 	sessionID := ctx.Param("sessionId")
@@ -1136,6 +1059,9 @@ func findUncreatedSessionAllocation(sessions []entities.Session, sessionID strin
 // ResumeSession explicitly recreates a suspended session workload. Read-only
 // status, message, and SSE endpoints deliberately do not wake a session.
 func (c *SessionController) ResumeSession(ctx echo.Context) error {
+	if err := c.checkRestartHold(ctx); err != nil {
+		return err
+	}
 	sessionID := ctx.Param("sessionId")
 	workloadSessionID := sessionID
 	session := c.getSessionManager().GetSession(sessionID)
@@ -1285,6 +1211,9 @@ func (c *SessionController) recordRemoteLifecycleStatus(ctx context.Context, rou
 
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
+	if err := c.checkRestartHold(ctx); err != nil {
+		return err
+	}
 	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.RouteToSession", func(requestCtx context.Context) error {
 		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
 		return c.routeToSession(ctx)
@@ -2172,4 +2101,103 @@ func selectSessionProfileByTags(profiles []*entities.SessionProfile, tags map[st
 		return matches[i].ID() < matches[j].ID()
 	})
 	return matches[0]
+}
+
+func applySessionProfile(startReq *entities.StartRequest, profile *entities.SessionProfile, explicitSandbox, explicitDocker bool) {
+	// Resolve session profile: merge profile config into startReq fields.
+	// When SessionProfileID is set, use that profile. Otherwise fall back to the
+	// user/team's default profile. The profile is the base; explicit request fields override.
+	if profile != nil {
+		if startReq.Tags == nil {
+			startReq.Tags = make(map[string]string)
+		}
+		startReq.Tags["session_profile_id"] = profile.ID()
+		cfg := profile.Config()
+		startReq.ProfileMCPServers = cfg.MCPServers()
+		startReq.ResolvedSessionProfileID = profile.ID()
+
+		// Keep profile environment separate so it can override team/user
+		// settings without overriding explicit request keys.
+		if len(cfg.Environment()) > 0 {
+			startReq.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
+			for k, v := range cfg.Environment() {
+				startReq.ProfileEnvironment[k] = v
+			}
+		}
+
+		// Tags: profile is base, request keys override
+		if len(cfg.Tags()) > 0 {
+			merged := make(map[string]string, len(cfg.Tags()))
+			for k, v := range cfg.Tags() {
+				merged[k] = v
+			}
+			for k, v := range startReq.Tags {
+				merged[k] = v
+			}
+			startReq.Tags = merged
+		}
+
+		// Params: profile is base, request fields override per-field
+		if cfg.Params() != nil {
+			if startReq.Params == nil {
+				startReq.Params = cfg.Params()
+			} else {
+				startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
+			}
+		}
+		if cfg.Pool() != "" {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			if startReq.Params.Pool == "" {
+				startReq.Params.Pool = cfg.Pool()
+			}
+		}
+		if containsAllocatorSelector(startReq.Tags) || hasRequestedSessionPool(*startReq) {
+			removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
+		}
+
+		// MemoryKey: profile is base, request keys override
+		if len(cfg.MemoryKey()) > 0 {
+			merged := make(map[string]string, len(cfg.MemoryKey()))
+			for k, v := range cfg.MemoryKey() {
+				merged[k] = v
+			}
+			for k, v := range startReq.MemoryKey {
+				merged[k] = v
+			}
+			startReq.MemoryKey = merged
+		}
+
+		// SandboxPolicyID: apply profile's policy when request does not already specify one.
+		if startReq.Params == nil {
+			startReq.Params = &entities.SessionParams{}
+		}
+		// Native allocator sessions intentionally do not support sandboxing.
+		// Do not let a profile's implicit sandbox default turn an otherwise valid
+		// allocator.* request into an unsupported-capability request. An explicit
+		// sandbox in the request remains intact and is rejected by the allocator
+		// selection layer.
+		if !containsAllocatorSelector(startReq.Tags) && !hasRequestedSessionPool(*startReq) {
+			applyProfileSandboxDefaults(cfg, startReq.Params)
+		}
+
+		// SessionTTL: apply profile's TTL when request does not already specify one.
+		if cfg.SessionTTL() != "" {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			if startReq.Params.SessionTTL == "" {
+				startReq.Params.SessionTTL = cfg.SessionTTL()
+			}
+		}
+		if len(cfg.UnsyncedFilePaths()) > 0 {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			if len(startReq.Params.UnsyncedFilePaths) == 0 {
+				startReq.Params.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
+			}
+		}
+	}
 }

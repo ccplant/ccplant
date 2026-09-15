@@ -38,12 +38,21 @@ const (
 
 // StatusResponse is the JSON body returned by GET /status.
 type StatusResponse struct {
-	Status  Status `json:"status"`
-	Message string `json:"message,omitempty"`
+	RestartID string `json:"restart_id,omitempty"`
+	Status    Status `json:"status"`
+	Message   string `json:"message,omitempty"`
 }
 
 // Server is the agent-provisioner HTTP server.
 type Server struct {
+	lifecycleMu    sync.Mutex
+	agentCancel    context.CancelFunc
+	provisionDone  chan struct{}
+	agentExited    chan struct{}
+	agentWorkers   sync.WaitGroup
+	activeSettings *sessionsettings.SessionSettings
+	restartID      string
+
 	port         int
 	settingsFile string // path to optional auto-provision settings file
 	httpClient   *http.Client
@@ -135,6 +144,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/livez", s.handleLivez)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
+	mux.HandleFunc("/pause", s.handlePauseAgent)
+	mux.HandleFunc("/restart", s.handleRestartAgent)
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 
@@ -192,7 +203,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // clients can distinguish a permanent failure from a transient startup delay.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
-	resp := StatusResponse{Status: s.status, Message: s.message}
+	resp := StatusResponse{Status: s.status, Message: s.message, RestartID: s.restartID}
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")

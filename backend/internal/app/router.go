@@ -427,6 +427,9 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
+	r.echo.POST("/sessions/:sessionId/restart", r.handlers.sessionController.RestartSession)
+	r.echo.GET("/sessions/:sessionId/restart", r.handlers.sessionController.RestartStatus)
+	r.echo.POST("/sessions/:sessionId/pause", r.handlers.sessionController.PauseSession)
 	r.echo.POST("/sessions/:sessionId/suspend", r.handlers.sessionController.SuspendSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionPoolController != nil {

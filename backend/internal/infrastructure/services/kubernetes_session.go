@@ -326,12 +326,16 @@ func (s *KubernetesSession) ResolvedAPIKey() string {
 // SetProvisionSettings stores the SessionSettings used for provisioning.
 // This is called after successful provisioning to enable Pod restart recovery.
 func (s *KubernetesSession) SetProvisionSettings(settings *sessionsettings.SessionSettings) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	s.provisionSettings = settings
 }
 
 // ProvisionSettings returns the SessionSettings used for provisioning.
 // Returns nil if not yet set (i.e., provisioning has not completed successfully).
 func (s *KubernetesSession) ProvisionSettings() *sessionsettings.SessionSettings {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 	return s.provisionSettings
 }
 

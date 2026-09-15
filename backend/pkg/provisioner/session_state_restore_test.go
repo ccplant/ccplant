@@ -25,6 +25,7 @@ func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
+	t.Setenv("SESSION_STATE_PROXY_URL", "")
 	t.Setenv("PROVISIONER_PROXY_URL", server.URL)
 	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
 
@@ -42,6 +43,7 @@ func TestRestoreSessionStateUnavailableCanBeSkipped(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
+	t.Setenv("SESSION_STATE_PROXY_URL", "")
 	t.Setenv("PROVISIONER_PROXY_URL", server.URL)
 	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
 

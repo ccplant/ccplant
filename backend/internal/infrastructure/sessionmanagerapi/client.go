@@ -532,3 +532,29 @@ func isHTTPStatus(err error, status int) bool {
 	var httpErr *HTTPError
 	return errors.As(err, &httpErr) && httpErr.StatusCode == status
 }
+
+func (c *Client) RestartSession(ctx context.Context, id, requestID string, settings *sessionsettings.SessionSettings) error {
+	long := *c
+	transport := *c.http
+	transport.Timeout = 10 * time.Minute
+	long.http = &transport
+	return long.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/restart", struct {
+		ID       string
+		Settings *sessionsettings.SessionSettings
+	}{requestID, settings}, nil)
+}
+func (c *Client) ValidateSessionRestart(ctx context.Context, id string, settings *sessionsettings.SessionSettings) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/restart/validate", settings, nil)
+}
+func (c *Client) PauseSession(ctx context.Context, id string) error {
+	long := *c
+	transport := *c.http
+	transport.Timeout = 10 * time.Minute
+	long.http = &transport
+	return long.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/pause", nil, nil)
+}
+func (c *Client) CurrentSessionSettings(ctx context.Context, id string) (*sessionsettings.SessionSettings, error) {
+	var settings sessionsettings.SessionSettings
+	err := c.do(ctx, http.MethodGet, "/sessions/"+url.PathEscape(id)+"/settings", nil, &settings)
+	return &settings, err
+}

@@ -723,6 +723,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
             retryTimerRef.current = setTimeout(initializeChat, 2000);
             return;
           }
+          if (err instanceof AgentAPIProxyError && err.status === 423) {
+            setError('セッションは停止中、または設定を再読み込み中です。セッション一覧で進行状況を確認し、停止中の場合は「設定を再読み込みして再起動」を選んでください。');
+            return;
+          }
           if (err instanceof AgentAPIProxyError) {
             setError(`接続に失敗しました: ${err.message}`);
           } else {
