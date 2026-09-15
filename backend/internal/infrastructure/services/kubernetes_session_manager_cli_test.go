@@ -32,7 +32,11 @@ func TestSessionCLIInjection(t *testing.T) {
 			require.NotNil(t, init)
 			require.Equal(t, "example/cli:v2", init.Image)
 			require.Equal(t, corev1.PullIfNotPresent, init.ImagePullPolicy)
-			require.Contains(t, init.Command[2], "cp -f /usr/local/bin/ccplant "+sessionCLIPath)
+			// The backend image stores its CLI under /opt/ccplant/bin and links
+			// /usr/local/bin/ccplant to it. Do not shadow that source with emptyDir.
+			require.Contains(t, init.Command[2], "cp -f /usr/local/bin/ccplant /ccplant-cli/ccplant")
+			require.Contains(t, init.Command[2], "chmod 0555 /ccplant-cli/ccplant")
+			require.Equal(t, "/ccplant-cli", init.VolumeMounts[0].MountPath)
 			require.False(t, init.VolumeMounts[0].ReadOnly)
 			main := findContainerByName(spec.Containers, "agentapi")
 			require.Equal(t, "example/agent:assets-fixed", main.Image)
