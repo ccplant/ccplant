@@ -297,7 +297,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Try to reuse an existing active session for this channel+thread.
+	// Try to reuse an existing live session for this channel+thread.
 	// Follow-up messages in the same Slack thread are routed to the existing session
 	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
 	// NOTE: The slackbot reuse path is handled here (rather than via LaunchUseCase)
@@ -308,10 +308,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			"slack_thread_ts":   threadKey,
 			"triggered_user_id": triggeredUserID,
 		},
-		Status: "active",
 	}
-	if activeSessions := h.sessionManager.ListSessions(reuseFilter); len(activeSessions) > 0 {
-		existingSession := activeSessions[0]
+	if liveSessions := liveSlackSessions(h.sessionManager.ListSessions(reuseFilter)); len(liveSessions) > 0 {
+		existingSession := liveSessions[0]
 		reuseMessage := h.buildMessage(bot, payloadMap, event.Text, true)
 		go func() {
 			bgCtx := context.Background()
@@ -701,7 +700,21 @@ func isStopCommand(text string) bool {
 	return strings.TrimSpace(cleaned) == "/stop"
 }
 
-// handleStopCommand processes a /stop command by finding the active session for the
+// liveSlackSessions returns sessions that can still accept Slack follow-up messages.
+// A session normally transitions from "active" to "running" once the agent starts,
+// so filtering only for "active" loses the session for almost its entire lifetime.
+func liveSlackSessions(sessions []entities.Session) []entities.Session {
+	live := make([]entities.Session, 0, len(sessions))
+	for _, session := range sessions {
+		switch session.Status() {
+		case "creating", "starting", "active", "running":
+			live = append(live, session)
+		}
+	}
+	return live
+}
+
+// handleStopCommand processes a /stop command by finding a live session for the
 // given channel+thread and sending a stop signal (Ctrl+C) to its agent.
 // The result (success or failure) is posted back to the Slack thread.
 func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, threadKey string, bot *entities.SlackBot) {
@@ -710,11 +723,10 @@ func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, t
 			"slack_channel":   channel,
 			"slack_thread_ts": threadKey,
 		},
-		Status: "active",
 	}
-	activeSessions := h.sessionManager.ListSessions(stopFilter)
-	if len(activeSessions) == 0 {
-		log.Printf("[SLACKBOT] /stop: no active session found for channel=%s, thread=%s", channel, threadKey)
+	liveSessions := liveSlackSessions(h.sessionManager.ListSessions(stopFilter))
+	if len(liveSessions) == 0 {
+		log.Printf("[SLACKBOT] /stop: no live session found for channel=%s, thread=%s", channel, threadKey)
 		botToken, tokenErr := h.getBotToken(ctx, bot)
 		if tokenErr == nil {
 			h.postErrorToSlack(ctx, channel, threadKey,
@@ -724,7 +736,7 @@ func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, t
 		return
 	}
 
-	session := activeSessions[0]
+	session := liveSessions[0]
 	go func() {
 		bgCtx := context.Background()
 
