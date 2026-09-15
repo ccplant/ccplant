@@ -289,6 +289,25 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 		}
 		aliasedRuntime := make(map[string]bool)
 		for _, route := range routes {
+			if route.Transport == repositories.SessionRouteTransportDirectRuntime && route.RemoteSessionID == "" {
+				// Direct-runtime sessions are represented by their durable public route;
+				// they do not have a separate remote session ID to alias. Excluding these
+				// routes makes worker-side consumers (SlackBot cleanup/reuse) see an empty
+				// session list while the session is queued or running.
+				if byID[route.SessionID] != nil {
+					continue
+				}
+				status := route.Status
+				if status == "" {
+					status = "creating"
+				}
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, status)
+				if !route.StatusUpdatedAt.IsZero() {
+					session.SetUpdatedAt(route.StatusUpdatedAt)
+				}
+				sessions = append(sessions, session)
+				continue
+			}
 			if route.RemoteSessionID == "" {
 				continue
 			}
