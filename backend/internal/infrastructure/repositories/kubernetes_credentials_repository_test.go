@@ -93,3 +93,23 @@ func TestKubernetesCredentialsRepository_SavePreservesOtherFileTypes(t *testing.
 		t.Fatalf("expected both file types present, got %v", paths)
 	}
 }
+
+func TestCredentialSyncRejectsOlderSessionSnapshot(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesCredentialsRepository(client, "test")
+	ctx := context.Background()
+	path := "/home/agentapi/.codex/auth.json"
+	if err := repo.SaveFiles(ctx, "alice", []sessionsettings.ManagedFile{{Path: path, Content: "new-token"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveFilesIfUnchanged(ctx, "alice", []sessionsettings.ManagedFile{{Path: path, Content: "stale-token"}}, map[string]string{path: "old-hash"}); err == nil {
+		t.Fatal("stale credential overwrote latest token")
+	}
+	credentials, err := repo.FindByName(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentials.Files()[0].Content != "new-token" {
+		t.Fatal("latest token was changed")
+	}
+}

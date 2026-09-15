@@ -74,6 +74,10 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.GET("/:sessionId", h.GetSession)
 	g.POST("/:sessionId/resume", h.ResumeSession)
 	g.POST("/:sessionId/suspend", h.SuspendSession)
+	g.POST("/:sessionId/restart", h.RestartSession)
+	g.POST("/:sessionId/restart/validate", h.ValidateRestart)
+	g.POST("/:sessionId/stop", h.StopSessionAgent)
+	g.POST("/:sessionId/pause", h.PauseSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
 
 	// Codex device auth workloads are manager-level operations addressed by the
@@ -472,4 +476,81 @@ func (h *Handlers) DeleteSession(c echo.Context) error {
 
 	log.Printf("[SESSION_MANAGER] Deleted session %s", sessionID)
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *Handlers) RestartSession(c echo.Context) error {
+	manager, ok := h.sessionManager.(repositories.SessionRestarter)
+	if !ok {
+		return echo.NewHTTPError(501, "session restart is not supported")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := c.Bind(&settings); err != nil {
+		return echo.NewHTTPError(400, "invalid restart settings")
+	}
+	id := c.Request().Header.Get("Idempotency-Key")
+	if id == "" {
+		return echo.NewHTTPError(400, "Idempotency-Key is required")
+	}
+	if err := manager.RestartSession(c.Request().Context(), c.Param("sessionId"), id, &settings); err != nil {
+		return echo.NewHTTPError(503, "session restart failed").SetInternal(err)
+	}
+	return c.NoContent(204)
+}
+func (h *Handlers) PauseSession(c echo.Context) error {
+	manager, ok := h.sessionManager.(repositories.SessionRestarter)
+	if !ok {
+		return echo.NewHTTPError(501, "session pause is not supported")
+	}
+	// Parent-owned allocations do not have settings in the manager until an
+	// explicit lifecycle operation. Persist the running snapshot before pausing.
+	if c.Request().ContentLength != 0 {
+		var current sessionsettings.SessionSettings
+		if err := c.Bind(&current); err != nil {
+			return echo.NewHTTPError(400, "invalid current settings")
+		}
+		preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
+		if !ok {
+			return echo.NewHTTPError(501, "session resume preparation unavailable")
+		}
+		if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &current); err != nil {
+			return echo.NewHTTPError(503, "failed to preserve current settings").SetInternal(err)
+		}
+	}
+	if err := manager.PauseSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(503, "session pause failed").SetInternal(err)
+	}
+	return c.NoContent(204)
+}
+
+func (h *Handlers) ValidateRestart(c echo.Context) error {
+	m, ok := h.sessionManager.(repositories.SessionRestarter)
+	if !ok {
+		return echo.NewHTTPError(501, "restart unavailable")
+	}
+	input := sessionsettings.RestartValidationRequest{SessionSettings: &sessionsettings.SessionSettings{}}
+	if err := c.Bind(&input); err != nil {
+		return echo.NewHTTPError(400, "invalid settings")
+	}
+	var err error
+	if input.CurrentSettings != nil {
+		validator, ok := h.sessionManager.(interface {
+			ValidateSessionRestartWithCurrent(context.Context, string, *sessionsettings.SessionSettings, *sessionsettings.SessionSettings) error
+		})
+		if !ok {
+			return echo.NewHTTPError(501, "pooled session restart validation unavailable")
+		}
+		err = validator.ValidateSessionRestartWithCurrent(c.Request().Context(), c.Param("sessionId"), input.CurrentSettings, input.SessionSettings)
+	} else {
+		err = m.ValidateSessionRestart(c.Request().Context(), c.Param("sessionId"), input.SessionSettings)
+	}
+	if err != nil {
+		return echo.NewHTTPError(422, err.Error())
+	}
+	return c.NoContent(204)
+}
+func (h *Handlers) StopSessionAgent(c echo.Context) error {
+	if err := h.sessionManager.StopAgent(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(503, "failed to stop agent")
+	}
+	return c.NoContent(204)
 }

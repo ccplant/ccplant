@@ -41,7 +41,8 @@ func (c *ManagedFilesController) Save(cctx echo.Context) error {
 		return cctx.NoContent(http.StatusNotFound)
 	}
 	var req struct {
-		Files []sessionsettings.ManagedFile `json:"files"`
+		Files    []sessionsettings.ManagedFile `json:"files"`
+		Expected map[string]string             `json:"expected"`
 	}
 	if err := cctx.Bind(&req); err != nil {
 		return cctx.JSON(http.StatusBadRequest, map[string]string{"error": "invalid managed-file snapshot"})
@@ -57,7 +58,29 @@ func (c *ManagedFilesController) Save(cctx echo.Context) error {
 			return cctx.JSON(http.StatusBadRequest, map[string]string{"error": "invalid managed-file path or snapshot size"})
 		}
 	}
-	if err := c.store.SaveFiles(cctx.Request().Context(), session.UserID(), req.Files); err != nil {
+	owner := session.UserID()
+	if validator, ok := c.manager.(interface {
+		ManagedFileSyncOwner(context.Context, string, string) (string, error)
+	}); ok {
+		resolved, err := validator.ManagedFileSyncOwner(cctx.Request().Context(), sessionID, cctx.Request().Header.Get("X-Credential-Sync-ID"))
+		if err != nil {
+			return cctx.NoContent(http.StatusConflict)
+		}
+		owner = resolved
+	}
+	if cctx.Request().Header.Get("X-Credential-Sync-ID") != "" {
+		conditional, ok := c.store.(interface {
+			SaveFilesIfUnchanged(context.Context, string, []sessionsettings.ManagedFile, map[string]string) error
+		})
+		if !ok || req.Expected == nil {
+			return cctx.NoContent(http.StatusConflict)
+		}
+		if err := conditional.SaveFilesIfUnchanged(cctx.Request().Context(), owner, req.Files, req.Expected); err != nil {
+			return cctx.NoContent(http.StatusConflict)
+		}
+		return cctx.NoContent(http.StatusNoContent)
+	}
+	if err := c.store.SaveFiles(cctx.Request().Context(), owner, req.Files); err != nil {
 		return cctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": "managed-file persistence unavailable"})
 	}
 	return cctx.NoContent(http.StatusNoContent)
