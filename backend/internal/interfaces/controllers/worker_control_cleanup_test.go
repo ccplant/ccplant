@@ -175,6 +175,18 @@ func TestWorkerSessionListIncludesPendingDirectRuntimeRouteWithoutRemoteID(t *te
 	require.Equal(t, "direct-session", sessions[0].ID)
 	require.Equal(t, "creating", sessions[0].Status)
 	require.Equal(t, routes.route.Tags, sessions[0].Tags)
+
+	// Claiming assigns a runner ID. The direct-runtime route must remain visible
+	// even when that runner is not part of the API manager's local session list.
+	routes.route.RemoteSessionID = "runner-1"
+	rec = httptest.NewRecorder()
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	sessions = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "direct-session", sessions[0].ID)
+	require.Equal(t, "creating", sessions[0].Status)
+	require.Equal(t, routes.route.Tags, sessions[0].Tags)
 }
 
 func TestRepeatedOneshotStatusPreservesCompletionTime(t *testing.T) {

@@ -314,8 +314,15 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
-			} else if route.Tags["session_ttl"] != "" || route.Tags["oneshot"] == "true" {
-				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, route.Status)
+			} else if route.Transport == repositories.SessionRouteTransportDirectRuntime || route.Tags["session_ttl"] != "" || route.Tags["oneshot"] == "true" {
+				// A claimed direct-runtime route has a runner ID, but that runner is not
+				// necessarily present in the API session manager's local list. Keep the
+				// durable public route visible to worker-side Slack thread reuse.
+				status := route.Status
+				if status == "" {
+					status = "creating"
+				}
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, status)
 				if !route.StatusUpdatedAt.IsZero() {
 					session.SetUpdatedAt(route.StatusUpdatedAt)
 				}
