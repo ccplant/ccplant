@@ -49,12 +49,12 @@ agent 種別を変えて別形式の会話を読み込むことや、復元失�
 - 既存の suspend／checkpoint／resume を workload 再作成と手動停止に再利用する。
 
 参照:
-[settings schema](../backend/pkg/sessionsettings/types.go)、
-[session controller](../backend/internal/interfaces/controllers/session_controller.go)、
-[Kubernetes manager](../backend/internal/infrastructure/services/kubernetes_session_manager.go)、
-[manager handlers](../backend/internal/modules/sessionmanager/handlers.go)、
-[provisioner](../backend/pkg/provisioner/provision.go)、
-[connection identity](../backend/pkg/provisioner/model_connections.go)。
+[settings schema](https://github.com/ccplant/ccplant/blob/docs/session-credential-switch-design/backend/pkg/sessionsettings/types.go)、
+[session controller](https://github.com/ccplant/ccplant/blob/docs/session-credential-switch-design/backend/internal/interfaces/controllers/session_controller.go)、
+[Kubernetes manager](https://github.com/ccplant/ccplant/blob/docs/session-credential-switch-design/backend/internal/infrastructure/services/kubernetes_session_manager.go)、
+[manager handlers](https://github.com/ccplant/ccplant/blob/docs/session-credential-switch-design/backend/internal/modules/sessionmanager/handlers.go)、
+[provisioner](https://github.com/ccplant/ccplant/blob/docs/session-credential-switch-design/backend/pkg/provisioner/provision.go)、
+[connection identity](https://github.com/ccplant/ccplant/blob/docs/session-credential-switch-design/backend/pkg/provisioner/model_connections.go)。
 
 ## 4. 設定生成と保存
 
