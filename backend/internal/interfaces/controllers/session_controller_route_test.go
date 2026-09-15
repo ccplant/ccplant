@@ -109,6 +109,8 @@ func TestStartSessionReusesMatchingDirectRuntimeThroughDurableQueue(t *testing.T
 	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
 		SessionID: "existing", RemoteSessionID: "runner-1", ManagerID: "manager-a",
 		Transport: repositories.SessionRouteTransportDirectRuntime, Status: "active",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+		Tags: map[string]string{"slack_thread_ts": "123", "slackbot_id": "bot-1"},
 	}}
 	tunnel := &lifecycleTunnel{}
 	controller := controllers.NewSessionController(
