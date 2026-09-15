@@ -258,6 +258,8 @@ API キーは既存の暗号化サービスを使って保存し、暗号化が�
 
 ### プロファイル専用の Web search / API パス
 
+個人・チームの Settings → Codex 認証でも、OpenAI 互換 API を選ぶと Web search の「既定・有効・無効」を変更できる。「保存して使用」で `codex_connection.web_search_enabled` に保存し、次のセッションから適用する。API キーを再入力する必要はない。
+
 プロファイルの「認証方法」で互換 API と専用接続を選ぶと、次の項目を設定できる。
 
 - Codex の `config.codex_connection.web_search_enabled`: 未指定／`null` はベースの Codex 設定を維持し、`true` は `web_search = "live"`、`false` は `web_search = "disabled"` を生成する。API 更新時の省略は保存済み値を保持する。接続先が Web search に非対応なら無効を指定する。設定値は [Codex Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference) に従う。
