@@ -91,12 +91,52 @@ func (s *allocationReader) GetAllocation(context.Context, string) (*sessionrunne
 
 func (t *lifecycleTunnel) Enqueue(_ context.Context, _, _, _ string, req *http.Request) (string, error) {
 	t.path = req.URL.Path
+	if req.Body != nil {
+		t.body, _ = io.ReadAll(req.Body)
+	}
 	t.enqueued = true
 	return "request-id", nil
 }
 
 func (t *lifecycleTunnel) CommandResult(_ context.Context, _ string) (bool, int, error) {
 	return t.done, t.status, nil
+}
+
+func TestStartSessionReusesMatchingDirectRuntimeThroughDurableQueue(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"existing": {id: "existing", userID: "user-1", scope: entities.ScopeUser, status: "active", tags: map[string]string{"slack_thread_ts": "123", "slackbot_id": "bot-1"}},
+	}}
+	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "existing", RemoteSessionID: "runner-1", ManagerID: "manager-a",
+		Transport: repositories.SessionRouteTransportDirectRuntime, Status: "active",
+	}}
+	tunnel := &lifecycleTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routes), controllers.WithESMControlTunnel(tunnel),
+	)
+	body := `{"reuse_match_tags":{"slack_thread_ts":"123","slackbot_id":"bot-1"},"reuse_message":"follow up"}`
+	req := httptest.NewRequest(http.MethodPost, "/start", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanCreate: true, CanRead: true},
+	})
+
+	if err := controller.StartSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"session_id":"existing"`) || !strings.Contains(rec.Body.String(), `"session_reused":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !tunnel.enqueued || tunnel.path != "/message" {
+		t.Fatalf("enqueued=%t path=%q", tunnel.enqueued, tunnel.path)
+	}
+	if got := string(tunnel.body); got != `{"content":"follow up","type":"user"}` {
+		t.Fatalf("queued body = %s", got)
+	}
 }
 
 type deletionRouteRepo struct {

@@ -72,6 +72,9 @@ type LaunchRequest struct {
 	// StopBeforeReuse stops the running agent before sending ReuseMessage.
 	// This keeps the session resources in place while making a busy agent receive follow-up input.
 	StopBeforeReuse bool
+	// DeferReuseToStart lets the authoritative /start API perform the tag lookup
+	// and enqueue, which is required for direct runtimes not owned by this worker.
+	DeferReuseToStart bool
 
 	// Session limit: when MaxSessions > 0, launch fails if the number of sessions
 	// matching LimitMatchTags already equals or exceeds MaxSessions.
@@ -172,7 +175,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	}
 
 	// 1. Try session reuse
-	if req.ReuseSession && len(req.ReuseMatchTags) > 0 {
+	if req.ReuseSession && !req.DeferReuseToStart && len(req.ReuseMatchTags) > 0 {
 		filter := entities.SessionFilter{
 			Tags:   req.ReuseMatchTags,
 			Status: "active",
@@ -195,7 +198,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	}
 
 	// 2. Check session limit
-	if req.MaxSessions > 0 {
+	if req.MaxSessions > 0 && !req.DeferReuseToStart {
 		filter := entities.SessionFilter{Tags: req.LimitMatchTags}
 		if existing := uc.sessionManager.ListSessions(filter); len(existing) >= req.MaxSessions {
 			return LaunchResult{}, fmt.Errorf("session limit reached: maximum %d sessions", req.MaxSessions)
@@ -223,6 +226,10 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		TeamID:                   req.TeamID,
 		Teams:                    req.Teams,
 		InitialMessage:           req.InitialMessage,
+		ReuseMatchTags:           req.ReuseMatchTags,
+		ReuseMessage:             req.ReuseMessage,
+		LimitMatchTags:           req.LimitMatchTags,
+		MaxSessions:              req.MaxSessions,
 		GithubToken:              req.GithubToken,
 		AgentType:                req.AgentType,
 		Model:                    req.Model,

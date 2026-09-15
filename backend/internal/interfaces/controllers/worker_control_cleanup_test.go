@@ -146,6 +146,49 @@ func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
 	require.Equal(t, "true", sessions[0].Tags["oneshot"])
 }
 
+func TestWorkerSessionListIncludesPendingDirectRuntimeRouteWithoutRemoteID(t *testing.T) {
+	startedAt := time.Now().Add(-time.Minute)
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "direct-session", Transport: portrepos.SessionRouteTransportDirectRuntime,
+		UserID: "alice", Scope: string(entities.ScopeUser), StartedAt: startedAt,
+		Tags: map[string]string{
+			"slackbot_id":       "bot-1",
+			"slack_channel":     "C123",
+			"slack_thread_ts":   "123.456",
+			"triggered_user_id": "alice",
+		},
+	}}
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes)
+	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sessions []struct {
+		ID     string            `json:"id"`
+		Status string            `json:"status"`
+		Tags   map[string]string `json:"tags"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "direct-session", sessions[0].ID)
+	require.Equal(t, "creating", sessions[0].Status)
+	require.Equal(t, routes.route.Tags, sessions[0].Tags)
+
+	// Claiming assigns a runner ID. The direct-runtime route must remain visible
+	// even when that runner is not part of the API manager's local session list.
+	routes.route.RemoteSessionID = "runner-1"
+	rec = httptest.NewRecorder()
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	sessions = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "direct-session", sessions[0].ID)
+	require.Equal(t, "creating", sessions[0].Status)
+	require.Equal(t, routes.route.Tags, sessions[0].Tags)
+}
+
 func TestRepeatedOneshotStatusPreservesCompletionTime(t *testing.T) {
 	completedAt := time.Now().Add(-2 * time.Minute)
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{

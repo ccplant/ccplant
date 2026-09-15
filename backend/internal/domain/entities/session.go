@@ -181,6 +181,12 @@ type StartRequest struct {
 	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
 	ProfileMCPServers        *MCPServersSettings `json:"-"`
 	ResolvedSessionProfileID string              `json:"-"`
+	// ReuseMatchTags asks /start to reuse a live session matching every tag.
+	// ReuseMessage is queued to that session instead of creating a new one.
+	ReuseMatchTags map[string]string `json:"reuse_match_tags,omitempty"`
+	ReuseMessage   string            `json:"reuse_message,omitempty"`
+	LimitMatchTags map[string]string `json:"limit_match_tags,omitempty"`
+	MaxSessions    int               `json:"max_sessions,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -208,6 +214,10 @@ type RunServerRequest struct {
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo
 	InitialMessage           string
+	ReuseMatchTags           map[string]string
+	ReuseMessage             string
+	LimitMatchTags           map[string]string
+	MaxSessions              int
 	Teams                    []string          // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
 	GithubToken              string            // GitHub token passed via params.github_token
 	Scope                    ResourceScope     // Resource scope ("user" or "team")
