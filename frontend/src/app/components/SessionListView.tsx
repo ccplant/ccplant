@@ -354,19 +354,18 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }
   }
 
-  const changeSessionRuntime = async (sessionId: string, pause: boolean) => {
+  const restartSessionWithSettings = async (sessionId: string) => {
     try {
       setSuspendingSession(sessionId)
       setError(null)
-      if (pause) await agentAPI.pauseSession(sessionId)
-      else await agentAPI.restartSession(sessionId)
-      setSuccess(pause ? '停止を開始しました。設定変更後に「設定を再読み込みして再起動」で再開できます。' : '設定を再読み込みしています。現在の処理が終了してから再起動します。')
+      await agentAPI.restartSession(sessionId)
+      setSuccess('設定を再読み込みしています。現在の処理が終了してから再起動します。')
       for (let attempt = 0; attempt < 330; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 2000))
         const operation = await agentAPI.restartStatus(sessionId)
         if (operation.phase === 'failed' || operation.error) throw new Error(operation.error || '再起動に失敗しました')
-        if (operation.phase === 'ready' || operation.phase === 'paused') {
-          setSuccess(pause ? '停止しました。設定を変更してから再開できます。' : '設定を再読み込みし、同じ会話を再開しました')
+        if (operation.phase === 'ready') {
+          setSuccess('設定を再読み込みし、同じ会話を再開しました')
           void fetchSessions(true)
           return
         }
@@ -1160,9 +1159,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                 )}
                                 {!acpMode && (
                                   <>
-                                    <button type="button" disabled={suspendingSession === session.session_id} onClick={() => { setOpenAnnotationMenuId(null); void changeSessionRuntime(session.session_id, false) }} className="block w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">設定を再読み込みして再起動</button>
-                                    <button type="button" onClick={() => { setOpenAnnotationMenuId(null); void agentAPI.restartStatus(session.session_id).then(status => setSuccess(status.error || ({ ready: '再開済み', paused: '停止中：設定変更後に再起動できます', waiting_idle: '現在の処理の完了待ち', pausing: '停止中', restarting: '再起動中', failed: '失敗：設定を修正して再試行してください' }[status.phase] || '設定の再読み込みは実行されていません'))).catch(err => setError(err instanceof Error ? err.message : '状態を取得できません')) }} className="block w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800">停止・再起動の状況</button>
-                                    <button type="button" disabled={suspendingSession === session.session_id} onClick={() => { setOpenAnnotationMenuId(null); void changeSessionRuntime(session.session_id, true) }} className="block w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">停止して設定を変更</button>
+                                    <button type="button" disabled={suspendingSession === session.session_id} onClick={() => { setOpenAnnotationMenuId(null); void restartSessionWithSettings(session.session_id) }} className="block w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">設定を再読み込みして再起動</button>
                                   </>
                                 )}
                                 {!acpMode && ['active', 'running'].includes(session.status) && (

@@ -188,7 +188,7 @@ plugin、認証ファイルも実行環境に残さない。管理対象のフ�
 - `POST /sessions/:id/pause`: agent と付随処理を停止し、checkpoint を保存して手動停止を維持。
 - `GET /sessions/:id/restart`: 再起動の phase、revision、失敗状態を取得。秘密値は返さない。
 - 手動停止からは restart API で再開する。通常の resume は手動停止を解除しない。
-- UI はセッション一覧メニューから操作する。CLI は `client restart`、`client pause`、
+- UI はセッション一覧メニューの「設定を再読み込みして再起動」に集約し、操作後に進捗と結果を表示する。CLI は `client restart`、`client pause`、
   `client restart-status`。認証・設定の編集は既存の個人／チーム／profile 設定画面を使用する。
 - 同じ sandbox／Docker 設定ならプロセス再起動、変更がある場合は workload 再作成を行う。
 - Claude ACP／Codex ACP と checkpoint 対応 Kubernetes manager を対象とする。
