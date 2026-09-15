@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -241,6 +243,10 @@ func TestBuildDeploymentAddsSciaSidecarAndChainsThroughNFA(t *testing.T) {
 			assert.Equal(t, []string{"-config", "/etc/scia-config/config.yaml"}, container.Args)
 			assert.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: "scia-config", MountPath: "/etc/scia-config", ReadOnly: true})
 			assert.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: "scia-mitm-ca", MountPath: "/etc/scia/mitm"})
+			require.NotNil(t, container.ReadinessProbe)
+			require.NotNil(t, container.ReadinessProbe.TCPSocket)
+			assert.Equal(t, intstr.FromInt(18081), container.ReadinessProbe.TCPSocket.Port)
+			assert.Nil(t, container.ReadinessProbe.HTTPGet)
 		}
 		if container.Name == "network-filter" {
 			foundNFA = true

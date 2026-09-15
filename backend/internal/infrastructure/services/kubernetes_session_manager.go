@@ -4359,8 +4359,7 @@ func (m *KubernetesSessionManager) buildSciaSidecarContainers(req *entities.RunS
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: "/_scia/healthz",
+				TCPSocket: &corev1.TCPSocketAction{
 					Port: intstr.FromInt(port),
 				},
 			},
