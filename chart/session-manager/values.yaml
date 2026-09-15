@@ -94,7 +94,14 @@ podAnnotations: {}
 podLabels: {}
 podSecurityContext: {}
 securityContext: {}
-resources: {}
+# Resources for the manager container; session.resources configures session Pods.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
 nodeSelector: {}
 tolerations: []
 affinity: {}
