@@ -9,6 +9,26 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
+func TestCodexWebSearchSelection(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		c := &modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://gateway.example", Model: "example", Authentication: "none", WebSearchEnabled: &enabled}
+		result, err := MergeCodexConnectionConfig("web_search = 'cached'\n", c)
+		require.NoError(t, err)
+		var parsed map[string]interface{}
+		require.NoError(t, toml.Unmarshal([]byte(result), &parsed))
+		expected := "disabled"
+		if enabled {
+			expected = "live"
+		}
+		require.Equal(t, expected, parsed["web_search"])
+		c.WebSearchEnabled = nil
+		result, err = MergeCodexConnectionConfig("web_search = 'cached'\n", c)
+		require.NoError(t, err)
+		require.NoError(t, toml.Unmarshal([]byte(result), &parsed))
+		require.Equal(t, "cached", parsed["web_search"])
+	}
+}
+
 func TestManagedConnectionCredentialsAndPersistedEnvironment(t *testing.T) {
 	s := &SessionSettings{Env: map[string]string{"ANTHROPIC_AUTH_TOKEN": "old", "ANTHROPIC_API_KEY": "old-key", "ANTHROPIC_OAUTH_TOKEN": "oauth", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_OAUTH_TOKEN": "oauth"}, ClaudeConnection: &modelprovider.Connection{Mode: "anthropic_compatible", BaseURL: "https://gateway.example", Model: "profile-model", Authentication: "api_key", APIKey: "gateway-key"}, Files: []ManagedFile{{Path: ManagedFileTypes[FileTypeClaudeCredentials], Content: "oauth"}, {Path: "/tmp/example", Content: "keep"}}}
 	s.ApplyModelConnections()

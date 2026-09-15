@@ -39,6 +39,8 @@
       "type": "object",
       "required": ["provisioner"],
       "properties": {
+        "image": {"type": "string"},
+        "cliImage": {"type": "string"},
         "provisioner": {
           "type": "object",
           "required": ["tokenSecretRef"],

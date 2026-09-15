@@ -96,6 +96,7 @@ func persistModelConnectionIdentity(settings *sessionsettings.SessionSettings, h
 		Agent          string `json:"agent"`
 		Mode           string `json:"mode"`
 		BaseURL        string `json:"base_url"`
+		EndpointPath   string `json:"endpoint_path,omitempty"`
 		Model          string `json:"model"`
 		Authentication string `json:"authentication"`
 	}
@@ -108,6 +109,7 @@ func persistModelConnectionIdentity(settings *sessionsettings.SessionSettings, h
 		current = &identity{Agent: agent, Mode: c.Mode}
 		if c.Compatible() {
 			current.BaseURL = c.BaseURL
+			current.EndpointPath = c.EndpointPath
 			current.Model = c.Model
 			current.Authentication = c.Authentication
 		}

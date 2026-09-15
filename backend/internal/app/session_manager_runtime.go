@@ -532,9 +532,18 @@ func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, cli
 				continue
 			}
 			found = true
+			previousImage := container.Image
 			container.Image = image
+			injectedCLI := false
+			for _, env := range container.Env {
+				if env.Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" && env.Value != "" {
+					injectedCLI = true
+				}
+			}
 			for j := range container.Env {
-				if container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE" {
+				if (container.Env[j].Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" ||
+					(!injectedCLI && container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE")) &&
+					container.Env[j].Value == previousImage {
 					container.Env[j].Value = image
 				}
 				if container.Env[j].Name == "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION" {

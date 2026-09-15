@@ -102,6 +102,7 @@ const (
 	RunnerClaiming RunnerStatus = "claiming"
 	RunnerRunning  RunnerStatus = "running"
 	RunnerOffline  RunnerStatus = "offline"
+	RunnerDraining RunnerStatus = "draining"
 )
 
 type Runner struct {

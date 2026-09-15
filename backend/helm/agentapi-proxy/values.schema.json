@@ -126,6 +126,8 @@
       "type": "object",
       "required": ["enabled", "pvc", "otelCollector"],
       "properties": {
+        "image": { "type": "string" },
+        "cliImage": { "type": "string" },
         "enabled": { "type": "boolean" },
         "serviceAccountName": { "type": "string", "minLength": 1 },
         "rbac": { "$ref": "#/definitions/rbac" },
@@ -211,6 +213,8 @@
           "type": "object",
           "required": ["enabled", "serviceAccountName", "rbac", "resources", "pvc", "provisioner", "otelCollector"],
           "properties": {
+            "image": { "type": "string" },
+            "cliImage": { "type": "string" },
             "enabled": { "type": "boolean" },
             "serviceAccountName": { "type": "string", "minLength": 1 },
             "rbac": { "$ref": "#/definitions/rbac" },

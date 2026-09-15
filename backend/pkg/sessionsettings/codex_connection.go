@@ -11,6 +11,13 @@ import (
 func structuredCodexProviderTOML(c *modelprovider.Connection) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "model = %s\nmodel_provider = %s\n", tomlString(c.Model), tomlString(codexCustomOpenAIProviderID))
+	if c.WebSearchEnabled != nil {
+		mode := "disabled"
+		if *c.WebSearchEnabled {
+			mode = "live"
+		}
+		fmt.Fprintf(&b, "web_search = %s\n", tomlString(mode))
+	}
 	if c.ContextWindow != nil {
 		fmt.Fprintf(&b, "model_context_window = %d\n", *c.ContextWindow)
 	}

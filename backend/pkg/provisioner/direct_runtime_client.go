@@ -439,3 +439,17 @@ func minDuration(left, right time.Duration) time.Duration {
 	}
 	return right
 }
+
+func confirmRuntimeStart(ctx context.Context, cfg *sessionsettings.ParentRuntimeConfig) error {
+	if cfg == nil || !cfg.Enabled {
+		return nil
+	}
+	client, err := newPullHTTPClient(ctx, os.Getenv("NODE_EXTRA_CA_CERTS"))
+	if err != nil {
+		return err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	worker := &directRuntimeWorker{cfg: cfg, client: client}
+	return worker.postStatus(requestCtx, "starting")
+}

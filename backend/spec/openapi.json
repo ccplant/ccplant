@@ -46,8 +46,11 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "startup_input": {"type": "object", "description": "Complete start request input. Replaces saved overrides and initializes legacy sessions; server-owned identity is preserved."},
-              "reload_settings": {
+                  "startup_input": {
+                    "type": "object",
+                    "description": "Complete start request input. Replaces saved overrides and initializes legacy sessions; server-owned identity is preserved."
+                  },
+                  "reload_settings": {
                     "type": "boolean",
                     "default": true
                   },
@@ -222,6 +225,60 @@
           },
           "501": {
             "description": "Manager does not support restart"
+          }
+        }
+      }
+    },
+    "/internal/session-managers/{id}/runners/{runnerId}/retire": {
+      "post": {
+        "tags": [
+          "Session Managers"
+        ],
+        "summary": "Fence an idle runner before workload deletion",
+        "operationId": "retireSessionRunner",
+        "description": "Authenticated with the owning manager connection token. Atomically transitions idle to draining; claiming and running runners return 409 and must not be deleted. Retirement is idempotent and leaves a tombstone that rejects delayed registration. Deploy the parent API before managers that use this endpoint.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runnerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bearer manager connection token"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Runner fenced; workload may be deleted"
+          },
+          "401": {
+            "description": "Invalid manager credential"
+          },
+          "403": {
+            "description": "Runner belongs to a different manager"
+          },
+          "409": {
+            "description": "Claiming or running runner; do not delete"
+          },
+          "500": {
+            "description": "Retirement failed; do not delete"
           }
         }
       }
@@ -8529,6 +8586,15 @@
         "additionalProperties": false,
         "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
+          "web_search_enabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True selects live web search; false disables it; null uses the base Codex config. Omission preserves the stored value."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8588,6 +8654,15 @@
       "CodexConnectionResponse": {
         "type": "object",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
+          "web_search_enabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True selects live web search; false disables it; null uses the base Codex config. Omission preserves the stored value."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8641,6 +8716,10 @@
         "additionalProperties": false,
         "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8699,6 +8778,10 @@
       "ClaudeConnectionResponse": {
         "type": "object",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
           "mode": {
             "type": "string",
             "enum": [

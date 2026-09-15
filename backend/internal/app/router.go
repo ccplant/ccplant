@@ -296,7 +296,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// session-manager registry have neither a local Kubernetes manager nor the
 	// legacy allocation queue, but must still expose the runtime endpoints.
 	if server.esmControlStore != nil && server.sessionRouteRepo != nil {
-		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
+		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController).WithRunnerStore(server.sessionRunnerStore)
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
 		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg)).WithSessionDeleter(sessionController.DeleteSession)
@@ -436,6 +436,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-runners/allocations/next", r.handlers.sessionPoolController.ClaimRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/ack", r.handlers.sessionPoolController.AckRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/fail", r.handlers.sessionPoolController.FailRunnerAllocation)
+		r.echo.POST("/internal/session-managers/:id/runners/:runnerId/retire", r.handlers.sessionPoolController.RetireRunner)
 		r.echo.POST("/internal/session-managers/:id/heartbeat", r.handlers.sessionPoolController.HeartbeatManager)
 		r.echo.GET("/internal/session-managers/:id/runtime-profile", r.handlers.sessionPoolController.GetManagerRuntimeProfile)
 	}

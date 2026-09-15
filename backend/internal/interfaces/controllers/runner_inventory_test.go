@@ -41,7 +41,7 @@ func TestHeartbeatPreservesClaimBeforeAcknowledgement(t *testing.T) {
 			must(store.CreateManager(ctx, &core.Manager{ID: "manager", Enabled: true, ConnectionTokenHash: hash}))
 			must(store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "pool", Enabled: true}))
 			must(store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "pool", ManagerID: "manager", Enabled: true}))
-			must(store.CreateRunner(ctx, &core.Runner{ID: "runner", ManagerID: "manager", Pool: "pool", Status: tc.status, LastSeen: time.Now()}))
+			must(store.CreateRunner(ctx, &core.Runner{ID: "runner", ManagerID: "manager", Pool: "pool", Status: core.RunnerIdle, LastSeen: time.Now()}))
 			must(store.Enqueue(ctx, &core.Allocation{SessionID: "session", Pool: "pool"}))
 			lease := 45 * time.Second
 			if tc.expired {
