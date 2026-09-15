@@ -19,6 +19,13 @@ Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRe
 
 By default, the authenticated heartbeat also advertises the parent proxy's
 semantic version. When it is newer, the elected manager updates its own
-Deployment image and the image used for newly created session Pods. Set
+Deployment image and the CLI source for newly created session Pods. The
+`session.image` asset reference stays fixed across application upgrades. Set
 `autoUpgrade=false` to pin the manager to the installed chart version. Existing
 session Pods are never restarted or mutated.
+
+The default manager image is `ccplant-api`. Session Pods use `ccplant-agent`
+with an independent content-based tag and `IfNotPresent`. An initContainer
+copies ccplant into an `emptyDir` mounted read-only at `/opt/ccplant/bin`.
+`session.cliImage` optionally overrides the release image used for this copy.
+See [Agent image lifecycle](../../docs/guide/agent-image.md).

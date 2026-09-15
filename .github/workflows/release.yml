@@ -15,6 +15,9 @@ env:
   FRONTEND_IMAGE: ccplant/ccplant-frontend
 
 jobs:
+  agent-image:
+    uses: ./.github/workflows/agent-image.yml
+
   metadata:
     runs-on: ubuntu-latest
     outputs:
@@ -217,7 +220,7 @@ jobs:
           args: --target ${{ env.TARGET }} --bundles app,dmg
 
   images:
-    needs: metadata
+    needs: [metadata, agent-image]
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:

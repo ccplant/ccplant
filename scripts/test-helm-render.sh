@@ -409,3 +409,16 @@ fi
   --set api.replicaCount=2 >"$TMP_DIR/backend-replicas.yaml"
 
 echo "Helm render assertions passed"
+
+# Application versions affect only the CLI source, never the cached assets.
+agent_image="ghcr.io/ccplant/ccplant-agent:$("$REPO_ROOT/scripts/agent-image-tag.sh")"
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set image.tag=v9.9.9 >"$TMP_DIR/manager-agent-assets.yaml"
+assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-agent-assets.yaml"
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set session.cliImage=registry.example/cli:fixed >"$TMP_DIR/manager-custom-cli.yaml"
+assert_contains 'value: "registry.example/cli:fixed"' "$TMP_DIR/manager-custom-cli.yaml"
+assert_contains "value: \"${agent_image}\"" "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"

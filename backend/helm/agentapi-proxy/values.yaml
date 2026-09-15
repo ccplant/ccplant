@@ -333,7 +333,7 @@ sessionManager:
   # to use the in-cluster agentapi-proxy Service.
   apiUrl: ""
   image:
-    repository: ghcr.io/ccplant/ccplant-backend
+    repository: ghcr.io/ccplant/ccplant-api
     pullPolicy: IfNotPresent
   imagePullSecrets: []
   serviceAccount:
@@ -463,7 +463,9 @@ sessionManager:
     serviceAccountName: agentapi-proxy-session
     rbac:
       create: true
-    image: ""
+    image: "ghcr.io/ccplant/ccplant-agent:assets-67550f1c68bcfc457200b242f2cd4c67"
+    # CLI source follows the manager release.
+    cliImage: ""
     networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
     networkFilter:
       resources:
@@ -1092,9 +1094,11 @@ kubernetesSession:
     create: true
 
   # Container image for session pods
-  # If empty, uses the full root image (image.repository), not api.image.
+  # Independent asset image; use an immutable tag or digest.
   # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
-  image: ""
+  image: "ghcr.io/ccplant/ccplant-agent:assets-67550f1c68bcfc457200b242f2cd4c67"
+  # CLI source follows the manager release; override for a custom registry.
+  cliImage: ""
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)
   networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"

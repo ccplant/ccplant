@@ -2064,6 +2064,11 @@ func (m *KubernetesSessionManager) normalizeProvisionSettings(settings *sessions
 		return nil
 	}
 	normalized := *settings
+	normalized.Env = cloneStringMap(settings.Env)
+	if normalized.Env == nil {
+		normalized.Env = make(map[string]string)
+	}
+	normalized.Env[proxybinary.EnvName] = m.sessionBinaryPath()
 	normalized.Session = settings.Session
 	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
 	return &normalized
@@ -3241,6 +3246,15 @@ func (m *KubernetesSessionManager) createPod(ctx context.Context, session *Kuber
 	return err
 }
 
+const sessionCLIPath = "/opt/ccplant/bin/ccplant"
+
+func (m *KubernetesSessionManager) sessionBinaryPath() string {
+	if m.k8sConfig.CLIImage != "" {
+		return sessionCLIPath
+	}
+	return proxybinary.Resolve(m.config.BinaryPath)
+}
+
 // buildDeployment builds the Deployment object used directly for PVC-backed
 // sessions and as a Pod template source for ephemeral sessions.
 func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session *KubernetesSession, req *entities.RunServerRequest) (*appsv1.Deployment, error) {
@@ -3450,6 +3464,25 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	}
 	if dindEnabled {
 		volumes = append(volumes, dindVolumes...)
+	}
+
+	// Copy the release-specific CLI into a writable volume as the Pod user.
+	// Agent assets and their image tag remain independent of application releases.
+	if m.k8sConfig.CLIImage != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name:         "ccplant-cli",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "install-ccplant-cli",
+			Image:           m.k8sConfig.CLIImage,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			Command:         []string{"/bin/sh", "-ec", "cp -f /usr/local/bin/ccplant /opt/ccplant/bin/ccplant && chmod 0555 /opt/ccplant/bin/ccplant"},
+			VolumeMounts:    []corev1.VolumeMount{{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin"}},
+		})
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true,
+		})
 	}
 
 	// Build containers list.
@@ -3691,6 +3724,30 @@ func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, gener
 	template.Spec.ServiceAccountName = generated.Spec.ServiceAccountName
 	template.Spec.RestartPolicy = generated.Spec.RestartPolicy
 
+	// Pod template customizations must retain the CLI needed to boot the runner.
+	if cli := findContainerByName(generated.Spec.InitContainers, "install-ccplant-cli"); cli != nil {
+		if existing := findContainerByName(template.Spec.InitContainers, cli.Name); existing != nil {
+			*existing = *cli
+		} else {
+			template.Spec.InitContainers = append(template.Spec.InitContainers, *cli)
+		}
+		for _, volume := range generated.Spec.Volumes {
+			if volume.Name != "ccplant-cli" {
+				continue
+			}
+			found := false
+			for i := range template.Spec.Volumes {
+				if template.Spec.Volumes[i].Name == volume.Name {
+					template.Spec.Volumes[i] = volume
+					found = true
+				}
+			}
+			if !found {
+				template.Spec.Volumes = append(template.Spec.Volumes, volume)
+			}
+		}
+	}
+
 	generatedMain := findContainerByName(generated.Spec.Containers, "agentapi")
 	if generatedMain == nil {
 		return
@@ -3698,6 +3755,24 @@ func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, gener
 	for i := range template.Spec.Containers {
 		if template.Spec.Containers[i].Name != "agentapi" {
 			continue
+		}
+		if findContainerByName(generated.Spec.InitContainers, "install-ccplant-cli") != nil {
+			main := &template.Spec.Containers[i]
+			mount := corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true}
+			mounts := make([]corev1.VolumeMount, 0, len(main.VolumeMounts)+1)
+			for _, existing := range main.VolumeMounts {
+				if existing.Name != mount.Name && existing.MountPath != mount.MountPath {
+					mounts = append(mounts, existing)
+				}
+			}
+			main.VolumeMounts = append(mounts, mount)
+			env := make([]corev1.EnvVar, 0, len(main.Env)+1)
+			for _, existing := range main.Env {
+				if existing.Name != proxybinary.EnvName {
+					env = append(env, existing)
+				}
+			}
+			main.Env = append(env, corev1.EnvVar{Name: proxybinary.EnvName, Value: sessionCLIPath})
 		}
 		template.Spec.Containers[i].Image = generatedMain.Image
 		template.Spec.Containers[i].ImagePullPolicy = generatedMain.ImagePullPolicy
@@ -4920,7 +4995,7 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 // buildEnvVars creates environment variables for the session pod
 func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req *entities.RunServerRequest) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
-		{Name: proxybinary.EnvName, Value: proxybinary.Resolve(m.config.BinaryPath)},
+		{Name: proxybinary.EnvName, Value: m.sessionBinaryPath()},
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
@@ -5030,6 +5105,16 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	// Add notification base URL so session pods can construct correct notification URLs
 	if value := os.Getenv("NOTIFICATION_BASE_URL"); value != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: "NOTIFICATION_BASE_URL", Value: value})
+	}
+
+	if m.k8sConfig.CLIImage != "" {
+		filtered := make([]corev1.EnvVar, 0, len(envVars))
+		for _, env := range envVars {
+			if env.Name != proxybinary.EnvName {
+				filtered = append(filtered, env)
+			}
+		}
+		envVars = append(filtered, corev1.EnvVar{Name: proxybinary.EnvName, Value: sessionCLIPath})
 	}
 
 	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
@@ -6478,7 +6563,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 
 	// Build env vars (mirrors buildEnvVars logic from line 2695)
 	env := map[string]string{
-		proxybinary.EnvName:   proxybinary.Resolve(m.config.BinaryPath),
+		proxybinary.EnvName:   m.sessionBinaryPath(),
 		"AGENTAPI_PORT":       fmt.Sprintf("%d", m.k8sConfig.BasePort),
 		"AGENTAPI_SESSION_ID": session.id,
 		"AGENTAPI_USER_ID":    req.UserID,
@@ -6673,6 +6758,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env["INITIAL_AGENT_MODE"] = "agent-full-access"
 	}
 
+	if m.k8sConfig.CLIImage != "" {
+		env[proxybinary.EnvName] = sessionCLIPath
+	}
 	settings.Env = env
 	settings.UsageReportingEnabled = m.config.Usage.Enabled
 

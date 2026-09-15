@@ -49,11 +49,10 @@ docker pull ghcr.io/takutakahashi/agentapi-proxy:latest
 
 ### API-only container
 
-Use the API-only image when agent execution and session tooling are hosted by
-separate workers/session managers. The image contains only the statically linked
-`ccplant` binary, CA certificates, and timezone data; it runs as UID/GID 999 and
-does not include Claude, Codex, Cursor, Docker, mise, uv, GitHub MCP, otelcol,
-Git, or shell-based session tooling.
+The lightweight image runs the API, workers and Kubernetes session managers.
+It contains the statically linked `ccplant` binary, Codex for device authentication,
+CA certificates and timezone data, and runs as UID/GID 999. Agent session tools
+are provided by the separate `ccplant-agent` image.
 
 ```bash
 # Build locally (linux/amd64 or linux/arm64)
@@ -79,13 +78,16 @@ configuration is preferred. Static API/OpenAPI content is embedded in the Go
 binary, so `backend/public` and source configuration examples are not copied.
 
 The published multi-architecture image is
-`ghcr.io/ccplant/ccplant-api:<release-tag>`. The existing
-`ccplant-backend` image remains the session/runtime default and is required by
-session-manager, provisioner, and direct/local session modes. The Helm chart
-uses `ccplant-api` for the backend API and worker Deployments by default.
-Session Pod images can be overridden with the Helm `kubernetesSession.image`
-value (or `sessionManager.kubernetesSession.image` for the dedicated manager),
-and with `AGENTAPI_K8S_SESSION_IMAGE` when running without Helm.
+`ghcr.io/ccplant/ccplant-api:<release-tag>`. Kubernetes sessions run the separately
+versioned `ccplant-agent:assets-<hash>` image. An initContainer copies the release
+CLI into an `emptyDir`, mounted at `/opt/ccplant/bin`. The full `ccplant-backend`
+image extends these assets for direct/local process sessions.
+
+Session image and CLI source overrides are available in Helm under
+`kubernetesSession.image` / `cliImage` (or
+`sessionManager.kubernetesSession.image` / `cliImage` for the dedicated manager).
+Without Helm, use `AGENTAPI_K8S_SESSION_IMAGE` and
+`AGENTAPI_K8S_SESSION_CLI_IMAGE`. See [Agent image lifecycle](../docs/guide/agent-image.md).
 
 ## Usage
 

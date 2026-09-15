@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: ghcr.io/ccplant/ccplant-backend
+  repository: ghcr.io/ccplant/ccplant-api
   tag: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -69,7 +69,9 @@ leaderElection:
   retryPeriod: 2s
 
 session:
-  image: ""
+  image: "ghcr.io/ccplant/ccplant-agent:assets-67550f1c68bcfc457200b242f2cd4c67"
+  # CLI source follows the manager release; override for a custom registry.
+  cliImage: ""
   serviceAccountName: agentapi-proxy-session
   networkFilterImage: ghcr.io/ccplant/network-filter-agent:latest
   imagePullPolicy: IfNotPresent
