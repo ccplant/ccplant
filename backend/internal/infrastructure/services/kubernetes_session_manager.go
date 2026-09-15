@@ -225,11 +225,34 @@ func (m *KubernetesSessionManager) refreshConfig() {
 	if current.KubernetesSession.ProvisionerToken == "" && m.k8sConfig != nil {
 		current.KubernetesSession.ProvisionerToken = m.k8sConfig.ProvisionerToken
 	}
+	resolveLegacySessionRuntimeImages(current)
 	m.config = current
 	m.k8sConfig = &current.KubernetesSession
 	if m.inheritedRuntimeProfile != nil {
 		m.applyRuntimeProfileLocked(m.inheritedRuntimeProfile)
 	}
+}
+
+// resolveLegacySessionRuntimeImages upgrades the old single-image defaults in
+// memory. This lets an auto-upgraded manager create new Pods with immutable
+// agent assets and inject the ccplant CLI from its own release, even when the
+// installed Helm chart predates the split image configuration. Explicit custom
+// session or CLI images are preserved.
+func resolveLegacySessionRuntimeImages(cfg *config.Config) {
+	if cfg == nil || strings.TrimSpace(cfg.KubernetesSession.CLIImage) != "" {
+		return
+	}
+	repository := strings.TrimSuffix(strings.TrimSpace(cfg.SessionManager.ImageRepository), ":")
+	version := strings.TrimSpace(cfg.SessionManager.CurrentVersion)
+	if repository == "" || version == "" {
+		return
+	}
+	managerImage := repository + ":" + version
+	if strings.TrimSpace(cfg.KubernetesSession.Image) != managerImage {
+		return
+	}
+	cfg.KubernetesSession.Image = config.DefaultKubernetesSessionImage
+	cfg.KubernetesSession.CLIImage = managerImage
 }
 
 func (m *KubernetesSessionManager) SetSessionControlStore(store coresessioncontrol.Store) {
@@ -266,6 +289,7 @@ func NewKubernetesSessionManagerWithClient(
 	lgr *logger.Logger,
 	client kubernetes.Interface,
 ) (*KubernetesSessionManager, error) {
+	resolveLegacySessionRuntimeImages(cfg)
 	k8sConfig := &cfg.KubernetesSession
 
 	// Determine namespace

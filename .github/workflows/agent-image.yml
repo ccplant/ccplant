@@ -19,7 +19,7 @@ jobs:
         run: |
           tag=$(scripts/agent-image-tag.sh)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          for file in backend/Dockerfile backend/helm/agentapi-proxy/values.yaml chart/session-manager/values.yaml; do
+          for file in backend/Dockerfile backend/pkg/config/config.go backend/helm/agentapi-proxy/values.yaml chart/session-manager/values.yaml; do
             grep -q "ghcr.io/ccplant/ccplant-agent:$tag" "$file" || {
               echo "::error::$file must reference ccplant-agent:$tag"
               exit 1

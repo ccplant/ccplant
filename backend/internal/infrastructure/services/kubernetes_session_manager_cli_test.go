@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	corev1 "k8s.io/api/core/v1"
@@ -58,6 +59,45 @@ func TestSessionCLIInjectionLegacyImage(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, findContainerByName(deployment.Spec.Template.Spec.InitContainers, "install-ccplant-cli"))
 	require.Equal(t, "/custom/ccplant", manager.sessionBinaryPath())
+}
+
+func TestResolveLegacySessionRuntimeImagesUsesManagerRelease(t *testing.T) {
+	cfg := &config.Config{
+		SessionManager: config.SessionManagerConfig{
+			ImageRepository: "ghcr.io/ccplant/ccplant-backend",
+			CurrentVersion:  "v1.2.3",
+		},
+		KubernetesSession: config.KubernetesSessionConfig{
+			Image: "ghcr.io/ccplant/ccplant-backend:v1.2.3",
+		},
+	}
+	resolveLegacySessionRuntimeImages(cfg)
+	require.Equal(t, config.DefaultKubernetesSessionImage, cfg.KubernetesSession.Image)
+	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
+}
+
+func TestResolveLegacySessionRuntimeImagesPreservesOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		image string
+		cli   string
+	}{
+		{name: "custom-session-image", image: "private/agent:fixed"},
+		{name: "custom-cli-image", image: "ghcr.io/ccplant/ccplant-backend:v1.2.3", cli: "private/cli:fixed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{
+				SessionManager: config.SessionManagerConfig{
+					ImageRepository: "ghcr.io/ccplant/ccplant-backend",
+					CurrentVersion:  "v1.2.3",
+				},
+				KubernetesSession: config.KubernetesSessionConfig{Image: tc.image, CLIImage: tc.cli},
+			}
+			resolveLegacySessionRuntimeImages(cfg)
+			require.Equal(t, tc.image, cfg.KubernetesSession.Image)
+			require.Equal(t, tc.cli, cfg.KubernetesSession.CLIImage)
+		})
+	}
 }
 
 func TestNormalizeProvisionSettingsUsesInjectedCLI(t *testing.T) {
