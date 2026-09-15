@@ -89,8 +89,21 @@ Disabling `oneshot` on this webhook alone would hide this compatibility issue an
 
 ## Investigation scope and limits
 
-This report is based on live API, Kubernetes worker/manager logs, deployment metadata, and source comparison of the deployed versions. No production configuration, webhook setting, or session lifecycle was changed. No webhook was replayed, since its configured task performs production release operations.
+This report is based on live API, Kubernetes worker/manager logs, deployment metadata, and source comparison of the deployed versions. The initial investigation changed no production configuration, webhook setting, or session lifecycle. The subsequently requested mitigation is recorded below. No webhook was replayed, since its configured task performs production release operations.
 
 The deleted session's normal messages endpoint returned 404. Legacy session-control Redis streams for its public/runtime IDs were empty; this is not proof that all possible runtime storage was empty. Recovering the complete agent transcript was not required to identify the deletion caller. No claim is made that the release task completed.
 
 This is a documentation-only investigation PR. No automated tests were run; the checks were the evidence/source comparisons described above.
+
+## Applied mitigation: legacy worker scaled to zero
+
+After the investigation, the user explicitly requested scaling the old worker to zero. The Kubernetes scale subresource for `agentapi-ui/agentapi-proxy-worker` was patched from one replica to zero, with a resource-version precondition.
+
+Verification at **2026-09-15 03:16:37 UTC (12:16:37 JST)** confirmed:
+
+- Desired replicas: `0`.
+- Actual replicas: `0`; ready replicas: `0`.
+- No Pods matched the Deployment's worker selector.
+- The Deployment controller had observed generation `60`, matching the requested generation.
+
+This stops the legacy worker's cleanup and any other duties served by that Deployment. The Fly worker was not modified, and its leadership takeover was not verified as part of this scale operation. The Helm release's saved values were not changed; a later Helm upgrade or reconciliation can restore replicas unless its source configuration is updated as well.
