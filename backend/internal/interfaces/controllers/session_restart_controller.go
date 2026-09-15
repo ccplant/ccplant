@@ -184,7 +184,7 @@ func (c *SessionController) changeSessionRuntime(ctx echo.Context, pause bool) e
 		return echo.NewHTTPError(500, "failed to encode settings")
 	}
 	if route != nil {
-		if err := c.sendRestartToManager(ctx.Request().Context(), route, "restart/validate", requestID, next); err != nil {
+		if err := c.sendRestartToManager(ctx.Request().Context(), route, "restart/validate", requestID, next, old); err != nil {
 			var httpErr *echo.HTTPError
 			if errors.As(err, &httpErr) {
 				return httpErr
@@ -347,11 +347,15 @@ func (c *SessionController) restartCurrentSettings(ctx echo.Context, id string) 
 	}
 	return &settings, route, nil
 }
-func (c *SessionController) sendRestartToManager(ctx context.Context, route *repositories.SessionRoute, action, id string, settings *sessionsettings.SessionSettings) error {
+func (c *SessionController) sendRestartToManager(ctx context.Context, route *repositories.SessionRoute, action, id string, settings *sessionsettings.SessionSettings, current ...*sessionsettings.SessionSettings) error {
 	if c.esmControlTunnel == nil {
 		return fmt.Errorf("manager unavailable")
 	}
-	raw, err := json.Marshal(settings)
+	var payload interface{} = settings
+	if action == "restart/validate" && len(current) > 0 {
+		payload = sessionsettings.RestartValidationRequest{SessionSettings: settings, CurrentSettings: current[0]}
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}

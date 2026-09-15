@@ -501,6 +501,21 @@ func (h *Handlers) PauseSession(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(501, "session pause is not supported")
 	}
+	// Parent-owned allocations do not have settings in the manager until an
+	// explicit lifecycle operation. Persist the running snapshot before pausing.
+	if c.Request().ContentLength != 0 {
+		var current sessionsettings.SessionSettings
+		if err := c.Bind(&current); err != nil {
+			return echo.NewHTTPError(400, "invalid current settings")
+		}
+		preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
+		if !ok {
+			return echo.NewHTTPError(501, "session resume preparation unavailable")
+		}
+		if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &current); err != nil {
+			return echo.NewHTTPError(503, "failed to preserve current settings").SetInternal(err)
+		}
+	}
 	if err := manager.PauseSession(c.Request().Context(), c.Param("sessionId")); err != nil {
 		return echo.NewHTTPError(503, "session pause failed").SetInternal(err)
 	}
@@ -512,11 +527,23 @@ func (h *Handlers) ValidateRestart(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(501, "restart unavailable")
 	}
-	var settings sessionsettings.SessionSettings
-	if err := c.Bind(&settings); err != nil {
+	input := sessionsettings.RestartValidationRequest{SessionSettings: &sessionsettings.SessionSettings{}}
+	if err := c.Bind(&input); err != nil {
 		return echo.NewHTTPError(400, "invalid settings")
 	}
-	if err := m.ValidateSessionRestart(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+	var err error
+	if input.CurrentSettings != nil {
+		validator, ok := h.sessionManager.(interface {
+			ValidateSessionRestartWithCurrent(context.Context, string, *sessionsettings.SessionSettings, *sessionsettings.SessionSettings) error
+		})
+		if !ok {
+			return echo.NewHTTPError(501, "pooled session restart validation unavailable")
+		}
+		err = validator.ValidateSessionRestartWithCurrent(c.Request().Context(), c.Param("sessionId"), input.CurrentSettings, input.SessionSettings)
+	} else {
+		err = m.ValidateSessionRestart(c.Request().Context(), c.Param("sessionId"), input.SessionSettings)
+	}
+	if err != nil {
 		return echo.NewHTTPError(422, err.Error())
 	}
 	return c.NoContent(204)

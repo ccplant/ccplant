@@ -68,14 +68,18 @@ func (m *KubernetesSessionManager) PauseSession(ctx context.Context, id string) 
 }
 func (m *KubernetesSessionManager) restartableSession(id string) (*KubernetesSession, error) {
 	ks, ok := m.GetSession(id).(*KubernetesSession)
-	if !ok || ks == nil || ks.ProvisionSettings() == nil {
+	if !ok || ks == nil {
 		return nil, fmt.Errorf("session settings unavailable")
 	}
-	settings := ks.ProvisionSettings()
+	settings, err := m.CurrentSessionSettings(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	ks.SetProvisionSettings(settings)
 	if err := sessionsettings.ValidateRestart(settings, settings); err != nil {
 		return nil, err
 	}
-	if !m.requiresSessionCheckpoint(ks) {
+	if m.config.SessionPersistence.Backend == "" {
 		return nil, fmt.Errorf("conversation checkpoint storage is required for restart")
 	}
 	return ks, nil
@@ -251,7 +255,7 @@ func (m *KubernetesSessionManager) ValidateSessionRestart(ctx context.Context, i
 }
 func (m *KubernetesSessionManager) CurrentSessionSettings(ctx context.Context, id string) (*sessionsettings.SessionSettings, error) {
 	ks, ok := m.GetSession(id).(*KubernetesSession)
-	if !ok || ks.ProvisionSettings() == nil {
+	if !ok || ks == nil {
 		return nil, fmt.Errorf("session settings unavailable")
 	}
 	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, strings.TrimSuffix(ks.ServiceName(), "-svc")+"-settings", metav1.GetOptions{})
@@ -264,6 +268,9 @@ func (m *KubernetesSessionManager) CurrentSessionSettings(ctx context.Context, i
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return nil, err
+	}
+	if ks.ProvisionSettings() == nil {
+		return nil, fmt.Errorf("session settings unavailable")
 	}
 	return ks.ProvisionSettings(), nil
 }
@@ -391,4 +398,23 @@ func (m *KubernetesSessionManager) restartClient() *http.Client {
 		return m.restartHTTPClient
 	}
 	return http.DefaultClient
+}
+
+// Validate the parent's running snapshot without mutating or stopping a pooled
+// runner. PauseSession's handler persists this snapshot only after validation.
+func (m *KubernetesSessionManager) ValidateSessionRestartWithCurrent(ctx context.Context, id string, current, next *sessionsettings.SessionSettings) error {
+	if current == nil || next == nil || current.Session.ID == "" || current.Session.ID != next.Session.ID {
+		return fmt.Errorf("session identity mismatch")
+	}
+	ks, ok := m.GetSession(id).(*KubernetesSession)
+	if !ok || ks == nil {
+		return fmt.Errorf("session settings unavailable")
+	}
+	if m.config.SessionPersistence.Backend == "" {
+		return fmt.Errorf("conversation checkpoint storage is required for restart")
+	}
+	if saved := ks.ProvisionSettings(); saved != nil && saved.Session.UserID != "" && saved.Session.ID != current.Session.ID {
+		return fmt.Errorf("session identity mismatch")
+	}
+	return sessionsettings.ValidateRestart(current, next)
 }

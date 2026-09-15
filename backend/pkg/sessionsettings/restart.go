@@ -109,3 +109,10 @@ func restartRouting(s *SessionSettings) (map[string]interface{}, error) {
 	}
 	return routing, nil
 }
+
+// RestartValidationRequest supplies the actual running snapshot for pooled runners,
+// whose manager only retains the unassigned stock configuration.
+type RestartValidationRequest struct {
+	*SessionSettings
+	CurrentSettings *SessionSettings `json:"current_settings,omitempty"`
+}

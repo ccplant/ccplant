@@ -87,3 +87,41 @@ func TestRestartAppliesCompleteSettingsToPausedProcess(t *testing.T) {
 		t.Fatal("restart settings not persisted")
 	}
 }
+
+func TestPooledRestartValidatesParentSnapshotWithoutMutatingRunner(t *testing.T) {
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{Namespace: "test", BasePort: 9000}, SessionPersistence: config.SessionPersistenceConfig{Backend: "volume"}}
+	client := fake.NewSimpleClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-runner-svc", Namespace: "test"}})
+	m, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.suspendCancel != nil {
+		m.suspendCancel()
+	}
+	ks := NewKubernetesSession("runner", &entities.RunServerRequest{}, "agentapi-session-runner", "agentapi-session-runner-svc", "", "test", 9000, nil, nil)
+	m.sessions["runner"] = ks
+	current := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{ID: "public", UserID: "alice", AgentType: "codex-acp"}}
+	next := *current
+	if err := m.ValidateSessionRestartWithCurrent(context.Background(), "runner", current, &next); err != nil {
+		t.Fatal(err)
+	}
+	if ks.ProvisionSettings() != nil {
+		t.Fatal("preflight mutated runner")
+	}
+	next.Session.AgentType = "claude-acp"
+	if err := m.ValidateSessionRestartWithCurrent(context.Background(), "runner", current, &next); err == nil {
+		t.Fatal("incompatible agent accepted")
+	}
+	// Pause writes the running settings. Another manager replica must load them
+	// even when its existing in-memory runner still has no provision settings.
+	if err := m.PrepareSessionResume(context.Background(), "runner", current); err != nil {
+		t.Fatal(err)
+	}
+	ks.SetProvisionSettings(nil)
+	if _, err := m.restartableSession("runner"); err != nil {
+		t.Fatal(err)
+	}
+	if ks.ProvisionSettings().Session.ID != "public" {
+		t.Fatal("lost public conversation identity")
+	}
+}
