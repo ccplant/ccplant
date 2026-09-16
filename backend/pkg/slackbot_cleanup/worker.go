@@ -144,9 +144,6 @@ func (w *CleanupWorker) run(ctx context.Context) {
 // makes a session ineligible until it enters an idle or terminal state again.
 func sessionTTLStart(session entities.Session) (time.Time, bool) {
 	status := session.Status()
-	if session.Tags()["oneshot"] == "true" && status != "stopped" {
-		return time.Time{}, false
-	}
 	switch status {
 	case "active", "stopped", "suspended", "error", "timeout":
 		completedAt := session.UpdatedAt()
