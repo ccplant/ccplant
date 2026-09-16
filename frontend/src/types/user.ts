@@ -5,6 +5,7 @@ export interface ProxyUserInfo {
   principal_id: string
   username: string
   teams: string[]
+  team_principals?: Array<{ team_id: string; principal_id: string }>
   repositories?: string[]
   is_admin?: boolean
 }

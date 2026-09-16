@@ -158,9 +158,10 @@ type githubOAuthState struct {
 }
 
 type GitHubConnectionLoginResult struct {
-	AccessToken string
-	APIURL      string
-	UserID      string
+	AccessToken  string
+	APIURL       string
+	UserID       string
+	ConnectionID string
 }
 
 type githubOAuthUser struct {
@@ -577,7 +578,7 @@ func (c *GitHubConnectionsController) CompleteLogin(ctx context.Context, stateID
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub identity could not be resolved").SetInternal(err)
 	}
-	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL, UserID: principal.ID}, nil
+	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL, UserID: principal.ID, ConnectionID: connection.ID}, nil
 }
 
 // ResolvePrincipalIDForGitHubUser maps the legacy GitHub OAuth flow onto the

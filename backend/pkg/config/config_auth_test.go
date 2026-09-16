@@ -159,6 +159,25 @@ func TestLoadAuthConfigFromFile(t *testing.T) {
 	}
 }
 
+func TestLoadConfigParsesTeamDiscovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+team_discovery:
+  - connection_id: ghes
+    team_pattern: "*/cc-users"
+`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.TeamDiscovery) != 1 || config.TeamDiscovery[0].ConnectionID != "ghes" || config.TeamDiscovery[0].TeamPattern != "*/cc-users" {
+		t.Fatalf("unexpected team discovery config: %#v", config.TeamDiscovery)
+	}
+}
+
 func TestLoadConfigWithAuthConfigFile(t *testing.T) {
 	// Save and clear environment variables that might interfere with the test
 	envVarsToSave := []string{

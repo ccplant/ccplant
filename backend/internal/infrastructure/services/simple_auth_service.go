@@ -40,6 +40,8 @@ type SimpleAuthService struct {
 	localUserRepo    repositories.LocalUserRepository
 	githubProvider   *auth.GitHubAuthProvider
 	githubAuthConfig *config.GitHubAuthConfig
+	teamConfigRepo   repositories.TeamConfigRepository
+	teamDiscovery    []config.TeamDiscoveryRule
 
 	// shadowedSecrets records every plaintext secret that has ever been
 	// registered as a named API token (via LoadAPIToken or ReconcileAPITokens).
@@ -179,6 +181,34 @@ func (s *SimpleAuthService) SetGitHubProvider(provider *auth.GitHubAuthProvider)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.githubProvider = provider
+}
+
+// SetTeamMembershipResolver wires persistent ccplant teams and discovery
+// rules into GitHub authentication.
+func (s *SimpleAuthService) SetTeamMembershipResolver(repo repositories.TeamConfigRepository, rules []config.TeamDiscoveryRule) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.teamConfigRepo = repo
+	s.teamDiscovery = append([]config.TeamDiscoveryRule(nil), rules...)
+}
+
+func (s *SimpleAuthService) resolveTeamMemberships(user *entities.User, memberships []entities.GitHubTeamMembership) error {
+	s.mu.RLock()
+	repo := s.teamConfigRepo
+	rules := append([]config.TeamDiscoveryRule(nil), s.teamDiscovery...)
+	s.mu.RUnlock()
+	if repo == nil {
+		return nil
+	}
+	resolver := NewTeamMembershipResolver(repo, rules)
+	teamIDs, resolved, err := resolver.Resolve(context.Background(), memberships)
+	if err != nil {
+		return err
+	}
+	if resolved {
+		user.SetResolvedTeamIDs(teamIDs)
+	}
+	return nil
 }
 
 // AuthenticateUser authenticates a user with the given credentials
@@ -507,6 +537,7 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 				// Convert teams
 				for _, t := range userContext.GitHubUser.Teams {
 					teams = append(teams, entities.GitHubTeamMembership{
+						ConnectionID: t.ConnectionID,
 						Organization: t.Organization,
 						TeamSlug:     t.TeamSlug,
 						TeamName:     t.TeamName,
@@ -528,6 +559,9 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 						log.Printf("[AUTH] Warning: failed to update role %q from GitHub context for existing user %s: %v", userContext.Role, userContext.UserID, err)
 					}
 				}
+				if err := s.resolveTeamMemberships(existingUser, teams); err != nil {
+					return nil, fmt.Errorf("resolve ccplant team memberships: %w", err)
+				}
 				return existingUser, nil
 			}
 
@@ -538,9 +572,6 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			}
 
 			// Create new user from GitHub context
-			s.mu.Lock()
-			defer s.mu.Unlock()
-
 			newUser := entities.NewGitHubUser(
 				userID,
 				userContext.UserID,
@@ -562,8 +593,13 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 				permission := entities.Permission(perm)
 				newUser.AddPermission(permission)
 			}
+			if err := s.resolveTeamMemberships(newUser, teams); err != nil {
+				return nil, fmt.Errorf("resolve ccplant team memberships: %w", err)
+			}
 
+			s.mu.Lock()
 			s.users[userID] = newUser
+			s.mu.Unlock()
 			return newUser, nil
 		}
 		// If GitHub auth fails, continue with simple token auth

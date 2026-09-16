@@ -29,9 +29,11 @@ const (
 
 // teamConfigJSON is the JSON representation of team config stored in Secret
 type teamConfigJSON struct {
-	TeamID         string              `json:"team_id"`
-	ServiceAccount *serviceAccountJSON `json:"service_account,omitempty"`
-	EnvVars        map[string]string   `json:"env_vars,omitempty"`
+	TeamID         string                         `json:"team_id"`
+	PrincipalID    string                         `json:"principal_id,omitempty"`
+	ExternalTeams  []entities.ExternalTeamBinding `json:"external_teams,omitempty"`
+	ServiceAccount *serviceAccountJSON            `json:"service_account,omitempty"`
+	EnvVars        map[string]string              `json:"env_vars,omitempty"`
 }
 
 // serviceAccountJSON is the JSON representation of service account
@@ -59,6 +61,13 @@ func NewKubernetesTeamConfigRepository(client kubernetes.Interface, namespace st
 
 // Save persists team configuration (creates or updates)
 func (r *KubernetesTeamConfigRepository) Save(ctx context.Context, config *entities.TeamConfig) error {
+	if config.PrincipalID() == "" {
+		principalID, err := entities.NewTeamPrincipalID()
+		if err != nil {
+			return err
+		}
+		config.SetPrincipalID(principalID)
+	}
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid team config: %w", err)
 	}
@@ -129,6 +138,28 @@ func (r *KubernetesTeamConfigRepository) FindByTeamID(ctx context.Context, teamI
 		return nil, fmt.Errorf("failed to parse team config: %w", err)
 	}
 
+	if config.PrincipalID() != "" {
+		return config, nil
+	}
+
+	// Adopt legacy TeamConfigs in place. resourceVersion makes this an atomic
+	// compare-and-swap: on a concurrent migration, reload the winner's ULID.
+	principalID, err := entities.NewTeamPrincipalID()
+	if err != nil {
+		return nil, err
+	}
+	config.SetPrincipalID(principalID)
+	data, err := r.toJSON(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal adopted team config: %w", err)
+	}
+	secret.Data[SecretKeyConfig] = data
+	if _, err = r.client.CoreV1().Secrets(r.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		if errors.IsConflict(err) {
+			return r.FindByTeamID(ctx, teamID)
+		}
+		return nil, fmt.Errorf("failed to adopt legacy team config: %w", err)
+	}
 	return config, nil
 }
 
@@ -176,7 +207,12 @@ func (r *KubernetesTeamConfigRepository) List(ctx context.Context) ([]*entities.
 
 	configs := make([]*entities.TeamConfig, 0, len(secretList.Items))
 	for i := range secretList.Items {
-		config, err := r.fromSecret(&secretList.Items[i])
+		var stored teamConfigJSON
+		if err := json.Unmarshal(secretList.Items[i].Data[SecretKeyConfig], &stored); err != nil {
+			fmt.Printf("Warning: failed to parse team config from secret %s: %v\n", secretList.Items[i].Name, err)
+			continue
+		}
+		config, err := r.FindByTeamID(ctx, stored.TeamID)
 		if err != nil {
 			// Log error but continue with other configs
 			fmt.Printf("Warning: failed to parse team config from secret %s: %v\n", secretList.Items[i].Name, err)
@@ -202,8 +238,10 @@ func (r *KubernetesTeamConfigRepository) secretName(teamID string) string {
 // toJSON converts team config to JSON bytes
 func (r *KubernetesTeamConfigRepository) toJSON(config *entities.TeamConfig) ([]byte, error) {
 	jsonData := &teamConfigJSON{
-		TeamID:  config.TeamID(),
-		EnvVars: config.EnvVars(),
+		TeamID:        config.TeamID(),
+		PrincipalID:   config.PrincipalID(),
+		ExternalTeams: config.ExternalTeams(),
+		EnvVars:       config.EnvVars(),
 	}
 
 	// Convert service account if present
@@ -270,7 +308,10 @@ func (r *KubernetesTeamConfigRepository) fromSecret(secret *corev1.Secret) (*ent
 		serviceAccount.SetUpdatedAt(updatedAt)
 	}
 
-	return entities.NewTeamConfig(jsonData.TeamID, serviceAccount, jsonData.EnvVars), nil
+	config := entities.NewTeamConfig(jsonData.TeamID, serviceAccount, jsonData.EnvVars)
+	config.SetPrincipalID(jsonData.PrincipalID)
+	config.SetExternalTeams(jsonData.ExternalTeams)
+	return config, nil
 }
 
 // sanitizeTeamIDForLabel converts team ID to a valid Kubernetes label value
