@@ -59,3 +59,18 @@ type SessionRouteRepository interface {
 	// Delete removes routing information for the given session ID
 	Delete(ctx context.Context, sessionID string) error
 }
+
+// SessionRouteFilter identifies the small route subset needed by trigger
+// reuse. Implementations should push these fields into their storage query.
+type SessionRouteFilter struct {
+	UserID string
+	Scope  string
+	TeamID string
+	Tags   map[string]string
+}
+
+// FilteredSessionRouteRepository is implemented by repositories that can
+// avoid loading every route for a tag-based reuse lookup.
+type FilteredSessionRouteRepository interface {
+	ListFiltered(ctx context.Context, filter SessionRouteFilter) ([]*SessionRoute, error)
+}

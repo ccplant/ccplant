@@ -425,7 +425,18 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 	// Direct runtimes are durable routes and are intentionally absent from the
 	// API process's local SessionManager. Search the route repository first.
 	if c.sessionRouteRepo != nil {
-		routes, err := c.sessionRouteRepo.List(ctx.Request().Context(), ownerUserID)
+		var routes []*repositories.SessionRoute
+		var err error
+		if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+			routes, err = filtered.ListFiltered(ctx.Request().Context(), repositories.SessionRouteFilter{
+				UserID: ownerUserID,
+				Scope:  string(startReq.Scope),
+				TeamID: startReq.TeamID,
+				Tags:   startReq.ReuseMatchTags,
+			})
+		} else {
+			routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), ownerUserID)
+		}
 		if err != nil {
 			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to list reusable sessions").SetInternal(err)
 		}

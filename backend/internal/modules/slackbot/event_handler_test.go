@@ -544,6 +544,30 @@ func TestProcessEvent_DefaultID_ResolveBotByChannel_UsesCorrectBotID(t *testing.
 		"session must be tagged with the registered bot's UUID, not 'default'")
 }
 
+func TestProcessEvent_DefaultID_ReusedThreadSkipsBotDiscovery(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot("registered-bot-uuid", "Existing Bot", "user-1")
+	repo.bots[bot.ID()] = bot
+	sessionMgr := &mockSessionManager{existingSessions: []entities.Session{&mockSession{
+		id: "existing-session",
+		tags: map[string]string{
+			"slackbot_id":     bot.ID(),
+			"slack_channel":   "C-existing",
+			"slack_thread_ts": "111.222",
+		},
+	}}}
+	handler := NewSlackBotEventHandler(repo, sessionMgr, "", "", nil, "", false, nil, nil)
+	payload := buildEventPayload("C-existing", "follow up")
+	payload.Event.ThreadTs = "111.222"
+
+	require.NoError(t, handler.ProcessEvent(context.Background(), slackBotDefaultID, payload))
+	require.True(t, waitForCondition(2*time.Second, 10*time.Millisecond, func() bool {
+		return sessionMgr.createdCount() == 1
+	}))
+	assert.Equal(t, 0, repo.listAllCalls, "reused threads must not enumerate every SlackBot")
+	assert.Equal(t, bot.ID(), sessionMgr.getCreatedSession(0).tags["slackbot_id"])
+}
+
 // TestProcessEvent_DefaultID_NoBotMatch_DropsEvent verifies that when no registered bot
 // matches the channel, the event is dropped (no session is created).
 func TestProcessEvent_DefaultID_NoBotMatch_DropsEvent(t *testing.T) {

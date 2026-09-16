@@ -57,11 +57,50 @@ PRIMARY KEY (kind, namespace, key))`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensureLibSQLLookupIndexes(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := ensureLibSQLBranchKeyTable(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+func ensureLibSQLLookupIndexes(ctx context.Context, db *sql.DB) error {
+	// These selectors are on synchronous trigger paths. Expression indexes keep
+	// their latency independent of unrelated KV records and, for route reuse,
+	// independent of the total number of active sessions.
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_profile_lookup ON agentapi_kv (
+kind, namespace,
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile-user-id"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile-scope"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile-team-id-hash"'))`,
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_route_reuse_lookup ON agentapi_kv (
+kind, namespace,
+json_extract(metadata, '$.labels."agentapi.proxy/session-route"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-user-id"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-scope"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-team-id-hash"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_channel"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_ts"'))`,
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_user_session_route_reuse_lookup ON agentapi_kv (
+kind, namespace,
+json_extract(metadata, '$.labels."agentapi.proxy/session-route"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-user-id"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-scope"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_channel"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_ts"'))`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("initialize libSQL lookup index: %w", err)
+		}
+	}
+	return nil
 }
 
 func ensureLibSQLBranchKeyTable(ctx context.Context, db *sql.DB) error {
@@ -336,7 +375,7 @@ WHERE kind = ? AND namespace = ?`)
 		values := requirement.Values().List()
 		switch requirement.Operator() {
 		case selection.Equals, selection.DoubleEquals, selection.In:
-			writeLibSQLLabelExists(&statement, &args, alias, key, values, false)
+			writeLibSQLLabelMatch(&statement, &args, key, values, false)
 		case selection.NotEquals, selection.NotIn:
 			writeLibSQLLabelExists(&statement, &args, alias, key, values, true)
 		case selection.Exists:
@@ -354,6 +393,21 @@ WHERE kind = ? AND namespace = ?`)
 	}
 	statement.WriteString(" ORDER BY key")
 	return statement.String(), args
+}
+
+func writeLibSQLLabelMatch(statement *strings.Builder, args *[]any, key string, values []string, negate bool) {
+	// Kubernetes label keys cannot contain quotes. Keeping the JSON expression
+	// literal (rather than binding the path) lets SQLite match expression indexes.
+	escapedKey := strings.ReplaceAll(key, `"`, `\"`)
+	if negate {
+		statement.WriteString(" AND NOT")
+	} else {
+		statement.WriteString(" AND")
+	}
+	fmt.Fprintf(statement, ` json_extract(agentapi_kv.metadata, '$.labels."%s"') IN (%s)`, escapedKey, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+	for _, value := range values {
+		*args = append(*args, value)
+	}
 }
 
 func writeLibSQLLabelExists(statement *strings.Builder, args *[]any, alias, key string, values []string, negate bool) {

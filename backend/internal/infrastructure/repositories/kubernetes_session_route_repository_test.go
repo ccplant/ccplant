@@ -113,3 +113,27 @@ func TestKubernetesSessionRouteRepositoryInvalidatesListCacheOnWrite(t *testing.
 		t.Fatalf("List() after Delete = %#v", routes)
 	}
 }
+
+func TestKubernetesSessionRouteRepositoryListFilteredUsesIndexedLabels(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	for _, route := range []*portrepos.SessionRoute{
+		{SessionID: "wanted", UserID: "alice", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T1"}},
+		{SessionID: "other-user", UserID: "bob", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T1"}},
+		{SessionID: "other-thread", UserID: "alice", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T2"}},
+	} {
+		if err := repo.Save(ctx, route); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routes, err := repo.ListFiltered(ctx, portrepos.SessionRouteFilter{
+		UserID: "alice", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].SessionID != "wanted" {
+		t.Fatalf("ListFiltered() = %#v", routes)
+	}
+}

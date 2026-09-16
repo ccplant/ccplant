@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,7 +123,7 @@ func (r *KubernetesSessionProfileRepository) List(ctx context.Context, filter po
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	profiles, err := r.loadAllProfiles(ctx)
+	profiles, err := r.loadProfiles(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load session profiles: %w", err)
 	}
@@ -223,10 +224,22 @@ func (r *KubernetesSessionProfileRepository) loadProfile(ctx context.Context, id
 	return r.decodeProfile(ctx, &pj)
 }
 
-func (r *KubernetesSessionProfileRepository) loadAllProfiles(ctx context.Context) ([]*entities.SessionProfile, error) {
-	labelSelector := fmt.Sprintf("%s=true", LabelSessionProfile)
+// loadProfiles pushes ownership filters into the persistence query. Session
+// launch calls List for every request, so loading every profile in the cluster
+// here made trigger latency proportional to the total KV record count.
+func (r *KubernetesSessionProfileRepository) loadProfiles(ctx context.Context, filter portrepos.SessionProfileFilter) ([]*entities.SessionProfile, error) {
+	selectors := []string{fmt.Sprintf("%s=true", LabelSessionProfile)}
+	if filter.UserID != "" {
+		selectors = append(selectors, fmt.Sprintf("%s=%s", LabelSessionProfileUserID, sanitizeLabelValue(filter.UserID)))
+	}
+	if filter.Scope != "" {
+		selectors = append(selectors, fmt.Sprintf("%s=%s", LabelSessionProfileScope, filter.Scope))
+	}
+	if filter.TeamID != "" {
+		selectors = append(selectors, fmt.Sprintf("%s=%s", LabelSessionProfileTeamIDHash, services.HashTeamID(filter.TeamID)))
+	}
 	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
+		LabelSelector: strings.Join(selectors, ","),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list session profile secrets: %w", err)

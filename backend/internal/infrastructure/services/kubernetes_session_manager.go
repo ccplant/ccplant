@@ -39,6 +39,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -2386,6 +2387,36 @@ func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (
 
 const sessionInformerSyncTimeout = 15 * time.Second
 
+const (
+	sessionIDInformerIndex  = "agentapi.session-id"
+	sessionTagInformerIndex = "agentapi.session-tag"
+)
+
+func sessionIDIndexFunc(obj interface{}) ([]string, error) {
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return nil, err
+	}
+	if id := accessor.GetLabels()["agentapi.proxy/session-id"]; id != "" {
+		return []string{id}, nil
+	}
+	return nil, nil
+}
+
+func sessionTagIndexFunc(obj interface{}) ([]string, error) {
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return nil, err
+	}
+	var values []string
+	for key, value := range accessor.GetLabels() {
+		if strings.HasPrefix(key, "agentapi.proxy/tag-") {
+			values = append(values, key+"="+value)
+		}
+	}
+	return values, nil
+}
+
 func (m *KubernetesSessionManager) ensureSessionInformers(ctx context.Context) error {
 	m.sessionInformerOnce.Do(func() {
 		resourceFactory := informers.NewSharedInformerFactoryWithOptions(
@@ -2411,6 +2442,14 @@ func (m *KubernetesSessionManager) ensureSessionInformers(ctx context.Context) e
 			m.workloadInformer = resourceFactory.Core().V1().Pods().Informer()
 		}
 		m.allocationInformer = allocationFactory.Core().V1().Secrets().Informer()
+		for _, informer := range []cache.SharedIndexInformer{m.serviceInformer, m.workloadInformer} {
+			if err := informer.AddIndexers(cache.Indexers{
+				sessionIDInformerIndex:  sessionIDIndexFunc,
+				sessionTagInformerIndex: sessionTagIndexFunc,
+			}); err != nil {
+				log.Printf("[K8S_SESSION] Failed to add session informer indexes: %v", err)
+			}
+		}
 		resourceFactory.Start(m.sessionInformerCtx.Done())
 		allocationFactory.Start(m.sessionInformerCtx.Done())
 	})
@@ -2465,23 +2504,23 @@ func (m *KubernetesSessionManager) fetchSessionsFromInformer(labelSelector strin
 		return []entities.Session{}
 	}
 
-	deploymentMap := make(map[string]*appsv1.Deployment)
-	podMap := make(map[string]*corev1.Pod)
-	for _, item := range m.workloadInformer.GetStore().List() {
-		switch workload := item.(type) {
-		case *appsv1.Deployment:
-			if sid := workload.Labels["agentapi.proxy/session-id"]; sid != "" {
-				deploymentMap[sid] = workload
-			}
-		case *corev1.Pod:
-			if sid := workload.Labels["agentapi.proxy/session-id"]; sid != "" {
-				podMap[sid] = workload
-			}
+	serviceItems := m.serviceInformer.GetStore().List()
+	// SlackBot reuse always supplies tags. Use the first tag's informer index so
+	// lookup cost depends on matching sessions, not every session in the cluster.
+	if len(filter.Tags) > 0 {
+		keys := make([]string, 0, len(filter.Tags))
+		for key := range filter.Tags {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		key := "agentapi.proxy/tag-" + sanitizeLabelKey(keys[0])
+		indexed, indexErr := m.serviceInformer.GetIndexer().ByIndex(sessionTagInformerIndex, key+"="+sanitizeLabelValue(filter.Tags[keys[0]]))
+		if indexErr == nil {
+			serviceItems = indexed
 		}
 	}
-
 	result := make([]entities.Session, 0)
-	for _, item := range m.serviceInformer.GetStore().List() {
+	for _, item := range serviceItems {
 		svc, ok := item.(*corev1.Service)
 		if !ok || svc.DeletionTimestamp != nil || !selector.Matches(labels.Set(svc.Labels)) {
 			continue
@@ -2494,7 +2533,18 @@ func (m *KubernetesSessionManager) fetchSessionsFromInformer(labelSelector strin
 		if filter.UserID != "" && userID != filter.UserID {
 			continue
 		}
-		session := m.getOrRestoreSessionWithWorkload(svc.DeepCopy(), deploymentMap[sessionID], podMap[sessionID])
+		var deployment *appsv1.Deployment
+		var pod *corev1.Pod
+		workloads, _ := m.workloadInformer.GetIndexer().ByIndex(sessionIDInformerIndex, sessionID)
+		for _, item := range workloads {
+			switch workload := item.(type) {
+			case *appsv1.Deployment:
+				deployment = workload
+			case *corev1.Pod:
+				pod = workload
+			}
+		}
+		session := m.getOrRestoreSessionWithWorkload(svc.DeepCopy(), deployment, pod)
 		if session != nil {
 			result = append(result, session)
 		}
@@ -5024,6 +5074,10 @@ func (m *KubernetesSessionManager) buildLabelSelector(filter entities.SessionFil
 	// Add TeamID filter using sha256 hash for consistent matching
 	if filter.TeamID != "" {
 		selector += ",agentapi.proxy/team-id-hash=" + hashTeamID(filter.TeamID)
+	}
+
+	for key, value := range filter.Tags {
+		selector += ",agentapi.proxy/tag-" + sanitizeLabelKey(key) + "=" + sanitizeLabelValue(value)
 	}
 
 	return selector

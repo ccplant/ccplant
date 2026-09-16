@@ -20,8 +20,9 @@ import (
 // --- Mock SlackBot repository ---
 
 type mockSlackBotRepository struct {
-	bots  map[string]*entities.SlackBot
-	errOn string // if set, returns error for this method
+	bots         map[string]*entities.SlackBot
+	errOn        string // if set, returns error for this method
+	listAllCalls int
 }
 
 func newMockSlackBotRepository() *mockSlackBotRepository {
@@ -98,6 +99,7 @@ func (r *mockSlackBotRepository) List(_ context.Context, filter portrepos.SlackB
 }
 
 func (r *mockSlackBotRepository) ListAll(_ context.Context) ([]*entities.SlackBot, error) {
+	r.listAllCalls++
 	if r.errOn == "ListAll" {
 		return nil, errors.New("storage error")
 	}

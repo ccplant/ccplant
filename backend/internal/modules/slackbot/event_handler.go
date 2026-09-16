@@ -153,6 +153,10 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	event := payload.Event
+	threadKey := event.ThreadTs
+	if threadKey == "" {
+		threadKey = event.Ts
+	}
 
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
 	bot, err := h.resolveSlackBot(ctx, botID)
@@ -164,13 +168,20 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// If no matching bot is found, notify the user via Slack and drop the event
 	// to avoid creating sessions with empty userID.
 	if botID == slackBotDefaultID && bot == nil {
-		resolvedBot := h.resolveBotByChannel(ctx, event.Channel)
+		// Replies overwhelmingly target an already-created session. Resolve its
+		// exact bot ID from indexed session tags before doing the expensive default
+		// channel-to-bot discovery (which lists bot definitions and may call Slack).
+		var resolvedBot *entities.SlackBot
+		if event.ThreadTs != "" {
+			resolvedBot = h.resolveBotFromReusableSession(ctx, event.Channel, threadKey)
+		}
+		if resolvedBot != nil {
+			log.Printf("[SLACKBOT] Default endpoint: identified bot from reusable session: id=%s, channel=%s, thread=%s", resolvedBot.ID(), event.Channel, threadKey)
+		} else {
+			resolvedBot = h.resolveBotByChannel(ctx, event.Channel)
+		}
 		if resolvedBot == nil {
 			log.Printf("[SLACKBOT] Default endpoint: no matching bot found for channel=%s, dropping event", event.Channel)
-			threadKey := event.ThreadTs
-			if threadKey == "" {
-				threadKey = event.Ts
-			}
 			if botToken, tokenErr := h.getBotToken(ctx, nil); tokenErr == nil {
 				h.postErrorToSlack(ctx, event.Channel, threadKey,
 					":warning: このチャンネルに対応する bot が登録されていません。チャンネルの設定を確認してください。",
@@ -232,12 +243,6 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 				return nil
 			}
 		}
-	}
-
-	// Normalize thread key: use thread_ts if present (indicates a reply), otherwise use ts (root message)
-	threadKey := event.ThreadTs
-	if threadKey == "" {
-		threadKey = event.Ts
 	}
 
 	// The message and app_mention callbacks generated for one Slack post share
@@ -530,6 +535,33 @@ func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (
 		return nil, fmt.Errorf("slackbot not found: %s", id)
 	}
 	return bot, nil
+}
+
+func (h *SlackBotEventHandler) resolveBotFromReusableSession(ctx context.Context, channelID, threadTS string) *entities.SlackBot {
+	if channelID == "" || threadTS == "" {
+		return nil
+	}
+	sessions := h.sessionManager.ListSessions(entities.SessionFilter{Tags: map[string]string{
+		"slack_channel":   channelID,
+		"slack_thread_ts": threadTS,
+	}})
+	for _, session := range sessions {
+		status := strings.ToLower(session.Status())
+		if status == "stopped" || status == "failed" || status == "terminated" || status == "terminating" {
+			continue
+		}
+		id := session.Tags()["slackbot_id"]
+		if id == "" || id == slackBotDefaultID {
+			continue
+		}
+		bot, err := h.repo.Get(ctx, id)
+		if err != nil {
+			log.Printf("[SLACKBOT] Failed to resolve bot %s from reusable session %s: %v", id, session.ID(), err)
+			continue
+		}
+		return bot
+	}
+	return nil
 }
 
 // resolveBotByChannel attempts to identify a registered SlackBot by the Slack channel ID.

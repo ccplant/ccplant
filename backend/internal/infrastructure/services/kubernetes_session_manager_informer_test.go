@@ -75,6 +75,29 @@ func TestListSessionsUsesInformerWatchWithoutRelisting(t *testing.T) {
 	assertListActionCount(t, client.Actions(), "secrets", 1)
 }
 
+func TestListSessionsUsesTagIndex(t *testing.T) {
+	service := func(id, thread string) *corev1.Service {
+		return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: "test-ns", Labels: map[string]string{
+			"app.kubernetes.io/name": "agentapi-session", "app.kubernetes.io/managed-by": "agentapi-proxy",
+			"agentapi.proxy/session-id": id, "agentapi.proxy/user-id": "user-1", "agentapi.proxy/scope": "user",
+			"agentapi.proxy/tag-slack_thread_ts": thread,
+		}}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 9000}}}}
+	}
+	client := fake.NewSimpleClientset(service("wanted", "T1"), service("other", "T2"))
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	cfg.KubernetesSession.PVCEnabled = boolPtrForTest(false)
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Shutdown(time.Second) })
+	sessions := manager.ListSessions(entities.SessionFilter{Tags: map[string]string{"slack_thread_ts": "T1"}})
+	if len(sessions) != 1 || sessions[0].ID() != "wanted" {
+		t.Fatalf("tag-filtered sessions = %#v", sessions)
+	}
+}
+
 func assertListActionCount(t *testing.T, actions []ktesting.Action, resource string, want int) {
 	t.Helper()
 	got := 0
