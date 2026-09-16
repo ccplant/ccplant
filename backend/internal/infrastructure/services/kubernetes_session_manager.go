@@ -5113,6 +5113,9 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 			}},
 		},
 	)
+	if m.config.SessionPersistence.Backend == "volume" {
+		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SESSION_STATE_VOLUME_PATH", Value: "/home/agentapi/workdir/.agentapi/session-state.tar.zst"})
+	}
 	if m.getSessionControlStore() != nil {
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "SESSION_CONTROL_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
@@ -5318,6 +5321,9 @@ func boolPtr(b bool) *bool {
 // isPVCEnabled returns whether PVC is enabled for session workdir
 // Returns true by default if not explicitly set
 func (m *KubernetesSessionManager) isPVCEnabled() bool {
+	if m.config.SessionPersistence.Backend == "volume" {
+		return true
+	}
 	if m.k8sConfig.PVCEnabled == nil {
 		return true // Default to enabled
 	}

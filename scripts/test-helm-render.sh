@@ -435,10 +435,8 @@ assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/manager-s3.yaml"
 
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set sessionPersistence.backend=volume \
-  --set sessionPersistence.path=/state \
-  --set sessionPersistence.persistence.storageClass=fast \
-  --set sessionPersistence.persistence.size=20Gi >"$TMP_DIR/manager-volume.yaml"
-assert_contains 'kind: PersistentVolumeClaim' "$TMP_DIR/manager-volume.yaml"
-assert_contains 'storageClassName: "fast"' "$TMP_DIR/manager-volume.yaml"
-assert_contains 'storage: "20Gi"' "$TMP_DIR/manager-volume.yaml"
-assert_contains 'mountPath: "/state"' "$TMP_DIR/manager-volume.yaml"
+  --set session.pvc.storageClass=fast \
+  --set session.pvc.storageSize=20Gi >"$TMP_DIR/manager-volume.yaml"
+assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: "volume"' "$TMP_DIR/manager-volume.yaml"
+assert_not_contains 'kind: PersistentVolumeClaim' "$TMP_DIR/manager-volume.yaml"
+assert_not_contains 'name: session-state' "$TMP_DIR/manager-volume.yaml"

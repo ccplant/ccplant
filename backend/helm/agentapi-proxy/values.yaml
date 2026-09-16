@@ -417,13 +417,7 @@ sessionManager:
     writeTimeout: "3s"
   sessionPersistence:
     backend: ""
-    path: /var/lib/agentapi-session-state
     suspendAfter: 1h
-    persistence:
-      enabled: true
-      storageClass: ""
-      accessModes: [ReadWriteOnce]
-      size: 5Gi
     s3:
       bucket: ""
       region: garage
@@ -756,18 +750,12 @@ asset:
     prefix: "agentapi-assets/"
     endpoint: ""
 
-# ACP conversation snapshots. Use "volume" for a backend PVC or "s3" for
-# Garage/AWS-compatible object storage. S3 credentials are supplied with envFrom.
+# ACP conversation snapshots. "volume" stores each snapshot on its session's
+# workdir PVC; "s3" uses Garage/AWS-compatible object storage.
 sessionPersistence:
   backend: ""
-  path: /var/lib/agentapi-session-state
   # Suspend the workload this long after an ACP turn is checkpointed.
   suspendAfter: 1h
-  persistence:
-    enabled: true
-    storageClass: ""
-    accessModes: [ReadWriteOnce]
-    size: 5Gi
   s3:
     bucket: ""
     region: garage

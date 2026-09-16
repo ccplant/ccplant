@@ -534,6 +534,20 @@ func shellQuote(value string) string {
 }
 
 func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) (bool, error) {
+	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
+		archive, err := os.Open(volumePath)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		defer func() { _ = archive.Close() }()
+		if err := sessionstate.Unpack(archive, runtimeHome, cwd); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
 	if proxy == "" {
 		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")

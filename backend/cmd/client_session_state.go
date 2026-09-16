@@ -64,6 +64,9 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	if home == "" {
 		home = "/home/agentapi"
 	}
+	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
+		return writeSessionStateVolume(volumePath, agentType, readACPSessionID(cwd), home, cwd)
+	}
 	client := &http.Client{Timeout: 10 * time.Minute}
 	strict := os.Getenv("AGENTAPI_REQUIRE_SESSION_STATE_BACKUP") == "1"
 	direct, err := beginDirectUpload(client, proxy, token, id)
@@ -110,6 +113,33 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".session-state-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := sessionstate.Pack(tmp, agentType, acpSessionID, home, cwd); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // sessionStateCWD prefers the provisioner's canonical clone path over the

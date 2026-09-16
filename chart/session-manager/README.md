@@ -26,8 +26,10 @@ session Pods are never restarted or mutated.
 
 Session checkpoint persistence is configured with `sessionPersistence`. Set
 `backend` to `s3` and provide the bucket and credential Secret references, or
-set it to `volume` to create and mount a PVC. `suspendAfter` controls how long
-an idle session waits before it is checkpointed and suspended.
+set it to `volume` to keep each checkpoint on that session's workdir PVC.
+Volume persistence automatically enables `session.pvc`; no shared manager PVC
+is created. `suspendAfter` controls how long an idle session waits before it is
+checkpointed and suspended.
 
 The default manager image is `ccplant-api`. Session Pods use `ccplant-agent`
 with an independent content-based tag and `IfNotPresent`. An initContainer

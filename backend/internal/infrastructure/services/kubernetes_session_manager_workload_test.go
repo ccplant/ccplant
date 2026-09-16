@@ -90,6 +90,25 @@ func TestNormalizeProvisionSettingsKeepsPublicIdentityAndUsesManagerPersistence(
 	}
 }
 
+func TestVolumePersistenceUsesPerSessionWorkdirPVC(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionPersistence.Backend = "volume"
+	session := newWorkloadTestSession()
+	if !manager.isPVCEnabled() {
+		t.Fatal("volume persistence must enable the per-session workdir PVC")
+	}
+	env := manager.buildEnvVars(session, session.Request())
+	for _, item := range env {
+		if item.Name == "AGENTAPI_SESSION_STATE_VOLUME_PATH" {
+			if item.Value != "/home/agentapi/workdir/.agentapi/session-state.tar.zst" {
+				t.Fatalf("volume path = %q", item.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("session state volume path was not injected")
+}
+
 func TestSessionWorkloadReadyFallsBackToReadyPodWhenDeploymentStatusLags(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()

@@ -5,10 +5,57 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionstate"
 )
+
+func TestRestoreSessionStateFromWorkdirVolume(t *testing.T) {
+	sourceHome := t.TempDir()
+	sourceCWD := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceHome, ".session"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceHome, ".session", "acp-history.jsonl"), []byte("history\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceCWD, ".acp-session-id"), []byte("thread-1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "session-state.tar.zst")
+	archive, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessionstate.Pack(archive, "codex-acp", "thread-1", sourceHome, sourceCWD); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRuntimeHome := runtimeHome
+	runtimeHome = t.TempDir()
+	t.Cleanup(func() { runtimeHome = oldRuntimeHome })
+	restoreCWD := t.TempDir()
+	t.Setenv("AGENTAPI_SESSION_STATE_VOLUME_PATH", archivePath)
+	t.Setenv("PROVISIONER_PROXY_URL", "http://must-not-be-used.invalid")
+
+	found, err := (&Server{}).restoreSessionState(context.Background(), "session-1", restoreCWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("volume snapshot was not restored")
+	}
+	got, err := os.ReadFile(filepath.Join(runtimeHome, ".session", "acp-history.jsonl"))
+	if err != nil || string(got) != "history\n" {
+		t.Fatalf("restored history = %q, err=%v", got, err)
+	}
+}
 
 func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

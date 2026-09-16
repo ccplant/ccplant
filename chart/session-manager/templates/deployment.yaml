@@ -1,6 +1,5 @@
 {{- $sessionPersistence := .Values.sessionPersistence | default dict -}}
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" -}}
-{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" -}}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -68,7 +67,6 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ .Values.leaderElection.renewDeadline | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ .Values.leaderElection.retryPeriod | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
-            - {name: AGENTAPI_SESSION_PERSISTENCE_PATH, value: {{ $sessionPersistencePath | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER, value: {{ $sessionPersistence.suspendAfter | default "1h" | quote }}}
             {{- if $sessionPersistenceS3.bucket }}
             - {name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: {{ $sessionPersistenceS3.bucket | quote }}}
@@ -108,22 +106,11 @@ spec:
           {{- with .Values.extraEnvFrom }}
           envFrom: {{ toYaml . | nindent 12 }}
           {{- end }}
-          {{- if eq $sessionPersistenceBackend "volume" }}
-          volumeMounts:
-            - name: session-state
-              mountPath: {{ $sessionPersistencePath | quote }}
-          {{- end }}
           readinessProbe: {httpGet: {path: /readyz, port: http}, initialDelaySeconds: 2, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /livez, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
           {{- with .Values.resources }}
           resources: {{ toYaml . | nindent 12 }}
           {{- end }}
-      {{- if eq $sessionPersistenceBackend "volume" }}
-      volumes:
-        - name: session-state
-          persistentVolumeClaim:
-            claimName: {{ include "session-manager.fullname" . }}-session-state
-      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}
