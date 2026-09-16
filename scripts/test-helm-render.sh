@@ -422,3 +422,23 @@ assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-
 assert_contains 'value: "registry.example/cli:fixed"' "$TMP_DIR/manager-custom-cli.yaml"
 assert_contains "value: \"${agent_image}\"" "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
+
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set sessionPersistence.backend=s3 \
+  --set sessionPersistence.s3.bucket=manager-sessions \
+  --set sessionPersistence.s3.endpoint=https://s3.example \
+  --set sessionPersistence.s3.accessKeyIdSecretRef.name=s3-credentials \
+  --set sessionPersistence.s3.secretAccessKeySecretRef.name=s3-credentials >"$TMP_DIR/manager-s3.yaml"
+assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/manager-s3.yaml"
+assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/manager-s3.yaml"
+assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/manager-s3.yaml"
+
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set sessionPersistence.backend=volume \
+  --set sessionPersistence.path=/state \
+  --set sessionPersistence.persistence.storageClass=fast \
+  --set sessionPersistence.persistence.size=20Gi >"$TMP_DIR/manager-volume.yaml"
+assert_contains 'kind: PersistentVolumeClaim' "$TMP_DIR/manager-volume.yaml"
+assert_contains 'storageClassName: "fast"' "$TMP_DIR/manager-volume.yaml"
+assert_contains 'storage: "20Gi"' "$TMP_DIR/manager-volume.yaml"
+assert_contains 'mountPath: "/state"' "$TMP_DIR/manager-volume.yaml"

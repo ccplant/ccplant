@@ -24,6 +24,11 @@ Deployment image and the CLI source for newly created session Pods. The
 `autoUpgrade=false` to pin the manager to the installed chart version. Existing
 session Pods are never restarted or mutated.
 
+Session checkpoint persistence is configured with `sessionPersistence`. Set
+`backend` to `s3` and provide the bucket and credential Secret references, or
+set it to `volume` to create and mount a PVC. `suspendAfter` controls how long
+an idle session waits before it is checkpointed and suspended.
+
 The default manager image is `ccplant-api`. Session Pods use `ccplant-agent`
 with an independent content-based tag and `IfNotPresent`. An initContainer
 copies ccplant into an `emptyDir` mounted read-only at `/opt/ccplant/bin`.

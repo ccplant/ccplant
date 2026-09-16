@@ -68,6 +68,27 @@ leaderElection:
   renewDeadline: 10s
   retryPeriod: 2s
 
+sessionPersistence:
+  backend: ""
+  path: /var/lib/agentapi-session-state
+  suspendAfter: 1h
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+    size: 5Gi
+  s3:
+    bucket: ""
+    region: garage
+    prefix: agentapi-sessions/
+    endpoint: ""
+    accessKeyIdSecretRef:
+      name: ""
+      key: access-key-id
+    secretAccessKeySecretRef:
+      name: ""
+      key: secret-access-key
+
 session:
   image: "ghcr.io/ccplant/ccplant-agent:assets-67550f1c68bcfc457200b242f2cd4c67"
   # CLI source follows the manager release; override for a custom registry.
