@@ -109,6 +109,48 @@ func TestVolumePersistenceUsesPerSessionWorkdirPVC(t *testing.T) {
 	t.Fatal("session state volume path was not injected")
 }
 
+func TestGetSessionRepairsStockAdoptionMetadataFromService(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	manager.config.SessionPersistence.Backend = "volume"
+	session := newWorkloadTestSession()
+	session.SetUserID("")
+	session.Request().AgentType = ""
+	manager.sessions[session.ID()] = session
+
+	_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      session.ServiceName(),
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.ID(),
+				"agentapi.proxy/user-id":    "adopted-user",
+			},
+			Annotations: map[string]string{"agentapi.proxy/agent-type": "codex-acp"},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored := manager.GetSession(session.ID())
+	if restored == nil {
+		t.Fatal("session was not returned")
+	}
+	if restored.UserID() != "adopted-user" {
+		t.Fatalf("user ID = %q, want adopted-user", restored.UserID())
+	}
+	ks, ok := restored.(*KubernetesSession)
+	if !ok {
+		t.Fatalf("session type = %T, want *KubernetesSession", restored)
+	}
+	if ks.Request().AgentType != "codex-acp" {
+		t.Fatalf("agent type = %q, want codex-acp", ks.Request().AgentType)
+	}
+	if !manager.requiresSessionCheckpoint(ks) {
+		t.Fatal("repaired ACP session must require a checkpoint")
+	}
+}
+
 func TestSessionWorkloadReadyFallsBackToReadyPodWhenDeploymentStatusLags(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()
