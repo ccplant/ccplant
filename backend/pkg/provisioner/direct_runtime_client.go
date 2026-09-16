@@ -230,9 +230,15 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 }
 
 func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command core.Command) {
-	if command.Method == http.MethodPost && command.Path == "/internal/session-prompt" {
+	if command.Method == http.MethodPost && (command.Path == "/internal/session-prompt" || command.Path == "/internal/session-interrupt-prompt") {
 		// Direct runtime sessions expose an ACP bridge. Force the ACP prompt path
 		// here instead of guessing an HTTP endpoint from the configured agent name.
+		if command.Path == "/internal/session-interrupt-prompt" {
+			if err := executeControlCommandAtBase(commandCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.localURL); err != nil {
+				w.postExecutionError(commandCtx, command, err)
+				return
+			}
+		}
 		err := executeControlCommandAtBase(commandCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.localURL)
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)

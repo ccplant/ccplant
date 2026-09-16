@@ -2828,7 +2828,7 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 	}
 
 	status := session.Status()
-	if status != "active" && status != "starting" {
+	if status != "active" && status != "starting" && status != "running" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
 	if store := m.connectedSessionControlStore(ctx, id); store != nil {
@@ -2981,7 +2981,7 @@ func (m *KubernetesSessionManager) StopAgent(ctx context.Context, id string) err
 
 	// Check session status
 	status := session.Status()
-	if status != "active" && status != "starting" {
+	if status != "active" && status != "starting" && status != "running" {
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
 	if store := m.connectedSessionControlStore(ctx, id); store != nil {

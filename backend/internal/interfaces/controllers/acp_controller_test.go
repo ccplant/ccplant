@@ -57,6 +57,7 @@ func (s *fakeSession) SetStatusSilent(status string)       { s.status = status }
 type fakeSessionManager struct {
 	sessions   map[string]*fakeSession
 	deletedIDs []string
+	calls      []string
 }
 
 func (m *fakeSessionManager) GetSession(id string) entities.Session {
@@ -87,9 +88,13 @@ func (m *fakeSessionManager) DeleteSession(id string) error {
 	return nil
 }
 func (m *fakeSessionManager) SendMessage(_ context.Context, _ string, _ string) error {
+	m.calls = append(m.calls, "send")
 	return nil
 }
-func (m *fakeSessionManager) StopAgent(_ context.Context, _ string) error { return nil }
+func (m *fakeSessionManager) StopAgent(_ context.Context, _ string) error {
+	m.calls = append(m.calls, "stop")
+	return nil
+}
 func (m *fakeSessionManager) GetMessages(_ context.Context, _ string) ([]repositories.Message, error) {
 	return nil, nil
 }
