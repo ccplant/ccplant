@@ -2854,7 +2854,9 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 // uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
 	if ks, ok := m.GetSession(id).(*KubernetesSession); ok && ks != nil {
-		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
+		svc, err := telemetry.Operation(ctx, "sessionmanager.SendMessage.GetService", func(operationCtx context.Context) (*corev1.Service, error) {
+			return m.client.CoreV1().Services(m.namespace).Get(operationCtx, ks.ServiceName(), metav1.GetOptions{})
+		}, telemetry.String("session.id", id), telemetry.String("k8s.service.name", ks.ServiceName()))
 		if err != nil {
 			return err
 		}
@@ -2873,16 +2875,20 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 		return fmt.Errorf("session is not active: status=%s", status)
 	}
 	if store := m.connectedSessionControlStore(ctx, id); store != nil {
+		telemetry.SetAttributes(ctx, telemetry.String("session.message_transport", "control_store"))
 		payload, err := json.Marshal(map[string]string{"content": message})
 		if err != nil {
 			return fmt.Errorf("marshal session control prompt: %w", err)
 		}
-		_, err = store.EnqueueCommand(ctx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "prompt", Payload: payload, CreatedAt: time.Now().UTC()})
+		_, err = telemetry.Operation(ctx, "sessionmanager.SendMessage.EnqueueControlPrompt", func(operationCtx context.Context) (string, error) {
+			return store.EnqueueCommand(operationCtx, id, coresessioncontrol.Command{ID: uuid.NewString(), Type: "prompt", Payload: payload, CreatedAt: time.Now().UTC()})
+		}, telemetry.String("session.id", id))
 		if err != nil {
 			return fmt.Errorf("enqueue session control prompt: %w", err)
 		}
 		return nil
 	}
+	telemetry.SetAttributes(ctx, telemetry.String("session.message_transport", "pod_http"))
 
 	serviceName := fmt.Sprintf("agentapi-session-%s-svc", id)
 	baseURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d",
@@ -2898,14 +2904,20 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 		}
 	}
 	if agentType == "" {
-		agentType = m.getSessionAgentTypeFromService(ctx, serviceName)
+		resolvedAgentType, _ := telemetry.Operation(ctx, "sessionmanager.SendMessage.ResolveAgentType", func(operationCtx context.Context) (string, error) {
+			return m.getSessionAgentTypeFromService(operationCtx, serviceName), nil
+		}, telemetry.String("session.id", id), telemetry.String("k8s.service.name", serviceName))
+		agentType = resolvedAgentType
 	}
+	telemetry.SetAttributes(ctx, telemetry.String("session.agent_type", agentType))
 
 	var jsonData []byte
 	var postURL string
 	if isACPAgentType(agentType) {
 		// Fetch the ACP session ID from GET /session.
-		acpSessionID, err := m.getACPSessionIDFromPod(ctx, baseURL)
+		acpSessionID, err := telemetry.Operation(ctx, "sessionmanager.SendMessage.GetACPSession", func(operationCtx context.Context) (string, error) {
+			return m.getACPSessionIDFromPod(operationCtx, baseURL)
+		}, telemetry.String("session.id", id))
 		if err != nil {
 			return fmt.Errorf("failed to get ACP session ID: %w", err)
 		}
@@ -2958,7 +2970,17 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := telemetry.Operation(ctx, "sessionmanager.SendMessage.PostToSession", func(operationCtx context.Context) (*http.Response, error) {
+			resp, err := instrumentedHTTPClient.Do(req.WithContext(operationCtx))
+			if resp != nil {
+				telemetry.SetAttributes(operationCtx, telemetry.Int64("http.response.status_code", int64(resp.StatusCode)))
+			}
+			return resp, err
+		},
+			telemetry.String("session.id", id),
+			telemetry.String("session.agent_type", agentType),
+			telemetry.Int64("session.send_attempt", int64(i+1)),
+		)
 		if err == nil && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted) {
 			_ = resp.Body.Close()
 			now := time.Now()
@@ -2966,7 +2988,9 @@ func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, m
 				ks.SetLastMessageAt(now)
 			}
 			svcName := fmt.Sprintf("agentapi-session-%s-svc", id)
-			if patchErr := m.patchLastMessageAt(context.Background(), svcName, now); patchErr != nil {
+			if patchErr := telemetry.OperationErr(context.WithoutCancel(ctx), "sessionmanager.SendMessage.PatchLastMessageAt", func(operationCtx context.Context) error {
+				return m.patchLastMessageAt(operationCtx, svcName, now)
+			}, telemetry.String("session.id", id), telemetry.String("k8s.service.name", svcName)); patchErr != nil {
 				log.Printf("[K8S_SESSION] Failed to update last-message-at for session %s: %v", id, patchErr)
 			}
 			log.Printf("[K8S_SESSION] Successfully sent message to session %s (agentType=%q)", id, agentType)
@@ -3111,7 +3135,11 @@ func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Cont
 	if store == nil {
 		return nil
 	}
-	connected, err := store.IsConnected(ctx, sessionID)
+	connected, err := telemetry.Operation(ctx, "sessionmanager.CheckControlConnection", func(operationCtx context.Context) (bool, error) {
+		connected, err := store.IsConnected(operationCtx, sessionID)
+		telemetry.SetAttributes(operationCtx, telemetry.Bool("session.control_connected", connected))
+		return connected, err
+	}, telemetry.String("session.id", sessionID))
 	if err != nil {
 		log.Printf("[SESSION_CONTROL] Failed to check connection for session %s; using direct transport: %v", sessionID, err)
 		return nil
