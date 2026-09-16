@@ -192,13 +192,9 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	}
 
 	// ── Step 1.5: write webhook payload file ─────────────────────────────────
-	// For stock sessions the pod is pre-created without a webhook-payload
-	// Secret volume (payload unknown at pod creation time).  We write the
-	// payload to the well-known path here so that /opt/webhook/payload.json is
-	// available to the agent regardless of whether the session was fulfilled
-	// from the stock inventory or from a freshly created pod.
-	// For non-stock sessions the file already exists (read-only Secret volume
-	// mount), so writeWebhookPayloadFile is a no-op in that case.
+	// The session manager sends the payload in the provision request. Write it
+	// to the well-known path inside the session instead of relying on a
+	// ConfigMap/Secret volume that an external manager may be unable to mount.
 	s.setPhase("provision:write-webhook-payload")
 	if settings.WebhookPayload != "" {
 		writeWebhookPayloadFile(settings.WebhookPayload)
