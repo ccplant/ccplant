@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -172,6 +173,43 @@ func TestDirectRuntimeSessionPromptUsesACPProtocol(t *testing.T) {
 	}
 	if len(frames) != 1 || frames[0].Status != http.StatusNoContent || !frames[0].Done || frames[0].CommandStreamID != "1-0" {
 		t.Fatalf("frames = %#v", frames)
+	}
+}
+
+func TestDirectRuntimeInterruptPromptCancelsBeforePrompt(t *testing.T) {
+	var methods []string
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case http.MethodGet + " /session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
+		case http.MethodPost + " /rpc":
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			methods = append(methods, body["method"].(string))
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer local.Close()
+
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer parent.Close()
+
+	worker := &directRuntimeWorker{
+		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
+		client: parent.Client(), localURL: local.URL,
+	}
+	worker.executeRequest(context.Background(), core.Command{
+		ID: "prompt-1", StreamID: "1-0", Method: http.MethodPost, Path: "/internal/session-interrupt-prompt", Body: []byte(`{"content":"replace current task"}`),
+	})
+
+	if !reflect.DeepEqual(methods, []string{"session/cancel", "session/prompt"}) {
+		t.Fatalf("RPC methods = %#v", methods)
 	}
 }
 

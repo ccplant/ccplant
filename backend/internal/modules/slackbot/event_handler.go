@@ -46,14 +46,21 @@ type SlackBotEventHandler struct {
 	// dryRun disables actual session creation and Slack posts; actions are only logged.
 	// Enabled via AGENTAPI_SLACK_DRY_RUN environment variable.
 	dryRun bool
-	// pendingThreads tracks channel+thread combinations that have a session creation
-	// in-flight. Slack may emit both "message" and "app_mention" events for the same
-	// @mention within milliseconds of each other. Without this guard both events would
-	// pass the reuse check (no session exists yet) and spawn duplicate sessions.
-	// Key: "channel:threadKey"  Value: struct{}
-	pendingThreads sync.Map
+	// pendingThreads serializes session creation/reuse requests for each Slack thread.
+	// Distinct messages in one thread must be queued rather than discarded while an
+	// earlier request is in flight. Exact duplicate callbacks are handled separately by
+	// processedEvents using the Slack message timestamp.
+	pendingThreadsMu sync.Mutex
+	pendingThreads   map[string]*pendingThreadQueue
 	// processedEvents tracks recently accepted Slack message timestamps.
 	processedEvents sync.Map
+}
+
+// pendingThreadQueue is a small FIFO chain for one Slack thread. Each reservation
+// waits for its predecessor channel to close, then closes its own channel when done.
+type pendingThreadQueue struct {
+	tail chan struct{}
+	refs int
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -79,7 +86,39 @@ func NewSlackBotEventHandler(
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		baseURL:                   baseURL,
 		dryRun:                    dryRun,
+		pendingThreads:            make(map[string]*pendingThreadQueue),
 	}
+}
+
+// reserveThreadTurn appends work to a per-thread FIFO queue. It returns a wait
+// function and a release function so callers can reserve ordering before starting
+// their asynchronous goroutine without blocking Slack event acknowledgement.
+func (h *SlackBotEventHandler) reserveThreadTurn(key string) (wait, release func()) {
+	h.pendingThreadsMu.Lock()
+	queue := h.pendingThreads[key]
+	if queue == nil {
+		ready := make(chan struct{})
+		close(ready)
+		queue = &pendingThreadQueue{tail: ready}
+		h.pendingThreads[key] = queue
+	}
+	predecessor := queue.tail
+	done := make(chan struct{})
+	queue.tail = done
+	queue.refs++
+	h.pendingThreadsMu.Unlock()
+
+	wait = func() { <-predecessor }
+	release = func() {
+		close(done)
+		h.pendingThreadsMu.Lock()
+		queue.refs--
+		if queue.refs == 0 && queue.tail == done {
+			delete(h.pendingThreads, key)
+		}
+		h.pendingThreadsMu.Unlock()
+	}
+	return wait, release
 }
 
 // SlackPayload represents the outer Slack event payload structure
@@ -342,21 +381,16 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 
 	sessionID := uuid.New().String()
 
-	// Dedup guard: Slack can emit both "message" and "app_mention" events for the same
-	// @mention within milliseconds. Both would pass the reuse check above (the session
-	// doesn't exist yet when they run concurrently) and would each spawn a new session.
-	// Use LoadOrStore so that only the first event proceeds; the second is dropped.
-	// The key is released once session creation completes (success or failure).
+	// Serialize distinct requests for the same thread. The first request may still be
+	// creating the session when a follow-up arrives, so the follow-up must wait until
+	// reuse can resolve authoritatively instead of being discarded as a duplicate.
 	pendingKey := botID + ":" + channel + ":" + threadKey + ":" + triggeredUserID
-	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
-		h.processedEvents.Delete(eventKey)
-		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
-		return nil
-	}
+	waitForTurn, releaseTurn := h.reserveThreadTurn(pendingKey)
 
 	// Create session asynchronously so we don't block event processing
 	go func() {
-		defer h.pendingThreads.Delete(pendingKey)
+		waitForTurn()
+		defer releaseTurn()
 		bgCtx := context.Background()
 
 		if h.dryRun {
@@ -428,6 +462,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			ReuseSession:             true,
 			ReuseMatchTags:           reuseFilter.Tags,
 			ReuseMessage:             h.buildMessage(bot, payloadMap, event.Text, true),
+			StopBeforeReuse:          true,
 			DeferReuseToStart:        true,
 			MaxSessions:              maxSessions,
 			LimitMatchTags:           map[string]string{"slackbot_id": botID},

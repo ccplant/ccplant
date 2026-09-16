@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,65 @@ func TestStartSessionReusesMatchingDirectRuntimeThroughPromptCommand(t *testing.
 	}
 	if got := string(tunnel.body); got != `{"content":"follow up","type":"user"}` {
 		t.Fatalf("queued body = %s", got)
+	}
+}
+
+func TestStartSessionInterruptsRunningDirectRuntimeBeforePrompt(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"existing": {id: "existing", userID: "user-1", scope: entities.ScopeUser, status: "running", tags: map[string]string{"slack_thread_ts": "123", "slackbot_id": "bot-1"}},
+	}}
+	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "existing", RemoteSessionID: "runner-1", ManagerID: "manager-a",
+		Transport: repositories.SessionRouteTransportDirectRuntime, Status: "running",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+		Tags: map[string]string{"slack_thread_ts": "123", "slackbot_id": "bot-1"},
+	}}
+	tunnel := &lifecycleTunnel{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routes), controllers.WithESMControlTunnel(tunnel),
+	)
+	body := `{"reuse_match_tags":{"slack_thread_ts":"123","slackbot_id":"bot-1"},"reuse_message":"follow up","stop_before_reuse":true}`
+	req := httptest.NewRequest(http.MethodPost, "/start", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanCreate: true, CanRead: true},
+	})
+
+	if err := controller.StartSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"session_reused":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !tunnel.enqueued || tunnel.path != "/internal/session-interrupt-prompt" {
+		t.Fatalf("enqueued=%t path=%q", tunnel.enqueued, tunnel.path)
+	}
+}
+
+func TestStartSessionStopsRunningManagedSessionBeforePrompt(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"existing": {id: "existing", userID: "user-1", scope: entities.ScopeUser, status: "running", tags: map[string]string{"slack_thread_ts": "123"}},
+	}}
+	controller := controllers.NewSessionController(&routeSessionManagerProvider{manager: manager}, nil)
+	body := `{"reuse_match_tags":{"slack_thread_ts":"123"},"reuse_message":"follow up","stop_before_reuse":true}`
+	req := httptest.NewRequest(http.MethodPost, "/start", strings.NewReader(body))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanCreate: true, CanRead: true},
+	})
+
+	if err := controller.StartSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(manager.calls, []string{"stop", "send"}) {
+		t.Fatalf("reuse calls = %#v", manager.calls)
 	}
 }
 

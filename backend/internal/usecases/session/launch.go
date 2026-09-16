@@ -228,6 +228,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		InitialMessage:           req.InitialMessage,
 		ReuseMatchTags:           req.ReuseMatchTags,
 		ReuseMessage:             req.ReuseMessage,
+		StopBeforeReuse:          req.StopBeforeReuse,
 		LimitMatchTags:           req.LimitMatchTags,
 		MaxSessions:              req.MaxSessions,
 		GithubToken:              req.GithubToken,

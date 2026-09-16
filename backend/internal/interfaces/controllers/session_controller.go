@@ -374,7 +374,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	}
 	// Reuse and limit controls belong to this /start invocation and must not be
 	// persisted as part of the session's restart configuration.
-	startReq.ReuseMatchTags, startReq.ReuseMessage = nil, ""
+	startReq.ReuseMatchTags, startReq.ReuseMessage, startReq.StopBeforeReuse = nil, "", false
 	startReq.LimitMatchTags, startReq.MaxSessions = nil, 0
 
 	// Persist the explicit input before profile defaults are merged.
@@ -442,7 +442,11 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime queue is unavailable")
 			}
 			body, _ := json.Marshal(map[string]string{"content": startReq.ReuseMessage, "type": "user"})
-			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/internal/session-prompt", bytes.NewReader(body))
+			promptPath := "/internal/session-prompt"
+			if startReq.StopBeforeReuse && strings.EqualFold(route.Status, "running") {
+				promptPath = "/internal/session-interrupt-prompt"
+			}
+			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local"+promptPath, bytes.NewReader(body))
 			if reqErr != nil {
 				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to build reusable session message").SetInternal(reqErr)
 			}
@@ -473,6 +477,11 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 		status := strings.ToLower(existing.Status())
 		if terminalReuseStatus(status) || status == "suspended" {
 			continue
+		}
+		if startReq.StopBeforeReuse && status == "running" {
+			if err := c.getSessionManager().StopAgent(ctx.Request().Context(), existing.ID()); err != nil {
+				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to interrupt reusable session").SetInternal(err)
+			}
 		}
 		if err := c.getSessionManager().SendMessage(ctx.Request().Context(), existing.ID(), startReq.ReuseMessage); err != nil {
 			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to route reusable session message").SetInternal(err)

@@ -185,8 +185,10 @@ type StartRequest struct {
 	// ReuseMessage is queued to that session instead of creating a new one.
 	ReuseMatchTags map[string]string `json:"reuse_match_tags,omitempty"`
 	ReuseMessage   string            `json:"reuse_message,omitempty"`
-	LimitMatchTags map[string]string `json:"limit_match_tags,omitempty"`
-	MaxSessions    int               `json:"max_sessions,omitempty"`
+	// StopBeforeReuse interrupts a running reusable session before delivering ReuseMessage.
+	StopBeforeReuse bool              `json:"stop_before_reuse,omitempty"`
+	LimitMatchTags  map[string]string `json:"limit_match_tags,omitempty"`
+	MaxSessions     int               `json:"max_sessions,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -216,6 +218,7 @@ type RunServerRequest struct {
 	InitialMessage           string
 	ReuseMatchTags           map[string]string
 	ReuseMessage             string
+	StopBeforeReuse          bool
 	LimitMatchTags           map[string]string
 	MaxSessions              int
 	Teams                    []string          // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
