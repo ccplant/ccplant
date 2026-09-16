@@ -552,21 +552,10 @@
     },
     "sessionPersistence": {
       "type": "object",
-      "required": ["backend", "path", "suspendAfter", "persistence", "s3"],
+      "required": ["backend", "suspendAfter", "s3"],
       "properties": {
         "backend": { "enum": ["", "volume", "s3"] },
-        "path": { "type": "string", "minLength": 1 },
         "suspendAfter": { "type": "string", "minLength": 1 },
-        "persistence": {
-          "type": "object",
-          "required": ["enabled", "storageClass", "accessModes", "size"],
-          "properties": {
-            "enabled": { "type": "boolean" },
-            "storageClass": { "type": "string" },
-            "accessModes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-            "size": { "type": "string", "minLength": 1 }
-          }
-        },
         "s3": {
           "type": "object",
           "required": ["bucket", "region", "prefix", "endpoint"],

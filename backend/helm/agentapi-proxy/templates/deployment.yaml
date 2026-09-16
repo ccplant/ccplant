@@ -13,7 +13,6 @@
 {{- $assetS3 := $asset.s3 | default dict }}
 {{- $sessionPersistence := .Values.sessionPersistence | default dict }}
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
-{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceSuspendAfter := $sessionPersistence.suspendAfter | default "1h" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 {{- $valuesMap := .Values | toJson | fromJson }}
@@ -571,8 +570,6 @@ spec:
             {{- if not $sessionManagerEnabled }}
             - name: AGENTAPI_SESSION_PERSISTENCE_BACKEND
               value: {{ $sessionPersistenceBackend | quote }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_PATH
-              value: {{ $sessionPersistencePath | quote }}
             - name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER
               value: {{ $sessionPersistenceSuspendAfter | quote }}
             {{- if $sessionPersistenceS3.bucket }}
@@ -912,10 +909,6 @@ spec:
             - name: asset-storage
               mountPath: {{ $assetStoragePath | quote }}
             {{- end }}
-            {{- if and (not $sessionManagerEnabled) (eq $sessionPersistenceBackend "volume") }}
-            - name: session-state
-              mountPath: {{ $sessionPersistencePath | quote }}
-            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -968,11 +961,6 @@ spec:
           {{ else }}
           emptyDir: {}
           {{ end }}
-        {{- end }}
-        {{- if and (not $sessionManagerEnabled) (eq $sessionPersistenceBackend "volume") }}
-        - name: session-state
-          persistentVolumeClaim:
-            claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

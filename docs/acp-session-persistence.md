@@ -154,20 +154,19 @@ fork API を使って新しい continuation ID を発行する。
 
 ### 配置
 
-セッション Pod に user / team scope の RWX PVC を `/session-state` として mount する。
+各セッションの workdir PVC に workspace と checkpoint archive を保存する。
+session-manager 自身には共有 PVC を mount しない。
 
 ```text
-/session-state/<scope>/<owner>/<continuation-id>/
-  manifest.json
-  acp-session-id
-  claude/projects/<project-key>/<sessionId>.jsonl
-  claude/projects/<project-key>/<sessionId>/...
-  codex/sessions/YYYY/MM/DD/rollout-...-<threadId>.jsonl
+/home/agentapi/workdir/
+  repo/...
+  .agentapi/session-state.tar.zst
 ```
 
-agent の通常ホームを丸ごと PVC にしない。init container が manifest の allowlist だけを
-runtime home に materialize し、agent 終了時または checkpoint 時に atomic rename で
-volume 側へ反映する。これにより credentials / generated config との上書き競合を避ける。
+agent の通常ホームを丸ごと PVC にしない。会話状態はruntime homeにmaterializeし、
+checkpoint時に一時ファイルへのwrite、fsync、atomic renameの順でworkdir PVCへ反映する。
+workspaceは同じPVCを再mountするためそのまま保持され、credentials / generated configとの
+上書き競合も避けられる。
 
 Claude は transcript を直接 volume 配下へ置く専用 `CLAUDE_CONFIG_DIR` も選べるが、設定や
 credentials まで同じ root に入るため、MVP では allowlist copy を共通方式とする。
@@ -203,7 +202,7 @@ annotation に保存されるため、proxy の再起動や replica の切り替
 ### 特性
 
 - 長所: 実装が単純、追記が安価、復元が速い
-- 短所: RWX storage が必要、cluster / region を越えにくい、PVC 障害ドメインに依存
+- 短所: cluster / region を越えにくい、セッションごとのPVC障害ドメインに依存
 
 ## パターン B: オブジェクトストレージ永続化
 

@@ -70,13 +70,7 @@ leaderElection:
 
 sessionPersistence:
   backend: ""
-  path: /var/lib/agentapi-session-state
   suspendAfter: 1h
-  persistence:
-    enabled: true
-    storageClass: ""
-    accessModes: [ReadWriteOnce]
-    size: 5Gi
   s3:
     bucket: ""
     region: garage
@@ -103,6 +97,7 @@ session:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "2", memory: 4Gi}
   pvc:
+    # Automatically enabled when sessionPersistence.backend=volume.
     enabled: false
     storageClass: ""
     storageSize: 10Gi

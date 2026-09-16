@@ -400,7 +400,7 @@ type MemoryS3Config struct {
 }
 
 // SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
-// to Path; "s3" uses any S3-compatible service (including Garage).
+// to each Kubernetes session's workdir PVC; "s3" uses an S3-compatible service.
 type SessionPersistenceConfig struct {
 	Backend      string          `json:"backend" mapstructure:"backend"`
 	Path         string          `json:"path" mapstructure:"path"`

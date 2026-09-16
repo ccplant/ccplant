@@ -5,6 +5,8 @@ import (
 	"context"
 	"io"
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
 func TestVolumeSessionStateStore(t *testing.T) {
@@ -31,5 +33,16 @@ func TestVolumeSessionStateStore(t *testing.T) {
 	}
 	if err := store.Save(ctx, "../escape", bytes.NewReader(want)); err == nil {
 		t.Fatal("expected invalid id error")
+	}
+}
+
+func TestVolumeSessionStateStoreIsOwnedBySessionPod(t *testing.T) {
+	path := t.TempDir() + "/manager-state"
+	store, err := NewSessionStateStore(context.Background(), config.SessionPersistenceConfig{Backend: "volume", Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.(podVolumeSessionStateStore); !ok {
+		t.Fatalf("store type = %T, want podVolumeSessionStateStore", store)
 	}
 }
