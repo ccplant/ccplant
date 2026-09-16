@@ -70,15 +70,17 @@ func TestPruneStaleSlackbotSessionsDryRun(t *testing.T) {
 func TestPruneSessionsWithTTLDeletesCompletedOneshotAfterOneMinute(t *testing.T) {
 	now := time.Now()
 	stale := completedOneshotSession("stale-oneshot", now.Add(-2*time.Minute))
+	staleActive := entities.NewProxySessionWithStatus("stale-active-oneshot", "user", entities.ScopeUser, "", map[string]string{"oneshot": "true", "session_ttl": "1m"}, now.Add(-time.Hour), "active")
+	staleActive.SetUpdatedAt(now.Add(-2 * time.Minute))
 	fresh := completedOneshotSession("fresh-oneshot", now.Add(-30*time.Second))
 	running := entities.NewProxySessionWithStatus("running-oneshot", "user", entities.ScopeUser, "", map[string]string{"oneshot": "true"}, now.Add(-time.Hour), "running")
 	regular := testSession("regular", false, now.Add(-100*time.Hour))
-	mgr := &mockSessionManager{sessions: []entities.Session{stale, fresh, running, regular}}
+	mgr := &mockSessionManager{sessions: []entities.Session{stale, staleActive, fresh, running, regular}}
 
 	worker := NewCleanupWorker(mgr, CleanupWorkerConfig{SessionTTL: 72 * time.Hour})
 	worker.pruneSessionsWithTTL(context.Background())
 
-	if len(mgr.deletedIDs) != 1 || mgr.deletedIDs[0] != "stale-oneshot" {
+	if len(mgr.deletedIDs) != 2 || mgr.deletedIDs[0] != "stale-oneshot" || mgr.deletedIDs[1] != "stale-active-oneshot" {
 		t.Fatalf("deleted = %v", mgr.deletedIDs)
 	}
 }
