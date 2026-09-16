@@ -888,14 +888,6 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 		session.SetDescription(req.InitialMessage)
 	}
 
-	// Create webhook payload Secret if webhook payload is provided
-	if len(webhookPayload) > 0 {
-		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret: %v", err)
-			// Continue anyway - session will work without payload file
-		}
-	}
-
 	// Ensure service account exists for team-scoped sessions (best-effort)
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
 		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
@@ -912,6 +904,9 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 		sessionSettings = m.normalizeProvisionSettings(req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
+	}
+	if len(webhookPayload) > 0 {
+		sessionSettings.WebhookPayload = string(webhookPayload)
 	}
 
 	session.SetProvisionSettings(sessionSettings)
@@ -1727,13 +1722,6 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		log.Printf("[K8S_SESSION] Warning: failed to check PVC for stock session %s: %v", stockID, pvcErr)
 	}
 
-	// Create webhook payload Secret if provided.
-	if len(webhookPayload) > 0 {
-		if err := m.createWebhookPayloadSecret(ctx, session, webhookPayload); err != nil {
-			log.Printf("[K8S_SESSION] Warning: failed to create webhook payload secret for stock session %s: %v", stockID, err)
-		}
-	}
-
 	// Ensure service account for team-scoped sessions (best-effort).
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" && m.serviceAccountEnsurer != nil {
 		if err := m.serviceAccountEnsurer.EnsureServiceAccount(ctx, req.TeamID); err != nil {
@@ -1749,6 +1737,9 @@ func (m *KubernetesSessionManager) adoptStockSession(
 		sessionSettings = m.normalizeProvisionSettings(req.ProvisionSettings)
 	} else {
 		sessionSettings = m.buildSessionSettings(ctx, session, req, webhookPayload)
+	}
+	if len(webhookPayload) > 0 {
+		sessionSettings.WebhookPayload = string(webhookPayload)
 	}
 	session.SetProvisionSettings(sessionSettings)
 	if err := m.createSessionSettingsSecretFromSettings(ctx, session, req, sessionSettings); err != nil {
@@ -3944,41 +3935,9 @@ func findContainerByName(containers []corev1.Container, name string) *corev1.Con
 // defaultSlackBotTokenSecretKey is the default key within the Secret that holds the Slack bot token
 const defaultSlackBotTokenSecretKey = "bot-token"
 
-// createWebhookPayloadSecret creates a Secret containing the webhook payload JSON
-func (m *KubernetesSessionManager) createWebhookPayloadSecret(
-	ctx context.Context,
-	session *KubernetesSession,
-	payload []byte,
-) error {
-	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            secretName,
-			Namespace:       m.namespace,
-			OwnerReferences: m.sessionServiceOwnerReferences(ctx, session.id),
-			Labels: map[string]string{
-				"agentapi.proxy/session-id": session.id,
-				"agentapi.proxy/user-id":    sanitizeLabelValue(session.Request().UserID),
-				"agentapi.proxy/resource":   "webhook-payload",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"payload.json": payload,
-		},
-	}
-
-	_, err := m.client.CoreV1().Secrets(m.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create webhook payload secret: %w", err)
-	}
-
-	log.Printf("[K8S_SESSION] Created webhook payload Secret %s for session %s", secretName, session.id)
-	return nil
-}
-
 // deleteWebhookPayloadSecret deletes the webhook payload Secret for a session
+// left behind by versions that mounted webhook payloads instead of sending them
+// in provision requests.
 func (m *KubernetesSessionManager) deleteWebhookPayloadSecret(ctx context.Context, session *KubernetesSession) error {
 	secretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
 	err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
@@ -4738,20 +4697,6 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 	// Note: The "initial-message-state" EmptyDir volume is no longer needed because
 	// the initial-message-sender sidecar has been removed. Initial message sending
 	// is now handled internally by agent-provisioner.
-
-	// Add webhook payload volume if webhook payload is provided
-	if len(session.WebhookPayload()) > 0 {
-		webhookPayloadSecretName := fmt.Sprintf("%s-webhook-payload", session.ServiceName())
-		volumes = append(volumes, corev1.Volume{
-			Name: "webhook-payload",
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: webhookPayloadSecretName,
-					Optional:   boolPtr(true),
-				},
-			},
-		})
-	}
 
 	// No otelcol ConfigMap volume needed: otelcol runs as an in-process subprocess
 	// and generates its config file at /tmp/otelcol-config.yaml at provisioning time.
@@ -6038,16 +5983,6 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "scia-mitm-ca",
 			MountPath: "/etc/scia/mitm",
-			ReadOnly:  true,
-		})
-	}
-
-	// Add webhook payload volume mount if webhook payload is provided
-	if len(session.WebhookPayload()) > 0 {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "webhook-payload",
-			MountPath: "/opt/webhook/payload.json",
-			SubPath:   "payload.json",
 			ReadOnly:  true,
 		})
 	}
