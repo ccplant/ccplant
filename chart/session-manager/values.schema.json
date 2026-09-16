@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["replicaCount", "image", "parent", "runner", "internalApi", "session"],
+  "required": ["replicaCount", "image", "parent", "runner", "internalApi", "sessionPersistence", "session"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 1},
     "image": {
@@ -35,6 +35,35 @@
       "required": ["tokenSecretRef"],
       "properties": {"tokenSecretRef": {"$ref": "#/$defs/namedSecretRef"}}
     },
+    "sessionPersistence": {
+      "type": "object",
+      "required": ["backend", "path", "suspendAfter", "persistence", "s3"],
+      "properties": {
+        "backend": {"enum": ["", "volume", "s3"]},
+        "path": {"type": "string", "minLength": 1},
+        "suspendAfter": {"type": "string", "minLength": 1},
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "storageClass": {"type": "string"},
+            "accessModes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "size": {"type": "string", "minLength": 1}
+          }
+        },
+        "s3": {
+          "type": "object",
+          "properties": {
+            "bucket": {"type": "string"},
+            "region": {"type": "string"},
+            "prefix": {"type": "string"},
+            "endpoint": {"type": "string"},
+            "accessKeyIdSecretRef": {"$ref": "#/$defs/optionalNamedSecretRef"},
+            "secretAccessKeySecretRef": {"$ref": "#/$defs/optionalNamedSecretRef"}
+          }
+        }
+      }
+    },
     "session": {
       "type": "object",
       "required": ["provisioner"],
@@ -55,6 +84,14 @@
       "required": ["name", "key"],
       "properties": {
         "name": {"type": "string", "minLength": 1},
+        "key": {"type": "string", "minLength": 1}
+      }
+    },
+    "optionalNamedSecretRef": {
+      "type": "object",
+      "required": ["name", "key"],
+      "properties": {
+        "name": {"type": "string"},
         "key": {"type": "string", "minLength": 1}
       }
     }
