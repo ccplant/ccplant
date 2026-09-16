@@ -74,6 +74,9 @@ func (t *Tunnel) Do(ctx context.Context, managerID, sessionID, remoteSessionID s
 // operations use this so slow Kubernetes termination cannot be cut off by an HTTP
 // proxy timeout; the manager resumes the durable command after reconnecting.
 func (t *Tunnel) Enqueue(ctx context.Context, managerID, sessionID, remoteSessionID string, req *http.Request) (string, error) {
+	// Durable commands cross an HTTP polling boundary, so explicitly persist the
+	// W3C trace context in the command headers for extraction by the runtime.
+	telemetry.InjectHTTP(ctx, req)
 	var body []byte
 	if req.Body != nil {
 		var err error

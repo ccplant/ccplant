@@ -15,6 +15,8 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // SessionManager is a worker-side port that delegates every session operation
@@ -60,6 +62,18 @@ func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL strin
 }
 
 func (m *SessionManager) startSession(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, bool, error) {
+	type startResult struct {
+		id     string
+		reused bool
+	}
+	result, err := telemetry.LoggedOperation(ctx, "controlapi.StartSession", func(operationCtx context.Context) (startResult, error) {
+		id, reused, requestErr := m.startSessionRequest(operationCtx, apiURL, start, token, executionID)
+		return startResult{id: id, reused: reused}, requestErr
+	}, telemetry.String("session.execution_id", executionID), telemetry.Bool("session.reuse_requested", len(start.ReuseMatchTags) > 0))
+	return result.id, result.reused, err
+}
+
+func (m *SessionManager) startSessionRequest(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, bool, error) {
 	body, err := json.Marshal(start)
 	if err != nil {
 		return "", false, err
@@ -101,7 +115,7 @@ func NewSessionManager(baseURL, token string) *SessionManager {
 	// Stock creation waits for a Kubernetes workload to become ready. Keep the
 	// transport timeout above the session manager's 120-second pod start timeout
 	// so the caller does not cancel an otherwise healthy startup prematurely.
-	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 150 * time.Second}}
+	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: utils.NewHTTPClient(utils.HTTPClientConfig{Timeout: 150 * time.Second})}
 }
 
 func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
@@ -128,6 +142,12 @@ func (m *SessionManager) ListSessions(filter entities.SessionFilter) []entities.
 	return result
 }
 func (m *SessionManager) ListSessionsContext(ctx context.Context, filter entities.SessionFilter) ([]entities.Session, error) {
+	return telemetry.LoggedOperation(ctx, "controlapi.ListSessions", func(operationCtx context.Context) ([]entities.Session, error) {
+		return m.listSessionsContext(operationCtx, filter)
+	}, telemetry.Int64("session.filter_tag_count", int64(len(filter.Tags))))
+}
+
+func (m *SessionManager) listSessionsContext(ctx context.Context, filter entities.SessionFilter) ([]entities.Session, error) {
 	query := make(url.Values)
 	if filter.UserID != "" {
 		query.Set("user_id", filter.UserID)

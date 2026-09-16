@@ -9,6 +9,7 @@ import (
 	"time"
 
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type tunnelStore struct {
@@ -94,6 +95,21 @@ func TestTunnelEnqueuesLifecycleCommandWhileManagerDisconnected(t *testing.T) {
 	}
 	if requestID == "" || len(store.commands) != 1 {
 		t.Fatalf("offline command was not persisted: requestID=%q commands=%#v", requestID, store.commands)
+	}
+}
+
+func TestTunnelEnqueuePersistsTraceContext(t *testing.T) {
+	store := &tunnelStore{}
+	req, _ := http.NewRequest(http.MethodPost, "http://esm.local/internal/session-prompt", nil)
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), spanContext)
+	if _, err := NewTunnel(store).Enqueue(ctx, "manager-a", "public", "remote", req); err != nil {
+		t.Fatal(err)
+	}
+	if got := http.Header(store.command.Headers).Get("traceparent"); got == "" {
+		t.Fatal("traceparent was not persisted in the durable command")
 	}
 }
 

@@ -2,7 +2,9 @@ package telemetry
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -67,6 +69,33 @@ func Operation[T any](ctx context.Context, name string, fn func(context.Context)
 // OperationErr is Operation for methods that return only an error.
 func OperationErr(ctx context.Context, name string, fn func(context.Context) error, attrs ...attribute.KeyValue) error {
 	_, err := Operation(ctx, name, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, fn(ctx)
+	}, attrs...)
+	return err
+}
+
+// LoggedOperation runs fn in a span and emits one completion log with the same
+// operation name, trace identifiers, and elapsed time. It is intended for
+// latency-sensitive asynchronous paths where a trace alone is not enough to
+// diagnose production delays from pod logs.
+func LoggedOperation[T any](ctx context.Context, name string, fn func(context.Context) (T, error), attrs ...attribute.KeyValue) (T, error) {
+	startedAt := time.Now()
+	return Operation(ctx, name, func(operationCtx context.Context) (T, error) {
+		result, err := fn(operationCtx)
+		spanContext := trace.SpanContextFromContext(operationCtx)
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+		log.Printf("[OTEL_TIMING] completed operation=%s status=%s duration_ms=%d trace_id=%s span_id=%s",
+			name, status, time.Since(startedAt).Milliseconds(), spanContext.TraceID(), spanContext.SpanID())
+		return result, err
+	}, attrs...)
+}
+
+// LoggedOperationErr is LoggedOperation for methods that return only an error.
+func LoggedOperationErr(ctx context.Context, name string, fn func(context.Context) error, attrs ...attribute.KeyValue) error {
+	_, err := LoggedOperation(ctx, name, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, fn(ctx)
 	}, attrs...)
 	return err
