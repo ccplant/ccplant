@@ -210,7 +210,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 
 // StartSession handles POST /start requests to start a new agentapi server
 func (c *SessionController) StartSession(ctx echo.Context) error {
-	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.StartSession", func(requestCtx context.Context) error {
+	return telemetry.LoggedOperationErr(ctx.Request().Context(), "controllers.SessionController.StartSession", func(requestCtx context.Context) error {
 		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
 		return c.startSession(ctx)
 	})
@@ -427,16 +427,14 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 	if c.sessionRouteRepo != nil {
 		var routes []*repositories.SessionRoute
 		var err error
-		if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
-			routes, err = filtered.ListFiltered(ctx.Request().Context(), repositories.SessionRouteFilter{
-				UserID: ownerUserID,
-				Scope:  string(startReq.Scope),
-				TeamID: startReq.TeamID,
-				Tags:   startReq.ReuseMatchTags,
-			})
-		} else {
-			routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), ownerUserID)
-		}
+		routes, err = telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.FindReusableRoutes", func(operationCtx context.Context) ([]*repositories.SessionRoute, error) {
+			if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+				return filtered.ListFiltered(operationCtx, repositories.SessionRouteFilter{
+					UserID: ownerUserID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Tags: startReq.ReuseMatchTags,
+				})
+			}
+			return c.sessionRouteRepo.List(operationCtx, ownerUserID)
+		}, telemetry.Int64("session.reuse_tag_count", int64(len(startReq.ReuseMatchTags))))
 		if err != nil {
 			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to list reusable sessions").SetInternal(err)
 		}
@@ -473,15 +471,21 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 				}
 				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
 			}
-			if _, err := enqueuer.Enqueue(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req); err != nil {
+			commandID, err := telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.EnqueueReusePrompt", func(operationCtx context.Context) (string, error) {
+				return enqueuer.Enqueue(operationCtx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
+			}, telemetry.String("session.id", route.SessionID), telemetry.String("session.prompt_path", promptPath))
+			if err != nil {
 				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to queue reusable session prompt").SetInternal(err)
 			}
-			log.Printf("[SESSION_REUSE] Reused direct runtime %s for tags %v", route.SessionID, startReq.ReuseMatchTags)
+			log.Printf("[SESSION_REUSE] Reused direct runtime %s command_id=%s for tags %v", route.SessionID, commandID, startReq.ReuseMatchTags)
 			return route.SessionID, true, nil
 		}
 	}
 
-	for _, existing := range c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.ReuseMatchTags}) {
+	existingSessions, _ := telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.FindReusableSessions", func(context.Context) ([]entities.Session, error) {
+		return c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.ReuseMatchTags}), nil
+	}, telemetry.Int64("session.reuse_tag_count", int64(len(startReq.ReuseMatchTags))))
+	for _, existing := range existingSessions {
 		if existing.Scope() != startReq.Scope || existing.TeamID() != startReq.TeamID || (startReq.Scope != entities.ScopeTeam && existing.UserID() != ownerUserID) {
 			continue
 		}
@@ -490,11 +494,15 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 			continue
 		}
 		if startReq.StopBeforeReuse && status == "running" {
-			if err := c.getSessionManager().StopAgent(ctx.Request().Context(), existing.ID()); err != nil {
+			if err := telemetry.LoggedOperationErr(ctx.Request().Context(), "controllers.SessionController.StopReusableSession", func(operationCtx context.Context) error {
+				return c.getSessionManager().StopAgent(operationCtx, existing.ID())
+			}, telemetry.String("session.id", existing.ID())); err != nil {
 				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to interrupt reusable session").SetInternal(err)
 			}
 		}
-		if err := c.getSessionManager().SendMessage(ctx.Request().Context(), existing.ID(), startReq.ReuseMessage); err != nil {
+		if err := telemetry.LoggedOperationErr(ctx.Request().Context(), "controllers.SessionController.SendReuseMessage", func(operationCtx context.Context) error {
+			return c.getSessionManager().SendMessage(operationCtx, existing.ID(), startReq.ReuseMessage)
+		}, telemetry.String("session.id", existing.ID())); err != nil {
 			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to route reusable session message").SetInternal(err)
 		}
 		return existing.ID(), true, nil

@@ -226,7 +226,14 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 		cancel()
 	}()
 	commandCtx = telemetry.ExtractHTTP(commandCtx, http.Header(command.Headers))
-	w.executeRequest(commandCtx, command)
+	queueDelay := time.Since(command.CreatedAt)
+	log.Printf("[SESSION_COMMAND_TIMING] stage=runtime_dequeue duration_ms=%d command_id=%s session_id=%s path=%s",
+		queueDelay.Milliseconds(), command.ID, command.SessionID, command.Path)
+	_ = telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.ExecuteCommand", func(operationCtx context.Context) error {
+		w.executeRequest(operationCtx, command)
+		return nil
+	}, telemetry.String("session.id", command.SessionID), telemetry.String("session.command_id", command.ID),
+		telemetry.String("session.command_path", command.Path), telemetry.Int64("session.queue_delay_ms", queueDelay.Milliseconds()))
 }
 
 func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command core.Command) {
@@ -234,12 +241,16 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		// Direct runtime sessions expose an ACP bridge. Force the ACP prompt path
 		// here instead of guessing an HTTP endpoint from the configured agent name.
 		if command.Path == "/internal/session-interrupt-prompt" {
-			if err := executeControlCommandAtBase(commandCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.localURL); err != nil {
+			if err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.CancelAgent", func(operationCtx context.Context) error {
+				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.localURL)
+			}, telemetry.String("session.command_id", command.ID)); err != nil {
 				w.postExecutionError(commandCtx, command, err)
 				return
 			}
 		}
-		err := executeControlCommandAtBase(commandCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.localURL)
+		err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.DeliverPrompt", func(operationCtx context.Context) error {
+			return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.localURL)
+		}, telemetry.String("session.command_id", command.ID), telemetry.String("session.id", command.SessionID))
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
 			return

@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type controlCommand struct {
@@ -175,6 +176,7 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	telemetry.InjectHTTP(ctx, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -191,6 +193,7 @@ func localACPSessionID(ctx context.Context, client *http.Client, base string) (s
 	if err != nil {
 		return "", err
 	}
+	telemetry.InjectHTTP(ctx, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
