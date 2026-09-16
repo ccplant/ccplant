@@ -1921,12 +1921,12 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 	session, exists := m.sessions[id]
 	m.mutex.RUnlock()
 
-	// Try to restore from Kubernetes Service to check for stale user-id even when
-	// the session is in memory.  A session cached while it was a stock pod will have
-	// an empty user-id; once the Service is updated with the real owner after
-	// adoption, we repair the in-memory entry here so authorization passes without
-	// requiring a proxy restart.
-	if exists && session.UserID() != "" {
+	// Try to restore from Kubernetes Service to check for stale adoption metadata
+	// even when the session is in memory. A session cached while it was a stock pod
+	// has an empty user-id and agent type; both are required after adoption. In
+	// particular, suspension uses the agent type to decide whether an ACP checkpoint
+	// must be written before deleting the workload.
+	if exists && session.UserID() != "" && session.Request() != nil && session.Request().AgentType != "" {
 		return session
 	}
 
@@ -1953,13 +1953,23 @@ func (m *KubernetesSessionManager) GetSession(id string) entities.Session {
 		return nil
 	}
 
-	// If session is already in memory but had a stale empty user-id, repair it
-	// from the Service labels instead of doing a full re-restore (which would
-	// start duplicate goroutines).
-	if exists && session.UserID() == "" {
-		if svcUserID := svc.Labels["agentapi.proxy/user-id"]; svcUserID != "" {
-			log.Printf("[K8S_SESSION] GetSession: repairing stale user-id for session %s (was empty, now %s)", id, svcUserID)
-			session.SetUserID(svcUserID)
+	// Repair adoption metadata from the canonical Service instead of doing a full
+	// re-restore, which would start duplicate watcher goroutines.
+	if exists {
+		if session.UserID() == "" {
+			if svcUserID := svc.Labels["agentapi.proxy/user-id"]; svcUserID != "" {
+				log.Printf("[K8S_SESSION] GetSession: repairing stale user-id for session %s (was empty, now %s)", id, svcUserID)
+				session.SetUserID(svcUserID)
+			}
+		}
+		if session.Request() == nil {
+			session.SetRequest(&entities.RunServerRequest{})
+		}
+		if session.Request().AgentType == "" {
+			if agentType := restoreAgentTypeFromService(svc); agentType != "" {
+				log.Printf("[K8S_SESSION] GetSession: repairing stale agent type for session %s (was empty, now %s)", id, agentType)
+				session.Request().AgentType = agentType
+			}
 		}
 		return session
 	}
