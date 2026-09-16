@@ -281,9 +281,6 @@ func TestSessionResourcesUseServiceOwnerReferenceWithoutPVC(t *testing.T) {
 	if err := manager.createSessionWorkload(ctx, session, session.Request()); err != nil {
 		t.Fatalf("Failed to create workload: %v", err)
 	}
-	if err := manager.createWebhookPayloadSecret(ctx, session, []byte(`{"ok":true}`)); err != nil {
-		t.Fatalf("Failed to create webhook payload secret: %v", err)
-	}
 	if err := manager.createOneshotSettingsSecret(ctx, session); err != nil {
 		t.Fatalf("Failed to create oneshot settings secret: %v", err)
 	}
@@ -303,7 +300,6 @@ func TestSessionResourcesUseServiceOwnerReferenceWithoutPVC(t *testing.T) {
 	assertOwnedByService(t, pod, session.ServiceName())
 
 	for _, secretName := range []string{
-		session.ServiceName() + "-webhook-payload",
 		session.ServiceName() + "-oneshot-settings",
 		"agentapi-provision-request-" + session.ID(),
 		"agentapi-session-" + session.ID() + "-settings",
