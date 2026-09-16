@@ -293,6 +293,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=deploy-manual-api
 
       - name: Build and publish session runtime image
+        if: false
         uses: docker/build-push-action@v6
         with:
           context: ./backend
@@ -303,6 +304,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=deploy-manual-backend
 
       - name: Build and publish frontend image
+        if: false
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
@@ -311,7 +313,26 @@ jobs:
           cache-from: type=gha,scope=deploy-manual-frontend
           cache-to: type=gha,mode=max,scope=deploy-manual-frontend
 
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+
+      - name: Package and publish session-manager chart
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          short_sha="${SOURCE_SHA:0:7}"
+          version="0.1.0-dev.ccplant.${short_sha}"
+          helm package chart/session-manager \
+            --version "$version" \
+            --app-version "dev.ccplant.${SOURCE_SHA}" \
+            --destination /tmp
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          helm push "/tmp/session-manager-${version}.tgz" oci://ghcr.io/ccplant/charts
+
       - name: Dispatch manual deployment
+        if: false
         env:
           GH_TOKEN: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
