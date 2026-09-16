@@ -83,8 +83,12 @@ func LoggedOperation[T any](ctx context.Context, name string, fn func(context.Co
 	return Operation(ctx, name, func(operationCtx context.Context) (T, error) {
 		result, err := fn(operationCtx)
 		spanContext := trace.SpanContextFromContext(operationCtx)
-		log.Printf("[OTEL_TIMING] operation=%s duration_ms=%d trace_id=%s span_id=%s error=%t",
-			name, time.Since(startedAt).Milliseconds(), spanContext.TraceID(), spanContext.SpanID(), err != nil)
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+		log.Printf("[OTEL_TIMING] completed operation=%s status=%s duration_ms=%d trace_id=%s span_id=%s",
+			name, status, time.Since(startedAt).Milliseconds(), spanContext.TraceID(), spanContext.SpanID())
 		return result, err
 	}, attrs...)
 }

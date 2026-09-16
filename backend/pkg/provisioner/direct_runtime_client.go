@@ -227,7 +227,7 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 	}()
 	commandCtx = telemetry.ExtractHTTP(commandCtx, http.Header(command.Headers))
 	queueDelay := time.Since(command.CreatedAt)
-	log.Printf("[SESSION_COMMAND_TIMING] stage=runtime_dequeue duration_ms=%d command_id=%s session_id=%s path=%s",
+	log.Printf("[OTEL_TIMING] completed operation=provisioner.DirectRuntime.DequeueCommand status=success duration_ms=%d command_id=%s session_id=%s path=%s",
 		queueDelay.Milliseconds(), command.ID, command.SessionID, command.Path)
 	_ = telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.ExecuteCommand", func(operationCtx context.Context) error {
 		w.executeRequest(operationCtx, command)

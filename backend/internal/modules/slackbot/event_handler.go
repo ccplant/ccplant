@@ -405,7 +405,7 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 	go func(asyncCtx context.Context) {
 		queueStartedAt := time.Now()
 		waitForTurn()
-		log.Printf("[SLACKBOT_TIMING] stage=thread_queue_wait duration_ms=%d bot_id=%s channel=%s thread=%s",
+		log.Printf("[OTEL_TIMING] completed operation=slackbot.ThreadQueueWait status=success duration_ms=%d bot_id=%s channel=%s thread=%s",
 			time.Since(queueStartedAt).Milliseconds(), botID, channel, threadKey)
 		defer releaseTurn()
 		bgCtx := context.WithoutCancel(asyncCtx)
