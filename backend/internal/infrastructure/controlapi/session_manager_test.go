@@ -11,6 +11,30 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
+func TestSessionManagerForwardsListFilterToControlAPI(t *testing.T) {
+	var requestURI string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.URL.RequestURI()
+		_ = json.NewEncoder(w).Encode([]sessionInfo{{
+			ID: "matching", UserID: "owner", Scope: entities.ScopeUser,
+			Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "1.2"}, Status: "running",
+		}})
+	}))
+	defer server.Close()
+
+	filter := entities.SessionFilter{UserID: "owner", Scope: entities.ScopeUser, Tags: map[string]string{
+		"slack_thread_ts": "1.2", "slack_channel": "C1",
+	}}
+	sessions, err := NewSessionManager(server.URL, "token").ListSessionsContext(context.Background(), filter)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions=%v err=%v", sessions, err)
+	}
+	want := "/internal/worker/sessions?scope=user&tag.slack_channel=C1&tag.slack_thread_ts=1.2&user_id=owner"
+	if requestURI != want {
+		t.Fatalf("request URI = %q, want %q", requestURI, want)
+	}
+}
+
 func TestSessionManagerDelegatesCreateAndStockToControlAPI(t *testing.T) {
 	requests := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

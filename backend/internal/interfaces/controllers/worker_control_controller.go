@@ -268,18 +268,43 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 	if !wc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
+	filter := entities.SessionFilter{
+		UserID: c.QueryParam("user_id"), Status: c.QueryParam("status"),
+		Scope: entities.ResourceScope(c.QueryParam("scope")), TeamID: c.QueryParam("team_id"),
+		Tags: make(map[string]string),
+	}
+	if teamIDs := c.QueryParam("team_ids"); teamIDs != "" {
+		for _, teamID := range strings.Split(teamIDs, ",") {
+			if teamID = strings.TrimSpace(teamID); teamID != "" {
+				filter.TeamIDs = append(filter.TeamIDs, teamID)
+			}
+		}
+	}
+	for name, values := range c.QueryParams() {
+		if strings.HasPrefix(name, "tag.") && len(values) > 0 {
+			filter.Tags[strings.TrimPrefix(name, "tag.")] = values[0]
+		}
+	}
 	var sessions []entities.Session
 	var err error
 	if lister, ok := wc.manager.(workerSessionLister); ok {
-		sessions, err = lister.ListSessionsContext(c.Request().Context(), entities.SessionFilter{})
+		sessions, err = lister.ListSessionsContext(c.Request().Context(), filter)
 	} else {
-		sessions = wc.manager.ListSessions(entities.SessionFilter{})
+		sessions = wc.manager.ListSessions(filter)
 	}
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 	if wc.routes != nil {
-		routes, routeErr := wc.routes.List(c.Request().Context(), "")
+		var routes []*repositories.SessionRoute
+		var routeErr error
+		if filtered, ok := wc.routes.(repositories.FilteredSessionRouteRepository); ok {
+			routes, routeErr = filtered.ListFiltered(c.Request().Context(), repositories.SessionRouteFilter{
+				UserID: filter.UserID, Scope: string(filter.Scope), TeamID: filter.TeamID, Tags: filter.Tags,
+			})
+		} else {
+			routes, routeErr = wc.routes.List(c.Request().Context(), filter.UserID)
+		}
 		if routeErr != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": routeErr.Error()})
 		}
