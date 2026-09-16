@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
@@ -111,6 +114,14 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		Data: map[string][]byte{
 			SessionRouteSecretKey: data,
 		},
+	}
+	secret.Labels["agentapi.proxy/session-route-user-id"] = services.SanitizeLabelValue(route.UserID)
+	secret.Labels["agentapi.proxy/session-route-scope"] = services.SanitizeLabelValue(route.Scope)
+	if route.TeamID != "" {
+		secret.Labels["agentapi.proxy/session-route-team-id-hash"] = services.HashTeamID(route.TeamID)
+	}
+	for key, value := range route.Tags {
+		secret.Labels["agentapi.proxy/session-route-tag-"+services.SanitizeLabelKey(key)] = services.SanitizeLabelValue(value)
 	}
 
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
@@ -237,6 +248,35 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 	return filterAndCloneSessionRoutes(routes, userID), nil
 }
 
+// ListFiltered uses labels written with each route so SlackBot reuse does not
+// deserialize every session route in the cluster.
+func (r *KubernetesSessionRouteRepository) ListFiltered(ctx context.Context, filter portrepos.SessionRouteFilter) ([]*portrepos.SessionRoute, error) {
+	selectors := []string{LabelSessionRoute + "=true"}
+	if filter.UserID != "" {
+		selectors = append(selectors, "agentapi.proxy/session-route-user-id="+services.SanitizeLabelValue(filter.UserID))
+	}
+	if filter.Scope != "" {
+		selectors = append(selectors, "agentapi.proxy/session-route-scope="+services.SanitizeLabelValue(filter.Scope))
+	}
+	if filter.TeamID != "" {
+		selectors = append(selectors, "agentapi.proxy/session-route-team-id-hash="+services.HashTeamID(filter.TeamID))
+	}
+	keys := make([]string, 0, len(filter.Tags))
+	for key := range filter.Tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		selectors = append(selectors, "agentapi.proxy/session-route-tag-"+services.SanitizeLabelKey(key)+"="+services.SanitizeLabelValue(filter.Tags[key]))
+	}
+	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: strings.Join(selectors, ",")})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list filtered session route secrets: %w", err)
+	}
+	routes := decodeSessionRoutes(secrets.Items)
+	return routes, nil
+}
+
 func (r *KubernetesSessionRouteRepository) list(ctx context.Context) ([]*portrepos.SessionRoute, error) {
 	if routes, ok := r.cachedList(); ok {
 		return routes, nil
@@ -261,9 +301,18 @@ func (r *KubernetesSessionRouteRepository) loadList(ctx context.Context) ([]*por
 		return nil, fmt.Errorf("failed to list session route secrets: %w", err)
 	}
 
-	routes := make([]*portrepos.SessionRoute, 0, len(secrets.Items))
-	for i := range secrets.Items {
-		secret := &secrets.Items[i]
+	routes := decodeSessionRoutes(secrets.Items)
+	r.cacheMu.Lock()
+	r.listCache = cloneSessionRoutes(routes)
+	r.listUntil = time.Now().Add(sessionRouteCacheTTL)
+	r.cacheMu.Unlock()
+	return routes, nil
+}
+
+func decodeSessionRoutes(secrets []corev1.Secret) []*portrepos.SessionRoute {
+	routes := make([]*portrepos.SessionRoute, 0, len(secrets))
+	for i := range secrets {
+		secret := &secrets[i]
 		raw, ok := secret.Data[SessionRouteSecretKey]
 		if !ok {
 			continue
@@ -291,11 +340,7 @@ func (r *KubernetesSessionRouteRepository) loadList(ctx context.Context) ([]*por
 			DeletionRequestID: rj.DeletionRequestID,
 		})
 	}
-	r.cacheMu.Lock()
-	r.listCache = cloneSessionRoutes(routes)
-	r.listUntil = time.Now().Add(sessionRouteCacheTTL)
-	r.cacheMu.Unlock()
-	return cloneSessionRoutes(routes), nil
+	return cloneSessionRoutes(routes)
 }
 
 func (r *KubernetesSessionRouteRepository) cachedList() ([]*portrepos.SessionRoute, bool) {
