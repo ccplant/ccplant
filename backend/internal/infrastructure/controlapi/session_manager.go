@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -127,8 +128,36 @@ func (m *SessionManager) ListSessions(filter entities.SessionFilter) []entities.
 	return result
 }
 func (m *SessionManager) ListSessionsContext(ctx context.Context, filter entities.SessionFilter) ([]entities.Session, error) {
+	query := make(url.Values)
+	if filter.UserID != "" {
+		query.Set("user_id", filter.UserID)
+	}
+	if filter.Status != "" {
+		query.Set("status", filter.Status)
+	}
+	if filter.Scope != "" {
+		query.Set("scope", string(filter.Scope))
+	}
+	if filter.TeamID != "" {
+		query.Set("team_id", filter.TeamID)
+	}
+	if len(filter.TeamIDs) > 0 {
+		query.Set("team_ids", strings.Join(filter.TeamIDs, ","))
+	}
+	keys := make([]string, 0, len(filter.Tags))
+	for key := range filter.Tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		query.Set("tag."+key, filter.Tags[key])
+	}
+	path := "/internal/worker/sessions"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	var infos []sessionInfo
-	if err := m.do(ctx, http.MethodGet, "/internal/worker/sessions", nil, &infos); err != nil {
+	if err := m.do(ctx, http.MethodGet, path, nil, &infos); err != nil {
 		return nil, err
 	}
 	result := make([]entities.Session, 0, len(infos))
