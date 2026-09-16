@@ -918,6 +918,7 @@ observability:
   openTelemetry:
     enabled: false
     serviceName: agentapi-proxy
+    workerServiceName: agentapi-worker
     sessionManagerServiceName: agentapi-session-manager
     serviceNamespace: ccplant
     deploymentEnvironment: ""
