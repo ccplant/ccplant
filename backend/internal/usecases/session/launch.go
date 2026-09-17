@@ -38,7 +38,6 @@ type LaunchRequest struct {
 	Model                    string
 	Pool                     string
 	SlackParams              *entities.SlackParams
-	Oneshot                  bool
 	RepoInfo                 *entities.RepositoryInfo
 	InitialMessageWaitSecond *int
 	Sandbox                  *entities.SandboxParams
@@ -91,6 +90,19 @@ type LaunchResult struct {
 	SessionID     string
 	SessionReused bool
 	Session       entities.Session
+}
+
+// ResolveSessionTTL keeps the public oneshot parameter as backwards-compatible
+// shorthand for a one-minute session TTL. Internal session creation only carries
+// the resolved TTL.
+func ResolveSessionTTL(params *entities.SessionParams) string {
+	if params == nil {
+		return ""
+	}
+	if params.SessionTTL == "" && params.Oneshot {
+		return "1m"
+	}
+	return params.SessionTTL
 }
 
 // ResolveTeams returns the GitHub team slugs to inject into a session's settings.
@@ -236,7 +248,6 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		Model:                    req.Model,
 		Pool:                     req.Pool,
 		SlackParams:              req.SlackParams,
-		Oneshot:                  req.Oneshot,
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		MemoryKey:                req.MemoryKey,
@@ -456,7 +467,7 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 			req.CycleMaxCount = cfg.Params().CycleMaxCount
 		}
 		if req.SessionTTL == "" {
-			req.SessionTTL = cfg.Params().SessionTTL
+			req.SessionTTL = ResolveSessionTTL(cfg.Params())
 		}
 		if len(req.UnsyncedFilePaths) == 0 && len(cfg.Params().UnsyncedFilePaths) > 0 {
 			req.UnsyncedFilePaths = append([]string(nil), cfg.Params().UnsyncedFilePaths...)

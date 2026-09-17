@@ -38,7 +38,7 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 	params := &entities.SessionParams{
 		Pool: req.Pool, ResumeFrom: req.ResumeFrom, Message: req.InitialMessage,
 		GithubToken: req.GithubToken, AgentType: req.AgentType, Model: req.Model,
-		Slack: req.SlackParams, Oneshot: req.Oneshot, InitialMessageWaitSecond: req.InitialMessageWaitSecond,
+		Slack: req.SlackParams, InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		CycleMessage: req.CycleMessage, CycleMaxCount: req.CycleMaxCount,
 		Sandbox: req.Sandbox, Docker: req.Docker, AuthProxy: req.AuthProxy,
 		SessionTTL: req.SessionTTL, UnsyncedFilePaths: req.UnsyncedFilePaths,

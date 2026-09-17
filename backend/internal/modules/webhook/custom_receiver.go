@@ -282,7 +282,6 @@ Please ensure the webhook payload is valid JSON.
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
-	var oneshot bool
 	if sessionConfig != nil && sessionConfig.Params() != nil {
 		params := sessionConfig.Params()
 		githubToken = params.GithubToken
@@ -295,8 +294,7 @@ Please ensure the webhook payload is valid JSON.
 		initialMessageWaitSecond = params.InitialMessageWaitSecond
 		cycleMessage = params.CycleMessage
 		cycleMaxCount = params.CycleMaxCount
-		sessionTTL = params.SessionTTL
-		oneshot = params.Oneshot
+		sessionTTL = sessionuc.ResolveSessionTTL(params)
 	}
 
 	result, err := c.launcher.Launch(ctx.Request().Context(), sessionID, sessionuc.LaunchRequest{
@@ -314,7 +312,6 @@ Please ensure the webhook payload is valid JSON.
 		Sandbox:                  sandbox,
 		Docker:                   docker,
 		AuthProxy:                authProxy,
-		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,

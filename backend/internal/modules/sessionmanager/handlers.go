@@ -334,7 +334,6 @@ func (h *Handlers) CreateSession(c echo.Context) error {
 		Scope:             entities.ResourceScope(settings.Session.Scope),
 		TeamID:            settings.Session.TeamID,
 		AgentType:         settings.Session.AgentType,
-		Oneshot:           settings.Session.Oneshot,
 		Teams:             settings.Session.Teams,
 		InitialMessage:    settings.InitialMessage,
 		ProvisionSettings: &settings,

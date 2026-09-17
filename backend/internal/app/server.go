@@ -1298,12 +1298,6 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		slackParams = startReq.Params.Slack
 	}
 
-	// Determine oneshot from Params.Oneshot
-	var oneshot bool
-	if startReq.Params != nil {
-		oneshot = startReq.Params.Oneshot
-	}
-
 	// Determine initial message wait second from Params.InitialMessageWaitSecond
 	var initialMessageWaitSecond *int
 	if startReq.Params != nil && startReq.Params.InitialMessageWaitSecond != nil {
@@ -1338,8 +1332,8 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 
 	// Determine session TTL from Params.SessionTTL
 	var sessionTTL string
-	if startReq.Params != nil && startReq.Params.SessionTTL != "" {
-		sessionTTL = startReq.Params.SessionTTL
+	if startReq.Params != nil {
+		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
 	}
 
 	var unsyncedFilePaths []string
@@ -1375,7 +1369,6 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		AgentType:                agentType,
 		Model:                    model,
 		SlackParams:              slackParams,
-		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		MemoryKey:                startReq.MemoryKey,
 		CycleMessage:             cycleMessage,
@@ -1419,7 +1412,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	runReq := s.runRequestForStart(sessionID, startReq, userID, teams)
 	runReq.Pool = pool
-	initialMessage, agentType, oneshot, sessionTTL, docker := runReq.InitialMessage, runReq.AgentType, runReq.Oneshot, runReq.SessionTTL, runReq.Docker
+	initialMessage, agentType, sessionTTL, docker := runReq.InitialMessage, runReq.AgentType, runReq.SessionTTL, runReq.Docker
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
 		var err error
@@ -1433,7 +1426,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	if settings == nil {
 		settings = &sessionsettings.SessionSettings{
-			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Oneshot: oneshot, Teams: teams, MemoryKey: startReq.MemoryKey},
+			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Teams: teams, MemoryKey: startReq.MemoryKey},
 			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: runReq.UnsyncedFilePaths,
 		}
 	}
@@ -1462,12 +1455,6 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	routeTags := make(map[string]string, len(startReq.Tags)+2)
 	for key, value := range startReq.Tags {
 		routeTags[key] = value
-	}
-	if oneshot {
-		routeTags["oneshot"] = "true"
-		if sessionTTL == "" {
-			sessionTTL = "1m"
-		}
 	}
 	if sessionTTL != "" {
 		routeTags["session_ttl"] = sessionTTL
@@ -1819,7 +1806,7 @@ func (s *Server) createMemoryIntegrationSession(req *entities.RunServerRequest, 
 		Tags:           map[string]string{"hidden": "true"},
 		MemoryKey:      nil, // MemoryKey を渡さない: 統合セッション削除時に再ダンプが走るのを防ぐ
 		InitialMessage: prompt,
-		Oneshot:        true,
+		SessionTTL:     "1m",
 		Environment:    env,
 	}
 
@@ -2126,7 +2113,6 @@ func buildWorkerLeaseClient(cfg *config.Config) schedule.LeaseClient {
 
 func (s *Server) runRequestForStart(sessionID string, startReq entities.StartRequest, userID string, teams []string) *entities.RunServerRequest {
 	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model, sessionTTL string
-	var oneshot bool
 	var authProxy *bool
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
@@ -2134,7 +2120,6 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
-		oneshot = startReq.Params.Oneshot
 		authProxy = startReq.Params.AuthProxy
 		sandbox = startReq.Params.Sandbox
 		docker = startReq.Params.Docker
@@ -2142,13 +2127,13 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		model = startReq.Params.Model
-		sessionTTL = startReq.Params.SessionTTL
+		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
 	}
 	runReq := &entities.RunServerRequest{
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
 		TriggeredUserID: startReq.TriggeredUserID,
-		Pool:            requestedSessionPool(startReq), AgentType: agentType, Model: model, Oneshot: oneshot, SessionTTL: sessionTTL, Environment: startReq.Environment,
+		Pool:            requestedSessionPool(startReq), AgentType: agentType, Model: model, SessionTTL: sessionTTL, Environment: startReq.Environment,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,

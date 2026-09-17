@@ -38,7 +38,7 @@ func (r *cleanupRouteRepository) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-func TestWorkerSessionListMarksOneshotForTTLCleanup(t *testing.T) {
+func TestWorkerSessionListCopiesRequestTTLForCleanup(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
 		"oneshot": {
 			id:        "oneshot",
@@ -48,7 +48,7 @@ func TestWorkerSessionListMarksOneshotForTTLCleanup(t *testing.T) {
 			status:    "active",
 			startedAt: time.Now(),
 			updatedAt: time.Now(),
-			request:   &entities.RunServerRequest{Oneshot: true},
+			request:   &entities.RunServerRequest{SessionTTL: "1m"},
 		},
 	}}
 	controller := controllers.NewWorkerControlController(manager, "secret", nil, nil)
@@ -63,7 +63,6 @@ func TestWorkerSessionListMarksOneshotForTTLCleanup(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
 	require.Len(t, sessions, 1)
-	require.Equal(t, "true", sessions[0].Tags["oneshot"])
 	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
 }
 
@@ -87,9 +86,9 @@ func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
 	require.Equal(t, []string{"public-session"}, routes.deletedIDs)
 }
 
-func TestWorkerSessionListPreservesPoolOneshotRequest(t *testing.T) {
+func TestWorkerSessionListPreservesPoolTTLRequest(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
-		"runtime": {id: "runtime", status: "stopped", request: &entities.RunServerRequest{Oneshot: true, SessionTTL: "2m"}},
+		"runtime": {id: "runtime", status: "stopped", request: &entities.RunServerRequest{SessionTTL: "2m"}},
 	}}
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{SessionID: "public", RemoteSessionID: "runtime"}}
 	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
@@ -104,17 +103,16 @@ func TestWorkerSessionListPreservesPoolOneshotRequest(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
 	require.Len(t, sessions, 1)
 	require.Equal(t, "public", sessions[0].ID)
-	require.Equal(t, "true", sessions[0].Tags["oneshot"])
 	require.Equal(t, "2m", sessions[0].Tags["session_ttl"])
 }
 
-func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
+func TestWorkerSessionListIncludesDirectRuntimeTTLRoute(t *testing.T) {
 	startedAt := time.Now().Add(-2 * time.Minute)
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
 		SessionID: "public-session", RemoteSessionID: "runtime-session",
 		Transport: portrepos.SessionRouteTransportDirectRuntime, UserID: "alice",
 		Scope: string(entities.ScopeUser), StartedAt: startedAt, Status: "stopped", StatusUpdatedAt: startedAt.Add(time.Minute),
-		Tags: map[string]string{"oneshot": "true", "session_ttl": "1m"},
+		Tags: map[string]string{"session_ttl": "1m"},
 	}}
 	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes)
 	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
@@ -136,14 +134,6 @@ func TestWorkerSessionListIncludesDirectRuntimeOneshotRoute(t *testing.T) {
 	require.True(t, sessions[0].UpdatedAt.Equal(routes.route.StatusUpdatedAt), "cleanup must use the completion time")
 	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
 
-	// Older routes may have the oneshot marker without an explicit TTL.
-	delete(routes.route.Tags, "session_ttl")
-	rec = httptest.NewRecorder()
-	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
-	sessions = nil
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
-	require.Len(t, sessions, 1)
-	require.Equal(t, "true", sessions[0].Tags["oneshot"])
 }
 
 func TestWorkerSessionListIncludesPendingDirectRuntimeRouteWithoutRemoteID(t *testing.T) {
@@ -189,15 +179,15 @@ func TestWorkerSessionListIncludesPendingDirectRuntimeRouteWithoutRemoteID(t *te
 	require.Equal(t, routes.route.Tags, sessions[0].Tags)
 }
 
-func TestRepeatedOneshotStatusPreservesCompletionTime(t *testing.T) {
+func TestRepeatedTTLStatusPreservesCompletionTime(t *testing.T) {
 	completedAt := time.Now().Add(-2 * time.Minute)
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
-		SessionID: "oneshot", Status: "stopped", StatusUpdatedAt: completedAt,
-		Tags: map[string]string{"oneshot": "true"},
+		SessionID: "ttl", Status: "active", StatusUpdatedAt: completedAt,
+		Tags: map[string]string{"session_ttl": "1m"},
 	}}
 	controller := controllers.NewSessionController(nil, nil, controllers.WithSessionRouteRepository(routes))
 	require.NoError(t, controller.RecordRemoteSessionStatus(context.Background(), routes.route, "stable"))
-	require.Equal(t, "stopped", routes.route.Status)
+	require.Equal(t, "active", routes.route.Status)
 	require.True(t, routes.route.StatusUpdatedAt.Equal(completedAt), "repeated status reads must not postpone cleanup")
 }
 

@@ -240,7 +240,7 @@ func (w *RunnerWorker) managerRequest(ctx context.Context, method, path string, 
 }
 
 func runRequestFromSettings(settings *sessionsettings.SessionSettings) *entities.RunServerRequest {
-	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
 	if settings.Repository != nil {
 		req.RepoInfo = &entities.RepositoryInfo{FullName: settings.Repository.FullName, CloneDir: settings.Repository.CloneDir, Branch: settings.Repository.Branch, PR: settings.Repository.PR}
 	}

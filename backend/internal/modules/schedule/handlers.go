@@ -539,7 +539,6 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
-	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
 		initialMessage = schedule.SessionConfig.Params.Message
 		// For team-scoped schedules, do not use the creator's github_token
@@ -555,8 +554,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		initialMessageWaitSecond = schedule.SessionConfig.Params.InitialMessageWaitSecond
 		cycleMessage = schedule.SessionConfig.Params.CycleMessage
 		cycleMaxCount = schedule.SessionConfig.Params.CycleMaxCount
-		sessionTTL = schedule.SessionConfig.Params.SessionTTL
-		oneshot = schedule.SessionConfig.Params.Oneshot
+		sessionTTL = sessionuc.ResolveSessionTTL(schedule.SessionConfig.Params)
 	}
 
 	result, err := h.launcher.Launch(c.Request().Context(), sessionID, sessionuc.LaunchRequest{
@@ -574,7 +572,6 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		Sandbox:                  sandbox,
 		Docker:                   docker,
 		AuthProxy:                authProxy,
-		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
