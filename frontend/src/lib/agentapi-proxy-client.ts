@@ -3332,8 +3332,9 @@ export class AgentAPIProxyClient {
     return this.makeRequest<SessionPoolLogs>(`/admin/session-runners/${encodeURIComponent(runnerID)}/logs?${params}`);
   }
 
-  async deleteAdminSessionRunner(runnerID: string, managerID: string): Promise<void> {
+  async deleteAdminSessionRunner(runnerID: string, managerID: string, force = false): Promise<void> {
     const params = new URLSearchParams({ manager_id: managerID });
+    if (force) params.set('force', 'true');
     await this.makeRequest(`/admin/session-runners/${encodeURIComponent(runnerID)}?${params}`, { method: 'DELETE' });
   }
 }

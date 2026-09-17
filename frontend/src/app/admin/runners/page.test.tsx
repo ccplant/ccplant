@@ -47,7 +47,7 @@ describe('AdminRunnersPage', () => {
 
     expect(await screen.findByText('pooled-runner')).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: '削除' })[0])
-    await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a'))
+    await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a', false))
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('関連する Secret'))
   })
 
@@ -61,8 +61,22 @@ describe('AdminRunnersPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '選択した Runner を削除' }))
 
     await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledTimes(2))
-    expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a')
-    expect(deleteAdminSessionRunner).toHaveBeenCalledWith('direct-session', 'manager-a')
+    expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a', false)
+    expect(deleteAdminSessionRunner).toHaveBeenCalledWith('direct-session', 'manager-a', false)
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('選択した 2 件'))
+  })
+
+  it('warns and force-cleans parent metadata for an offline runner', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    listAdminSessionRunners.mockResolvedValue([
+      { id: 'offline-runner', manager_id: 'manager-a', manager_name: 'Manager A', pool: 'linux', from_pool: true, status: 'offline', online: false },
+    ])
+    render(<AdminRunnersPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '強制クリーンアップ' }))
+
+    await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledWith('offline-runner', 'manager-a', true))
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('親側の Runner、Session の紐づき、allocation メタデータだけ'))
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Manager が復旧しないこと'))
   })
 })
