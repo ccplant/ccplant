@@ -5378,7 +5378,10 @@ func (m *KubernetesSessionManager) GetNamespace() string {
 }
 
 func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools []string) (map[string]interface{}, error) {
-	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"})
+	// Fetch every managed session service. Pool-scoped callers are filtered
+	// below, while an unfiltered administrative inventory must also see direct
+	// sessions which deliberately have no session-pool label.
+	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"})
 	if err != nil {
 		return nil, err
 	}
