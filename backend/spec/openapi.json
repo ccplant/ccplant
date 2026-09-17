@@ -6305,6 +6305,24 @@
         }
       }
     },
+    "/admin/session-runners/{id}": {
+      "delete": {
+        "summary": "Delete a session runner and its resources",
+        "description": "Deletes the runner workload through its session manager, including Service, Deployment or Pod, PVC, session-labelled Secrets, allocation, and route metadata. Requires admin permission.",
+        "operationId": "deleteAdminSessionRunner",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "204": {"description": "Runner and related resources deleted"},
+          "403": {"description": "Admin permission required"},
+          "404": {"description": "Session manager not found"},
+          "503": {"description": "Session manager control channel is offline"}
+        }
+      }
+    },
     "/session-managers/{id}": {
       "parameters": [
         {

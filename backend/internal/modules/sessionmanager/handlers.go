@@ -93,6 +93,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 		management.Use(h.hmacMiddleware())
 		management.GET("/status", h.GetOperationalStatus)
 		management.GET("/logs", h.GetOperationalLogs)
+		management.DELETE("/runners/:runnerId", h.DeleteOperationalRunner)
 	}
 
 	// Runtime traffic is addressed by the parent as
@@ -109,6 +110,24 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+// DeleteOperationalRunner removes the complete workload through the session
+// manager's normal deletion path. Kubernetes managers therefore delete the
+// Service, Deployment/Pod, PVC, provision request, and every session-labelled
+// Secret instead of only terminating the Pod.
+func (h *Handlers) DeleteOperationalRunner(c echo.Context) error {
+	runnerID := strings.TrimSpace(c.Param("runnerId"))
+	if runnerID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "runnerId is required")
+	}
+	if err := h.sessionManager.DeleteSession(runnerID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.NoContent(http.StatusNotFound)
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete runner").SetInternal(err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (h *Handlers) GetOperationalStatus(c echo.Context) error {

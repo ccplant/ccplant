@@ -662,6 +662,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/session-runners/:id/logs", r.handlers.sessionPoolController.GetRunnerLogs, poolRead)
 		r.echo.GET("/admin/session-runners", r.handlers.sessionPoolController.ListAdminRunners, admin)
 		r.echo.GET("/admin/session-runners/:id/logs", r.handlers.sessionPoolController.GetAdminRunnerLogs, admin)
+		r.echo.DELETE("/admin/session-runners/:id", r.handlers.sessionPoolController.DeleteAdminRunner, admin)
 		r.echo.GET("/session-managers/:id", r.handlers.sessionPoolController.GetOwnedManager, poolRead)
 		r.echo.PATCH("/session-managers/:id", r.handlers.sessionPoolController.PatchOwnedManager, poolWrite)
 		r.echo.DELETE("/session-managers/:id", r.handlers.sessionPoolController.DeleteOwnedManager, poolWrite)

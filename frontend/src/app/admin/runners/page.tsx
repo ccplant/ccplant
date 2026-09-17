@@ -75,6 +75,21 @@ export default function AdminRunnersPage() {
     }
   }
 
+  const deleteRunner = async (runner: AdminSessionRunner) => {
+    if (!window.confirm(`Runner「${runner.id}」を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`)) return
+    setError('')
+    try {
+      await client.deleteAdminSessionRunner(runner.id, runner.manager_id)
+      if (logRunner?.manager_id === runner.manager_id && logRunner.id === runner.id) {
+        setLogRunner(null)
+        setLogs(null)
+      }
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Runner の削除に失敗しました')
+    }
+  }
+
   return (
     <>
       <SettingsPageHeader
@@ -105,7 +120,10 @@ export default function AdminRunnersPage() {
                   : <StatusBadge tone="amber">Pool から作成されていません</StatusBadge>}
                 {!runner.online && <StatusBadge tone="neutral">Manager 未確認</StatusBadge>}
               </>}
-              actions={<RowAction onClick={() => void showLogs(runner)} disabled={!runner.online}><span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" />ログ</span></RowAction>}
+              actions={<>
+                <RowAction onClick={() => void showLogs(runner)} disabled={!runner.online}><span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" />ログ</span></RowAction>
+                <RowAction tone="danger" onClick={() => void deleteRunner(runner)}>削除</RowAction>
+              </>}
             >
               <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
                 <div><dt className="text-gray-500 dark:text-gray-400">Session</dt><dd className="break-all font-mono text-gray-800 dark:text-gray-200">{runner.session_id || '紐づいていません'}</dd></div>

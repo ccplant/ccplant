@@ -7,11 +7,13 @@ import AdminRunnersPage from './page'
 
 const listAdminSessionRunners = vi.fn()
 const getAdminSessionRunnerLogs = vi.fn()
+const deleteAdminSessionRunner = vi.fn()
 
 vi.mock('@/lib/agentapi-proxy-client', () => ({
   createCurrentDeploymentAgentAPIProxyClient: () => ({
     listAdminSessionRunners,
     getAdminSessionRunnerLogs,
+    deleteAdminSessionRunner,
   }),
 }))
 
@@ -23,6 +25,7 @@ describe('AdminRunnersPage', () => {
       { id: 'direct-session', manager_id: 'manager-a', manager_name: 'Manager A', from_pool: false, status: 'running', session_id: 'direct-session', online: true },
     ])
     getAdminSessionRunnerLogs.mockResolvedValue({ lines: ['runner output'], source: 'pod/agentapi' })
+    deleteAdminSessionRunner.mockResolvedValue(undefined)
   })
 
   it('shows pool origin, linked sessions, and runner logs', async () => {
@@ -36,5 +39,15 @@ describe('AdminRunnersPage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /ログ/ })[1])
     await waitFor(() => expect(getAdminSessionRunnerLogs).toHaveBeenCalledWith('direct-session', 'manager-a'))
     expect(await screen.findByText('runner output')).toBeInTheDocument()
+  })
+
+  it('confirms and deletes the complete runner workload', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<AdminRunnersPage />)
+
+    expect(await screen.findByText('pooled-runner')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: '削除' })[0])
+    await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a'))
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('関連する Secret'))
   })
 })

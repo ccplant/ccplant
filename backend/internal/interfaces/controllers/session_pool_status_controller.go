@@ -282,6 +282,74 @@ func (c *SessionPoolController) GetAdminRunnerLogs(ctx echo.Context) error {
 	return c.proxyManagerLogs(ctx, managerID, ctx.Param("id"), ctx.Param("id"))
 }
 
+// DeleteAdminRunner asks the owning manager to delete the complete workload,
+// then removes the parent-side allocation, runner record, and route metadata.
+// A manager-side 404 is idempotent: stale parent records are still cleaned up.
+func (c *SessionPoolController) DeleteAdminRunner(ctx echo.Context) error {
+	requestCtx := ctx.Request().Context()
+	runnerID := strings.TrimSpace(ctx.Param("id"))
+	managerID := strings.TrimSpace(ctx.QueryParam("manager_id"))
+	if runnerID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "runner id is required")
+	}
+	if managerID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "manager_id is required")
+	}
+	if _, err := c.store.GetManager(requestCtx, managerID); err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	if c.managerTunnel == nil || !c.managerTunnel.IsConnected(requestCtx, managerID) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager control channel is offline")
+	}
+
+	targetURL := "http://manager/internal/esm-management/runners/" + url.PathEscape(runnerID)
+	req, _ := http.NewRequestWithContext(requestCtx, http.MethodDelete, targetURL, nil)
+	resp, err := c.managerTunnel.Do(requestCtx, managerID, "", "", req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "session manager operation failed").SetInternal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return echo.NewHTTPError(http.StatusBadGateway, "session manager failed to delete runner: "+strings.TrimSpace(string(body)))
+	}
+
+	var sessionID string
+	runner, runnerErr := c.store.GetRunner(requestCtx, runnerID)
+	if runnerErr == nil && runner.ManagerID == managerID {
+		allocations, listErr := c.store.ListAllocations(requestCtx, runner.Pool)
+		if listErr != nil {
+			return sessionRunnerStoreError(listErr)
+		}
+		for _, allocation := range allocations {
+			if allocation.RunnerID == runnerID {
+				sessionID = allocation.SessionID
+				if err := c.store.DeleteAllocation(requestCtx, allocation.SessionID); err != nil && err != core.ErrNotFound {
+					return sessionRunnerStoreError(err)
+				}
+			}
+		}
+		if err := c.store.DeleteRunner(requestCtx, runnerID); err != nil && err != core.ErrNotFound {
+			return sessionRunnerStoreError(err)
+		}
+	}
+
+	if c.routes != nil {
+		routes, listErr := c.routes.List(requestCtx, "")
+		if listErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session routes").SetInternal(listErr)
+		}
+		for _, route := range routes {
+			if route.ManagerID == managerID && (route.RemoteSessionID == runnerID || route.SessionID == sessionID) {
+				if err := c.routes.Delete(requestCtx, route.SessionID); err != nil {
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete session route").SetInternal(err)
+				}
+			}
+		}
+	}
+	return ctx.NoContent(http.StatusNoContent)
+}
+
 func (c *SessionPoolController) proxyManagerLogs(ctx echo.Context, managerID, runnerID, sessionID string) error {
 	if c.managerTunnel == nil || !c.managerTunnel.IsConnected(ctx.Request().Context(), managerID) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager control channel is offline")
