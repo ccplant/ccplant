@@ -53,6 +53,10 @@ const (
 	// polls refresh LastSeen, so records older than this no longer represent a
 	// live workload and must not suppress stock-runner reconciliation.
 	sessionRunnerHeartbeatTTL = 3 * time.Minute
+	// Draining records fence workloads while the manager removes them. Keep the
+	// tombstone long enough for delayed registrations to be rejected, then
+	// collect it once manager inventory and allocations both confirm it is gone.
+	sessionRunnerDrainingRetention = 10 * time.Minute
 )
 
 func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
@@ -1234,6 +1238,27 @@ func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Conte
 	allocations, err := c.store.ListAllocations(ctx, "")
 	if err != nil {
 		return err
+	}
+	allocated := make(map[string]bool, len(allocations))
+	for _, allocation := range allocations {
+		if allocation.RunnerID != "" {
+			allocated[allocation.RunnerID] = true
+		}
+	}
+	runners, err := c.store.ListRunners(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, runner := range runners {
+		if runner.ManagerID != managerID || runner.Status != core.RunnerDraining || local[runner.ID] || allocated[runner.ID] {
+			continue
+		}
+		if c.now().Sub(runner.UpdatedAt) < sessionRunnerDrainingRetention {
+			continue
+		}
+		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
+			return err
+		}
 	}
 	for _, allocation := range allocations {
 		if allocation.ManagerID != managerID || allocation.RunnerID == "" || local[allocation.RunnerID] {

@@ -175,10 +175,18 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 	managerNames := make(map[string]string, len(managers))
 	items := make(map[string]*adminRunnerInventoryItem, len(runners))
 	sessionItems := make(map[string]*adminRunnerInventoryItem, len(allocations))
+	draining := make(map[string]bool)
 	for _, manager := range managers {
 		managerNames[manager.ID] = manager.Name
 	}
 	for _, runner := range runners {
+		// Draining runners are deletion tombstones, not usable inventory. They
+		// remain persisted briefly for fencing but should not appear as runners
+		// that an administrator can inspect or operate.
+		if runner.Status == core.RunnerDraining {
+			draining[runner.ManagerID+"\x00"+runner.ID] = true
+			continue
+		}
 		items[runner.ManagerID+"\x00"+runner.ID] = &adminRunnerInventoryItem{
 			ID: runner.ID, ManagerID: runner.ManagerID, ManagerName: managerNames[runner.ManagerID],
 			Pool: runner.Pool, FromPool: true, Status: runner.Status,
@@ -236,6 +244,9 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 			defer mu.Unlock()
 			for _, id := range status.RunningRunnerIDs {
 				key := manager.ID + "\x00" + id
+				if draining[key] {
+					continue
+				}
 				if item := items[key]; item != nil {
 					item.Online = true
 					continue

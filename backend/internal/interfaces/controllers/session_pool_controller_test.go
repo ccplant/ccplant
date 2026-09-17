@@ -128,6 +128,7 @@ func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
 	ctx := context.Background()
 	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
 	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "retired-runner", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerDraining}))
 	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
 	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": true}}}
 	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
@@ -157,6 +158,38 @@ func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
 	logs := callSessionPoolHandler(t, controller.GetAdminRunnerLogs, http.MethodGet, "/admin/session-runners/direct-session/logs?manager_id=manager-a", nil, map[string]string{"id": "direct-session"}, nil)
 	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), "hello") {
 		t.Fatalf("logs status=%d body=%s", logs.Code, logs.Body.String())
+	}
+}
+
+func TestSessionManagerHeartbeatCollectsExpiredDrainingRunners(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	requireNoError(t, store.CreateManager(ctx, manager))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "expired", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "local", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "allocated", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: manager.ID, RunnerID: "allocated"}))
+
+	controller := NewSessionPoolController(store, nil)
+	controller.now = func() time.Time { return time.Now().UTC().Add(sessionRunnerDrainingRetention + time.Minute) }
+	localIDs := []string{"local"}
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"local_runner_ids": localIDs}, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "expired"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("expired draining runner was not collected: %v", err)
+	}
+	for _, id := range []string{"local", "allocated"} {
+		if _, err := store.GetRunner(ctx, id); err != nil {
+			t.Fatalf("protected draining runner %s was removed: %v", id, err)
+		}
 	}
 }
 
