@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +59,8 @@ func (s *fakeSession) Annotations() entities.SessionAnnotations { return s.annot
 func (s *fakeSession) Request() *entities.RunServerRequest      { return s.request }
 
 type fakeManager struct {
-	sessions map[string]entities.Session
+	sessions  map[string]entities.Session
+	listCalls atomic.Int64
 
 	createdID      string
 	createdRequest *entities.RunServerRequest
@@ -132,6 +134,7 @@ func (m *fakeManager) CreateSession(_ context.Context, id string, request *entit
 func (m *fakeManager) GetSession(id string) entities.Session { return m.sessions[id] }
 
 func (m *fakeManager) ListSessions(filter entities.SessionFilter) []entities.Session {
+	m.listCalls.Add(1)
 	m.lastFilter = filter
 	result := make([]entities.Session, 0, len(m.sessions))
 	for _, session := range m.sessions {
@@ -250,6 +253,7 @@ func newTestClient(t *testing.T, manager *fakeManager) (*Client, *httptest.Serve
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = client.Shutdown(0) })
 	return client, server
 }
 
@@ -273,6 +277,34 @@ func TestClientSubscribeStatusEventsEmitsInitialSnapshot(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for initial status snapshot")
 	}
+}
+
+func TestClientSubscribeStatusEventsSharesOnePoller(t *testing.T) {
+	manager := newFakeManager()
+	now := time.Now().UTC()
+	manager.sessions["session-active"] = &fakeSession{
+		id: "session-active", userID: "user-1", scope: entities.ScopeUser,
+		status: "active", startedAt: now, updatedAt: now, lastMessageAt: now,
+	}
+	client, _ := newTestClient(t, manager)
+	defer client.Shutdown(0) //nolint:errcheck
+
+	first, cancelFirst := client.SubscribeStatusEvents()
+	defer cancelFirst()
+	second, cancelSecond := client.SubscribeStatusEvents()
+	defer cancelSecond()
+
+	for name, events := range map[string]<-chan portrepos.SessionStatusEvent{"first": first, "second": second} {
+		select {
+		case event := <-events:
+			require.Equal(t, "session-active", event.SessionID, name)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s subscriber timed out waiting for initial status snapshot", name)
+		}
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	require.LessOrEqual(t, manager.listCalls.Load(), int64(2), "subscribers must share a single one-second poller")
 }
 
 func TestHandlerAuthenticatesEveryPrivateRoute(t *testing.T) {
