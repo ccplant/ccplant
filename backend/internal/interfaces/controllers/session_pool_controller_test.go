@@ -31,6 +31,25 @@ type statusTestTunnel struct {
 	requests  []string
 }
 
+type runnerInventoryTunnel struct {
+	statusTestTunnel
+}
+
+func (t *runnerInventoryTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.requests = append(t.requests, req.URL.String())
+	t.mu.Unlock()
+	body := `{"running_runner_ids":["session-a","direct-session"],"used_runner_ids":["session-a","direct-session"]}`
+	status := http.StatusOK
+	if strings.Contains(req.URL.Path, "/logs") {
+		body = `{"lines":["hello"],"source":"direct-session"}`
+	} else if req.Method == http.MethodDelete {
+		body = ""
+		status = http.StatusNoContent
+	}
+	return &http.Response{StatusCode: status, Status: http.StatusText(status), Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
+}
+
 func (t *statusTestTunnel) IsConnected(_ context.Context, id string) bool { return t.connected[id] }
 func (t *statusTestTunnel) Do(_ context.Context, id, _, _ string, req *http.Request) (*http.Response, error) {
 	t.mu.Lock()
@@ -101,6 +120,75 @@ func TestListManageablePoolStatusFiltersPoolsAndFetchesLiveManagerStatus(t *test
 	}
 	if len(result.Managers) != 1 || result.Managers[0].Manager.ID != "manager-a" || !result.Managers[0].Online || result.Managers[0].Status["version"] != "v1.2.3" {
 		t.Fatalf("managers=%+v", result.Managers)
+	}
+}
+
+func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": true}}}
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
+
+	rec := callSessionPoolHandler(t, controller.ListAdminRunners, http.MethodGet, "/admin/session-runners", nil, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Runners []adminRunnerInventoryItem `json:"session_runners"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Runners) != 2 {
+		t.Fatalf("runners=%+v", result.Runners)
+	}
+	byID := map[string]adminRunnerInventoryItem{}
+	for _, runner := range result.Runners {
+		byID[runner.ID] = runner
+	}
+	if pooled := byID["runner-a"]; !pooled.FromPool || pooled.Pool != "linux" || pooled.SessionID != "session-a" || !pooled.Online {
+		t.Fatalf("pooled=%+v", pooled)
+	}
+	if direct := byID["direct-session"]; direct.FromPool || direct.SessionID != "direct-session" || direct.Status != core.RunnerRunning {
+		t.Fatalf("direct=%+v", direct)
+	}
+
+	logs := callSessionPoolHandler(t, controller.GetAdminRunnerLogs, http.MethodGet, "/admin/session-runners/direct-session/logs?manager_id=manager-a", nil, map[string]string{"id": "direct-session"}, nil)
+	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), "hello") {
+		t.Fatalf("logs status=%d body=%s", logs.Code, logs.Body.String())
+	}
+}
+
+func TestDeleteAdminRunnerDeletesManagerWorkloadAndParentRecords(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	requireNoError(t, routes.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "runner-a", ManagerID: "manager-a"}))
+	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": true}}}
+	controller := NewSessionPoolController(store, routes).WithManagerTunnel(tunnel)
+
+	rec := callSessionPoolHandler(t, controller.DeleteAdminRunner, http.MethodDelete, "/admin/session-runners/runner-a?manager_id=manager-a", nil, map[string]string{"id": "runner-a"}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "runner-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("runner still exists: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("allocation still exists: %v", err)
+	}
+	if route, err := routes.Get(ctx, "session-a"); err != nil || route != nil {
+		t.Fatalf("route still exists: route=%+v err=%v", route, err)
+	}
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if len(tunnel.requests) != 1 || tunnel.requests[0] != "http://manager/internal/esm-management/runners/runner-a" {
+		t.Fatalf("requests=%v", tunnel.requests)
 	}
 }
 

@@ -78,7 +78,7 @@ import {
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
-import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
+import { AdminSessionRunner, ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
@@ -3320,6 +3320,21 @@ export class AgentAPIProxyClient {
 
   async getSessionPoolRunnerLogs(runnerID: string, tail = 200): Promise<SessionPoolLogs> {
     return this.makeRequest<SessionPoolLogs>(`/session-runners/${encodeURIComponent(runnerID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
+  }
+
+  async listAdminSessionRunners(): Promise<AdminSessionRunner[]> {
+    const result = await this.makeRequest<{ session_runners: AdminSessionRunner[] }>('/admin/session-runners');
+    return result.session_runners ?? [];
+  }
+
+  async getAdminSessionRunnerLogs(runnerID: string, managerID: string, tail = 200): Promise<SessionPoolLogs> {
+    const params = new URLSearchParams({ manager_id: managerID, tail: String(Math.min(5000, Math.max(1, tail))) });
+    return this.makeRequest<SessionPoolLogs>(`/admin/session-runners/${encodeURIComponent(runnerID)}/logs?${params}`);
+  }
+
+  async deleteAdminSessionRunner(runnerID: string, managerID: string): Promise<void> {
+    const params = new URLSearchParams({ manager_id: managerID });
+    await this.makeRequest(`/admin/session-runners/${encodeURIComponent(runnerID)}?${params}`, { method: 'DELETE' });
   }
 }
 

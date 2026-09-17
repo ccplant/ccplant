@@ -6274,6 +6274,55 @@
         }
       }
     },
+    "/admin/session-runners": {
+      "get": {
+        "summary": "List all session runners",
+        "description": "Returns the administrator inventory of pooled and direct runners, including live status, pool origin, and linked session.",
+        "operationId": "listAdminSessionRunners",
+        "tags": ["Session Pools"],
+        "responses": {
+          "200": {"description": "Runner inventory"},
+          "403": {"description": "Admin permission required"}
+        }
+      }
+    },
+    "/admin/session-runners/{id}/logs": {
+      "get": {
+        "summary": "Read any session runner logs",
+        "description": "Reads logs for a pooled or direct runner. Requires admin permission.",
+        "operationId": "getAdminSessionRunnerLogs",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+        ],
+        "responses": {
+          "200": {"description": "Runner log lines and source"},
+          "403": {"description": "Admin permission required"},
+          "404": {"description": "Session manager not found"},
+          "503": {"description": "Session manager control channel is offline"}
+        }
+      }
+    },
+    "/admin/session-runners/{id}": {
+      "delete": {
+        "summary": "Delete a session runner and its resources",
+        "description": "Deletes the runner workload through its session manager, including Service, Deployment or Pod, PVC, session-labelled Secrets, allocation, and route metadata. Requires admin permission.",
+        "operationId": "deleteAdminSessionRunner",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "204": {"description": "Runner and related resources deleted"},
+          "403": {"description": "Admin permission required"},
+          "404": {"description": "Session manager not found"},
+          "503": {"description": "Session manager control channel is offline"}
+        }
+      }
+    },
     "/session-managers/{id}": {
       "parameters": [
         {

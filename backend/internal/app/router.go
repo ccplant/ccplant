@@ -651,6 +651,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.DELETE("/users/me/github-identities/:identity_id", controller.Unlink, write)
 	}
 	if r.handlers.sessionPoolController != nil {
+		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
 		poolRead := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
 		poolWrite := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
 		r.echo.POST("/session-managers/registration-tokens", r.handlers.sessionPoolController.IssueManagerRegistrationToken, poolWrite)
@@ -659,6 +660,9 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/session-pools/status", r.handlers.sessionPoolController.ListManageablePoolStatus, poolRead)
 		r.echo.GET("/session-managers/:id/logs", r.handlers.sessionPoolController.GetManagerLogs, poolRead)
 		r.echo.GET("/session-runners/:id/logs", r.handlers.sessionPoolController.GetRunnerLogs, poolRead)
+		r.echo.GET("/admin/session-runners", r.handlers.sessionPoolController.ListAdminRunners, admin)
+		r.echo.GET("/admin/session-runners/:id/logs", r.handlers.sessionPoolController.GetAdminRunnerLogs, admin)
+		r.echo.DELETE("/admin/session-runners/:id", r.handlers.sessionPoolController.DeleteAdminRunner, admin)
 		r.echo.GET("/session-managers/:id", r.handlers.sessionPoolController.GetOwnedManager, poolRead)
 		r.echo.PATCH("/session-managers/:id", r.handlers.sessionPoolController.PatchOwnedManager, poolWrite)
 		r.echo.DELETE("/session-managers/:id", r.handlers.sessionPoolController.DeleteOwnedManager, poolWrite)

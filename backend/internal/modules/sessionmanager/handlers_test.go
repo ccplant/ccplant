@@ -39,6 +39,7 @@ func (s *proxyTestSession) Request() *entities.RunServerRequest { return nil }
 
 type proxyTestManager struct {
 	session     entities.Session
+	deletedID   string
 	suspendedID string
 	resumedID   string
 	preparedID  string
@@ -59,13 +60,22 @@ func (m *proxyTestManager) GetSession(id string) entities.Session {
 	return nil
 }
 func (m *proxyTestManager) ListSessions(entities.SessionFilter) []entities.Session { return nil }
-func (m *proxyTestManager) DeleteSession(string) error                             { return nil }
-func (m *proxyTestManager) SendMessage(context.Context, string, string) error      { return nil }
-func (m *proxyTestManager) StopAgent(context.Context, string) error                { return nil }
+func (m *proxyTestManager) DeleteSession(id string) error {
+	m.deletedID = id
+	return nil
+}
+func (m *proxyTestManager) SendMessage(context.Context, string, string) error { return nil }
+func (m *proxyTestManager) StopAgent(context.Context, string) error           { return nil }
 func (m *proxyTestManager) GetMessages(context.Context, string) ([]repositories.Message, error) {
 	return nil, nil
 }
 func (m *proxyTestManager) Shutdown(time.Duration) error { return nil }
+func (m *proxyTestManager) OperationalStatus(context.Context, []string) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+func (m *proxyTestManager) OperationalLogs(context.Context, string, string, int) ([]string, string, error) {
+	return nil, "", nil
+}
 func (m *proxyTestManager) SuspendSession(_ context.Context, id string) error {
 	m.suspendedID = id
 	return nil
@@ -93,6 +103,25 @@ func TestSuspendSessionUsesManagerPolicy(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent || manager.suspendedID != "remote-1" {
 		t.Fatalf("status=%d suspended=%q body=%s", rec.Code, manager.suspendedID, rec.Body.String())
+	}
+}
+
+func TestDeleteOperationalRunnerUsesCompleteSessionDeletion(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/internal/esm-management/runners/runner-a"
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodDelete, path, ts, nil)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.deletedID != "runner-a" {
+		t.Fatalf("status=%d deleted=%q body=%s", rec.Code, manager.deletedID, rec.Body.String())
 	}
 }
 

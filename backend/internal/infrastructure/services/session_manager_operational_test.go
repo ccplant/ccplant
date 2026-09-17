@@ -25,7 +25,7 @@ func TestOperationalStatusUsesLiveInventoryAndFiltersPools(t *testing.T) {
 		}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 	}
 	manager := &KubernetesSessionManager{
-		client:    fake.NewSimpleClientset(service("idle-a", "allowed", "true"), service("used-a", "allowed", "false"), service("hidden", "hidden", "false"), pod("idle-a", "allowed"), pod("used-a", "allowed"), pod("hidden", "hidden")),
+		client:    fake.NewSimpleClientset(service("idle-a", "allowed", "true"), service("used-a", "allowed", "false"), service("hidden", "hidden", "false"), service("direct", "", "false"), pod("idle-a", "allowed"), pod("used-a", "allowed"), pod("hidden", "hidden"), pod("direct", "")),
 		namespace: "test", config: &config.Config{SessionManager: config.SessionManagerConfig{CurrentVersion: "v1.2.3"}},
 	}
 	status, err := manager.OperationalStatus(context.Background(), []string{"allowed"})
@@ -39,5 +39,13 @@ func TestOperationalStatusUsesLiveInventoryAndFiltersPools(t *testing.T) {
 	used := status["used_runner_ids"].([]string)
 	if len(running) != 2 || running[0] != "idle-a" || running[1] != "used-a" || len(used) != 1 || used[0] != "used-a" {
 		t.Fatalf("running=%v used=%v", running, used)
+	}
+	all, err := manager.OperationalStatus(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allRunning := all["running_runner_ids"].([]string)
+	if len(allRunning) != 4 || allRunning[0] != "direct" {
+		t.Fatalf("unfiltered inventory must include direct sessions: %v", allRunning)
 	}
 }
