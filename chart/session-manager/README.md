@@ -9,10 +9,6 @@ The parent API remains the source of truth for allocations, routes, quotas and
 provision status. This chart keeps only Kubernetes workload resources and a
 cached runtime profile in the remote cluster.
 
-The `control` compatibility Service is enabled by default so session Pods
-created by an earlier combined-chart installation keep their callback URL
-during migration.
-
 Required values are `parent.url`, the parent connection/HMAC
 Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRef.name`, and
 `session.provisioner.tokenSecretRef.name`.

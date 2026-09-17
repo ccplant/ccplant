@@ -21,11 +21,6 @@ service:
   type: ClusterIP
   port: 8080
 
-# Stable in-cluster callback name used by already-running session Pods.
-compatibilityService:
-  enabled: true
-  name: control
-
 ingress:
   enabled: false
   className: ""
