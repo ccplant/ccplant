@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import AdminRunnersPage from './page'
 
 const listAdminSessionRunners = vi.fn()
@@ -19,7 +19,7 @@ vi.mock('@/lib/agentapi-proxy-client', () => ({
 
 // The shared Vitest config disables module isolation to reduce CI memory usage.
 // Do not let this page-specific mock leak into later component suites.
-afterEach(() => {
+afterAll(() => {
   vi.unmock('@/lib/agentapi-proxy-client')
   vi.resetModules()
 })
