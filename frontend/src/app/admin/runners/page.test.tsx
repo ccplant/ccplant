@@ -20,7 +20,7 @@ vi.mock('@/lib/agentapi-proxy-client', () => ({
 // The shared Vitest config disables module isolation to reduce CI memory usage.
 // Do not let this page-specific mock leak into later component suites.
 afterAll(() => {
-  vi.unmock('@/lib/agentapi-proxy-client')
+  vi.doUnmock('@/lib/agentapi-proxy-client')
   vi.resetModules()
 })
 
