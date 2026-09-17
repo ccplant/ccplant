@@ -6150,13 +6150,6 @@
                     "additionalProperties": {
                       "type": "string"
                     }
-                  },
-                  "pool": {
-                    "type": "string"
-                  },
-                  "default": {
-                    "type": "boolean",
-                    "description": "System scope only; create an all-subject default binding during enrollment"
                   }
                 }
               }
@@ -6206,13 +6199,6 @@
                     "items": {
                       "type": "string"
                     }
-                  },
-                  "pool": {
-                    "type": "string"
-                  },
-                  "default": {
-                    "type": "boolean",
-                    "description": "Create an all-subject binding so the pool is selected by default"
                   }
                 }
               }

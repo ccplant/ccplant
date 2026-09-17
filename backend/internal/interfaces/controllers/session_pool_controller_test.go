@@ -183,7 +183,7 @@ func TestRunnerLongPollClaimsOnlyAfterPoolNotification(t *testing.T) {
 	}
 }
 
-func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
+func TestSystemManagerRegistrationDoesNotConfigurePools(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
 	admin := entities.NewUser("admin-1", entities.UserTypeAdmin, "admin")
@@ -218,12 +218,15 @@ func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
 	if credentials.ID != registration.Manager.ID || credentials.ConnectionToken == "" {
 		t.Fatalf("invalid enrollment response: %s", enrolled.Body.String())
 	}
-	if _, err := store.GetPoolSupplier(context.Background(), credentials.ID, "default"); err != nil {
-		t.Fatalf("default pool supplier was not created: %v", err)
+	if _, err := store.GetLogicalPool(context.Background(), "default"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("registration unexpectedly created a logical pool: %v", err)
+	}
+	if _, err := store.GetPoolSupplier(context.Background(), credentials.ID, "default"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("registration unexpectedly created a pool supplier: %v", err)
 	}
 	bindings, err := store.ListBindings(context.Background(), "default")
-	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectAll {
-		t.Fatalf("default binding was not created: bindings=%+v err=%v", bindings, err)
+	if err != nil || len(bindings) != 0 {
+		t.Fatalf("registration unexpectedly created pool bindings: bindings=%+v err=%v", bindings, err)
 	}
 
 	reused := callSessionPoolHandler(t, controller.EnrollManager, http.MethodPost, "/session-managers/enroll",

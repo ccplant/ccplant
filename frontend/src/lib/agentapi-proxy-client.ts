@@ -3209,7 +3209,7 @@ export class AgentAPIProxyClient {
   }
 
   async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; registration_token: string; expires_at: string }> {
-    return this.makeRequest('/session-managers/registration-tokens', { method: 'POST', body: JSON.stringify({ name, scope: 'system', pool: 'default', default: true }) });
+    return this.makeRequest('/session-managers/registration-tokens', { method: 'POST', body: JSON.stringify({ name, scope: 'system' }) });
   }
 
   async deleteClusterSessionManager(managerID: string): Promise<void> {
