@@ -123,8 +123,8 @@ type SessionParams struct {
 	AuthProxy *bool `json:"auth_proxy,omitempty"`
 	// SessionTTL is the duration after processing ends before this session is automatically deleted.
 	// Accepted format: Go duration string (e.g. "48h", "168h").
-	// Empty uses one minute for oneshot sessions, the global cleanup TTL for other
-	// Slackbot sessions, and no automatic deletion for other sessions.
+	// Empty uses the global cleanup TTL for Slackbot sessions and disables
+	// automatic deletion for other sessions. Oneshot is shorthand for "1m".
 	SessionTTL string `json:"session_ttl,omitempty"`
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
@@ -228,7 +228,6 @@ type RunServerRequest struct {
 	AgentType                string            // Agent type for the session
 	Model                    string            // Model override interpreted for the selected agent
 	SlackParams              *SlackParams      // Slack integration parameters
-	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)

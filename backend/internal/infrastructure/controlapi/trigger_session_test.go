@@ -53,7 +53,7 @@ func TestTriggerStartPreservesConfigurationAndIdentity(t *testing.T) {
 			req := &entities.RunServerRequest{
 				UserID: "owner", TriggeredUserID: "actor", Scope: entities.ScopeTeam, TeamID: "org/team", Teams: []string{"org/team"},
 				Tags: map[string]string{origin: "trigger", "branch": "main", "pr": "42"}, Pool: "pool", AgentType: "codex-acp", Model: "model",
-				InitialMessage: "finish", Oneshot: true, SessionTTL: "2m", InitialMessageWaitSecond: &wait,
+				InitialMessage: "finish", SessionTTL: "2m", InitialMessageWaitSecond: &wait,
 				Environment: map[string]string{"EXPLICIT": "value"}, MemoryKey: map[string]string{"task": "test"}, ResolvedSessionProfileID: "profile",
 				RepoInfo: &entities.RepositoryInfo{FullName: "org/repo"}, CycleMessage: "continue", CycleMaxCount: 2,
 				Docker: &entities.DockerParams{Enabled: true}, Sandbox: &entities.SandboxParams{Enabled: true}, AuthProxy: &authProxy,
@@ -78,7 +78,7 @@ func TestTriggerStartPreservesConfigurationAndIdentity(t *testing.T) {
 			require.NotContains(t, req.Tags, "repository", "caller tags must not be mutated")
 			require.Equal(t, "main", start.Tags["branch"])
 			require.Equal(t, "42", start.Tags["pr"])
-			require.Equal(t, &entities.SessionParams{Pool: "pool", RepoFullName: "org/repo", Message: "finish", AgentType: "codex-acp", Model: "model", Oneshot: true, SessionTTL: "2m", InitialMessageWaitSecond: &wait, CycleMessage: "continue", CycleMaxCount: 2, Docker: req.Docker, Sandbox: req.Sandbox, AuthProxy: &authProxy, CredentialSource: "triggered_user", CodexAuthMode: "oauth", ClaudeAuthMode: "api_key", UnsyncedFilePaths: req.UnsyncedFilePaths}, start.Params)
+			require.Equal(t, &entities.SessionParams{Pool: "pool", RepoFullName: "org/repo", Message: "finish", AgentType: "codex-acp", Model: "model", SessionTTL: "2m", InitialMessageWaitSecond: &wait, CycleMessage: "continue", CycleMaxCount: 2, Docker: req.Docker, Sandbox: req.Sandbox, AuthProxy: &authProxy, CredentialSource: "triggered_user", CodexAuthMode: "oauth", ClaudeAuthMode: "api_key", UnsyncedFilePaths: req.UnsyncedFilePaths}, start.Params)
 		})
 	}
 }

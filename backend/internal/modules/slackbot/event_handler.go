@@ -464,7 +464,7 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 			slackInitialMessageWaitSecond = params.InitialMessageWaitSecond
 			slackCycleMessage = params.CycleMessage
 			slackCycleMaxCount = params.CycleMaxCount
-			slackSessionTTL = params.SessionTTL
+			slackSessionTTL = sessionuc.ResolveSessionTTL(params)
 		}
 
 		result, err := telemetry.LoggedOperation(bgCtx, "slackbot.LaunchSession", func(launchCtx context.Context) (sessionuc.LaunchResult, error) {

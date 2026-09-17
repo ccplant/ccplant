@@ -1099,7 +1099,7 @@ func decodeRecorder(t *testing.T, recorder *httptest.ResponseRecorder, out any) 
 	}
 }
 
-func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
+func TestManagerHeartbeatUpdatesLegacyOneshotStatusNormally(t *testing.T) {
 	for _, reported := range []string{"active", "stable", "running", "starting", "creating"} {
 		t.Run(reported, func(t *testing.T) {
 			ctx := context.Background()
@@ -1122,24 +1122,12 @@ func TestManagerHeartbeatPreservesDirectOneshotCompletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != "stopped" || !got.StatusUpdatedAt.Equal(completedAt) {
-				t.Fatalf("heartbeat %q changed completion: status=%s updated=%s", reported, got.Status, got.StatusUpdatedAt)
+			expected := reported
+			if reported == "stable" {
+				expected = "active"
 			}
-			// An actual runtime running event may still begin a new turn.
-			runtimeController := NewSessionController(nil, nil, WithSessionRouteRepository(routes))
-			if err := runtimeController.RecordRemoteSessionStatus(ctx, got, "running"); err != nil {
-				t.Fatal(err)
-			}
-			got, err = routes.Get(ctx, "oneshot")
-			if err != nil || got.Status != "running" {
-				t.Fatalf("runtime status not accepted: %v %v", got, err)
-			}
-			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
-				t.Fatal(err)
-			}
-			got, err = routes.Get(ctx, "oneshot")
-			if err != nil || got.Status != "running" {
-				t.Fatalf("manager replaced authoritative runtime status: %v %v", got, err)
+			if got.Status != expected || !got.StatusUpdatedAt.After(completedAt) {
+				t.Fatalf("heartbeat %q was not recorded normally: status=%s updated=%s", reported, got.Status, got.StatusUpdatedAt)
 			}
 		})
 	}

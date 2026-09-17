@@ -155,39 +155,35 @@ func sessionTTLStart(session entities.Session) (time.Time, bool) {
 	}
 }
 
+func sessionTTL(session entities.Session) string {
+	if provider, ok := session.(interface {
+		Request() *entities.RunServerRequest
+	}); ok && provider.Request() != nil {
+		return provider.Request().SessionTTL
+	}
+	// Remote worker transports expose the request TTL as a tag because the
+	// generic Session interface does not carry RunServerRequest.
+	return session.Tags()["session_ttl"]
+}
+
 // pruneStaleSlackbotSessions lists all Slackbot sessions and deletes those whose
 // processing ended more than SessionTTL ago. When DryRun is enabled the
 // worker only logs which sessions would be deleted without touching them.
-// If a session has the agentapi.proxy/session-ttl annotation, that value overrides
-// the global SessionTTL for that individual session.
 func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 	now := time.Now()
-
-	dryRunPrefix := ""
-	if w.config.DryRun {
-		dryRunPrefix = "[DRY-RUN] "
-	}
 
 	sessions := w.sessionManager.ListSessions(entities.SessionFilter{})
 
 	deleted := 0
 	for _, session := range sessions {
-		// Oneshot lifetime starts at completion and is handled by the short
-		// TTL loop, even when the session originated from Slack.
-		if session.Tags()["slackbot_id"] == "" || session.Tags()["oneshot"] == "true" {
+		// Sessions with an explicit TTL are handled by the per-session TTL loop,
+		// even when the session originated from Slack.
+		if session.Tags()["slackbot_id"] == "" || sessionTTL(session) != "" {
 			continue
 		}
 		sessionID := session.ID()
 
-		// Resolve effective TTL: per-session annotation takes priority over global config.
 		effectiveTTL := w.config.SessionTTL
-		if ttlStr := session.Tags()["session_ttl"]; ttlStr != "" {
-			if parsed, err := time.ParseDuration(ttlStr); err == nil {
-				effectiveTTL = parsed
-			} else {
-				log.Printf("[SLACKBOT_CLEANUP] %sSession %s: invalid session-ttl annotation %q, using global TTL", dryRunPrefix, sessionID, ttlStr)
-			}
-		}
 		threshold := now.Add(-effectiveTTL)
 
 		refTime, eligible := sessionTTLStart(session)
@@ -224,9 +220,8 @@ func (w *CleanupWorker) pruneStaleSlackbotSessions(ctx context.Context) {
 }
 
 // pruneSessionsWithTTL scans all agentapi-proxy sessions (regardless of Slackbot label)
-// that have an explicit session TTL or are marked oneshot. Explicit TTLs take priority;
-// oneshot sessions are deleted one minute after their completed turn. Interactive
-// Slackbot sessions are handled by pruneStaleSlackbotSessions.
+// that have an explicit session TTL. Interactive Slackbot sessions without an
+// explicit TTL are handled by pruneStaleSlackbotSessions.
 func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	now := time.Now()
 
@@ -238,15 +233,7 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 	sessions := w.sessionManager.ListSessions(entities.SessionFilter{})
 	deleted := 0
 	for _, session := range sessions {
-		oneshot := session.Tags()["oneshot"] == "true"
-		if session.Tags()["slackbot_id"] != "" && !oneshot {
-			continue
-		}
-
-		ttlStr := session.Tags()["session_ttl"]
-		if ttlStr == "" && oneshot {
-			ttlStr = "1m"
-		}
+		ttlStr := sessionTTL(session)
 		if ttlStr == "" {
 			continue
 		}

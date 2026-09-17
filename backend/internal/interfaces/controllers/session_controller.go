@@ -907,9 +907,6 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 		return nil
 	}
 	status := publicSessionStatus(runtimeStatus)
-	if runtimeStatus == "stable" && route.Tags["oneshot"] == "true" {
-		status = "stopped"
-	}
 	previous := route.Status
 	// StatusUpdatedAt is the completion timestamp used by session TTL cleanup.
 	// Repeated /status reads and runtime retries must not move that deadline.

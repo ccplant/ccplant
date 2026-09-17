@@ -2077,7 +2077,7 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 	if getErr != nil && !errors.IsNotFound(getErr) {
 		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
 	}
-	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Oneshot: settings.Session.Oneshot, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
 	if settings.Sandbox != nil {
 		req.Sandbox = &entities.SandboxParams{Enabled: settings.Sandbox.Enabled, PolicyID: settings.Sandbox.PolicyID, AllowedDomains: settings.Sandbox.AllowedDomains, DeniedDomains: settings.Sandbox.DeniedDomains, CountMode: settings.Sandbox.CountMode}
 	}
@@ -5843,19 +5843,8 @@ func applyAgentRuntimeStatus(session *KubernetesSession, status string) {
 		session.SetStatus("running")
 		log.Printf("[AGENT_STATUS] Session %s is now running", session.id)
 	case "stable":
-		request := session.Request()
-		// Runtime watching starts after pull provisioning, including the initial
-		// message, has completed. A fast turn can therefore finish before the
-		// watcher connects and its first event is stable rather than running.
-		completedOneshot := request != nil && request.Oneshot && request.InitialMessage != "" &&
-			(session.Status() == "running" || session.Status() == "active")
-		if completedOneshot {
-			session.SetStatus("stopped")
-			log.Printf("[AGENT_STATUS] Session %s completed oneshot turn; waiting for TTL cleanup", session.id)
-		} else {
-			session.SetStatus("active")
-			log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
-		}
+		session.SetStatus("active")
+		log.Printf("[AGENT_STATUS] Session %s is now stable (active)", session.id)
 	}
 }
 
@@ -6052,14 +6041,12 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
-	// Extract MemoryKey, Teams, and Oneshot from session meta if available
+	// Extract MemoryKey and Teams from session meta if available.
 	var memoryKey map[string]string
 	var teams []string
-	var oneshot bool
 	if sessionMeta != nil {
 		memoryKey = sessionMeta.MemoryKey
 		teams = sessionMeta.Teams
-		oneshot = sessionMeta.Oneshot
 	}
 
 	// Parse created-at from annotations
@@ -6109,7 +6096,6 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			InitialMessage: initialMessage,
 			MemoryKey:      memoryKey,
 			Teams:          teams,
-			Oneshot:        oneshot,
 			SessionTTL:     sessionTTL,
 			AgentType:      agentType,
 		},
@@ -6193,11 +6179,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	// Extract MemoryKey, Teams, and Oneshot from session meta if available
 	var memoryKey map[string]string
 	var teams []string
-	var oneshot bool
 	if sessionMeta != nil {
 		memoryKey = sessionMeta.MemoryKey
 		teams = sessionMeta.Teams
-		oneshot = sessionMeta.Oneshot
 	}
 
 	// Parse created-at from annotations
@@ -6247,7 +6231,6 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 			InitialMessage: initialMessage,
 			MemoryKey:      memoryKey,
 			Teams:          teams,
-			Oneshot:        oneshot,
 			SessionTTL:     sessionTTL,
 			AgentType:      agentType,
 		},
@@ -6652,7 +6635,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		Scope:              scope,
 		TeamID:             req.TeamID,
 		AgentType:          req.AgentType,
-		Oneshot:            req.Oneshot,
 		Teams:              req.Teams,
 		MemoryKey:          req.MemoryKey,
 		ResumeFrom:         req.ResumeFrom,

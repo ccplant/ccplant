@@ -131,8 +131,6 @@ type workerSessionLister interface {
 	ListSessionsContext(context.Context, entities.SessionFilter) ([]entities.Session, error)
 }
 
-const defaultOneshotSessionTTL = "1m"
-
 type workerSessionInfo struct {
 	ID            string                 `json:"id"`
 	UserID        string                 `json:"user_id"`
@@ -155,14 +153,6 @@ func workerSessionInfoFrom(session entities.Session) workerSessionInfo {
 	}); ok && provider.Request() != nil {
 		if provider.Request().SessionTTL != "" {
 			tags["session_ttl"] = provider.Request().SessionTTL
-		}
-		// oneshot is an internal cleanup hint. ACP agents do not execute Claude's
-		// Stop hook, so the worker applies its configured TTL to these sessions.
-		if provider.Request().Oneshot {
-			tags["oneshot"] = "true"
-			if provider.Request().SessionTTL == "" {
-				tags["session_ttl"] = defaultOneshotSessionTTL
-			}
 		}
 	}
 	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), UpdatedAt: session.UpdatedAt(), LastMessageAt: session.LastMessageAt()}
@@ -339,7 +329,7 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
-			} else if route.Transport == repositories.SessionRouteTransportDirectRuntime || route.Tags["session_ttl"] != "" || route.Tags["oneshot"] == "true" {
+			} else if route.Transport == repositories.SessionRouteTransportDirectRuntime || route.Tags["session_ttl"] != "" {
 				// A claimed direct-runtime route has a runner ID, but that runner is not
 				// necessarily present in the API session manager's local list. Keep the
 				// durable public route visible to worker-side Slack thread reuse.

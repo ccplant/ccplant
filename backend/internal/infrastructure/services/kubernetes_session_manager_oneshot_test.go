@@ -63,9 +63,8 @@ func TestBuildSessionSettings_OneshotDoesNotInjectDeleteHook(t *testing.T) {
 	}
 
 	req := &entities.RunServerRequest{
-		UserID:  "test-user",
-		Scope:   entities.ScopeUser,
-		Oneshot: true,
+		UserID: "test-user",
+		Scope:  entities.ScopeUser,
 	}
 
 	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
@@ -81,10 +80,10 @@ func TestBuildSessionSettings_OneshotDoesNotInjectDeleteHook(t *testing.T) {
 	}
 }
 
-func TestApplyAgentRuntimeStatusCompletesFastOneshotFromActive(t *testing.T) {
+func TestApplyAgentRuntimeStatusKeepsTTLSessionActive(t *testing.T) {
 	session := NewKubernetesSession(
 		"fast-oneshot",
-		&entities.RunServerRequest{Oneshot: true, InitialMessage: "finish quickly"},
+		&entities.RunServerRequest{SessionTTL: "1m", InitialMessage: "finish quickly"},
 		"agentapi-session-fast-oneshot",
 		"agentapi-session-fast-oneshot-svc",
 		"",
@@ -97,8 +96,8 @@ func TestApplyAgentRuntimeStatusCompletesFastOneshotFromActive(t *testing.T) {
 
 	applyAgentRuntimeStatus(session, "stable")
 
-	if got := session.Status(); got != "stopped" {
-		t.Fatalf("status = %q, want stopped", got)
+	if got := session.Status(); got != "active" {
+		t.Fatalf("status = %q, want active", got)
 	}
 }
 

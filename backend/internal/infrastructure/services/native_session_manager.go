@@ -231,9 +231,6 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		s.updatedAt = time.Now().UTC()
 		s.mu.Unlock()
 		_ = m.persistSession(s)
-		if req.Oneshot {
-			m.removeFinishedSession(s)
-		}
 	}()
 	return s, nil
 }
@@ -392,16 +389,6 @@ func nativeSessionStatusActive(status string) bool {
 		return false
 	default:
 		return true
-	}
-}
-
-func (m *NativeSessionManager) removeFinishedSession(s *NativeSession) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.sessions[s.id] == s {
-		_ = os.RemoveAll(s.rootDir)
-		delete(m.sessions, s.id)
-		delete(m.provisionRequests, s.id)
 	}
 }
 

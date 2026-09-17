@@ -1247,7 +1247,7 @@ func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Cont
 		// A lagging manager replica may still report startup after the turn has
 		// finished; those statuses must not reset the completion/TTL timestamp.
 		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
-			(route.Tags["oneshot"] == "true" || route.Tags["session_ttl"] != "" || route.Tags["slackbot_id"] != "") &&
+			(route.Tags["session_ttl"] != "" || route.Tags["slackbot_id"] != "") &&
 			(status == "active" || status == "running" || status == "starting" || status == "creating") {
 			continue
 		}

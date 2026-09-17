@@ -368,7 +368,6 @@ func allocationMetadata(req *sessionallocation.AllocationRequest) *sessionalloca
 			Scope:     req.Request.Scope,
 			TeamID:    req.Request.TeamID,
 			AgentType: req.Request.AgentType,
-			Oneshot:   req.Request.Oneshot,
 		}
 	}
 	return &copyReq

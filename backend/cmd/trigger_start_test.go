@@ -74,7 +74,7 @@ func TestAPITriggersUseStartEndpoint(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Len(t, starts, 1)
 	require.Equal(t, "schedule", origins[0].ScheduleID)
-	require.True(t, starts[0].Params.Oneshot)
+	require.False(t, starts[0].Params.Oneshot)
 	require.Equal(t, "2m", starts[0].Params.SessionTTL)
 	var manual map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &manual))
@@ -99,7 +99,8 @@ func TestAPITriggersUseStartEndpoint(t *testing.T) {
 	require.Equal(t, origins[1].SessionID, id)
 	require.Equal(t, "webhook", origins[1].WebhookID)
 	require.Equal(t, "owner", origins[1].UserID)
-	require.True(t, starts[1].Params.Oneshot)
+	require.False(t, starts[1].Params.Oneshot)
+	require.Equal(t, "2m", starts[1].Params.SessionTTL)
 	require.Equal(t, "finish test", starts[1].Params.Message)
 	require.Equal(t, payload, starts[1].WebhookPayload)
 }
