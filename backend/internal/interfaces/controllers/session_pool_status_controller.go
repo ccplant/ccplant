@@ -175,10 +175,18 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 	managerNames := make(map[string]string, len(managers))
 	items := make(map[string]*adminRunnerInventoryItem, len(runners))
 	sessionItems := make(map[string]*adminRunnerInventoryItem, len(allocations))
+	draining := make(map[string]bool)
 	for _, manager := range managers {
 		managerNames[manager.ID] = manager.Name
 	}
 	for _, runner := range runners {
+		// Draining runners are deletion tombstones, not usable inventory. They
+		// remain persisted briefly for fencing but should not appear as runners
+		// that an administrator can inspect or operate.
+		if runner.Status == core.RunnerDraining {
+			draining[runner.ManagerID+"\x00"+runner.ID] = true
+			continue
+		}
 		items[runner.ManagerID+"\x00"+runner.ID] = &adminRunnerInventoryItem{
 			ID: runner.ID, ManagerID: runner.ManagerID, ManagerName: managerNames[runner.ManagerID],
 			Pool: runner.Pool, FromPool: true, Status: runner.Status,
@@ -236,6 +244,9 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 			defer mu.Unlock()
 			for _, id := range status.RunningRunnerIDs {
 				key := manager.ID + "\x00" + id
+				if draining[key] {
+					continue
+				}
 				if item := items[key]; item != nil {
 					item.Online = true
 					continue
@@ -285,6 +296,8 @@ func (c *SessionPoolController) GetAdminRunnerLogs(ctx echo.Context) error {
 // DeleteAdminRunner asks the owning manager to delete the complete workload,
 // then removes the parent-side allocation, runner record, and route metadata.
 // A manager-side 404 is idempotent: stale parent records are still cleaned up.
+// When an offline manager is permanently gone, force=true skips the unreachable
+// manager call and removes only its stale parent-side metadata.
 func (c *SessionPoolController) DeleteAdminRunner(ctx echo.Context) error {
 	requestCtx := ctx.Request().Context()
 	runnerID := strings.TrimSpace(ctx.Param("id"))
@@ -298,20 +311,24 @@ func (c *SessionPoolController) DeleteAdminRunner(ctx echo.Context) error {
 	if _, err := c.store.GetManager(requestCtx, managerID); err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
 	}
-	if c.managerTunnel == nil || !c.managerTunnel.IsConnected(requestCtx, managerID) {
+	managerConnected := c.managerTunnel != nil && c.managerTunnel.IsConnected(requestCtx, managerID)
+	force := strings.EqualFold(strings.TrimSpace(ctx.QueryParam("force")), "true")
+	if !managerConnected && !force {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session manager control channel is offline")
 	}
 
-	targetURL := "http://manager/internal/esm-management/runners/" + url.PathEscape(runnerID)
-	req, _ := http.NewRequestWithContext(requestCtx, http.MethodDelete, targetURL, nil)
-	resp, err := c.managerTunnel.Do(requestCtx, managerID, "", "", req)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "session manager operation failed").SetInternal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return echo.NewHTTPError(http.StatusBadGateway, "session manager failed to delete runner: "+strings.TrimSpace(string(body)))
+	if managerConnected {
+		targetURL := "http://manager/internal/esm-management/runners/" + url.PathEscape(runnerID)
+		req, _ := http.NewRequestWithContext(requestCtx, http.MethodDelete, targetURL, nil)
+		resp, err := c.managerTunnel.Do(requestCtx, managerID, "", "", req)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, "session manager operation failed").SetInternal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+			return echo.NewHTTPError(http.StatusBadGateway, "session manager failed to delete runner: "+strings.TrimSpace(string(body)))
+		}
 	}
 
 	var sessionID string
