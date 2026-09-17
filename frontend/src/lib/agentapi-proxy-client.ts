@@ -78,7 +78,7 @@ import {
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
-import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
+import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
@@ -3308,6 +3308,18 @@ export class AgentAPIProxyClient {
 
   async deleteSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
     await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
+  }
+
+  async getSessionPoolStatus(): Promise<SessionPoolStatusResponse> {
+    return this.makeRequest<SessionPoolStatusResponse>('/session-pools/status');
+  }
+
+  async getSessionPoolManagerLogs(managerID: string, tail = 200): Promise<SessionPoolLogs> {
+    return this.makeRequest<SessionPoolLogs>(`/session-managers/${encodeURIComponent(managerID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
+  }
+
+  async getSessionPoolRunnerLogs(runnerID: string, tail = 200): Promise<SessionPoolLogs> {
+    return this.makeRequest<SessionPoolLogs>(`/session-runners/${encodeURIComponent(runnerID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
   }
 }
 

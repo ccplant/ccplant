@@ -34,3 +34,33 @@ export interface SessionPoolBinding {
   priority?: number
   max_concurrent?: number
 }
+
+export interface SessionPoolManagerRuntimeStatus {
+  status?: string
+  version?: string
+  uptime_seconds?: number
+  active_sessions?: number
+  running_runners?: number
+  used_runners?: number
+  running_runner_ids?: string[]
+  used_runner_ids?: string[]
+  capabilities?: string[]
+}
+
+export interface SessionPoolManagerStatus {
+  manager: ClusterSessionManager
+  pools: string[]
+  online: boolean
+  status?: SessionPoolManagerRuntimeStatus
+  error?: string
+}
+
+export interface SessionPoolStatusResponse {
+  session_pools: LogicalSessionPool[]
+  session_managers: SessionPoolManagerStatus[]
+}
+
+export interface SessionPoolLogs {
+  lines: string[]
+  source?: string
+}
