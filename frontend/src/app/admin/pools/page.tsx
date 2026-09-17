@@ -1,11 +1,14 @@
 'use client'
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { RefreshCw, Terminal } from 'lucide-react'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import {
   ClusterSessionManager,
   LogicalSessionPool,
   SessionPoolBinding,
+  SessionPoolLogs,
+  SessionPoolManagerStatus,
   SessionPoolSupplier,
 } from '@/types/session_pool'
 import {
@@ -15,7 +18,21 @@ import {
   RowAction,
   SettingsPageHeader,
   SettingsSubsection,
+  StatusBadge,
 } from '@/components/settings'
+
+function LogPanel({ target, result, onClose }: { target: string; result: SessionPoolLogs | null; onClose: () => void }) {
+  return <div className="mt-3 rounded-lg border border-gray-700 bg-gray-950 p-3 text-gray-100">
+    <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="truncate font-mono text-xs">{target}</p>
+        {result?.source && <p className="truncate font-mono text-[10px] text-gray-500">{result.source}</p>}
+      </div>
+      <button type="button" onClick={onClose} className="text-xs text-gray-400 hover:text-white">閉じる</button>
+    </div>
+    <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded bg-black p-2 font-mono text-[11px] leading-4 text-gray-300">{result ? (result.lines.length ? result.lines.join('\n') : 'ログはありません') : 'ログを読み込み中...'}</pre>
+  </div>
+}
 
 export default function SessionPoolsAdminPage() {
   const client = useMemo(() => createCurrentDeploymentAgentAPIProxyClient(), [])
@@ -23,6 +40,10 @@ export default function SessionPoolsAdminPage() {
   const [pools, setPools] = useState<LogicalSessionPool[]>([])
   const [suppliers, setSuppliers] = useState<SessionPoolSupplier[]>([])
   const [bindings, setBindings] = useState<Record<string, SessionPoolBinding[]>>({})
+  const [runtimeStatuses, setRuntimeStatuses] = useState<SessionPoolManagerStatus[]>([])
+  const [loading, setLoading] = useState(true)
+  const [logTarget, setLogTarget] = useState<string | null>(null)
+  const [logResult, setLogResult] = useState<SessionPoolLogs | null>(null)
   const [managerName, setManagerName] = useState('')
   const [managerID, setManagerID] = useState('')
   const [poolName, setPoolName] = useState('')
@@ -39,10 +60,12 @@ export default function SessionPoolsAdminPage() {
   const [error, setError] = useState('')
 
   const reload = useCallback(async () => {
+    setLoading(true)
     try {
-      const [nextManagers, nextPools] = await Promise.all([
+      const [nextManagers, nextPools, statusResult] = await Promise.all([
         client.listClusterSessionManagers(),
         client.listSessionPools(),
+        client.getSessionPoolStatus().catch(() => ({ session_pools: [], session_managers: [] })),
       ])
       const nextSuppliers = (await Promise.all(
         nextManagers.map((manager) => client.listSessionPoolSuppliers(manager.id)),
@@ -54,16 +77,33 @@ export default function SessionPoolsAdminPage() {
       setPools(nextPools)
       setSuppliers(nextSuppliers)
       setBindings(Object.fromEntries(nextBindings))
+      setRuntimeStatuses(statusResult.session_managers)
       setManagerID((current) => current || nextManagers[0]?.id || '')
       setSupplierPool((current) => current || nextPools[0]?.name || '')
       setBindingPool((current) => current || nextPools[0]?.name || '')
       setError('')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '読み込みに失敗しました')
+    } finally {
+      setLoading(false)
     }
   }, [client])
 
   useEffect(() => { void reload() }, [reload])
+
+  const showLogs = async (kind: 'manager' | 'runner', id: string) => {
+    const target = `${kind}:${id}`
+    setLogTarget(target)
+    setLogResult(null)
+    setError('')
+    try {
+      setLogResult(kind === 'manager'
+        ? await client.getSessionPoolManagerLogs(id)
+        : await client.getSessionPoolRunnerLogs(id))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'ログの取得に失敗しました')
+    }
+  }
 
   const addManager = async (event: FormEvent) => {
     event.preventDefault()
@@ -156,6 +196,24 @@ export default function SessionPoolsAdminPage() {
     }
   }
 
+  const togglePool = async (pool: LogicalSessionPool) => {
+    try {
+      await client.patchManagedSessionPool(pool.name, { enabled: !pool.enabled })
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Logical Pool更新に失敗しました')
+    }
+  }
+
+  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean }) => {
+    try {
+      await client.patchManagedSessionPoolSupplier(supplier.pool, supplier.manager_id, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Pool Supplier更新に失敗しました')
+    }
+  }
+
   const input =
     'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white'
   const stepCard = 'space-y-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700'
@@ -169,6 +227,11 @@ export default function SessionPoolsAdminPage() {
       <SettingsPageHeader
         title="Session Pools"
         description="Logical Pool、Manager ごとの供給設定、user / team の利用権限をクラスタ全体で管理します。"
+        action={
+          <button type="button" onClick={() => void reload()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> 更新
+          </button>
+        }
       />
 
       {error && (
@@ -194,6 +257,21 @@ export default function SessionPoolsAdminPage() {
           </button>
         </div>
       )}
+
+      <SettingsSubsection title="稼働状況" description="Manager の制御チャネル、Runner、ログをライブで確認します">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            ['Manager online', `${runtimeStatuses.filter((item) => item.online).length}/${runtimeStatuses.length}`],
+            ['Running runners', runtimeStatuses.reduce((sum, item) => sum + (item.status?.running_runners || 0), 0)],
+            ['Used runners', runtimeStatuses.reduce((sum, item) => sum + (item.status?.used_runners || 0), 0)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+      </SettingsSubsection>
 
       <SettingsSubsection
         title="セットアップ"
@@ -281,16 +359,32 @@ export default function SessionPoolsAdminPage() {
         <ItemList>
           {managers.length === 0 && <ItemListEmpty>Session Manager はまだありません</ItemListEmpty>}
           {managers.map((manager) => (
-            <ItemListRow
-              key={manager.id}
-              name={manager.name}
-              meta={manager.id}
-              actions={
-                <RowAction tone="danger" onClick={() => void removeManager(manager)} title={`${manager.name}を削除`}>
-                  削除
-                </RowAction>
-              }
-            />
+            (() => {
+              const runtime = runtimeStatuses.find((item) => item.manager.id === manager.id)
+              const runnerIDs = runtime?.status?.running_runner_ids || []
+              return <ItemListRow
+                key={manager.id}
+                name={manager.name}
+                meta={`${manager.id}${runtime?.status?.version ? ` · ${runtime.status.version}` : ''}`}
+                badges={<>
+                  <StatusBadge tone={runtime?.online ? 'green' : 'amber'}>{runtime ? (runtime.online ? 'Online' : 'Offline') : '未割り当て'}</StatusBadge>
+                  {runtime?.pools.map((pool) => <StatusBadge key={pool} tone="blue">{pool}</StatusBadge>)}
+                  {runtime?.status && <StatusBadge tone="violet">{runtime.status.used_runners || 0}/{runtime.status.running_runners || 0} used</StatusBadge>}
+                </>}
+                actions={<>
+                  <RowAction onClick={() => void showLogs('manager', manager.id)} disabled={!runtime?.online}>ログ</RowAction>
+                  <RowAction tone="danger" onClick={() => void removeManager(manager)} title={`${manager.name}を削除`}>削除</RowAction>
+                </>}
+              >
+                {runtime?.error && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{runtime.error}</p>}
+                {runnerIDs.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Runners</span>
+                  {runnerIDs.map((runnerID) => <button key={runnerID} type="button" onClick={() => void showLogs('runner', runnerID)} className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"><Terminal className="h-3 w-3" />{runnerID}</button>)}
+                </div>}
+                {logTarget === `manager:${manager.id}` && <LogPanel target={manager.name} result={logResult} onClose={() => { setLogTarget(null); setLogResult(null) }} />}
+                {runnerIDs.some((runnerID) => logTarget === `runner:${runnerID}`) && <LogPanel target={logTarget?.slice('runner:'.length) || ''} result={logResult} onClose={() => { setLogTarget(null); setLogResult(null) }} />}
+              </ItemListRow>
+            })()
           ))}
         </ItemList>
       </SettingsSubsection>
@@ -306,10 +400,12 @@ export default function SessionPoolsAdminPage() {
                 key={pool.name}
                 name={pool.name}
                 actions={
-                  <RowAction tone="danger" onClick={() => void removePool(pool)} title={`${pool.name}を削除`}>
-                    削除
-                  </RowAction>
+                  <>
+                    <RowAction onClick={() => void togglePool(pool)}>{pool.enabled ? '停止' : '有効化'}</RowAction>
+                    <RowAction tone="danger" onClick={() => void removePool(pool)} title={`${pool.name}を削除`}>削除</RowAction>
+                  </>
                 }
+                badges={<StatusBadge tone={pool.enabled ? 'green' : 'amber'}>{pool.enabled ? 'Enabled' : 'Disabled'}</StatusBadge>}
               >
                 <div className="mt-3 grid gap-4 sm:grid-cols-2">
                   <div>
@@ -319,6 +415,8 @@ export default function SessionPoolsAdminPage() {
                       <div key={supplier.manager_id} className="mt-1 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
                         <span>{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span>
                         <span className="text-gray-500 dark:text-gray-400">idle {supplier.idle_runners || 0} / max {supplier.max_runners || '∞'}</span>
+                        <button type="button" className="text-amber-700 hover:underline dark:text-amber-300" onClick={() => void patchSupplier(supplier, { draining: !supplier.draining })}>{supplier.draining ? 'Drain解除' : 'Drain'}</button>
+                        <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => void patchSupplier(supplier, { enabled: !supplier.enabled })}>{supplier.enabled ? '供給停止' : '供給再開'}</button>
                         <button
                           type="button"
                           aria-label={`${supplier.pool}のSupplierを削除`}
