@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,9 +126,17 @@ func TestEnsureManagerCredentialsIssuesTokenAndEnrolls(t *testing.T) {
 		case "/api/v1/session-managers":
 			_, _ = w.Write([]byte(`{"session_managers":[]}`))
 		case "/api/v1/session-managers/registration-tokens":
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.NotContains(t, payload, "pool")
+			require.NotContains(t, payload, "default")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"registration_token":"registration-1"}`))
 		case "/api/v1/session-managers/enroll":
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.NotContains(t, payload, "pool")
+			require.NotContains(t, payload, "default")
 			_, _ = w.Write([]byte(`{"id":"manager-1","connection_token":"connection-1"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

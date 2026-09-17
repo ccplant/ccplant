@@ -44,10 +44,9 @@ On upgrade, omit the registration token. If the connection Secret exists, the
 command reuses it and does not enroll again. Passing a registration token while the
 Secret exists is rejected to make accidental credential replacement visible.
 
-Enrollment also enables the requested pool supplier. The installer requests a
-cluster-wide default binding when that intent was included in the registration token,
-so requests without an explicit pool can use it. The admin Session Pools page issues
-system tokens with the `default` pool and this binding enabled.
+Enrollment only registers the manager and its credentials. It does not create a
+logical pool, enable a pool supplier, or create a pool binding. Configure those
+resources explicitly after installation when the manager should accept allocations.
 
 All manager and Session Pod connections are outbound-only. The parent never connects
 to a manager Service, so no ingress or parent-reachable manager URL is required.

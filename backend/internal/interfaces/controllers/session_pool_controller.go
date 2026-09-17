@@ -101,19 +101,15 @@ type managerCreateRequest struct {
 }
 
 type managerRegistrationRequest struct {
-	Name    string            `json:"name"`
-	Scope   core.ManagerScope `json:"scope"`
-	TeamID  string            `json:"team_id,omitempty"`
-	Pool    string            `json:"pool,omitempty"`
-	Default bool              `json:"default,omitempty"`
-	Labels  map[string]string `json:"labels,omitempty"`
+	Name   string            `json:"name"`
+	Scope  core.ManagerScope `json:"scope"`
+	TeamID string            `json:"team_id,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 type managerEnrollRequest struct {
 	RegistrationToken string            `json:"registration_token"`
 	InstanceID        string            `json:"instance_id"`
-	Pool              string            `json:"pool,omitempty"`
-	Default           bool              `json:"default,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Capabilities      []string          `json:"capabilities,omitempty"`
 }
@@ -151,20 +147,12 @@ func (c *SessionPoolController) IssueManagerRegistrationToken(ctx echo.Context) 
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "scope must be user, team or system")
 	}
-	if input.Default && input.Scope != core.ManagerScopeSystem {
-		return echo.NewHTTPError(http.StatusForbidden, "only system-scoped managers can install a default binding")
-	}
-	if input.Pool != "" {
-		if problems := validation.IsValidLabelValue(input.Pool); len(problems) > 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
-		}
-	}
 	token, tokenHash, err := newSessionRunnerToken()
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create registration token")
 	}
 	manager := &core.Manager{
-		Name: input.Name, Scope: input.Scope, OwnerID: ownerID, InstallPool: input.Pool, Default: input.Default, Labels: input.Labels,
+		Name: input.Name, Scope: input.Scope, OwnerID: ownerID, Labels: input.Labels,
 		Enabled: false, RegistrationTokenHash: tokenHash,
 		RegistrationExpiresAt: c.now().Add(15 * time.Minute),
 	}
@@ -210,44 +198,6 @@ func (c *SessionPoolController) EnrollManager(ctx echo.Context) error {
 		manager.Capabilities = input.Capabilities
 		if len(manager.Capabilities) == 0 {
 			manager.Capabilities = []string{core.CapabilityRunnerClaimV1, core.CapabilityDirectRuntimeV1}
-		}
-		if input.Pool != "" && manager.InstallPool != "" && input.Pool != manager.InstallPool {
-			return echo.NewHTTPError(http.StatusBadRequest, "pool does not match the registration")
-		}
-		pool := manager.InstallPool
-		if pool == "" {
-			pool = input.Pool
-		}
-		if pool != "" {
-			if _, getErr := c.store.GetLogicalPool(ctx.Request().Context(), pool); errors.Is(getErr, core.ErrNotFound) {
-				if createErr := c.store.CreateLogicalPool(ctx.Request().Context(), &core.LogicalPool{Name: pool, Enabled: true}); createErr != nil {
-					return sessionRunnerStoreError(createErr)
-				}
-			} else if getErr != nil {
-				return sessionRunnerStoreError(getErr)
-			}
-			if _, getErr := c.store.GetPoolSupplier(ctx.Request().Context(), manager.ID, pool); errors.Is(getErr, core.ErrNotFound) {
-				if createErr := c.store.CreatePoolSupplier(ctx.Request().Context(), &core.PoolSupplier{Pool: pool, ManagerID: manager.ID, Enabled: true}); createErr != nil {
-					return sessionRunnerStoreError(createErr)
-				}
-			} else if getErr != nil {
-				return sessionRunnerStoreError(getErr)
-			}
-			if manager.Default {
-				bindings, listErr := c.store.ListBindings(ctx.Request().Context(), pool)
-				if listErr != nil {
-					return sessionRunnerStoreError(listErr)
-				}
-				hasDefault := false
-				for _, binding := range bindings {
-					hasDefault = hasDefault || (binding.SubjectType == core.SubjectAll && binding.SubjectID == "" && binding.Enabled)
-				}
-				if !hasDefault {
-					if createErr := c.store.CreateBinding(ctx.Request().Context(), &core.Binding{Pool: pool, SubjectType: core.SubjectAll, Role: core.BindingRoleUse, Enabled: true}); createErr != nil {
-						return sessionRunnerStoreError(createErr)
-					}
-				}
-			}
 		}
 		if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
 			return sessionRunnerStoreError(err)
