@@ -83,12 +83,16 @@ export default function AdminRunnersPage() {
   }
 
   const deleteRunner = async (runner: AdminSessionRunner) => {
-    if (!window.confirm(`Runner「${runner.id}」を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`)) return
+    const force = !runner.online
+    const warning = force
+      ? `Runner「${runner.id}」を強制クリーンアップしますか？\n\nManager が offline のため、親側の Runner、Session の紐づき、allocation メタデータだけを削除します。Pod、Service、PVC、Secret は Manager 側に残る可能性があります。Manager が復旧しないことを確認してから実行してください。`
+      : `Runner「${runner.id}」を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`
+    if (!window.confirm(warning)) return
     setError('')
     const key = runnerKey(runner)
     setDeleting((current) => new Set(current).add(key))
     try {
-      await client.deleteAdminSessionRunner(runner.id, runner.manager_id)
+      await client.deleteAdminSessionRunner(runner.id, runner.manager_id, force)
       if (logRunner?.manager_id === runner.manager_id && logRunner.id === runner.id) {
         setLogRunner(null)
         setLogs(null)
@@ -129,13 +133,17 @@ export default function AdminRunnersPage() {
 
   const deleteSelected = async () => {
     if (selectedRunners.length === 0) return
-    if (!window.confirm(`選択した ${selectedRunners.length} 件の Runner を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`)) return
+    const offlineCount = selectedRunners.filter((runner) => !runner.online).length
+    const warning = offlineCount > 0
+      ? `選択した ${selectedRunners.length} 件の Runner を削除しますか？\n\nうち ${offlineCount} 件は Manager が offline のため強制クリーンアップします。offline Runner は親側メタデータだけが削除され、Pod、Service、PVC、Secret が Manager 側に残る可能性があります。Manager が復旧しないことを確認してください。`
+      : `選択した ${selectedRunners.length} 件の Runner を削除しますか？Pod、Service、PVC、関連する Secret と Session の紐づきも削除されます。`
+    if (!window.confirm(warning)) return
     const targets = [...selectedRunners]
     const keys = new Set(targets.map(runnerKey))
     setError('')
     setDeleting((current) => new Set([...current, ...keys]))
     const results = await Promise.allSettled(
-      targets.map((runner) => client.deleteAdminSessionRunner(runner.id, runner.manager_id)),
+      targets.map((runner) => client.deleteAdminSessionRunner(runner.id, runner.manager_id, !runner.online)),
     )
     const failed = results.filter((result) => result.status === 'rejected').length
     const succeededKeys = new Set(targets.filter((_, index) => results[index].status === 'fulfilled').map(runnerKey))
@@ -191,7 +199,7 @@ export default function AdminRunnersPage() {
               </>}
               actions={<>
                 <RowAction onClick={() => void showLogs(runner)} disabled={!runner.online}><span className="inline-flex items-center gap-1"><Terminal className="h-3 w-3" />ログ</span></RowAction>
-                <RowAction tone="danger" onClick={() => void deleteRunner(runner)} disabled={deleting.has(runnerKey(runner))}>{deleting.has(runnerKey(runner)) ? '削除中...' : '削除'}</RowAction>
+                <RowAction tone="danger" onClick={() => void deleteRunner(runner)} disabled={deleting.has(runnerKey(runner))}>{deleting.has(runnerKey(runner)) ? '削除中...' : runner.online ? '削除' : '強制クリーンアップ'}</RowAction>
               </>}
             >
               <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
