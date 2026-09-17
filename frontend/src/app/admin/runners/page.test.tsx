@@ -50,4 +50,19 @@ describe('AdminRunnersPage', () => {
     await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a'))
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('関連する Secret'))
   })
+
+  it('selects multiple runners and deletes them together', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<AdminRunnersPage />)
+
+    expect(await screen.findByText('pooled-runner')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'すべて選択' }))
+    expect(screen.getByText('2 件選択中')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '選択した Runner を削除' }))
+
+    await waitFor(() => expect(deleteAdminSessionRunner).toHaveBeenCalledTimes(2))
+    expect(deleteAdminSessionRunner).toHaveBeenCalledWith('pooled-runner', 'manager-a')
+    expect(deleteAdminSessionRunner).toHaveBeenCalledWith('direct-session', 'manager-a')
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('選択した 2 件'))
+  })
 })
