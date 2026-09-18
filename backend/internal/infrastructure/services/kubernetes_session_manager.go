@@ -969,7 +969,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 // waits for adoption, at which point adoptStockSession creates the request.
 // Note: Sandbox (network filter) and scia sidecar are always enabled.
 func (m *KubernetesSessionManager) CreateStockSession(ctx context.Context, dind bool) error {
-	return m.CreateStockSessionForPool(ctx, m.runnerDefaultPool, dind)
+	return m.CreateStockSessionForPool(ctx, "", dind)
 }
 
 func (m *KubernetesSessionManager) CreateStockSessionForPool(ctx context.Context, pool string, dind bool) error {
@@ -1273,6 +1273,8 @@ func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context
 	)
 	if pool != "" {
 		selector += ",agentapi.proxy/session-pool=" + pool
+	} else {
+		selector += ",!agentapi.proxy/session-pool"
 	}
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
@@ -1385,6 +1387,19 @@ func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context
 // This also purges sessions stuck in the "claiming" state (stock=claiming) that
 // were abandoned mid-adoption due to a crash or restart.
 func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error {
+	return m.purgeStockSessions(ctx, "")
+}
+
+// PurgeStockSessionsForPool retires and deletes idle stock belonging to pool.
+// Allocation artifacts and the parent runner registry protect claimed runners.
+func (m *KubernetesSessionManager) PurgeStockSessionsForPool(ctx context.Context, pool string) error {
+	if strings.TrimSpace(pool) == "" {
+		return fmt.Errorf("pool is required")
+	}
+	return m.purgeStockSessions(ctx, pool)
+}
+
+func (m *KubernetesSessionManager) purgeStockSessions(ctx context.Context, pool string) error {
 	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to resolve allocated runners for purge protection: %w", err)
@@ -1394,6 +1409,9 @@ func (m *KubernetesSessionManager) PurgeStockSessions(ctx context.Context) error
 	// resource kind so a previous partial purge cannot leave orphaned stock
 	// Deployments/PVCs behind.
 	selector := "agentapi.proxy/stock in (true, claiming, creating),app.kubernetes.io/managed-by=agentapi-proxy"
+	if pool != "" {
+		selector += ",agentapi.proxy/session-pool=" + pool
+	}
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -1601,7 +1619,7 @@ func (m *KubernetesSessionManager) fetchAllocatedRunnerIDs(ctx context.Context) 
 func (m *KubernetesSessionManager) findStockSession(ctx context.Context, requirements coreallocation.Requirements) (*corev1.Service, error) {
 	// Sandbox is always enabled (capability-sandbox=true)
 	selector := fmt.Sprintf(
-		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t",
+		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t,!agentapi.proxy/session-pool",
 		requirements.DinD,
 	)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
@@ -5230,7 +5248,24 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	// Note: Bedrock settings are now loaded via envFrom from agent-env-{name} Secret
 	// which is synced by CredentialsSecretSyncer when settings are updated via API
 
-	return envVars
+	return deduplicateEnvVars(envVars)
+}
+
+// deduplicateEnvVars preserves first-seen ordering while applying the last
+// value for each name. Kubernetes accepts duplicate names, but container
+// runtimes resolve them ambiguously and can select the wrong control plane.
+func deduplicateEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
+	result := make([]corev1.EnvVar, 0, len(envVars))
+	indexes := make(map[string]int, len(envVars))
+	for _, envVar := range envVars {
+		if index, ok := indexes[envVar.Name]; ok {
+			result[index] = envVar
+			continue
+		}
+		indexes[envVar.Name] = len(result)
+		result = append(result, envVar)
+	}
+	return result
 }
 
 const (

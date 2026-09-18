@@ -618,12 +618,22 @@ type sessionRunnerInfrastructure interface {
 	CountStockSessionsForPool(context.Context, string, bool) (int, error)
 	CountRunnerSessionsForPool(context.Context, string) (int, error)
 	CreateStockSessionForPool(context.Context, string, bool) error
+	PurgeStockSessionsForPool(context.Context, string) error
 }
 
 func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier) {
 	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcilePools", func(ctx context.Context) {
 		for _, pool := range pools {
-			if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
+			if pool == nil {
+				continue
+			}
+			if !pool.Enabled || pool.Draining {
+				if err := manager.PurgeStockSessionsForPool(ctx, pool.Pool); err != nil {
+					log.Printf("[SESSION_MANAGER] Purge disabled or draining pool %s stock: %v", pool.Pool, err)
+				}
+				continue
+			}
+			if pool.MinIdle <= 0 {
 				continue
 			}
 			localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)

@@ -863,6 +863,101 @@ func TestCountStockSessionsExcludesAllocatedDirectRunners(t *testing.T) {
 	}
 }
 
+func TestLegacyStockSelectionAndCountExcludePoolRunners(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	baseLabels := map[string]string{
+		"app.kubernetes.io/managed-by":      "agentapi-proxy",
+		"agentapi.proxy/stock":              "true",
+		"agentapi.proxy/capability-sandbox": "true",
+		"agentapi.proxy/capability-dind":    "false",
+	}
+	for _, tc := range []struct {
+		id   string
+		pool string
+	}{{id: "pool-stock", pool: "managed"}, {id: "legacy-stock"}} {
+		labels := make(map[string]string, len(baseLabels)+2)
+		for key, value := range baseLabels {
+			labels[key] = value
+		}
+		labels["agentapi.proxy/session-id"] = tc.id
+		if tc.pool != "" {
+			labels["agentapi.proxy/session-pool"] = tc.pool
+		}
+		if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + tc.id + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, err := manager.CountStockSessions(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("legacy stock count = %d, want 1", count)
+	}
+	stock, err := manager.findStockSession(ctx, sessionRequirements(&entities.RunServerRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stock == nil || stock.Labels["agentapi.proxy/session-id"] != "legacy-stock" {
+		t.Fatalf("selected stock = %#v, want legacy-stock", stock)
+	}
+}
+
+func TestBuildEnvVarsDeduplicatesControlPlaneURL(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	session := newWorkloadTestSession()
+	session.Request().Environment = map[string]string{"PROVISIONER_PROXY_URL": "https://parent.example.com"}
+
+	env := manager.buildEnvVars(session, session.Request())
+	count := 0
+	for _, item := range env {
+		if item.Name == "PROVISIONER_PROXY_URL" {
+			count++
+			if item.Value != "https://parent.example.com" {
+				t.Fatalf("PROVISIONER_PROXY_URL = %q", item.Value)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("PROVISIONER_PROXY_URL count = %d, want 1", count)
+	}
+}
+
+func TestPurgeStockSessionsForPoolOnlyDeletesRequestedPool(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	for _, pool := range []string{"disabled", "enabled"} {
+		id := pool + "-stock"
+		labels := map[string]string{
+			"app.kubernetes.io/name":         "agentapi-session",
+			"app.kubernetes.io/managed-by":   "agentapi-proxy",
+			"agentapi.proxy/session-id":      id,
+			"agentapi.proxy/session-pool":    pool,
+			"agentapi.proxy/stock":           "true",
+			"agentapi.proxy/capability-dind": "false",
+		}
+		if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + id + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := manager.PurgeStockSessionsForPool(ctx, "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-disabled-stock-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
+		t.Fatalf("disabled pool stock still exists: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-enabled-stock-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("enabled pool stock was deleted: %v", err)
+	}
+}
+
 func TestCreateStockSessionReturnsBeforeWorkloadIsReady(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	manager.k8sConfig.PodStartTimeout = 1
