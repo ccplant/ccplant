@@ -3739,8 +3739,10 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: sessionServiceAccount,
-					RestartPolicy:      corev1.RestartPolicyAlways,
+					ServiceAccountName:           sessionServiceAccount,
+					EnableServiceLinks:           boolPtr(!m.k8sConfig.DisableServiceLinks),
+					AutomountServiceAccountToken: boolPtr(!m.k8sConfig.DisableServiceAccountToken),
+					RestartPolicy:                corev1.RestartPolicyAlways,
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup:    int64Ptr(999),
 						RunAsUser:  int64Ptr(999),
@@ -3890,6 +3892,8 @@ func restoreSessionPodTemplateInvariants(template *corev1.PodTemplateSpec, gener
 	}
 
 	template.Spec.ServiceAccountName = generated.Spec.ServiceAccountName
+	template.Spec.EnableServiceLinks = generated.Spec.EnableServiceLinks
+	template.Spec.AutomountServiceAccountToken = generated.Spec.AutomountServiceAccountToken
 	template.Spec.RestartPolicy = generated.Spec.RestartPolicy
 
 	// Pod template customizations must retain the CLI needed to boot the runner.
@@ -5082,6 +5086,9 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 		"app.kubernetes.io/managed-by": "agentapi-proxy",
 		"agentapi.proxy/session-id":    session.id,
 		"agentapi.proxy/user-id":       sanitizeLabelValue(session.Request().UserID),
+	}
+	if m.config != nil && m.config.SessionManager.ID != "" {
+		labels["agentapi.proxy/session-manager-id"] = sanitizeLabelValue(m.config.SessionManager.ID)
 	}
 
 	// Add scope and team_id labels for filtering

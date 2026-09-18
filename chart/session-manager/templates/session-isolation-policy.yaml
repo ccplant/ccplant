@@ -1,0 +1,17 @@
+{{- if .Values.session.isolation.blockKubernetesAPI }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "session-manager.fullname" . }}-session-isolation
+  labels:
+    {{- include "session-manager.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: agentapi-proxy
+      app.kubernetes.io/name: agentapi-session
+      agentapi.proxy/session-manager-id: {{ include "session-manager.managerIdLabelValue" . | quote }}
+  egressDeny:
+    - toEntities:
+        - kube-apiserver
+{{- end }}

@@ -105,6 +105,21 @@ func TestBuildDeploymentIgnoresMissingSessionPodTemplateFile(t *testing.T) {
 	assert.Equal(t, "agentapi-proxy-session", deployment.Spec.Template.Spec.ServiceAccountName)
 }
 
+func TestBuildDeploymentAppliesSessionIsolation(t *testing.T) {
+	manager := newPodTemplateTestManager("")
+	manager.config.SessionManager.ID = "manager-1"
+	manager.k8sConfig.DisableServiceLinks = true
+	manager.k8sConfig.DisableServiceAccountToken = true
+
+	deployment, err := manager.buildDeployment(context.Background(), newPodTemplateTestSession(), newPodTemplateTestSession().Request())
+	assert.NoError(t, err)
+	assert.Equal(t, "manager-1", deployment.Spec.Template.Labels["agentapi.proxy/session-manager-id"])
+	assert.NotNil(t, deployment.Spec.Template.Spec.EnableServiceLinks)
+	assert.False(t, *deployment.Spec.Template.Spec.EnableServiceLinks)
+	assert.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+}
+
 func newPodTemplateTestManager(templateFile string) *KubernetesSessionManager {
 	return &KubernetesSessionManager{
 		config: &config.Config{},

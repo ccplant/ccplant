@@ -60,6 +60,15 @@
       "properties": {
         "image": {"type": "string"},
         "cliImage": {"type": "string"},
+        "isolation": {
+          "type": "object",
+          "required": ["disableServiceLinks", "disableServiceAccountToken", "blockKubernetesAPI"],
+          "properties": {
+            "disableServiceLinks": {"type": "boolean"},
+            "disableServiceAccountToken": {"type": "boolean"},
+            "blockKubernetesAPI": {"type": "boolean"}
+          }
+        },
         "provisioner": {
           "type": "object",
           "required": ["tokenSecretRef"],

@@ -264,6 +264,10 @@ type KubernetesSessionConfig struct {
 	ImagePullPolicy string `json:"image_pull_policy" mapstructure:"image_pull_policy"`
 	// ServiceAccount is the service account for session pods
 	ServiceAccount string `json:"service_account" mapstructure:"service_account"`
+	// DisableServiceLinks prevents Kubernetes Service environment variables from being injected into session pods.
+	DisableServiceLinks bool `json:"disable_service_links" mapstructure:"disable_service_links"`
+	// DisableServiceAccountToken prevents Kubernetes service account credentials from being mounted into session pods.
+	DisableServiceAccountToken bool `json:"disable_service_account_token" mapstructure:"disable_service_account_token"`
 	// BasePort is the port that agentapi listens on in session pods
 	BasePort int `json:"base_port" mapstructure:"base_port"`
 	// CPURequest is the CPU request for session pods
@@ -1104,6 +1108,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.cli_image", "AGENTAPI_K8S_SESSION_CLI_IMAGE")
 	_ = v.BindEnv("kubernetes_session.image_pull_policy", "AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY")
 	_ = v.BindEnv("kubernetes_session.service_account", "AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT")
+	_ = v.BindEnv("kubernetes_session.disable_service_links", "AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS")
+	_ = v.BindEnv("kubernetes_session.disable_service_account_token", "AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN")
 	_ = v.BindEnv("kubernetes_session.base_port", "AGENTAPI_K8S_SESSION_BASE_PORT")
 	_ = v.BindEnv("kubernetes_session.cpu_request", "AGENTAPI_K8S_SESSION_CPU_REQUEST")
 	_ = v.BindEnv("kubernetes_session.cpu_limit", "AGENTAPI_K8S_SESSION_CPU_LIMIT")

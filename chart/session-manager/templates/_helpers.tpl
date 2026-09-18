@@ -22,3 +22,6 @@ app.kubernetes.io/component: session-manager
 {{- define "session-manager.image" -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
 {{- end }}
+{{- define "session-manager.managerIdLabelValue" -}}
+{{- regexReplaceAll "[^a-zA-Z0-9_.-]" .Values.runner.managerId "-" | trunc 63 | trimAll "-_." }}
+{{- end }}
