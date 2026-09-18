@@ -11,6 +11,11 @@ spec:
       app.kubernetes.io/managed-by: agentapi-proxy
       app.kubernetes.io/name: agentapi-session
       agentapi.proxy/session-manager-id: {{ include "session-manager.managerIdLabelValue" . | quote }}
+  # A deny-only Cilium policy enables egress policy enforcement without allowing
+  # any traffic. Keep the session's normal egress connectivity and rely on the
+  # deny rule below to block only Kubernetes API access.
+  egress:
+    - {}
   egressDeny:
     - toEntities:
         - kube-apiserver
