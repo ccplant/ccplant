@@ -1101,6 +1101,14 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	logicalPools, err := c.store.ListLogicalPools(ctx.Request().Context())
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	logicalPoolEnabled := make(map[string]bool, len(logicalPools))
+	for _, pool := range logicalPools {
+		logicalPoolEnabled[pool.Name] = pool.Enabled
+	}
 	owned := make([]*core.PoolSupplier, 0)
 	registeredRunnerIDs := make([]string, 0)
 	allocatedRunnerIDs := make([]string, 0)
@@ -1134,6 +1142,10 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				}
 			}
 			copy := *pool
+			// A supplier cannot remain allocatable when its logical pool is
+			// disabled. Propagate the effective state to the remote manager so it
+			// retires idle stock instead of merely stopping replenishment.
+			copy.Enabled = copy.Enabled && logicalPoolEnabled[pool.Pool]
 			for _, runner := range runners {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue

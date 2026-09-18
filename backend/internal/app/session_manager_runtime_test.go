@@ -83,6 +83,7 @@ type fakeRunnerInfrastructure struct {
 	createdDinD []bool
 	registered  map[string]struct{}
 	operations  []string
+	purgedPools []string
 }
 
 func (f *fakeRunnerInfrastructure) DeleteRunnerSessionsNotRegistered(_ context.Context, registered map[string]struct{}) error {
@@ -103,6 +104,12 @@ func (f *fakeRunnerInfrastructure) CreateStockSessionForPool(_ context.Context, 
 	f.created++
 	f.createdDinD = append(f.createdDinD, dind)
 	f.operations = append(f.operations, "create")
+	return nil
+}
+
+func (f *fakeRunnerInfrastructure) PurgeStockSessionsForPool(_ context.Context, pool string) error {
+	f.purgedPools = append(f.purgedPools, pool)
+	f.operations = append(f.operations, "purge")
 	return nil
 }
 
@@ -148,6 +155,20 @@ func TestReconcileSessionRunnerPoolsReplacesLocallyStaleRunner(t *testing.T) {
 	}
 	if len(manager.createdDinD) != 1 || !manager.createdDinD[0] {
 		t.Fatalf("created DinD variants = %v, want [true]", manager.createdDinD)
+	}
+}
+
+func TestReconcileSessionRunnerPoolsPurgesDisabledAndDrainingPools(t *testing.T) {
+	manager := &fakeRunnerInfrastructure{}
+	reconcileSessionRunnerPools(context.Background(), manager, []*sessionrunnercore.PoolSupplier{
+		{Pool: "disabled", Enabled: false, MinIdle: 1},
+		{Pool: "draining", Enabled: true, Draining: true, MinIdle: 1},
+	})
+	if len(manager.purgedPools) != 2 || manager.purgedPools[0] != "disabled" || manager.purgedPools[1] != "draining" {
+		t.Fatalf("purged pools = %v, want [disabled draining]", manager.purgedPools)
+	}
+	if manager.created != 0 {
+		t.Fatalf("created %d runners for unavailable pools", manager.created)
 	}
 }
 
