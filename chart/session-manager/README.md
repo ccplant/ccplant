@@ -37,5 +37,6 @@ Session Pod isolation is configurable per manager release under
 `session.isolation`. `disableServiceLinks` suppresses Service-derived environment
 variables, while `disableServiceAccountToken` prevents the projected Kubernetes
 credentials from being mounted. On Cilium clusters, `blockKubernetesAPI` also
-creates a `CiliumNetworkPolicy` that denies session Pod egress to the
-`kube-apiserver` entity. All three options default to `false` for compatibility.
+creates a `CiliumNetworkPolicy` that preserves normal session Pod egress while
+denying access to the `kube-apiserver` entity. All three options default to
+`false` for compatibility.
