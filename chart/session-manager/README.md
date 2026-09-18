@@ -32,3 +32,10 @@ with an independent content-based tag and `IfNotPresent`. An initContainer
 copies ccplant into an `emptyDir` mounted read-only at `/opt/ccplant/bin`.
 `session.cliImage` optionally overrides the release image used for this copy.
 See [Agent image lifecycle](../../docs/guide/agent-image.md).
+
+Session Pod isolation is configurable per manager release under
+`session.isolation`. `disableServiceLinks` suppresses Service-derived environment
+variables, while `disableServiceAccountToken` prevents the projected Kubernetes
+credentials from being mounted. On Cilium clusters, `blockKubernetesAPI` also
+creates a `CiliumNetworkPolicy` that denies session Pod egress to the
+`kube-apiserver` entity. All three options default to `false` for compatibility.

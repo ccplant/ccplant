@@ -89,6 +89,8 @@ spec:
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ .Values.session.networkFilterImage | quote }}}
             - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ .Values.session.imagePullPolicy | quote }}}
             - {name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: {{ .Values.session.serviceAccountName | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS, value: {{ .Values.session.isolation.disableServiceLinks | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN, value: {{ .Values.session.isolation.disableServiceAccountToken | quote }}}
             - {name: AGENTAPI_K8S_SESSION_BASE_PORT, value: {{ .Values.session.basePort | quote }}}
             - {name: AGENTAPI_K8S_SESSION_CPU_REQUEST, value: {{ .Values.session.resources.requests.cpu | quote }}}
             - {name: AGENTAPI_K8S_SESSION_CPU_LIMIT, value: {{ .Values.session.resources.limits.cpu | quote }}}

@@ -83,6 +83,13 @@ session:
   # CLI source follows the manager release; override for a custom registry.
   cliImage: ""
   serviceAccountName: agentapi-proxy-session
+  isolation:
+    # Hide Service-derived environment variables from session containers.
+    disableServiceLinks: false
+    # Do not mount the service account token, cluster CA, or namespace into sessions.
+    disableServiceAccountToken: false
+    # Requires Cilium. Denies session Pod egress to the kube-apiserver entity.
+    blockKubernetesAPI: false
   networkFilterImage: ghcr.io/ccplant/network-filter-agent:latest
   imagePullPolicy: IfNotPresent
   basePort: 9000

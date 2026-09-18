@@ -56,6 +56,17 @@ func TestLoadConfigDefaultsEmptyKubernetesSessionBasePort(t *testing.T) {
 	assert.Equal(t, 9000, loadedConfig.KubernetesSession.BasePort)
 }
 
+func TestLoadConfigKubernetesSessionIsolationFromEnv(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS", "true")
+	t.Setenv("AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN", "true")
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.True(t, loadedConfig.KubernetesSession.DisableServiceLinks)
+	assert.True(t, loadedConfig.KubernetesSession.DisableServiceAccountToken)
+}
+
 func TestLoadK8sSessionConfigFromYAMLUsesStringKeyedAffinityMaps(t *testing.T) {
 	configFile := t.TempDir() + "/k8s-session-config.yaml"
 	err := os.WriteFile(configFile, []byte(`
