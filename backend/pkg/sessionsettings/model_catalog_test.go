@@ -16,7 +16,7 @@ import (
 const stubBundledCatalog = `{
   "models": [
     {"slug": "gpt-5.6-sol", "display_name": "GPT 5.6 Sol", "description": "sol", "visibility": "hidden", "base_instructions": "sol instructions", "priority": 1},
-    {"slug": "gpt-5.6-terra", "display_name": "GPT 5.6 Terra", "description": "terra", "visibility": "list", "base_instructions": "terra instructions", "priority": 2}
+    {"slug": "gpt-5.6-terra", "display_name": "GPT 5.6 Terra", "description": "terra", "visibility": "list", "base_instructions": "terra instructions", "priority": 2, "use_responses_lite": true, "tool_mode": "code_mode_only", "experimental_supported_tools": ["clock"]}
   ]
 }`
 
@@ -107,6 +107,9 @@ func TestGenerateCodexModelCatalogKeepsBundledEntries(t *testing.T) {
 	terra := findCatalogEntry(t, models, "gpt-5.6-terra")
 	require.Equal(t, "GPT 5.6 Terra", terra["display_name"])
 	require.Equal(t, "terra", terra["description"])
+	// Bundled entries stay untouched, including their wire format opt-ins.
+	require.Equal(t, true, terra["use_responses_lite"])
+	require.Equal(t, "code_mode_only", terra["tool_mode"])
 }
 
 func TestGenerateCodexModelCatalogIncludesCurrentModel(t *testing.T) {
@@ -132,6 +135,11 @@ func TestGenerateCodexModelCatalogUsesListedReference(t *testing.T) {
 
 	custom := findCatalogEntry(t, readGeneratedCatalog(t, outputDir), "glm-5.3")
 	require.Equal(t, "terra instructions", custom["base_instructions"])
+	// Custom models must not inherit "responses lite": providers behind a
+	// custom base_url reject the additional_tools input items it produces.
+	require.Equal(t, false, custom["use_responses_lite"])
+	require.NotContains(t, custom, "tool_mode")
+	require.Equal(t, []any{}, custom["experimental_supported_tools"])
 }
 
 func TestGenerateCodexModelCatalogSkipsKnownCandidates(t *testing.T) {

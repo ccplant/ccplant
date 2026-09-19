@@ -112,6 +112,26 @@ session profile params.model_options
 （`codex debug models -c 'zzz_bogus_key=1'` がエラーにならないことを確認済み）、
 `model_catalog_json` 未対応のバージョンでも key を書くだけで起動は壊れない。
 
+#### カスタムエントリの正規化（重要）
+
+同梱カタログの複製だけでは不十分だった。Codex 0.154.0 の新しい同梱モデルは
+`use_responses_lite: true` を持ち、このフラグが立ったモデルではツール定義が
+**`additional_tools` input item** として送られる（トップレベルの `tools` は空になる）。
+サードパーティの OpenAI 互換プロバイダはこれを解釈できず、
+
+```
+input[0]: unknown input item type: "additional_tools"
+```
+
+で失敗する（ローカルのモックプロバイダで再現・`use_responses_lite=false` で解消を確認済み）。
+そのためカスタムエントリは複製後に次を上書きする:
+
+- `use_responses_lite = false`（従来の Responses 形式で送る）
+- `tool_mode` を削除（`code_mode_only` のツール構成を継承しない）
+- `experimental_supported_tools = []`
+
+同梱エントリ自体は変更しない。現在モデルが同梱カタログに無い場合も同じ正規化が適用される。
+
 なお `CompileSettings` は互換コネクション（`openai_compatible` 等）が provider TOML を所有する
 場合に env を null 化するが、カタログ生成用の env は `codexModelCatalogEnv` で別途組み立てて
 維持する。現在モデルは接続の `model` を優先する（Ollama などは接続側にモデルが入るため）。

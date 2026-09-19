@@ -214,6 +214,12 @@ func codexModelCatalogEntry(reference map[string]any, slug string) map[string]an
 	entry["description"] = fmt.Sprintf("Custom model registered from the session profile (%s)", slug)
 	// The reference entry may be hidden from the picker; candidates must not be.
 	entry["visibility"] = "list"
+	// Newer bundled models opt into "responses lite": tools travel as
+	// additional_tools input items, which OpenAI-compatible providers behind a
+	// custom base_url generally reject. Custom models use the classic format.
+	entry["use_responses_lite"] = false
+	delete(entry, "tool_mode")
+	entry["experimental_supported_tools"] = []any{}
 	return entry
 }
 
