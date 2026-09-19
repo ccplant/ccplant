@@ -121,6 +121,10 @@ interface ACPModelOption {
   label: string;
   description?: string;
   group?: string;
+  // "agent" options are advertised by the ACP agent and always accepted.
+  // "profile" options only come from the session profile model_options; the
+  // agent may reject them, so they are grouped and called out separately.
+  source?: 'agent' | 'profile';
 }
 
 function getACPConfigOptionId(option: ACPConfigOption | undefined): string | null {
@@ -141,14 +145,31 @@ function getACPConfigOptionCurrentValue(option: ACPConfigOption | undefined): st
 // conventional "model" config id for session/set_config_option.
 const ACP_MODEL_CONFIG_ID_FALLBACK = 'model';
 
-function formatACPModelUpdateError(message: string, options: ACPModelOption[]): string {
+// ACP agents validate the model value against the options they advertise, so
+// profile-configured candidates that the agent never offered cannot be
+// applied. Keep the dropdown grouping explicit about that.
+const ACP_PROFILE_MODEL_GROUP = 'プロファイルのモデル候補（エージェント未対応の場合は拒否されます）';
+
+function formatACPModelUpdateError(
+  message: string,
+  agentOptions: ACPModelOption[],
+  rejectedValue?: string
+): string {
   if (!message.includes('-32602')) return message;
 
-  const available = options.map(option => option.value).filter(Boolean);
-  if (available.length === 0) {
-    return 'エージェントがこのモデル文字列を拒否しました（-32602 Invalid params）';
-  }
-  return `エージェントがこのモデル文字列を拒否しました。利用可能なモデル: ${available.join(', ')}`;
+  const target = rejectedValue ? `「${rejectedValue}」` : 'このモデル文字列';
+  // Only the agent's own options are guaranteed to be accepted. Listing the
+  // merged dropdown here used to advertise profile-only values as available.
+  const available = agentOptions.map(option => option.value).filter(Boolean);
+  const known = rejectedValue ? agentOptions.some(option => option.value === rejectedValue) : true;
+
+  const base =
+    available.length === 0
+      ? `エージェントが${target}を受け付けませんでした（-32602 Invalid params）`
+      : `エージェントが${target}を受け付けませんでした。エージェントが切り替え可能なモデル: ${available.join(', ')}`;
+
+  if (known) return base;
+  return `${base}。セッションプロファイルのモデル候補はエージェントが提示していない場合、切り替えできません`;
 }
 
 function getACPModelConfigOption(info: ACPSessionInfo | null): ACPConfigOption | null {
@@ -845,21 +866,31 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   // Fall back to the conventional config id so sessions whose agent does not
   // advertise a model option can still switch to an advertised/configured model.
   const acpModelConfigIdForUpdate = acpModelConfigId ?? (acpInfo ? ACP_MODEL_CONFIG_ID_FALLBACK : null);
-  const acpAgentModelOptions = useMemo(() => flattenACPModelOptions(acpModelConfigOption?.options), [acpModelConfigOption]);
-  // The session profile can contribute extra candidates. Agent-advertised
-  // options come first because they carry labels/descriptions; user-configured
-  // values that the agent does not advertise are appended.
-  const acpModelOptions = useMemo(() => {
-    const merged = [...acpAgentModelOptions];
-    const known = new Set(merged.map(option => option.value));
+  const acpAgentModelOptions = useMemo(
+    () => flattenACPModelOptions(acpModelConfigOption?.options).map(option => ({ ...option, source: 'agent' as const })),
+    [acpModelConfigOption]
+  );
+  // Only these values are guaranteed to be accepted by the agent. ACP agents
+  // validate the model against their own option list, so values that come from
+  // the session profile alone may be rejected with -32602.
+  const acpProfileModelOptions = useMemo(() => {
+    const known = new Set(acpAgentModelOptions.map(option => option.value));
+    const options: ACPModelOption[] = [];
     for (const model of sessionModelOptions) {
       const value = model.trim();
       if (!value || known.has(value)) continue;
       known.add(value);
-      merged.push({ value, label: value });
+      options.push({ value, label: value, group: ACP_PROFILE_MODEL_GROUP, source: 'profile' });
     }
-    return merged;
+    return options;
   }, [acpAgentModelOptions, sessionModelOptions]);
+  // The session profile can contribute extra candidates. Agent-advertised
+  // options come first because they carry labels/descriptions; user-configured
+  // values that the agent does not advertise are appended.
+  const acpModelOptions = useMemo(
+    () => [...acpAgentModelOptions, ...acpProfileModelOptions],
+    [acpAgentModelOptions, acpProfileModelOptions]
+  );
   const acpCurrentModelValue = useMemo(
     () =>
       getACPConfigOptionCurrentValue(acpModelConfigOption ?? undefined) ??
@@ -1081,7 +1112,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       console.error('Failed to update ACP model:', err);
       setACPModelMessage(
         err instanceof Error
-          ? formatACPModelUpdateError(err.message, acpModelOptions)
+          ? formatACPModelUpdateError(err.message, acpAgentModelOptions, selectedACPModel)
           : 'Failed to update model'
       );
     } finally {
@@ -1094,7 +1125,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     acpModelConfigIdForUpdate,
     selectedACPModel,
     acpCurrentModelValue,
-    acpModelOptions,
+    acpAgentModelOptions,
     applyACPConfigOptions,
   ]);
 
@@ -2495,6 +2526,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                       {acpModelOptions.length === 0 && (
                         <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
                           エージェントがモデル候補を提示していません。セッションプロファイルの「モデル候補」で切り替え候補を設定できます。
+                        </p>
+                      )}
+                      {acpProfileModelOptions.length > 0 && (
+                        <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                          プロファイルのモデル候補 {acpProfileModelOptions.length} 件はエージェントが提示していないため、切り替えできない場合があります。
                         </p>
                       )}
                       {acpModelOptions.find(option => option.value === selectedACPModel)?.description && (
