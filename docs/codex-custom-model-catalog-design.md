@@ -8,7 +8,8 @@ ACP チャットの info パネル（Switch Model）から、セッションプ�
 
 現状はプロファイル候補を UI に表示しても、`codex-acp` が
 `session/set_config_option` を `-32602 Invalid params` で拒否する
-（[PR #353](https://github.com/ccplant/ccplant/pull/353) で UI とエラーメッセージは改善済み）。
+（ACP モデル切替 UI を追加した [PR #353](https://github.com/ccplant/ccplant/pull/353) で
+UI とエラーメッセージは改善済み。プロファイルの `params.model_options` はそこで追加した）。
 
 ## 調査結果（実測）
 
@@ -74,7 +75,7 @@ set model=glm-5.3 → OK
 
 ```
 session profile params.model_options
-  └─ LaunchRequest.ModelOptions（実装済み: PR #353）
+  └─ LaunchRequest.ModelOptions（実装済み: ACP モデル切替 UI の PR #353）
       └─ RunServerRequest.ModelOptions
           └─ applyModelConnections()            … 制御プレーン
               └─ settings.Env["CODEX_MODEL_OPTIONS"] = JSON 配列
@@ -103,10 +104,13 @@ session profile params.model_options
    - 同梱モデルはそのまま残す（既存ユーザーの選択肢を消さない）
    - 現在モデルも必ず含める（指示文・コンテキスト設定の参照先になるため）
 4. `<CODEX_HOME>/ccplant-model-catalog.json` に書き出す。
-5. `codex debug models --bundled -c 'model_catalog_json=<path>'` でパース検証する。
-   失敗したら key を書かず、警告ログのみ（セッション起動は壊さない）。
-6. 検証に成功したときだけ `config.toml` に `model_catalog_json = "<path>"` を追記する
+5. 生成に成功したときだけ `config.toml` に `model_catalog_json = "<path>"` を追記する
    （`removeTopLevelTOMLKey` と同様、既存値を上書きして重複させない）。
+
+生成に失敗した場合（`codex` バイナリが無い、同梱カタログが取得できない等）は key を書かず、
+警告ログのみで続行する。パース検証は行わない: Codex は未知の config キーを無視するため
+（`codex debug models -c 'zzz_bogus_key=1'` がエラーにならないことを確認済み）、
+`model_catalog_json` 未対応のバージョンでも key を書くだけで起動は壊れない。
 
 ### 制御プレーンの変更
 
@@ -149,7 +153,7 @@ PR #353 で追加した「プロファイルのモデル候補（エージェン
   - 同梱カタログのモデルが維持され、指定モデルが追加される
   - 現在モデルが必ず含まれる
   - 重複 slug / 空文字 / 不正 slug を無視する
-  - 生成 JSON のパース検証に失敗した場合、`model_catalog_json` を書かない
+  - 同梱カタログの取得に失敗した場合、`model_catalog_json` を書かない
 - 単体（Go）: `applyModelConnections` が `CODEX_MODEL_OPTIONS` を設定し、
   他エージェント種別では設定しない
 - 統合（dev）: `codex-ollama` プロファイルに `model_options = ["glm-5.2", "glm-5.3"]` を設定し、
@@ -170,5 +174,6 @@ PR #353 で追加した「プロファイルのモデル候補（エージェン
   できるようにする余地はある）
 - 表示名・コンテキスト長・推論レベルなどをプロファイルから指定できるようにするか
   （Phase 2 で `model_options` をオブジェクト形式に拡張する想定）
-- codex のバージョン更新で必須フィールドが増えた場合の検知（生成時のパース検証で
-  fail-safe にするが、ログ監視が必要）
+- codex のバージョン更新で必須フィールドが増えた場合の検知（生成は
+  `codex debug models --bundled` の出力を複製するため通常は追随できるが、
+  codex-acp 側でカタログが読めなかった場合はログ監視が必要）
