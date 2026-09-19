@@ -137,6 +137,10 @@ function getACPConfigOptionCurrentValue(option: ACPConfigOption | undefined): st
   );
 }
 
+// ACP agents that do not advertise a model config option still accept the
+// conventional "model" config id for session/set_config_option.
+const ACP_MODEL_CONFIG_ID_FALLBACK = 'model';
+
 function getACPModelConfigOption(info: ACPSessionInfo | null): ACPConfigOption | null {
   if (!info?.configOptions?.length) return null;
 
@@ -825,8 +829,17 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [acpInfo, setACPInfo] = useState<ACPSessionInfo | null>(null);
   const acpModelConfigOption = useMemo(() => getACPModelConfigOption(acpInfo), [acpInfo]);
   const acpModelConfigId = useMemo(() => getACPConfigOptionId(acpModelConfigOption ?? undefined), [acpModelConfigOption]);
+  // Keep the model field available even when the agent does not advertise a
+  // model config option, so an arbitrary model string can still be applied.
+  const acpModelConfigIdForUpdate = acpModelConfigId ?? (acpInfo ? ACP_MODEL_CONFIG_ID_FALLBACK : null);
   const acpModelOptions = useMemo(() => flattenACPModelOptions(acpModelConfigOption?.options), [acpModelConfigOption]);
-  const acpCurrentModelValue = useMemo(() => getACPConfigOptionCurrentValue(acpModelConfigOption ?? undefined), [acpModelConfigOption]);
+  const acpCurrentModelValue = useMemo(
+    () =>
+      getACPConfigOptionCurrentValue(acpModelConfigOption ?? undefined) ??
+      formatACPModelValue(acpInfo?.model) ??
+      null,
+    [acpModelConfigOption, acpInfo]
+  );
   const acpModelDisplay = useMemo(() => getACPModelDisplay(acpInfo), [acpInfo]);
   const [selectedACPModel, setSelectedACPModel] = useState('');
   const [isSettingACPModel, setIsSettingACPModel] = useState(false);
@@ -885,7 +898,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   useEffect(() => {
     setSelectedACPModel(acpCurrentModelValue ?? '');
     setACPModelMessage(null);
-  }, [acpCurrentModelValue, acpModelConfigId]);
+  }, [acpCurrentModelValue, acpModelConfigIdForUpdate]);
 
   useEffect(() => {
     setSelectedACPEffort(acpCurrentEffortValue ?? '');
@@ -995,7 +1008,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   }, [loadPreviousACPTurn]);
 
   const handleSetACPModel = useCallback(async () => {
-    if (!sessionId || !acpModelConfigId || !selectedACPModel) return;
+    if (!sessionId || !acpModelConfigIdForUpdate || !selectedACPModel.trim()) return;
     if (selectedACPModel === acpCurrentModelValue) return;
 
     setIsSettingACPModel(true);
@@ -1006,7 +1019,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       if (acpServerEnabled && acpServerClientRef.current) {
         result = await acpServerClientRef.current.setSessionConfigOption(
           sessionId,
-          acpModelConfigId,
+          acpModelConfigIdForUpdate,
           selectedACPModel
         );
       } else {
@@ -1014,7 +1027,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         result = await agentAPIRef.current.setACPSessionConfigOption(
           sessionId,
           acpInfo.sessionId,
-          acpModelConfigId,
+          acpModelConfigIdForUpdate,
           selectedACPModel
         );
       }
@@ -1033,7 +1046,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     sessionId,
     acpInfo,
     acpServerEnabled,
-    acpModelConfigId,
+    acpModelConfigIdForUpdate,
     selectedACPModel,
     acpCurrentModelValue,
     applyACPConfigOptions,
@@ -2379,7 +2392,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   <span className="text-gray-500 dark:text-gray-400">Model</span>
                   <span className="break-all text-gray-900 dark:text-gray-100">{acpModelDisplay || '-'}</span>
                 </div>
-                {acpModelConfigId && (
+                {acpModelConfigIdForUpdate && (
                   <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2">
                     <label htmlFor="acp-model-input" className="text-gray-500 dark:text-gray-400 pt-2">
                       Switch Model
