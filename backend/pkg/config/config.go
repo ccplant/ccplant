@@ -596,6 +596,13 @@ type Config struct {
 	SessionTokenDebug bool `json:"session_token_debug" mapstructure:"session_token_debug"`
 	// GitHubBrokerBaseURL overrides the request-derived base URL for session GitHub credentials.
 	GitHubBrokerBaseURL string `json:"github_broker_base_url" mapstructure:"github_broker_base_url"`
+	// CodexDeviceAuthCallbackBaseURL overrides the request-derived base URL that
+	// short-lived Codex device auth workers use to report their challenge and
+	// result. Workloads run inside the session cluster, so the browser-facing
+	// host (which may sit behind an authentication proxy such as Cloudflare
+	// Access) is not necessarily reachable from them. Defaults to the
+	// request-derived URL when empty.
+	CodexDeviceAuthCallbackBaseURL string `json:"codex_device_auth_callback_base_url" mapstructure:"codex_device_auth_callback_base_url"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -1056,6 +1063,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth_config_file")
 	_ = v.BindEnv("session_token_debug", "AGENTAPI_SESSION_TOKEN_DEBUG_ENABLED")
 	_ = v.BindEnv("github_broker_base_url", "AGENTAPI_GITHUB_BROKER_BASE_URL")
+	_ = v.BindEnv("codex_device_auth_callback_base_url", "AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
