@@ -81,6 +81,10 @@ type sessionSandboxPolicyProvider interface {
 	SandboxPolicyID() string
 }
 
+type sessionModelOptionsProvider interface {
+	ModelOptions() []string
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -661,6 +665,49 @@ func removeImplicitAllocatorCapabilities(params *entities.SessionParams, explici
 	}
 }
 
+// resolveSessionModelOptions returns the ACP model switching candidates exposed
+// for a session: the value snapshotted in the session's run request, falling
+// back to the session profile it was created from.
+func (c *SessionController) resolveSessionModelOptions(ctx context.Context, session entities.Session, cache map[string][]string) []string {
+	if provider, ok := session.(sessionModelOptionsProvider); ok {
+		if options := provider.ModelOptions(); len(options) > 0 {
+			return options
+		}
+	}
+	return c.sessionModelOptionsFromTags(ctx, session.Tags(), cache)
+}
+
+// sessionModelOptionsFromTags resolves model switching candidates from the
+// session profile referenced by a session's tags. Sessions handled by an
+// external session manager no longer carry the original run request, so the
+// profile is the durable source of truth for the candidates.
+func (c *SessionController) sessionModelOptionsFromTags(ctx context.Context, tags map[string]string, cache map[string][]string) []string {
+	if c.sessionProfileRepo == nil {
+		return nil
+	}
+	profileID := strings.TrimSpace(tags["session_profile_id"])
+	if profileID == "" {
+		return nil
+	}
+	if cached, ok := cache[profileID]; ok {
+		return cached
+	}
+	var options []string
+	profile, err := c.sessionProfileRepo.Get(ctx, profileID)
+	if err != nil {
+		log.Printf("[SESSION] Warning: could not resolve model options from session profile %q: %v", profileID, err)
+	} else if profile != nil {
+		cfg := profile.Config()
+		if params := cfg.Params(); params != nil {
+			options = append([]string(nil), params.ModelOptions...)
+		}
+	}
+	if cache != nil {
+		cache[profileID] = options
+	}
+	return options
+}
+
 // SearchSessions handles GET /search requests to list and filter active sessions
 func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
@@ -773,6 +820,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	})
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
+	// Profiles are shared by many sessions, so resolve each one at most once per
+	// request while building the response.
+	modelOptionsCache := make(map[string][]string)
 	// Track session IDs already present to avoid duplicates from route-based sessions
 	localSessionIDs := make(map[string]struct{}, len(matchingSessions))
 	for _, session := range matchingSessions {
@@ -818,6 +868,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
 			}
 		}
+		if modelOptions := c.resolveSessionModelOptions(ctx.Request().Context(), session, modelOptionsCache); len(modelOptions) > 0 {
+			sessionData["model_options"] = modelOptions
+		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
@@ -856,7 +909,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			continue
 		}
 		status := routedSessionStatus(route, allocatedSessions)
-		filteredSessions = append(filteredSessions, map[string]interface{}{
+		sessionData := map[string]interface{}{
 			"session_id":           route.SessionID,
 			"allocated_session_id": route.RemoteSessionID,
 			"user_id":              route.UserID,
@@ -872,7 +925,13 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			"metadata": map[string]interface{}{
 				"description": route.InitialMessage,
 			},
-		})
+		}
+		// External session managers keep the run request on their side, so the
+		// candidates are recovered from the session profile referenced by the route.
+		if modelOptions := c.sessionModelOptionsFromTags(ctx.Request().Context(), tags, modelOptionsCache); len(modelOptions) > 0 {
+			sessionData["model_options"] = modelOptions
+		}
+		filteredSessions = append(filteredSessions, sessionData)
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
@@ -2035,6 +2094,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	}
 	if override.Model != "" {
 		merged.Model = override.Model
+	}
+	if len(override.ModelOptions) > 0 {
+		merged.ModelOptions = append([]string(nil), override.ModelOptions...)
 	}
 	if override.Slack != nil {
 		merged.Slack = override.Slack

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -181,6 +182,16 @@ func applyModelConnections(settings *sessionsettings.SessionSettings, req *entit
 		}
 	}
 	settings.ApplyModelConnections()
+	if req.AgentType == "codex-acp" && len(req.ModelOptions) > 0 {
+		// The provisioner registers these in the Codex model catalog so the ACP
+		// model switcher can select them (see sessionsettings.CodexModelOptionsEnv).
+		if encoded, err := json.Marshal(req.ModelOptions); err == nil {
+			if settings.Env == nil {
+				settings.Env = map[string]string{}
+			}
+			settings.Env[sessionsettings.CodexModelOptionsEnv] = string(encoded)
+		}
+	}
 	if req.Model == "" {
 		return
 	}

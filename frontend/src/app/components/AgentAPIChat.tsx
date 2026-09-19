@@ -137,6 +137,37 @@ function getACPConfigOptionCurrentValue(option: ACPConfigOption | undefined): st
   );
 }
 
+// ACP agents that do not advertise a model config option still accept the
+// conventional "model" config id for session/set_config_option.
+const ACP_MODEL_CONFIG_ID_FALLBACK = 'model';
+
+// ACP agents validate the model value against the options they advertise, so
+// profile-configured candidates that the agent never offered cannot be
+// applied. Keep the dropdown grouping explicit about that.
+const ACP_PROFILE_MODEL_GROUP = 'プロファイルのモデル候補（エージェント未対応の場合は拒否されます）';
+
+function formatACPModelUpdateError(
+  message: string,
+  agentOptions: ACPModelOption[],
+  rejectedValue?: string
+): string {
+  if (!message.includes('-32602')) return message;
+
+  const target = rejectedValue ? `「${rejectedValue}」` : 'このモデル文字列';
+  // Only the agent's own options are guaranteed to be accepted. Listing the
+  // merged dropdown here used to advertise profile-only values as available.
+  const available = agentOptions.map(option => option.value).filter(Boolean);
+  const known = rejectedValue ? agentOptions.some(option => option.value === rejectedValue) : true;
+
+  const base =
+    available.length === 0
+      ? `エージェントが${target}を受け付けませんでした（-32602 Invalid params）`
+      : `エージェントが${target}を受け付けませんでした。エージェントが切り替え可能なモデル: ${available.join(', ')}`;
+
+  if (known) return base;
+  return `${base}。セッションプロファイルのモデル候補はエージェントが提示していない場合、切り替えできません`;
+}
+
 function getACPModelConfigOption(info: ACPSessionInfo | null): ACPConfigOption | null {
   if (!info?.configOptions?.length) return null;
 
@@ -798,6 +829,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showPRLinks, setShowPRLinks] = useState(false);
   const [sessionAnnotations, setSessionAnnotations] = useState<SessionAnnotations | undefined>();
+  const [sessionModelOptions, setSessionModelOptions] = useState<string[]>([]);
 
   // Annotations decorate the header but are not needed to display the chat.
   // Defer their full session search until message history is visible so the
@@ -807,7 +839,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     const timeoutId = setTimeout(() => {
       void agentAPIRef.current.search({ limit: 100 })
         .then(response => {
-          setSessionAnnotations(getSessionFromList(response.sessions, sessionId)?.annotations);
+          const session = getSessionFromList(response.sessions, sessionId);
+          setSessionAnnotations(session?.annotations);
+          setSessionModelOptions(session?.model_options ?? []);
           lastSessionAnnotationLoadTimeRef.current = Date.now();
         })
         .catch(err => console.warn('Failed to load session annotations:', err));
@@ -825,10 +859,54 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [acpInfo, setACPInfo] = useState<ACPSessionInfo | null>(null);
   const acpModelConfigOption = useMemo(() => getACPModelConfigOption(acpInfo), [acpInfo]);
   const acpModelConfigId = useMemo(() => getACPConfigOptionId(acpModelConfigOption ?? undefined), [acpModelConfigOption]);
-  const acpModelOptions = useMemo(() => flattenACPModelOptions(acpModelConfigOption?.options), [acpModelConfigOption]);
-  const acpCurrentModelValue = useMemo(() => getACPConfigOptionCurrentValue(acpModelConfigOption ?? undefined), [acpModelConfigOption]);
+  // Fall back to the conventional config id so sessions whose agent does not
+  // advertise a model option can still switch to an advertised/configured model.
+  const acpModelConfigIdForUpdate = acpModelConfigId ?? (acpInfo ? ACP_MODEL_CONFIG_ID_FALLBACK : null);
+  const acpAgentModelOptions = useMemo(() => flattenACPModelOptions(acpModelConfigOption?.options), [acpModelConfigOption]);
+  // Only these values are guaranteed to be accepted by the agent. ACP agents
+  // validate the model against their own option list, so values that come from
+  // the session profile alone may be rejected with -32602.
+  const acpProfileModelOptions = useMemo(() => {
+    const known = new Set(acpAgentModelOptions.map(option => option.value));
+    const options: ACPModelOption[] = [];
+    for (const model of sessionModelOptions) {
+      const value = model.trim();
+      if (!value || known.has(value)) continue;
+      known.add(value);
+      options.push({ value, label: value, group: ACP_PROFILE_MODEL_GROUP });
+    }
+    return options;
+  }, [acpAgentModelOptions, sessionModelOptions]);
+  // The session profile can contribute extra candidates. Agent-advertised
+  // options come first because they carry labels/descriptions; user-configured
+  // values that the agent does not advertise are appended.
+  const acpModelOptions = useMemo(
+    () => [...acpAgentModelOptions, ...acpProfileModelOptions],
+    [acpAgentModelOptions, acpProfileModelOptions]
+  );
+  const acpCurrentModelValue = useMemo(
+    () =>
+      getACPConfigOptionCurrentValue(acpModelConfigOption ?? undefined) ??
+      formatACPModelValue(acpInfo?.model) ??
+      null,
+    [acpModelConfigOption, acpInfo]
+  );
   const acpModelDisplay = useMemo(() => getACPModelDisplay(acpInfo), [acpInfo]);
   const [selectedACPModel, setSelectedACPModel] = useState('');
+  const acpSelectedModelIsKnown = acpModelOptions.some(option => option.value === selectedACPModel);
+  const acpModelSelectGroups = useMemo(() => {
+    const groups: { name: string; options: ACPModelOption[] }[] = [];
+    for (const option of acpModelOptions) {
+      const name = option.group ?? '';
+      const last = groups[groups.length - 1];
+      if (last && last.name === name) {
+        last.options.push(option);
+      } else {
+        groups.push({ name, options: [option] });
+      }
+    }
+    return groups;
+  }, [acpModelOptions]);
   const [isSettingACPModel, setIsSettingACPModel] = useState(false);
   const [acpModelMessage, setACPModelMessage] = useState<string | null>(null);
   const acpEffortConfigOption = useMemo(() => getACPEffortConfigOption(acpInfo), [acpInfo]);
@@ -885,7 +963,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   useEffect(() => {
     setSelectedACPModel(acpCurrentModelValue ?? '');
     setACPModelMessage(null);
-  }, [acpCurrentModelValue, acpModelConfigId]);
+  }, [acpCurrentModelValue, acpModelConfigIdForUpdate]);
 
   useEffect(() => {
     setSelectedACPEffort(acpCurrentEffortValue ?? '');
@@ -995,7 +1073,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   }, [loadPreviousACPTurn]);
 
   const handleSetACPModel = useCallback(async () => {
-    if (!sessionId || !acpModelConfigId || !selectedACPModel) return;
+    if (!sessionId || !acpModelConfigIdForUpdate || !selectedACPModel) return;
     if (selectedACPModel === acpCurrentModelValue) return;
 
     setIsSettingACPModel(true);
@@ -1006,7 +1084,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       if (acpServerEnabled && acpServerClientRef.current) {
         result = await acpServerClientRef.current.setSessionConfigOption(
           sessionId,
-          acpModelConfigId,
+          acpModelConfigIdForUpdate,
           selectedACPModel
         );
       } else {
@@ -1014,7 +1092,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         result = await agentAPIRef.current.setACPSessionConfigOption(
           sessionId,
           acpInfo.sessionId,
-          acpModelConfigId,
+          acpModelConfigIdForUpdate,
           selectedACPModel
         );
       }
@@ -1025,7 +1103,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       setACPModelMessage('Model updated');
     } catch (err) {
       console.error('Failed to update ACP model:', err);
-      setACPModelMessage(err instanceof Error ? err.message : 'Failed to update model');
+      setACPModelMessage(
+        err instanceof Error
+          ? formatACPModelUpdateError(err.message, acpAgentModelOptions, selectedACPModel)
+          : 'Failed to update model'
+      );
     } finally {
       setIsSettingACPModel(false);
     }
@@ -1033,9 +1115,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     sessionId,
     acpInfo,
     acpServerEnabled,
-    acpModelConfigId,
+    acpModelConfigIdForUpdate,
     selectedACPModel,
     acpCurrentModelValue,
+    acpAgentModelOptions,
     applyACPConfigOptions,
   ]);
 
@@ -1402,7 +1485,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       const normalizedSessionStatus = { ...sessionStatus, status: normalizeAgentStatus(sessionStatus.status) };
       setAgentStatus(normalizedSessionStatus);
       if (sessionListResponse) {
-        setSessionAnnotations(getSessionFromList(sessionListResponse.sessions, sessionId)?.annotations);
+        const session = getSessionFromList(sessionListResponse.sessions, sessionId);
+        setSessionAnnotations(session?.annotations);
+        setSessionModelOptions(session?.model_options ?? []);
         lastSessionAnnotationLoadTimeRef.current = Date.now();
       }
       // When the provisioner has permanently failed, surface the error once.
@@ -2379,25 +2464,44 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   <span className="text-gray-500 dark:text-gray-400">Model</span>
                   <span className="break-all text-gray-900 dark:text-gray-100">{acpModelDisplay || '-'}</span>
                 </div>
-                {acpModelConfigId && acpModelOptions.length > 0 && (
+                {acpModelConfigIdForUpdate && (
                   <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2">
                     <label htmlFor="acp-model-select" className="text-gray-500 dark:text-gray-400 pt-2">
                       Switch Model
                     </label>
                     <div className="min-w-0">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                      <div className="flex gap-2 sm:items-start">
                         <select
                           id="acp-model-select"
                           value={selectedACPModel}
-                          onChange={(event) => setSelectedACPModel(event.target.value)}
-                          disabled={isSettingACPModel}
-                          className="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-700"
+                          onChange={(event) => {
+                            setSelectedACPModel(event.target.value);
+                            setACPModelMessage(null);
+                          }}
+                          disabled={isSettingACPModel || acpModelOptions.length === 0}
+                          className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-700"
                         >
-                          {acpModelOptions.map(option => (
-                            <option key={`${option.group ?? 'model'}:${option.value}`} value={option.value}>
-                              {option.group ? `${option.group} / ${option.label}` : option.label}
-                            </option>
-                          ))}
+                          {!selectedACPModel && <option value="">モデルを選択</option>}
+                          {selectedACPModel && !acpSelectedModelIsKnown && (
+                            <option value={selectedACPModel}>{selectedACPModel}</option>
+                          )}
+                          {acpModelSelectGroups.map((group, groupIndex) =>
+                            group.name ? (
+                              <optgroup key={`group:${group.name}:${groupIndex}`} label={group.name}>
+                                {group.options.map(option => (
+                                  <option key={`model:${option.value}`} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ) : (
+                              group.options.map(option => (
+                                <option key={`model:${option.value}`} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))
+                            )
+                          )}
                         </select>
                         <button
                           type="button"
@@ -2412,6 +2516,16 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                           {isSettingACPModel ? 'Applying...' : 'Apply'}
                         </button>
                       </div>
+                      {acpModelOptions.length === 0 && (
+                        <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                          エージェントがモデル候補を提示していません。セッションプロファイルの「モデル候補」で切り替え候補を設定できます。
+                        </p>
+                      )}
+                      {acpProfileModelOptions.length > 0 && (
+                        <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                          プロファイルのモデル候補 {acpProfileModelOptions.length} 件はエージェントが提示していないため、切り替えできない場合があります。
+                        </p>
+                      )}
                       {acpModelOptions.find(option => option.value === selectedACPModel)?.description && (
                         <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
                           {acpModelOptions.find(option => option.value === selectedACPModel)?.description}

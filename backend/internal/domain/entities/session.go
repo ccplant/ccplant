@@ -90,6 +90,9 @@ type SessionParams struct {
 	AgentType string `json:"agent_type,omitempty"`
 	// Model overrides the model used by the selected agent.
 	Model string `json:"model,omitempty"`
+	// ModelOptions lists the model strings offered as switching candidates in the
+	// ACP session info panel. Empty means only the agent-advertised options are shown.
+	ModelOptions []string `json:"model_options,omitempty"`
 	// Slack contains Slack integration parameters
 	Slack *SlackParams `json:"slack,omitempty"`
 	// Oneshot indicates whether the session should automatically delete itself after stopping
@@ -227,6 +230,7 @@ type RunServerRequest struct {
 	TeamID                   string            // Team identifier when Scope is "team"
 	AgentType                string            // Agent type for the session
 	Model                    string            // Model override interpreted for the selected agent
+	ModelOptions             []string          // Model switching candidates exposed to the ACP chat UI
 	SlackParams              *SlackParams      // Slack integration parameters
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags

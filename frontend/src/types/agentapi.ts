@@ -185,6 +185,8 @@ export interface Session {
   scope?: ResourceScope;
   team_id?: string;
   sandbox_policy_id?: string;
+  /** Model switching candidates configured for this session (profile params.model_options). */
+  model_options?: string[];
   error_message?: string;
 }
 

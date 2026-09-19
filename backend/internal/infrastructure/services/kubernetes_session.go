@@ -310,6 +310,15 @@ func (s *KubernetesSession) Request() *entities.RunServerRequest {
 	return s.request
 }
 
+// ModelOptions returns the model switching candidates configured for the
+// session, so the public session list can expose them to the ACP chat UI.
+func (s *KubernetesSession) ModelOptions() []string {
+	if s.request == nil {
+		return nil
+	}
+	return append([]string(nil), s.request.ModelOptions...)
+}
+
 func (s *KubernetesSession) SetRequest(request *entities.RunServerRequest) { s.request = request }
 
 // SetResolvedAPIKey stores the API key resolved during session creation.

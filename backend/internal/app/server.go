@@ -1336,7 +1336,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
 	}
 
-	var unsyncedFilePaths []string
+	var unsyncedFilePaths, modelOptions []string
 	var credentialSource, codexAuthMode, claudeAuthMode, model string
 	var resumeFrom string
 	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
@@ -1348,6 +1348,9 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		resumeFrom = startReq.Params.ResumeFrom
 		model = startReq.Params.Model
+		if len(startReq.Params.ModelOptions) > 0 {
+			modelOptions = append([]string(nil), startReq.Params.ModelOptions...)
+		}
 	}
 
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
@@ -1368,6 +1371,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		TeamID:                   startReq.TeamID,
 		AgentType:                agentType,
 		Model:                    model,
+		ModelOptions:             modelOptions,
 		SlackParams:              slackParams,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		MemoryKey:                startReq.MemoryKey,
@@ -2116,7 +2120,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 	var authProxy *bool
 	var sandbox *entities.SandboxParams
 	var docker *entities.DockerParams
-	var unsyncedFilePaths []string
+	var unsyncedFilePaths, modelOptions []string
 	if startReq.Params != nil {
 		initialMessage = startReq.Params.Message
 		agentType = startReq.Params.AgentType
@@ -2127,6 +2131,9 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		model = startReq.Params.Model
+		if len(startReq.Params.ModelOptions) > 0 {
+			modelOptions = append([]string(nil), startReq.Params.ModelOptions...)
+		}
 		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
 	}
@@ -2134,6 +2141,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
 		TriggeredUserID: startReq.TriggeredUserID,
 		Pool:            requestedSessionPool(startReq), AgentType: agentType, Model: model, SessionTTL: sessionTTL, Environment: startReq.Environment,
+		ModelOptions:       modelOptions,
 		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,

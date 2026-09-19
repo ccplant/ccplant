@@ -348,12 +348,13 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	request := &entities.RunServerRequest{
-		UserID:     "user-1",
-		Scope:      entities.ScopeTeam,
-		TeamID:     "org/team",
-		Tags:       map[string]string{"source": "test"},
-		SessionTTL: "6h",
-		Sandbox:    &entities.SandboxParams{PolicyID: "sandbox-policy-1"},
+		UserID:       "user-1",
+		Scope:        entities.ScopeTeam,
+		TeamID:       "org/team",
+		Tags:         map[string]string{"source": "test"},
+		SessionTTL:   "6h",
+		Sandbox:      &entities.SandboxParams{PolicyID: "sandbox-policy-1"},
+		ModelOptions: []string{"sonnet", "opus"},
 	}
 	session, err := client.CreateSession(ctx, "caller-selected-id", request, []byte("webhook"))
 	if err != nil {
@@ -383,6 +384,10 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	sandboxed, ok := session.(interface{ SandboxPolicyID() string })
 	if !ok || sandboxed.SandboxPolicyID() != "sandbox-policy-1" {
 		t.Fatalf("sandbox policy was not preserved: %#v", sandboxed)
+	}
+	modeled, ok := session.(interface{ ModelOptions() []string })
+	if !ok || len(modeled.ModelOptions()) != 2 || modeled.ModelOptions()[0] != "sonnet" || modeled.ModelOptions()[1] != "opus" {
+		t.Fatalf("model options were not preserved: %#v", modeled)
 	}
 
 	got, err := client.GetSessionContext(ctx, "caller-selected-id")
