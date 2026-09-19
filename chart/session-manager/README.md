@@ -38,5 +38,8 @@ Session Pod isolation is configurable per manager release under
 variables, while `disableServiceAccountToken` prevents the projected Kubernetes
 credentials from being mounted. On Cilium clusters, `blockKubernetesAPI` also
 creates a `CiliumNetworkPolicy` that preserves normal session Pod egress while
-denying access to the `kube-apiserver` entity. All three options default to
-`false` for compatibility.
+denying access to the `kube-apiserver` entity. Setting `egressMode` to
+`public-only` instead permits kube-dns on TCP/UDP port 53 and Cilium's `world`
+entity, while default-denying all other cluster-internal egress (including the
+session-manager service and kube-apiserver). Isolation defaults remain disabled
+for compatibility.
