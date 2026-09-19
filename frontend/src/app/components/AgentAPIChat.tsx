@@ -2379,32 +2379,46 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   <span className="text-gray-500 dark:text-gray-400">Model</span>
                   <span className="break-all text-gray-900 dark:text-gray-100">{acpModelDisplay || '-'}</span>
                 </div>
-                {acpModelConfigId && acpModelOptions.length > 0 && (
+                {acpModelConfigId && (
                   <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2">
-                    <label htmlFor="acp-model-select" className="text-gray-500 dark:text-gray-400 pt-2">
+                    <label htmlFor="acp-model-input" className="text-gray-500 dark:text-gray-400 pt-2">
                       Switch Model
                     </label>
                     <div className="min-w-0">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-                        <select
-                          id="acp-model-select"
+                        <input
+                          id="acp-model-input"
+                          type="text"
+                          list={acpModelOptions.length > 0 ? 'acp-model-options' : undefined}
                           value={selectedACPModel}
                           onChange={(event) => setSelectedACPModel(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void handleSetACPModel();
+                            }
+                          }}
                           disabled={isSettingACPModel}
+                          placeholder="任意のモデル名を入力"
+                          autoComplete="off"
+                          spellCheck={false}
                           className="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-700"
-                        >
-                          {acpModelOptions.map(option => (
-                            <option key={`${option.group ?? 'model'}:${option.value}`} value={option.value}>
-                              {option.group ? `${option.group} / ${option.label}` : option.label}
-                            </option>
-                          ))}
-                        </select>
+                        />
+                        {acpModelOptions.length > 0 && (
+                          <datalist id="acp-model-options">
+                            {acpModelOptions.map(option => (
+                              <option key={`${option.group ?? 'model'}:${option.value}`} value={option.value}>
+                                {option.group ? `${option.group} / ${option.label}` : option.label}
+                              </option>
+                            ))}
+                          </datalist>
+                        )}
                         <button
                           type="button"
                           onClick={handleSetACPModel}
                           disabled={
                             isSettingACPModel ||
-                            !selectedACPModel ||
+                            !selectedACPModel.trim() ||
                             selectedACPModel === acpCurrentModelValue
                           }
                           className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
