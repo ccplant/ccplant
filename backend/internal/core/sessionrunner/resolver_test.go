@@ -30,6 +30,13 @@ func (s *resolverStore) ListPoolSuppliers(context.Context) ([]*PoolSupplier, err
 	return s.suppliers, nil
 }
 func (s *resolverStore) ListBindings(context.Context, string) ([]*Binding, error) {
+	for _, binding := range s.bindings {
+		// Match the persistent store's compatibility behavior for bindings
+		// created before roles were introduced.
+		if binding.Role == "" {
+			binding.Role = BindingRoleUse
+		}
+	}
 	return s.bindings, nil
 }
 
@@ -50,6 +57,49 @@ func TestResolverRequiresBindingAndSelectsPool(t *testing.T) {
 
 	_, err = resolver.Resolve(context.Background(), Subject{Type: SubjectUser, ID: "bob"}, "linux", nil)
 	require.Error(t, err)
+}
+
+func TestResolverManageBindingDoesNotGrantUseAccess(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings: []*Binding{{
+			Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice",
+			Role: BindingRoleManage, Enabled: true,
+		}},
+	}
+	resolver := NewResolver(store, 0)
+	subject := Subject{Type: SubjectUser, ID: "alice"}
+
+	available, err := resolver.AvailablePools(context.Background(), subject)
+	require.NoError(t, err)
+	require.Empty(t, available)
+
+	resolved, err := resolver.Resolve(context.Background(), subject, "", nil)
+	require.NoError(t, err)
+	require.Nil(t, resolved)
+
+	_, err = resolver.Resolve(context.Background(), subject, "linux", nil)
+	require.Error(t, err)
+}
+
+func TestResolverManageAndUseBindingGrantsUseAccess(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings: []*Binding{{
+			Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice",
+			Role: BindingRoleManageAndUse, Enabled: true,
+		}},
+	}
+	resolver := NewResolver(store, 0)
+	subject := Subject{Type: SubjectUser, ID: "alice"}
+
+	resolved, err := resolver.Resolve(context.Background(), subject, "linux", nil)
+	require.NoError(t, err)
+	require.Equal(t, "linux", resolved.Pool.Name)
 }
 
 func TestResolverSelectsHighestPriorityEffectiveBinding(t *testing.T) {

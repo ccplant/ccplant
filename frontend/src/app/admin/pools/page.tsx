@@ -52,7 +52,7 @@ export default function SessionPoolsAdminPage() {
   const [maxRunners, setMaxRunners] = useState(10)
   const [subjectType, setSubjectType] = useState<'user' | 'team' | 'all'>('team')
   const [subjectID, setSubjectID] = useState('')
-  const [bindingRole, setBindingRole] = useState<'use' | 'manage'>('use')
+  const [bindingRole, setBindingRole] = useState<'use' | 'manage' | 'manage_and_use'>('use')
   const [bindingPool, setBindingPool] = useState('')
   const [bindingPriority, setBindingPriority] = useState(0)
   const [maxConcurrent, setMaxConcurrent] = useState(0)
@@ -341,9 +341,10 @@ export default function SessionPoolsAdminPage() {
               <option value="user">User</option>
               <option value="all">All users and teams</option>
             </select>
-            <select className={input} value={bindingRole} onChange={(event) => setBindingRole(event.target.value as 'use' | 'manage')}>
+            <select className={input} value={bindingRole} onChange={(event) => setBindingRole(event.target.value as 'use' | 'manage' | 'manage_and_use')}>
               <option value="use">Use</option>
               <option value="manage" disabled={subjectType === 'all'}>Manage</option>
+              <option value="manage_and_use" disabled={subjectType === 'all'}>Manage and use</option>
             </select>
             <input required={subjectType !== 'all'} disabled={subjectType === 'all'} className={input} value={subjectID} onChange={(event) => setSubjectID(event.target.value)} placeholder={subjectType === 'all' ? 'Subject ID は不要です' : subjectType === 'team' ? 'org/team' : 'user-id'} />
             <div className="grid grid-cols-2 gap-3">

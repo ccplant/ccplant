@@ -29,7 +29,7 @@ export interface SessionPoolBinding {
   pool: string
   subject_type: 'user' | 'team' | 'all'
   subject_id: string
-  role: 'use' | 'manage'
+  role: 'use' | 'manage' | 'manage_and_use'
   enabled: boolean
   priority?: number
   max_concurrent?: number

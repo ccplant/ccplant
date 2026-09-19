@@ -1026,7 +1026,7 @@ func TestBindingPriorityAndMaxConcurrentValidationAndPatch(t *testing.T) {
 	}
 }
 
-func TestPoolCreatorReceivesManageBinding(t *testing.T) {
+func TestPoolCreatorReceivesManageAndUseBinding(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
 	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
@@ -1038,8 +1038,8 @@ func TestPoolCreatorReceivesManageBinding(t *testing.T) {
 		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
 	}
 	bindings, err := store.ListBindings(context.Background(), "linux")
-	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectUser || bindings[0].SubjectID != "alice" || bindings[0].Role != core.BindingRoleManage {
-		t.Fatalf("creator manage binding missing: bindings=%+v err=%v", bindings, err)
+	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectUser || bindings[0].SubjectID != "alice" || bindings[0].Role != core.BindingRoleManageAndUse {
+		t.Fatalf("creator manage-and-use binding missing: bindings=%+v err=%v", bindings, err)
 	}
 
 	denied := callSessionPoolHandlerAs(t, controller.PatchLogicalPool, http.MethodPatch, "/session-pools/linux",
