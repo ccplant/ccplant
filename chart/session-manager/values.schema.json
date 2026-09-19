@@ -62,11 +62,12 @@
         "cliImage": {"type": "string"},
         "isolation": {
           "type": "object",
-          "required": ["disableServiceLinks", "disableServiceAccountToken", "blockKubernetesAPI"],
+          "required": ["disableServiceLinks", "disableServiceAccountToken", "blockKubernetesAPI", "egressMode"],
           "properties": {
             "disableServiceLinks": {"type": "boolean"},
             "disableServiceAccountToken": {"type": "boolean"},
-            "blockKubernetesAPI": {"type": "boolean"}
+            "blockKubernetesAPI": {"type": "boolean"},
+            "egressMode": {"type": "string", "enum": ["", "public-only"]}
           }
         },
         "provisioner": {
