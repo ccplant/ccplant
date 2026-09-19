@@ -20,12 +20,21 @@ type SubjectType string
 type BindingRole string
 
 const (
-	SubjectUser       SubjectType = "user"
-	SubjectTeam       SubjectType = "team"
-	SubjectAll        SubjectType = "all"
-	BindingRoleUse    BindingRole = "use"
-	BindingRoleManage BindingRole = "manage"
+	SubjectUser             SubjectType = "user"
+	SubjectTeam             SubjectType = "team"
+	SubjectAll              SubjectType = "all"
+	BindingRoleUse          BindingRole = "use"
+	BindingRoleManage       BindingRole = "manage"
+	BindingRoleManageAndUse BindingRole = "manage_and_use"
 )
+
+func (r BindingRole) GrantsUse() bool {
+	return r == BindingRoleUse || r == BindingRoleManageAndUse
+}
+
+func (r BindingRole) GrantsManage() bool {
+	return r == BindingRoleManage || r == BindingRoleManageAndUse
+}
 
 type Manager struct {
 	ID                    string            `json:"id"`

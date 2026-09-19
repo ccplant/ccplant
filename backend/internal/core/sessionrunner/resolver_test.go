@@ -84,6 +84,24 @@ func TestResolverManageBindingDoesNotGrantUseAccess(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestResolverManageAndUseBindingGrantsUseAccess(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}},
+		bindings: []*Binding{{
+			Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice",
+			Role: BindingRoleManageAndUse, Enabled: true,
+		}},
+	}
+	resolver := NewResolver(store, 0)
+	subject := Subject{Type: SubjectUser, ID: "alice"}
+
+	resolved, err := resolver.Resolve(context.Background(), subject, "linux", nil)
+	require.NoError(t, err)
+	require.Equal(t, "linux", resolved.Pool.Name)
+}
+
 func TestResolverSelectsHighestPriorityEffectiveBinding(t *testing.T) {
 	store := &resolverStore{
 		managers: []*Manager{{ID: "manager-a", Enabled: true}},
