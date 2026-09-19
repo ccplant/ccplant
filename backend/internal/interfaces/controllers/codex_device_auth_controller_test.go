@@ -276,9 +276,54 @@ func TestDeviceAuthCallbackURLUsesForwardedPrefix(t *testing.T) {
 	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
 	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
 
-	got, err := deviceAuthCallbackURL(e.NewContext(req, httptest.NewRecorder()))
+	got, err := requestDerivedCallbackURL(e.NewContext(req, httptest.NewRecorder()))
 	require.NoError(t, err)
 	assert.Equal(t, "https://dev.ccplant.com/api/proxy/internal/codex-device-auth", got)
+}
+
+// TestCodexDeviceAuthCallbackBaseURLOverride covers deployments whose public
+// host is only reachable from the browser (for example when the UI sits behind
+// Cloudflare Access). The configured base URL must win over the request
+// derived host, otherwise the in-cluster auth worker cannot report its
+// challenge and the UI stays on "waiting".
+func TestCodexDeviceAuthCallbackBaseURLOverride(t *testing.T) {
+	repo := &fakeCodexCredentialsRepository{}
+	launcher := &fakeCodexAuthLauncher{}
+	controller := NewCodexDeviceAuthController(repo, launcher).WithCallbackBaseURL("https://ccplant-api-dev.fly.dev/")
+	e := echo.New()
+	user := entities.NewGitHubUser("alice", "alice", "alice@example.com", nil)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/codex/device-auth", strings.NewReader(`{"scope":"user"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Host = "backend.internal"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "dev.ccplant.com")
+	req.Header.Set("X-Forwarded-Prefix", "/api/proxy")
+	ctx := e.NewContext(req, recorder)
+	ctx.Set("internal_user", user)
+
+	require.NoError(t, controller.StartDeviceAuth(ctx))
+	assert.Equal(t, http.StatusAccepted, recorder.Code)
+	assert.Equal(t, "https://ccplant-api-dev.fly.dev/internal/codex-device-auth", launcher.request.CallbackURL)
+}
+
+func TestCodexDeviceAuthCallbackBaseURLRejectsInvalid(t *testing.T) {
+	repo := &fakeCodexCredentialsRepository{}
+	launcher := &fakeCodexAuthLauncher{}
+	controller := NewCodexDeviceAuthController(repo, launcher).WithCallbackBaseURL("ftp://example.com")
+	e := echo.New()
+	user := entities.NewGitHubUser("alice", "alice", "alice@example.com", nil)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/codex/device-auth", strings.NewReader(`{"scope":"user"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	ctx := e.NewContext(req, recorder)
+	ctx.Set("internal_user", user)
+
+	err := controller.StartDeviceAuth(ctx)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusBadRequest, err.(*echo.HTTPError).Code)
 }
 
 func TestDeviceAuthCallbackURLRejectsInvalidForwardedPrefix(t *testing.T) {
@@ -288,6 +333,6 @@ func TestDeviceAuthCallbackURLRejectsInvalidForwardedPrefix(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Prefix", "/api/../admin")
 
-	_, err := deviceAuthCallbackURL(e.NewContext(req, httptest.NewRecorder()))
+	_, err := requestDerivedCallbackURL(e.NewContext(req, httptest.NewRecorder()))
 	require.Error(t, err)
 }

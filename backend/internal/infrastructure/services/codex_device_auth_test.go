@@ -122,3 +122,47 @@ func TestStartCodexDeviceAuthInjectsCLIImage(t *testing.T) {
 		t.Fatalf("auth pod must mount the injected CLI read-only: %#v", pod.Spec.Containers[0].VolumeMounts)
 	}
 }
+
+// TestStartCodexDeviceAuthPodOutlivesAttempt guards the reporting window: the
+// worker only reports after the Codex device login finishes or the attempt
+// expires, so the Pod deadline must be later than the attempt expiry.
+func TestStartCodexDeviceAuthPodOutlivesAttempt(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	manager := &KubernetesSessionManager{client: client, namespace: "test", k8sConfig: &config.KubernetesSessionConfig{Image: "session"}}
+	request := codexauth.WorkloadRequest{
+		AttemptID: "cda-0123456789abcdef", CallbackURL: "https://proxy.example/internal/codex-device-auth",
+		Token: "token", ExpiresAt: time.Now().Add(15 * time.Minute),
+	}
+	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := client.CoreV1().Pods("test").Get(context.Background(), codexDeviceAuthResourceName(request.AttemptID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Spec.ActiveDeadlineSeconds == nil {
+		t.Fatal("auth pod must carry an active deadline")
+	}
+	if got := time.Duration(*pod.Spec.ActiveDeadlineSeconds) * time.Second; got <= 15*time.Minute {
+		t.Fatalf("auth pod deadline %s must outlive the 15m attempt", got)
+	}
+}
+
+func TestStartCodexDeviceAuthExpiredAttemptKeepsShortDeadline(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	manager := &KubernetesSessionManager{client: client, namespace: "test", k8sConfig: &config.KubernetesSessionConfig{Image: "session"}}
+	request := codexauth.WorkloadRequest{
+		AttemptID: "cda-0123456789abcdef", CallbackURL: "https://proxy.example/internal/codex-device-auth",
+		Token: "token", ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	if err := manager.StartCodexDeviceAuth(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := client.CoreV1().Pods("test").Get(context.Background(), codexDeviceAuthResourceName(request.AttemptID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Spec.ActiveDeadlineSeconds == nil || *pod.Spec.ActiveDeadlineSeconds != 1 {
+		t.Fatalf("expired attempt must use the minimal pod deadline: %#v", pod.Spec.ActiveDeadlineSeconds)
+	}
+}

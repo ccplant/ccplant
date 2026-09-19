@@ -137,6 +137,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.persistenceClient != nil {
 			codexDeviceAuthController.WithAttemptStore(repositories.NewKubernetesCodexAuthAttemptRepository(server.GetPersistenceClient(), server.namespace))
 		}
+		if cfg := server.GetConfig(); cfg != nil {
+			codexDeviceAuthController.WithCallbackBaseURL(cfg.CodexDeviceAuthCallbackBaseURL)
+		}
 		log.Printf("[ROUTER] Codex device auth controller initialized")
 	}
 

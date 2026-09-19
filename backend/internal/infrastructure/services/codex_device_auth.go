@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,15 @@ import (
 )
 
 const codexDeviceAuthLabel = "agentapi.proxy/codex-device-auth"
+
+// The auth worker holds the Codex device login open until the attempt expires
+// and only then reports the outcome. The Pod must therefore outlive the
+// attempt, otherwise Kubernetes kills the worker before it can deliver the
+// final callback and the attempt is stuck until the API expires it.
+const (
+	codexAuthPodDeadlineGrace = 90 * time.Second
+	codexAuthPodMaxDeadline   = 17 * time.Minute
+)
 
 func codexDeviceAuthResourceName(attemptID string) string {
 	id := strings.TrimPrefix(attemptID, "cda-")
@@ -92,9 +102,12 @@ func (m *KubernetesSessionManager) StartCodexDeviceAuth(ctx context.Context, req
 		}
 		log.Printf("[CODEX_AUTH_K8S] Cleaned up Secret for attempt %s resource=%s after Pod creation failure", req.AttemptID, name)
 	}
-	deadline := int64(600)
-	if seconds := int64(req.ExpiresAt.Sub(metav1.Now().Time).Seconds()); seconds > 0 && seconds < deadline {
-		deadline = seconds
+	deadline := int64(codexAuthPodMaxDeadline.Seconds())
+	switch remaining := req.ExpiresAt.Sub(metav1.Now().Time); {
+	case remaining <= 0:
+		deadline = 1
+	case int64((remaining + codexAuthPodDeadlineGrace).Seconds()) < deadline:
+		deadline = int64((remaining + codexAuthPodDeadlineGrace).Seconds())
 	}
 	noPrivilegeEscalation := false
 	readOnlyRoot := true
