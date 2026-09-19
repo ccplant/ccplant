@@ -215,6 +215,16 @@ type listRouteRepo struct {
 	routes []*repositories.SessionRoute
 }
 
+// stubSessionProfileRepo resolves profiles by ID for session list rendering.
+type stubSessionProfileRepo struct {
+	repositories.SessionProfileRepository
+	profiles map[string]*entities.SessionProfile
+}
+
+func (r *stubSessionProfileRepo) Get(_ context.Context, id string) (*entities.SessionProfile, error) {
+	return r.profiles[id], nil
+}
+
 func (r *listRouteRepo) Save(context.Context, *repositories.SessionRoute) error { return nil }
 func (r *listRouteRepo) Get(context.Context, string) (*repositories.SessionRoute, error) {
 	return nil, nil
@@ -319,6 +329,55 @@ func TestSearchSessionsIsolatesRequestedTeamAcrossLocalAndRoutedSessions(t *test
 	}
 	if len(got) != 2 || !got["local-a"] || !got["routed-a"] {
 		t.Fatalf("session IDs = %v, want only local-a and routed-a", got)
+	}
+}
+
+func TestSearchSessionsExposesModelOptionsFromSessionProfileForRoutedSessions(t *testing.T) {
+	profile := entities.NewSessionProfile("profile-1", "codex", "user-1")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}})
+	profile.SetConfig(cfg)
+
+	routeRepo := &listRouteRepo{routes: []*repositories.SessionRoute{
+		{
+			SessionID: "routed-model", UserID: "user-1", Scope: string(entities.ScopeUser),
+			Tags: map[string]string{"session_profile_id": "profile-1"},
+		},
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}},
+		nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithSessionProfileRepository(&stubSessionProfileRepo{
+			profiles: map[string]*entities.SessionProfile{"profile-1": profile},
+		}),
+	)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/search", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true},
+	})
+
+	if err := controller.SearchSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Sessions []struct {
+			SessionID    string   `json:"session_id"`
+			ModelOptions []string `json:"model_options"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want exactly the routed session", response.Sessions)
+	}
+	if got := response.Sessions[0].ModelOptions; !reflect.DeepEqual(got, []string{"sonnet", "opus"}) {
+		t.Fatalf("model_options = %v, want [sonnet opus]", got)
 	}
 }
 

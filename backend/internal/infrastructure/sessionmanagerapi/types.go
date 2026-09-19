@@ -30,6 +30,7 @@ type SessionDTO struct {
 	Description     string                      `json:"description,omitempty"`
 	Annotations     entities.SessionAnnotations `json:"annotations"`
 	SandboxPolicyID string                      `json:"sandbox_policy_id,omitempty"`
+	ModelOptions    []string                    `json:"model_options,omitempty"`
 }
 
 type createSessionRequest struct {
@@ -120,6 +121,9 @@ func newSessionDTO(session entities.Session) SessionDTO {
 			if req.Sandbox != nil {
 				dto.SandboxPolicyID = req.Sandbox.PolicyID
 			}
+			if len(req.ModelOptions) > 0 {
+				dto.ModelOptions = append([]string(nil), req.ModelOptions...)
+			}
 			if req.SessionTTL != "" {
 				if dto.Tags == nil {
 					dto.Tags = make(map[string]string)
@@ -165,6 +169,7 @@ func (s *remoteSession) Description() string                      { return s.dto
 func (s *remoteSession) Cancel()                                  {}
 func (s *remoteSession) Annotations() entities.SessionAnnotations { return s.dto.Annotations }
 func (s *remoteSession) SandboxPolicyID() string                  { return s.dto.SandboxPolicyID }
+func (s *remoteSession) ModelOptions() []string                   { return append([]string(nil), s.dto.ModelOptions...) }
 
 func (d SessionDTO) entity() entities.Session {
 	d.Tags = cloneTags(d.Tags)
