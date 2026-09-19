@@ -334,20 +334,28 @@ func (c *CodexDeviceAuthController) expireAttempt(attempt *deviceAuthAttempt) {
 	}
 }
 
+// loadAttempt resolves an attempt by ID. When a durable store is configured it
+// is authoritative: the parent API can serve the same attempt from several
+// replicas, and a process-local snapshot may lag behind state written by
+// another replica (for example the device challenge reported by the auth
+// worker). Trusting the cached copy would leave the UI polling forever in the
+// "starting" state, so every read goes back to the store and the cache is only
+// used as a fallback when no store is configured.
 func (c *CodexDeviceAuthController) loadAttempt(ctx context.Context, id string) (*deviceAuthAttempt, bool) {
-	value, ok := c.attempts.Load(id)
-	if ok {
-		return value.(*deviceAuthAttempt), true
-	}
 	if c.store != nil {
 		stored, err := c.store.Get(ctx, id)
-		if err == nil {
-			attempt := runtimeAttempt(stored)
-			c.attempts.Store(id, attempt)
-			return attempt, true
+		if err != nil {
+			return nil, false
 		}
+		attempt := runtimeAttempt(stored)
+		c.attempts.Store(id, attempt)
+		return attempt, true
 	}
-	return nil, false
+	value, ok := c.attempts.Load(id)
+	if !ok {
+		return nil, false
+	}
+	return value.(*deviceAuthAttempt), true
 }
 
 func (c *CodexDeviceAuthController) activeAttempt(ctx context.Context, credentialName string) (*deviceAuthAttempt, bool) {
