@@ -17,6 +17,10 @@ func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {
 	require.Error(t, validateSessionProfileConfig(cfg))
 	cfg.SetParams(&entities.SessionParams{Model: "gpt-test"})
 	require.NoError(t, validateSessionProfileConfig(cfg))
+	cfg.SetParams(&entities.SessionParams{ModelOptions: []string{"gpt-test", "invalid\nmodel"}})
+	require.Error(t, validateSessionProfileConfig(cfg))
+	cfg.SetParams(&entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}})
+	require.NoError(t, validateSessionProfileConfig(cfg))
 	cfg.SetParams(&entities.SessionParams{CodexAuthMode: "auth_json", ClaudeAuthMode: "anthropic_compatible", Model: "gpt-test"})
 	merged := mergeSessionParams(cfg.Params(), &entities.SessionParams{ClaudeAuthMode: "oauth"})
 	require.Equal(t, "auth_json", merged.CodexAuthMode)
@@ -30,6 +34,16 @@ func TestMergeSessionParamsRequestPoolOverridesProfilePool(t *testing.T) {
 
 	require.Equal(t, "request-pool", merged.Pool)
 	require.Equal(t, "profile-pool", profile.Pool)
+}
+
+func TestMergeSessionParamsModelOptions(t *testing.T) {
+	profile := &entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}}
+	merged := mergeSessionParams(profile, &entities.SessionParams{})
+	require.Equal(t, []string{"sonnet", "opus"}, merged.ModelOptions)
+
+	override := mergeSessionParams(profile, &entities.SessionParams{ModelOptions: []string{"haiku"}})
+	require.Equal(t, []string{"haiku"}, override.ModelOptions)
+	require.Equal(t, []string{"sonnet", "opus"}, profile.ModelOptions)
 }
 
 func TestProfileConnectionSecretLifecycle(t *testing.T) {

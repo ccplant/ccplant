@@ -305,6 +305,11 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 				return err
 			}
 		}
+		for _, model := range params.ModelOptions {
+			if err := modelprovider.ValidateModel(model); err != nil {
+				return err
+			}
+		}
 	}
 	if config.MCPServers() != nil {
 		return config.MCPServers().Validate()

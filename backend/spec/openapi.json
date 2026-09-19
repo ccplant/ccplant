@@ -7461,6 +7461,18 @@
             "description": "Model ID override for the selected agent. Session request overrides the session profile and connection default.",
             "example": "gpt-5.3-codex"
           },
+          "model_options": {
+            "type": "array",
+            "description": "Model strings offered as switching candidates in the ACP session info panel. The agent-advertised options are always included; this list adds user-defined values and is merged with them.",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "sonnet",
+              "opus",
+              "gpt-5.3-codex"
+            ]
+          },
           "slack": {
             "$ref": "#/components/schemas/SlackParams"
           },
@@ -7887,6 +7899,13 @@
           "sandbox_policy_id": {
             "type": "string",
             "description": "ID of the sandbox policy applied to this session (Kubernetes sessions only)"
+          },
+          "model_options": {
+            "type": "array",
+            "description": "Model switching candidates configured for this session (session profile params model_options). Present only when configured.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

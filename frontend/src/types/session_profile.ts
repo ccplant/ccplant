@@ -9,6 +9,8 @@ export interface SessionProfileParams {
   github_token?: string;
   agent_type?: string;
   model?: string;
+  /** Model switching candidates offered in the ACP chat info panel. */
+  model_options?: string[];
   sandbox?: SandboxConfig;
   docker?: DockerConfig;
   auth_proxy?: boolean;

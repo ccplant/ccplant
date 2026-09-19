@@ -818,6 +818,11 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
 			}
 		}
+		if ks, ok := session.(*services.KubernetesSession); ok {
+			if req := ks.Request(); req != nil && len(req.ModelOptions) > 0 {
+				sessionData["model_options"] = append([]string(nil), req.ModelOptions...)
+			}
+		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
@@ -2035,6 +2040,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	}
 	if override.Model != "" {
 		merged.Model = override.Model
+	}
+	if len(override.ModelOptions) > 0 {
+		merged.ModelOptions = append([]string(nil), override.ModelOptions...)
 	}
 	if override.Slack != nil {
 		merged.Slack = override.Slack
