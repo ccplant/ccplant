@@ -121,10 +121,6 @@ interface ACPModelOption {
   label: string;
   description?: string;
   group?: string;
-  // "agent" options are advertised by the ACP agent and always accepted.
-  // "profile" options only come from the session profile model_options; the
-  // agent may reject them, so they are grouped and called out separately.
-  source?: 'agent' | 'profile';
 }
 
 function getACPConfigOptionId(option: ACPConfigOption | undefined): string | null {
@@ -866,10 +862,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   // Fall back to the conventional config id so sessions whose agent does not
   // advertise a model option can still switch to an advertised/configured model.
   const acpModelConfigIdForUpdate = acpModelConfigId ?? (acpInfo ? ACP_MODEL_CONFIG_ID_FALLBACK : null);
-  const acpAgentModelOptions = useMemo(
-    () => flattenACPModelOptions(acpModelConfigOption?.options).map(option => ({ ...option, source: 'agent' as const })),
-    [acpModelConfigOption]
-  );
+  const acpAgentModelOptions = useMemo(() => flattenACPModelOptions(acpModelConfigOption?.options), [acpModelConfigOption]);
   // Only these values are guaranteed to be accepted by the agent. ACP agents
   // validate the model against their own option list, so values that come from
   // the session profile alone may be rejected with -32602.
@@ -880,7 +873,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       const value = model.trim();
       if (!value || known.has(value)) continue;
       known.add(value);
-      options.push({ value, label: value, group: ACP_PROFILE_MODEL_GROUP, source: 'profile' });
+      options.push({ value, label: value, group: ACP_PROFILE_MODEL_GROUP });
     }
     return options;
   }, [acpAgentModelOptions, sessionModelOptions]);
