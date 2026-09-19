@@ -235,3 +235,22 @@ func TestProfileTeamSettingsInheritance(t *testing.T) {
 	req = &entities.RunServerRequest{UserID: "user", Teams: []string{"org/team"}, ResolvedSessionProfileID: "profile"}
 	require.Error(t, manager.prepareModelConnections(context.Background(), req))
 }
+
+func TestCodexModelOptionsEnv(t *testing.T) {
+	req := &entities.RunServerRequest{AgentType: "codex-acp", ModelOptions: []string{"glm-5.2", "glm-5.3"}}
+	settings := &sessionsettings.SessionSettings{}
+	applyModelConnections(settings, req)
+	require.JSONEq(t, `["glm-5.2","glm-5.3"]`, settings.Env[sessionsettings.CodexModelOptionsEnv])
+
+	codex := &sessionsettings.SessionSettings{}
+	applyModelConnections(codex, &entities.RunServerRequest{AgentType: "codex-acp"})
+	require.NotContains(t, codex.Env, sessionsettings.CodexModelOptionsEnv)
+
+	claude := &sessionsettings.SessionSettings{}
+	applyModelConnections(claude, &entities.RunServerRequest{AgentType: "claude-acp", ModelOptions: []string{"sonnet"}})
+	require.NotContains(t, claude.Env, sessionsettings.CodexModelOptionsEnv)
+
+	pi := &sessionsettings.SessionSettings{}
+	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi-ollama", ModelOptions: []string{"ollama/model"}})
+	require.NotContains(t, pi.Env, sessionsettings.CodexModelOptionsEnv)
+}

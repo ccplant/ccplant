@@ -80,6 +80,9 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 
 	// 3c. Generate ~/.codex/config.toml (codex-acp sessions only)
 	codexConfig, codexEnv := settings.Codex.ConfigTOML, settings.Env
+	// Model candidates are registered through a Codex catalog, so the catalog
+	// env survives even when an explicit connection owns the provider TOML.
+	catalogEnv := codexModelCatalogEnv(settings)
 	if settings.CodexConnection != nil {
 		codexEnv = nil
 		if settings.CodexConnection.Compatible() {
@@ -90,7 +93,7 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 			}
 		}
 	}
-	if err := generateCodexConfigTOML(opts.OutputDir, codexConfig, codexEnv); err != nil {
+	if err := generateCodexConfigTOML(opts.OutputDir, codexConfig, codexEnv, catalogEnv); err != nil {
 		return fmt.Errorf("failed to generate codex config.toml: %w", err)
 	}
 
@@ -504,9 +507,12 @@ func generateCodexInstructionsMD(outputDir string, instructionsMD string) error 
 
 // generateCodexConfigTOML creates ~/.codex/config.toml for Codex CLI configuration.
 // Only written when configTOML is non-empty or OPENAI_BASE_URL is configured.
-func generateCodexConfigTOML(outputDir string, configTOML string, env map[string]string) error {
+func generateCodexConfigTOML(outputDir string, configTOML string, env map[string]string, catalogEnv map[string]string) error {
 	customProviderTOML := codexCustomOpenAIProviderTOML(env)
-	if configTOML == "" && customProviderTOML == "" {
+	// Profile model candidates are registered in a Codex catalog so codex-acp
+	// accepts them from the ACP model switcher.
+	catalogPath := generateCodexModelCatalog(outputDir, catalogEnv)
+	if configTOML == "" && customProviderTOML == "" && catalogPath == "" {
 		return nil
 	}
 
@@ -517,6 +523,9 @@ func generateCodexConfigTOML(outputDir string, configTOML string, env map[string
 
 	configPath := filepath.Join(codexDir, "config.toml")
 	content := appendCodexConfigSection(configTOML, customProviderTOML)
+	if catalogPath != "" {
+		content = appendCodexModelCatalogConfig(content, catalogPath)
+	}
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write codex config.toml: %w", err)
 	}

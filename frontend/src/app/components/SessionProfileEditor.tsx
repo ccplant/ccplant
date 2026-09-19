@@ -568,7 +568,7 @@ export default function SessionProfileEditor({
                         rows={3}
                         className="w-full rounded-md border bg-white p-2 font-mono text-xs dark:bg-gray-800" />
                     </label>
-                    <p className="text-xs text-gray-500">セッション情報パネルの「Switch Model」に表示する候補です（エージェントが提示する候補も常に表示されます）。エージェントは自身が提示していないモデルを拒否することがあります。切り替えに失敗する場合は、既定モデル（Codex / Claude モデル ID）を変えて新しいセッションを開始してください。</p>
+                    <p className="text-xs text-gray-500">セッション情報パネルの「Switch Model」に表示する候補です（エージェントが提示する候補も常に表示されます）。codex-acp ではここで指定した候補が Codex のモデルカタログに登録され、セッション開始後に選択できます。登録に失敗した場合や Claude では、エージェントが候補を拒否することがあるため、切り替えに失敗するときは既定モデル（Codex / Claude モデル ID）を変えて新しいセッションを開始してください。</p>
                   </div>
 
                   
