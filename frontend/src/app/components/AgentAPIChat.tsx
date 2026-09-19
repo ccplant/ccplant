@@ -140,6 +140,8 @@ function getACPConfigOptionCurrentValue(option: ACPConfigOption | undefined): st
 // ACP agents that do not advertise a model config option still accept the
 // conventional "model" config id for session/set_config_option.
 const ACP_MODEL_CONFIG_ID_FALLBACK = 'model';
+// Sentinel used by the model <select> to switch into free-text input mode.
+const ACP_CUSTOM_MODEL_OPTION_VALUE = '__custom__';
 
 /**
  * Maps a user-typed model string onto the canonical option value advertised by
@@ -880,15 +882,37 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     [acpModelConfigOption, acpInfo]
   );
   const acpModelDisplay = useMemo(() => getACPModelDisplay(acpInfo), [acpInfo]);
-  const [selectedACPModel, setSelectedACPModel] = useState('');
-  const acpResolvedModelInput = useMemo(
-    () => resolveACPModelInput(selectedACPModel, acpModelOptions),
-    [selectedACPModel, acpModelOptions]
+  const [acpModelInput, setACPModelInput] = useState('');
+  const acpModelInputRef = useRef<HTMLInputElement>(null);
+  const effectiveACPModel = useMemo(
+    () => resolveACPModelInput(acpModelInput, acpModelOptions),
+    [acpModelInput, acpModelOptions]
   );
   const acpModelInputIsKnown = useMemo(
-    () => acpModelOptions.length === 0 || acpModelOptions.some(option => option.value === acpResolvedModelInput),
-    [acpModelOptions, acpResolvedModelInput]
+    () => acpModelOptions.length === 0 || acpModelOptions.some(option => option.value === effectiveACPModel),
+    [acpModelOptions, effectiveACPModel]
   );
+  // Known values select the matching option; anything else falls back to the
+  // free-text option so a typed model string is never lost.
+  const acpModelSelectValue = useMemo(() => {
+    if (!effectiveACPModel) return '';
+    return acpModelOptions.some(option => option.value === effectiveACPModel)
+      ? effectiveACPModel
+      : ACP_CUSTOM_MODEL_OPTION_VALUE;
+  }, [acpModelOptions, effectiveACPModel]);
+  const acpModelSelectGroups = useMemo(() => {
+    const groups: { name: string; options: ACPModelOption[] }[] = [];
+    for (const option of acpModelOptions) {
+      const name = option.group ?? '';
+      const last = groups[groups.length - 1];
+      if (last && last.name === name) {
+        last.options.push(option);
+      } else {
+        groups.push({ name, options: [option] });
+      }
+    }
+    return groups;
+  }, [acpModelOptions]);
   const [isSettingACPModel, setIsSettingACPModel] = useState(false);
   const [acpModelMessage, setACPModelMessage] = useState<string | null>(null);
   const acpEffortConfigOption = useMemo(() => getACPEffortConfigOption(acpInfo), [acpInfo]);
@@ -943,7 +967,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   }, [isACPSession]);
 
   useEffect(() => {
-    setSelectedACPModel(acpCurrentModelValue ?? '');
+    setACPModelInput(acpCurrentModelValue ?? '');
     setACPModelMessage(null);
   }, [acpCurrentModelValue, acpModelConfigIdForUpdate]);
 
@@ -1055,8 +1079,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   }, [loadPreviousACPTurn]);
 
   const handleSetACPModel = useCallback(async () => {
-    if (!sessionId || !acpModelConfigIdForUpdate || !acpResolvedModelInput) return;
-    if (acpResolvedModelInput === acpCurrentModelValue) return;
+    if (!sessionId || !acpModelConfigIdForUpdate || !effectiveACPModel) return;
+    if (effectiveACPModel === acpCurrentModelValue) return;
 
     setIsSettingACPModel(true);
     setACPModelMessage(null);
@@ -1067,7 +1091,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         result = await acpServerClientRef.current.setSessionConfigOption(
           sessionId,
           acpModelConfigIdForUpdate,
-          acpResolvedModelInput
+          effectiveACPModel
         );
       } else {
         if (!acpInfo || !agentAPIRef.current) return;
@@ -1075,7 +1099,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           sessionId,
           acpInfo.sessionId,
           acpModelConfigIdForUpdate,
-          acpResolvedModelInput
+          effectiveACPModel
         );
       }
 
@@ -1098,7 +1122,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     acpInfo,
     acpServerEnabled,
     acpModelConfigIdForUpdate,
-    acpResolvedModelInput,
+    effectiveACPModel,
     acpCurrentModelValue,
     acpModelOptions,
     applyACPConfigOptions,
@@ -2450,55 +2474,95 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                       Switch Model
                     </label>
                     <div className="min-w-0">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-                        <input
-                          id="acp-model-input"
-                          type="text"
-                          list={acpModelOptions.length > 0 ? 'acp-model-options' : undefined}
-                          value={selectedACPModel}
-                          onChange={(event) => setSelectedACPModel(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault();
-                              void handleSetACPModel();
-                            }
-                          }}
-                          disabled={isSettingACPModel}
-                          placeholder="任意のモデル名を入力"
-                          autoComplete="off"
-                          spellCheck={false}
-                          className="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-700"
-                        />
+                      <div className="flex flex-col gap-2">
                         {acpModelOptions.length > 0 && (
-                          <datalist id="acp-model-options">
-                            {acpModelOptions.map(option => (
-                              <option key={`${option.group ?? 'model'}:${option.value}`} value={option.value}>
-                                {option.group ? `${option.group} / ${option.label}` : option.label}
-                              </option>
-                            ))}
-                          </datalist>
+                          <select
+                            aria-label="モデルを選択"
+                            value={acpModelSelectValue}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              if (value === ACP_CUSTOM_MODEL_OPTION_VALUE) {
+                                setACPModelInput('');
+                                acpModelInputRef.current?.focus();
+                                return;
+                              }
+                              setACPModelInput(value);
+                            }}
+                            disabled={isSettingACPModel}
+                            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-700"
+                          >
+                            <option value="">モデルを選択</option>
+                            {acpModelSelectGroups.map((group, groupIndex) =>
+                              group.name ? (
+                                <optgroup key={`group:${group.name}:${groupIndex}`} label={group.name}>
+                                  {group.options.map(option => (
+                                    <option key={`model:${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ) : (
+                                group.options.map(option => (
+                                  <option key={`model:${option.value}`} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))
+                              )
+                            )}
+                            <option value={ACP_CUSTOM_MODEL_OPTION_VALUE}>その他のモデルを自由入力…</option>
+                          </select>
                         )}
-                        <button
-                          type="button"
-                          onClick={handleSetACPModel}
-                          disabled={
-                            isSettingACPModel ||
-                            !acpResolvedModelInput ||
-                            acpResolvedModelInput === acpCurrentModelValue
-                          }
-                          className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
-                        >
-                          {isSettingACPModel ? 'Applying...' : 'Apply'}
-                        </button>
+                        <div className="flex gap-2 sm:items-start">
+                          <input
+                            id="acp-model-input"
+                            ref={acpModelInputRef}
+                            type="text"
+                            list={acpModelOptions.length > 0 ? 'acp-model-options' : undefined}
+                            value={acpModelInput}
+                            onChange={(event) => setACPModelInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                void handleSetACPModel();
+                              }
+                            }}
+                            disabled={isSettingACPModel}
+                            placeholder="任意のモデル名を入力"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:disabled:bg-gray-700"
+                          />
+                          {acpModelOptions.length > 0 && (
+                            <datalist id="acp-model-options">
+                              {acpModelOptions.map(option => (
+                                <option key={`${option.group ?? 'model'}:${option.value}`} value={option.value}>
+                                  {option.group ? `${option.group} / ${option.label}` : option.label}
+                                </option>
+                              ))}
+                            </datalist>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleSetACPModel}
+                            disabled={
+                              isSettingACPModel ||
+                              !effectiveACPModel ||
+                              effectiveACPModel === acpCurrentModelValue
+                            }
+                            className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
+                          >
+                            {isSettingACPModel ? 'Applying...' : 'Apply'}
+                          </button>
+                        </div>
                       </div>
-                      {!acpModelInputIsKnown && acpResolvedModelInput && (
+                      {!acpModelInputIsKnown && effectiveACPModel && (
                         <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
                           エージェントの候補にないモデル文字列です。codex-acp などは未対応の文字列を拒否します。
                         </p>
                       )}
-                      {acpModelOptions.find(option => option.value === acpResolvedModelInput)?.description && (
+                      {acpModelOptions.find(option => option.value === effectiveACPModel)?.description && (
                         <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                          {acpModelOptions.find(option => option.value === acpResolvedModelInput)?.description}
+                          {acpModelOptions.find(option => option.value === effectiveACPModel)?.description}
                         </p>
                       )}
                       {acpModelMessage && (
