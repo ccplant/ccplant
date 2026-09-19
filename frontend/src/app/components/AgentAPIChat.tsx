@@ -141,6 +141,45 @@ function getACPConfigOptionCurrentValue(option: ACPConfigOption | undefined): st
 // conventional "model" config id for session/set_config_option.
 const ACP_MODEL_CONFIG_ID_FALLBACK = 'model';
 
+/**
+ * Maps a user-typed model string onto the canonical option value advertised by
+ * the agent. Users often type the visible label (for example "6 Astra") rather
+ * than the value ("gpt-6-astra"), and agents reject unknown values. Unknown text
+ * is preserved so agents that accept aliases or arbitrary ids still work.
+ */
+function resolveACPModelInput(value: string, options: ACPModelOption[]): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+
+  const byValue = options.find(option => option.value === trimmed);
+  if (byValue) return byValue.value;
+
+  const lower = trimmed.toLowerCase();
+  const byValueCaseInsensitive = options.find(option => option.value.trim().toLowerCase() === lower);
+  if (byValueCaseInsensitive) return byValueCaseInsensitive.value;
+
+  const byLabel = options.find(option => option.label.trim().toLowerCase() === lower);
+  if (byLabel) return byLabel.value;
+
+  const byQualifiedLabel = options.find(option => {
+    const label = option.group ? `${option.group} / ${option.label}` : option.label;
+    return label.trim().toLowerCase() === lower;
+  });
+  if (byQualifiedLabel) return byQualifiedLabel.value;
+
+  return trimmed;
+}
+
+function formatACPModelUpdateError(message: string, options: ACPModelOption[]): string {
+  if (!message.includes('-32602')) return message;
+
+  const available = options.map(option => option.value).filter(Boolean);
+  if (available.length === 0) {
+    return 'エージェントがこのモデル文字列を拒否しました（-32602 Invalid params）';
+  }
+  return `エージェントがこのモデル文字列を拒否しました。利用可能なモデル: ${available.join(', ')}`;
+}
+
 function getACPModelConfigOption(info: ACPSessionInfo | null): ACPConfigOption | null {
   if (!info?.configOptions?.length) return null;
 
@@ -842,6 +881,14 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   );
   const acpModelDisplay = useMemo(() => getACPModelDisplay(acpInfo), [acpInfo]);
   const [selectedACPModel, setSelectedACPModel] = useState('');
+  const acpResolvedModelInput = useMemo(
+    () => resolveACPModelInput(selectedACPModel, acpModelOptions),
+    [selectedACPModel, acpModelOptions]
+  );
+  const acpModelInputIsKnown = useMemo(
+    () => acpModelOptions.length === 0 || acpModelOptions.some(option => option.value === acpResolvedModelInput),
+    [acpModelOptions, acpResolvedModelInput]
+  );
   const [isSettingACPModel, setIsSettingACPModel] = useState(false);
   const [acpModelMessage, setACPModelMessage] = useState<string | null>(null);
   const acpEffortConfigOption = useMemo(() => getACPEffortConfigOption(acpInfo), [acpInfo]);
@@ -1008,8 +1055,8 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   }, [loadPreviousACPTurn]);
 
   const handleSetACPModel = useCallback(async () => {
-    if (!sessionId || !acpModelConfigIdForUpdate || !selectedACPModel.trim()) return;
-    if (selectedACPModel === acpCurrentModelValue) return;
+    if (!sessionId || !acpModelConfigIdForUpdate || !acpResolvedModelInput) return;
+    if (acpResolvedModelInput === acpCurrentModelValue) return;
 
     setIsSettingACPModel(true);
     setACPModelMessage(null);
@@ -1020,7 +1067,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         result = await acpServerClientRef.current.setSessionConfigOption(
           sessionId,
           acpModelConfigIdForUpdate,
-          selectedACPModel
+          acpResolvedModelInput
         );
       } else {
         if (!acpInfo || !agentAPIRef.current) return;
@@ -1028,7 +1075,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           sessionId,
           acpInfo.sessionId,
           acpModelConfigIdForUpdate,
-          selectedACPModel
+          acpResolvedModelInput
         );
       }
 
@@ -1038,7 +1085,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       setACPModelMessage('Model updated');
     } catch (err) {
       console.error('Failed to update ACP model:', err);
-      setACPModelMessage(err instanceof Error ? err.message : 'Failed to update model');
+      setACPModelMessage(
+        err instanceof Error
+          ? formatACPModelUpdateError(err.message, acpModelOptions)
+          : 'Failed to update model'
+      );
     } finally {
       setIsSettingACPModel(false);
     }
@@ -1047,8 +1098,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     acpInfo,
     acpServerEnabled,
     acpModelConfigIdForUpdate,
-    selectedACPModel,
+    acpResolvedModelInput,
     acpCurrentModelValue,
+    acpModelOptions,
     applyACPConfigOptions,
   ]);
 
@@ -2431,17 +2483,22 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                           onClick={handleSetACPModel}
                           disabled={
                             isSettingACPModel ||
-                            !selectedACPModel.trim() ||
-                            selectedACPModel === acpCurrentModelValue
+                            !acpResolvedModelInput ||
+                            acpResolvedModelInput === acpCurrentModelValue
                           }
                           className="shrink-0 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
                         >
                           {isSettingACPModel ? 'Applying...' : 'Apply'}
                         </button>
                       </div>
-                      {acpModelOptions.find(option => option.value === selectedACPModel)?.description && (
+                      {!acpModelInputIsKnown && acpResolvedModelInput && (
+                        <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                          エージェントの候補にないモデル文字列です。codex-acp などは未対応の文字列を拒否します。
+                        </p>
+                      )}
+                      {acpModelOptions.find(option => option.value === acpResolvedModelInput)?.description && (
                         <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                          {acpModelOptions.find(option => option.value === selectedACPModel)?.description}
+                          {acpModelOptions.find(option => option.value === acpResolvedModelInput)?.description}
                         </p>
                       )}
                       {acpModelMessage && (
