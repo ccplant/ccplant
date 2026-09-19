@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -42,5 +45,66 @@ func TestParseCodexAuthChallengeRejectsOversizedOutput(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected scanner error")
 		}
+	}
+}
+
+func TestPostCodexAuthJSONAcceptsNoContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			t.Errorf("unexpected authorization header: %q", got)
+		}
+		if r.URL.Path != "/cda-test/challenge" {
+			t.Errorf("unexpected path: %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	request := codexauth.WorkloadRequest{AttemptID: "cda-test", CallbackURL: server.URL, Token: "token"}
+	if err := postCodexAuthJSON(context.Background(), request, "challenge", codexauth.Challenge{UserCode: "ABCD-EFGH"}); err != nil {
+		t.Fatalf("expected callback to succeed: %v", err)
+	}
+}
+
+// A callback endpoint behind an authentication proxy answers with a redirect to
+// a login page. Following that redirect returns HTTP 200 HTML, which previously
+// looked like a successful report and left the attempt stuck on "starting".
+func TestPostCodexAuthJSONRejectsRedirectToLoginPage(t *testing.T) {
+	login := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html><title>Sign in</title></html>"))
+	}))
+	defer login.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, login.URL, http.StatusFound)
+	}))
+	defer proxy.Close()
+
+	request := codexauth.WorkloadRequest{AttemptID: "cda-test", CallbackURL: proxy.URL, Token: "token"}
+	err := postCodexAuthJSON(context.Background(), request, "challenge", codexauth.Challenge{UserCode: "ABCD-EFGH"})
+	if err == nil {
+		t.Fatal("expected redirect to be rejected")
+	}
+	if !strings.Contains(err.Error(), "302") {
+		t.Fatalf("expected redirect status in error, got %v", err)
+	}
+}
+
+// Some proxies terminate the redirect themselves and return the login page with
+// HTTP 200. HTML content must never be treated as an API acknowledgement.
+func TestPostCodexAuthJSONRejectsHTMLSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html><title>Sign in</title></html>"))
+	}))
+	defer server.Close()
+
+	request := codexauth.WorkloadRequest{AttemptID: "cda-test", CallbackURL: server.URL, Token: "token"}
+	err := postCodexAuthJSON(context.Background(), request, "challenge", codexauth.Challenge{UserCode: "ABCD-EFGH"})
+	if err == nil {
+		t.Fatal("expected HTML response to be rejected")
+	}
+	if !strings.Contains(err.Error(), "HTML") {
+		t.Fatalf("expected HTML error, got %v", err)
 	}
 }

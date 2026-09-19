@@ -27,6 +27,16 @@ var (
 	codexAuthCodeRegex = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4,8}\b`)
 )
 
+// codexAuthCallbackClient posts challenge and result reports back to the API.
+// Redirects must never be followed: a callback endpoint sitting behind an
+// authentication proxy answers with a 302 to a login page, and the default
+// client would follow it, receive HTTP 200 HTML, and report the callback as
+// delivered even though nothing reached the API.
+var codexAuthCallbackClient = &http.Client{
+	Timeout:       15 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
 var CodexAuthWorkerCmd = &cobra.Command{
 	Use:    "codex-auth-worker",
 	Short:  "Run an isolated Codex device authentication attempt",
@@ -182,14 +192,23 @@ func postCodexAuthJSON(ctx context.Context, request codexauth.WorkloadRequest, s
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+request.Token)
 	httpRequest.Header.Set("Content-Type", "application/json")
-	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(httpRequest)
+	response, err := codexAuthCallbackClient.Do(httpRequest)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if location := response.Header.Get("Location"); location != "" {
+			return fmt.Errorf("callback returned %d (redirect to %q): %s", response.StatusCode, location, strings.TrimSpace(string(message)))
+		}
 		return fmt.Errorf("callback returned %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
+	}
+	// A reverse proxy in front of the API can answer an unauthenticated callback
+	// with a login page. Those pages are HTTP 200, so treat HTML as a failure to
+	// avoid recording a challenge that never reached the API.
+	if contentType := strings.ToLower(response.Header.Get("Content-Type")); strings.Contains(contentType, "text/html") {
+		return fmt.Errorf("callback returned %d with HTML content instead of an API response", response.StatusCode)
 	}
 	return nil
 }
