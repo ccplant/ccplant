@@ -17,6 +17,10 @@ func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {
 	require.Error(t, validateSessionProfileConfig(cfg))
 	cfg.SetParams(&entities.SessionParams{Model: "gpt-test"})
 	require.NoError(t, validateSessionProfileConfig(cfg))
+	cfg.SetParams(&entities.SessionParams{ModelOptions: []string{"gpt-test", "invalid\nmodel"}})
+	require.Error(t, validateSessionProfileConfig(cfg))
+	cfg.SetParams(&entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}})
+	require.NoError(t, validateSessionProfileConfig(cfg))
 	cfg.SetParams(&entities.SessionParams{CodexAuthMode: "auth_json", ClaudeAuthMode: "anthropic_compatible", Model: "gpt-test"})
 	merged := mergeSessionParams(cfg.Params(), &entities.SessionParams{ClaudeAuthMode: "oauth"})
 	require.Equal(t, "auth_json", merged.CodexAuthMode)
@@ -30,6 +34,16 @@ func TestMergeSessionParamsRequestPoolOverridesProfilePool(t *testing.T) {
 
 	require.Equal(t, "request-pool", merged.Pool)
 	require.Equal(t, "profile-pool", profile.Pool)
+}
+
+func TestMergeSessionParamsModelOptions(t *testing.T) {
+	profile := &entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}}
+	merged := mergeSessionParams(profile, &entities.SessionParams{})
+	require.Equal(t, []string{"sonnet", "opus"}, merged.ModelOptions)
+
+	override := mergeSessionParams(profile, &entities.SessionParams{ModelOptions: []string{"haiku"}})
+	require.Equal(t, []string{"haiku"}, override.ModelOptions)
+	require.Equal(t, []string{"sonnet", "opus"}, profile.ModelOptions)
 }
 
 func TestProfileConnectionSecretLifecycle(t *testing.T) {
@@ -63,6 +77,28 @@ func TestProfileConnectionSecretLifecycle(t *testing.T) {
 	require.NotContains(t, string(encoded), "profile-secret")
 	require.Contains(t, string(encoded), `"has_api_key":true`)
 	require.NotContains(t, string(encoded), `"api_key":`)
+}
+
+func TestProfileConnectionEndpointAndWebSearch(t *testing.T) {
+	c, err := mergeProfileConnection(nil, []byte(`{"mode":"openai_compatible","base_url":"https://gateway.example","endpoint_path":"/api/generate","authentication":"none","web_search_enabled":false}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, "/api/generate", c.EndpointPath)
+	require.NotNil(t, c.WebSearchEnabled)
+	require.False(t, *c.WebSearchEnabled)
+	kept, err := mergeProfileConnection(c, []byte(`{"mode":"openai_compatible"}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, c, kept)
+	cleared, err := mergeProfileConnection(c, []byte(`{"mode":"openai_compatible","endpoint_path":"","web_search_enabled":null}`), "codex")
+	require.NoError(t, err)
+	require.Empty(t, cleared.EndpointPath)
+	require.Nil(t, cleared.WebSearchEnabled)
+	require.False(t, *c.WebSearchEnabled)
+	for _, path := range []string{"relative", "//other.example/path", "/../secret", "/api?key=secret", "/api#fragment", "/api/%2e%2e/path", "/api//path"} {
+		raw, err := json.Marshal(map[string]interface{}{"mode": "openai_compatible", "endpoint_path": path})
+		require.NoError(t, err)
+		_, err = mergeProfileConnection(c, raw, "codex")
+		require.Error(t, err, path)
+	}
 }
 
 func TestProfileTeamSettingsAccess(t *testing.T) {

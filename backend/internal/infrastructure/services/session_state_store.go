@@ -40,6 +40,19 @@ type MultipartSessionStateStore interface {
 
 type volumeSessionStateStore struct{ root string }
 
+// podVolumeSessionStateStore marks volume persistence as enabled for lifecycle
+// scheduling. The archive itself lives on each Session Pod's workdir PVC, so
+// manager-side upload and download endpoints are intentionally unavailable.
+type podVolumeSessionStateStore struct{}
+
+func (podVolumeSessionStateStore) Save(context.Context, string, io.Reader) error {
+	return fmt.Errorf("volume session state is owned by the session pod")
+}
+
+func (podVolumeSessionStateStore) Load(context.Context, string) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("volume session state is owned by the session pod")
+}
+
 func newVolumeSessionStateStore(root string) (SessionStateStore, error) {
 	if root == "" {
 		return nil, fmt.Errorf("session persistence path is required")
@@ -235,7 +248,7 @@ func NewSessionStateStore(ctx context.Context, cfg config.SessionPersistenceConf
 	case "":
 		return nil, nil
 	case "volume":
-		return newVolumeSessionStateStore(cfg.Path)
+		return podVolumeSessionStateStore{}, nil
 	case "s3":
 		return newS3SessionStateStore(ctx, cfg.S3)
 	default:

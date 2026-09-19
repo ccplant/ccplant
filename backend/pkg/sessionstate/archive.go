@@ -61,6 +61,9 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 	if err := add(filepath.Join(home, ".session", "model-connection.json"), "home/.session/model-connection.json"); err != nil {
 		return err
 	}
+	if err := add(filepath.Join(home, ".session", "acp-history.jsonl"), "home/.session/acp-history.jsonl"); err != nil {
+		return err
+	}
 	if err := add(filepath.Join(cwd, ".acp-session-id"), "cwd/.acp-session-id"); err != nil {
 		return err
 	}
@@ -85,6 +88,9 @@ func Pack(w io.Writer, agentType, sessionID, home, cwd string) error {
 				return err
 			}
 			if rel == ".acp-session-id" {
+				return nil
+			}
+			if excludedUntrackedPath(rel) {
 				return nil
 			}
 			return add(path, filepath.Join("cwd", rel))
@@ -222,6 +228,9 @@ func packGitWorkspace(tw *tar.Writer, cwd string, add func(string, string) error
 }
 
 func excludedUntrackedPath(path string) bool {
+	if filepath.ToSlash(path) == ".agentapi/session-state.tar.zst" || strings.HasPrefix(filepath.ToSlash(path), ".agentapi/.session-state-") {
+		return true
+	}
 	excluded := map[string]bool{
 		"node_modules": true, ".cache": true, ".venv": true, "venv": true,
 		"dist": true, "build": true, "target": true, ".next": true,

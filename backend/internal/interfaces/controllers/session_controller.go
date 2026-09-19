@@ -27,6 +27,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -43,6 +44,10 @@ type pendingSessionAllocationDeleter interface {
 
 type sessionStatusMessageProvider interface {
 	StatusMessage() string
+}
+
+type sessionStatusCacheUpdater interface {
+	SetStatusSilent(string)
 }
 
 // SessionManagerProvider provides access to the session manager
@@ -76,6 +81,10 @@ type sessionSandboxPolicyProvider interface {
 	SandboxPolicyID() string
 }
 
+type sessionModelOptionsProvider interface {
+	ModelOptions() []string
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -84,6 +93,7 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
+	sessionRunnerStore     sessionRunnerAllocationStore
 	esmControlTunnel       ESMControlTunnel
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
@@ -91,13 +101,20 @@ type SessionController struct {
 	githubTokenResolver    interface {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
+		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+		ResolveConnectionURLs(context.Context, string) (string, string, error)
+		RevokeBrokerLeases(context.Context, string) error
 	}
-	sessionTokenDebug bool
+	sessionTokenDebug   bool
+	githubBrokerBaseURL string
 }
 
 func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
+	IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+	ResolveConnectionURLs(context.Context, string) (string, string, error)
+	RevokeBrokerLeases(context.Context, string) error
 }) SessionControllerOption {
 	return func(c *SessionController) { c.githubTokenResolver = resolver }
 }
@@ -105,6 +122,11 @@ func WithGitHubTokenResolver(resolver interface {
 // WithSessionTokenDebug enables safe token-routing diagnostics. Token values are never logged.
 func WithSessionTokenDebug(enabled bool) SessionControllerOption {
 	return func(c *SessionController) { c.sessionTokenDebug = enabled }
+}
+
+// WithGitHubBrokerBaseURL sets the session-reachable broker base URL, including any API prefix.
+func WithGitHubBrokerBaseURL(baseURL string) SessionControllerOption {
+	return func(c *SessionController) { c.githubBrokerBaseURL = baseURL }
 }
 
 // NewSessionController creates a new SessionController instance
@@ -153,6 +175,14 @@ func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
 	return func(c *SessionController) { c.esmControlTunnel = tunnel }
 }
 
+type sessionRunnerAllocationStore interface {
+	GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error)
+}
+
+func WithSessionRunnerStore(store sessionRunnerAllocationStore) SessionControllerOption {
+	return func(c *SessionController) { c.sessionRunnerStore = store }
+}
+
 // getSessionManager returns the current session manager
 func (c *SessionController) getSessionManager() repositories.SessionManager {
 	return c.sessionManagerProvider.GetSessionManager()
@@ -170,6 +200,9 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.GET("/search", c.SearchSessions)
 	e.PATCH("/sessions/:sessionId/annotations", c.UpdateSessionAnnotations)
 	e.POST("/sessions/:sessionId/resume", c.ResumeSession)
+	e.POST("/sessions/:sessionId/restart", c.RestartSession)
+	e.GET("/sessions/:sessionId/restart", c.RestartStatus)
+	e.POST("/sessions/:sessionId/pause", c.PauseSession)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -181,7 +214,7 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 
 // StartSession handles POST /start requests to start a new agentapi server
 func (c *SessionController) StartSession(ctx echo.Context) error {
-	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.StartSession", func(requestCtx context.Context) error {
+	return telemetry.LoggedOperationErr(ctx.Request().Context(), "controllers.SessionController.StartSession", func(requestCtx context.Context) error {
 		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
 		return c.startSession(ctx)
 	})
@@ -191,7 +224,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
 	sessionID := uuid.New().String()
-	if claims, ok := ctx.Get("schedule_execution_claims").(executiontoken.ExecutionClaims); ok {
+	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok {
 		sessionID = claims.SessionID
 		if existing := c.getSessionManager().GetSession(sessionID); existing != nil {
 			return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID})
@@ -201,6 +234,21 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	var startReq entities.StartRequest
 	if err := ctx.Bind(&startReq); err != nil {
 		log.Printf("Failed to parse request body (using defaults): %v", err)
+	}
+	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok {
+		// Bind worker-triggered identity and ownership to the signed claims.
+		startReq.Scope = claims.Scope
+		startReq.TeamID = claims.TeamID
+		startReq.TriggeredUserID = claims.TriggeredUserID
+		if startReq.Tags == nil {
+			startReq.Tags = make(map[string]string)
+		}
+		for key, id := range map[string]string{"slackbot_id": claims.SlackBotID, "schedule_id": claims.ScheduleID, "webhook_id": claims.WebhookID} {
+			delete(startReq.Tags, key)
+			if id != "" {
+				startReq.Tags[key] = id
+			}
+		}
 	}
 	explicitSandbox := startReq.Params != nil && startReq.Params.Sandbox != nil
 	explicitDocker := startReq.Params != nil && startReq.Params.Docker != nil
@@ -237,7 +285,37 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		startReq.Scope = entities.ResourceScope(resolvedScope)
 		startReq.TeamID = resolvedTeamID
 	}
-	if startReq.Params != nil && startReq.Params.ConnectionID != "" {
+	repository := sessionRepository(startReq)
+	brokerConfigured := false
+	if shouldUseGitHubBroker(startReq, repository) && c.githubTokenResolver != nil {
+		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
+		}
+		lease, connectionID, matched, err := c.githubTokenResolver.IssueBrokerLeaseForOrganization(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if matched {
+			brokerConfigured = true
+			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
+			brokerURL, err := githubBrokerURL(ctx, sessionID, c.githubBrokerBaseURL)
+			if err != nil {
+				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
+			startReq.Environment["AGENTAPI_GITHUB_BROKER_URL"] = brokerURL
+			startReq.Environment["AGENTAPI_GITHUB_BROKER_TOKEN"] = lease
+			startReq.Environment["AGENTAPI_GITHUB_CONNECTION_ID"] = connectionID
+			if startReq.Params != nil {
+				startReq.Params.GithubToken = ""
+			}
+			c.logSessionTokenRouting(sessionID, "team-broker", connectionID, "")
+		}
+	}
+	if !brokerConfigured && startReq.Params != nil && startReq.Params.ConnectionID != "" {
 		if c.githubTokenResolver == nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection credentials are unavailable")
 		}
@@ -246,20 +324,27 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		startReq.Params.GithubToken = token
+		if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, startReq.Params.ConnectionID); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
-	} else if (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
+	} else if !brokerConfigured && (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
 		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(sessionRepository(startReq)))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		if matched {
 			startReq.Params.GithubToken = token
+			startReq.Params.ConnectionID = connectionID
+			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
 			c.logSessionTokenRouting(sessionID, "organization", connectionID, token)
 		} else {
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)
 			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
 		}
-	} else {
+	} else if !brokerConfigured {
 		populateGitHubTokenFromAuthHeader(ctx, &startReq)
 		if startReq.Params != nil {
 			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
@@ -283,108 +368,38 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
-	// Resolve session profile: merge profile config into startReq fields.
-	// When SessionProfileID is set, use that profile. Otherwise fall back to the
-	// user/team's default profile. The profile is the base; explicit request fields override.
+	if existingID, reused, err := c.reuseStartSession(ctx, startReq, userID); err != nil {
+		return err
+	} else if reused {
+		return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": existingID, "session_reused": true})
+	}
+	if startReq.MaxSessions > 0 && len(c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.LimitMatchTags})) >= startReq.MaxSessions {
+		return echo.NewHTTPError(http.StatusTooManyRequests, fmt.Sprintf("session limit reached: maximum %d sessions", startReq.MaxSessions))
+	}
+	// Reuse and limit controls belong to this /start invocation and must not be
+	// persisted as part of the session's restart configuration.
+	startReq.ReuseMatchTags, startReq.ReuseMessage, startReq.StopBeforeReuse = nil, "", false
+	startReq.LimitMatchTags, startReq.MaxSessions = nil, 0
+
+	// Persist the explicit input before profile defaults are merged.
+	startInput, err := json.Marshal(startReq)
+	if err != nil {
+		return echo.NewHTTPError(500, "failed to preserve session input")
+	}
 	if c.sessionProfileRepo != nil {
 		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
-		if profile != nil {
-			if startReq.Tags == nil {
-				startReq.Tags = make(map[string]string)
-			}
-			startReq.Tags["session_profile_id"] = profile.ID()
-			cfg := profile.Config()
-			startReq.ProfileMCPServers = cfg.MCPServers()
-			startReq.ResolvedSessionProfileID = profile.ID()
-
-			// Keep profile environment separate so it can override team/user
-			// settings without overriding explicit request keys.
-			if len(cfg.Environment()) > 0 {
-				startReq.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
-				for k, v := range cfg.Environment() {
-					startReq.ProfileEnvironment[k] = v
-				}
-			}
-
-			// Tags: profile is base, request keys override
-			if len(cfg.Tags()) > 0 {
-				merged := make(map[string]string, len(cfg.Tags()))
-				for k, v := range cfg.Tags() {
-					merged[k] = v
-				}
-				for k, v := range startReq.Tags {
-					merged[k] = v
-				}
-				startReq.Tags = merged
-			}
-
-			// Params: profile is base, request fields override per-field
-			if cfg.Params() != nil {
-				if startReq.Params == nil {
-					startReq.Params = cfg.Params()
-				} else {
-					startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
-				}
-			}
-			if cfg.Pool() != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if startReq.Params.Pool == "" {
-					startReq.Params.Pool = cfg.Pool()
-				}
-			}
-			if containsAllocatorSelector(startReq.Tags) || hasRequestedSessionPool(startReq) {
-				removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
-			}
-
-			// MemoryKey: profile is base, request keys override
-			if len(cfg.MemoryKey()) > 0 {
-				merged := make(map[string]string, len(cfg.MemoryKey()))
-				for k, v := range cfg.MemoryKey() {
-					merged[k] = v
-				}
-				for k, v := range startReq.MemoryKey {
-					merged[k] = v
-				}
-				startReq.MemoryKey = merged
-			}
-
-			// SandboxPolicyID: apply profile's policy when request does not already specify one.
-			if startReq.Params == nil {
-				startReq.Params = &entities.SessionParams{}
-			}
-			// Native allocator sessions intentionally do not support sandboxing.
-			// Do not let a profile's implicit sandbox default turn an otherwise valid
-			// allocator.* request into an unsupported-capability request. An explicit
-			// sandbox in the request remains intact and is rejected by the allocator
-			// selection layer.
-			if !containsAllocatorSelector(startReq.Tags) && !hasRequestedSessionPool(startReq) {
-				applyProfileSandboxDefaults(cfg, startReq.Params)
-			}
-
-			// SessionTTL: apply profile's TTL when request does not already specify one.
-			if cfg.SessionTTL() != "" {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if startReq.Params.SessionTTL == "" {
-					startReq.Params.SessionTTL = cfg.SessionTTL()
-				}
-			}
-			if len(cfg.UnsyncedFilePaths()) > 0 {
-				if startReq.Params == nil {
-					startReq.Params = &entities.SessionParams{}
-				}
-				if len(startReq.Params.UnsyncedFilePaths) == 0 {
-					startReq.Params.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
-				}
-			}
+		applySessionProfile(&startReq, profile, explicitSandbox, explicitDocker)
+	}
+	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
+		config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}
+		if err := store.CreateConfiguration(ctx.Request().Context(), config); err != nil {
+			return echo.NewHTTPError(503, "failed to preserve session input")
 		}
 	}
 
 	session, err := c.sessionCreator.CreateSession(ctx.Request().Context(), sessionID, startReq, userID, userRole, teams)
 	if err != nil {
+		c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 		var quotaErr *sessionrunnercore.QuotaExceededError
 		if errors.As(err, &quotaErr) {
 			return ctx.JSON(http.StatusTooManyRequests, map[string]any{
@@ -402,6 +417,163 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+// reuseStartSession makes tag-based trigger reuse authoritative at /start.
+// Direct-runtime prompts are appended to the durable reverse-RPC queue, so the
+// request is not lost while a matching session is still connecting.
+func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entities.StartRequest, ownerUserID string) (string, bool, error) {
+	if len(startReq.ReuseMatchTags) == 0 || startReq.ReuseMessage == "" {
+		return "", false, nil
+	}
+	// Direct runtimes are durable routes and are intentionally absent from the
+	// API process's local SessionManager. Search the route repository first.
+	if c.sessionRouteRepo != nil {
+		var routes []*repositories.SessionRoute
+		var err error
+		routes, err = telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.FindReusableRoutes", func(operationCtx context.Context) ([]*repositories.SessionRoute, error) {
+			if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+				return filtered.ListFiltered(operationCtx, repositories.SessionRouteFilter{
+					UserID: ownerUserID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Tags: startReq.ReuseMatchTags,
+				})
+			}
+			return c.sessionRouteRepo.List(operationCtx, ownerUserID)
+		}, telemetry.Int64("session.reuse_tag_count", int64(len(startReq.ReuseMatchTags))))
+		if err != nil {
+			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to list reusable sessions").SetInternal(err)
+		}
+		sort.SliceStable(routes, func(i, j int) bool { return routes[i].StartedAt.After(routes[j].StartedAt) })
+		for _, route := range routes {
+			if route.Transport != repositories.SessionRouteTransportDirectRuntime ||
+				route.Scope != string(startReq.Scope) || route.TeamID != startReq.TeamID ||
+				(startReq.Scope != entities.ScopeTeam && route.UserID != ownerUserID) ||
+				!tagsContain(route.Tags, startReq.ReuseMatchTags) || terminalReuseStatus(route.Status) {
+				continue
+			}
+			enqueuer, ok := c.esmControlTunnel.(esmControlEnqueuer)
+			if !ok {
+				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime queue is unavailable")
+			}
+			body, _ := json.Marshal(map[string]string{"content": startReq.ReuseMessage, "type": "user"})
+			promptPath := "/internal/session-prompt"
+			if startReq.StopBeforeReuse && strings.EqualFold(route.Status, "running") {
+				promptPath = "/internal/session-interrupt-prompt"
+			}
+			req, reqErr := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local"+promptPath, bytes.NewReader(body))
+			if reqErr != nil {
+				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to build reusable session message").SetInternal(reqErr)
+			}
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			if strings.EqualFold(route.Status, "suspended") {
+				resp, resumeErr := c.requestRemoteResume(ctx, route)
+				if resumeErr != nil {
+					return "", false, resumeErr
+				}
+				_ = resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to resume reusable session")
+				}
+				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+			}
+			commandID, err := telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.EnqueueReusePrompt", func(operationCtx context.Context) (string, error) {
+				return enqueuer.Enqueue(operationCtx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
+			}, telemetry.String("session.id", route.SessionID), telemetry.String("session.prompt_path", promptPath))
+			if err != nil {
+				return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to queue reusable session prompt").SetInternal(err)
+			}
+			log.Printf("[SESSION_REUSE] Reused direct runtime %s command_id=%s for tags %v", route.SessionID, commandID, startReq.ReuseMatchTags)
+			return route.SessionID, true, nil
+		}
+	}
+
+	existingSessions, _ := telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.FindReusableSessions", func(context.Context) ([]entities.Session, error) {
+		return c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.ReuseMatchTags}), nil
+	}, telemetry.Int64("session.reuse_tag_count", int64(len(startReq.ReuseMatchTags))))
+	for _, existing := range existingSessions {
+		if existing.Scope() != startReq.Scope || existing.TeamID() != startReq.TeamID || (startReq.Scope != entities.ScopeTeam && existing.UserID() != ownerUserID) {
+			continue
+		}
+		status := strings.ToLower(existing.Status())
+		if terminalReuseStatus(status) || status == "suspended" {
+			continue
+		}
+		if startReq.StopBeforeReuse && status == "running" {
+			if err := telemetry.LoggedOperationErr(ctx.Request().Context(), "controllers.SessionController.StopReusableSession", func(operationCtx context.Context) error {
+				return c.getSessionManager().StopAgent(operationCtx, existing.ID())
+			}, telemetry.String("session.id", existing.ID())); err != nil {
+				return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to interrupt reusable session").SetInternal(err)
+			}
+		}
+		if err := telemetry.LoggedOperationErr(ctx.Request().Context(), "controllers.SessionController.SendReuseMessage", func(operationCtx context.Context) error {
+			return c.getSessionManager().SendMessage(operationCtx, existing.ID(), startReq.ReuseMessage)
+		}, telemetry.String("session.id", existing.ID())); err != nil {
+			return "", false, echo.NewHTTPError(http.StatusInternalServerError, "failed to route reusable session message").SetInternal(err)
+		}
+		return existing.ID(), true, nil
+	}
+	return "", false, nil
+}
+
+func tagsContain(tags, expected map[string]string) bool {
+	for key, value := range expected {
+		if tags[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func terminalReuseStatus(status string) bool {
+	switch strings.ToLower(status) {
+	case "stopped", "failed", "terminated", "terminating":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldUseGitHubBroker(startReq entities.StartRequest, repository string) bool {
+	if startReq.Scope != entities.ScopeTeam || repository == "" {
+		return false
+	}
+	return startReq.Params == nil || (startReq.Params.GithubToken == "" && startReq.Params.ConnectionID == "")
+}
+
+func githubBrokerURL(ctx echo.Context, sessionID, baseURL string) (string, error) {
+	endpoint := "/internal/sessions/" + url.PathEscape(sessionID) + "/github-credentials"
+	if baseURL = strings.TrimSpace(baseURL); baseURL != "" {
+		base, err := url.Parse(baseURL)
+		if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Hostname() == "" ||
+			base.User != nil || strings.ContainsAny(baseURL, "?#") {
+			return "", errors.New("github_broker_base_url must be an absolute HTTP(S) URL without userinfo, query, or fragment")
+		}
+		// The configured base is authoritative; do not append forwarded prefixes
+		// from the browser-facing route when sessions use a different endpoint.
+		return strings.TrimRight(base.String(), "/") + endpoint, nil
+	}
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if ctx.Request().TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New("invalid GitHub broker scheme")
+	}
+	if host == "" || strings.ContainsAny(host, "\r\n/") {
+		return "", errors.New("invalid GitHub broker host")
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	if prefix != "" && (!strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "..") || strings.ContainsAny(prefix, "\r\n?#")) {
+		return "", errors.New("invalid GitHub broker prefix")
+	}
+	return scheme + "://" + host + prefix + endpoint, nil
 }
 
 func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.StartRequest) {
@@ -429,6 +601,28 @@ func (c *SessionController) logSessionTokenRouting(sessionID, source, connection
 		fingerprint = fmt.Sprintf("%x", sum[:6])
 	}
 	log.Printf("[SESSION_TOKEN_DEBUG] session_id=%s source=%s connection_id=%q token_fingerprint=%s token_present=%t", sessionID, source, connectionID, fingerprint, token != "")
+}
+
+func (c *SessionController) applyGitHubConnectionURLs(ctx context.Context, startReq *entities.StartRequest, connectionID string) error {
+	baseURL, apiURL, err := c.githubTokenResolver.ResolveConnectionURLs(ctx, connectionID)
+	if err != nil {
+		return err
+	}
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil || parsedBaseURL.Host == "" {
+		return fmt.Errorf("selected GitHub connection has an invalid base URL")
+	}
+	if startReq.Environment == nil {
+		startReq.Environment = make(map[string]string)
+	}
+	// These are part of the selected credential's routing context. Overwrite
+	// request-provided values so a token is never sent to a different GitHub host.
+	startReq.Environment["GITHUB_URL"] = baseURL
+	startReq.Environment["GITHUB_API"] = apiURL
+	// GH_HOST may already be present in deployment or team settings. Set it even
+	// for github.com so gh cannot keep using a deployment-wide Enterprise host.
+	startReq.Environment["GH_HOST"] = parsedBaseURL.Host
+	return nil
 }
 
 func repositoryOwner(repoFullName string) string {
@@ -469,6 +663,49 @@ func removeImplicitAllocatorCapabilities(params *entities.SessionParams, explici
 	if !explicitDocker {
 		params.Docker = nil
 	}
+}
+
+// resolveSessionModelOptions returns the ACP model switching candidates exposed
+// for a session: the value snapshotted in the session's run request, falling
+// back to the session profile it was created from.
+func (c *SessionController) resolveSessionModelOptions(ctx context.Context, session entities.Session, cache map[string][]string) []string {
+	if provider, ok := session.(sessionModelOptionsProvider); ok {
+		if options := provider.ModelOptions(); len(options) > 0 {
+			return options
+		}
+	}
+	return c.sessionModelOptionsFromTags(ctx, session.Tags(), cache)
+}
+
+// sessionModelOptionsFromTags resolves model switching candidates from the
+// session profile referenced by a session's tags. Sessions handled by an
+// external session manager no longer carry the original run request, so the
+// profile is the durable source of truth for the candidates.
+func (c *SessionController) sessionModelOptionsFromTags(ctx context.Context, tags map[string]string, cache map[string][]string) []string {
+	if c.sessionProfileRepo == nil {
+		return nil
+	}
+	profileID := strings.TrimSpace(tags["session_profile_id"])
+	if profileID == "" {
+		return nil
+	}
+	if cached, ok := cache[profileID]; ok {
+		return cached
+	}
+	var options []string
+	profile, err := c.sessionProfileRepo.Get(ctx, profileID)
+	if err != nil {
+		log.Printf("[SESSION] Warning: could not resolve model options from session profile %q: %v", profileID, err)
+	} else if profile != nil {
+		cfg := profile.Config()
+		if params := cfg.Params(); params != nil {
+			options = append([]string(nil), params.ModelOptions...)
+		}
+	}
+	if cache != nil {
+		cache[profileID] = options
+	}
+	return options
 }
 
 // SearchSessions handles GET /search requests to list and filter active sessions
@@ -530,6 +767,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			if sessionScope != entities.ScopeTeam {
 				continue
 			}
+			if teamIDFilter != "" && session.TeamID() != teamIDFilter {
+				continue
+			}
 		} else {
 			if sessionScope == entities.ScopeTeam {
 				continue
@@ -580,6 +820,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	})
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
+	// Profiles are shared by many sessions, so resolve each one at most once per
+	// request while building the response.
+	modelOptionsCache := make(map[string][]string)
 	// Track session IDs already present to avoid duplicates from route-based sessions
 	localSessionIDs := make(map[string]struct{}, len(matchingSessions))
 	for _, session := range matchingSessions {
@@ -625,6 +868,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
 			}
 		}
+		if modelOptions := c.resolveSessionModelOptions(ctx.Request().Context(), session, modelOptionsCache); len(modelOptions) > 0 {
+			sessionData["model_options"] = modelOptions
+		}
 		filteredSessions = append(filteredSessions, sessionData)
 	}
 
@@ -639,6 +885,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			continue
 		}
 		if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+			continue
+		}
+		if teamIDFilter != "" && route.TeamID != teamIDFilter {
 			continue
 		}
 		if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
@@ -660,7 +909,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			continue
 		}
 		status := routedSessionStatus(route, allocatedSessions)
-		filteredSessions = append(filteredSessions, map[string]interface{}{
+		sessionData := map[string]interface{}{
 			"session_id":           route.SessionID,
 			"allocated_session_id": route.RemoteSessionID,
 			"user_id":              route.UserID,
@@ -676,7 +925,13 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			"metadata": map[string]interface{}{
 				"description": route.InitialMessage,
 			},
-		})
+		}
+		// External session managers keep the run request on their side, so the
+		// candidates are recovered from the session profile referenced by the route.
+		if modelOptions := c.sessionModelOptionsFromTags(ctx.Request().Context(), tags, modelOptionsCache); len(modelOptions) > 0 {
+			sessionData["model_options"] = modelOptions
+		}
+		filteredSessions = append(filteredSessions, sessionData)
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
@@ -712,6 +967,11 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 	}
 	status := publicSessionStatus(runtimeStatus)
 	previous := route.Status
+	// StatusUpdatedAt is the completion timestamp used by session TTL cleanup.
+	// Repeated /status reads and runtime retries must not move that deadline.
+	if previous == status && !route.StatusUpdatedAt.IsZero() {
+		return nil
+	}
 	route.Status, route.StatusUpdatedAt = status, time.Now()
 	if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
 		return err
@@ -865,6 +1125,9 @@ func (c *SessionController) UpdateSessionAnnotations(ctx echo.Context) error {
 
 // DeleteSession handles DELETE /sessions/:sessionId requests to terminate a session
 func (c *SessionController) DeleteSession(ctx echo.Context) error {
+	if err := c.checkRestartHold(ctx); err != nil {
+		return err
+	}
 	c.setCORSHeaders(ctx)
 
 	sessionID := ctx.Param("sessionId")
@@ -934,6 +1197,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusConflict, "Session allocation is no longer pending")
 		}
 		log.Printf("Pending session allocation %s deletion completed successfully", sessionID)
+		c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message":    "Session allocation deleted successfully",
 			"session_id": sessionID,
@@ -947,12 +1211,30 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 	}
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
+	c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
+}
+
+// DeleteSessionFromWorker runs the durable deletion path for a request that was
+// already authenticated by WorkerControlController. Worker cleanup is allowed
+// to delete expired sessions regardless of their user or team owner.
+func (c *SessionController) DeleteSessionFromWorker(ctx echo.Context) error {
+	ctx.Set(workerAuthorizedDeleteContextKey, true)
+	return c.DeleteSession(ctx)
+}
+
+func (c *SessionController) revokeGitHubBrokerLeases(ctx context.Context, sessionID string) {
+	if c.githubTokenResolver == nil {
+		return
+	}
+	if err := c.githubTokenResolver.RevokeBrokerLeases(ctx, sessionID); err != nil {
+		log.Printf("Failed to revoke GitHub broker lease for session %s: %v", sessionID, err)
+	}
 }
 
 func findUncreatedSessionAllocation(sessions []entities.Session, sessionID string) entities.Session {
@@ -967,6 +1249,9 @@ func findUncreatedSessionAllocation(sessions []entities.Session, sessionID strin
 // ResumeSession explicitly recreates a suspended session workload. Read-only
 // status, message, and SSE endpoints deliberately do not wake a session.
 func (c *SessionController) ResumeSession(ctx echo.Context) error {
+	if err := c.checkRestartHold(ctx); err != nil {
+		return err
+	}
 	sessionID := ctx.Param("sessionId")
 	workloadSessionID := sessionID
 	session := c.getSessionManager().GetSession(sessionID)
@@ -1003,7 +1288,7 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 	status := "active"
 	code := http.StatusOK
 	if restoring {
-		status = "restoring"
+		status = "resuming"
 		code = http.StatusAccepted
 		ctx.Response().Header().Set("Retry-After", "2")
 	} else if ensured != nil {
@@ -1012,8 +1297,113 @@ func (c *SessionController) ResumeSession(ctx echo.Context) error {
 	return ctx.JSON(code, map[string]interface{}{"session_id": sessionID, "status": status})
 }
 
+// SuspendSession asks the owning session manager to suspend the workload. The
+// manager owns any checkpoint policy and does not expose it through this API.
+func (c *SessionController) SuspendSession(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	session := c.getSessionManager().GetSession(sessionID)
+	if session == nil && c.sessionRouteRepo != nil {
+		route, err := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to look up session route")
+		}
+		if route != nil && route.ManagerID != "" {
+			return c.suspendRemoteSession(ctx, route)
+		}
+	}
+	if session == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
+	}
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	suspender, ok := c.getSessionManager().(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "Session suspend is not supported by this session manager")
+	}
+	if err := suspender.SuspendSession(ctx.Request().Context(), sessionID); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("failed to suspend session: %v", err))
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": sessionID, "status": "suspended"})
+}
+
+func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+	}
+	if route.RemoteSessionID == "" || c.esmControlTunnel == nil || !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+	}
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/suspend"
+	if c.sessionRunnerStore == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Session resume data store is unavailable")
+	}
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is unavailable; the session was not suspended")
+	}
+	if len(allocation.ProvisionSettings) == 0 || strings.TrimSpace(allocation.RuntimeToken) == "" || allocation.Generation <= 0 {
+		return echo.NewHTTPError(http.StatusConflict, "Session resume data is incomplete; the session was not suspended")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to decode session resume data; the session was not suspended")
+	}
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
+	settingsBody, err := json.Marshal(&settings)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(settingsBody))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build suspend request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return echo.NewHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "suspended"); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist suspended session status")
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": route.SessionID, "status": "suspended"})
+}
+
+// recordRemoteLifecycleStatus keeps the public route and only the allocated
+// session's local cache entry in sync after a remote lifecycle command.
+func (c *SessionController) recordRemoteLifecycleStatus(ctx context.Context, route *repositories.SessionRoute, status string) error {
+	if err := c.RecordRemoteSessionStatus(ctx, route, status); err != nil {
+		return err
+	}
+	if session := c.getSessionManager().GetSession(route.RemoteSessionID); session != nil {
+		if updater, ok := session.(sessionStatusCacheUpdater); ok {
+			updater.SetStatusSilent(status)
+		}
+	}
+	return nil
+}
+
 // RouteToSession routes requests to the appropriate agentapi server instance
 func (c *SessionController) RouteToSession(ctx echo.Context) error {
+	if err := c.checkRestartHold(ctx); err != nil {
+		return err
+	}
 	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.RouteToSession", func(requestCtx context.Context) error {
 		ctx.SetRequest(ctx.Request().WithContext(requestCtx))
 		return c.routeToSession(ctx)
@@ -1053,6 +1443,30 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 		if !authzCtx.CanAccessResource(session.UserID(), string(session.Scope()), session.TeamID()) {
 			log.Printf("User does not have access to session %s", sessionID)
 			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+		}
+	}
+
+	// Runtime access is the resume boundary. Listing and proxy-level status
+	// endpoints never reach this handler, so background polling cannot wake all
+	// suspended sessions.
+	if ctx.Request().Method != "OPTIONS" {
+		if ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") && session.Status() == "suspended" {
+			return ctx.JSON(http.StatusOK, map[string]string{"status": "suspended"})
+		}
+		if ensurer, ok := c.getSessionManager().(repositories.SessionWorkloadEnsurer); ok {
+			ensured, resuming, err := ensurer.EnsureSessionWorkload(ctx.Request().Context(), session.ID())
+			if err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume session workload").SetInternal(err)
+			}
+			if ensured != nil {
+				session = ensured
+			}
+			if resuming {
+				ctx.Response().Header().Set("Retry-After", "2")
+				return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+					"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": sessionID, "status": "resuming"},
+				})
+			}
 		}
 	}
 
@@ -1203,6 +1617,30 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && (route.RemoteSessionID == "" || route.ManagerID == "") {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a routable session yet")
 	}
+	if (route.Status == "suspended" || route.Status == "resuming") && ctx.Request().Method == http.MethodGet && strings.HasSuffix(ctx.Request().URL.Path, "/status") {
+		return ctx.JSON(http.StatusOK, map[string]string{"status": route.Status})
+	}
+	if route.Status == "suspended" {
+		resp, err := c.requestRemoteResume(ctx, route)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
+		}
+		_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
+		ctx.Response().Header().Set("Retry-After", "2")
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+		})
+	}
+	if route.Status == "resuming" {
+		ctx.Response().Header().Set("Retry-After", "2")
+		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
+		})
+	}
 
 	// Check authorization
 	if ctx.Request().Method != "OPTIONS" {
@@ -1285,26 +1723,44 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 }
 
 func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
+	resp, err := c.requestRemoteResume(ctx, route)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for key, values := range resp.Header {
+		for _, value := range values {
+			ctx.Response().Header().Add(key, value)
+		}
+	}
+	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+}
+
+func (c *SessionController) requestRemoteResume(ctx echo.Context, route *repositories.SessionRoute) (*http.Response, error) {
 	if route.RemoteSessionID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager has not reported a session yet")
 	}
 	if c.esmControlTunnel == nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	if route.Transport != repositories.SessionRouteTransportDirectRuntime && !c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID) {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
-	targetURL := "http://esm.local/sessions/" + route.RemoteSessionID + "/resume"
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, nil)
+	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
+	body := c.remoteResumeSettings(ctx, route)
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
+	}
+	if len(body) != 0 {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	ts := hmacutil.NowTimestamp()
 	parsedTarget, err := url.Parse(targetURL)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Invalid external session manager URL")
 	}
-	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, nil)
+	msg := hmacutil.BuildMessage(req.Method, parsedTarget.RequestURI(), ts, body)
 	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(route.HMACSecret), msg))
 	req.Header.Set(hmacutil.TimestampHeader, ts)
 	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil && authzCtx.PersonalScope.UserID != "" {
@@ -1315,15 +1771,55 @@ func (c *SessionController) resumeRemoteSession(ctx echo.Context, route *reposit
 	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
 	}
-	defer func() { _ = resp.Body.Close() }()
-	for key, values := range resp.Header {
-		for _, value := range values {
-			ctx.Response().Header().Add(key, value)
+	return resp, nil
+}
+
+// remoteResumeSettings refreshes mutable policy values before an existing pool
+// allocation is restored. This prevents a session created under an older idle
+// timeout from reverting to that timeout after every resume.
+func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) []byte {
+	if c.sessionRunnerStore == nil {
+		return nil
+	}
+	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
+	if err != nil || allocation == nil || len(allocation.ProvisionSettings) == 0 {
+		return nil
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
+		return nil
+	}
+	if c.settingsRepo != nil {
+		settingsName := route.UserID
+		if route.Scope == string(entities.ScopeTeam) && route.TeamID != "" {
+			settingsName = route.TeamID
+		}
+		if stored, findErr := c.settingsRepo.FindByName(ctx.Request().Context(), settingsName); findErr == nil && stored != nil && stored.AutoSuspend() != nil {
+			policy := stored.AutoSuspend()
+			settings.Session.AutoSuspendEnabled = &policy.Enabled
+			settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 		}
 	}
-	return ctx.Stream(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = ctx.Request().Host
+	}
+	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID,
+		ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation,
+	}
+	body, err := json.Marshal(&settings)
+	if err != nil {
+		return nil
+	}
+	return body
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
@@ -1599,6 +2095,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
+	if len(override.ModelOptions) > 0 {
+		merged.ModelOptions = append([]string(nil), override.ModelOptions...)
+	}
 	if override.Slack != nil {
 		merged.Slack = override.Slack
 	}
@@ -1795,4 +2294,103 @@ func selectSessionProfileByTags(profiles []*entities.SessionProfile, tags map[st
 		return matches[i].ID() < matches[j].ID()
 	})
 	return matches[0]
+}
+
+func applySessionProfile(startReq *entities.StartRequest, profile *entities.SessionProfile, explicitSandbox, explicitDocker bool) {
+	// Resolve session profile: merge profile config into startReq fields.
+	// When SessionProfileID is set, use that profile. Otherwise fall back to the
+	// user/team's default profile. The profile is the base; explicit request fields override.
+	if profile != nil {
+		if startReq.Tags == nil {
+			startReq.Tags = make(map[string]string)
+		}
+		startReq.Tags["session_profile_id"] = profile.ID()
+		cfg := profile.Config()
+		startReq.ProfileMCPServers = cfg.MCPServers()
+		startReq.ResolvedSessionProfileID = profile.ID()
+
+		// Keep profile environment separate so it can override team/user
+		// settings without overriding explicit request keys.
+		if len(cfg.Environment()) > 0 {
+			startReq.ProfileEnvironment = make(map[string]string, len(cfg.Environment()))
+			for k, v := range cfg.Environment() {
+				startReq.ProfileEnvironment[k] = v
+			}
+		}
+
+		// Tags: profile is base, request keys override
+		if len(cfg.Tags()) > 0 {
+			merged := make(map[string]string, len(cfg.Tags()))
+			for k, v := range cfg.Tags() {
+				merged[k] = v
+			}
+			for k, v := range startReq.Tags {
+				merged[k] = v
+			}
+			startReq.Tags = merged
+		}
+
+		// Params: profile is base, request fields override per-field
+		if cfg.Params() != nil {
+			if startReq.Params == nil {
+				startReq.Params = cfg.Params()
+			} else {
+				startReq.Params = mergeSessionParams(cfg.Params(), startReq.Params)
+			}
+		}
+		if cfg.Pool() != "" {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			if startReq.Params.Pool == "" {
+				startReq.Params.Pool = cfg.Pool()
+			}
+		}
+		if containsAllocatorSelector(startReq.Tags) || hasRequestedSessionPool(*startReq) {
+			removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
+		}
+
+		// MemoryKey: profile is base, request keys override
+		if len(cfg.MemoryKey()) > 0 {
+			merged := make(map[string]string, len(cfg.MemoryKey()))
+			for k, v := range cfg.MemoryKey() {
+				merged[k] = v
+			}
+			for k, v := range startReq.MemoryKey {
+				merged[k] = v
+			}
+			startReq.MemoryKey = merged
+		}
+
+		// SandboxPolicyID: apply profile's policy when request does not already specify one.
+		if startReq.Params == nil {
+			startReq.Params = &entities.SessionParams{}
+		}
+		// Native allocator sessions intentionally do not support sandboxing.
+		// Do not let a profile's implicit sandbox default turn an otherwise valid
+		// allocator.* request into an unsupported-capability request. An explicit
+		// sandbox in the request remains intact and is rejected by the allocator
+		// selection layer.
+		if !containsAllocatorSelector(startReq.Tags) && !hasRequestedSessionPool(*startReq) {
+			applyProfileSandboxDefaults(cfg, startReq.Params)
+		}
+
+		// SessionTTL: apply profile's TTL when request does not already specify one.
+		if cfg.SessionTTL() != "" {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			if startReq.Params.SessionTTL == "" {
+				startReq.Params.SessionTTL = cfg.SessionTTL()
+			}
+		}
+		if len(cfg.UnsyncedFilePaths()) > 0 {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			if len(startReq.Params.UnsyncedFilePaths) == 0 {
+				startReq.Params.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
+			}
+		}
+	}
 }

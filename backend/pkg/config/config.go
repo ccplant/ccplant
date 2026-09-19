@@ -151,13 +151,13 @@ type ScheduleWorkerConfig struct {
 }
 
 // SlackbotCleanupWorkerConfig represents Slackbot session cleanup worker configuration.
-// The worker deletes Slackbot sessions whose last message is older than SessionTTL.
+// The worker deletes Slackbot sessions whose processing ended more than SessionTTL ago.
 type SlackbotCleanupWorkerConfig struct {
 	// Enabled enables the Slackbot cleanup worker
 	Enabled bool `json:"enabled" mapstructure:"enabled"`
 	// CheckInterval is how often to scan for stale sessions (e.g., "1h", "30m")
 	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
-	// SessionTTL is the duration after the last message before a session is deleted (e.g., "72h")
+	// SessionTTL is the duration after processing ends before a session is deleted (e.g., "72h")
 	SessionTTL string `json:"session_ttl" mapstructure:"session_ttl"`
 	// SessionTTLCheckInterval is how often to scan for non-Slackbot sessions that have an
 	// explicit agentapi.proxy/session-ttl annotation. This can be much shorter than
@@ -258,16 +258,27 @@ type SciaConfig struct {
 	TodoistPaths []string `json:"todoist_paths" mapstructure:"todoist_paths"`
 }
 
+// DefaultKubernetesSessionImage is the immutable agent-assets revision used by
+// Kubernetes session Pods. Application releases supply the ccplant CLI from
+// the session-manager image independently.
+const DefaultKubernetesSessionImage = "ghcr.io/ccplant/ccplant-agent:assets-068be2ef320224e336d7538c3a700bef"
+
 // KubernetesSessionConfig represents Kubernetes session manager configuration
 type KubernetesSessionConfig struct {
 	// Namespace is the Kubernetes namespace where session resources are created
 	Namespace string `json:"namespace" mapstructure:"namespace"`
 	// Image is the container image for session pods
 	Image string `json:"image" mapstructure:"image"`
+	// CLIImage supplies /usr/local/bin/ccplant through an initContainer. Empty disables injection.
+	CLIImage string `json:"cli_image" mapstructure:"cli_image"`
 	// ImagePullPolicy is the image pull policy for session pods
 	ImagePullPolicy string `json:"image_pull_policy" mapstructure:"image_pull_policy"`
 	// ServiceAccount is the service account for session pods
 	ServiceAccount string `json:"service_account" mapstructure:"service_account"`
+	// DisableServiceLinks prevents Kubernetes Service environment variables from being injected into session pods.
+	DisableServiceLinks bool `json:"disable_service_links" mapstructure:"disable_service_links"`
+	// DisableServiceAccountToken prevents Kubernetes service account credentials from being mounted into session pods.
+	DisableServiceAccountToken bool `json:"disable_service_account_token" mapstructure:"disable_service_account_token"`
 	// BasePort is the port that agentapi listens on in session pods
 	BasePort int `json:"base_port" mapstructure:"base_port"`
 	// CPURequest is the CPU request for session pods
@@ -404,7 +415,7 @@ type MemoryS3Config struct {
 }
 
 // SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
-// to Path; "s3" uses any S3-compatible service (including Garage).
+// to each Kubernetes session's workdir PVC; "s3" uses an S3-compatible service.
 type SessionPersistenceConfig struct {
 	Backend      string          `json:"backend" mapstructure:"backend"`
 	Path         string          `json:"path" mapstructure:"path"`
@@ -596,6 +607,15 @@ type Config struct {
 	Usage UsageConfig `json:"usage" mapstructure:"usage"`
 	// SessionTokenDebug enables non-secret token-routing diagnostics for session creation.
 	SessionTokenDebug bool `json:"session_token_debug" mapstructure:"session_token_debug"`
+	// GitHubBrokerBaseURL overrides the request-derived base URL for session GitHub credentials.
+	GitHubBrokerBaseURL string `json:"github_broker_base_url" mapstructure:"github_broker_base_url"`
+	// CodexDeviceAuthCallbackBaseURL overrides the request-derived base URL that
+	// short-lived Codex device auth workers use to report their challenge and
+	// result. Workloads run inside the session cluster, so the browser-facing
+	// host (which may sit behind an authentication proxy such as Cloudflare
+	// Access) is not necessarily reachable from them. Defaults to the
+	// request-derived URL when empty.
+	CodexDeviceAuthCallbackBaseURL string `json:"codex_device_auth_callback_base_url" mapstructure:"codex_device_auth_callback_base_url"`
 }
 
 // SlackConfig represents Slack bot (Socket Mode) configuration
@@ -1074,6 +1094,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("auth_config_file")
 	_ = v.BindEnv("team_discovery", "AGENTAPI_TEAM_DISCOVERY")
 	_ = v.BindEnv("session_token_debug", "AGENTAPI_SESSION_TOKEN_DEBUG_ENABLED")
+	_ = v.BindEnv("github_broker_base_url", "AGENTAPI_GITHUB_BROKER_BASE_URL")
+	_ = v.BindEnv("codex_device_auth_callback_base_url", "AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL")
 	_ = v.BindEnv("kv_store.backend", "AGENTAPI_KV_STORE_BACKEND")
 	_ = v.BindEnv("kv_store.namespace", "AGENTAPI_KV_STORE_NAMESPACE")
 	_ = v.BindEnv("kv_store.database_url", "AGENTAPI_KV_STORE_DATABASE_URL")
@@ -1123,8 +1145,11 @@ func bindEnvVars(v *viper.Viper) {
 	// Kubernetes session configuration
 	_ = v.BindEnv("kubernetes_session.namespace", "AGENTAPI_K8S_SESSION_NAMESPACE")
 	_ = v.BindEnv("kubernetes_session.image", "AGENTAPI_K8S_SESSION_IMAGE")
+	_ = v.BindEnv("kubernetes_session.cli_image", "AGENTAPI_K8S_SESSION_CLI_IMAGE")
 	_ = v.BindEnv("kubernetes_session.image_pull_policy", "AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY")
 	_ = v.BindEnv("kubernetes_session.service_account", "AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT")
+	_ = v.BindEnv("kubernetes_session.disable_service_links", "AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS")
+	_ = v.BindEnv("kubernetes_session.disable_service_account_token", "AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN")
 	_ = v.BindEnv("kubernetes_session.base_port", "AGENTAPI_K8S_SESSION_BASE_PORT")
 	_ = v.BindEnv("kubernetes_session.cpu_request", "AGENTAPI_K8S_SESSION_CPU_REQUEST")
 	_ = v.BindEnv("kubernetes_session.cpu_limit", "AGENTAPI_K8S_SESSION_CPU_LIMIT")
@@ -1310,6 +1335,7 @@ func setDefaults(v *viper.Viper) {
 	// Kubernetes session defaults
 	v.SetDefault("kubernetes_session.namespace", "")
 	v.SetDefault("kubernetes_session.image", "")
+	v.SetDefault("kubernetes_session.cli_image", "")
 	v.SetDefault("kubernetes_session.image_pull_policy", "IfNotPresent")
 	v.SetDefault("kubernetes_session.service_account", "agentapi-proxy-session")
 	v.SetDefault("kubernetes_session.base_port", 9000)

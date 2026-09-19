@@ -113,7 +113,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 				return next(c)
 			}
 			if path == "/start" && cfg.Worker.ControlAPIToken != "" {
-				if authenticateScheduleExecution(c, cfg.Worker.ControlAPIToken, time.Now()) {
+				if authenticateTriggerExecution(c, cfg.Worker.ControlAPIToken, time.Now()) {
 					return next(c)
 				}
 			}
@@ -195,7 +195,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 	}
 }
 
-func authenticateScheduleExecution(c echo.Context, secret string, now time.Time) bool {
+func authenticateTriggerExecution(c echo.Context, secret string, now time.Time) bool {
 	token := ExtractTokenFromHeader(c.Request().Header.Get(echo.HeaderAuthorization))
 	claims, err := executiontoken.VerifyExecutionToken([]byte(secret), token, now)
 	if err != nil {
@@ -209,7 +209,7 @@ func authenticateScheduleExecution(c echo.Context, secret string, now time.Time)
 	}
 	c.Set("internal_user", user)
 	c.Set("authz_context", authzCtx)
-	c.Set("schedule_execution_claims", claims)
+	c.Set("trigger_execution_claims", claims)
 	return true
 }
 
@@ -455,6 +455,9 @@ func GetConfigFromContext(c echo.Context) *config.Config {
 
 // isOAuthEndpoint checks if the given path is an OAuth endpoint that should skip auth
 func isOAuthEndpoint(path string) bool {
+	if strings.HasPrefix(path, "/internal/sessions/") && strings.HasSuffix(path, "/github-credentials") {
+		return true
+	}
 	oauthPaths := []string{
 		"/oauth/authorize",
 		"/oauth/callback",

@@ -3,7 +3,11 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,6 +39,30 @@ func TestCreateConnectionRequiresEncryptedKVForStoredSecret(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, httpErr.Code)
 }
 
+func TestCreateConnectionStoresSecretWithKubernetesBackend(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "", true)
+	body := map[string]any{
+		"name": "corp", "base_url": "https://github.example.com", "api_url": "https://github.example.com/api/v3", "oauth_client_id": "client",
+		"oauth_client_secret": map[string]any{"source": "encrypted", "value": "super-sensitive-value"},
+	}
+	payload, err := json.Marshal(body)
+	require.NoError(t, err)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/admin/github-connections", bytes.NewReader(payload))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	recorder := httptest.NewRecorder()
+	require.NoError(t, controller.Create(e.NewContext(req, recorder)))
+	require.Equal(t, http.StatusCreated, recorder.Code)
+
+	connections, err := client.CoreV1().Secrets("test").List(context.Background(), metav1.ListOptions{LabelSelector: githubConnectionLabel + "=true"})
+	require.NoError(t, err)
+	require.Len(t, connections.Items, 1)
+	require.Equal(t, "super-sensitive-value", string(connections.Items[0].Data["client_secret"]))
+	require.NotContains(t, string(connections.Items[0].Data["record.json"]), "super-sensitive-value")
+}
+
 func TestNormalizeGitHubURL(t *testing.T) {
 	t.Parallel()
 
@@ -54,6 +82,80 @@ func TestValidateGitHubSecret(t *testing.T) {
 	require.NoError(t, validateGitHubSecret("environment", "", "GITHUB_OAUTH_CORP_CLIENT_SECRET"))
 	require.Error(t, validateGitHubSecret("encrypted", "", ""))
 	require.Error(t, validateGitHubSecret("environment", "", "DATABASE_PASSWORD"))
+}
+
+func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
+	t.Parallel()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pemValue := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+
+	var installationCalls, tokenCalls int
+	githubAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/repos/acme/payments/installation":
+			installationCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+		case "/api/v3/app/installations/99/access_tokens":
+			tokenCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().UTC().Add(time.Hour)})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer githubAPI.Close()
+
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "", true)
+	connection := githubConnection{ID: "connection-1", Name: "GitHub", BaseURL: githubAPI.URL, APIURL: githubAPI.URL, Enabled: true, Organizations: []string{"acme"}, GitHubApp: &githubAppConfiguration{AppID: 123}}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+	_, _, resourceVersion, err := controller.loadConnection(context.Background(), connection.ID)
+	require.NoError(t, err)
+	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
+
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForOrganization(context.Background(), "session-1", "acme", "acme/payments")
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.Equal(t, connection.ID, connectionID)
+	require.NotEmpty(t, lease)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials", nil)
+	req.Header.Set("Authorization", "Bearer "+lease)
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(req, recorder)
+	ctx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-1")
+	require.NoError(t, controller.BrokerCredentials(ctx))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "installation-token")
+	require.Equal(t, 1, installationCalls)
+	require.Equal(t, 1, tokenCalls)
+	require.NoError(t, controller.RevokeBrokerLeases(context.Background(), "session-1"))
+	recorder = httptest.NewRecorder()
+	ctx = e.NewContext(req, recorder)
+	ctx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-1")
+	err = controller.BrokerCredentials(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusUnauthorized, httpErr.Code)
+
+	stored, err := client.CoreV1().Secrets("test").Get(context.Background(), connectionSecretName(connection.ID), metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, pemValue, stored.Data[githubAppPrivateKeyKey])
+	require.NotContains(t, string(stored.Data["record.json"]), string(pemValue))
+}
+
+func TestValidateGitHubAppPrivateKey(t *testing.T) {
+	t.Parallel()
+	require.Error(t, validateGitHubAppPrivateKey([]byte("not pem")))
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	value := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	require.NoError(t, validateGitHubAppPrivateKey(value))
 }
 
 func TestPrincipalIsStableAndRandom(t *testing.T) {
@@ -194,6 +296,39 @@ func TestSanitizeReturnTo(t *testing.T) {
 	require.Equal(t, "/settings/personal/account-connections", sanitizeReturnTo("//evil.example.com"))
 }
 
+func TestResolveGitHubConnectionCallbackURLsAcceptAPIV1(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
+	req.Header.Set("Origin", "https://ui.example.test")
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	callbackURL := "https://ui.example.test/api/v1/auth/github-connections/callback"
+
+	resolved, err := controller.resolveCallbackURL(ctx, callbackURL)
+	require.NoError(t, err)
+	require.Equal(t, callbackURL, resolved)
+
+	resolved, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
+	require.NoError(t, err)
+	require.Equal(t, callbackURL, resolved)
+}
+
+func TestResolveGitHubConnectionCallbackURLsRejectDifferentOrigin(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
+	req.Header.Set("Origin", "https://ui.example.test")
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	callbackURL := "https://evil.example.test/api/v1/auth/github-connections/callback"
+
+	_, err := controller.resolveCallbackURL(ctx, callbackURL)
+	require.Error(t, err)
+	_, err = controller.resolveLoginCallbackURL(ctx, callbackURL)
+	require.Error(t, err)
+}
+
 func TestNormalizeOAuthScope(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "read:user read:org project", normalizeOAuthScope(""))
@@ -228,7 +363,7 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	user := entities.NewUser(entities.UserID("alice"), entities.UserTypeRegular, "alice")
 	principal, err := controller.getOrCreatePrincipal(context.Background(), "internal:alice")
 	require.NoError(t, err)
-	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, Organizations: []string{"example-org"}}
+	connection := githubConnection{ID: "corp", Name: "Corp", Enabled: true, BaseURL: "https://github.corp.example", APIURL: "https://github.corp.example/api/v3", Organizations: []string{"example-org"}}
 	require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
 	_, err = controller.linkIdentity(context.Background(), githubIdentity{ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice"}, "corp-token", nil)
 	require.NoError(t, err)
@@ -238,6 +373,10 @@ func TestResolveAccessTokenForOrganization(t *testing.T) {
 	require.True(t, matched)
 	require.Equal(t, "corp-token", token)
 	require.Equal(t, "corp", connectionID)
+	baseURL, apiURL, err := controller.ResolveConnectionURLs(context.Background(), connectionID)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.corp.example", baseURL)
+	require.Equal(t, "https://github.corp.example/api/v3", apiURL)
 	_, connectionID, matched, err = controller.ResolveAccessTokenForOrganization(context.Background(), user, "unmapped-org")
 	require.NoError(t, err)
 	require.False(t, matched)

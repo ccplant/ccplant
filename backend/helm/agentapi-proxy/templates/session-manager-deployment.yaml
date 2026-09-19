@@ -12,7 +12,6 @@
 {{- $redisClient := $manager.redis | default dict }}
 {{- $sessionPersistence := $manager.sessionPersistence | default dict }}
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
-{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 {{- /* SCIA is a release-wide session runtime. Keep the API, the standalone
       broker and the session manager on one source of truth so externally
@@ -225,7 +224,6 @@ spec:
             {{- end }}
             - {name: LOG_DIR, value: "/var/log/agentapi/sessions"}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
-            - {name: AGENTAPI_SESSION_PERSISTENCE_PATH, value: {{ $sessionPersistencePath | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER, value: {{ $sessionPersistence.suspendAfter | default "1h" | quote }}}
             {{- if $sessionPersistenceS3.bucket }}
             - {name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: {{ $sessionPersistenceS3.bucket | quote }}}
@@ -266,6 +264,8 @@ spec:
             - {name: AGENTAPI_SCIA_TODOIST_HOSTS, value: {{ dig "todoistHosts" (list "api.todoist.com") $scia | join "," | quote }}}
             - {name: AGENTAPI_SCIA_TODOIST_PATHS, value: {{ dig "todoistPaths" (list "/api/v1/*") $scia | join "," | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
+              value: {{ $k8s.cliImage | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ $k8s.image | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ $k8s.networkFilterImage | quote }}}
@@ -334,10 +334,6 @@ spec:
               mountPath: /etc/k8s-session-config
               readOnly: true
             {{- end }}
-            {{- if eq $sessionPersistenceBackend "volume" }}
-            - name: session-state
-              mountPath: {{ $sessionPersistencePath | quote }}
-            {{- end }}
           {{- with $manager.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -355,11 +351,6 @@ spec:
         - name: k8s-session-config
           configMap:
             name: {{ include "agentapi-proxy.fullname" . }}-k8s-session-config
-        {{- end }}
-        {{- if eq $sessionPersistenceBackend "volume" }}
-        - name: session-state
-          persistentVolumeClaim:
-            claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
         {{- end }}
       {{- with $manager.nodeSelector }}
       nodeSelector:

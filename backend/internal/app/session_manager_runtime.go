@@ -37,6 +37,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -407,7 +408,13 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		}
 		var heartbeatBody io.Reader
 		if inventoryErr == nil {
-			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs})
+			sessionStatuses := make(map[string]string)
+			for _, runnerID := range localRunnerIDs {
+				if session := manager.GetSession(runnerID); session != nil {
+					sessionStatuses[session.ID()] = session.Status()
+				}
+			}
+			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs, "session_statuses": sessionStatuses})
 			if marshalErr != nil {
 				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
 			} else {
@@ -428,10 +435,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					_ = resp.Body.Close()
 				} else {
 					var result struct {
-						ManagerID           string                            `json:"manager_id"`
-						Pools               []*sessionrunnercore.PoolSupplier `json:"pools"`
-						RegisteredRunnerIDs *[]string                         `json:"registered_runner_ids"`
-						UpstreamVersion     string                            `json:"upstream_version"`
+						ManagerID               string                                 `json:"manager_id"`
+						Pools                   []*sessionrunnercore.PoolSupplier      `json:"pools"`
+						RegisteredRunnerIDs     *[]string                              `json:"registered_runner_ids"`
+						UpstreamVersion         string                                 `json:"upstream_version"`
+						AllocatedRunnerPolicies map[string]sessionsettings.SessionMeta `json:"allocated_runner_policies"`
 					}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&result); decodeErr != nil {
 						log.Printf("[SESSION_MANAGER] Decode runner pool heartbeat: %v", decodeErr)
@@ -443,6 +451,11 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						manager.ConfigureSessionRunnerPool(upstream, managerID, token, cfg.SessionManager.RunnerPool)
 					}
 					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
+					for runnerID, policy := range result.AllocatedRunnerPolicies {
+						if err := manager.ApplyRunnerAutoSuspendPolicy(ctx, runnerID, policy.AutoSuspendEnabled, policy.AutoSuspendMinutes); err != nil {
+							log.Printf("[SESSION_MANAGER] Apply runner %s auto-suspend policy: %v", runnerID, err)
+						}
+					}
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
 						log.Printf("[SESSION_MANAGER] Auto-upgrade reconcile failed: %v", err)
 					}
@@ -519,9 +532,18 @@ func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, cli
 				continue
 			}
 			found = true
+			previousImage := container.Image
 			container.Image = image
+			injectedCLI := false
+			for _, env := range container.Env {
+				if env.Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" && env.Value != "" {
+					injectedCLI = true
+				}
+			}
 			for j := range container.Env {
-				if container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE" {
+				if (container.Env[j].Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" ||
+					(!injectedCLI && container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE")) &&
+					container.Env[j].Value == previousImage {
 					container.Env[j].Value = image
 				}
 				if container.Env[j].Name == "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION" {
@@ -596,12 +618,22 @@ type sessionRunnerInfrastructure interface {
 	CountStockSessionsForPool(context.Context, string, bool) (int, error)
 	CountRunnerSessionsForPool(context.Context, string) (int, error)
 	CreateStockSessionForPool(context.Context, string, bool) error
+	PurgeStockSessionsForPool(context.Context, string) error
 }
 
 func reconcileSessionRunnerPools(ctx context.Context, manager sessionRunnerInfrastructure, pools []*sessionrunnercore.PoolSupplier) {
 	telemetry.OperationVoid(ctx, "app.SessionManagerRuntime.reconcilePools", func(ctx context.Context) {
 		for _, pool := range pools {
-			if pool == nil || !pool.Enabled || pool.Draining || pool.MinIdle <= 0 {
+			if pool == nil {
+				continue
+			}
+			if !pool.Enabled || pool.Draining {
+				if err := manager.PurgeStockSessionsForPool(ctx, pool.Pool); err != nil {
+					log.Printf("[SESSION_MANAGER] Purge disabled or draining pool %s stock: %v", pool.Pool, err)
+				}
+				continue
+			}
+			if pool.MinIdle <= 0 {
 				continue
 			}
 			localTotal, err := manager.CountRunnerSessionsForPool(ctx, pool.Pool)

@@ -170,6 +170,14 @@ type RegistryConfig struct {
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
+	Paused           bool   `json:"paused,omitempty" yaml:"paused,omitempty"`
+	RestartID        string `json:"restart_id,omitempty" yaml:"restart_id,omitempty"`
+	RestartInPlace   bool   `json:"-" yaml:"-"`
+	CredentialOwner  string `json:"credential_owner,omitempty" yaml:"credential_owner,omitempty"`
+	CredentialSyncID string `json:"credential_sync_id,omitempty" yaml:"credential_sync_id,omitempty"`
+	// Restart requires restoration of the same conversation and suppresses first-launch actions.
+	Restart bool `json:"restart,omitempty" yaml:"restart,omitempty"`
+
 	CodexConnection       *modelprovider.Connection `json:"codex_connection,omitempty" yaml:"codex_connection,omitempty"`
 	ClaudeConnection      *modelprovider.Connection `json:"claude_connection,omitempty" yaml:"claude_connection,omitempty"`
 	UnsetEnv              []string                  `json:"unset_env,omitempty" yaml:"unset_env,omitempty"`
@@ -292,6 +300,8 @@ type SessionMeta struct {
 	MemoryKey          map[string]string `yaml:"memory_key,omitempty" json:"memory_key,omitempty"`
 	ResumeFrom         string            `yaml:"resume_from,omitempty" json:"resume_from,omitempty"`
 	PersistenceEnabled bool              `yaml:"persistence_enabled,omitempty" json:"persistence_enabled,omitempty"`
+	AutoSuspendEnabled *bool             `yaml:"auto_suspend_enabled,omitempty" json:"auto_suspend_enabled,omitempty"`
+	AutoSuspendMinutes int               `yaml:"auto_suspend_minutes,omitempty" json:"auto_suspend_minutes,omitempty"`
 }
 
 // ClaudeConfig holds Claude-related configuration data.

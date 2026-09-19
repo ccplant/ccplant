@@ -18,9 +18,15 @@ import (
 )
 
 const (
-	labelResource = "agentapi.proxy/session-runner-resource"
-	labelPoolHash = "agentapi.proxy/session-runner-pool-hash"
-	dataKey       = "resource.json"
+	labelResource    = "agentapi.proxy/session-runner-resource"
+	labelPoolHash    = "agentapi.proxy/session-runner-pool-hash"
+	dataKey          = "resource.json"
+	managerPrefix    = "agentapi-session-manager-"
+	logicalPrefix    = "agentapi-session-logical-pool-"
+	supplierPrefix   = "agentapi-session-pool-supplier-"
+	bindingPrefix    = "agentapi-session-pool-binding-"
+	runnerPrefix     = "agentapi-session-runner-"
+	allocationPrefix = "agentapi-session-allocation-pool-"
 )
 
 type Store struct {
@@ -52,14 +58,33 @@ func hashName(value string) string {
 	return hex.EncodeToString(digest[:8])
 }
 
-func managerName(id string) string       { return "agentapi-session-manager-" + hashName(id) }
-func logicalPoolName(pool string) string { return "agentapi-session-logical-pool-" + hashName(pool) }
+func managerName(id string) string       { return managerPrefix + hashName(id) }
+func logicalPoolName(pool string) string { return logicalPrefix + hashName(pool) }
 func poolSupplierName(managerID, pool string) string {
-	return "agentapi-session-pool-supplier-" + hashName(managerID+"\x00"+pool)
+	return supplierPrefix + hashName(managerID+"\x00"+pool)
 }
-func bindingName(id string) string    { return "agentapi-session-pool-binding-" + hashName(id) }
-func runnerName(id string) string     { return "agentapi-session-runner-" + hashName(id) }
-func allocationName(id string) string { return "agentapi-session-allocation-pool-" + hashName(id) }
+func bindingName(id string) string    { return bindingPrefix + hashName(id) }
+func runnerName(id string) string     { return runnerPrefix + hashName(id) }
+func allocationName(id string) string { return allocationPrefix + hashName(id) }
+
+func resourcePrefix(resource string) string {
+	switch resource {
+	case "manager":
+		return managerPrefix
+	case "logical-pool":
+		return logicalPrefix
+	case "pool-supplier":
+		return supplierPrefix
+	case "binding":
+		return bindingPrefix
+	case "runner":
+		return runnerPrefix
+	case "allocation":
+		return allocationPrefix
+	default:
+		return ""
+	}
+}
 
 func (s *Store) create(ctx context.Context, name, resource, pool string, value any) error {
 	raw, err := json.Marshal(value)
@@ -76,7 +101,7 @@ func (s *Store) create(ctx context.Context, name, resource, pool string, value a
 	if err != nil {
 		return err
 	}
-	_, err = s.kv.Create(ctx, kvstore.Record{Kind: kvstore.KindSecret, Namespace: s.namespace, Key: name, Value: document})
+	_, err = s.kv.Create(ctx, kvstore.Record{Kind: kvstore.KindSecret, Namespace: s.namespace, Key: name, Labels: labels, Value: document})
 	if errors.Is(err, kvstore.ErrConflict) {
 		return core.ErrConflict
 	}
@@ -150,7 +175,7 @@ func (s *Store) delete(ctx context.Context, name string) error {
 }
 
 func (s *Store) list(ctx context.Context, resource string, decode func([]byte) error) error {
-	items, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace})
+	items, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace, KeyPrefix: resourcePrefix(resource)})
 	if err != nil {
 		return err
 	}
@@ -374,13 +399,14 @@ func (s *Store) GetRunner(ctx context.Context, id string) (*core.Runner, error) 
 	return &value, err
 }
 
-func (s *Store) UpdateRunner(ctx context.Context, runner *core.Runner) error {
-	current, err := s.GetRunner(ctx, runner.ID)
-	if err != nil {
-		return err
-	}
-	runner.CreatedAt, runner.UpdatedAt = current.CreatedAt, s.now()
-	return s.update(ctx, runnerName(runner.ID), runner)
+// TouchRunner updates liveness without overwriting a concurrent claim or retirement.
+func (s *Store) TouchRunner(ctx context.Context, id string, seen time.Time) error {
+	var current core.Runner
+	return s.mutate(ctx, runnerName(id), &current, func() error {
+		current.LastSeen = seen
+		current.UpdatedAt = s.now()
+		return nil
+	})
 }
 
 func (s *Store) ListRunners(ctx context.Context, pool string) ([]*core.Runner, error) {
@@ -445,7 +471,7 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 	if runner.Pool != pool {
 		return nil, false, core.ErrUnauthorized
 	}
-	records, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace})
+	records, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace, KeyPrefix: allocationPrefix})
 	if err != nil {
 		return nil, false, err
 	}
@@ -481,9 +507,31 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 		if !claimable {
 			continue
 		}
+		if err := s.changeRunnerStatus(ctx, runnerID, core.RunnerIdle, core.RunnerClaiming); err != nil {
+			if errors.Is(err, core.ErrConflict) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = s.changeRunnerStatus(context.WithoutCancel(ctx), runnerID, core.RunnerClaiming, core.RunnerIdle)
+			}
+		}()
 		leaseID, err := randomToken(24)
 		if err != nil {
 			return nil, false, err
+		}
+		if allocation.Status == core.AllocationLeased {
+			token, err := randomToken(32)
+			if err != nil {
+				return nil, false, err
+			}
+			digest := sha256.Sum256([]byte(token))
+			allocation.RuntimeToken = token
+			allocation.RuntimeTokenHash = hex.EncodeToString(digest[:])
+			allocation.Generation++
 		}
 		allocation.Status = core.AllocationLeased
 		allocation.ManagerID = runner.ManagerID
@@ -496,10 +544,14 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 		item.document.Data[dataKey] = raw
 		item.record.Value, _ = json.Marshal(item.document)
 		if _, err := s.kv.Update(ctx, item.record); errors.Is(err, kvstore.ErrConflict) {
-			continue
+			return nil, false, nil
 		} else if err != nil {
+			// The write may have committed despite a transport/replication error.
+			// Keep the runner fenced against deletion until reconciliation resolves it.
+			committed = true
 			return nil, false, err
 		}
+		committed = true
 		return &allocation, true, nil
 	}
 	return nil, false, nil
@@ -534,6 +586,10 @@ func (s *Store) transitionLease(ctx context.Context, sessionID, runnerID, leaseI
 		if err != nil {
 			return nil, err
 		}
+		if status == core.AllocationClaimed && allocation.RunnerID == runnerID && allocation.LeaseID == leaseID && allocation.Status == core.AllocationRunning {
+			_ = s.changeRunnerStatus(ctx, runnerID, core.RunnerClaiming, core.RunnerRunning)
+			return &allocation, nil
+		}
 		if allocation.RunnerID != runnerID || allocation.LeaseID != leaseID || allocation.Status != core.AllocationLeased {
 			return nil, core.ErrConflict
 		}
@@ -557,6 +613,13 @@ func (s *Store) transitionLease(ctx context.Context, sessionID, runnerID, leaseI
 		if _, err := s.kv.Update(ctx, record); errors.Is(err, kvstore.ErrConflict) {
 			continue
 		} else if err != nil {
+			return nil, err
+		}
+		target := core.RunnerRunning
+		if status == core.AllocationPending {
+			target = core.RunnerIdle
+		}
+		if err := s.changeRunnerStatus(ctx, runnerID, core.RunnerClaiming, target); err != nil {
 			return nil, err
 		}
 		return &allocation, nil

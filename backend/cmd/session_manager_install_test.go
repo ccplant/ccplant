@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -49,6 +51,65 @@ func TestEnsureManagerCredentialsReusesSecretOnUpgrade(t *testing.T) {
 
 }
 
+func TestEnsureManagerCredentialsKeepsManagerIDAcrossRepeatedInstalls(t *testing.T) {
+	t.Parallel()
+	var enrollments atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/session-managers/enroll":
+			enrollments.Add(1)
+			_, _ = w.Write([]byte(`{"id":"manager-1","connection_token":"connection-1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/internal/session-managers/manager-1/runtime-profile":
+			require.Equal(t, "Bearer connection-1", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"revision":"test"}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := fake.NewSimpleClientset()
+	initial := sessionManagerInstallOptions{
+		upstream:          server.URL,
+		registrationToken: "registration-1",
+		namespace:         "sessions",
+		release:           "manager",
+		pool:              "dev",
+		instanceID:        "sessions/manager",
+		connectionSecret:  "manager-parent",
+	}
+	installed, err := ensureManagerCredentials(context.Background(), client, initial)
+	require.NoError(t, err)
+
+	upgrade := initial
+	upgrade.registrationToken = ""
+	updated, err := ensureManagerCredentials(context.Background(), client, upgrade)
+	require.NoError(t, err)
+	require.Equal(t, installed.ManagerID, updated.ManagerID)
+	require.Equal(t, installed.ConnectionToken, updated.ConnectionToken)
+	require.Equal(t, int32(1), enrollments.Load())
+}
+
+func TestEnsureManagerCredentialsRejectsRegistrationTokenWhenSecretExists(t *testing.T) {
+	t.Parallel()
+	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "manager-parent", Namespace: "sessions"}, Data: map[string][]byte{
+		"manager-id": []byte("manager-1"), "connection-token": []byte("connection-1"),
+	}})
+	opts := sessionManagerInstallOptions{
+		registrationToken: "registration-2",
+		namespace:         "sessions",
+		connectionSecret:  "manager-parent",
+	}
+
+	_, err := ensureManagerCredentials(context.Background(), client, opts)
+	require.ErrorContains(t, err, "--registration-token is only valid for the initial install")
+
+	secret, getErr := client.CoreV1().Secrets("sessions").Get(context.Background(), "manager-parent", metav1.GetOptions{})
+	require.NoError(t, getErr)
+	require.Equal(t, "manager-1", string(secret.Data["manager-id"]))
+	require.Equal(t, "connection-1", string(secret.Data["connection-token"]))
+}
+
 func TestEnsureManagerCredentialsRequiresRegistrationTokenInitially(t *testing.T) {
 	t.Parallel()
 	_, err := ensureManagerCredentials(context.Background(), fake.NewSimpleClientset(), sessionManagerInstallOptions{namespace: "sessions", connectionSecret: "manager-parent"})
@@ -65,9 +126,17 @@ func TestEnsureManagerCredentialsIssuesTokenAndEnrolls(t *testing.T) {
 		case "/api/v1/session-managers":
 			_, _ = w.Write([]byte(`{"session_managers":[]}`))
 		case "/api/v1/session-managers/registration-tokens":
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.NotContains(t, payload, "pool")
+			require.NotContains(t, payload, "default")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"registration_token":"registration-1"}`))
 		case "/api/v1/session-managers/enroll":
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			require.NotContains(t, payload, "pool")
+			require.NotContains(t, payload, "default")
 			_, _ = w.Write([]byte(`{"id":"manager-1","connection_token":"connection-1"}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

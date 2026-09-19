@@ -22,6 +22,26 @@ are delegated to the backend control API. Enabling `worker` requires either
 libSQL or Kubernetes KV persistence, bundled or external Redis, and a
 worker-control Secret shared only with the API.
 
+## GitHub token broker routing
+
+To let sessions reach the GitHub token broker through the Kubernetes API Service,
+enable:
+
+```yaml
+api:
+  githubBroker:
+    inCluster: true
+```
+
+The chart generates `AGENTAPI_GITHUB_BROKER_BASE_URL` as
+`http://<API Service name>.<release namespace>.svc.cluster.local:<service.port>`.
+This respects `fullnameOverride` and replaces any base URL supplied through
+`env` or `api.env`. Enable it only when sessions can reach that cluster network.
+The default is `false`, which leaves the existing URL selection unchanged.
+The change applies to newly created broker sessions after the API rollout.
+
+For the ccplant umbrella chart, use `backend.api.githubBroker.inCluster`.
+
 ## Cloud Run manifest
 
 The same application values can render the API as a Google Cloud Run Knative
@@ -209,34 +229,25 @@ The command removes all the Kubernetes components associated with the chart and 
 | ------------------- | --------------------------------- | ------------------------------------------ |
 | `api.image.repository` | API image repository | `ghcr.io/ccplant/ccplant-api` |
 | `worker.image.repository` | Worker image repository | `ghcr.io/ccplant/ccplant-api` |
-| `sessionManager.image.repository` | Session-manager image repository | `ghcr.io/ccplant/ccplant-backend` |
-| `kubernetesSession.image` | Legacy in-process session Pod image; empty uses the full root image | `""` |
-| `sessionManager.kubernetesSession.image` | Dedicated manager session Pod image; empty uses the full session-manager image | `""` |
+| `sessionManager.image.repository` | Session-manager image repository | `ghcr.io/ccplant/ccplant-api` |
+| `kubernetesSession.image` | Independent session asset image | `ghcr.io/ccplant/ccplant-agent:assets-<hash>` |
+| `kubernetesSession.cliImage` | CLI source copied by an initContainer | Manager/API release image |
+| `sessionManager.kubernetesSession.image` | Dedicated manager asset image | `ghcr.io/ccplant/ccplant-agent:assets-<hash>` |
 
 The API, worker, and session-manager image tags always use the chart's
 `appVersion`. Helm values can select each image repository, but cannot override
 these image tags.
 
-The default uses the lightweight image for the API and background worker while
-keeping the compatibility-sensitive session-manager and session runtime on the
-full image:
+The API, worker and Kubernetes session-manager use the lightweight image.
+Session Pods use a separately published `ccplant-agent` image containing agent
+CLIs, adapters, tools and configuration. An initContainer copies ccplant from
+the manager release image into an `emptyDir` mounted at `/opt/ccplant/bin`.
+The agent image uses a fixed content-based tag and `IfNotPresent`, so application
+releases update only the CLI source. Direct/local process sessions still use
+`ccplant-backend`, which bundles the CLI with the same agent assets.
 
-```yaml
-api:
-  image:
-    repository: ghcr.io/ccplant/ccplant-api
-
-worker:
-  image:
-    repository: ghcr.io/ccplant/ccplant-api
-sessionManager:
-  image:
-    repository: ghcr.io/ccplant/ccplant-backend
-```
-
-The API-only image does not contain agent CLIs, Docker/GitHub tooling, or the
-session runtime. It supports the API and worker commands, but must not be used
-for session-manager, provisioner, or direct/local session execution roles.
+See [Agent image lifecycle](../../../docs/guide/agent-image.md) for publishing
+and custom registry configuration.
 
 Override these independently from CI/CD environment variables by passing them
 to Helm, for example:
@@ -248,7 +259,8 @@ helm upgrade --install backend ./backend/helm/agentapi-proxy \
 ```
 
 When running `ccplant` without Helm, `AGENTAPI_K8S_SESSION_IMAGE` selects the
-session Pod image directly. A container cannot change its own Kubernetes image
+session Pod image directly, and `AGENTAPI_K8S_SESSION_CLI_IMAGE` selects its CLI
+source (empty disables injection for legacy images). A container cannot change its own Kubernetes image
 from an environment variable; use `api.image.repository` to select the backend
 API Deployment image.
 

@@ -3,10 +3,14 @@ import type { APIMCPServerConfig, ModelConnection } from './settings';
 
 // Session profile params
 export interface SessionProfileParams {
+  /** Legacy pool location; the editor saves this as SessionProfileConfig.pool. */
+  pool?: string;
   initial_message?: string;
   github_token?: string;
   agent_type?: string;
   model?: string;
+  /** Model switching candidates offered in the ACP chat info panel. */
+  model_options?: string[];
   sandbox?: SandboxConfig;
   docker?: DockerConfig;
   auth_proxy?: boolean;

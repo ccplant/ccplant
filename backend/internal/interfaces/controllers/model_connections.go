@@ -40,8 +40,8 @@ func mergeModelConnection(existing *modelprovider.Connection, patch map[string]j
 				return nil, fmt.Errorf("invalid clear_api_key")
 			}
 		case "has_api_key": // read-only metadata may be round-tripped by clients
-		case "mode", "base_url", "model", "authentication", "context_window", "auto_compact_token_limit", "supports_reasoning_summaries", "model_aliases":
-			if (k == "mode" || k == "base_url" || k == "model" || k == "authentication") && string(v) == "null" {
+		case "mode", "base_url", "model", "authentication", "context_window", "auto_compact_token_limit", "supports_reasoning_summaries", "model_aliases", "web_search_enabled", "endpoint_path":
+			if (k == "mode" || k == "base_url" || k == "model" || k == "authentication" || k == "endpoint_path") && string(v) == "null" {
 				return nil, fmt.Errorf("%s cannot be null", k)
 			}
 			fields[k] = v

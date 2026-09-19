@@ -25,10 +25,16 @@ type WorkerControlController struct {
 	routes          repositories.SessionRouteRepository
 	leases          schedule.LeaseClient
 	scheduleManager schedule.Manager
+	sessionDeleter  func(echo.Context) error
 }
 
 func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
 	wc.scheduleManager = manager
+	return wc
+}
+
+func (wc *WorkerControlController) WithSessionDeleter(deleter func(echo.Context) error) *WorkerControlController {
+	wc.sessionDeleter = deleter
 	return wc
 }
 
@@ -133,6 +139,7 @@ type workerSessionInfo struct {
 	Tags          map[string]string      `json:"tags"`
 	Status        string                 `json:"status"`
 	StartedAt     time.Time              `json:"started_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 	LastMessageAt time.Time              `json:"last_message_at"`
 }
 
@@ -143,10 +150,12 @@ func workerSessionInfoFrom(session entities.Session) workerSessionInfo {
 	}
 	if provider, ok := session.(interface {
 		Request() *entities.RunServerRequest
-	}); ok && provider.Request() != nil && provider.Request().SessionTTL != "" {
-		tags["session_ttl"] = provider.Request().SessionTTL
+	}); ok && provider.Request() != nil {
+		if provider.Request().SessionTTL != "" {
+			tags["session_ttl"] = provider.Request().SessionTTL
+		}
 	}
-	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), LastMessageAt: session.LastMessageAt()}
+	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), UpdatedAt: session.UpdatedAt(), LastMessageAt: session.LastMessageAt()}
 }
 
 func NewWorkerControlController(manager repositories.SessionManager, token string, teams workerTeamEnsurer, routes repositories.SessionRouteRepository) *WorkerControlController {
@@ -249,18 +258,43 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 	if !wc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
+	filter := entities.SessionFilter{
+		UserID: c.QueryParam("user_id"), Status: c.QueryParam("status"),
+		Scope: entities.ResourceScope(c.QueryParam("scope")), TeamID: c.QueryParam("team_id"),
+		Tags: make(map[string]string),
+	}
+	if teamIDs := c.QueryParam("team_ids"); teamIDs != "" {
+		for _, teamID := range strings.Split(teamIDs, ",") {
+			if teamID = strings.TrimSpace(teamID); teamID != "" {
+				filter.TeamIDs = append(filter.TeamIDs, teamID)
+			}
+		}
+	}
+	for name, values := range c.QueryParams() {
+		if strings.HasPrefix(name, "tag.") && len(values) > 0 {
+			filter.Tags[strings.TrimPrefix(name, "tag.")] = values[0]
+		}
+	}
 	var sessions []entities.Session
 	var err error
 	if lister, ok := wc.manager.(workerSessionLister); ok {
-		sessions, err = lister.ListSessionsContext(c.Request().Context(), entities.SessionFilter{})
+		sessions, err = lister.ListSessionsContext(c.Request().Context(), filter)
 	} else {
-		sessions = wc.manager.ListSessions(entities.SessionFilter{})
+		sessions = wc.manager.ListSessions(filter)
 	}
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 	if wc.routes != nil {
-		routes, routeErr := wc.routes.List(c.Request().Context(), "")
+		var routes []*repositories.SessionRoute
+		var routeErr error
+		if filtered, ok := wc.routes.(repositories.FilteredSessionRouteRepository); ok {
+			routes, routeErr = filtered.ListFiltered(c.Request().Context(), repositories.SessionRouteFilter{
+				UserID: filter.UserID, Scope: string(filter.Scope), TeamID: filter.TeamID, Tags: filter.Tags,
+			})
+		} else {
+			routes, routeErr = wc.routes.List(c.Request().Context(), filter.UserID)
+		}
 		if routeErr != nil {
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": routeErr.Error()})
 		}
@@ -270,12 +304,44 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 		}
 		aliasedRuntime := make(map[string]bool)
 		for _, route := range routes {
-			if route.ManagerID != "" || route.RemoteSessionID == "" {
+			if route.Transport == repositories.SessionRouteTransportDirectRuntime && route.RemoteSessionID == "" {
+				// Direct-runtime sessions are represented by their durable public route;
+				// they do not have a separate remote session ID to alias. Excluding these
+				// routes makes worker-side consumers (SlackBot cleanup/reuse) see an empty
+				// session list while the session is queued or running.
+				if byID[route.SessionID] != nil {
+					continue
+				}
+				status := route.Status
+				if status == "" {
+					status = "creating"
+				}
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, status)
+				if !route.StatusUpdatedAt.IsZero() {
+					session.SetUpdatedAt(route.StatusUpdatedAt)
+				}
+				sessions = append(sessions, session)
+				continue
+			}
+			if route.RemoteSessionID == "" {
 				continue
 			}
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
 				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
 				aliasedRuntime[route.RemoteSessionID] = true
+			} else if route.Transport == repositories.SessionRouteTransportDirectRuntime || route.Tags["session_ttl"] != "" {
+				// A claimed direct-runtime route has a runner ID, but that runner is not
+				// necessarily present in the API session manager's local list. Keep the
+				// durable public route visible to worker-side Slack thread reuse.
+				status := route.Status
+				if status == "" {
+					status = "creating"
+				}
+				session := entities.NewProxySessionWithStatus(route.SessionID, route.UserID, entities.ResourceScope(route.Scope), route.TeamID, route.Tags, route.StartedAt, status)
+				if !route.StatusUpdatedAt.IsZero() {
+					session.SetUpdatedAt(route.StatusUpdatedAt)
+				}
+				sessions = append(sessions, session)
 			}
 		}
 		filtered := make([]entities.Session, 0, len(sessions))
@@ -297,8 +363,29 @@ func (wc *WorkerControlController) DeleteSession(c echo.Context) error {
 	if !wc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), c.Param("sessionId"))); err != nil {
+	publicID := c.Param("sessionId")
+	if wc.routes != nil {
+		route, err := wc.routes.Get(c.Request().Context(), publicID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if route != nil && route.ManagerID != "" && wc.sessionDeleter != nil {
+			// Direct runtimes are owned by an external session manager. Reuse the
+			// durable public deletion path so the workload is removed before its
+			// route alias is reconciled away.
+			return wc.sessionDeleter(c)
+		}
+	}
+	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), publicID)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// Pool-backed sessions use a public route alias for the adopted runtime ID.
+	// TTL cleanup must remove that alias after the runtime deletion succeeds or
+	// /search continues to expose a session whose workload no longer exists.
+	if wc.routes != nil {
+		if err := wc.routes.Delete(c.Request().Context(), publicID); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 	}
 	return c.NoContent(http.StatusNoContent)
 }
@@ -335,6 +422,16 @@ type workerAliasSession struct {
 }
 
 func (s *workerAliasSession) ID() string { return s.id }
+
+// Preserve cleanup settings that are not part of the embedded Session interface.
+func (s *workerAliasSession) Request() *entities.RunServerRequest {
+	if provider, ok := s.Session.(interface {
+		Request() *entities.RunServerRequest
+	}); ok {
+		return provider.Request()
+	}
+	return nil
+}
 
 func (wc *WorkerControlController) Stock(c echo.Context) error {
 	if !wc.authorized(c) {

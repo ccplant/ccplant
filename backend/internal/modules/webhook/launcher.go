@@ -89,7 +89,6 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 
 	// Determine session params fields from rendered params
 	var githubToken, agentType, model string
-	var oneshot bool
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
@@ -97,11 +96,10 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		githubToken = renderedParams.GithubToken
 		agentType = renderedParams.AgentType
 		model = renderedParams.Model
-		oneshot = renderedParams.Oneshot
 		initialMessageWaitSecond = renderedParams.InitialMessageWaitSecond
 		cycleMessage = renderedParams.CycleMessage
 		cycleMaxCount = renderedParams.CycleMaxCount
-		sessionTTL = renderedParams.SessionTTL
+		sessionTTL = sessionuc.ResolveSessionTTL(renderedParams)
 	}
 
 	// Sandbox is not a template field — read directly from the merged session config params.
@@ -161,7 +159,6 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		GithubToken:              githubToken,
 		AgentType:                agentType,
 		Model:                    model,
-		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,

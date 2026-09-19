@@ -365,6 +365,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	// Set settings repository in session manager for Bedrock integration
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetSettingsRepository(settingsRepo)
+		k8sSessionManager.SetSlackTokenClient(persistenceClient, namespace)
 	}
 	log.Printf("[SERVER] Settings repository initialized")
 
@@ -508,6 +509,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("[SERVER] Failed to initialize API-side provision settings builder: %v", builderErr)
 		}
 		settingsBuilder.SetSettingsRepository(settingsRepo)
+		settingsBuilder.SetSettingsSecretClient(persistenceClient, namespace)
+		settingsBuilder.SetSlackTokenClient(persistenceClient, namespace)
 		settingsBuilder.SetCredentialsRepository(credentialsRepo)
 		settingsBuilder.SetTeamConfigRepository(teamConfigRepo)
 		settingsBuilder.SetPersonalAPIKeyRepository(personalAPIKeyRepo)
@@ -1307,12 +1310,6 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		slackParams = startReq.Params.Slack
 	}
 
-	// Determine oneshot from Params.Oneshot
-	var oneshot bool
-	if startReq.Params != nil {
-		oneshot = startReq.Params.Oneshot
-	}
-
 	// Determine initial message wait second from Params.InitialMessageWaitSecond
 	var initialMessageWaitSecond *int
 	if startReq.Params != nil && startReq.Params.InitialMessageWaitSecond != nil {
@@ -1347,11 +1344,11 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 
 	// Determine session TTL from Params.SessionTTL
 	var sessionTTL string
-	if startReq.Params != nil && startReq.Params.SessionTTL != "" {
-		sessionTTL = startReq.Params.SessionTTL
+	if startReq.Params != nil {
+		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
 	}
 
-	var unsyncedFilePaths []string
+	var unsyncedFilePaths, modelOptions []string
 	var credentialSource, codexAuthMode, claudeAuthMode, model string
 	var resumeFrom string
 	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
@@ -1363,12 +1360,17 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		resumeFrom = startReq.Params.ResumeFrom
 		model = startReq.Params.Model
+		if len(startReq.Params.ModelOptions) > 0 {
+			modelOptions = append([]string(nil), startReq.Params.ModelOptions...)
+		}
 	}
 
 	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
 		WithMemoryRepository(s.memoryRepo)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
+		WebhookPayload:           startReq.WebhookPayload,
 		ResumeFrom:               resumeFrom,
+		TriggeredUserID:          startReq.TriggeredUserID,
 		UserID:                   userID,
 		Environment:              startReq.Environment,
 		ProfileEnvironment:       startReq.ProfileEnvironment,
@@ -1381,8 +1383,8 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		TeamID:                   startReq.TeamID,
 		AgentType:                agentType,
 		Model:                    model,
+		ModelOptions:             modelOptions,
 		SlackParams:              slackParams,
-		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		MemoryKey:                startReq.MemoryKey,
 		CycleMessage:             cycleMessage,
@@ -1424,37 +1426,9 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
 		return nil, err
 	}
-	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model string
-	var oneshot bool
-	var authProxy *bool
-	var sandbox *entities.SandboxParams
-	var docker *entities.DockerParams
-	var unsyncedFilePaths []string
-	if startReq.Params != nil {
-		initialMessage = startReq.Params.Message
-		agentType = startReq.Params.AgentType
-		oneshot = startReq.Params.Oneshot
-		authProxy = startReq.Params.AuthProxy
-		sandbox = startReq.Params.Sandbox
-		docker = startReq.Params.Docker
-		credentialSource = startReq.Params.CredentialSource
-		codexAuthMode = startReq.Params.CodexAuthMode
-		claudeAuthMode = startReq.Params.ClaudeAuthMode
-		model = startReq.Params.Model
-		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
-	}
-	runReq := &entities.RunServerRequest{
-		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
-		Pool: pool, AgentType: agentType, Model: model, Oneshot: oneshot, Environment: startReq.Environment,
-		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
-		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
-		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
-		Sandbox: sandbox, Docker: docker,
-		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
-		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
-		ProfileMCPServers:        startReq.ProfileMCPServers,
-		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
-	}
+	runReq := s.runRequestForStart(sessionID, startReq, userID, teams)
+	runReq.Pool = pool
+	initialMessage, agentType, sessionTTL, docker := runReq.InitialMessage, runReq.AgentType, runReq.SessionTTL, runReq.Docker
 	var settings *sessionsettings.SessionSettings
 	if builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder); ok {
 		var err error
@@ -1468,10 +1442,12 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	if settings == nil {
 		settings = &sessionsettings.SessionSettings{
-			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Oneshot: oneshot, Teams: teams, MemoryKey: startReq.MemoryKey},
-			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: unsyncedFilePaths,
+			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Teams: teams, MemoryKey: startReq.MemoryKey},
+			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: runReq.UnsyncedFilePaths,
 		}
 	}
+	settings.WebhookPayload = string(startReq.WebhookPayload)
+	s.applyPoolAutoSuspendPolicy(ctx, settings, startReq.Scope, userID, startReq.TeamID)
 	settingsRaw, err := json.Marshal(settings)
 	if err != nil {
 		return nil, fmt.Errorf("marshal pool provision settings: %w", err)
@@ -1492,10 +1468,17 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		return nil, fmt.Errorf("enqueue session pool allocation: %w", err)
 	}
 	startedAt := time.Now().UTC()
+	routeTags := make(map[string]string, len(startReq.Tags)+2)
+	for key, value := range startReq.Tags {
+		routeTags[key] = value
+	}
+	if sessionTTL != "" {
+		routeTags["session_ttl"] = sessionTTL
+	}
 	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
 		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
-		TeamID: startReq.TeamID, Tags: startReq.Tags, StartedAt: startedAt, InitialMessage: initialMessage,
+		TeamID: startReq.TeamID, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
@@ -1505,6 +1488,23 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		}
 	}
 	return entities.NewProxySessionWithStatus(sessionID, userID, startReq.Scope, startReq.TeamID, startReq.Tags, startedAt, "creating"), nil
+}
+
+func (s *Server) applyPoolAutoSuspendPolicy(ctx context.Context, settings *sessionsettings.SessionSettings, scope entities.ResourceScope, userID, teamID string) {
+	if settings == nil || s.settingsRepo == nil {
+		return
+	}
+	settingsName := userID
+	if scope == entities.ScopeTeam && teamID != "" {
+		settingsName = teamID
+	}
+	stored, err := s.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil || stored == nil || stored.AutoSuspend() == nil {
+		return
+	}
+	policy := stored.AutoSuspend()
+	settings.Session.AutoSuspendEnabled = &policy.Enabled
+	settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 }
 
 func (s *Server) checkSessionPoolQuota(ctx context.Context, binding *sessionrunnercore.Binding) error {
@@ -1822,7 +1822,7 @@ func (s *Server) createMemoryIntegrationSession(req *entities.RunServerRequest, 
 		Tags:           map[string]string{"hidden": "true"},
 		MemoryKey:      nil, // MemoryKey を渡さない: 統合セッション削除時に再ダンプが走るのを防ぐ
 		InitialMessage: prompt,
-		Oneshot:        true,
+		SessionTTL:     "1m",
 		Environment:    env,
 	}
 
@@ -2125,4 +2125,58 @@ func buildWorkerLeaseClient(cfg *config.Config) schedule.LeaseClient {
 		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	return schedule.NewRedisLeaseClient(redis.NewClient(opts))
+}
+
+func (s *Server) runRequestForStart(sessionID string, startReq entities.StartRequest, userID string, teams []string) *entities.RunServerRequest {
+	var initialMessage, agentType, credentialSource, codexAuthMode, claudeAuthMode, model, sessionTTL string
+	var authProxy *bool
+	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
+	var unsyncedFilePaths, modelOptions []string
+	if startReq.Params != nil {
+		initialMessage = startReq.Params.Message
+		agentType = startReq.Params.AgentType
+		authProxy = startReq.Params.AuthProxy
+		sandbox = startReq.Params.Sandbox
+		docker = startReq.Params.Docker
+		credentialSource = startReq.Params.CredentialSource
+		codexAuthMode = startReq.Params.CodexAuthMode
+		claudeAuthMode = startReq.Params.ClaudeAuthMode
+		model = startReq.Params.Model
+		if len(startReq.Params.ModelOptions) > 0 {
+			modelOptions = append([]string(nil), startReq.Params.ModelOptions...)
+		}
+		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
+		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
+	}
+	runReq := &entities.RunServerRequest{
+		UserID: userID, Teams: teams, Scope: startReq.Scope, TeamID: startReq.TeamID,
+		TriggeredUserID: startReq.TriggeredUserID,
+		Pool:            requestedSessionPool(startReq), AgentType: agentType, Model: model, SessionTTL: sessionTTL, Environment: startReq.Environment,
+		ModelOptions:       modelOptions,
+		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
+		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
+		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
+		Sandbox: sandbox, Docker: docker,
+		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
+		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
+		ProfileMCPServers:        startReq.ProfileMCPServers,
+		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
+	}
+	if startReq.Params != nil {
+		runReq.SlackParams = startReq.Params.Slack
+		runReq.ResumeFrom = startReq.Params.ResumeFrom
+		runReq.InitialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
+		runReq.CycleMessage = startReq.Params.CycleMessage
+		runReq.CycleMaxCount = startReq.Params.CycleMaxCount
+	}
+	return runReq
+}
+
+func (s *Server) ResolveRestartSettings(ctx context.Context, id string, input entities.StartRequest, userID string, teams []string) (*sessionsettings.SessionSettings, error) {
+	builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder)
+	if !ok {
+		return nil, fmt.Errorf("settings reload is not supported")
+	}
+	return builder.BuildRemoteProvisionSettings(ctx, id, s.runRequestForStart(id, input, userID, teams))
 }

@@ -58,11 +58,13 @@ func runCodexAuthWorker(_ *cobra.Command, _ []string) error {
 	defer cancel()
 	result, err := executeCodexDeviceAuth(ctx, request)
 	if err != nil {
+		log.Printf("[CODEX_AUTH_WORKER] Attempt %s failed: %v", request.AttemptID, err)
 		result = codexauth.Result{Status: codexauth.StatusFailed, ErrorCode: "codex_login_failed"}
 	}
 	reportCtx, reportCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer reportCancel()
 	if postErr := postCodexAuthJSON(reportCtx, request, "result", result); postErr != nil {
+		log.Printf("[CODEX_AUTH_WORKER] Failed to report result for attempt %s: %v", request.AttemptID, postErr)
 		return fmt.Errorf("report result: %w", postErr)
 	}
 	return err

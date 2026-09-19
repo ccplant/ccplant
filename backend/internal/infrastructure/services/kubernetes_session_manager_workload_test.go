@@ -69,6 +69,88 @@ func assertOwnedByService(t *testing.T, obj metav1.Object, serviceName string) {
 	}
 }
 
+func TestNormalizeProvisionSettingsKeepsPublicIdentityAndUsesManagerPersistence(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionPersistence.Backend = "s3"
+	original := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		ID:                 "public-session",
+		PersistenceEnabled: false,
+	}}
+
+	normalized := manager.normalizeProvisionSettings(original)
+
+	if normalized.Session.ID != "public-session" {
+		t.Fatalf("session ID = %q, want stable public-session", normalized.Session.ID)
+	}
+	if !normalized.Session.PersistenceEnabled {
+		t.Fatal("manager persistence must enable implicit restore")
+	}
+	if original.Session.ID != "public-session" || original.Session.PersistenceEnabled {
+		t.Fatal("normalization mutated parent-owned settings")
+	}
+}
+
+func TestVolumePersistenceUsesPerSessionWorkdirPVC(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionPersistence.Backend = "volume"
+	session := newWorkloadTestSession()
+	if !manager.isPVCEnabled() {
+		t.Fatal("volume persistence must enable the per-session workdir PVC")
+	}
+	env := manager.buildEnvVars(session, session.Request())
+	for _, item := range env {
+		if item.Name == "AGENTAPI_SESSION_STATE_VOLUME_PATH" {
+			if item.Value != "/home/agentapi/workdir/.agentapi/session-state.tar.zst" {
+				t.Fatalf("volume path = %q", item.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("session state volume path was not injected")
+}
+
+func TestGetSessionRepairsStockAdoptionMetadataFromService(t *testing.T) {
+	manager := newWorkloadTestManager(t, true)
+	manager.config.SessionPersistence.Backend = "volume"
+	session := newWorkloadTestSession()
+	session.SetUserID("")
+	session.Request().AgentType = ""
+	manager.sessions[session.ID()] = session
+
+	_, err := manager.client.CoreV1().Services("test-ns").Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      session.ServiceName(),
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"agentapi.proxy/session-id": session.ID(),
+				"agentapi.proxy/user-id":    "adopted-user",
+			},
+			Annotations: map[string]string{"agentapi.proxy/agent-type": "codex-acp"},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored := manager.GetSession(session.ID())
+	if restored == nil {
+		t.Fatal("session was not returned")
+	}
+	if restored.UserID() != "adopted-user" {
+		t.Fatalf("user ID = %q, want adopted-user", restored.UserID())
+	}
+	ks, ok := restored.(*KubernetesSession)
+	if !ok {
+		t.Fatalf("session type = %T, want *KubernetesSession", restored)
+	}
+	if ks.Request().AgentType != "codex-acp" {
+		t.Fatalf("agent type = %q, want codex-acp", ks.Request().AgentType)
+	}
+	if !manager.requiresSessionCheckpoint(ks) {
+		t.Fatal("repaired ACP session must require a checkpoint")
+	}
+}
+
 func TestSessionWorkloadReadyFallsBackToReadyPodWhenDeploymentStatusLags(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()
@@ -199,9 +281,6 @@ func TestSessionResourcesUseServiceOwnerReferenceWithoutPVC(t *testing.T) {
 	if err := manager.createSessionWorkload(ctx, session, session.Request()); err != nil {
 		t.Fatalf("Failed to create workload: %v", err)
 	}
-	if err := manager.createWebhookPayloadSecret(ctx, session, []byte(`{"ok":true}`)); err != nil {
-		t.Fatalf("Failed to create webhook payload secret: %v", err)
-	}
 	if err := manager.createOneshotSettingsSecret(ctx, session); err != nil {
 		t.Fatalf("Failed to create oneshot settings secret: %v", err)
 	}
@@ -221,7 +300,6 @@ func TestSessionResourcesUseServiceOwnerReferenceWithoutPVC(t *testing.T) {
 	assertOwnedByService(t, pod, session.ServiceName())
 
 	for _, secretName := range []string{
-		session.ServiceName() + "-webhook-payload",
 		session.ServiceName() + "-oneshot-settings",
 		"agentapi-provision-request-" + session.ID(),
 		"agentapi-session-" + session.ID() + "-settings",
@@ -260,6 +338,56 @@ func TestSessionResourcesUseServiceOwnerReferenceWithPVC(t *testing.T) {
 		t.Fatalf("Expected deployment to be created: %v", err)
 	}
 	assertOwnedByService(t, deployment, session.ServiceName())
+}
+
+func TestDeleteSessionResourcesDeletesAllSessionLabeledSecrets(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	session := newWorkloadTestSession()
+	ctx := context.Background()
+
+	for _, secret := range []*corev1.Secret{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "agentapi-provision-request-" + session.ID(),
+				Namespace: "test-ns",
+				Labels: map[string]string{
+					"agentapi.proxy/session-id":        session.ID(),
+					"agentapi.proxy/provision-request": "true",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "future-session-secret",
+				Namespace: "test-ns",
+				Labels:    map[string]string{"agentapi.proxy/session-id": session.ID()},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "other-session-secret",
+				Namespace: "test-ns",
+				Labels:    map[string]string{"agentapi.proxy/session-id": "other-session"},
+			},
+		},
+	} {
+		if _, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create Secret %s: %v", secret.Name, err)
+		}
+	}
+
+	if err := manager.deleteSessionResources(ctx, session); err != nil {
+		t.Fatalf("deleteSessionResources() error = %v", err)
+	}
+
+	for _, name := range []string{"agentapi-provision-request-" + session.ID(), "future-session-secret"} {
+		if _, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
+			t.Errorf("expected session Secret %s to be deleted, got %v", name, err)
+		}
+	}
+	if _, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, "other-session-secret", metav1.GetOptions{}); err != nil {
+		t.Errorf("expected another session's Secret to remain, got %v", err)
+	}
 }
 
 func TestPurgeStockSessionsDeletesMixedWorkloadKindsAndPVC(t *testing.T) {
@@ -732,6 +860,101 @@ func TestCountStockSessionsExcludesAllocatedDirectRunners(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("CountStockSessionsForPool = %d, want 1", count)
+	}
+}
+
+func TestLegacyStockSelectionAndCountExcludePoolRunners(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	baseLabels := map[string]string{
+		"app.kubernetes.io/managed-by":      "agentapi-proxy",
+		"agentapi.proxy/stock":              "true",
+		"agentapi.proxy/capability-sandbox": "true",
+		"agentapi.proxy/capability-dind":    "false",
+	}
+	for _, tc := range []struct {
+		id   string
+		pool string
+	}{{id: "pool-stock", pool: "managed"}, {id: "legacy-stock"}} {
+		labels := make(map[string]string, len(baseLabels)+2)
+		for key, value := range baseLabels {
+			labels[key] = value
+		}
+		labels["agentapi.proxy/session-id"] = tc.id
+		if tc.pool != "" {
+			labels["agentapi.proxy/session-pool"] = tc.pool
+		}
+		if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + tc.id + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, err := manager.CountStockSessions(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("legacy stock count = %d, want 1", count)
+	}
+	stock, err := manager.findStockSession(ctx, sessionRequirements(&entities.RunServerRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stock == nil || stock.Labels["agentapi.proxy/session-id"] != "legacy-stock" {
+		t.Fatalf("selected stock = %#v, want legacy-stock", stock)
+	}
+}
+
+func TestBuildEnvVarsDeduplicatesControlPlaneURL(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	session := newWorkloadTestSession()
+	session.Request().Environment = map[string]string{"PROVISIONER_PROXY_URL": "https://parent.example.com"}
+
+	env := manager.buildEnvVars(session, session.Request())
+	count := 0
+	for _, item := range env {
+		if item.Name == "PROVISIONER_PROXY_URL" {
+			count++
+			if item.Value != "https://parent.example.com" {
+				t.Fatalf("PROVISIONER_PROXY_URL = %q", item.Value)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("PROVISIONER_PROXY_URL count = %d, want 1", count)
+	}
+}
+
+func TestPurgeStockSessionsForPoolOnlyDeletesRequestedPool(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	for _, pool := range []string{"disabled", "enabled"} {
+		id := pool + "-stock"
+		labels := map[string]string{
+			"app.kubernetes.io/name":         "agentapi-session",
+			"app.kubernetes.io/managed-by":   "agentapi-proxy",
+			"agentapi.proxy/session-id":      id,
+			"agentapi.proxy/session-pool":    pool,
+			"agentapi.proxy/stock":           "true",
+			"agentapi.proxy/capability-dind": "false",
+		}
+		if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + id + "-svc", Namespace: "test-ns", Labels: labels},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := manager.PurgeStockSessionsForPool(ctx, "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-disabled-stock-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
+		t.Fatalf("disabled pool stock still exists: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-enabled-stock-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("enabled pool stock was deleted: %v", err)
 	}
 }
 

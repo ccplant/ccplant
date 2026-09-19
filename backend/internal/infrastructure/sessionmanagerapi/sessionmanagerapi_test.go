@@ -5,14 +5,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 const testBearerToken = "session-manager-only-token"
@@ -49,7 +59,8 @@ func (s *fakeSession) Annotations() entities.SessionAnnotations { return s.annot
 func (s *fakeSession) Request() *entities.RunServerRequest      { return s.request }
 
 type fakeManager struct {
-	sessions map[string]entities.Session
+	sessions  map[string]entities.Session
+	listCalls atomic.Int64
 
 	createdID      string
 	createdRequest *entities.RunServerRequest
@@ -58,6 +69,7 @@ type fakeManager struct {
 	sentID         string
 	sentMessage    string
 	stoppedID      string
+	suspendedID    string
 	lastFilter     entities.SessionFilter
 	messages       []portrepos.Message
 
@@ -122,6 +134,7 @@ func (m *fakeManager) CreateSession(_ context.Context, id string, request *entit
 func (m *fakeManager) GetSession(id string) entities.Session { return m.sessions[id] }
 
 func (m *fakeManager) ListSessions(filter entities.SessionFilter) []entities.Session {
+	m.listCalls.Add(1)
 	m.lastFilter = filter
 	result := make([]entities.Session, 0, len(m.sessions))
 	for _, session := range m.sessions {
@@ -143,6 +156,11 @@ func (m *fakeManager) SendMessage(_ context.Context, id, message string) error {
 
 func (m *fakeManager) StopAgent(_ context.Context, id string) error {
 	m.stoppedID = id
+	return nil
+}
+
+func (m *fakeManager) SuspendSession(_ context.Context, id string) error {
+	m.suspendedID = id
 	return nil
 }
 
@@ -235,6 +253,7 @@ func newTestClient(t *testing.T, manager *fakeManager) (*Client, *httptest.Serve
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = client.Shutdown(0) })
 	return client, server
 }
 
@@ -258,6 +277,34 @@ func TestClientSubscribeStatusEventsEmitsInitialSnapshot(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for initial status snapshot")
 	}
+}
+
+func TestClientSubscribeStatusEventsSharesOnePoller(t *testing.T) {
+	manager := newFakeManager()
+	now := time.Now().UTC()
+	manager.sessions["session-active"] = &fakeSession{
+		id: "session-active", userID: "user-1", scope: entities.ScopeUser,
+		status: "active", startedAt: now, updatedAt: now, lastMessageAt: now,
+	}
+	client, _ := newTestClient(t, manager)
+	defer client.Shutdown(0) //nolint:errcheck
+
+	first, cancelFirst := client.SubscribeStatusEvents()
+	defer cancelFirst()
+	second, cancelSecond := client.SubscribeStatusEvents()
+	defer cancelSecond()
+
+	for name, events := range map[string]<-chan portrepos.SessionStatusEvent{"first": first, "second": second} {
+		select {
+		case event := <-events:
+			require.Equal(t, "session-active", event.SessionID, name)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s subscriber timed out waiting for initial status snapshot", name)
+		}
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	require.LessOrEqual(t, manager.listCalls.Load(), int64(2), "subscribers must share a single one-second poller")
 }
 
 func TestHandlerAuthenticatesEveryPrivateRoute(t *testing.T) {
@@ -301,12 +348,13 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	ctx := context.Background()
 
 	request := &entities.RunServerRequest{
-		UserID:     "user-1",
-		Scope:      entities.ScopeTeam,
-		TeamID:     "org/team",
-		Tags:       map[string]string{"source": "test"},
-		SessionTTL: "6h",
-		Sandbox:    &entities.SandboxParams{PolicyID: "sandbox-policy-1"},
+		UserID:       "user-1",
+		Scope:        entities.ScopeTeam,
+		TeamID:       "org/team",
+		Tags:         map[string]string{"source": "test"},
+		SessionTTL:   "6h",
+		Sandbox:      &entities.SandboxParams{PolicyID: "sandbox-policy-1"},
+		ModelOptions: []string{"sonnet", "opus"},
 	}
 	session, err := client.CreateSession(ctx, "caller-selected-id", request, []byte("webhook"))
 	if err != nil {
@@ -336,6 +384,10 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	sandboxed, ok := session.(interface{ SandboxPolicyID() string })
 	if !ok || sandboxed.SandboxPolicyID() != "sandbox-policy-1" {
 		t.Fatalf("sandbox policy was not preserved: %#v", sandboxed)
+	}
+	modeled, ok := session.(interface{ ModelOptions() []string })
+	if !ok || len(modeled.ModelOptions()) != 2 || modeled.ModelOptions()[0] != "sonnet" || modeled.ModelOptions()[1] != "opus" {
+		t.Fatalf("model options were not preserved: %#v", modeled)
 	}
 
 	got, err := client.GetSessionContext(ctx, "caller-selected-id")
@@ -388,6 +440,17 @@ func TestClientRoundTripsRichSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestClientRequestsManagerOwnedSuspend(t *testing.T) {
+	manager := newFakeManager()
+	client, _ := newTestClient(t, manager)
+	if err := client.SuspendSession(context.Background(), "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if manager.suspendedID != "session-1" {
+		t.Fatalf("suspended session = %q", manager.suspendedID)
+	}
+}
+
 func TestClientSendsAPIResolvedProvisionSettings(t *testing.T) {
 	manager := newFakeManager()
 	client, _ := newTestClient(t, manager)
@@ -406,6 +469,63 @@ func TestClientSendsAPIResolvedProvisionSettings(t *testing.T) {
 	}
 	if got := manager.createdRequest.ProvisionSettings.Env["ANTHROPIC_API_KEY"]; got != "plain-api-key" {
 		t.Fatalf("ANTHROPIC_API_KEY = %q", got)
+	}
+}
+
+func TestClientSendsBaseMCPFromAPIPersistence(t *testing.T) {
+	for _, adapter := range []bool{false, true} {
+		for _, agentType := range []string{"claude-acp", "codex-acp"} {
+			name := agentType + "/kubernetes"
+			if adapter {
+				name = agentType + "/kv-adapter"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx := context.Background()
+				const namespace = "api-settings"
+				const baseName = "custom-base-settings"
+				secret := func(name, data string) *corev1.Secret {
+					return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Data: map[string][]byte{"settings.json": []byte(data)}}
+				}
+				storage := fake.NewSimpleClientset(
+					secret(baseName, `{"mcp_servers":{"base-only":{"type":"http","url":"https://base.example/mcp"},"shared":{"type":"http","url":"https://base.example/shared"},"deleted":{"type":"http","url":"https://base.example/deleted"}}}`),
+					secret("agentapi-settings-org-team", `{"mcp_servers":{"team-only":{"type":"http","url":"https://team.example/mcp"},"shared":{"type":"http","url":"https://team.example/shared"}}}`),
+					secret("agentapi-settings-user-1", `{"mcp_servers":{"shared":{"type":"http","url":"https://user.example/shared"},"deleted":null}}`),
+				)
+				var persistence kubernetes.Interface = storage
+				if adapter {
+					persistence = kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), kvstore.NewKubernetesStore(storage))
+				}
+				pvc := false
+				cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+					Namespace: "workloads", SettingsBaseSecret: baseName,
+					Image: "test-image", BasePort: 9000, PVCEnabled: &pvc,
+				}}
+				// Match API composition: the workload client is empty, and settings
+				// live in a separate persistence client and namespace.
+				builder, err := services.NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+				require.NoError(t, err)
+				builder.SetSettingsSecretClient(persistence, namespace)
+				manager := newFakeManager()
+				client, _ := newTestClient(t, manager)
+				client.SetProvisionSettingsBuilder(builder)
+				req := &entities.RunServerRequest{UserID: "user-1", Scope: entities.ScopeUser, Teams: []string{"org/team"}, AgentType: agentType}
+				_, err = client.CreateSession(ctx, "base-mcp-session", req, nil)
+				require.NoError(t, err)
+				require.NotNil(t, manager.createdRequest)
+				settings := manager.createdRequest.ProvisionSettings
+				require.NotNil(t, settings)
+				servers := settings.Claude.MCPServers
+				if agentType == "codex-acp" {
+					servers = settings.Codex.MCPServers
+				}
+				require.Len(t, servers, 3)
+				require.Equal(t, "https://base.example/mcp", servers["base-only"].(map[string]interface{})["url"])
+				require.Equal(t, "https://team.example/mcp", servers["team-only"].(map[string]interface{})["url"])
+				require.Equal(t, "https://user.example/shared", servers["shared"].(map[string]interface{})["url"])
+				require.NotContains(t, servers, "deleted")
+				require.Nil(t, req.ProvisionSettings)
+			})
+		}
 	}
 }
 

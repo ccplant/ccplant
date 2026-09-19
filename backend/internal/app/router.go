@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/spec"
 )
@@ -84,6 +85,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	if server.esmControlStore != nil {
 		sessionPoolController.WithManagerLiveness(server.esmControlStore)
 	}
+	if server.esmControlTunnel != nil {
+		sessionPoolController.WithManagerTunnel(server.esmControlTunnel)
+	}
 	if server.sessionAllocationNotifier != nil {
 		sessionPoolController.WithAllocationNotifier(server.sessionAllocationNotifier)
 	}
@@ -101,7 +105,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		encryptedStorage := false
 		if cfg := server.GetConfig(); cfg != nil {
-			encryptedStorage = cfg.KVStore.Backend == "libsql-encrypted" || (cfg.KVStore.Primary != nil && cfg.KVStore.Primary.Backend == "libsql-encrypted")
+			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
 	}
@@ -134,6 +138,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		if server.persistenceClient != nil {
 			codexDeviceAuthController.WithAttemptStore(repositories.NewKubernetesCodexAuthAttemptRepository(server.GetPersistenceClient(), server.namespace))
 		}
+		if cfg := server.GetConfig(); cfg != nil {
+			codexDeviceAuthController.WithCallbackBaseURL(cfg.CodexDeviceAuthCallbackBaseURL)
+		}
 		log.Printf("[ROUTER] Codex device auth controller initialized")
 	}
 
@@ -146,7 +153,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
+		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
+		controllers.WithGitHubBrokerBaseURL(server.config.GitHubBrokerBaseURL),
 	}
 	if githubConnectionsController != nil {
 		sessionControllerOptions = append(sessionControllerOptions, controllers.WithGitHubTokenResolver(githubConnectionsController))
@@ -291,10 +300,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// session-manager registry have neither a local Kubernetes manager nor the
 	// legacy allocation queue, but must still expose the runtime endpoints.
 	if server.esmControlStore != nil && server.sessionRouteRepo != nil {
-		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController)
+		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController).WithRunnerStore(server.sessionRunnerStore)
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
-		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg))
+		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, server, server.sessionRouteRepo).WithLeases(buildWorkerLeaseClient(cfg)).WithSessionDeleter(sessionController.DeleteSessionFromWorker)
 		if server.scheduleManager != nil {
 			workerControlController.WithScheduleManager(server.scheduleManager)
 		}
@@ -349,6 +358,11 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			customHandlers:                 make([]CustomHandler, 0),
 		},
 	}
+}
+
+func supportsGitHubSecretStorage(cfg config.KVStoreConfig) bool {
+	backend := configuredKVBackend(cfg)
+	return backend == "libsql-encrypted" || backend == "kubernetes"
 }
 
 // AddCustomHandler adds a custom handler to the registry
@@ -418,6 +432,10 @@ func (r *Router) registerCoreRoutes() error {
 	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)
 	r.echo.POST("/sessions/:sessionId/resume", r.handlers.sessionController.ResumeSession)
+	r.echo.POST("/sessions/:sessionId/restart", r.handlers.sessionController.RestartSession)
+	r.echo.GET("/sessions/:sessionId/restart", r.handlers.sessionController.RestartStatus)
+	r.echo.POST("/sessions/:sessionId/pause", r.handlers.sessionController.PauseSession)
+	r.echo.POST("/sessions/:sessionId/suspend", r.handlers.sessionController.SuspendSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
@@ -426,6 +444,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-runners/allocations/next", r.handlers.sessionPoolController.ClaimRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/ack", r.handlers.sessionPoolController.AckRunnerAllocation)
 		r.echo.POST("/internal/session-runners/allocations/:sessionId/fail", r.handlers.sessionPoolController.FailRunnerAllocation)
+		r.echo.POST("/internal/session-managers/:id/runners/:runnerId/retire", r.handlers.sessionPoolController.RetireRunner)
 		r.echo.POST("/internal/session-managers/:id/heartbeat", r.handlers.sessionPoolController.HeartbeatManager)
 		r.echo.GET("/internal/session-managers/:id/runtime-profile", r.handlers.sessionPoolController.GetManagerRuntimeProfile)
 	}
@@ -502,6 +521,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/internal/session-runtime/:sessionId/requests", r.handlers.sessionRuntimeController.WaitRequests)
 		r.echo.POST("/internal/session-runtime/:sessionId/frames", r.handlers.sessionRuntimeController.AppendFrames)
 		r.echo.POST("/internal/session-runtime/:sessionId/status", r.handlers.sessionRuntimeController.UpdateStatus)
+		r.echo.POST("/internal/session-runtime/:sessionId/checkpoint", r.handlers.sessionRuntimeController.Checkpoint)
 		log.Printf("[ROUTES] Direct Session Pod runtime endpoints registered")
 	}
 
@@ -628,17 +648,28 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.PUT("/admin/github-connections/:id/secret", controller.UpdateSecret, admin)
 		r.echo.DELETE("/admin/github-connections/:id/secret", controller.DeleteSecret, admin)
 		r.echo.POST("/admin/github-connections/:id/test", controller.Test, admin)
+		r.echo.PUT("/admin/github-connections/:id/github-app/private-key", controller.UpdateGitHubAppPrivateKey, admin)
+		r.echo.DELETE("/admin/github-connections/:id/github-app/private-key", controller.DeleteGitHubAppPrivateKey, admin)
+		r.echo.POST("/admin/github-connections/:id/github-app/test", controller.TestGitHubApp, admin)
+		r.echo.GET("/internal/sessions/:sessionId/github-credentials", controller.BrokerCredentials)
 		r.echo.GET("/github-connections", controller.ListAvailable, read)
 		r.echo.GET("/users/me/github-identities", controller.ListIdentities, read)
 		r.echo.POST("/users/me/github-identities/link", controller.StartLink, write)
 		r.echo.DELETE("/users/me/github-identities/:identity_id", controller.Unlink, write)
 	}
 	if r.handlers.sessionPoolController != nil {
+		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
 		poolRead := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
 		poolWrite := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
 		r.echo.POST("/session-managers/registration-tokens", r.handlers.sessionPoolController.IssueManagerRegistrationToken, poolWrite)
 		r.echo.POST("/session-managers/enroll", r.handlers.sessionPoolController.EnrollManager)
 		r.echo.GET("/session-managers", r.handlers.sessionPoolController.ListOwnedManagers, poolRead)
+		r.echo.GET("/session-pools/status", r.handlers.sessionPoolController.ListManageablePoolStatus, poolRead)
+		r.echo.GET("/session-managers/:id/logs", r.handlers.sessionPoolController.GetManagerLogs, poolRead)
+		r.echo.GET("/session-runners/:id/logs", r.handlers.sessionPoolController.GetRunnerLogs, poolRead)
+		r.echo.GET("/admin/session-runners", r.handlers.sessionPoolController.ListAdminRunners, admin)
+		r.echo.GET("/admin/session-runners/:id/logs", r.handlers.sessionPoolController.GetAdminRunnerLogs, admin)
+		r.echo.DELETE("/admin/session-runners/:id", r.handlers.sessionPoolController.DeleteAdminRunner, admin)
 		r.echo.GET("/session-managers/:id", r.handlers.sessionPoolController.GetOwnedManager, poolRead)
 		r.echo.PATCH("/session-managers/:id", r.handlers.sessionPoolController.PatchOwnedManager, poolWrite)
 		r.echo.DELETE("/session-managers/:id", r.handlers.sessionPoolController.DeleteOwnedManager, poolWrite)

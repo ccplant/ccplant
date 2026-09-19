@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: ghcr.io/ccplant/ccplant-backend
+  repository: ghcr.io/ccplant/ccplant-api
   tag: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -20,11 +20,6 @@ serviceAccount:
 service:
   type: ClusterIP
   port: 8080
-
-# Stable in-cluster callback name used by already-running session Pods.
-compatibilityService:
-  enabled: true
-  name: control
 
 ingress:
   enabled: false
@@ -68,9 +63,36 @@ leaderElection:
   renewDeadline: 10s
   retryPeriod: 2s
 
+sessionPersistence:
+  backend: ""
+  suspendAfter: 1h
+  s3:
+    bucket: ""
+    region: garage
+    prefix: agentapi-sessions/
+    endpoint: ""
+    accessKeyIdSecretRef:
+      name: ""
+      key: access-key-id
+    secretAccessKeySecretRef:
+      name: ""
+      key: secret-access-key
+
 session:
-  image: ""
+  image: "ghcr.io/ccplant/ccplant-agent:assets-068be2ef320224e336d7538c3a700bef"
+  # CLI source follows the manager release; override for a custom registry.
+  cliImage: ""
   serviceAccountName: agentapi-proxy-session
+  isolation:
+    # Hide Service-derived environment variables from session containers.
+    disableServiceLinks: false
+    # Do not mount the service account token, cluster CA, or namespace into sessions.
+    disableServiceAccountToken: false
+    # Requires Cilium. Preserves normal egress while denying the kube-apiserver entity.
+    blockKubernetesAPI: false
+    # Requires Cilium. Set to public-only to allow kube-dns and the Cilium
+    # world entity while denying all other cluster-internal egress.
+    egressMode: ""
   networkFilterImage: ghcr.io/ccplant/network-filter-agent:latest
   imagePullPolicy: IfNotPresent
   basePort: 9000
@@ -80,6 +102,7 @@ session:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "2", memory: 4Gi}
   pvc:
+    # Automatically enabled when sessionPersistence.backend=volume.
     enabled: false
     storageClass: ""
     storageSize: 10Gi
@@ -92,7 +115,14 @@ podAnnotations: {}
 podLabels: {}
 podSecurityContext: {}
 securityContext: {}
-resources: {}
+# Resources for the manager container; session.resources configures session Pods.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
 nodeSelector: {}
 tolerations: []
 affinity: {}

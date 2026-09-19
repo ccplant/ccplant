@@ -6,7 +6,6 @@ import { createAgentAPIProxyClientFromStorage, ProxySessionStatusEvent } from '.
 import { Session, SessionStatus } from '../../types/agentapi'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import { useSessionsStatusStream } from '../hooks/useSessionsStatusStream'
-import { resumeSessionFromList } from '../../lib/session-resume'
 
 interface SessionListSidebarProps {
   currentSessionId: string
@@ -17,6 +16,9 @@ function getStatusDotClass(status: SessionStatus): string {
   switch (status) {
     case 'active':   return 'bg-green-500'
     case 'suspended':return 'bg-violet-500'
+    case 'suspending':return 'bg-violet-400 animate-pulse'
+    case 'resuming':
+    case 'restoring': return 'bg-blue-400 animate-pulse'
     case 'running':  return 'bg-yellow-400 animate-pulse'
     case 'starting': return 'bg-yellow-400 animate-pulse'
     case 'creating': return 'bg-blue-400 animate-pulse'
@@ -69,15 +71,20 @@ export default function SessionListSidebar({
   isVisible = true,
 }: SessionListSidebarProps) {
   const router = useRouter()
-  const { selectedTeam } = useTeamScope()
+  const { selectedTeam, isLoading: isTeamScopeLoading } = useTeamScope()
   const [client] = useState(() => createAgentAPIProxyClientFromStorage())
   const [sessions, setSessions] = useState<Session[]>([])
   const sessionsRef = useRef<Session[]>([])
+  const requestedScopeRef = useRef<string | null>(null)
+  requestedScopeRef.current = isTeamScopeLoading
+    ? null
+    : selectedTeam ? `team:${selectedTeam}` : 'user'
   const [loading, setLoading] = useState(true)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
-  const resumingIdsRef = useRef<Set<string>>(new Set())
 
   const fetchSessions = useCallback(async () => {
+    if (isTeamScopeLoading) return
+    const requestedScope = selectedTeam ? `team:${selectedTeam}` : 'user'
     try {
       const scopeParams: { scope: 'user' | 'team'; team_id?: string } = selectedTeam
         ? { scope: 'team', team_id: selectedTeam }
@@ -87,22 +94,17 @@ export default function SessionListSidebar({
         new Date(b.updated_at || b.started_at).getTime() -
         new Date(a.updated_at || a.started_at).getTime()
       )
+      if (requestedScopeRef.current !== requestedScope) return
       sessionsRef.current = sorted
       setSessions(sorted)
 
-      const current = sorted.find(session => session.session_id === currentSessionId)
-      if (current?.status === 'suspended' && !resumingIdsRef.current.has(currentSessionId)) {
-        resumingIdsRef.current.add(currentSessionId)
-        void resumeSessionFromList(client, sorted, currentSessionId)
-          .catch((err) => console.error('[SessionListSidebar] Failed to resume session:', err))
-          .finally(() => resumingIdsRef.current.delete(currentSessionId))
-      }
     } catch (err) {
+      if (requestedScopeRef.current !== requestedScope) return
       console.error('[SessionListSidebar] Failed to fetch sessions:', err)
     } finally {
-      setLoading(false)
+      if (requestedScopeRef.current === requestedScope) setLoading(false)
     }
-  }, [client, currentSessionId, selectedTeam])
+  }, [client, isTeamScopeLoading, selectedTeam])
 
   // SSE でリアルタイム更新: ステータス変化をインプレース反映し、active になったらフルリフレッシュ
   const handleProxyStatusEvent = useCallback((event: ProxySessionStatusEvent) => {

@@ -30,24 +30,34 @@ func TestCodexDeviceAuthCallbackUsesAttemptTokenAuthentication(t *testing.T) {
 	}
 }
 
-func TestAuthenticateScheduleExecution(t *testing.T) {
-	now := time.Now()
-	token, err := executiontoken.SignExecutionToken([]byte("secret"), executiontoken.ExecutionClaims{ScheduleID: "s", ExecutionID: "e", SessionID: "session", UserID: "alice", Teams: []string{"org/team"}, ExpiresAt: now.Add(time.Minute).Unix()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := echo.New()
-	req := httptest.NewRequest("POST", "/start", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	ctx := e.NewContext(req, httptest.NewRecorder())
-	if !authenticateScheduleExecution(ctx, "secret", now) {
-		t.Fatal("valid execution token rejected")
-	}
-	if user := GetUserFromContext(ctx); user == nil || string(user.ID()) != "alice" {
-		t.Fatalf("user=%v", user)
-	}
-	if !GetAuthorizationContext(ctx).CanCreateInTeam("org/team") {
-		t.Fatal("team context not restored")
+func TestAuthenticateTriggerExecution(t *testing.T) {
+	for _, origin := range []string{"schedule", "webhook"} {
+		t.Run(origin, func(t *testing.T) {
+			now := time.Now()
+			claims := executiontoken.ExecutionClaims{ExecutionID: "e", SessionID: "session", UserID: "alice", Teams: []string{"org/team"}, ExpiresAt: now.Add(time.Minute).Unix()}
+			if origin == "schedule" {
+				claims.ScheduleID = "s"
+			} else {
+				claims.WebhookID = "w"
+			}
+			token, err := executiontoken.SignExecutionToken([]byte("secret"), claims)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := echo.New()
+			req := httptest.NewRequest("POST", "/start", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			ctx := e.NewContext(req, httptest.NewRecorder())
+			if !authenticateTriggerExecution(ctx, "secret", now) {
+				t.Fatal("valid execution token rejected")
+			}
+			if user := GetUserFromContext(ctx); user == nil || string(user.ID()) != "alice" {
+				t.Fatalf("user=%v", user)
+			}
+			if !GetAuthorizationContext(ctx).CanCreateInTeam("org/team") {
+				t.Fatal("team context not restored")
+			}
+		})
 	}
 }
 

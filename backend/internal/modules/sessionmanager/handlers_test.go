@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type proxyTestSession struct{ addr string }
@@ -35,7 +37,18 @@ func (s *proxyTestSession) Annotations() entities.SessionAnnotations {
 }
 func (s *proxyTestSession) Request() *entities.RunServerRequest { return nil }
 
-type proxyTestManager struct{ session entities.Session }
+type proxyTestManager struct {
+	session     entities.Session
+	deletedID   string
+	suspendedID string
+	resumedID   string
+	preparedID  string
+}
+
+func (m *proxyTestManager) PrepareSessionResume(_ context.Context, id string, _ *sessionsettings.SessionSettings) error {
+	m.preparedID = id
+	return nil
+}
 
 func (m *proxyTestManager) CreateSession(context.Context, string, *entities.RunServerRequest, []byte) (entities.Session, error) {
 	return nil, nil
@@ -47,13 +60,129 @@ func (m *proxyTestManager) GetSession(id string) entities.Session {
 	return nil
 }
 func (m *proxyTestManager) ListSessions(entities.SessionFilter) []entities.Session { return nil }
-func (m *proxyTestManager) DeleteSession(string) error                             { return nil }
-func (m *proxyTestManager) SendMessage(context.Context, string, string) error      { return nil }
-func (m *proxyTestManager) StopAgent(context.Context, string) error                { return nil }
+func (m *proxyTestManager) DeleteSession(id string) error {
+	m.deletedID = id
+	return nil
+}
+func (m *proxyTestManager) SendMessage(context.Context, string, string) error { return nil }
+func (m *proxyTestManager) StopAgent(context.Context, string) error           { return nil }
 func (m *proxyTestManager) GetMessages(context.Context, string) ([]repositories.Message, error) {
 	return nil, nil
 }
 func (m *proxyTestManager) Shutdown(time.Duration) error { return nil }
+func (m *proxyTestManager) OperationalStatus(context.Context, []string) (map[string]interface{}, error) {
+	return map[string]interface{}{}, nil
+}
+func (m *proxyTestManager) OperationalLogs(context.Context, string, string, int) ([]string, string, error) {
+	return nil, "", nil
+}
+func (m *proxyTestManager) SuspendSession(_ context.Context, id string) error {
+	m.suspendedID = id
+	return nil
+}
+func (m *proxyTestManager) EnsureSessionWorkload(_ context.Context, id string) (entities.Session, bool, error) {
+	m.resumedID = id
+	return m.session, true, nil
+}
+
+func TestSuspendSessionUsesManagerPolicy(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/sessions/remote-1/suspend"
+	body := []byte(`{"session":{"user_id":"user","scope":"user"}}`)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodPost, path, ts, body)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.suspendedID != "remote-1" {
+		t.Fatalf("status=%d suspended=%q body=%s", rec.Code, manager.suspendedID, rec.Body.String())
+	}
+}
+
+func TestDeleteOperationalRunnerUsesCompleteSessionDeletion(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/internal/esm-management/runners/runner-a"
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodDelete, path, ts, nil)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.deletedID != "runner-a" {
+		t.Fatalf("status=%d deleted=%q body=%s", rec.Code, manager.deletedID, rec.Body.String())
+	}
+}
+
+func TestSuspendSessionRejectsMissingResumeSettingsWithoutStoppingWorkload(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/sessions/remote-1/suspend"
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodPost, path, ts, nil)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || manager.suspendedID != "" {
+		t.Fatalf("status=%d suspended=%q body=%s", rec.Code, manager.suspendedID, rec.Body.String())
+	}
+}
+
+func TestSuspendSessionPersistsParentSettings(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/sessions/remote-1/suspend"
+	body := []byte(`{"session":{"user_id":"user","scope":"user"}}`)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodPost, path, ts, body)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.preparedID != "remote-1" || manager.suspendedID != "remote-1" {
+		t.Fatalf("status=%d prepared=%q suspended=%q body=%s", rec.Code, manager.preparedID, manager.suspendedID, rec.Body.String())
+	}
+}
+
+func TestResumeSessionEnsuresWorkload(t *testing.T) {
+	const secret = "test-secret"
+	manager := &proxyTestManager{session: &proxyTestSession{}}
+	e := echo.New()
+	if err := NewHandlers(manager, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/sessions/remote-1/resume"
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(http.MethodPost, path, ts, nil)))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || manager.resumedID != "remote-1" {
+		t.Fatalf("status=%d resumed=%q body=%s", rec.Code, manager.resumedID, rec.Body.String())
+	}
+}
 
 func TestProxySessionUsesParentCompatiblePathAndPreservesQuery(t *testing.T) {
 	var gotPath, gotQuery string
@@ -246,5 +375,69 @@ func TestCodexDeviceAuthWithoutLauncherIsNotImplemented(t *testing.T) {
 	e.ServeHTTP(rec, signedCodexAuthRequest(http.MethodPost, "/api/v1/codex-device-auth", body))
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+type pooledRestartTestManager struct {
+	proxyTestManager
+	currentID string
+	nextID    string
+	paused    bool
+}
+
+func (m *pooledRestartTestManager) CurrentSessionSettings(context.Context, string) (*sessionsettings.SessionSettings, error) {
+	return nil, nil
+}
+func (m *pooledRestartTestManager) ValidateSessionRestart(context.Context, string, *sessionsettings.SessionSettings) error {
+	return fmt.Errorf("missing manager settings")
+}
+func (m *pooledRestartTestManager) ValidateSessionRestartWithCurrent(_ context.Context, id string, current, next *sessionsettings.SessionSettings) error {
+	if id != "remote-1" {
+		return fmt.Errorf("wrong runtime ID")
+	}
+	m.currentID, m.nextID = current.Session.ID, next.Session.ID
+	return sessionsettings.ValidateRestart(current, next)
+}
+func (m *pooledRestartTestManager) RestartSession(context.Context, string, string, *sessionsettings.SessionSettings) error {
+	return nil
+}
+func (m *pooledRestartTestManager) PauseSession(context.Context, string) error {
+	if m.preparedID != "remote-1" {
+		return fmt.Errorf("settings not preserved before pause")
+	}
+	m.paused = true
+	return nil
+}
+func TestPooledRestartRoutesUseParentCurrentSettings(t *testing.T) {
+	const secret = "test-secret"
+	m := &pooledRestartTestManager{}
+	e := echo.New()
+	if err := NewHandlers(m, secret).RegisterRoutes(e); err != nil {
+		t.Fatal(err)
+	}
+	current := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{ID: "public-1", AgentType: "codex-acp"}}
+	next := *current
+	for _, tc := range []struct {
+		action  string
+		payload interface{}
+	}{
+		{"restart/validate", sessionsettings.RestartValidationRequest{SessionSettings: &next, CurrentSettings: current}},
+		{"pause", current},
+	} {
+		body, _ := json.Marshal(tc.payload)
+		path := "/api/v1/sessions/remote-1/" + tc.action
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		ts := hmacutil.NowTimestamp()
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(hmacutil.TimestampHeader, ts)
+		req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(secret), hmacutil.BuildMessage(req.Method, path, ts, body)))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != 204 {
+			t.Fatalf("%s: status=%d body=%s", tc.action, rec.Code, rec.Body.String())
+		}
+	}
+	if m.currentID != "public-1" || m.nextID != "public-1" || !m.paused {
+		t.Fatal("lost current settings or pause")
 	}
 }

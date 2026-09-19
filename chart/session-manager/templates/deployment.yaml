@@ -1,3 +1,6 @@
+{{- $sessionPersistence := .Values.sessionPersistence | default dict -}}
+{{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" -}}
+{{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,11 +66,31 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ .Values.leaderElection.leaseDuration | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ .Values.leaderElection.renewDeadline | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ .Values.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER, value: {{ $sessionPersistence.suspendAfter | default "1h" | quote }}}
+            {{- if $sessionPersistenceS3.bucket }}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: {{ $sessionPersistenceS3.bucket | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_REGION, value: {{ $sessionPersistenceS3.region | default "garage" | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX, value: {{ $sessionPersistenceS3.prefix | default "agentapi-sessions/" | quote }}}
+            - {name: AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT, value: {{ $sessionPersistenceS3.endpoint | default "" | quote }}}
+            {{- with $sessionPersistenceS3.accessKeyIdSecretRef.name }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $sessionPersistenceS3.accessKeyIdSecretRef.key | default "access-key-id" | quote }}}}
+            {{- end }}
+            {{- with $sessionPersistenceS3.secretAccessKeySecretRef.name }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ . | quote }}, key: {{ $sessionPersistenceS3.secretAccessKeySecretRef.key | default "secret-access-key" | quote }}}}
+            {{- end }}
+            {{- end }}
             - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
+              value: {{ .Values.session.cliImage | default (include "session-manager.image" .) | quote }}
             - {name: AGENTAPI_K8S_SESSION_IMAGE, value: {{ .Values.session.image | default (include "session-manager.image" .) | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ .Values.session.networkFilterImage | quote }}}
             - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ .Values.session.imagePullPolicy | quote }}}
             - {name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: {{ .Values.session.serviceAccountName | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS, value: {{ .Values.session.isolation.disableServiceLinks | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN, value: {{ .Values.session.isolation.disableServiceAccountToken | quote }}}
             - {name: AGENTAPI_K8S_SESSION_BASE_PORT, value: {{ .Values.session.basePort | quote }}}
             - {name: AGENTAPI_K8S_SESSION_CPU_REQUEST, value: {{ .Values.session.resources.requests.cpu | quote }}}
             - {name: AGENTAPI_K8S_SESSION_CPU_LIMIT, value: {{ .Values.session.resources.limits.cpu | quote }}}

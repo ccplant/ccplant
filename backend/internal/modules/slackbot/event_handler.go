@@ -8,17 +8,21 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 const (
 	// slackBotDefaultID is the special ID for the server-configured default SlackBot
 	slackBotDefaultID = "default"
+	// slackEventDedupTTL covers delayed duplicate Events API deliveries and informer lag.
+	slackEventDedupTTL = time.Minute
 )
 
 // slackMentionRe matches Slack user/bot mention tokens of the form <@UXXXXXXXX>.
@@ -43,12 +47,21 @@ type SlackBotEventHandler struct {
 	// dryRun disables actual session creation and Slack posts; actions are only logged.
 	// Enabled via AGENTAPI_SLACK_DRY_RUN environment variable.
 	dryRun bool
-	// pendingThreads tracks channel+thread combinations that have a session creation
-	// in-flight. Slack may emit both "message" and "app_mention" events for the same
-	// @mention within milliseconds of each other. Without this guard both events would
-	// pass the reuse check (no session exists yet) and spawn duplicate sessions.
-	// Key: "channel:threadKey"  Value: struct{}
-	pendingThreads sync.Map
+	// pendingThreads serializes session creation/reuse requests for each Slack thread.
+	// Distinct messages in one thread must be queued rather than discarded while an
+	// earlier request is in flight. Exact duplicate callbacks are handled separately by
+	// processedEvents using the Slack message timestamp.
+	pendingThreadsMu sync.Mutex
+	pendingThreads   map[string]*pendingThreadQueue
+	// processedEvents tracks recently accepted Slack message timestamps.
+	processedEvents sync.Map
+}
+
+// pendingThreadQueue is a small FIFO chain for one Slack thread. Each reservation
+// waits for its predecessor channel to close, then closes its own channel when done.
+type pendingThreadQueue struct {
+	tail chan struct{}
+	refs int
 }
 
 // NewSlackBotEventHandler creates a new SlackBotEventHandler
@@ -74,7 +87,39 @@ func NewSlackBotEventHandler(
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
 		baseURL:                   baseURL,
 		dryRun:                    dryRun,
+		pendingThreads:            make(map[string]*pendingThreadQueue),
 	}
+}
+
+// reserveThreadTurn appends work to a per-thread FIFO queue. It returns a wait
+// function and a release function so callers can reserve ordering before starting
+// their asynchronous goroutine without blocking Slack event acknowledgement.
+func (h *SlackBotEventHandler) reserveThreadTurn(key string) (wait, release func()) {
+	h.pendingThreadsMu.Lock()
+	queue := h.pendingThreads[key]
+	if queue == nil {
+		ready := make(chan struct{})
+		close(ready)
+		queue = &pendingThreadQueue{tail: ready}
+		h.pendingThreads[key] = queue
+	}
+	predecessor := queue.tail
+	done := make(chan struct{})
+	queue.tail = done
+	queue.refs++
+	h.pendingThreadsMu.Unlock()
+
+	wait = func() { <-predecessor }
+	release = func() {
+		close(done)
+		h.pendingThreadsMu.Lock()
+		queue.refs--
+		if queue.refs == 0 && queue.tail == done {
+			delete(h.pendingThreads, key)
+		}
+		h.pendingThreadsMu.Unlock()
+	}
+	return wait, release
 }
 
 // SlackPayload represents the outer Slack event payload structure
@@ -101,6 +146,12 @@ type SlackEvent struct {
 // botID should be the SlackBot entity ID or slackBotDefaultID ("default").
 // This method is called by SlackSocketWorker after acknowledging the event to Slack.
 func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, payload SlackPayload) error {
+	return telemetry.LoggedOperationErr(ctx, "slackbot.ProcessEvent", func(operationCtx context.Context) error {
+		return h.processEvent(operationCtx, botID, payload)
+	}, telemetry.String("slackbot.id", botID), telemetry.String("slack.event_type", payload.Type))
+}
+
+func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, payload SlackPayload) error {
 	log.Printf("[SLACKBOT] ProcessEvent called: botID=%s, type=%s", botID, payload.Type)
 	// We only process event_callback type
 	if payload.Type != "event_callback" || payload.Event == nil {
@@ -109,6 +160,10 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	}
 
 	event := payload.Event
+	threadKey := event.ThreadTs
+	if threadKey == "" {
+		threadKey = event.Ts
+	}
 
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
 	bot, err := h.resolveSlackBot(ctx, botID)
@@ -120,13 +175,20 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// If no matching bot is found, notify the user via Slack and drop the event
 	// to avoid creating sessions with empty userID.
 	if botID == slackBotDefaultID && bot == nil {
-		resolvedBot := h.resolveBotByChannel(ctx, event.Channel)
+		// Replies overwhelmingly target an already-created session. Resolve its
+		// exact bot ID from indexed session tags before doing the expensive default
+		// channel-to-bot discovery (which lists bot definitions and may call Slack).
+		var resolvedBot *entities.SlackBot
+		if event.ThreadTs != "" {
+			resolvedBot = h.resolveBotFromReusableSession(ctx, event.Channel, threadKey)
+		}
+		if resolvedBot != nil {
+			log.Printf("[SLACKBOT] Default endpoint: identified bot from reusable session: id=%s, channel=%s, thread=%s", resolvedBot.ID(), event.Channel, threadKey)
+		} else {
+			resolvedBot = h.resolveBotByChannel(ctx, event.Channel)
+		}
 		if resolvedBot == nil {
 			log.Printf("[SLACKBOT] Default endpoint: no matching bot found for channel=%s, dropping event", event.Channel)
-			threadKey := event.ThreadTs
-			if threadKey == "" {
-				threadKey = event.Ts
-			}
 			if botToken, tokenErr := h.getBotToken(ctx, nil); tokenErr == nil {
 				h.postErrorToSlack(ctx, event.Channel, threadKey,
 					":warning: このチャンネルに対応する bot が登録されていません。チャンネルの設定を確認してください。",
@@ -190,11 +252,18 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Normalize thread key: use thread_ts if present (indicates a reply), otherwise use ts (root message)
-	threadKey := event.ThreadTs
-	if threadKey == "" {
-		threadKey = event.Ts
+	// The message and app_mention callbacks generated for one Slack post share
+	// channel+ts. Retain this key beyond session creation so a delayed callback
+	// cannot create a second session while ListSessions is still stale.
+	// The handler is shared by every configured bot in this process. Include the
+	// bot ID so two bots receiving the same Slack message do not suppress each
+	// other merely because channel and timestamp match.
+	eventKey := botID + ":" + event.Channel + ":" + event.Ts
+	if _, duplicate := h.processedEvents.LoadOrStore(eventKey, struct{}{}); duplicate {
+		log.Printf("[SLACKBOT] Duplicate Slack event ignored: id=%s, channel=%s, ts=%s", botID, event.Channel, event.Ts)
+		return nil
 	}
+	time.AfterFunc(slackEventDedupTTL, func() { h.processedEvents.Delete(eventKey) })
 
 	channel := event.Channel
 	log.Printf("[SLACKBOT] Processing event: id=%s, type=%s, channel=%s, thread=%s", botID, event.Type, channel, threadKey)
@@ -210,7 +279,9 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 	// Best-effort: errors are logged and an empty string is used as fallback.
 	var threadMessages string
 	if event.ThreadTs != "" {
-		threadMessages = h.fetchAndFormatThreadContext(ctx, bot, channel, event.ThreadTs, event.Ts)
+		threadMessages, _ = telemetry.LoggedOperation(ctx, "slackbot.FetchThreadContext", func(operationCtx context.Context) (string, error) {
+			return h.fetchAndFormatThreadContext(operationCtx, bot, channel, event.ThreadTs, event.Ts), nil
+		}, telemetry.String("slack.channel", channel), telemetry.String("slack.thread_ts", threadKey))
 	}
 
 	// Build payload map for template rendering
@@ -297,32 +368,13 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		}
 	}
 
-	// Try to reuse an existing active session for this channel+thread.
-	// Follow-up messages in the same Slack thread are routed to the existing session
-	// rather than spawning a new one (mirrors the webhook reuse-session behaviour).
-	// NOTE: The slackbot reuse path is handled here (rather than via LaunchUseCase)
-	// because it requires Slackbot-specific message construction (buildMessage).
 	reuseFilter := entities.SessionFilter{
 		Tags: map[string]string{
+			"slackbot_id":       botID,
 			"slack_channel":     channel,
 			"slack_thread_ts":   threadKey,
 			"triggered_user_id": triggeredUserID,
 		},
-		Status: "active",
-	}
-	if activeSessions := h.sessionManager.ListSessions(reuseFilter); len(activeSessions) > 0 {
-		existingSession := activeSessions[0]
-		reuseMessage := h.buildMessage(bot, payloadMap, event.Text, true)
-		go func() {
-			bgCtx := context.Background()
-			if err := h.sessionManager.SendMessage(bgCtx, existingSession.ID(), reuseMessage); err != nil {
-				log.Printf("[SLACKBOT] Failed to route message to existing session %s: %v", existingSession.ID(), err)
-				return
-			}
-			// last-message-at is updated automatically inside SendMessage.
-			log.Printf("[SLACKBOT] Routed message to existing session %s for thread %s", existingSession.ID(), threadKey)
-		}()
-		return nil
 	}
 
 	// Determine scope and ownership.
@@ -341,37 +393,22 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 		maxSessions = bot.MaxSessions()
 	}
 
-	// Check session limit synchronously so that the caller (and tests) can observe
-	// the error before a goroutine is launched.  LaunchUseCase receives MaxSessions=0
-	// to skip the duplicate check inside the goroutine.
-	if maxSessions > 0 {
-		limitFilter := entities.SessionFilter{
-			Tags: map[string]string{"slackbot_id": botID},
-		}
-		activeSessions := h.sessionManager.ListSessions(limitFilter)
-		if len(activeSessions) >= maxSessions {
-			log.Printf("[SLACKBOT] Session limit reached: id=%s, limit=%d", botID, maxSessions)
-			return fmt.Errorf("session limit reached: maximum %d sessions", maxSessions)
-		}
-	}
-
 	sessionID := uuid.New().String()
 
-	// Dedup guard: Slack can emit both "message" and "app_mention" events for the same
-	// @mention within milliseconds. Both would pass the reuse check above (the session
-	// doesn't exist yet when they run concurrently) and would each spawn a new session.
-	// Use LoadOrStore so that only the first event proceeds; the second is dropped.
-	// The key is released once session creation completes (success or failure).
-	pendingKey := channel + ":" + threadKey + ":" + triggeredUserID
-	if _, alreadyPending := h.pendingThreads.LoadOrStore(pendingKey, struct{}{}); alreadyPending {
-		log.Printf("[SLACKBOT] Session creation already in progress for thread %s (event type=%s), skipping duplicate", threadKey, event.Type)
-		return nil
-	}
+	// Serialize distinct requests for the same thread. The first request may still be
+	// creating the session when a follow-up arrives, so the follow-up must wait until
+	// reuse can resolve authoritatively instead of being discarded as a duplicate.
+	pendingKey := botID + ":" + channel + ":" + threadKey + ":" + triggeredUserID
+	waitForTurn, releaseTurn := h.reserveThreadTurn(pendingKey)
 
 	// Create session asynchronously so we don't block event processing
-	go func() {
-		defer h.pendingThreads.Delete(pendingKey)
-		bgCtx := context.Background()
+	go func(asyncCtx context.Context) {
+		queueStartedAt := time.Now()
+		waitForTurn()
+		log.Printf("[OTEL_TIMING] completed operation=slackbot.ThreadQueueWait status=success duration_ms=%d bot_id=%s channel=%s thread=%s",
+			time.Since(queueStartedAt).Milliseconds(), botID, channel, threadKey)
+		defer releaseTurn()
+		bgCtx := context.WithoutCancel(asyncCtx)
 
 		if h.dryRun {
 			log.Printf("[SLACKBOT] [DRY-RUN] Would create session: id=%s, channel=%s, thread=%s, agentType=%s, scope=%s",
@@ -427,59 +464,75 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 			slackInitialMessageWaitSecond = params.InitialMessageWaitSecond
 			slackCycleMessage = params.CycleMessage
 			slackCycleMaxCount = params.CycleMaxCount
-			slackSessionTTL = params.SessionTTL
+			slackSessionTTL = sessionuc.ResolveSessionTTL(params)
 		}
 
-		result, err := h.launcher.Launch(bgCtx, sessionID, sessionuc.LaunchRequest{
-			UserID:                   userID,
-			TriggeredUserID:          triggeredUserID,
-			Scope:                    scope,
-			TeamID:                   teamID,
-			Teams:                    teams,
-			Environment:              env,
-			Tags:                     tags,
-			InitialMessage:           initialMessage,
-			AgentType:                agentType,
-			Model:                    model,
-			MemoryKey:                memoryKey,
-			RepoInfo:                 repoInfo,
-			Sandbox:                  slackSandbox,
-			Docker:                   slackDocker,
-			AuthProxy:                slackAuthProxy,
-			InitialMessageWaitSecond: slackInitialMessageWaitSecond,
-			CycleMessage:             slackCycleMessage,
-			CycleMaxCount:            slackCycleMaxCount,
-			SessionTTL:               slackSessionTTL,
-			SessionProfileID:         slackSessionProfileID,
-			CredentialSource: func() string {
-				if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
-					return bot.SessionConfig().Params().CredentialSource
-				}
-				return ""
-			}(),
-			SlackParams: func() *entities.SlackParams {
-				sp := &entities.SlackParams{
-					Channel:  channel,
-					ThreadTS: threadKey,
-				}
-				if bot != nil && bot.BotTokenSecretName() != "" {
-					sp.BotTokenSecretName = bot.BotTokenSecretName()
-					sp.BotTokenSecretKey = bot.BotTokenSecretKey()
-				}
-				return sp
-			}(),
-			// MaxSessions=0: limit was already checked synchronously above so we
-			// skip the redundant check inside LaunchUseCase.
-		})
+		result, err := telemetry.LoggedOperation(bgCtx, "slackbot.LaunchSession", func(launchCtx context.Context) (sessionuc.LaunchResult, error) {
+			return h.launcher.Launch(launchCtx, sessionID, sessionuc.LaunchRequest{
+				UserID:                   userID,
+				TriggeredUserID:          triggeredUserID,
+				Scope:                    scope,
+				TeamID:                   teamID,
+				Teams:                    teams,
+				Environment:              env,
+				Tags:                     tags,
+				InitialMessage:           initialMessage,
+				ReuseSession:             true,
+				ReuseMatchTags:           reuseFilter.Tags,
+				ReuseMessage:             h.buildMessage(bot, payloadMap, event.Text, true),
+				StopBeforeReuse:          true,
+				DeferReuseToStart:        true,
+				MaxSessions:              maxSessions,
+				LimitMatchTags:           map[string]string{"slackbot_id": botID},
+				AgentType:                agentType,
+				Model:                    model,
+				MemoryKey:                memoryKey,
+				RepoInfo:                 repoInfo,
+				Sandbox:                  slackSandbox,
+				Docker:                   slackDocker,
+				AuthProxy:                slackAuthProxy,
+				InitialMessageWaitSecond: slackInitialMessageWaitSecond,
+				CycleMessage:             slackCycleMessage,
+				CycleMaxCount:            slackCycleMaxCount,
+				SessionTTL:               slackSessionTTL,
+				SessionProfileID:         slackSessionProfileID,
+				CredentialSource: func() string {
+					if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+						return bot.SessionConfig().Params().CredentialSource
+					}
+					return ""
+				}(),
+				SlackParams: func() *entities.SlackParams {
+					sp := &entities.SlackParams{
+						Channel:            channel,
+						ThreadTS:           threadKey,
+						BotTokenSecretName: h.defaultBotTokenSecretName,
+						BotTokenSecretKey:  h.defaultBotTokenSecretKey,
+					}
+					if bot != nil && bot.BotTokenSecretName() != "" {
+						sp.BotTokenSecretName = bot.BotTokenSecretName()
+					}
+					if bot != nil && bot.BotTokenSecretKey() != "" {
+						sp.BotTokenSecretKey = bot.BotTokenSecretKey()
+					}
+					return sp
+				}(),
+			})
+		}, telemetry.String("slackbot.id", botID), telemetry.String("slack.channel", channel), telemetry.String("slack.thread_ts", threadKey))
 		if err != nil {
+			h.processedEvents.Delete(eventKey)
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
 			return
 		}
-		log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
-		if bot.NotifyOnSessionCreated() {
+		if result.SessionReused {
+			log.Printf("[SLACKBOT] Reused session %s for thread %s", result.SessionID, threadKey)
+		} else {
+			log.Printf("[SLACKBOT] Created session %s for thread %s", result.SessionID, threadKey)
+		}
+		if !result.SessionReused && bot.NotifyOnSessionCreated() {
 			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, tags["repository"], bot)
 		}
-	}()
+	}(ctx)
 
 	return nil
 }
@@ -496,6 +549,34 @@ func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (
 		return nil, fmt.Errorf("slackbot not found: %s", id)
 	}
 	return bot, nil
+}
+
+func (h *SlackBotEventHandler) resolveBotFromReusableSession(ctx context.Context, channelID, threadTS string) *entities.SlackBot {
+	if channelID == "" || threadTS == "" {
+		return nil
+	}
+	sessions, _ := telemetry.LoggedOperation(ctx, "slackbot.FindReusableSession", func(context.Context) ([]entities.Session, error) {
+		return h.sessionManager.ListSessions(entities.SessionFilter{Tags: map[string]string{
+			"slack_channel": channelID, "slack_thread_ts": threadTS,
+		}}), nil
+	}, telemetry.String("slack.channel", channelID), telemetry.String("slack.thread_ts", threadTS))
+	for _, session := range sessions {
+		status := strings.ToLower(session.Status())
+		if status == "stopped" || status == "failed" || status == "terminated" || status == "terminating" {
+			continue
+		}
+		id := session.Tags()["slackbot_id"]
+		if id == "" || id == slackBotDefaultID {
+			continue
+		}
+		bot, err := h.repo.Get(ctx, id)
+		if err != nil {
+			log.Printf("[SLACKBOT] Failed to resolve bot %s from reusable session %s: %v", id, session.ID(), err)
+			continue
+		}
+		return bot
+	}
+	return nil
 }
 
 // resolveBotByChannel attempts to identify a registered SlackBot by the Slack channel ID.
@@ -697,7 +778,21 @@ func isStopCommand(text string) bool {
 	return strings.TrimSpace(cleaned) == "/stop"
 }
 
-// handleStopCommand processes a /stop command by finding the active session for the
+// liveSlackSessions returns sessions that can still accept Slack follow-up messages.
+// A session normally transitions from "active" to "running" once the agent starts,
+// so filtering only for "active" loses the session for almost its entire lifetime.
+func liveSlackSessions(sessions []entities.Session) []entities.Session {
+	live := make([]entities.Session, 0, len(sessions))
+	for _, session := range sessions {
+		switch session.Status() {
+		case "creating", "starting", "active", "running":
+			live = append(live, session)
+		}
+	}
+	return live
+}
+
+// handleStopCommand processes a /stop command by finding a live session for the
 // given channel+thread and sending a stop signal (Ctrl+C) to its agent.
 // The result (success or failure) is posted back to the Slack thread.
 func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, threadKey string, bot *entities.SlackBot) {
@@ -706,11 +801,10 @@ func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, t
 			"slack_channel":   channel,
 			"slack_thread_ts": threadKey,
 		},
-		Status: "active",
 	}
-	activeSessions := h.sessionManager.ListSessions(stopFilter)
-	if len(activeSessions) == 0 {
-		log.Printf("[SLACKBOT] /stop: no active session found for channel=%s, thread=%s", channel, threadKey)
+	liveSessions := liveSlackSessions(h.sessionManager.ListSessions(stopFilter))
+	if len(liveSessions) == 0 {
+		log.Printf("[SLACKBOT] /stop: no live session found for channel=%s, thread=%s", channel, threadKey)
 		botToken, tokenErr := h.getBotToken(ctx, bot)
 		if tokenErr == nil {
 			h.postErrorToSlack(ctx, channel, threadKey,
@@ -720,7 +814,7 @@ func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, t
 		return
 	}
 
-	session := activeSessions[0]
+	session := liveSessions[0]
 	go func() {
 		bgCtx := context.Background()
 

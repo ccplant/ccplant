@@ -2,6 +2,33 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentAPIProxyClient, AgentAPIProxyError } from '../agentapi-proxy-client';
 
+describe('AgentAPIProxyClient team settings', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['get', (client: AgentAPIProxyClient) => client.getSettings('acme/platform')],
+    ['save', (client: AgentAPIProxyClient) => client.saveSettings('acme/platform', {})],
+    ['delete', (client: AgentAPIProxyClient) => client.deleteSettings('acme/platform')],
+  ])('preserves the organization/team identifier when settings are %s', async (_operation, request) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await request(client);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/settings/acme%2Fplatform',
+      expect.any(Object),
+    );
+  });
+});
+
 describe('AgentAPIProxyClient Session Runner Pools', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -56,6 +83,51 @@ describe('AgentAPIProxyClient concurrent reads', () => {
   });
 });
 
+describe('AgentAPIProxyClient session scope isolation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps only sessions from the requested team', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        sessions: [
+          { session_id: 'team-a', scope: 'team', team_id: 'acme/a' },
+          { session_id: 'team-b', scope: 'team', team_id: 'acme/b' },
+          { session_id: 'personal', scope: 'user' },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.search({ scope: 'team', team_id: 'acme/a' })).resolves.toEqual({
+      sessions: [{ session_id: 'team-a', scope: 'team', team_id: 'acme/a' }],
+    });
+  });
+
+  it('treats legacy sessions without a scope as personal', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        sessions: [
+          { session_id: 'legacy-personal' },
+          { session_id: 'team', scope: 'team', team_id: 'acme/a' },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.search({ scope: 'user' })).resolves.toEqual({
+      sessions: [{ session_id: 'legacy-personal' }],
+    });
+  });
+});
+
 describe('AgentAPIProxyClient ACP message history', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -77,6 +149,25 @@ describe('AgentAPIProxyClient ACP message history', () => {
     });
     expect(fetchMock).toHaveBeenCalledWith(
       'http://proxy.example.test/sessions/session-1/resume',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('suspends a session through the explicit suspend endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ session_id: 'session-1', status: 'suspending' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.suspendSession('session-1')).resolves.toEqual({
+      session_id: 'session-1',
+      status: 'suspending',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/sessions/session-1/suspend',
       expect.objectContaining({ method: 'POST' }),
     );
   });
@@ -493,5 +584,31 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
 
     await expect(subscription.opened).resolves.toBe(false);
     subscription.close();
+  });
+});
+
+describe('session settings reload', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('requests a complete reload with an idempotency key', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ session_id: 'one', request_id: 'operation' }),
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    await client.restartSession('one');
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://proxy.example.test/sessions/one/restart');
+    expect(JSON.parse(options!.body as string)).toEqual({ reload_settings: true, busy_policy: 'wait' });
+    expect(new Headers(options!.headers).get('Idempotency-Key')).toBeTruthy();
+  });
+  it('reads operation status without waking the session', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ phase: 'paused', revision: 2 }), { status: 200 },
+    ));
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    await expect(client.restartStatus('one')).resolves.toEqual({ phase: 'paused', revision: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://proxy.example.test/sessions/one/restart');
+    expect(fetchMock.mock.calls[0][1]?.method ?? 'GET').toBe('GET');
   });
 });

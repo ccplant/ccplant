@@ -83,7 +83,12 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.POST("/sessions/:sessionId/messages", h.sendMessage)
 	g.GET("/sessions/:sessionId/messages", h.getMessages)
 	g.POST("/sessions/:sessionId/stop", h.stopAgent)
+	g.POST("/sessions/:sessionId/restart", h.restartSession)
+	g.POST("/sessions/:sessionId/restart/validate", h.validateRestart)
+	g.POST("/sessions/:sessionId/pause", h.pauseSession)
+	g.GET("/sessions/:sessionId/settings", h.currentSettings)
 	g.POST("/sessions/:sessionId/ensure", h.ensureWorkload)
+	g.POST("/sessions/:sessionId/suspend", h.suspendSession)
 	g.POST("/sessions/:sessionId/provision-settings", h.provisionSettings)
 	g.POST("/sessions/:sessionId/touch", h.touchSession)
 	g.GET("/sessions/:sessionId/sandbox-domains", h.sandboxDomains)
@@ -102,6 +107,17 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.GET("/allocations/external/next", h.nextExternalAllocation)
 	g.POST("/allocations/external/:sessionId/result", h.completeExternalAllocation)
 	g.POST("/allocations/external/:sessionId", h.submitExternalAllocation)
+}
+
+func (h *Handler) suspendSession(c echo.Context) error {
+	suspender, ok := h.manager.(portrepos.SessionSuspender)
+	if !ok {
+		return unsupported(c, "session suspend is not supported")
+	}
+	if err := suspender.SuspendSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return internalError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (h *Handler) authenticate(next echo.HandlerFunc) echo.HandlerFunc {
@@ -531,4 +547,57 @@ func internalError(c echo.Context, err error) error {
 
 func unsupported(c echo.Context, message string) error {
 	return c.JSON(http.StatusNotImplemented, errorResponse{Error: message})
+}
+
+func (h *Handler) restartSession(c echo.Context) error {
+	m, ok := h.manager.(portrepos.SessionRestarter)
+	if !ok {
+		return unsupported(c, "restart unavailable")
+	}
+	var req struct {
+		ID       string
+		Settings *sessionsettings.SessionSettings
+	}
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil || req.ID == "" || req.Settings == nil {
+		return echo.NewHTTPError(400, "invalid restart request")
+	}
+	if err := m.RestartSession(c.Request().Context(), c.Param("sessionId"), req.ID, req.Settings); err != nil {
+		return internalError(c, err)
+	}
+	return c.NoContent(204)
+}
+func (h *Handler) validateRestart(c echo.Context) error {
+	m, ok := h.manager.(portrepos.SessionRestarter)
+	if !ok {
+		return unsupported(c, "restart unavailable")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := json.NewDecoder(c.Request().Body).Decode(&settings); err != nil {
+		return echo.NewHTTPError(400, "invalid settings")
+	}
+	if err := m.ValidateSessionRestart(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+		return echo.NewHTTPError(422, err.Error())
+	}
+	return c.NoContent(204)
+}
+func (h *Handler) currentSettings(c echo.Context) error {
+	m, ok := h.manager.(portrepos.SessionRestarter)
+	if !ok {
+		return unsupported(c, "restart unavailable")
+	}
+	settings, err := m.CurrentSessionSettings(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return internalError(c, err)
+	}
+	return c.JSON(200, settings)
+}
+func (h *Handler) pauseSession(c echo.Context) error {
+	m, ok := h.manager.(portrepos.SessionRestarter)
+	if !ok {
+		return unsupported(c, "pause unavailable")
+	}
+	if err := m.PauseSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return internalError(c, err)
+	}
+	return c.NoContent(204)
 }

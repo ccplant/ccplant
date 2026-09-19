@@ -13,12 +13,14 @@ package sessionmanager
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,11 @@ import (
 type Handlers struct {
 	sessionManager repositories.SessionManager
 	hmacSecret     []byte
+}
+
+type operationalProvider interface {
+	OperationalStatus(context.Context, []string) (map[string]interface{}, error)
+	OperationalLogs(context.Context, string, string, int) ([]string, string, error)
 }
 
 // NewHandlers creates a new Handlers instance.
@@ -65,6 +72,12 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.POST("", h.CreateSession)
 	g.GET("", h.ListSessions)
 	g.GET("/:sessionId", h.GetSession)
+	g.POST("/:sessionId/resume", h.ResumeSession)
+	g.POST("/:sessionId/suspend", h.SuspendSession)
+	g.POST("/:sessionId/restart", h.RestartSession)
+	g.POST("/:sessionId/restart/validate", h.ValidateRestart)
+	g.POST("/:sessionId/stop", h.StopSessionAgent)
+	g.POST("/:sessionId/pause", h.PauseSession)
 	g.DELETE("/:sessionId", h.DeleteSession)
 
 	// Codex device auth workloads are manager-level operations addressed by the
@@ -74,6 +87,14 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	auth.Use(h.hmacMiddleware())
 	auth.POST("", h.StartCodexDeviceAuth)
 	auth.DELETE("/:attemptId", h.CancelCodexDeviceAuth)
+
+	if _, ok := h.sessionManager.(operationalProvider); ok {
+		management := e.Group("/internal/esm-management")
+		management.Use(h.hmacMiddleware())
+		management.GET("/status", h.GetOperationalStatus)
+		management.GET("/logs", h.GetOperationalLogs)
+		management.DELETE("/runners/:runnerId", h.DeleteOperationalRunner)
+	}
 
 	// Runtime traffic is addressed by the parent as
 	// /<remote-id>/<agent-endpoint>, rather than through the management API
@@ -89,6 +110,109 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+// DeleteOperationalRunner removes the complete workload through the session
+// manager's normal deletion path. Kubernetes managers therefore delete the
+// Service, Deployment/Pod, PVC, provision request, and every session-labelled
+// Secret instead of only terminating the Pod.
+func (h *Handlers) DeleteOperationalRunner(c echo.Context) error {
+	runnerID := strings.TrimSpace(c.Param("runnerId"))
+	if runnerID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "runnerId is required")
+	}
+	if err := h.sessionManager.DeleteSession(runnerID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.NoContent(http.StatusNotFound)
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete runner").SetInternal(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *Handlers) GetOperationalStatus(c echo.Context) error {
+	provider, ok := h.sessionManager.(operationalProvider)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "operational status is unavailable")
+	}
+	status, err := provider.OperationalStatus(c.Request().Context(), c.QueryParams()["pool"])
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to inspect session manager").SetInternal(err)
+	}
+	return c.JSON(http.StatusOK, status)
+}
+
+func (h *Handlers) GetOperationalLogs(c echo.Context) error {
+	provider, ok := h.sessionManager.(operationalProvider)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "operational logs are unavailable")
+	}
+	tail, _ := strconv.Atoi(c.QueryParam("tail"))
+	if tail < 1 || tail > 5000 {
+		tail = 200
+	}
+	lines, source, err := provider.OperationalLogs(c.Request().Context(), c.QueryParam("runner_id"), c.QueryParam("session_id"), tail)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to read logs").SetInternal(err)
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"lines": lines, "source": source})
+}
+
+func (h *Handlers) ResumeSession(c echo.Context) error {
+	if c.Request().ContentLength != 0 {
+		var settings sessionsettings.SessionSettings
+		if err := c.Bind(&settings); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid resume settings")
+		}
+		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
+			if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+			}
+		}
+	}
+	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session resume is not supported")
+	}
+	session, restoring, err := ensurer.EnsureSessionWorkload(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	status := "active"
+	code := http.StatusOK
+	if restoring {
+		status = "resuming"
+		code = http.StatusAccepted
+		c.Response().Header().Set("Retry-After", "2")
+	} else if session != nil {
+		status = session.Status()
+	}
+	return c.JSON(code, map[string]string{"session_id": c.Param("sessionId"), "status": status})
+}
+
+func (h *Handlers) SuspendSession(c echo.Context) error {
+	if c.Request().ContentLength == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "suspend settings are required")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := c.Bind(&settings); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid suspend settings")
+	}
+	preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session resume preparation is not supported")
+	}
+	if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	suspender, ok := h.sessionManager.(repositories.SessionSuspender)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session suspend is not supported")
+	}
+	if err := suspender.SuspendSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // ProxySession forwards an authenticated parent request to the concrete
@@ -229,7 +353,6 @@ func (h *Handlers) CreateSession(c echo.Context) error {
 		Scope:             entities.ResourceScope(settings.Session.Scope),
 		TeamID:            settings.Session.TeamID,
 		AgentType:         settings.Session.AgentType,
-		Oneshot:           settings.Session.Oneshot,
 		Teams:             settings.Session.Teams,
 		InitialMessage:    settings.InitialMessage,
 		ProvisionSettings: &settings,
@@ -371,4 +494,81 @@ func (h *Handlers) DeleteSession(c echo.Context) error {
 
 	log.Printf("[SESSION_MANAGER] Deleted session %s", sessionID)
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *Handlers) RestartSession(c echo.Context) error {
+	manager, ok := h.sessionManager.(repositories.SessionRestarter)
+	if !ok {
+		return echo.NewHTTPError(501, "session restart is not supported")
+	}
+	var settings sessionsettings.SessionSettings
+	if err := c.Bind(&settings); err != nil {
+		return echo.NewHTTPError(400, "invalid restart settings")
+	}
+	id := c.Request().Header.Get("Idempotency-Key")
+	if id == "" {
+		return echo.NewHTTPError(400, "Idempotency-Key is required")
+	}
+	if err := manager.RestartSession(c.Request().Context(), c.Param("sessionId"), id, &settings); err != nil {
+		return echo.NewHTTPError(503, "session restart failed").SetInternal(err)
+	}
+	return c.NoContent(204)
+}
+func (h *Handlers) PauseSession(c echo.Context) error {
+	manager, ok := h.sessionManager.(repositories.SessionRestarter)
+	if !ok {
+		return echo.NewHTTPError(501, "session pause is not supported")
+	}
+	// Parent-owned allocations do not have settings in the manager until an
+	// explicit lifecycle operation. Persist the running snapshot before pausing.
+	if c.Request().ContentLength != 0 {
+		var current sessionsettings.SessionSettings
+		if err := c.Bind(&current); err != nil {
+			return echo.NewHTTPError(400, "invalid current settings")
+		}
+		preparer, ok := h.sessionManager.(repositories.SessionResumePreparer)
+		if !ok {
+			return echo.NewHTTPError(501, "session resume preparation unavailable")
+		}
+		if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &current); err != nil {
+			return echo.NewHTTPError(503, "failed to preserve current settings").SetInternal(err)
+		}
+	}
+	if err := manager.PauseSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(503, "session pause failed").SetInternal(err)
+	}
+	return c.NoContent(204)
+}
+
+func (h *Handlers) ValidateRestart(c echo.Context) error {
+	m, ok := h.sessionManager.(repositories.SessionRestarter)
+	if !ok {
+		return echo.NewHTTPError(501, "restart unavailable")
+	}
+	input := sessionsettings.RestartValidationRequest{SessionSettings: &sessionsettings.SessionSettings{}}
+	if err := c.Bind(&input); err != nil {
+		return echo.NewHTTPError(400, "invalid settings")
+	}
+	var err error
+	if input.CurrentSettings != nil {
+		validator, ok := h.sessionManager.(interface {
+			ValidateSessionRestartWithCurrent(context.Context, string, *sessionsettings.SessionSettings, *sessionsettings.SessionSettings) error
+		})
+		if !ok {
+			return echo.NewHTTPError(501, "pooled session restart validation unavailable")
+		}
+		err = validator.ValidateSessionRestartWithCurrent(c.Request().Context(), c.Param("sessionId"), input.CurrentSettings, input.SessionSettings)
+	} else {
+		err = m.ValidateSessionRestart(c.Request().Context(), c.Param("sessionId"), input.SessionSettings)
+	}
+	if err != nil {
+		return echo.NewHTTPError(422, err.Error())
+	}
+	return c.NoContent(204)
+}
+func (h *Handlers) StopSessionAgent(c echo.Context) error {
+	if err := h.sessionManager.StopAgent(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return echo.NewHTTPError(503, "failed to stop agent")
+	}
+	return c.NoContent(204)
 }

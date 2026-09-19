@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	_ "modernc.org/sqlite" // register the sqlite driver for local file:// databases
 )
 
@@ -55,11 +57,50 @@ PRIMARY KEY (kind, namespace, key))`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensureLibSQLLookupIndexes(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := ensureLibSQLBranchKeyTable(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+func ensureLibSQLLookupIndexes(ctx context.Context, db *sql.DB) error {
+	// These selectors are on synchronous trigger paths. Expression indexes keep
+	// their latency independent of unrelated KV records and, for route reuse,
+	// independent of the total number of active sessions.
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_profile_lookup ON agentapi_kv (
+kind, namespace,
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile-user-id"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile-scope"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-profile-team-id-hash"'))`,
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_route_reuse_lookup ON agentapi_kv (
+kind, namespace,
+json_extract(metadata, '$.labels."agentapi.proxy/session-route"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-user-id"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-scope"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-team-id-hash"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_channel"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_ts"'))`,
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_user_session_route_reuse_lookup ON agentapi_kv (
+kind, namespace,
+json_extract(metadata, '$.labels."agentapi.proxy/session-route"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-user-id"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-scope"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_channel"'),
+json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_ts"'))`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("initialize libSQL lookup index: %w", err)
+		}
+	}
+	return nil
 }
 
 func ensureLibSQLBranchKeyTable(ctx context.Context, db *sql.DB) error {
@@ -283,8 +324,8 @@ func (s *LibSQLStore) List(ctx context.Context, query Query) ([]Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse label selector: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT key, version, metadata, value FROM agentapi_kv
-WHERE kind = ? AND namespace = ? ORDER BY key`, query.Kind, query.Namespace)
+	statement, args := libSQLListQuery(query, selector)
+	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list libSQL records: %w", err)
 	}
@@ -309,6 +350,81 @@ WHERE kind = ? AND namespace = ? ORDER BY key`, query.Kind, query.Namespace)
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+// libSQLListQuery pushes label requirements into SQLite so remote libSQL does
+// not return every value in a namespace before the caller-side label filter is
+// applied. The caller still checks selector.Matches after scanning as a safety
+// net and to preserve Kubernetes selector semantics.
+func libSQLListQuery(query Query, selector labels.Selector) (string, []any) {
+	statement := strings.Builder{}
+	statement.WriteString(`SELECT key, version, metadata, value FROM agentapi_kv
+WHERE kind = ? AND namespace = ?`)
+	args := []any{query.Kind, query.Namespace}
+	if query.KeyPrefix != "" {
+		statement.WriteString(" AND substr(key, 1, length(?)) = ?")
+		args = append(args, query.KeyPrefix, query.KeyPrefix)
+	}
+	requirements, selectable := selector.Requirements()
+	if !selectable {
+		statement.WriteString(" AND 0")
+	}
+	for i, requirement := range requirements {
+		alias := fmt.Sprintf("label_%d", i)
+		key := requirement.Key()
+		values := requirement.Values().List()
+		switch requirement.Operator() {
+		case selection.Equals, selection.DoubleEquals, selection.In:
+			writeLibSQLLabelMatch(&statement, &args, key, values, false)
+		case selection.NotEquals, selection.NotIn:
+			writeLibSQLLabelExists(&statement, &args, alias, key, values, true)
+		case selection.Exists:
+			writeLibSQLLabelExists(&statement, &args, alias, key, nil, false)
+		case selection.DoesNotExist:
+			writeLibSQLLabelExists(&statement, &args, alias, key, nil, true)
+		case selection.GreaterThan, selection.LessThan:
+			comparison := ">"
+			if requirement.Operator() == selection.LessThan {
+				comparison = "<"
+			}
+			fmt.Fprintf(&statement, " AND EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ? AND CAST(%s.value AS INTEGER) %s ?)", alias, alias, alias, comparison)
+			args = append(args, key, values[0])
+		}
+	}
+	statement.WriteString(" ORDER BY key")
+	return statement.String(), args
+}
+
+func writeLibSQLLabelMatch(statement *strings.Builder, args *[]any, key string, values []string, negate bool) {
+	// Kubernetes label keys cannot contain quotes. Keeping the JSON expression
+	// literal (rather than binding the path) lets SQLite match expression indexes.
+	escapedKey := strings.ReplaceAll(key, `"`, `\"`)
+	if negate {
+		statement.WriteString(" AND NOT")
+	} else {
+		statement.WriteString(" AND")
+	}
+	fmt.Fprintf(statement, ` json_extract(agentapi_kv.metadata, '$.labels."%s"') IN (%s)`, escapedKey, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+	for _, value := range values {
+		*args = append(*args, value)
+	}
+}
+
+func writeLibSQLLabelExists(statement *strings.Builder, args *[]any, alias, key string, values []string, negate bool) {
+	if negate {
+		statement.WriteString(" AND NOT")
+	} else {
+		statement.WriteString(" AND")
+	}
+	fmt.Fprintf(statement, " EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ?", alias, alias)
+	*args = append(*args, key)
+	if len(values) > 0 {
+		fmt.Fprintf(statement, " AND %s.value IN (%s)", alias, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+		for _, value := range values {
+			*args = append(*args, value)
+		}
+	}
+	statement.WriteString(")")
 }
 
 const recordMetadataFormat = "agentapi-kv-metadata/v1"

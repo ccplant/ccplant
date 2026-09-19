@@ -52,3 +52,88 @@ func TestKubernetesSessionRouteRepositoryCachesGets(t *testing.T) {
 		t.Fatalf("cached route was mutated: %#v", second.Tags)
 	}
 }
+
+func TestKubernetesSessionRouteRepositoryCachesListsAndFiltersCopies(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	if err := repo.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", UserID: "alice", Tags: map[string]string{"env": "test"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, &portrepos.SessionRoute{SessionID: "session-b", UserID: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+
+	before := len(client.Actions())
+	first, err := repo.List(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].SessionID != "session-a" {
+		t.Fatalf("List(alice) = %#v", first)
+	}
+	first[0].Tags["env"] = "mutated"
+	second, err := repo.List(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(client.Actions()) - before; got != 1 {
+		t.Fatalf("Kubernetes calls = %d, want 1", got)
+	}
+	if second[0].Tags["env"] != "test" {
+		t.Fatalf("cached route was mutated: %#v", second[0].Tags)
+	}
+}
+
+func TestKubernetesSessionRouteRepositoryInvalidatesListCacheOnWrite(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	if _, err := repo.List(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a"}); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := repo.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].SessionID != "session-a" {
+		t.Fatalf("List() after Save = %#v", routes)
+	}
+	if err := repo.Delete(ctx, "session-a"); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = repo.List(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("List() after Delete = %#v", routes)
+	}
+}
+
+func TestKubernetesSessionRouteRepositoryListFilteredUsesIndexedLabels(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	for _, route := range []*portrepos.SessionRoute{
+		{SessionID: "wanted", UserID: "alice", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T1"}},
+		{SessionID: "other-user", UserID: "bob", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T1"}},
+		{SessionID: "other-thread", UserID: "alice", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T2"}},
+	} {
+		if err := repo.Save(ctx, route); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routes, err := repo.ListFiltered(ctx, portrepos.SessionRouteFilter{
+		UserID: "alice", Scope: "user", Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "T1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].SessionID != "wanted" {
+		t.Fatalf("ListFiltered() = %#v", routes)
+	}
+}

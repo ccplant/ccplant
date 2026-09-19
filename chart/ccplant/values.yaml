@@ -8,11 +8,15 @@ global:
 
 backend:
   enabled: true
-  # Full runtime image used by session pods and compatibility workloads.
+  # Full runtime image for compatibility/local process workloads.
+  # Kubernetes sessions use the independently versioned ccplant-agent image.
   image:
     repository: ghcr.io/ccplant/ccplant-backend
   # Lightweight image used only by the backend API Deployment.
   api:
+    githubBroker:
+      # Use the backend Service directly for session GitHub token requests.
+      inCluster: false
     image:
       repository: ghcr.io/ccplant/ccplant-api
   ingress:

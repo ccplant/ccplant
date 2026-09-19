@@ -15,6 +15,274 @@
     }
   ],
   "paths": {
+    "/sessions/{sessionId}/restart": {
+      "post": {
+        "summary": "Reload complete startup settings and restart the same conversation",
+        "operationId": "restartSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Reuse the same key only when retrying the same request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "startup_input": {
+                    "type": "object",
+                    "description": "Complete start request input. Replaces saved overrides and initializes legacy sessions; server-owned identity is preserved."
+                  },
+                  "reload_settings": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "busy_policy": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "interrupt"
+                    ],
+                    "default": "wait"
+                  },
+                  "session_profile_id": {
+                    "type": "string",
+                    "description": "Explicitly select another authorized profile; empty disables the profile."
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Operation accepted; poll GET /sessions/{sessionId}/restart."
+          },
+          "403": {
+            "description": "Session or profile access denied"
+          },
+          "409": {
+            "description": "Operation conflict or legacy session has no saved startup input"
+          },
+          "412": {
+            "description": "Settings revision changed"
+          },
+          "422": {
+            "description": "Settings or conversation restoration incompatible"
+          },
+          "501": {
+            "description": "Manager does not support restart"
+          }
+        }
+      },
+      "get": {
+        "summary": "Read settings restart status without waking the runtime",
+        "operationId": "sessionRestartStatus",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation status without credential values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "type": "string"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "phase": {
+                      "type": "string",
+                      "enum": [
+                        "",
+                        "waiting_idle",
+                        "pausing",
+                        "restarting",
+                        "paused",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "description": "No saved startup input"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/pause": {
+      "post": {
+        "summary": "Stop the agent and retain a manual resume hold",
+        "operationId": "pauseSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Reuse the same key only when retrying the same request.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "busy_policy": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "interrupt"
+                    ],
+                    "default": "wait"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Operation accepted; poll GET /sessions/{sessionId}/restart."
+          },
+          "403": {
+            "description": "Session or profile access denied"
+          },
+          "409": {
+            "description": "Operation conflict or legacy session has no saved startup input"
+          },
+          "412": {
+            "description": "Settings revision changed"
+          },
+          "422": {
+            "description": "Settings or conversation restoration incompatible"
+          },
+          "501": {
+            "description": "Manager does not support restart"
+          }
+        }
+      }
+    },
+    "/internal/session-managers/{id}/runners/{runnerId}/retire": {
+      "post": {
+        "tags": [
+          "Session Managers"
+        ],
+        "summary": "Fence an idle runner before workload deletion",
+        "operationId": "retireSessionRunner",
+        "description": "Authenticated with the owning manager connection token. Atomically transitions idle to draining; claiming and running runners return 409 and must not be deleted. Retirement is idempotent and leaves a tombstone that rejects delayed registration. Deploy the parent API before managers that use this endpoint.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runnerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Bearer manager connection token"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Runner fenced; workload may be deleted"
+          },
+          "401": {
+            "description": "Invalid manager credential"
+          },
+          "403": {
+            "description": "Runner belongs to a different manager"
+          },
+          "409": {
+            "description": "Claiming or running runner; do not delete"
+          },
+          "500": {
+            "description": "Retirement failed; do not delete"
+          }
+        }
+      }
+    },
     "/internal/worker/schedules/claim-due": {
       "post": {
         "summary": "Claim due schedule jobs",
@@ -569,6 +837,43 @@
         }
       }
     },
+    "/admin/github-connections/{id}/github-app/private-key": {
+      "put": {
+        "summary": "Upload or rotate the GitHub App PEM for a connection",
+        "operationId": "updateGitHubAppPrivateKey",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+        "requestBody": {"required":true,"content":{"application/json":{"schema":{"type":"object","required":["value"],"properties":{"value":{"type":"string","format":"password","writeOnly":true}}}}}},
+        "responses": {"200":{"description":"Private key updated; plaintext is never returned"}}
+      },
+      "delete": {
+        "summary": "Delete the GitHub App PEM from a connection",
+        "operationId": "deleteGitHubAppPrivateKey",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+        "responses": {"204":{"description":"Private key deleted"}}
+      }
+    },
+    "/admin/github-connections/{id}/github-app/test": {
+      "post": {
+        "summary": "Test a connection GitHub App against a repository",
+        "operationId": "testGitHubApp",
+        "tags": ["GitHub Connections"],
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
+        "requestBody": {"required":true,"content":{"application/json":{"schema":{"type":"object","required":["repository"],"properties":{"repository":{"type":"string","pattern":"^[^/]+/[^/]+$"}}}}}},
+        "responses": {"200":{"description":"GitHub App token mint succeeded"}}
+      }
+    },
+    "/internal/sessions/{sessionId}/github-credentials": {
+      "get": {
+        "summary": "Get a current repository-scoped token using a session broker credential",
+        "operationId": "getSessionGitHubCredentials",
+        "tags": ["GitHub Connections"],
+        "security": [{"bearerAuth":[]}],
+        "parameters": [{"name":"sessionId","in":"path","required":true,"schema":{"type":"string"}}],
+        "responses": {"200":{"description":"Current short-lived credential"},"401":{"description":"Invalid or expired broker credential"}}
+      }
+    },
     "/github-connections": {
       "get": {
         "summary": "List enabled GitHub connections",
@@ -934,6 +1239,44 @@
           },
           "500": {
             "description": "Failed to delete session"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/suspend": {
+      "post": {
+        "summary": "Suspend a session",
+        "description": "Requests suspension from the owning session manager. The manager decides whether a persistence checkpoint is required before removing the runtime workload.",
+        "operationId": "suspendSession",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session workload was suspended"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "501": {
+            "description": "Suspend is not supported by the configured session manager"
+          },
+          "503": {
+            "description": "Session is busy, checkpoint failed, or its manager is unavailable"
           }
         }
       }
@@ -5631,7 +5974,7 @@
         }
       },
       "post": {
-        "summary": "Create a logical pool and grant its creator manage access",
+        "summary": "Create a logical pool and grant its creator manage-and-use access",
         "operationId": "createManagedSessionPool",
         "tags": [
           "Session Pools"
@@ -5735,7 +6078,7 @@
         }
       },
       "post": {
-        "summary": "Grant pool use or manage access; users with global use access may create their own use override",
+        "summary": "Grant pool use, manage, or combined manage-and-use access; users with global use access may create their own use override",
         "operationId": "createManagedSessionPoolBinding",
         "tags": [
           "Session Pools"
@@ -5807,13 +6150,6 @@
                     "additionalProperties": {
                       "type": "string"
                     }
-                  },
-                  "pool": {
-                    "type": "string"
-                  },
-                  "default": {
-                    "type": "boolean",
-                    "description": "System scope only; create an all-subject default binding during enrollment"
                   }
                 }
               }
@@ -5863,13 +6199,6 @@
                     "items": {
                       "type": "string"
                     }
-                  },
-                  "pool": {
-                    "type": "string"
-                  },
-                  "default": {
-                    "type": "boolean",
-                    "description": "Create an all-subject binding so the pool is selected by default"
                   }
                 }
               }
@@ -5897,6 +6226,100 @@
           "200": {
             "description": "Manager registry"
           }
+        }
+      }
+    },
+    "/session-pools/status": {
+      "get": {
+        "summary": "List live status for manageable session pools and their managers",
+        "description": "Returns only pools on which the authenticated subject has an enabled manage binding (all pools for admins). Session manager operational data is fetched live through each manager's outbound control channel.",
+        "operationId": "listManageableSessionPoolStatus",
+        "tags": ["Session Pools"],
+        "responses": {
+          "200": {"description": "Manageable pools and live manager status"}
+        }
+      }
+    },
+    "/session-managers/{id}/logs": {
+      "get": {
+        "summary": "Read session manager logs",
+        "description": "Requires manage access to at least one pool supplied by the manager.",
+        "operationId": "getSessionManagerLogs",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+        ],
+        "responses": {
+          "200": {"description": "Log lines and source"},
+          "404": {"description": "Manager is not manageable by the caller"},
+          "503": {"description": "Manager control channel is offline"}
+        }
+      }
+    },
+    "/session-runners/{id}/logs": {
+      "get": {
+        "summary": "Read session runner logs",
+        "description": "Requires manage access to the runner's pool.",
+        "operationId": "getSessionRunnerLogs",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+        ],
+        "responses": {
+          "200": {"description": "Runner log lines and source"},
+          "404": {"description": "Runner is not manageable by the caller"},
+          "503": {"description": "Runner's manager control channel is offline"}
+        }
+      }
+    },
+    "/admin/session-runners": {
+      "get": {
+        "summary": "List all session runners",
+        "description": "Returns the administrator inventory of pooled and direct runners, including live status, pool origin, and linked session.",
+        "operationId": "listAdminSessionRunners",
+        "tags": ["Session Pools"],
+        "responses": {
+          "200": {"description": "Runner inventory"},
+          "403": {"description": "Admin permission required"}
+        }
+      }
+    },
+    "/admin/session-runners/{id}/logs": {
+      "get": {
+        "summary": "Read any session runner logs",
+        "description": "Reads logs for a pooled or direct runner. Requires admin permission.",
+        "operationId": "getAdminSessionRunnerLogs",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+        ],
+        "responses": {
+          "200": {"description": "Runner log lines and source"},
+          "403": {"description": "Admin permission required"},
+          "404": {"description": "Session manager not found"},
+          "503": {"description": "Session manager control channel is offline"}
+        }
+      }
+    },
+    "/admin/session-runners/{id}": {
+      "delete": {
+        "summary": "Delete a session runner and its resources",
+        "description": "Deletes the runner workload through its session manager, including Service, Deployment or Pod, PVC, session-labelled Secrets, allocation, and route metadata. Requires admin permission.",
+        "operationId": "deleteAdminSessionRunner",
+        "tags": ["Session Pools"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "204": {"description": "Runner and related resources deleted"},
+          "403": {"description": "Admin permission required"},
+          "404": {"description": "Session manager not found"},
+          "503": {"description": "Session manager control channel is offline"}
         }
       }
     },
@@ -6397,6 +6820,18 @@
             },
             "uniqueItems": true
           },
+          "github_app": {
+            "type": "object",
+            "required": ["app_id"],
+            "properties": {
+              "app_id": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1,
+                "description": "GitHub App ID used for team repository access. Installation ID is discovered from the repository."
+              }
+            }
+          },
           "oauth_client_secret": {
             "type": "object",
             "properties": {
@@ -6513,7 +6948,8 @@
             "type": "string",
             "enum": [
               "use",
-              "manage"
+              "manage",
+              "manage_and_use"
             ],
             "default": "use"
           },
@@ -6950,6 +7386,11 @@
       "StartRequest": {
         "type": "object",
         "properties": {
+          "webhook_payload": {
+            "type": "string",
+            "format": "byte",
+            "description": "Base64-encoded original webhook body to mount in the session."
+          },
           "environment": {
             "type": "object",
             "additionalProperties": {
@@ -7021,6 +7462,18 @@
             "description": "Model ID override for the selected agent. Session request overrides the session profile and connection default.",
             "example": "gpt-5.3-codex"
           },
+          "model_options": {
+            "type": "array",
+            "description": "Model strings offered as switching candidates in the ACP session info panel. The agent-advertised options are always included; this list adds user-defined values and is merged with them.",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "sonnet",
+              "opus",
+              "gpt-5.3-codex"
+            ]
+          },
           "slack": {
             "$ref": "#/components/schemas/SlackParams"
           },
@@ -7054,7 +7507,7 @@
           },
           "session_ttl": {
             "type": "string",
-            "description": "Duration after the last message before this session is automatically deleted. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string means the global cleanup worker TTL is used for Slackbot sessions; non-Slackbot sessions without this field are not auto-deleted.",
+            "description": "Duration after processing ends before this session is automatically deleted. Running or starting sessions are never deleted by TTL. The clock restarts after each completed turn. Accepted format: Go duration string (e.g. '48h', '168h', '7d' is not valid — use hours). Empty string uses a one-minute TTL for oneshot sessions and the global cleanup worker TTL for other Slackbot sessions; other sessions without this field are not auto-deleted.",
             "example": "48h"
           },
           "unsynced_file_paths": {
@@ -7447,6 +7900,13 @@
           "sandbox_policy_id": {
             "type": "string",
             "description": "ID of the sandbox policy applied to this session (Kubernetes sessions only)"
+          },
+          "model_options": {
+            "type": "array",
+            "description": "Model switching candidates configured for this session (session profile params model_options). Present only when configured.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -7457,7 +7917,9 @@
           "starting",
           "running",
           "active",
+          "suspending",
           "suspended",
+          "resuming",
           "unhealthy",
           "stopped",
           "error",
@@ -8179,6 +8641,15 @@
         "additionalProperties": false,
         "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
+          "web_search_enabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True selects live web search; false disables it; null uses the base Codex config. Omission preserves the stored value."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8238,6 +8709,15 @@
       "CodexConnectionResponse": {
         "type": "object",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
+          "web_search_enabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True selects live web search; false disables it; null uses the base Codex config. Omission preserves the stored value."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8291,6 +8771,10 @@
         "additionalProperties": false,
         "description": "Omitted fields are preserved. URL and key remain together when only the model is overridden.",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8349,6 +8833,10 @@
       "ClaudeConnectionResponse": {
         "type": "object",
         "properties": {
+          "endpoint_path": {
+            "type": "string",
+            "description": "Path appended to base_url. Empty uses /responses (Codex) or /v1/messages (Claude). Routing only; the API protocol is unchanged. Subpaths such as /compact and /count_tokens follow this path."
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -8469,6 +8957,9 @@
               "cursor"
             ],
             "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
+          },
+          "auto_suspend": {
+            "$ref": "#/components/schemas/AutoSuspendSettings"
           },
           "codex_connection": {
             "$ref": "#/components/schemas/CodexConnectionRequest"
@@ -8667,6 +9158,9 @@
             ],
             "description": "Default agent type for sessions in this settings scope."
           },
+          "auto_suspend": {
+            "$ref": "#/components/schemas/AutoSuspendSettings"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -8688,6 +9182,21 @@
           "default_anthropic_base_url": {
             "type": "string",
             "description": "Instance-level ANTHROPIC_BASE_URL used to prefill compatible API settings."
+          }
+        }
+      },
+      "AutoSuspendSettings": {
+        "type": "object",
+        "required": ["enabled", "idle_timeout_minutes"],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "idle_timeout_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10080,
+            "description": "Idle timeout in minutes. Any whole-minute value from 1 minute through 7 days is accepted."
           }
         }
       },
@@ -9932,7 +10441,7 @@
         },
         "session_ttl": {
           "type": "string",
-          "description": "Default TTL for sessions created with this profile. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
+          "description": "Default TTL after processing ends for sessions created with this profile. Running or starting sessions are never deleted by TTL. Overrides the global cleanup worker TTL. Accepted format: Go duration string (e.g. '48h', '168h'). Can be overridden per-session via params.session_ttl.",
           "example": "72h"
         },
         "unsynced_file_paths": {

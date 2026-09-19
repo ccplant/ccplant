@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +24,242 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+type statusTestTunnel struct {
+	connected map[string]bool
+	mu        sync.Mutex
+	requests  []string
+}
+
+type runnerInventoryTunnel struct {
+	statusTestTunnel
+}
+
+func (t *runnerInventoryTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.requests = append(t.requests, req.URL.String())
+	t.mu.Unlock()
+	body := `{"running_runner_ids":["session-a","direct-session"],"used_runner_ids":["session-a","direct-session"]}`
+	status := http.StatusOK
+	if strings.Contains(req.URL.Path, "/logs") {
+		body = `{"lines":["hello"],"source":"direct-session"}`
+	} else if req.Method == http.MethodDelete {
+		body = ""
+		status = http.StatusNoContent
+	}
+	return &http.Response{StatusCode: status, Status: http.StatusText(status), Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
+}
+
+func (t *statusTestTunnel) IsConnected(_ context.Context, id string) bool { return t.connected[id] }
+func (t *statusTestTunnel) Do(_ context.Context, id, _, _ string, req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.requests = append(t.requests, req.URL.String())
+	t.mu.Unlock()
+	body := `{"version":"v1.2.3","running_runners":2,"used_runners":1}`
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
+}
+
+func TestManagerAndRunnerLogsUseSeparateEndpoints(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	requestCtx := context.Background()
+	requireNoError(t, store.CreateLogicalPool(requestCtx, &core.LogicalPool{Name: "managed", Enabled: true}))
+	requireNoError(t, store.CreateManager(requestCtx, &core.Manager{ID: "manager-a", Enabled: true}))
+	requireNoError(t, store.CreatePoolSupplier(requestCtx, &core.PoolSupplier{Pool: "managed", ManagerID: "manager-a", Enabled: true}))
+	requireNoError(t, store.CreateBinding(requestCtx, &core.Binding{Pool: "managed", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleManage, Enabled: true}))
+	requireNoError(t, store.CreateRunner(requestCtx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "managed", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(requestCtx, &core.Allocation{SessionID: "session-a", Pool: "managed", ManagerID: "manager-a", RunnerID: "runner-a", Status: core.AllocationRunning}))
+	tunnel := &statusTestTunnel{connected: map[string]bool{"manager-a": true}}
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
+	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
+
+	managerLogs := callSessionPoolHandlerAs(t, controller.GetManagerLogs, http.MethodGet, "/session-managers/manager-a/logs?tail=10", nil, map[string]string{"id": "manager-a"}, nil, user)
+	if managerLogs.Code != http.StatusOK {
+		t.Fatalf("manager logs status=%d body=%s", managerLogs.Code, managerLogs.Body.String())
+	}
+	runnerLogs := callSessionPoolHandlerAs(t, controller.GetRunnerLogs, http.MethodGet, "/session-runners/runner-a/logs?tail=20", nil, map[string]string{"id": "runner-a"}, nil, user)
+	if runnerLogs.Code != http.StatusOK {
+		t.Fatalf("runner logs status=%d body=%s", runnerLogs.Code, runnerLogs.Body.String())
+	}
+
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if len(tunnel.requests) != 2 || tunnel.requests[0] != "http://manager/internal/esm-management/logs?tail=10" || tunnel.requests[1] != "http://manager/internal/esm-management/logs?runner_id=runner-a&session_id=session-a&tail=20" {
+		t.Fatalf("requests=%v", tunnel.requests)
+	}
+}
+
+func TestListManageablePoolStatusFiltersPoolsAndFetchesLiveManagerStatus(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	for _, pool := range []string{"managed", "use-only"} {
+		requireNoError(t, store.CreateLogicalPool(ctx, &core.LogicalPool{Name: pool, Enabled: true}))
+	}
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "A", Enabled: true}))
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-b", Name: "B", Enabled: true}))
+	requireNoError(t, store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "managed", ManagerID: "manager-a", Enabled: true}))
+	requireNoError(t, store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "use-only", ManagerID: "manager-b", Enabled: true}))
+	requireNoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "managed", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleManage, Enabled: true}))
+	requireNoError(t, store.CreateBinding(ctx, &core.Binding{Pool: "use-only", SubjectType: core.SubjectUser, SubjectID: "alice", Role: core.BindingRoleUse, Enabled: true}))
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(&statusTestTunnel{connected: map[string]bool{"manager-a": true}})
+	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
+	rec := callSessionPoolHandlerAs(t, controller.ListManageablePoolStatus, http.MethodGet, "/session-pools/status", nil, nil, nil, user)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Pools    []core.LogicalPool `json:"session_pools"`
+		Managers []struct {
+			Manager core.Manager           `json:"manager"`
+			Online  bool                   `json:"online"`
+			Status  map[string]interface{} `json:"status"`
+		} `json:"session_managers"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Pools) != 1 || result.Pools[0].Name != "managed" {
+		t.Fatalf("pools=%+v", result.Pools)
+	}
+	if len(result.Managers) != 1 || result.Managers[0].Manager.ID != "manager-a" || !result.Managers[0].Online || result.Managers[0].Status["version"] != "v1.2.3" {
+		t.Fatalf("managers=%+v", result.Managers)
+	}
+}
+
+func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "retired-runner", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": true}}}
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
+
+	rec := callSessionPoolHandler(t, controller.ListAdminRunners, http.MethodGet, "/admin/session-runners", nil, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Runners []adminRunnerInventoryItem `json:"session_runners"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Runners) != 2 {
+		t.Fatalf("runners=%+v", result.Runners)
+	}
+	byID := map[string]adminRunnerInventoryItem{}
+	for _, runner := range result.Runners {
+		byID[runner.ID] = runner
+	}
+	if pooled := byID["runner-a"]; !pooled.FromPool || pooled.Pool != "linux" || pooled.SessionID != "session-a" || !pooled.Online {
+		t.Fatalf("pooled=%+v", pooled)
+	}
+	if direct := byID["direct-session"]; direct.FromPool || direct.SessionID != "direct-session" || direct.Status != core.RunnerRunning {
+		t.Fatalf("direct=%+v", direct)
+	}
+
+	logs := callSessionPoolHandler(t, controller.GetAdminRunnerLogs, http.MethodGet, "/admin/session-runners/direct-session/logs?manager_id=manager-a", nil, map[string]string{"id": "direct-session"}, nil)
+	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), "hello") {
+		t.Fatalf("logs status=%d body=%s", logs.Code, logs.Body.String())
+	}
+}
+
+func TestSessionManagerHeartbeatCollectsExpiredDrainingRunners(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	requireNoError(t, store.CreateManager(ctx, manager))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "expired", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "local", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "allocated", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerDraining}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: manager.ID, RunnerID: "allocated"}))
+
+	controller := NewSessionPoolController(store, nil)
+	controller.now = func() time.Time { return time.Now().UTC().Add(sessionRunnerDrainingRetention + time.Minute) }
+	localIDs := []string{"local"}
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"local_runner_ids": localIDs}, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "expired"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("expired draining runner was not collected: %v", err)
+	}
+	for _, id := range []string{"local", "allocated"} {
+		if _, err := store.GetRunner(ctx, id); err != nil {
+			t.Fatalf("protected draining runner %s was removed: %v", id, err)
+		}
+	}
+}
+
+func TestDeleteAdminRunnerDeletesManagerWorkloadAndParentRecords(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	requireNoError(t, routes.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "runner-a", ManagerID: "manager-a"}))
+	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": true}}}
+	controller := NewSessionPoolController(store, routes).WithManagerTunnel(tunnel)
+
+	rec := callSessionPoolHandler(t, controller.DeleteAdminRunner, http.MethodDelete, "/admin/session-runners/runner-a?manager_id=manager-a", nil, map[string]string{"id": "runner-a"}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "runner-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("runner still exists: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("allocation still exists: %v", err)
+	}
+	if route, err := routes.Get(ctx, "session-a"); err != nil || route != nil {
+		t.Fatalf("route still exists: route=%+v err=%v", route, err)
+	}
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if len(tunnel.requests) != 1 || tunnel.requests[0] != "http://manager/internal/esm-management/runners/runner-a" {
+		t.Fatalf("requests=%v", tunnel.requests)
+	}
+}
+
+func TestDeleteAdminRunnerForceCleansOfflineManagerRecords(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux", Status: core.RunnerRunning}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	requireNoError(t, routes.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "runner-a", ManagerID: "manager-a"}))
+	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": false}}}
+	controller := NewSessionPoolController(store, routes).WithManagerTunnel(tunnel)
+
+	refused := callSessionPoolHandler(t, controller.DeleteAdminRunner, http.MethodDelete, "/admin/session-runners/runner-a?manager_id=manager-a", nil, map[string]string{"id": "runner-a"}, nil)
+	if refused.Code != http.StatusServiceUnavailable {
+		t.Fatalf("non-force status=%d body=%s", refused.Code, refused.Body.String())
+	}
+	forced := callSessionPoolHandler(t, controller.DeleteAdminRunner, http.MethodDelete, "/admin/session-runners/runner-a?manager_id=manager-a&force=true", nil, map[string]string{"id": "runner-a"}, nil)
+	if forced.Code != http.StatusNoContent {
+		t.Fatalf("force status=%d body=%s", forced.Code, forced.Body.String())
+	}
+	if _, err := store.GetRunner(ctx, "runner-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("runner still exists: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("allocation still exists: %v", err)
+	}
+	if route, err := routes.Get(ctx, "session-a"); err != nil || route != nil {
+		t.Fatalf("route still exists: route=%+v err=%v", route, err)
+	}
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if len(tunnel.requests) != 0 {
+		t.Fatalf("offline manager was contacted: requests=%v", tunnel.requests)
+	}
+}
 
 type testManagerLiveness struct {
 	connected map[string]bool
@@ -101,7 +340,7 @@ func TestRunnerLongPollClaimsOnlyAfterPoolNotification(t *testing.T) {
 	}
 }
 
-func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
+func TestSystemManagerRegistrationDoesNotConfigurePools(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
 	admin := entities.NewUser("admin-1", entities.UserTypeAdmin, "admin")
@@ -136,12 +375,15 @@ func TestSystemManagerRegistrationUsesOneTimeEnrollment(t *testing.T) {
 	if credentials.ID != registration.Manager.ID || credentials.ConnectionToken == "" {
 		t.Fatalf("invalid enrollment response: %s", enrolled.Body.String())
 	}
-	if _, err := store.GetPoolSupplier(context.Background(), credentials.ID, "default"); err != nil {
-		t.Fatalf("default pool supplier was not created: %v", err)
+	if _, err := store.GetLogicalPool(context.Background(), "default"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("registration unexpectedly created a logical pool: %v", err)
+	}
+	if _, err := store.GetPoolSupplier(context.Background(), credentials.ID, "default"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("registration unexpectedly created a pool supplier: %v", err)
 	}
 	bindings, err := store.ListBindings(context.Background(), "default")
-	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectAll {
-		t.Fatalf("default binding was not created: bindings=%+v err=%v", bindings, err)
+	if err != nil || len(bindings) != 0 {
+		t.Fatalf("registration unexpectedly created pool bindings: bindings=%+v err=%v", bindings, err)
 	}
 
 	reused := callSessionPoolHandler(t, controller.EnrollManager, http.MethodPost, "/session-managers/enroll",
@@ -227,7 +469,7 @@ func TestSessionManagerHeartbeatResolvesCurrentManagerIDFromToken(t *testing.T) 
 	}
 }
 
-func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
+func TestSessionManagerHeartbeatRetiresStaleIdleRunners(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
@@ -255,8 +497,8 @@ func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	if result.Code != http.StatusOK {
 		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
 	}
-	if runners, err := store.ListRunners(ctx, "linux"); err != nil || len(runners) != 0 {
-		t.Fatalf("stale runners remain: runners=%+v err=%v", runners, err)
+	if runners, err := store.ListRunners(ctx, "linux"); err != nil || len(runners) != 1 || runners[0].Status != core.RunnerDraining {
+		t.Fatalf("stale runner must remain fenced: runners=%+v err=%v", runners, err)
 	}
 	var heartbeat struct {
 		Pools []*core.PoolSupplier `json:"pools"`
@@ -264,6 +506,39 @@ func TestSessionManagerHeartbeatDeletesStaleIdleRunners(t *testing.T) {
 	decodeRecorder(t, result, &heartbeat)
 	if len(heartbeat.Pools) != 1 || heartbeat.Pools[0].TotalRunners != 0 || heartbeat.Pools[0].IdleRunners != 0 {
 		t.Fatalf("unexpected heartbeat pools: %+v", heartbeat.Pools)
+	}
+}
+
+func TestSessionManagerHeartbeatDisablesSupplierForDisabledLogicalPool(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true, MinIdle: 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		nil, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		Pools []*core.PoolSupplier `json:"pools"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if len(heartbeat.Pools) != 1 || heartbeat.Pools[0].Enabled {
+		t.Fatalf("disabled logical pool remained enabled in heartbeat: %+v", heartbeat.Pools)
 	}
 }
 
@@ -307,7 +582,109 @@ func TestSessionManagerHeartbeatReportsAllocatedRunnerIDs(t *testing.T) {
 	}
 }
 
-func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
+func TestSessionManagerHeartbeatReconcilesSuspendedSessionStatus(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	route := &portrepos.SessionRoute{SessionID: "public-a", RemoteSessionID: "remote-a", ManagerID: manager.ID, Status: "active"}
+	if err := routes.Save(ctx, route); err != nil {
+		t.Fatal(err)
+	}
+	controller := NewSessionPoolController(store, routes)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"session_statuses": map[string]string{"remote-a": "suspended"}}, map[string]string{"id": manager.ID},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	updated, err := routes.Get(ctx, "public-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "suspended" || updated.StatusUpdatedAt.IsZero() {
+		t.Fatalf("route status=%q updated_at=%v", updated.Status, updated.StatusUpdatedAt)
+	}
+}
+
+func TestSessionManagerHeartbeatDoesNotOverwriteSuspendedRouteWithStopped(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	statusUpdatedAt := time.Now().Add(-time.Minute)
+	route := &portrepos.SessionRoute{
+		SessionID: "public-a", RemoteSessionID: "remote-a", ManagerID: manager.ID,
+		Status: "suspended", StatusUpdatedAt: statusUpdatedAt,
+	}
+	if err := routes.Save(ctx, route); err != nil {
+		t.Fatal(err)
+	}
+	controller := NewSessionPoolController(store, routes)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"session_statuses": map[string]string{"remote-a": "stopped"}}, map[string]string{"id": manager.ID},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	updated, err := routes.Get(ctx, "public-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "suspended" || !updated.StatusUpdatedAt.Equal(statusUpdatedAt) {
+		t.Fatalf("route status=%q updated_at=%v, want suspended at %v", updated.Status, updated.StatusUpdatedAt, statusUpdatedAt)
+	}
+}
+
+func TestSessionManagerHeartbeatDoesNotOverwriteResumingRouteWithStopped(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	route := &portrepos.SessionRoute{SessionID: "public-a", RemoteSessionID: "remote-a", ManagerID: manager.ID, Status: "resuming"}
+	if err := routes.Save(ctx, route); err != nil {
+		t.Fatal(err)
+	}
+	controller := NewSessionPoolController(store, routes)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"session_statuses": map[string]string{"remote-a": "stopped"}}, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	updated, err := routes.Get(ctx, "public-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "resuming" {
+		t.Fatalf("route status=%q, want resuming", updated.Status)
+	}
+}
+
+func TestSessionManagerHeartbeatPreservesAllocatedRunnersMissingFromLocalInventory(t *testing.T) {
 	ctx := context.Background()
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	token, tokenHash, err := newSessionRunnerToken()
@@ -344,11 +721,11 @@ func TestSessionManagerHeartbeatRemovesAllocatedRunnersMissingFromLocalInventory
 	if result.Code != http.StatusOK {
 		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
 	}
-	if _, err := store.GetRunner(ctx, "missing-running"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("missing running runner was not deleted: %v", err)
+	if _, err := store.GetRunner(ctx, "missing-running"); err != nil {
+		t.Fatalf("missing running runner was deleted: %v", err)
 	}
-	if _, err := store.GetAllocation(ctx, "stale-session"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("stale allocation was not deleted: %v", err)
+	if _, err := store.GetAllocation(ctx, "stale-session"); err != nil {
+		t.Fatalf("allocation recovery data was deleted: %v", err)
 	}
 	for _, id := range []string{"live-running", "missing-idle"} {
 		if _, err := store.GetRunner(ctx, id); err != nil {
@@ -649,7 +1026,7 @@ func TestBindingPriorityAndMaxConcurrentValidationAndPatch(t *testing.T) {
 	}
 }
 
-func TestPoolCreatorReceivesManageBinding(t *testing.T) {
+func TestPoolCreatorReceivesManageAndUseBinding(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
 	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
@@ -661,8 +1038,8 @@ func TestPoolCreatorReceivesManageBinding(t *testing.T) {
 		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
 	}
 	bindings, err := store.ListBindings(context.Background(), "linux")
-	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectUser || bindings[0].SubjectID != "alice" || bindings[0].Role != core.BindingRoleManage {
-		t.Fatalf("creator manage binding missing: bindings=%+v err=%v", bindings, err)
+	if err != nil || len(bindings) != 1 || bindings[0].SubjectType != core.SubjectUser || bindings[0].SubjectID != "alice" || bindings[0].Role != core.BindingRoleManageAndUse {
+		t.Fatalf("creator manage-and-use binding missing: bindings=%+v err=%v", bindings, err)
 	}
 
 	denied := callSessionPoolHandlerAs(t, controller.PatchLogicalPool, http.MethodPatch, "/session-pools/linux",
@@ -912,5 +1289,70 @@ func decodeRecorder(t *testing.T, recorder *httptest.ResponseRecorder, out any) 
 	t.Helper()
 	if err := json.Unmarshal(recorder.Body.Bytes(), out); err != nil {
 		t.Fatalf("decode response %q: %v", recorder.Body.String(), err)
+	}
+}
+
+func TestManagerHeartbeatUpdatesLegacyOneshotStatusNormally(t *testing.T) {
+	for _, reported := range []string{"active", "stable", "running", "starting", "creating"} {
+		t.Run(reported, func(t *testing.T) {
+			ctx := context.Background()
+			client := fake.NewSimpleClientset()
+			routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+			completedAt := time.Now().Add(-2 * time.Minute).UTC()
+			route := &portrepos.SessionRoute{
+				SessionID: "oneshot", RemoteSessionID: "runtime", ManagerID: "manager",
+				Transport: portrepos.SessionRouteTransportDirectRuntime,
+				Tags:      map[string]string{"oneshot": "true"}, Status: "stopped", StatusUpdatedAt: completedAt,
+			}
+			if err := routes.Save(ctx, route); err != nil {
+				t.Fatal(err)
+			}
+			controller := NewSessionPoolController(nil, routes)
+			if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := routes.Get(ctx, "oneshot")
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := reported
+			if reported == "stable" {
+				expected = "active"
+			}
+			if got.Status != expected || !got.StatusUpdatedAt.After(completedAt) {
+				t.Fatalf("heartbeat %q was not recorded normally: status=%s updated=%s", reported, got.Status, got.StatusUpdatedAt)
+			}
+		})
+	}
+}
+
+func TestManagerHeartbeatPreservesInteractiveTTLCompletion(t *testing.T) {
+	for _, status := range []string{"running", "active"} {
+		for _, reported := range []string{"active", "stable", "running", "starting", "creating"} {
+			t.Run(status+"/"+reported, func(t *testing.T) {
+				ctx := context.Background()
+				routes := repositories.NewKubernetesSessionRouteRepository(fake.NewSimpleClientset(), "test")
+				updatedAt := time.Now().Add(-2 * time.Hour).UTC()
+				route := &portrepos.SessionRoute{
+					SessionID: "interactive", RemoteSessionID: "runtime", ManagerID: "manager",
+					Transport: portrepos.SessionRouteTransportDirectRuntime,
+					Tags:      map[string]string{"session_ttl": "1h"}, Status: status, StatusUpdatedAt: updatedAt,
+				}
+				if err := routes.Save(ctx, route); err != nil {
+					t.Fatal(err)
+				}
+				controller := NewSessionPoolController(nil, routes)
+				if err := controller.reconcileManagerSessionStatuses(ctx, "manager", map[string]string{"runtime": reported}); err != nil {
+					t.Fatal(err)
+				}
+				got, err := routes.Get(ctx, route.SessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Status != status || !got.StatusUpdatedAt.Equal(updatedAt) {
+					t.Fatalf("heartbeat replaced runtime TTL state: status=%s updated=%s", got.Status, got.StatusUpdatedAt)
+				}
+			})
+		}
 	}
 }

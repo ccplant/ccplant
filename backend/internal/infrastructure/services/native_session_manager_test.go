@@ -143,26 +143,30 @@ func TestNativeSessionManagerGetMissingSessionReturnsNil(t *testing.T) {
 	}
 }
 
-func TestNativeSessionManagerRemovesFinishedOneshotSession(t *testing.T) {
+func TestNativeSessionManagerKeepsFinishedTTLSessionForCleanup(t *testing.T) {
 	stateDir := t.TempDir()
 	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", "/bin/true", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = m.CreateSessionDirect(context.Background(), "oneshot-1", &entities.RunServerRequest{Oneshot: true}, nil)
+	_, err = m.CreateSessionDirect(context.Background(), "oneshot-1", &entities.RunServerRequest{SessionTTL: "1m"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(stateDir, "sessions", "oneshot-1")
 	deadline := time.Now().Add(3 * time.Second)
-	for m.GetSession("oneshot-1") != nil {
+	for {
+		session := m.GetSession("oneshot-1")
+		if session != nil && session.Status() == "error" {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("finished oneshot session was not removed")
+			t.Fatal("finished TTL session did not reach a terminal state")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if _, err := os.Stat(root); !os.IsNotExist(err) {
-		t.Fatalf("oneshot session directory still exists: %v", err)
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("TTL session directory was removed before cleanup: %v", err)
 	}
 }
 

@@ -38,25 +38,35 @@ const (
 
 // StatusResponse is the JSON body returned by GET /status.
 type StatusResponse struct {
-	Status  Status `json:"status"`
-	Message string `json:"message,omitempty"`
+	RestartID string `json:"restart_id,omitempty"`
+	Status    Status `json:"status"`
+	Message   string `json:"message,omitempty"`
 }
 
 // Server is the agent-provisioner HTTP server.
 type Server struct {
+	lifecycleMu    sync.Mutex
+	agentCancel    context.CancelFunc
+	provisionDone  chan struct{}
+	agentExited    chan struct{}
+	agentWorkers   sync.WaitGroup
+	activeSettings *sessionsettings.SessionSettings
+	restartID      string
+
 	port         int
 	settingsFile string // path to optional auto-provision settings file
 	httpClient   *http.Client
 	filterURL    string
 
-	mu          sync.RWMutex
-	status      Status
-	message     string
-	phase       string
-	phaseTime   time.Time
-	serverCtx   context.Context // long-lived context for provisioning goroutines
-	reporter    func(Status, string)
-	startupDone chan struct{}
+	mu                     sync.RWMutex
+	status                 Status
+	message                string
+	phase                  string
+	phaseTime              time.Time
+	serverCtx              context.Context // long-lived context for provisioning goroutines
+	reporter               func(Status, string)
+	restartSettingsHandler func(*sessionsettings.SessionSettings)
+	startupDone            chan struct{}
 }
 
 // New creates a new Server.
@@ -118,6 +128,12 @@ func (s *Server) Start(ctx context.Context) error {
 						return
 					}
 					log.Printf("[PROVISIONER] No initial provision request claimed; auto-provisioning from %s", s.settingsFile)
+					s.mu.RLock()
+					handler := s.restartSettingsHandler
+					s.mu.RUnlock()
+					if handler != nil {
+						handler(settings)
+					}
 					s.runProvision(ctx, settings)
 				}()
 			}
@@ -128,6 +144,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/livez", s.handleLivez)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
+	mux.HandleFunc("/pause", s.handlePauseAgent)
+	mux.HandleFunc("/restart", s.handleRestartAgent)
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
 
@@ -149,6 +167,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+func (s *Server) SetRestartSettingsHandler(handler func(*sessionsettings.SessionSettings)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.restartSettingsHandler = handler
 }
 
 func (s *Server) handleLivez(w http.ResponseWriter, _ *http.Request) {
@@ -179,7 +203,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // clients can distinguish a permanent failure from a transient startup delay.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
-	resp := StatusResponse{Status: s.status, Message: s.message}
+	resp := StatusResponse{Status: s.status, Message: s.message, RestartID: s.restartID}
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")

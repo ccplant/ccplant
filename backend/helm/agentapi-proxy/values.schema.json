@@ -87,10 +87,11 @@
       "properties": {
         "openTelemetry": {
           "type": "object",
-          "required": ["enabled", "serviceName", "serviceNamespace", "deploymentEnvironment", "tracesSampler", "tracesSamplerArg", "secretRef"],
+          "required": ["enabled", "serviceName", "workerServiceName", "serviceNamespace", "deploymentEnvironment", "tracesSampler", "tracesSamplerArg", "secretRef"],
           "properties": {
             "enabled": { "type": "boolean" },
             "serviceName": { "type": "string", "minLength": 1 },
+            "workerServiceName": { "type": "string", "minLength": 1 },
             "serviceNamespace": { "type": "string", "minLength": 1 },
             "deploymentEnvironment": { "type": "string" },
             "cloudRegion": { "type": "string" },
@@ -126,6 +127,8 @@
       "type": "object",
       "required": ["enabled", "pvc", "otelCollector"],
       "properties": {
+        "image": { "type": "string" },
+        "cliImage": { "type": "string" },
         "enabled": { "type": "boolean" },
         "serviceAccountName": { "type": "string", "minLength": 1 },
         "rbac": { "$ref": "#/definitions/rbac" },
@@ -211,6 +214,8 @@
           "type": "object",
           "required": ["enabled", "serviceAccountName", "rbac", "resources", "pvc", "provisioner", "otelCollector"],
           "properties": {
+            "image": { "type": "string" },
+            "cliImage": { "type": "string" },
             "enabled": { "type": "boolean" },
             "serviceAccountName": { "type": "string", "minLength": 1 },
             "rbac": { "$ref": "#/definitions/rbac" },
@@ -548,21 +553,10 @@
     },
     "sessionPersistence": {
       "type": "object",
-      "required": ["backend", "path", "suspendAfter", "persistence", "s3"],
+      "required": ["backend", "suspendAfter", "s3"],
       "properties": {
         "backend": { "enum": ["", "volume", "s3"] },
-        "path": { "type": "string", "minLength": 1 },
         "suspendAfter": { "type": "string", "minLength": 1 },
-        "persistence": {
-          "type": "object",
-          "required": ["enabled", "storageClass", "accessModes", "size"],
-          "properties": {
-            "enabled": { "type": "boolean" },
-            "storageClass": { "type": "string" },
-            "accessModes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-            "size": { "type": "string", "minLength": 1 }
-          }
-        },
         "s3": {
           "type": "object",
           "required": ["bucket", "region", "prefix", "endpoint"],

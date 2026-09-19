@@ -6,11 +6,15 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
+	runnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
+	infraesmcontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
@@ -18,11 +22,37 @@ import (
 // SessionRuntimeController exposes a per-session reverse-RPC channel used by a
 // Session Pod to communicate directly with the parent proxy.
 type SessionRuntimeController struct {
-	store  core.Store
-	routes repositories.SessionRouteRepository
-	status interface {
+	store   core.Store
+	runners runnercore.Store
+	routes  repositories.SessionRouteRepository
+	status  interface {
 		RecordRemoteSessionStatus(context.Context, *repositories.SessionRoute, string) error
 	}
+}
+
+// Checkpoint asks the connected runtime to persist its workspace and ACP state.
+// External session managers call this parent-owned endpoint instead of joining
+// the parent's Redis control stream.
+func (c *SessionRuntimeController) Checkpoint(ctx echo.Context) error {
+	route, status := c.authorize(ctx)
+	if status != http.StatusOK {
+		return ctx.NoContent(status)
+	}
+	tunnel := infraesmcontrol.NewTunnel(c.store)
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/internal/checkpoint-session-state", nil)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	resp, err := tunnel.Do(ctx.Request().Context(), route.SessionID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return echo.NewHTTPError(resp.StatusCode, string(body))
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func NewSessionRuntimeController(store core.Store, routes repositories.SessionRouteRepository, recorders ...interface {
@@ -32,6 +62,11 @@ func NewSessionRuntimeController(store core.Store, routes repositories.SessionRo
 	if len(recorders) > 0 {
 		c.status = recorders[0]
 	}
+	return c
+}
+
+func (c *SessionRuntimeController) WithRunnerStore(store runnercore.Store) *SessionRuntimeController {
+	c.runners = store
 	return c
 }
 
@@ -79,6 +114,14 @@ func (c *SessionRuntimeController) authorize(ctx echo.Context) (*repositories.Se
 	actual := hex.EncodeToString(digest[:])
 	if subtle.ConstantTimeCompare([]byte(actual), []byte(route.RuntimeTokenHash)) != 1 {
 		return nil, http.StatusUnauthorized
+	}
+	if c.runners != nil {
+		if err := c.runners.MarkStarted(ctx.Request().Context(), route.SessionID, generation); err != nil && !errors.Is(err, runnercore.ErrNotFound) {
+			if errors.Is(err, runnercore.ErrConflict) {
+				return route, http.StatusConflict
+			}
+			return route, http.StatusServiceUnavailable
+		}
 	}
 	return route, http.StatusOK
 }

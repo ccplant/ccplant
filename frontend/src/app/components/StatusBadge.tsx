@@ -84,6 +84,16 @@ export default function StatusBadge({ status, className = '' }: StatusBadgeProps
           icon: '💤',
           label: 'Suspended'
         }
+      case 'suspending':
+      case 'resuming':
+      case 'restoring':
+        return {
+          bg: 'bg-blue-100 dark:bg-blue-900 animate-pulse',
+          text: 'text-blue-800 dark:text-blue-200 font-semibold',
+          border: 'border-blue-300 dark:border-blue-600 border-2',
+          icon: '↻',
+          label: status === 'suspending' ? 'サスペンド中' : '再開中'
+        }
       case 'unhealthy':
         return {
           bg: 'bg-red-100 dark:bg-red-900',

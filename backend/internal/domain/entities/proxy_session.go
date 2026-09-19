@@ -12,8 +12,10 @@ type ProxySession struct {
 	tags          map[string]string
 	status        string
 	startedAt     time.Time
+	updatedAt     time.Time
 	lastMessageAt time.Time
 	statusMessage string
+	sessionReused bool
 }
 
 // SetStatusMessage attaches a human-readable explanation to the current status.
@@ -21,6 +23,12 @@ func (p *ProxySession) SetStatusMessage(message string) { p.statusMessage = mess
 
 // StatusMessage returns a human-readable explanation for terminal states.
 func (p *ProxySession) StatusMessage() string { return p.statusMessage }
+
+// SetSessionReused records that a trigger launch resolved to an existing session.
+func (p *ProxySession) SetSessionReused(reused bool) { p.sessionReused = reused }
+
+// SessionReused reports whether a trigger launch resolved to an existing session.
+func (p *ProxySession) SessionReused() bool { return p.sessionReused }
 
 // NewProxySession creates a new ProxySession
 func NewProxySession(id, userID string, scope ResourceScope, teamID string, tags map[string]string, startedAt time.Time) *ProxySession {
@@ -43,6 +51,7 @@ func NewProxySessionWithStatus(id, userID string, scope ResourceScope, teamID st
 		tags:          tags,
 		status:        status,
 		startedAt:     startedAt,
+		updatedAt:     startedAt,
 		lastMessageAt: startedAt,
 	}
 }
@@ -55,9 +64,10 @@ func (p *ProxySession) TeamID() string           { return p.teamID }
 func (p *ProxySession) Tags() map[string]string  { return p.tags }
 func (p *ProxySession) Status() string           { return p.status }
 func (p *ProxySession) StartedAt() time.Time     { return p.startedAt }
-func (p *ProxySession) UpdatedAt() time.Time     { return p.startedAt }
+func (p *ProxySession) UpdatedAt() time.Time     { return p.updatedAt }
 func (p *ProxySession) LastMessageAt() time.Time { return p.lastMessageAt }
 func (p *ProxySession) Description() string      { return p.tags["description"] }
 func (p *ProxySession) Cancel()                  {}
 
 func (p *ProxySession) SetLastMessageAt(value time.Time) { p.lastMessageAt = value }
+func (p *ProxySession) SetUpdatedAt(value time.Time)     { p.updatedAt = value }

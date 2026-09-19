@@ -11,6 +11,30 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
+func TestSessionManagerForwardsListFilterToControlAPI(t *testing.T) {
+	var requestURI string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.URL.RequestURI()
+		_ = json.NewEncoder(w).Encode([]sessionInfo{{
+			ID: "matching", UserID: "owner", Scope: entities.ScopeUser,
+			Tags: map[string]string{"slack_channel": "C1", "slack_thread_ts": "1.2"}, Status: "running",
+		}})
+	}))
+	defer server.Close()
+
+	filter := entities.SessionFilter{UserID: "owner", Scope: entities.ScopeUser, Tags: map[string]string{
+		"slack_thread_ts": "1.2", "slack_channel": "C1",
+	}}
+	sessions, err := NewSessionManager(server.URL, "token").ListSessionsContext(context.Background(), filter)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions=%v err=%v", sessions, err)
+	}
+	want := "/internal/worker/sessions?scope=user&tag.slack_channel=C1&tag.slack_thread_ts=1.2&user_id=owner"
+	if requestURI != want {
+		t.Fatalf("request URI = %q, want %q", requestURI, want)
+	}
+}
+
 func TestSessionManagerDelegatesCreateAndStockToControlAPI(t *testing.T) {
 	requests := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,5 +130,46 @@ func TestScheduleClientClaimsStartsAndFinalizes(t *testing.T) {
 	}
 	if !finalized {
 		t.Fatal("execution was not finalized")
+	}
+}
+
+func TestSlackStartFailureDoesNotFallBackToControlAPI(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/start" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	_, err := NewSessionManager(server.URL, "secret").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"}}, nil)
+	if err == nil {
+		t.Fatal("start failure ignored")
+	}
+	if calls != 1 {
+		t.Fatalf("requests=%d want 1", calls)
+	}
+}
+
+func TestSlackStartPreservesSessionReused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/start" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "existing", "session_reused": true})
+	}))
+	defer server.Close()
+
+	session, err := NewSessionManager(server.URL, "secret").CreateSession(context.Background(), "attempt", &entities.RunServerRequest{
+		UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused, ok := session.(interface{ SessionReused() bool })
+	if !ok || !reused.SessionReused() || session.ID() != "existing" {
+		t.Fatalf("session=%#v reused=%t", session, ok && reused.SessionReused())
 	}
 }

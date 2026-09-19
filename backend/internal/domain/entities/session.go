@@ -90,6 +90,9 @@ type SessionParams struct {
 	AgentType string `json:"agent_type,omitempty"`
 	// Model overrides the model used by the selected agent.
 	Model string `json:"model,omitempty"`
+	// ModelOptions lists the model strings offered as switching candidates in the
+	// ACP session info panel. Empty means only the agent-advertised options are shown.
+	ModelOptions []string `json:"model_options,omitempty"`
 	// Slack contains Slack integration parameters
 	Slack *SlackParams `json:"slack,omitempty"`
 	// Oneshot indicates whether the session should automatically delete itself after stopping
@@ -121,10 +124,10 @@ type SessionParams struct {
 	// AuthProxy controls whether the session auth proxy sidecar is injected.
 	// nil means use the global server configuration.
 	AuthProxy *bool `json:"auth_proxy,omitempty"`
-	// SessionTTL is the duration after the last message before this session is automatically deleted.
-	// Accepted format: Go duration string (e.g. "48h", "7d" where d=24h, "168h").
-	// Empty string means the global cleanup worker TTL is used for Slackbot sessions;
-	// non-Slackbot sessions without this field are not auto-deleted.
+	// SessionTTL is the duration after processing ends before this session is automatically deleted.
+	// Accepted format: Go duration string (e.g. "48h", "168h").
+	// Empty uses the global cleanup TTL for Slackbot sessions and disables
+	// automatic deletion for other sessions. Oneshot is shorthand for "1m".
 	SessionTTL string `json:"session_ttl,omitempty"`
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string `json:"unsynced_file_paths,omitempty"`
@@ -157,7 +160,11 @@ type UpdateSessionAnnotationsRequest struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
-	Environment map[string]string `json:"environment,omitempty"`
+	// WebhookPayload contains the original webhook body to mount in the session.
+	WebhookPayload []byte `json:"webhook_payload,omitempty"`
+	// TriggeredUserID is restored from a signed execution token, never from request JSON.
+	TriggeredUserID string            `json:"-"`
+	Environment     map[string]string `json:"environment,omitempty"`
 	// ProfileEnvironment is resolved from SessionProfileID and is never accepted from the API.
 	ProfileEnvironment map[string]string `json:"-"`
 	Tags               map[string]string `json:"tags,omitempty"`
@@ -177,6 +184,14 @@ type StartRequest struct {
 	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
 	ProfileMCPServers        *MCPServersSettings `json:"-"`
 	ResolvedSessionProfileID string              `json:"-"`
+	// ReuseMatchTags asks /start to reuse a live session matching every tag.
+	// ReuseMessage is queued to that session instead of creating a new one.
+	ReuseMatchTags map[string]string `json:"reuse_match_tags,omitempty"`
+	ReuseMessage   string            `json:"reuse_message,omitempty"`
+	// StopBeforeReuse interrupts a running reusable session before delivering ReuseMessage.
+	StopBeforeReuse bool              `json:"stop_before_reuse,omitempty"`
+	LimitMatchTags  map[string]string `json:"limit_match_tags,omitempty"`
+	MaxSessions     int               `json:"max_sessions,omitempty"`
 }
 
 // RepositoryInfo contains repository information extracted from tags
@@ -204,14 +219,19 @@ type RunServerRequest struct {
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo
 	InitialMessage           string
+	ReuseMatchTags           map[string]string
+	ReuseMessage             string
+	StopBeforeReuse          bool
+	LimitMatchTags           map[string]string
+	MaxSessions              int
 	Teams                    []string          // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
 	GithubToken              string            // GitHub token passed via params.github_token
 	Scope                    ResourceScope     // Resource scope ("user" or "team")
 	TeamID                   string            // Team identifier when Scope is "team"
 	AgentType                string            // Agent type for the session
 	Model                    string            // Model override interpreted for the selected agent
+	ModelOptions             []string          // Model switching candidates exposed to the ACP chat UI
 	SlackParams              *SlackParams      // Slack integration parameters
-	Oneshot                  bool              // Oneshot indicates whether the session should automatically delete itself after stopping
 	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
 	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
 	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)
@@ -230,8 +250,8 @@ type RunServerRequest struct {
 	// ParentRuntime is internal bootstrap material for a Session Pod that
 	// connects directly to the parent proxy. It is never accepted from user JSON.
 	ParentRuntime *sessionsettings.ParentRuntimeConfig
-	// SessionTTL is the duration after the last message before this session is auto-deleted.
-	// Stored as a Go duration string (e.g. "48h"). Empty means use the global cleanup TTL.
+	// SessionTTL is the duration after processing ends before this session is auto-deleted.
+	// Stored as a Go duration string (e.g. "48h"). Empty uses the default for the session type.
 	SessionTTL string
 	// UnsyncedFilePaths excludes managed file paths from syncing changes back to storage.
 	UnsyncedFilePaths []string

@@ -51,7 +51,7 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
         const exact = bindings.find((binding) => binding.subject_type === subjectType && binding.subject_id === scopeId)
         const scopeBinding = exact ?? bindings.find((binding) => binding.subject_type === 'all' && !binding.subject_id)
         if (!scopeBinding) return null
-        const suppliers = scopeBinding.role === 'manage' && scopeBinding.enabled
+        const suppliers = (scopeBinding.role === 'manage' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled
           ? await client.listManagedSessionPoolSuppliers(pool.name)
           : []
         return { pool, suppliers, bindings, scopeBinding }
@@ -251,7 +251,8 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
 
         {runtimes.map((runtime) => {
           const { pool, suppliers, bindings, scopeBinding } = runtime
-          const canManage = scopeBinding.role === 'manage' && scopeBinding.enabled
+          const canManage = (scopeBinding.role === 'manage' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled
+          const canUse = (scopeBinding.role === 'use' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled
           const idle = suppliers.reduce((sum, supplier) => sum + (supplier.idle_runners ?? 0), 0)
           const runners = suppliers.reduce((sum, supplier) => sum + (supplier.total_runners ?? 0), 0)
           return (
@@ -261,11 +262,12 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
                   <div>
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <h2 className="break-all text-base font-semibold text-gray-950 sm:text-lg dark:text-white">{pool.name}</h2>
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${scopeBinding.enabled && pool.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>{scopeBinding.enabled && pool.enabled ? '使用する' : '使用しない'}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${canUse && pool.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>{canUse && pool.enabled ? '使用する' : '使用しない'}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
                       {canManage && <><span>{suppliers.length} suppliers</span><span>{runners} runners</span><span>{idle} idle</span><span>{bindings.length} bindings</span></>}
                       {!canManage && <span>use 権限</span>}
+                      {canManage && !canUse && <span>manage 権限（利用不可）</span>}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -298,7 +300,7 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
       {activeTab === 'assignments' && <div className="space-y-4">
         <div><h2 className="text-base font-semibold text-gray-950 dark:text-white">割り当て設定</h2><p className="mt-1 text-sm text-gray-500">ManagerをPoolへ割り当て、供給状態とDrainを管理します。</p></div>
         {runtimes.length === 0 && <div className={`${card} py-8 text-center text-sm text-gray-500`}>先にPoolを作成してください。</div>}
-        {runtimes.filter(({ scopeBinding }) => scopeBinding.role === 'manage' && scopeBinding.enabled).map(({ pool, suppliers, bindings }) => <section key={pool.name} className={card}>
+        {runtimes.filter(({ scopeBinding }) => (scopeBinding.role === 'manage' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled).map(({ pool, suppliers, bindings }) => <section key={pool.name} className={card}>
           <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="break-all font-semibold text-gray-950 dark:text-white">{pool.name}</h3><button type="button" onClick={() => { setAssigningPool(assigningPool === pool.name ? null : pool.name); setAssignManagerID('') }} className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:text-blue-300"><UserPlus className="h-3.5 w-3.5" /> Managerを割り当て</button></div>
           {assigningPool === pool.name && <div className="mt-3 flex flex-col gap-2 sm:flex-row"><select value={assignManagerID} onChange={(event) => setAssignManagerID(event.target.value)} className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-950 dark:text-white"><option value="">Managerを選択</option>{managers.filter((manager) => manager.id && !suppliers.some((supplier) => supplier.manager_id === manager.id)).map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select><button type="button" onClick={() => void assignManager(pool.name)} disabled={!assignManagerID || busyAction === `assign:${pool.name}`} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">割り当て</button></div>}
           {bindings.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{bindings.map((binding) => <span key={binding.id} className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-xs text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"><Users className="h-3 w-3" /> {binding.subject_type}: {binding.subject_id || 'everyone'} · {binding.role}</span>)}</div>}

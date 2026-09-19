@@ -3,6 +3,7 @@ package sessionrunner
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,6 +115,9 @@ func TestKVStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotEqual(t, first.LeaseID, second.LeaseID)
+	require.Equal(t, first.Generation+1, second.Generation)
+	require.NotEqual(t, first.RuntimeToken, second.RuntimeToken)
+	require.ErrorIs(t, store.MarkStarted(ctx, first.SessionID, first.Generation), core.ErrConflict)
 	require.Equal(t, "runner-b", second.RunnerID)
 	_, err = store.Acknowledge(ctx, first.SessionID, first.RunnerID, first.LeaseID)
 	require.True(t, errors.Is(err, core.ErrConflict))
@@ -218,7 +222,7 @@ func (s *versionedMemoryStore) List(_ context.Context, query kvstore.Query) ([]k
 	defer s.mu.Unlock()
 	result := make([]kvstore.Record, 0)
 	for _, record := range s.records {
-		if record.Kind == query.Kind && record.Namespace == query.Namespace {
+		if record.Kind == query.Kind && record.Namespace == query.Namespace && strings.HasPrefix(record.Key, query.KeyPrefix) {
 			result = append(result, cloneRecord(record))
 		}
 	}

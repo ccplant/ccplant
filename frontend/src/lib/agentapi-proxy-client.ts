@@ -79,7 +79,7 @@ import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory
 import { ProxyUserInfo } from '../types/user';
 import { TeamConfig, ExternalTeamBinding } from '../types/team-config';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
-import { ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '../types/session_pool';
+import { AdminSessionRunner, ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
@@ -1130,10 +1130,18 @@ export class AgentAPIProxyClient {
 
     const endpoint = `/search${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
     const result = await this.makeRequest<SessionListResponse>(endpoint);
+
+    // Keep the UI scope isolated even when an older proxy or an external
+    // session manager returns a broader result set than requested.
+    const sessions = (result.sessions || []).filter(session => {
+      if (params?.scope && (session.scope || 'user') !== params.scope) return false;
+      if (params?.team_id && session.team_id !== params.team_id) return false;
+      return true;
+    });
     
     return {
       ...result,
-      sessions: result.sessions || []
+      sessions
     };
   }
 
@@ -1157,6 +1165,29 @@ export class AgentAPIProxyClient {
 
   async resumeSession(sessionId: string): Promise<{ session_id: string; status: string }> {
     return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/resume`, {
+      method: 'POST',
+    });
+  }
+
+  async restartSession(sessionId: string, reloadSettings = true): Promise<{ session_id: string; request_id: string }> {
+    return this.makeRequest(
+      `/sessions/${encodeURIComponent(sessionId)}/restart`,
+      { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ reload_settings: reloadSettings, busy_policy: 'wait' }) },
+    );
+  }
+
+  async pauseSession(sessionId: string): Promise<{ session_id: string; request_id: string }> {
+    return this.makeRequest(`/sessions/${encodeURIComponent(sessionId)}/pause`, {
+      method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ busy_policy: 'wait' }),
+    });
+  }
+
+  async restartStatus(sessionId: string): Promise<{ phase: string; revision: number; error?: string }> {
+    return this.makeRequest(`/sessions/${encodeURIComponent(sessionId)}/restart`);
+  }
+
+  async suspendSession(sessionId: string): Promise<{ session_id: string; status: string }> {
+    return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/suspend`, {
       method: 'POST',
     });
   }
@@ -1701,22 +1732,12 @@ export class AgentAPIProxyClient {
   // Settings operations
 
   /**
-   * Normalize name for settings API
-   * Team names may contain '/' which should be replaced with '-'
-   * @param name - User name or team name
-   */
-  private normalizeSettingsName(name: string): string {
-    return name.replace(/\//g, '-');
-  }
-
-  /**
    * Get settings for a user or team
    * @param name - User name or team name
    */
   async getSettings(name: string): Promise<SettingsData> {
-    const normalizedName = this.normalizeSettingsName(name);
     try {
-      return await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(normalizedName)}`);
+      return await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(name)}`);
     } catch (error) {
       // If settings don't exist (404), return empty settings
       if (error instanceof AgentAPIProxyError && error.status === 404) {
@@ -1735,11 +1756,10 @@ export class AgentAPIProxyClient {
    * @param data - Settings data to save
    */
   async saveSettings(name: string, data: SettingsData): Promise<SettingsData> {
-    const normalizedName = this.normalizeSettingsName(name);
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Saving settings for: ${name} (normalized: ${normalizedName})`);
+      console.log(`[AgentAPIProxy] Saving settings for: ${name}`);
     }
-    const result = await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(normalizedName)}`, {
+    const result = await this.makeRequest<SettingsData>(`/settings/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -1852,11 +1872,10 @@ export class AgentAPIProxyClient {
    * @param name - User name or team name
    */
   async deleteSettings(name: string): Promise<void> {
-    const normalizedName = this.normalizeSettingsName(name);
     if (this.debug) {
-      console.log(`[AgentAPIProxy] Deleting settings for: ${name} (normalized: ${normalizedName})`);
+      console.log(`[AgentAPIProxy] Deleting settings for: ${name}`);
     }
-    await this.makeRequest<void>(`/settings/${encodeURIComponent(normalizedName)}`, {
+    await this.makeRequest<void>(`/settings/${encodeURIComponent(name)}`, {
       method: 'DELETE',
     });
     if (this.debug) {
@@ -3174,6 +3193,14 @@ export class AgentAPIProxyClient {
     return this.makeRequest(`/admin/github-connections/${encodeURIComponent(id)}/test`, { method: 'POST' });
   }
 
+  async updateGitHubAppPrivateKey(id: string, value: string): Promise<GitHubConnection> {
+    return this.makeRequest<GitHubConnection>(`/admin/github-connections/${encodeURIComponent(id)}/github-app/private-key`, { method: 'PUT', body: JSON.stringify({ value }) });
+  }
+
+  async testGitHubApp(id: string, repository: string): Promise<{ valid: boolean; expires_at: string }> {
+    return this.makeRequest(`/admin/github-connections/${encodeURIComponent(id)}/github-app/test`, { method: 'POST', body: JSON.stringify({ repository }) });
+  }
+
   async listGitHubIdentities(): Promise<GitHubIdentitiesResponse> {
     return this.makeRequest<GitHubIdentitiesResponse>('/users/me/github-identities');
   }
@@ -3194,7 +3221,7 @@ export class AgentAPIProxyClient {
   }
 
   async createClusterSessionManager(name: string): Promise<{ manager: ClusterSessionManager; registration_token: string; expires_at: string }> {
-    return this.makeRequest('/session-managers/registration-tokens', { method: 'POST', body: JSON.stringify({ name, scope: 'system', pool: 'default', default: true }) });
+    return this.makeRequest('/session-managers/registration-tokens', { method: 'POST', body: JSON.stringify({ name, scope: 'system' }) });
   }
 
   async deleteClusterSessionManager(managerID: string): Promise<void> {
@@ -3236,7 +3263,7 @@ export class AgentAPIProxyClient {
     return result.pool_bindings ?? [];
   }
 
-  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' = 'use', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' | 'manage_and_use' = 'use', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
     return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
   }
 
@@ -3279,11 +3306,11 @@ export class AgentAPIProxyClient {
     await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/suppliers/${encodeURIComponent(managerID)}`, { method: 'DELETE' });
   }
 
-  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage', priority = 0, maxConcurrent = 0, enabled = true): Promise<SessionPoolBinding> {
+  async createManagedSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' | 'manage_and_use', priority = 0, maxConcurrent = 0, enabled = true): Promise<SessionPoolBinding> {
     return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent, enabled }) });
   }
 
-  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage'; enabled?: boolean; priority?: number; max_concurrent?: number }): Promise<SessionPoolBinding> {
+  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage' | 'manage_and_use'; enabled?: boolean; priority?: number; max_concurrent?: number }): Promise<SessionPoolBinding> {
     return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'PATCH', body: JSON.stringify(input) });
   }
 
@@ -3293,6 +3320,34 @@ export class AgentAPIProxyClient {
 
   async deleteSessionPoolBinding(pool: string, bindingID: string): Promise<void> {
     await this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'DELETE' });
+  }
+
+  async getSessionPoolStatus(): Promise<SessionPoolStatusResponse> {
+    return this.makeRequest<SessionPoolStatusResponse>('/session-pools/status');
+  }
+
+  async getSessionPoolManagerLogs(managerID: string, tail = 200): Promise<SessionPoolLogs> {
+    return this.makeRequest<SessionPoolLogs>(`/session-managers/${encodeURIComponent(managerID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
+  }
+
+  async getSessionPoolRunnerLogs(runnerID: string, tail = 200): Promise<SessionPoolLogs> {
+    return this.makeRequest<SessionPoolLogs>(`/session-runners/${encodeURIComponent(runnerID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
+  }
+
+  async listAdminSessionRunners(): Promise<AdminSessionRunner[]> {
+    const result = await this.makeRequest<{ session_runners: AdminSessionRunner[] }>('/admin/session-runners');
+    return result.session_runners ?? [];
+  }
+
+  async getAdminSessionRunnerLogs(runnerID: string, managerID: string, tail = 200): Promise<SessionPoolLogs> {
+    const params = new URLSearchParams({ manager_id: managerID, tail: String(Math.min(5000, Math.max(1, tail))) });
+    return this.makeRequest<SessionPoolLogs>(`/admin/session-runners/${encodeURIComponent(runnerID)}/logs?${params}`);
+  }
+
+  async deleteAdminSessionRunner(runnerID: string, managerID: string, force = false): Promise<void> {
+    const params = new URLSearchParams({ manager_id: managerID });
+    if (force) params.set('force', 'true');
+    await this.makeRequest(`/admin/session-runners/${encodeURIComponent(runnerID)}?${params}`, { method: 'DELETE' });
   }
 }
 

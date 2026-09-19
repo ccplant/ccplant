@@ -12,6 +12,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/takutakahashi/agentapi-proxy/pkg/acp"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
 
 // Server is a minimal HTTP transport for ACP.
@@ -34,6 +36,7 @@ func NewServer(b *Bridge, verbose bool) *Server {
 	e.HidePort = true
 
 	e.Use(middleware.Recover())
+	e.Use(otelecho.Middleware("agentapi-acp-bridge"))
 	e.Use(middleware.CORS())
 	if verbose {
 		e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
@@ -260,7 +263,9 @@ func (s *Server) handleRPC(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest,
 				rpcErrorResp(env.ID, -32602, err.Error()))
 		}
-		if err := s.bridge.SendPrompt(*env.ID, params.Prompt); err != nil {
+		if err := telemetry.LoggedOperationErr(c.Request().Context(), "acp.Bridge.AcceptPrompt", func(context.Context) error {
+			return s.bridge.SendPrompt(*env.ID, params.Prompt)
+		}, telemetry.String("acp.session_id", params.SessionId)); err != nil {
 			return c.JSON(http.StatusInternalServerError,
 				rpcErrorResp(env.ID, -32000, err.Error()))
 		}

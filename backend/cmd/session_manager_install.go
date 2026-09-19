@@ -189,6 +189,9 @@ func ensureManagerCredentials(ctx context.Context, client kubernetes.Interface, 
 	secrets := client.CoreV1().Secrets(opts.namespace)
 	existing, err := secrets.Get(ctx, opts.connectionSecret, metav1.GetOptions{})
 	if err == nil {
+		if opts.registrationToken != "" {
+			return nil, fmt.Errorf("connection Secret %s/%s already exists; --registration-token is only valid for the initial install; omit it for an upgrade, or remove the Secret in a controlled maintenance window to replace credentials", opts.namespace, opts.connectionSecret)
+		}
 		managerID, token := string(existing.Data["manager-id"]), string(existing.Data["connection-token"])
 		if managerID == "" || token == "" {
 			return nil, fmt.Errorf("secret %s/%s is missing manager-id or connection-token", opts.namespace, opts.connectionSecret)
@@ -286,10 +289,9 @@ func issueManagerRegistrationToken(ctx context.Context, opts sessionManagerInsta
 	}
 	var listed struct {
 		Managers []struct {
-			ID          string            `json:"id"`
-			Name        string            `json:"name"`
-			InstallPool string            `json:"install_pool"`
-			Labels      map[string]string `json:"labels"`
+			ID     string            `json:"id"`
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
 		} `json:"session_managers"`
 	}
 	if err = json.NewDecoder(listResp.Body).Decode(&listed); err != nil {
@@ -298,7 +300,7 @@ func issueManagerRegistrationToken(ctx context.Context, opts sessionManagerInsta
 	}
 	_ = listResp.Body.Close()
 	for _, manager := range listed.Managers {
-		if manager.Name != opts.name || manager.InstallPool != opts.pool || manager.Labels["namespace"] != opts.namespace || manager.Labels["release"] != opts.release {
+		if manager.Name != opts.name || manager.Labels["namespace"] != opts.namespace || manager.Labels["release"] != opts.release {
 			continue
 		}
 		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session-managers/"+url.PathEscape(manager.ID)+"/registration-token", nil)
@@ -308,7 +310,7 @@ func issueManagerRegistrationToken(ctx context.Context, opts sessionManagerInsta
 		req.Header.Set("X-API-Key", apiKey)
 		return requestRegistrationToken(req, http.StatusOK)
 	}
-	payload, _ := json.Marshal(map[string]any{"name": opts.name, "scope": opts.scope, "team_id": opts.teamID, "pool": opts.pool,
+	payload, _ := json.Marshal(map[string]any{"name": opts.name, "scope": opts.scope, "team_id": opts.teamID,
 		"labels": map[string]string{"type": "kubernetes", "namespace": opts.namespace, "release": opts.release}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/session-managers/registration-tokens", bytes.NewReader(payload))
 	if err != nil {
@@ -373,8 +375,6 @@ func verifyManagerCredential(ctx context.Context, upstream string, credentials *
 
 func enrollKubernetesManager(ctx context.Context, opts sessionManagerInstallOptions) (*installedManagerCredentials, error) {
 	payload, _ := json.Marshal(map[string]any{"registration_token": opts.registrationToken, "instance_id": opts.instanceID,
-		"pool":         opts.pool,
-		"default":      true,
 		"labels":       map[string]string{"type": "kubernetes", "namespace": opts.namespace, "release": opts.release},
 		"capabilities": []string{"runner_claim_v1", "direct_session_runtime_v1"}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBaseURL(opts.upstream)+"/session-managers/enroll", bytes.NewReader(payload))

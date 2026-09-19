@@ -76,6 +76,7 @@ export default function SessionProfileEditor({
   const [agentType, setAgentType] = useState('')
   const [codexModel, setCodexModel] = useState('')
   const [claudeModel, setClaudeModel] = useState('')
+  const [modelOptions, setModelOptions] = useState('')
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
 
   // Docker / DinD fields
@@ -140,10 +141,11 @@ export default function SessionProfileEditor({
       setIsDefault(editingProfile.is_default ?? false)
 
       const cfg = editingProfile.config
-      setPool(cfg?.pool ?? '')
+      setPool(cfg?.pool || cfg?.params?.pool || '')
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
       setCodexModel(cfg?.environment?.CODEX_MODEL ?? '')
       setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
+      setModelOptions((cfg?.params?.model_options ?? []).join('\n'))
       setMcpServers(cfg?.mcp_servers ?? {})
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
@@ -207,6 +209,7 @@ export default function SessionProfileEditor({
       setAgentType('')
       setCodexModel('')
       setClaudeModel('')
+      setModelOptions('')
       setMcpServers({})
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -320,10 +323,12 @@ export default function SessionProfileEditor({
       // Build params if any param is set
       // Preserve fields managed through the API that are not exposed in this editor.
       const extraParams = { ...editingProfile?.config?.params }
-      for (const key of ['agent_type', 'model', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      const parsedModelOptions = modelOptions.split('\n').map(line => line.trim()).filter(Boolean)
       const params = {
         ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
+        ...(parsedModelOptions.length > 0 ? { model_options: parsedModelOptions } : {}),
         sandbox: sandboxConfig,
         ...(dockerConfig ? { docker: dockerConfig } : {}),
         ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
@@ -556,6 +561,14 @@ export default function SessionProfileEditor({
                         onChange={e => { setClaudeModel(e.target.value); setDirty(true) }}
                         placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
                     </label>
+                    <label className="block text-sm">モデル候補（ACP チャットの切り替え候補）
+                      <textarea aria-label="モデル候補" value={modelOptions}
+                        onChange={e => { setModelOptions(e.target.value); setDirty(true) }}
+                        placeholder={'1 行に 1 つ入力\nsonnet\nopus'}
+                        rows={3}
+                        className="w-full rounded-md border bg-white p-2 font-mono text-xs dark:bg-gray-800" />
+                    </label>
+                    <p className="text-xs text-gray-500">セッション情報パネルの「Switch Model」に表示する候補です（エージェントが提示する候補も常に表示されます）。codex-acp ではここで指定した候補が Codex のモデルカタログに登録され、セッション開始後に選択できます。登録に失敗した場合や Claude では、エージェントが候補を拒否することがあるため、切り替えに失敗するときは既定モデル（Codex / Claude モデル ID）を変えて新しいセッションを開始してください。</p>
                   </div>
 
                   
@@ -874,7 +887,7 @@ export default function SessionProfileEditor({
                       セッション自動削除 TTL
                     </label>
                     <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      最後のメッセージからこの時間が経過するとセッションを自動削除します。例: <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">24h</code>、<code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">168h</code>（空欄 = 自動削除なし / グローバル設定に従う）
+                      処理が終了してからこの時間が経過するとセッションを自動削除します。実行中は削除されず、次の処理が終了すると再計測します。例: <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">24h</code>、<code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">168h</code>（空欄 = 自動削除なし / グローバル設定に従う）
                     </p>
                     <input
                       type="text"

@@ -11,11 +11,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 type controlCommand struct {
@@ -116,7 +119,10 @@ func pollControlCommands(ctx context.Context, client *http.Client, cfg PullClien
 }
 
 func executeControlCommand(ctx context.Context, client *http.Client, agentType string, command controlCommand) error {
-	localBase := "http://127.0.0.1:9000"
+	return executeControlCommandAtBase(ctx, client, agentType, command, "http://127.0.0.1:9000")
+}
+
+func executeControlCommandAtBase(ctx context.Context, client *http.Client, agentType string, command controlCommand, localBase string) error {
 	var endpoint string
 	var payload interface{}
 	switch command.Type {
@@ -149,6 +155,15 @@ func executeControlCommand(ctx context.Context, client *http.Client, agentType s
 			endpoint = localBase + "/rpc"
 			payload = map[string]interface{}{"jsonrpc": "2.0", "id": command.ID, "method": "session/cancel", "params": map[string]string{"sessionId": sessionID}}
 		}
+	case "checkpoint_session_state":
+		binary := proxybinary.Resolve(os.Getenv(proxybinary.EnvName))
+		cmd := exec.CommandContext(ctx, binary, "client", "backup-session-state")
+		cmd.Env = append(os.Environ(), "AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("backup session state: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported command type %q", command.Type)
 	}
@@ -161,6 +176,7 @@ func executeControlCommand(ctx context.Context, client *http.Client, agentType s
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	telemetry.InjectHTTP(ctx, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -177,6 +193,7 @@ func localACPSessionID(ctx context.Context, client *http.Client, base string) (s
 	if err != nil {
 		return "", err
 	}
+	telemetry.InjectHTTP(ctx, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

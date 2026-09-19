@@ -20,12 +20,21 @@ type SubjectType string
 type BindingRole string
 
 const (
-	SubjectUser       SubjectType = "user"
-	SubjectTeam       SubjectType = "team"
-	SubjectAll        SubjectType = "all"
-	BindingRoleUse    BindingRole = "use"
-	BindingRoleManage BindingRole = "manage"
+	SubjectUser             SubjectType = "user"
+	SubjectTeam             SubjectType = "team"
+	SubjectAll              SubjectType = "all"
+	BindingRoleUse          BindingRole = "use"
+	BindingRoleManage       BindingRole = "manage"
+	BindingRoleManageAndUse BindingRole = "manage_and_use"
 )
+
+func (r BindingRole) GrantsUse() bool {
+	return r == BindingRoleUse || r == BindingRoleManageAndUse
+}
+
+func (r BindingRole) GrantsManage() bool {
+	return r == BindingRoleManage || r == BindingRoleManageAndUse
+}
 
 type Manager struct {
 	ID                    string            `json:"id"`
@@ -102,6 +111,7 @@ const (
 	RunnerClaiming RunnerStatus = "claiming"
 	RunnerRunning  RunnerStatus = "running"
 	RunnerOffline  RunnerStatus = "offline"
+	RunnerDraining RunnerStatus = "draining"
 )
 
 type Runner struct {
@@ -164,4 +174,25 @@ func (e *QuotaExceededError) Error() string {
 type Claim struct {
 	Allocation *Allocation `json:"allocation"`
 	Runner     *Runner     `json:"runner"`
+}
+
+// Configuration preserves user input separately from resolved profile defaults.
+// Secret-bearing Input and Settings are never returned by the public status API.
+type Configuration struct {
+	TriggeredUserID string    `json:"triggered_user_id,omitempty"`
+	RequestHash     string    `json:"request_hash,omitempty"`
+	SessionID       string    `json:"session_id"`
+	UserID          string    `json:"user_id"`
+	Scope           string    `json:"scope"`
+	TeamID          string    `json:"team_id,omitempty"`
+	Teams           []string  `json:"teams,omitempty"`
+	Input           []byte    `json:"input"`
+	ProfileID       string    `json:"profile_id,omitempty"`
+	Settings        []byte    `json:"settings,omitempty"`
+	Revision        int64     `json:"revision"`
+	Phase           string    `json:"phase,omitempty"`
+	RequestID       string    `json:"request_id,omitempty"`
+	Error           string    `json:"error,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	Version         int64     `json:"-"`
 }

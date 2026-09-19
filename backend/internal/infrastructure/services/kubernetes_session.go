@@ -204,9 +204,21 @@ func (s *KubernetesSession) StatusMessage() string {
 // received from Redis so that the local state is kept consistent without
 // triggering a redundant broadcast (the originating pod already did that).
 func (s *KubernetesSession) SetStatusSilent(status string) {
+	s.SetStatusSilentAt(status, time.Time{})
+}
+
+// SetStatusSilentAt preserves the originating status transition time when
+// synchronizing replicas, so TTL cleanup does not use the previous turn's time.
+func (s *KubernetesSession) SetStatusSilentAt(status string, updatedAt time.Time) {
 	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.status != status || updatedAt.After(s.updatedAt) {
+		if updatedAt.IsZero() {
+			updatedAt = time.Now()
+		}
+		s.updatedAt = updatedAt
+	}
 	s.status = status
-	s.mutex.Unlock()
 }
 
 // SetStartedAt sets the session start time (used for restored sessions)
@@ -298,6 +310,17 @@ func (s *KubernetesSession) Request() *entities.RunServerRequest {
 	return s.request
 }
 
+// ModelOptions returns the model switching candidates configured for the
+// session, so the public session list can expose them to the ACP chat UI.
+func (s *KubernetesSession) ModelOptions() []string {
+	if s.request == nil {
+		return nil
+	}
+	return append([]string(nil), s.request.ModelOptions...)
+}
+
+func (s *KubernetesSession) SetRequest(request *entities.RunServerRequest) { s.request = request }
+
 // SetResolvedAPIKey stores the API key resolved during session creation.
 // This is used by the memory-sync sidecar to authenticate with the proxy.
 func (s *KubernetesSession) SetResolvedAPIKey(key string) {
@@ -312,12 +335,16 @@ func (s *KubernetesSession) ResolvedAPIKey() string {
 // SetProvisionSettings stores the SessionSettings used for provisioning.
 // This is called after successful provisioning to enable Pod restart recovery.
 func (s *KubernetesSession) SetProvisionSettings(settings *sessionsettings.SessionSettings) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	s.provisionSettings = settings
 }
 
 // ProvisionSettings returns the SessionSettings used for provisioning.
 // Returns nil if not yet set (i.e., provisioning has not completed successfully).
 func (s *KubernetesSession) ProvisionSettings() *sessionsettings.SessionSettings {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 	return s.provisionSettings
 }
 

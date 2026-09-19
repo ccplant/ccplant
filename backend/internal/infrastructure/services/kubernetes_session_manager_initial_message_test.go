@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -202,11 +203,13 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	initialMessage := "Hello, this is the initial message for testing"
 
 	req := &entities.RunServerRequest{
-		UserID:         "test-user",
-		InitialMessage: initialMessage,
+		UserID:            "test-user",
+		InitialMessage:    initialMessage,
+		ProvisionSettings: &sessionsettings.SessionSettings{InitialMessage: initialMessage},
 	}
+	webhookPayload := []byte(`{"action":"opened"}`)
 
-	session, err := manager.CreateSession(ctx, sessionID, req, nil)
+	session, err := manager.CreateSession(ctx, sessionID, req, webhookPayload)
 	if err != nil {
 		t.Fatalf("Failed to create session: %v\n", err)
 	}
@@ -237,6 +240,19 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	if ks.ProvisionSettings().InitialMessage != initialMessage {
 		t.Errorf("Expected InitialMessage %q in ProvisionSettings, got %q", initialMessage, ks.ProvisionSettings().InitialMessage)
 	}
+	if ks.ProvisionSettings().WebhookPayload != string(webhookPayload) {
+		t.Errorf("Expected webhook payload in ProvisionSettings, got %q", ks.ProvisionSettings().WebhookPayload)
+	}
+	provisionRequest, err := manager.getProvisionRequest(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("Failed to load provision request: %v", err)
+	}
+	if provisionRequest.Settings.WebhookPayload != string(webhookPayload) {
+		t.Errorf("Expected webhook payload in provision request, got %q", provisionRequest.Settings.WebhookPayload)
+	}
+	if _, err := k8sClient.CoreV1().Secrets(ns.Name).Get(ctx, "agentapi-session-"+sessionID+"-svc-webhook-payload", metav1.GetOptions{}); !errors.IsNotFound(err) {
+		t.Fatalf("Webhook payload must not be stored in a Secret, got error %v", err)
+	}
 
 	// Verify pod uses agent-provisioner (NOT initial-message-sender sidecar).
 	workloadName := "agentapi-session-" + sessionID
@@ -246,6 +262,11 @@ func TestCreateSessionWithInitialMessage(t *testing.T) {
 	}
 
 	podSpec := pod.Spec
+	for _, volume := range podSpec.Volumes {
+		if volume.Name == "webhook-payload" {
+			t.Error("webhook payload must not be mounted as a Secret volume")
+		}
+	}
 	for _, container := range podSpec.Containers {
 		if container.Name == "initial-message-sender" {
 			t.Error("initial-message-sender sidecar should NOT be present (replaced by agent-provisioner)")

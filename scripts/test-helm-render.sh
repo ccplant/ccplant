@@ -29,6 +29,33 @@ assert_not_contains() {
   fi
 }
 
+# Broker sessions can bypass the public ingress using the API Service. The
+# opt-in value must track the actual Service name, namespace and port, and
+# must not leave a duplicate override in the API environment.
+assert_not_contains 'AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/backend-default.yaml"
+assert_not_contains 'AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/ccplant-default.yaml"
+"$HELM_BIN" template broker "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --namespace broker-test --show-only templates/deployment.yaml \
+  --set api.githubBroker.inCluster=true >"$TMP_DIR/broker-in-cluster.yaml"
+assert_contains 'value: "http://broker-agentapi-proxy.broker-test.svc.cluster.local:8080"' "$TMP_DIR/broker-in-cluster.yaml"
+"$HELM_BIN" template broker "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --namespace broker-test --show-only templates/deployment.yaml \
+  --set api.githubBroker.inCluster=true --set fullnameOverride=broker-api --set service.port=9090 \
+  --set 'env[0].name=AGENTAPI_GITHUB_BROKER_BASE_URL' --set 'env[0].value=https://legacy.example' \
+  --set 'api.env[0].name=AGENTAPI_GITHUB_BROKER_BASE_URL' --set 'api.env[0].value=https://custom.example' \
+  >"$TMP_DIR/broker-in-cluster-overrides.yaml"
+assert_contains 'value: "http://broker-api.broker-test.svc.cluster.local:9090"' "$TMP_DIR/broker-in-cluster-overrides.yaml"
+assert_not_contains 'https://(legacy|custom).example' "$TMP_DIR/broker-in-cluster-overrides.yaml"
+if [[ $(grep -c 'name: AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/broker-in-cluster-overrides.yaml") -ne 1 ]]; then
+  echo "expected exactly one broker base URL environment entry" >&2
+  exit 1
+fi
+"$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" \
+  --namespace broker-test --set backend.api.githubBroker.inCluster=true \
+  --set backend.fullnameOverride=broker-api --set backend.service.port=9090 \
+  >"$TMP_DIR/ccplant-broker-in-cluster.yaml"
+assert_contains 'value: "http://broker-api.broker-test.svc.cluster.local:9090"' "$TMP_DIR/ccplant-broker-in-cluster.yaml"
+
 "$HELM_BIN" template backend-kv-encryption "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --set api.kvStore.primary.encryption.activeKeyId=current \
   --set api.kvStore.primary.encryption.keysSecretRef.name=agentapi-kv-keys >"$TMP_DIR/backend-kv-encryption.yaml"
@@ -382,3 +409,34 @@ fi
   --set api.replicaCount=2 >"$TMP_DIR/backend-replicas.yaml"
 
 echo "Helm render assertions passed"
+
+# Application versions affect only the CLI source, never the cached assets.
+agent_image="ghcr.io/ccplant/ccplant-agent:$("$REPO_ROOT/scripts/agent-image-tag.sh")"
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set image.tag=v9.9.9 >"$TMP_DIR/manager-agent-assets.yaml"
+assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-agent-assets.yaml"
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set session.cliImage=registry.example/cli:fixed >"$TMP_DIR/manager-custom-cli.yaml"
+assert_contains 'value: "registry.example/cli:fixed"' "$TMP_DIR/manager-custom-cli.yaml"
+assert_contains "value: \"${agent_image}\"" "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
+
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set sessionPersistence.backend=s3 \
+  --set sessionPersistence.s3.bucket=manager-sessions \
+  --set sessionPersistence.s3.endpoint=https://s3.example \
+  --set sessionPersistence.s3.accessKeyIdSecretRef.name=s3-credentials \
+  --set sessionPersistence.s3.secretAccessKeySecretRef.name=s3-credentials >"$TMP_DIR/manager-s3.yaml"
+assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/manager-s3.yaml"
+assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/manager-s3.yaml"
+assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/manager-s3.yaml"
+
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set sessionPersistence.backend=volume \
+  --set session.pvc.storageClass=fast \
+  --set session.pvc.storageSize=20Gi >"$TMP_DIR/manager-volume.yaml"
+assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: "volume"' "$TMP_DIR/manager-volume.yaml"
+assert_not_contains 'kind: PersistentVolumeClaim' "$TMP_DIR/manager-volume.yaml"
+assert_not_contains 'name: session-state' "$TMP_DIR/manager-volume.yaml"

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
@@ -42,6 +43,20 @@ type Client struct {
 	token                    string
 	http                     *http.Client
 	provisionSettingsBuilder portrepos.RemoteProvisionSettingsBuilder
+	statusOnce               sync.Once
+	statusCtx                context.Context
+	statusCancel             context.CancelFunc
+	statusMu                 sync.Mutex
+	statusSubscribers        map[uint64]*statusSubscriber
+	statusNextSubscriberID   uint64
+	statusKnown              map[string]string
+}
+
+type statusSubscriber struct {
+	out   chan portrepos.SessionStatusEvent
+	wake  chan struct{}
+	stop  chan struct{}
+	queue []portrepos.SessionStatusEvent
 }
 
 // SetProvisionSettingsBuilder installs the API-side settings resolver. The
@@ -75,12 +90,17 @@ func NewClient(baseURL, bearerToken string, options ...ClientOption) (*Client, e
 	if bearerToken == "" {
 		return nil, errors.New("session-manager API bearer token is required")
 	}
+	statusCtx, statusCancel := context.WithCancel(context.Background())
 	client := &Client{
 		baseURL: baseURL,
 		token:   bearerToken,
 		// Stock creation can wait up to 120 seconds for its Kubernetes workload.
 		// Keep this hop alive for the entire session-manager operation.
-		http: &http.Client{Timeout: 150 * time.Second, Transport: otelhttp.NewTransport(http.DefaultTransport)},
+		http:              &http.Client{Timeout: 150 * time.Second, Transport: otelhttp.NewTransport(http.DefaultTransport)},
+		statusCtx:         statusCtx,
+		statusCancel:      statusCancel,
+		statusSubscribers: make(map[uint64]*statusSubscriber),
+		statusKnown:       make(map[string]string),
 	}
 	for _, option := range options {
 		option(client)
@@ -90,6 +110,7 @@ func NewClient(baseURL, bearerToken string, options ...ClientOption) (*Client, e
 
 var _ portrepos.SessionManager = (*Client)(nil)
 var _ portrepos.SessionWorkloadEnsurer = (*Client)(nil)
+var _ portrepos.SessionSuspender = (*Client)(nil)
 var _ portrepos.SessionToucher = (*Client)(nil)
 var _ portrepos.SessionSandboxDomainReader = (*Client)(nil)
 var _ portrepos.SessionStatusWatcher = (*Client)(nil)
@@ -114,44 +135,117 @@ func (c *Client) ExternalRuntimeProfile() *sessionsettings.RuntimeProfile {
 }
 
 // SubscribeStatusEvents preserves the public API's watcher capability without
-// giving it Redis or Kubernetes credentials. The private client observes the
-// manager's authoritative DTOs and emits changes locally.
+// giving it Redis or Kubernetes credentials. All subscribers on this client
+// share one manager poller so session-list work does not multiply with the
+// number of connected browsers.
 func (c *Client) SubscribeStatusEvents() (<-chan portrepos.SessionStatusEvent, func()) {
-	ctx, cancel := context.WithCancel(context.Background())
-	events := make(chan portrepos.SessionStatusEvent, 32)
-	go func() {
-		defer close(events)
-		known := make(map[string]string)
-		initialized := false
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			sessions, err := c.ListSessionsContext(ctx, entities.SessionFilter{})
-			if err == nil {
-				next := make(map[string]string, len(sessions))
-				for _, session := range sessions {
-					next[session.ID()] = session.Status()
-					// Emit the initial authoritative snapshot as well as later changes.
-					// Browser tabs intentionally disconnect while hidden; without this
-					// snapshot a transition that happened during that gap is lost forever.
-					if !initialized || known[session.ID()] != session.Status() {
-						select {
-						case events <- portrepos.SessionStatusEvent{SessionID: session.ID(), Status: session.Status(), Timestamp: time.Now()}:
-						case <-ctx.Done():
-							return
-						}
-					}
-				}
-				known, initialized = next, true
+	subscriber := &statusSubscriber{
+		out:  make(chan portrepos.SessionStatusEvent, 32),
+		wake: make(chan struct{}, 1),
+		stop: make(chan struct{}),
+	}
+
+	c.statusMu.Lock()
+	id := c.statusNextSubscriberID
+	c.statusNextSubscriberID++
+	now := time.Now()
+	for sessionID, status := range c.statusKnown {
+		subscriber.queue = append(subscriber.queue, portrepos.SessionStatusEvent{SessionID: sessionID, Status: status, Timestamp: now})
+	}
+	c.statusSubscribers[id] = subscriber
+	hasSnapshot := len(subscriber.queue) > 0
+	c.statusMu.Unlock()
+
+	go c.runStatusSubscriber(subscriber)
+	if hasSnapshot {
+		subscriber.wake <- struct{}{}
+	}
+	c.statusOnce.Do(func() { go c.runStatusPoller() })
+
+	var cancelOnce sync.Once
+	cancel := func() {
+		cancelOnce.Do(func() {
+			c.statusMu.Lock()
+			if _, exists := c.statusSubscribers[id]; exists {
+				delete(c.statusSubscribers, id)
+				close(subscriber.stop)
 			}
+			c.statusMu.Unlock()
+		})
+	}
+	return subscriber.out, cancel
+}
+
+func (c *Client) runStatusPoller() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		c.pollSessionStatuses()
+		select {
+		case <-c.statusCtx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *Client) pollSessionStatuses() {
+	sessions, err := c.ListSessionsContext(c.statusCtx, entities.SessionFilter{})
+	if err != nil {
+		return
+	}
+	next := make(map[string]string, len(sessions))
+	now := time.Now()
+
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	for _, session := range sessions {
+		next[session.ID()] = session.Status()
+		if previous, exists := c.statusKnown[session.ID()]; exists && previous == session.Status() {
+			continue
+		}
+		event := portrepos.SessionStatusEvent{SessionID: session.ID(), Status: session.Status(), Timestamp: now}
+		for _, subscriber := range c.statusSubscribers {
+			subscriber.queue = append(subscriber.queue, event)
 			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
+			case subscriber.wake <- struct{}{}:
+			default:
 			}
 		}
-	}()
-	return events, cancel
+	}
+	c.statusKnown = next
+}
+
+func (c *Client) runStatusSubscriber(subscriber *statusSubscriber) {
+	defer close(subscriber.out)
+	for {
+		select {
+		case <-subscriber.stop:
+			return
+		case <-c.statusCtx.Done():
+			return
+		case <-subscriber.wake:
+		}
+
+		for {
+			c.statusMu.Lock()
+			if len(subscriber.queue) == 0 {
+				c.statusMu.Unlock()
+				break
+			}
+			event := subscriber.queue[0]
+			subscriber.queue = subscriber.queue[1:]
+			c.statusMu.Unlock()
+
+			select {
+			case subscriber.out <- event:
+			case <-subscriber.stop:
+				return
+			case <-c.statusCtx.Done():
+				return
+			}
+		}
+	}
 }
 
 func (c *Client) SubscribeMessageEvents(sessionID string) (<-chan portrepos.SessionMessageEvent, func()) {
@@ -308,6 +402,10 @@ func (c *Client) StopAgent(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/stop", nil, nil)
 }
 
+func (c *Client) SuspendSession(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/suspend", nil, nil)
+}
+
 func (c *Client) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	return telemetry.Operation(ctx, "sessionmanagerapi.Client.GetMessages", func(ctx context.Context) ([]portrepos.Message, error) {
 		return c.getMessages(ctx, id)
@@ -323,8 +421,11 @@ func (c *Client) getMessages(ctx context.Context, id string) ([]portrepos.Messag
 }
 
 // Shutdown intentionally does not stop the remote process or its sessions. It
-// only satisfies the lifecycle port used by the API process.
-func (c *Client) Shutdown(time.Duration) error { return nil }
+// only stops client-side background work owned by the API process.
+func (c *Client) Shutdown(time.Duration) error {
+	c.statusCancel()
+	return nil
+}
 
 func (c *Client) EnsureSessionWorkload(ctx context.Context, id string) (entities.Session, bool, error) {
 	var response ensureWorkloadResponse
@@ -526,4 +627,28 @@ func readErrorMessage(body io.Reader) string {
 func isHTTPStatus(err error, status int) bool {
 	var httpErr *HTTPError
 	return errors.As(err, &httpErr) && httpErr.StatusCode == status
+}
+
+func (c *Client) RestartSession(ctx context.Context, id, requestID string, settings *sessionsettings.SessionSettings) error {
+	transport := *c.http
+	transport.Timeout = 10 * time.Minute
+	long := &Client{baseURL: c.baseURL, token: c.token, http: &transport}
+	return long.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/restart", struct {
+		ID       string
+		Settings *sessionsettings.SessionSettings
+	}{requestID, settings}, nil)
+}
+func (c *Client) ValidateSessionRestart(ctx context.Context, id string, settings *sessionsettings.SessionSettings) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/restart/validate", settings, nil)
+}
+func (c *Client) PauseSession(ctx context.Context, id string) error {
+	transport := *c.http
+	transport.Timeout = 10 * time.Minute
+	long := &Client{baseURL: c.baseURL, token: c.token, http: &transport}
+	return long.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/pause", nil, nil)
+}
+func (c *Client) CurrentSessionSettings(ctx context.Context, id string) (*sessionsettings.SessionSettings, error) {
+	var settings sessionsettings.SessionSettings
+	err := c.do(ctx, http.MethodGet, "/sessions/"+url.PathEscape(id)+"/settings", nil, &settings)
+	return &settings, err
 }

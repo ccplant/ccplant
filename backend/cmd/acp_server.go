@@ -17,14 +17,16 @@ import (
 )
 
 var (
-	acpPort        string
-	acpCwd         string
-	acpSessionID   string
-	acpSessionFile string
-	acpOutputFile  string
-	acpVerbose     bool
-	acpRawJSONLog  bool
-	acpAutoApprove bool
+	acpPort          string
+	acpCwd           string
+	acpSessionID     string
+	acpSessionFile   string
+	acpOutputFile    string
+	acpHistoryFile   string
+	acpVerbose       bool
+	acpRawJSONLog    bool
+	acpAutoApprove   bool
+	acpRequireResume bool
 )
 
 // AcpServerCmd starts an ACP agent over stdio and exposes it as an
@@ -58,8 +60,10 @@ func init() {
 	AcpServerCmd.Flags().StringVar(&acpSessionID, "session-id", "", "Session ID to use (defaults to auto-generated)")
 	AcpServerCmd.Flags().StringVar(&acpSessionFile, "session-file", "", "File to persist ACP session ID for reuse across restarts (defaults to {cwd}/.acp-session-id)")
 	AcpServerCmd.Flags().StringVar(&acpOutputFile, "output-file", "", "File to append conversation history in acp-posts JSONL format (for Slack integration)")
+	AcpServerCmd.Flags().StringVar(&acpHistoryFile, "history-file", "", "File to persist raw bridge message history across restarts")
 	AcpServerCmd.Flags().BoolVarP(&acpVerbose, "verbose", "v", false, "Enable verbose logging")
 	AcpServerCmd.Flags().BoolVar(&acpRawJSONLog, "raw-json-log", false, "Log raw ACP JSON-RPC messages sent to and received from the agent")
+	AcpServerCmd.Flags().BoolVar(&acpRequireResume, "require-resume", false, "Fail instead of creating a new conversation when restoration is unavailable")
 	AcpServerCmd.Flags().BoolVar(&acpAutoApprove, "auto-approve", false, "Automatically approve all permission requests without showing a UI modal")
 }
 
@@ -139,20 +143,9 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 		sessionFile = filepath.Join(cwd, ".acp-session-id")
 	}
 
-	// Try to restore a previous session if the agent supports session/load.
-	restored := false
-	if acpClient.AgentCaps().SessionLoad {
-		if data, err := os.ReadFile(sessionFile); err == nil {
-			savedID := strings.TrimSpace(string(data))
-			if savedID != "" {
-				if err := acpClient.LoadSession(ctx, savedID, cwd, nil); err != nil {
-					log.Printf("[acp-server] session/load failed (%v), creating new session", err)
-				} else {
-					log.Printf("[acp-server] restored previous session (session=%s)", acpClient.SessionID())
-					restored = true
-				}
-			}
-		}
+	restored, err := loadSavedACPSession(ctx, sessionFile, cwd, acpClient.AgentCaps().SessionLoad, acpRequireResume, func(ctx context.Context, id, cwd string) error { return acpClient.LoadSession(ctx, id, cwd, nil) })
+	if err != nil {
+		return err
 	}
 
 	if !restored {
@@ -172,6 +165,9 @@ func runAcpServer(cmd *cobra.Command, args []string) error {
 
 	// Create the bridge and start its event loop.
 	b := bridge.New(acpClient, acpClient.SessionID(), acpVerbose, acpOutputFile, acpAutoApprove)
+	if err := b.SetHistoryFile(acpHistoryFile); err != nil {
+		return fmt.Errorf("load ACP bridge history: %w", err)
+	}
 	go b.Run(ctx)
 
 	// Start the HTTP server.
@@ -219,4 +215,30 @@ func parseACPAgentArgs(cmd *cobra.Command, args []string) ([]string, error) {
 	}
 	// No "--": all positional args are the agent command.
 	return args, nil
+}
+
+// loadSavedACPSession makes required restoration fail closed for missing state,
+// unsupported adapters and agent errors. Only ordinary new launches may fall back.
+func loadSavedACPSession(ctx context.Context, path, cwd string, supported, required bool, load func(context.Context, string, string) error) (bool, error) {
+	fail := func(err error) (bool, error) {
+		if required {
+			return false, fmt.Errorf("required conversation could not be restored: %w", err)
+		}
+		return false, nil
+	}
+	if !supported {
+		return fail(fmt.Errorf("agent does not support session/load"))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fail(err)
+	}
+	id := strings.TrimSpace(string(data))
+	if id == "" {
+		return fail(fmt.Errorf("saved session ID is empty"))
+	}
+	if err := load(ctx, id, cwd); err != nil {
+		return fail(err)
+	}
+	return true, nil
 }

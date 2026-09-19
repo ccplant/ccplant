@@ -33,6 +33,11 @@
 # data only; it never receives Kubernetes workload credentials.
 api:
   replicaCount: 1
+  githubBroker:
+    # Route session GitHub credentials directly to this release's API Service.
+    # Enable only when sessions can reach the API's Kubernetes cluster network.
+    # false preserves request-derived URLs (or a manually configured base URL).
+    inCluster: false
   image:
     # The public API does not need agent CLIs or session tooling.
     # Use the full backend image only for legacy direct/local execution.
@@ -328,7 +333,7 @@ sessionManager:
   # to use the in-cluster agentapi-proxy Service.
   apiUrl: ""
   image:
-    repository: ghcr.io/ccplant/ccplant-backend
+    repository: ghcr.io/ccplant/ccplant-api
     pullPolicy: IfNotPresent
   imagePullSecrets: []
   serviceAccount:
@@ -412,13 +417,7 @@ sessionManager:
     writeTimeout: "3s"
   sessionPersistence:
     backend: ""
-    path: /var/lib/agentapi-session-state
     suspendAfter: 1h
-    persistence:
-      enabled: true
-      storageClass: ""
-      accessModes: [ReadWriteOnce]
-      size: 5Gi
     s3:
       bucket: ""
       region: garage
@@ -458,7 +457,9 @@ sessionManager:
     serviceAccountName: agentapi-proxy-session
     rbac:
       create: true
-    image: ""
+    image: "ghcr.io/ccplant/ccplant-agent:assets-068be2ef320224e336d7538c3a700bef"
+    # CLI source follows the manager release.
+    cliImage: ""
     networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
     networkFilter:
       resources:
@@ -749,18 +750,12 @@ asset:
     prefix: "agentapi-assets/"
     endpoint: ""
 
-# ACP conversation snapshots. Use "volume" for a backend PVC or "s3" for
-# Garage/AWS-compatible object storage. S3 credentials are supplied with envFrom.
+# ACP conversation snapshots. "volume" stores each snapshot on its session's
+# workdir PVC; "s3" uses Garage/AWS-compatible object storage.
 sessionPersistence:
   backend: ""
-  path: /var/lib/agentapi-session-state
   # Suspend the workload this long after an ACP turn is checkpointed.
   suspendAfter: 1h
-  persistence:
-    enabled: true
-    storageClass: ""
-    accessModes: [ReadWriteOnce]
-    size: 5Gi
   s3:
     bucket: ""
     region: garage
@@ -923,6 +918,7 @@ observability:
   openTelemetry:
     enabled: false
     serviceName: agentapi-proxy
+    workerServiceName: agentapi-worker
     sessionManagerServiceName: agentapi-session-manager
     serviceNamespace: ccplant
     deploymentEnvironment: ""
@@ -1087,9 +1083,11 @@ kubernetesSession:
     create: true
 
   # Container image for session pods
-  # If empty, uses the full root image (image.repository), not api.image.
+  # Independent asset image; use an immutable tag or digest.
   # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
-  image: ""
+  image: "ghcr.io/ccplant/ccplant-agent:assets-068be2ef320224e336d7538c3a700bef"
+  # CLI source follows the manager release; override for a custom registry.
+  cliImage: ""
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)
   networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"

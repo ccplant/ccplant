@@ -62,7 +62,7 @@ func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*Reso
 	result := make([]*ResolvedPool, 0, len(pools))
 	for _, pool := range pools {
 		binding := effectiveBinding(bindings, pool.Name, subject)
-		if binding == nil || !binding.Enabled || !pool.Enabled || !healthy[pool.Name] {
+		if binding == nil || !binding.Role.GrantsUse() || !binding.Enabled || !pool.Enabled || !healthy[pool.Name] {
 			continue
 		}
 		result = append(result, &ResolvedPool{Pool: pool, Binding: binding})

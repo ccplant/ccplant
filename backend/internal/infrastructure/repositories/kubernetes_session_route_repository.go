@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
@@ -52,6 +55,9 @@ type KubernetesSessionRouteRepository struct {
 	cacheMu   sync.RWMutex
 	cache     map[string]cachedSessionRoute
 	loads     singleflight.Group
+	listCache []*portrepos.SessionRoute
+	listUntil time.Time
+	listLoad  singleflight.Group
 }
 
 type cachedSessionRoute struct {
@@ -108,6 +114,14 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		Data: map[string][]byte{
 			SessionRouteSecretKey: data,
 		},
+	}
+	secret.Labels["agentapi.proxy/session-route-user-id"] = services.SanitizeLabelValue(route.UserID)
+	secret.Labels["agentapi.proxy/session-route-scope"] = services.SanitizeLabelValue(route.Scope)
+	if route.TeamID != "" {
+		secret.Labels["agentapi.proxy/session-route-team-id-hash"] = services.HashTeamID(route.TeamID)
+	}
+	for key, value := range route.Tags {
+		secret.Labels["agentapi.proxy/session-route-tag-"+services.SanitizeLabelKey(key)] = services.SanitizeLabelValue(value)
 	}
 
 	_, err = r.client.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{})
@@ -211,6 +225,8 @@ func (r *KubernetesSessionRouteRepository) cacheRoute(route *portrepos.SessionRo
 	}
 	r.cacheMu.Lock()
 	r.cache[route.SessionID] = cachedSessionRoute{route: cloneSessionRoute(route), expiresAt: time.Now().Add(sessionRouteCacheTTL)}
+	r.listCache = nil
+	r.listUntil = time.Time{}
 	r.cacheMu.Unlock()
 }
 
@@ -225,6 +241,59 @@ func cloneSessionRoute(route *portrepos.SessionRoute) *portrepos.SessionRoute {
 
 // List retrieves all session routes; if userID is non-empty, only routes for that user are returned
 func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID string) ([]*portrepos.SessionRoute, error) {
+	routes, err := r.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return filterAndCloneSessionRoutes(routes, userID), nil
+}
+
+// ListFiltered uses labels written with each route so SlackBot reuse does not
+// deserialize every session route in the cluster.
+func (r *KubernetesSessionRouteRepository) ListFiltered(ctx context.Context, filter portrepos.SessionRouteFilter) ([]*portrepos.SessionRoute, error) {
+	selectors := []string{LabelSessionRoute + "=true"}
+	if filter.UserID != "" {
+		selectors = append(selectors, "agentapi.proxy/session-route-user-id="+services.SanitizeLabelValue(filter.UserID))
+	}
+	if filter.Scope != "" {
+		selectors = append(selectors, "agentapi.proxy/session-route-scope="+services.SanitizeLabelValue(filter.Scope))
+	}
+	if filter.TeamID != "" {
+		selectors = append(selectors, "agentapi.proxy/session-route-team-id-hash="+services.HashTeamID(filter.TeamID))
+	}
+	keys := make([]string, 0, len(filter.Tags))
+	for key := range filter.Tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		selectors = append(selectors, "agentapi.proxy/session-route-tag-"+services.SanitizeLabelKey(key)+"="+services.SanitizeLabelValue(filter.Tags[key]))
+	}
+	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: strings.Join(selectors, ",")})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list filtered session route secrets: %w", err)
+	}
+	routes := decodeSessionRoutes(secrets.Items)
+	return routes, nil
+}
+
+func (r *KubernetesSessionRouteRepository) list(ctx context.Context) ([]*portrepos.SessionRoute, error) {
+	if routes, ok := r.cachedList(); ok {
+		return routes, nil
+	}
+	value, err, _ := r.listLoad.Do("all", func() (interface{}, error) {
+		if routes, ok := r.cachedList(); ok {
+			return routes, nil
+		}
+		return r.loadList(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneSessionRoutes(value.([]*portrepos.SessionRoute)), nil
+}
+
+func (r *KubernetesSessionRouteRepository) loadList(ctx context.Context) ([]*portrepos.SessionRoute, error) {
 	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: LabelSessionRoute + "=true",
 	})
@@ -232,18 +301,24 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 		return nil, fmt.Errorf("failed to list session route secrets: %w", err)
 	}
 
-	routes := make([]*portrepos.SessionRoute, 0, len(secrets.Items))
-	for i := range secrets.Items {
-		secret := &secrets.Items[i]
+	routes := decodeSessionRoutes(secrets.Items)
+	r.cacheMu.Lock()
+	r.listCache = cloneSessionRoutes(routes)
+	r.listUntil = time.Now().Add(sessionRouteCacheTTL)
+	r.cacheMu.Unlock()
+	return routes, nil
+}
+
+func decodeSessionRoutes(secrets []corev1.Secret) []*portrepos.SessionRoute {
+	routes := make([]*portrepos.SessionRoute, 0, len(secrets))
+	for i := range secrets {
+		secret := &secrets[i]
 		raw, ok := secret.Data[SessionRouteSecretKey]
 		if !ok {
 			continue
 		}
 		var rj routeJSON
 		if err := json.Unmarshal(raw, &rj); err != nil {
-			continue
-		}
-		if userID != "" && rj.UserID != userID {
 			continue
 		}
 		routes = append(routes, &portrepos.SessionRoute{
@@ -265,13 +340,42 @@ func (r *KubernetesSessionRouteRepository) List(ctx context.Context, userID stri
 			DeletionRequestID: rj.DeletionRequestID,
 		})
 	}
-	return routes, nil
+	return cloneSessionRoutes(routes)
+}
+
+func (r *KubernetesSessionRouteRepository) cachedList() ([]*portrepos.SessionRoute, bool) {
+	r.cacheMu.RLock()
+	defer r.cacheMu.RUnlock()
+	if r.listCache == nil || time.Now().After(r.listUntil) {
+		return nil, false
+	}
+	return cloneSessionRoutes(r.listCache), true
+}
+
+func cloneSessionRoutes(routes []*portrepos.SessionRoute) []*portrepos.SessionRoute {
+	clones := make([]*portrepos.SessionRoute, 0, len(routes))
+	for _, route := range routes {
+		clones = append(clones, cloneSessionRoute(route))
+	}
+	return clones
+}
+
+func filterAndCloneSessionRoutes(routes []*portrepos.SessionRoute, userID string) []*portrepos.SessionRoute {
+	filtered := make([]*portrepos.SessionRoute, 0, len(routes))
+	for _, route := range routes {
+		if userID == "" || route.UserID == userID {
+			filtered = append(filtered, cloneSessionRoute(route))
+		}
+	}
+	return filtered
 }
 
 // Delete removes the routing information for the given session ID
 func (r *KubernetesSessionRouteRepository) Delete(ctx context.Context, sessionID string) error {
 	r.cacheMu.Lock()
 	delete(r.cache, sessionID)
+	r.listCache = nil
+	r.listUntil = time.Time{}
 	r.cacheMu.Unlock()
 	err := r.client.CoreV1().Secrets(r.namespace).Delete(ctx, r.secretName(sessionID), metav1.DeleteOptions{})
 	if err != nil {

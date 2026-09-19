@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -50,6 +51,16 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 	if err != nil {
 		return err
 	}
+	if address, ok, err := localPullProxyAddress(client, cfg.ProxyURL); err != nil {
+		return fmt.Errorf("resolve pull provisioner proxy: %w", err)
+	} else if ok {
+		waitForLocalTCP(ctx, address, 30*time.Second)
+	}
+	srv.SetRestartSettingsHandler(func(settings *sessionsettings.SessionSettings) {
+		if settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+			go runDirectRuntimeClient(ctx, client.Transport, settings.ParentRuntime, cfg.PodName)
+		}
+	})
 	if cfg.RunnerPool != "" {
 		return runRunnerClaimClient(ctx, srv, client, cfg)
 	}
@@ -104,6 +115,41 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 		<-ctx.Done()
 		return ctx.Err()
 	}
+}
+
+// localPullProxyAddress returns the address of a loopback HTTP proxy selected
+// by the client's transport for the upstream pull request. Session Pods start
+// their network-filter sidecar concurrently with the provisioner, so the first
+// allocation claim must wait until that local proxy is accepting connections.
+func localPullProxyAddress(client *http.Client, target string) (string, bool, error) {
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy == nil {
+		return "", false, nil
+	}
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return "", false, err
+	}
+	proxyURL, err := transport.Proxy(req)
+	if err != nil || proxyURL == nil {
+		return "", false, err
+	}
+	hostname := proxyURL.Hostname()
+	if hostname != "127.0.0.1" && hostname != "localhost" && hostname != "::1" {
+		return "", false, nil
+	}
+	address := proxyURL.Host
+	if proxyURL.Port() == "" {
+		switch proxyURL.Scheme {
+		case "http":
+			address = net.JoinHostPort(hostname, "80")
+		case "https":
+			address = net.JoinHostPort(hostname, "443")
+		default:
+			return "", false, fmt.Errorf("local proxy URL %q has no port", proxyURL.Redacted())
+		}
+	}
+	return address, true, nil
 }
 
 type runnerClaimResponse struct {

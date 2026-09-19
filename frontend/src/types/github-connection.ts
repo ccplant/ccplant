@@ -16,6 +16,10 @@ export interface GitHubConnection {
   show_on_login?: boolean
   allow_user_creation?: boolean
   organizations?: string[]
+  github_app?: {
+    app_id: number
+  }
+  github_app_private_key_configured?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -30,6 +34,10 @@ export interface GitHubConnectionInput {
   show_on_login?: boolean
   allow_user_creation?: boolean
   organizations?: string[]
+  github_app?: {
+    app_id: number
+    private_key?: string
+  }
   oauth_client_secret?: {
     source: GitHubSecretSource
     value?: string

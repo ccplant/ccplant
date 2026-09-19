@@ -36,9 +36,9 @@ type LaunchRequest struct {
 	GithubToken              string
 	AgentType                string
 	Model                    string
+	ModelOptions             []string
 	Pool                     string
 	SlackParams              *entities.SlackParams
-	Oneshot                  bool
 	RepoInfo                 *entities.RepositoryInfo
 	InitialMessageWaitSecond *int
 	Sandbox                  *entities.SandboxParams
@@ -72,6 +72,9 @@ type LaunchRequest struct {
 	// StopBeforeReuse stops the running agent before sending ReuseMessage.
 	// This keeps the session resources in place while making a busy agent receive follow-up input.
 	StopBeforeReuse bool
+	// DeferReuseToStart lets the authoritative /start API perform the tag lookup
+	// and enqueue, which is required for direct runtimes not owned by this worker.
+	DeferReuseToStart bool
 
 	// Session limit: when MaxSessions > 0, launch fails if the number of sessions
 	// matching LimitMatchTags already equals or exceeds MaxSessions.
@@ -88,6 +91,19 @@ type LaunchResult struct {
 	SessionID     string
 	SessionReused bool
 	Session       entities.Session
+}
+
+// ResolveSessionTTL keeps the public oneshot parameter as backwards-compatible
+// shorthand for a one-minute session TTL. Internal session creation only carries
+// the resolved TTL.
+func ResolveSessionTTL(params *entities.SessionParams) string {
+	if params == nil {
+		return ""
+	}
+	if params.SessionTTL == "" && params.Oneshot {
+		return "1m"
+	}
+	return params.SessionTTL
 }
 
 // ResolveTeams returns the GitHub team slugs to inject into a session's settings.
@@ -172,7 +188,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	}
 
 	// 1. Try session reuse
-	if req.ReuseSession && len(req.ReuseMatchTags) > 0 {
+	if req.ReuseSession && !req.DeferReuseToStart && len(req.ReuseMatchTags) > 0 {
 		filter := entities.SessionFilter{
 			Tags:   req.ReuseMatchTags,
 			Status: "active",
@@ -195,7 +211,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	}
 
 	// 2. Check session limit
-	if req.MaxSessions > 0 {
+	if req.MaxSessions > 0 && !req.DeferReuseToStart {
 		filter := entities.SessionFilter{Tags: req.LimitMatchTags}
 		if existing := uc.sessionManager.ListSessions(filter); len(existing) >= req.MaxSessions {
 			return LaunchResult{}, fmt.Errorf("session limit reached: maximum %d sessions", req.MaxSessions)
@@ -223,12 +239,17 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		TeamID:                   req.TeamID,
 		Teams:                    req.Teams,
 		InitialMessage:           req.InitialMessage,
+		ReuseMatchTags:           req.ReuseMatchTags,
+		ReuseMessage:             req.ReuseMessage,
+		StopBeforeReuse:          req.StopBeforeReuse,
+		LimitMatchTags:           req.LimitMatchTags,
+		MaxSessions:              req.MaxSessions,
 		GithubToken:              req.GithubToken,
 		AgentType:                req.AgentType,
 		Model:                    req.Model,
+		ModelOptions:             req.ModelOptions,
 		Pool:                     req.Pool,
 		SlackParams:              req.SlackParams,
-		Oneshot:                  req.Oneshot,
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		MemoryKey:                req.MemoryKey,
@@ -250,7 +271,11 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	if err != nil {
 		return LaunchResult{}, err
 	}
-	return LaunchResult{SessionID: session.ID(), SessionReused: false, Session: session}, nil
+	reused := false
+	if aware, ok := session.(interface{ SessionReused() bool }); ok {
+		reused = aware.SessionReused()
+	}
+	return LaunchResult{SessionID: session.ID(), SessionReused: reused, Session: session}, nil
 }
 
 // ensureMemoryExists checks whether a memory with all tags in req.MemoryKey already exists
@@ -415,6 +440,9 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		if req.Model == "" {
 			req.Model = cfg.Params().Model
 		}
+		if len(req.ModelOptions) == 0 && len(cfg.Params().ModelOptions) > 0 {
+			req.ModelOptions = append([]string(nil), cfg.Params().ModelOptions...)
+		}
 		if req.GithubToken == "" {
 			req.GithubToken = cfg.Params().GithubToken
 		}
@@ -444,7 +472,7 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 			req.CycleMaxCount = cfg.Params().CycleMaxCount
 		}
 		if req.SessionTTL == "" {
-			req.SessionTTL = cfg.Params().SessionTTL
+			req.SessionTTL = ResolveSessionTTL(cfg.Params())
 		}
 		if len(req.UnsyncedFilePaths) == 0 && len(cfg.Params().UnsyncedFilePaths) > 0 {
 			req.UnsyncedFilePaths = append([]string(nil), cfg.Params().UnsyncedFilePaths...)

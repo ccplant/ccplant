@@ -46,7 +46,10 @@ func runScheduleSessionSuspend(_ *cobra.Command, _ []string) error {
 }
 
 func runBackupSessionState(_ *cobra.Command, _ []string) error {
-	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
+	if proxy == "" {
+		proxy = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
 	token := os.Getenv("PROVISIONER_TOKEN")
 	id := os.Getenv("AGENTAPI_SESSION_ID")
 	agentType := os.Getenv("AGENTAPI_AGENT_TYPE")
@@ -60,6 +63,9 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	home := os.Getenv("HOME")
 	if home == "" {
 		home = "/home/agentapi"
+	}
+	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
+		return writeSessionStateVolume(volumePath, agentType, readACPSessionID(cwd), home, cwd)
 	}
 	client := &http.Client{Timeout: 10 * time.Minute}
 	strict := os.Getenv("AGENTAPI_REQUIRE_SESSION_STATE_BACKUP") == "1"
@@ -107,6 +113,33 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func writeSessionStateVolume(path, agentType, acpSessionID, home, cwd string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".session-state-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := sessionstate.Pack(tmp, agentType, acpSessionID, home, cwd); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // sessionStateCWD prefers the provisioner's canonical clone path over the

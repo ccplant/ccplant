@@ -1,0 +1,41 @@
+{{- if or .Values.session.isolation.blockKubernetesAPI (eq .Values.session.isolation.egressMode "public-only") }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "session-manager.fullname" . }}-session-isolation
+  labels:
+    {{- include "session-manager.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: agentapi-proxy
+      app.kubernetes.io/name: agentapi-session
+      agentapi.proxy/session-manager-id: {{ include "session-manager.managerIdLabelValue" . | quote }}
+  {{- if eq .Values.session.isolation.egressMode "public-only" }}
+  # Permit public destinations and cluster DNS only. Selecting these endpoints
+  # enables default-deny egress for every other destination, including the
+  # session-manager service and kube-apiserver.
+  egress:
+    - toEntities:
+        - world
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+  {{- else }}
+  # A deny-only Cilium policy enables egress policy enforcement without allowing
+  # any traffic. Keep the session's normal egress connectivity and rely on the
+  # deny rule below to block only Kubernetes API access.
+  egress:
+    - {}
+  egressDeny:
+    - toEntities:
+        - kube-apiserver
+  {{- end }}
+{{- end }}

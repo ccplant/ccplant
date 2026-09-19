@@ -273,7 +273,6 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
-	var oneshot bool
 	if schedule.SessionConfig.Params != nil {
 		initialMessage = schedule.SessionConfig.Params.Message
 		// For team-scoped schedules, do not use the creator's github_token.
@@ -289,8 +288,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		initialMessageWaitSecond = schedule.SessionConfig.Params.InitialMessageWaitSecond
 		cycleMessage = schedule.SessionConfig.Params.CycleMessage
 		cycleMaxCount = schedule.SessionConfig.Params.CycleMaxCount
-		sessionTTL = schedule.SessionConfig.Params.SessionTTL
-		oneshot = schedule.SessionConfig.Params.Oneshot
+		sessionTTL = sessionuc.ResolveSessionTTL(schedule.SessionConfig.Params)
 	}
 
 	// Render memory_key values as Go templates with schedule context.
@@ -327,7 +325,6 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		Sandbox:                  sandbox,
 		Docker:                   docker,
 		AuthProxy:                authProxy,
-		Oneshot:                  oneshot,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,

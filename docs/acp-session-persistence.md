@@ -154,20 +154,19 @@ fork API を使って新しい continuation ID を発行する。
 
 ### 配置
 
-セッション Pod に user / team scope の RWX PVC を `/session-state` として mount する。
+各セッションの workdir PVC に workspace と checkpoint archive を保存する。
+session-manager 自身には共有 PVC を mount しない。
 
 ```text
-/session-state/<scope>/<owner>/<continuation-id>/
-  manifest.json
-  acp-session-id
-  claude/projects/<project-key>/<sessionId>.jsonl
-  claude/projects/<project-key>/<sessionId>/...
-  codex/sessions/YYYY/MM/DD/rollout-...-<threadId>.jsonl
+/home/agentapi/workdir/
+  repo/...
+  .agentapi/session-state.tar.zst
 ```
 
-agent の通常ホームを丸ごと PVC にしない。init container が manifest の allowlist だけを
-runtime home に materialize し、agent 終了時または checkpoint 時に atomic rename で
-volume 側へ反映する。これにより credentials / generated config との上書き競合を避ける。
+agent の通常ホームを丸ごと PVC にしない。会話状態はruntime homeにmaterializeし、
+checkpoint時に一時ファイルへのwrite、fsync、atomic renameの順でworkdir PVCへ反映する。
+workspaceは同じPVCを再mountするためそのまま保持され、credentials / generated configとの
+上書き競合も避けられる。
 
 Claude は transcript を直接 volume 配下へ置く専用 `CLAUDE_CONFIG_DIR` も選べるが、設定や
 credentials まで同じ root に入るため、MVP では allowlist copy を共通方式とする。
@@ -187,21 +186,23 @@ checkpoint には ACP の会話状態に加えて Git workspace の HEAD commit�
 branch（detached HEAD を含む）、staged / unstaged の差分、無視対象を除く untracked file を
 保存する。復元時は同じ commit と branch を checkout してから差分を適用する。
 
-永続化が有効な ACP session は Stop hook で checkpoint が完了した後、既定で 1 時間後の
-suspend を予約する。期限は session の canonical Kubernetes Service の annotation に保存
-されるため、proxy の再起動や replica の切り替えでも失われない。期限到来時には
-Deployment / Pod だけを削除し、Service、settings Secret、PVC、snapshot は保持する。
+親 API は session-manager に suspend だけを指示する。永続化が有効な ACP session では
+session-manager が session control 経由で session Pod に checkpoint を指示し、その成功後に
+workload を停止する。checkpoint の要否と失敗時の扱いは session-manager のポリシーであり、
+親 API の契約には含めない。自動 suspend の期限は session の canonical Kubernetes Service の
+annotation に保存されるため、proxy の再起動や replica の切り替えでも失われない。期限到来時
+には Deployment / Pod だけを削除し、Service、settings Secret、PVC、snapshot は保持する。
 
 停止中の session を開くと既存の lazy workload restore が同じ proxy session ID で workload
 を再作成し、snapshot から ACP session を復元する。猶予時間は
 `session_persistence.suspend_after`（環境変数
 `AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER`）で変更でき、`0` で無効化できる。期限時点で
-新しい turn が実行中なら suspend は延期され、その turn の Stop hook で期限が再設定される。
+新しい turn が実行中なら suspend は延期され、session-manager が後で再試行する。
 
 ### 特性
 
 - 長所: 実装が単純、追記が安価、復元が速い
-- 短所: RWX storage が必要、cluster / region を越えにくい、PVC 障害ドメインに依存
+- 短所: cluster / region を越えにくい、セッションごとのPVC障害ドメインに依存
 
 ## パターン B: オブジェクトストレージ永続化
 
@@ -221,13 +222,15 @@ bucket versioning と server-side encryption を有効化する。
 
 ### Claude
 
-Claude の Stop hook が `agentapi-proxy client backup-session-state` を呼ぶ。CLI は main / subagent
-transcript と `.acp-session-id` だけを archive にし、provisioner token で backend の内部 API
-へ送る。S3 credentials は session Pod に渡さず、backend が Garage へ upload する。
+session-manager から checkpoint command を受けた session Pod が
+`agentapi-proxy client backup-session-state` を呼ぶ。CLI は main / subagent transcript と
+`.acp-session-id` を archive にし、provisioner token で session-manager の内部 API から
+署名 URL を取得する。S3 credentials は session Pod に渡さず、archive 本体は署名 URL で
+session Pod から object storage へ直接 upload する。
 
 ### Codex
 
-Codex の Stop hook も同じ CLI / backend API を使う。CLI が対象 rollout、SQLite index、
+Codex も同じ session control command と CLI を使う。CLI が対象 rollout、SQLite index、
 session index、`.acp-session-id` を gzip archive にし、backend が Garage へ upload する。
 復元時はすべて元の `CODEX_HOME` 配下へ戻す。
 

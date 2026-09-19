@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,7 +33,13 @@ type SessionPoolController struct {
 	profile  interface {
 		ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
 	}
-	now func() time.Time
+	now           func() time.Time
+	managerTunnel ESMControlTunnel
+}
+
+func (c *SessionPoolController) WithManagerTunnel(tunnel ESMControlTunnel) *SessionPoolController {
+	c.managerTunnel = tunnel
+	return c
 }
 
 type managerLiveness interface {
@@ -48,6 +53,10 @@ const (
 	// polls refresh LastSeen, so records older than this no longer represent a
 	// live workload and must not suppress stock-runner reconciliation.
 	sessionRunnerHeartbeatTTL = 3 * time.Minute
+	// Draining records fence workloads while the manager removes them. Keep the
+	// tombstone long enough for delayed registrations to be rejected, then
+	// collect it once manager inventory and allocations both confirm it is gone.
+	sessionRunnerDrainingRetention = 10 * time.Minute
 )
 
 func NewSessionPoolController(store core.Store, routes portrepos.SessionRouteRepository, providers ...interface {
@@ -96,19 +105,15 @@ type managerCreateRequest struct {
 }
 
 type managerRegistrationRequest struct {
-	Name    string            `json:"name"`
-	Scope   core.ManagerScope `json:"scope"`
-	TeamID  string            `json:"team_id,omitempty"`
-	Pool    string            `json:"pool,omitempty"`
-	Default bool              `json:"default,omitempty"`
-	Labels  map[string]string `json:"labels,omitempty"`
+	Name   string            `json:"name"`
+	Scope  core.ManagerScope `json:"scope"`
+	TeamID string            `json:"team_id,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 type managerEnrollRequest struct {
 	RegistrationToken string            `json:"registration_token"`
 	InstanceID        string            `json:"instance_id"`
-	Pool              string            `json:"pool,omitempty"`
-	Default           bool              `json:"default,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Capabilities      []string          `json:"capabilities,omitempty"`
 }
@@ -146,20 +151,12 @@ func (c *SessionPoolController) IssueManagerRegistrationToken(ctx echo.Context) 
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "scope must be user, team or system")
 	}
-	if input.Default && input.Scope != core.ManagerScopeSystem {
-		return echo.NewHTTPError(http.StatusForbidden, "only system-scoped managers can install a default binding")
-	}
-	if input.Pool != "" {
-		if problems := validation.IsValidLabelValue(input.Pool); len(problems) > 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
-		}
-	}
 	token, tokenHash, err := newSessionRunnerToken()
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create registration token")
 	}
 	manager := &core.Manager{
-		Name: input.Name, Scope: input.Scope, OwnerID: ownerID, InstallPool: input.Pool, Default: input.Default, Labels: input.Labels,
+		Name: input.Name, Scope: input.Scope, OwnerID: ownerID, Labels: input.Labels,
 		Enabled: false, RegistrationTokenHash: tokenHash,
 		RegistrationExpiresAt: c.now().Add(15 * time.Minute),
 	}
@@ -205,44 +202,6 @@ func (c *SessionPoolController) EnrollManager(ctx echo.Context) error {
 		manager.Capabilities = input.Capabilities
 		if len(manager.Capabilities) == 0 {
 			manager.Capabilities = []string{core.CapabilityRunnerClaimV1, core.CapabilityDirectRuntimeV1}
-		}
-		if input.Pool != "" && manager.InstallPool != "" && input.Pool != manager.InstallPool {
-			return echo.NewHTTPError(http.StatusBadRequest, "pool does not match the registration")
-		}
-		pool := manager.InstallPool
-		if pool == "" {
-			pool = input.Pool
-		}
-		if pool != "" {
-			if _, getErr := c.store.GetLogicalPool(ctx.Request().Context(), pool); errors.Is(getErr, core.ErrNotFound) {
-				if createErr := c.store.CreateLogicalPool(ctx.Request().Context(), &core.LogicalPool{Name: pool, Enabled: true}); createErr != nil {
-					return sessionRunnerStoreError(createErr)
-				}
-			} else if getErr != nil {
-				return sessionRunnerStoreError(getErr)
-			}
-			if _, getErr := c.store.GetPoolSupplier(ctx.Request().Context(), manager.ID, pool); errors.Is(getErr, core.ErrNotFound) {
-				if createErr := c.store.CreatePoolSupplier(ctx.Request().Context(), &core.PoolSupplier{Pool: pool, ManagerID: manager.ID, Enabled: true}); createErr != nil {
-					return sessionRunnerStoreError(createErr)
-				}
-			} else if getErr != nil {
-				return sessionRunnerStoreError(getErr)
-			}
-			if manager.Default {
-				bindings, listErr := c.store.ListBindings(ctx.Request().Context(), pool)
-				if listErr != nil {
-					return sessionRunnerStoreError(listErr)
-				}
-				hasDefault := false
-				for _, binding := range bindings {
-					hasDefault = hasDefault || (binding.SubjectType == core.SubjectAll && binding.SubjectID == "" && binding.Enabled)
-				}
-				if !hasDefault {
-					if createErr := c.store.CreateBinding(ctx.Request().Context(), &core.Binding{Pool: pool, SubjectType: core.SubjectAll, Role: core.BindingRoleUse, Enabled: true}); createErr != nil {
-						return sessionRunnerStoreError(createErr)
-					}
-				}
-			}
 		}
 		if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
 			return sessionRunnerStoreError(err)
@@ -522,7 +481,7 @@ func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
 		return sessionRunnerStoreError(err)
 	}
 	if user != nil {
-		binding := &core.Binding{Pool: pool.Name, SubjectType: core.SubjectUser, SubjectID: string(user.ID()), Role: core.BindingRoleManage, Enabled: true}
+		binding := &core.Binding{Pool: pool.Name, SubjectType: core.SubjectUser, SubjectID: string(user.ID()), Role: core.BindingRoleManageAndUse, Enabled: true}
 		if input.TeamID != "" {
 			binding.SubjectType, binding.SubjectID = core.SubjectTeam, input.TeamID
 		}
@@ -821,7 +780,7 @@ func (c *SessionPoolController) DeleteBinding(ctx echo.Context) error {
 	if !found {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
-	if target.Enabled && target.Role == core.BindingRoleManage && !hasOtherEnabledManageBinding(bindings, target.ID) {
+	if target.Enabled && target.Role.GrantsManage() && !hasOtherEnabledManageBinding(bindings, target.ID) {
 		return echo.NewHTTPError(http.StatusConflict, "cannot remove the last enabled manage binding")
 	}
 	if err := c.store.DeleteBinding(ctx.Request().Context(), ctx.Param("bindingId")); err != nil {
@@ -874,7 +833,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	if binding == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
-	wasEnabledManage := binding.Enabled && binding.Role == core.BindingRoleManage
+	wasEnabledManage := binding.Enabled && binding.Role.GrantsManage()
 	var patch struct {
 		Role          *core.BindingRole `json:"role,omitempty"`
 		Enabled       *bool             `json:"enabled,omitempty"`
@@ -918,7 +877,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	if wasEnabledManage && (binding.Role != core.BindingRoleManage || !binding.Enabled) {
+	if wasEnabledManage && (!binding.Role.GrantsManage() || !binding.Enabled) {
 		if !hasOtherEnabledManageBinding(bindings, binding.ID) {
 			return echo.NewHTTPError(http.StatusConflict, "cannot remove the last enabled manage binding")
 		}
@@ -931,7 +890,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 
 func hasOtherEnabledManageBinding(bindings []*core.Binding, bindingID string) bool {
 	for _, binding := range bindings {
-		if binding.ID != bindingID && binding.Enabled && binding.Role == core.BindingRoleManage {
+		if binding.ID != bindingID && binding.Enabled && binding.Role.GrantsManage() {
 			return true
 		}
 	}
@@ -1022,8 +981,6 @@ func (c *SessionPoolController) ClaimRunnerAllocation(ctx echo.Context) error {
 			return sessionRunnerStoreError(claimErr)
 		}
 		if found {
-			runner.Status, runner.LastSeen = core.RunnerClaiming, c.now()
-			_ = c.store.UpdateRunner(ctx.Request().Context(), runner)
 			if err := c.prepareClaimRoute(ctx.Request().Context(), allocation, runner); err != nil {
 				return sessionRunnerStoreError(err)
 			}
@@ -1077,8 +1034,6 @@ func (c *SessionPoolController) AckRunnerAllocation(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	runner.Status, runner.LastSeen = core.RunnerRunning, c.now()
-	_ = c.store.UpdateRunner(ctx.Request().Context(), runner)
 	return ctx.JSON(http.StatusOK, allocation)
 }
 
@@ -1097,8 +1052,6 @@ func (c *SessionPoolController) FailRunnerAllocation(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
-	runner.Status, runner.LastSeen = core.RunnerIdle, c.now()
-	_ = c.store.UpdateRunner(ctx.Request().Context(), runner)
 	return ctx.JSON(http.StatusOK, allocation)
 }
 
@@ -1118,11 +1071,20 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		}
 	}
 	var heartbeat struct {
-		LocalRunnerIDs *[]string `json:"local_runner_ids"`
+		LocalRunnerIDs  *[]string         `json:"local_runner_ids"`
+		SessionStatuses map[string]string `json:"session_statuses"`
 	}
 	if ctx.Request().Body != nil && ctx.Request().Body != http.NoBody {
 		if err := ctx.Bind(&heartbeat); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid heartbeat request")
+		}
+	}
+	// An inventory is a snapshot, not a deletion acknowledgement. In particular,
+	// never erase a leased allocation: its expiry is what permits recovery.
+	localRunners := make(map[string]bool)
+	if heartbeat.LocalRunnerIDs != nil {
+		for _, id := range *heartbeat.LocalRunnerIDs {
+			localRunners[id] = true
 		}
 	}
 	if heartbeat.LocalRunnerIDs != nil {
@@ -1130,13 +1092,28 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return sessionRunnerStoreError(err)
 		}
 	}
+	if len(heartbeat.SessionStatuses) > 0 {
+		if err := c.reconcileManagerSessionStatuses(ctx.Request().Context(), manager.ID, heartbeat.SessionStatuses); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
 	pools, err := c.store.ListPoolSuppliers(ctx.Request().Context())
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	logicalPools, err := c.store.ListLogicalPools(ctx.Request().Context())
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	logicalPoolEnabled := make(map[string]bool, len(logicalPools))
+	for _, pool := range logicalPools {
+		logicalPoolEnabled[pool.Name] = pool.Enabled
+	}
 	owned := make([]*core.PoolSupplier, 0)
 	registeredRunnerIDs := make([]string, 0)
 	allocatedRunnerIDs := make([]string, 0)
+	protectedRunners := make(map[string]bool)
+	allocatedRunnerPolicies := make(map[string]sessionsettings.SessionMeta)
 	runners, err := c.store.ListRunners(ctx.Request().Context(), "")
 	if err != nil {
 		return sessionRunnerStoreError(err)
@@ -1146,73 +1123,202 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	for _, pool := range pools {
 		if pool.ManagerID == manager.ID {
+			allocations, listErr := c.store.ListAllocations(ctx.Request().Context(), pool.Pool)
+			if listErr != nil {
+				return sessionRunnerStoreError(listErr)
+			}
+			for _, allocation := range allocations {
+				if allocation.ManagerID != manager.ID || allocation.RunnerID == "" {
+					continue
+				}
+				// ClaimNext persists the lease before updating the runner status.
+				// Include that window in stock-purge protection as well.
+				if allocation.Status == core.AllocationLeased || allocation.Status == core.AllocationClaimed || allocation.Status == core.AllocationRunning {
+					protectedRunners[allocation.RunnerID] = true
+				}
+				var settings sessionsettings.SessionSettings
+				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
+					allocatedRunnerPolicies[allocation.RunnerID] = settings.Session
+				}
+			}
 			copy := *pool
+			// A supplier cannot remain allocatable when its logical pool is
+			// disabled. Propagate the effective state to the remote manager so it
+			// retires idle stock instead of merely stopping replenishment.
+			copy.Enabled = copy.Enabled && logicalPoolEnabled[pool.Pool]
 			for _, runner := range runners {
 				if runner.ManagerID != manager.ID || runner.Pool != pool.Pool {
 					continue
 				}
-				if runner.Status == core.RunnerIdle && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
-					if err := c.store.DeleteRunner(ctx.Request().Context(), runner.ID); err != nil {
+				if runner.Status == core.RunnerIdle && !protectedRunners[runner.ID] && c.now().Sub(runner.LastSeen) > sessionRunnerHeartbeatTTL {
+					if err := c.store.RetireRunner(ctx.Request().Context(), manager.ID, runner.ID); err != nil && !errors.Is(err, core.ErrConflict) {
 						return sessionRunnerStoreError(err)
 					}
 					continue
 				}
-				copy.TotalRunners++
+				if runner.Status == core.RunnerDraining {
+					continue
+				}
 				registeredRunnerIDs = append(registeredRunnerIDs, runner.ID)
-				if runner.Status == core.RunnerIdle {
+				if runner.Status == core.RunnerRunning || runner.Status == core.RunnerClaiming {
+					protectedRunners[runner.ID] = true
+				}
+				// Missing workloads must not consume capacity and prevent a replacement
+				// from reclaiming an expired lease. Retain their durable registration.
+				if heartbeat.LocalRunnerIDs != nil && !localRunners[runner.ID] {
+					continue
+				}
+				copy.TotalRunners++
+				if runner.Status == core.RunnerIdle && !protectedRunners[runner.ID] {
 					copy.IdleRunners++
-				} else if runner.Status == core.RunnerRunning {
-					allocatedRunnerIDs = append(allocatedRunnerIDs, runner.ID)
 				}
 			}
 			owned = append(owned, &copy)
 		}
 	}
+	for id := range protectedRunners {
+		allocatedRunnerIDs = append(allocatedRunnerIDs, id)
+	}
 	return ctx.JSON(http.StatusOK, map[string]any{
 		"ok": true, "at": c.now(), "manager_id": manager.ID, "pools": owned,
-		"registered_runner_ids": registeredRunnerIDs,
-		"allocated_runner_ids":  allocatedRunnerIDs,
-		"upstream_version":      buildinfo.Version,
+		"registered_runner_ids":     registeredRunnerIDs,
+		"allocated_runner_ids":      allocatedRunnerIDs,
+		"allocated_runner_policies": allocatedRunnerPolicies,
+		"upstream_version":          buildinfo.Version,
 	})
 }
 
-func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
-	local := make(map[string]struct{}, len(localRunnerIDs))
-	for _, id := range localRunnerIDs {
-		local[id] = struct{}{}
+func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Context, managerID string, statuses map[string]string) error {
+	if c.routes == nil {
+		return nil
 	}
-	runners, err := c.store.ListRunners(ctx, "")
+	routes, err := c.routes.List(ctx, "")
 	if err != nil {
 		return err
+	}
+	for _, route := range routes {
+		status, ok := statuses[route.RemoteSessionID]
+		if !ok || route.ManagerID != managerID || status == "" || route.DeletionRequestID != "" {
+			continue
+		}
+		if status == "stable" {
+			status = "active"
+		}
+		// Direct runtimes report turn completion themselves. The manager can
+		// still see a healthy, active Pod while the agent is processing a turn;
+		// that coarse heartbeat must not mark running work eligible for TTL cleanup.
+		// Runtime status is authoritative even while running, so a heartbeat
+		// cannot race completion using an earlier route snapshot. A new turn is
+		// reported through RecordRemoteSessionStatus instead.
+		// A lagging manager replica may still report startup after the turn has
+		// finished; those statuses must not reset the completion/TTL timestamp.
+		if route.Transport == portrepos.SessionRouteTransportDirectRuntime &&
+			(route.Tags["session_ttl"] != "" || route.Tags["slackbot_id"] != "") &&
+			(status == "active" || status == "running" || status == "starting" || status == "creating") {
+			continue
+		}
+		// Suspension is a parent-controlled lifecycle state. A manager may still
+		// report the workload's terminal status from a watcher that observed the
+		// Pod deletion after suspension completed. Keep the route resumable until
+		// an explicit resume changes it to resuming.
+		if route.Status == "suspended" && status != "suspended" {
+			continue
+		}
+		// While resume owns the lifecycle transition, stale replicas can still
+		// report the deleted pre-resume workload as stopped. Only a live status
+		// may complete the transition.
+		if route.Status == "resuming" && status != "active" && status != "running" && status != "stable" && status != "resuming" {
+			continue
+		}
+		if route.Status == status {
+			continue
+		}
+		route.Status = status
+		route.StatusUpdatedAt = c.now()
+		if err := c.routes.Save(ctx, route); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Context, managerID string, localRunnerIDs []string) error {
+	local := make(map[string]bool, len(localRunnerIDs))
+	for _, id := range localRunnerIDs {
+		local[id] = true
 	}
 	allocations, err := c.store.ListAllocations(ctx, "")
 	if err != nil {
 		return err
 	}
-	allocationsByRunner := make(map[string][]string)
+	allocated := make(map[string]bool, len(allocations))
 	for _, allocation := range allocations {
 		if allocation.RunnerID != "" {
-			allocationsByRunner[allocation.RunnerID] = append(allocationsByRunner[allocation.RunnerID], allocation.SessionID)
+			allocated[allocation.RunnerID] = true
 		}
 	}
+	runners, err := c.store.ListRunners(ctx, "")
+	if err != nil {
+		return err
+	}
 	for _, runner := range runners {
-		if runner.ManagerID != managerID || (runner.Status != core.RunnerRunning && runner.Status != core.RunnerClaiming) {
+		if runner.ManagerID != managerID || runner.Status != core.RunnerDraining || local[runner.ID] || allocated[runner.ID] {
 			continue
 		}
-		if _, ok := local[runner.ID]; ok {
+		if c.now().Sub(runner.UpdatedAt) < sessionRunnerDrainingRetention {
 			continue
-		}
-		for _, sessionID := range allocationsByRunner[runner.ID] {
-			if err := c.store.DeleteAllocation(ctx, sessionID); err != nil && !errors.Is(err, core.ErrNotFound) {
-				return err
-			}
 		}
 		if err := c.store.DeleteRunner(ctx, runner.ID); err != nil && !errors.Is(err, core.ErrNotFound) {
 			return err
 		}
-		log.Printf("[SESSION_RUNNER] Removed stale %s runner %s absent from manager %s inventory", runner.Status, runner.ID, managerID)
 	}
+	for _, allocation := range allocations {
+		if allocation.ManagerID != managerID || allocation.RunnerID == "" || local[allocation.RunnerID] {
+			continue
+		}
+		// A heartbeat is only a snapshot. Preserve in-flight leases and wait
+		// through the startup lease before considering an acknowledged but
+		// never-connected runtime for recovery.
+		if allocation.Status != core.AllocationClaimed || c.now().Before(allocation.LeaseExpiresAt) {
+			continue
+		}
+		// Preserve legacy sessions that reported a status before start fencing existed.
+		if c.routes != nil {
+			route, e := c.routes.Get(ctx, allocation.SessionID)
+			if e != nil {
+				return e
+			}
+			if route != nil && route.Status != "" && route.Status != "starting" && route.Status != "creating" {
+				continue
+			}
+		}
+		retried, e := c.store.RequeueUnstarted(ctx, allocation.SessionID, allocation.RunnerID)
+		if errors.Is(e, core.ErrConflict) || errors.Is(e, core.ErrNotFound) {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		if c.notifier != nil {
+			if e = c.notifier.Notify(ctx, retried.Pool); e != nil {
+				return e
+			}
+		}
+	}
+
 	return nil
+}
+
+// RetireRunner must succeed before a manager deletes an idle workload.
+func (c *SessionPoolController) RetireRunner(ctx echo.Context) error {
+	manager, err := c.authenticateManager(ctx)
+	if err != nil {
+		return err
+	}
+	if err = c.store.RetireRunner(ctx.Request().Context(), manager.ID, ctx.Param("runnerId")); err != nil {
+		return sessionRunnerStoreError(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (c *SessionPoolController) authenticateManager(ctx echo.Context) (*core.Manager, error) {
@@ -1244,8 +1350,7 @@ func (c *SessionPoolController) authenticateRunner(ctx echo.Context) (*core.Runn
 	if err != nil || !verifySessionRunnerToken(runner.TokenHash, bearerToken(ctx.Request())) {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid runner token")
 	}
-	runner.LastSeen = c.now()
-	if err := c.store.UpdateRunner(ctx.Request().Context(), runner); err != nil {
+	if err := c.store.TouchRunner(ctx.Request().Context(), runner.ID, c.now()); err != nil {
 		return nil, sessionRunnerStoreError(err)
 	}
 	return runner, nil
@@ -1264,9 +1369,15 @@ func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocatio
 	if err != nil || route == nil {
 		return err
 	}
+	if route.Generation != allocation.Generation {
+		// A replacement must not inherit the previous runtime's completion TTL.
+		route.Status = "starting"
+		route.StatusUpdatedAt = c.now()
+	}
 	route.ManagerID = runner.ManagerID
 	route.RemoteSessionID = runner.ID
 	route.Generation = allocation.Generation
+	route.RuntimeTokenHash = allocation.RuntimeTokenHash
 	return c.routes.Save(ctx, route)
 }
 
@@ -1280,19 +1391,20 @@ func (c *SessionPoolController) repairManagerRoutes(ctx context.Context, manager
 	}
 	for _, allocation := range allocations {
 		if allocation.ManagerID != managerID || allocation.RunnerID == "" ||
-			(allocation.Status != core.AllocationClaimed && allocation.Status != core.AllocationRunning) {
+			(allocation.Status != core.AllocationLeased && allocation.Status != core.AllocationClaimed && allocation.Status != core.AllocationRunning) {
 			continue
 		}
 		route, err := c.routes.Get(ctx, allocation.SessionID)
 		if err != nil {
 			return err
 		}
-		if route == nil || route.RemoteSessionID != "" {
+		if route == nil || (route.RemoteSessionID != "" && route.Generation >= allocation.Generation) {
 			continue
 		}
 		route.ManagerID = managerID
 		route.RemoteSessionID = allocation.RunnerID
 		route.Generation = allocation.Generation
+		route.RuntimeTokenHash = allocation.RuntimeTokenHash
 		if err := c.routes.Save(ctx, route); err != nil {
 			return err
 		}
@@ -1366,10 +1478,10 @@ func validatePoolBindingSubject(kind core.SubjectType, id string) error {
 }
 
 func validatePoolBindingRole(kind core.SubjectType, role core.BindingRole) error {
-	if role != core.BindingRoleUse && role != core.BindingRoleManage {
-		return errors.New("role must be use or manage")
+	if role != core.BindingRoleUse && role != core.BindingRoleManage && role != core.BindingRoleManageAndUse {
+		return errors.New("role must be use, manage, or manage_and_use")
 	}
-	if kind == core.SubjectAll && role == core.BindingRoleManage {
+	if kind == core.SubjectAll && role.GrantsManage() {
 		return errors.New("all binding cannot have manage role")
 	}
 	return nil
@@ -1401,7 +1513,7 @@ func (c *SessionPoolController) canManagePool(ctx context.Context, user *entitie
 		return false, err
 	}
 	for _, binding := range bindings {
-		if !binding.Enabled || binding.Role != core.BindingRoleManage {
+		if !binding.Enabled || !binding.Role.GrantsManage() {
 			continue
 		}
 		if binding.SubjectType == core.SubjectUser && binding.SubjectID == string(user.ID()) {

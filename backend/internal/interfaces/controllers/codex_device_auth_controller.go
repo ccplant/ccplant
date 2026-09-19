@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,7 +25,9 @@ import (
 )
 
 const (
-	deviceAuthTTL          = 10 * time.Minute
+	// Codex device codes stay valid for 15 minutes, so the attempt must not
+	// expire earlier than the code the user is asked to enter.
+	deviceAuthTTL          = 15 * time.Minute
 	maxDeviceAuthBodyBytes = 64 << 10
 	maxAuthJSONBytes       = 32 << 10
 )
@@ -41,12 +44,13 @@ type deviceAuthAttempt struct {
 }
 
 type CodexDeviceAuthController struct {
-	repo       repositories.CredentialsRepository
-	launcher   codexauth.WorkloadLauncher
-	store      codexauth.AttemptStore
-	attempts   sync.Map // attempt ID -> *deviceAuthAttempt
-	active     sync.Map // credential name -> attempt ID
-	userLatest sync.Map // user ID -> attempt ID; legacy poll compatibility
+	repo            repositories.CredentialsRepository
+	launcher        codexauth.WorkloadLauncher
+	store           codexauth.AttemptStore
+	callbackBaseURL string
+	attempts        sync.Map // attempt ID -> *deviceAuthAttempt
+	active          sync.Map // credential name -> attempt ID
+	userLatest      sync.Map // user ID -> attempt ID; legacy poll compatibility
 }
 
 func NewCodexDeviceAuthController(repo repositories.CredentialsRepository, launchers ...codexauth.WorkloadLauncher) *CodexDeviceAuthController {
@@ -59,6 +63,16 @@ func NewCodexDeviceAuthController(repo repositories.CredentialsRepository, launc
 
 func (c *CodexDeviceAuthController) WithAttemptStore(store codexauth.AttemptStore) *CodexDeviceAuthController {
 	c.store = store
+	return c
+}
+
+// WithCallbackBaseURL pins the base URL that Codex device auth workers use to
+// report their challenge and result. Workloads that run inside the session
+// cluster cannot necessarily reach the browser-facing host (for example when
+// the UI is published behind an authentication proxy), so deployments may pin
+// a directly reachable API origin instead of relying on the request headers.
+func (c *CodexDeviceAuthController) WithCallbackBaseURL(baseURL string) *CodexDeviceAuthController {
+	c.callbackBaseURL = strings.TrimSpace(baseURL)
 	return c
 }
 
@@ -137,27 +151,34 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	}
 	attemptID := "cda-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	attempt := &deviceAuthAttempt{ID: attemptID, UserID: string(user.ID()), CredentialName: credentialName, TokenHash: tokenHash, Status: codexauth.StatusStarting, ExpiresAt: time.Now().UTC().Add(deviceAuthTTL)}
+	log.Printf("[CODEX_DEVICE_AUTH] Created attempt %s for user=%s credential=%q", attemptID, user.ID(), credentialName)
 	if c.store != nil {
 		if err := c.store.Create(ctx.Request().Context(), durableAttempt(attempt)); err != nil {
+			log.Printf("[CODEX_DEVICE_AUTH] Failed to persist attempt %s: %v", attemptID, err)
 			if err == codexauth.ErrAttemptActive {
 				return echo.NewHTTPError(http.StatusConflict, "Codex device auth is already in progress")
 			}
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to persist Codex device auth attempt")
 		}
+		log.Printf("[CODEX_DEVICE_AUTH] Persisted attempt %s with status=%s", attemptID, attempt.Status)
 	}
 	c.attempts.Store(attemptID, attempt)
 	c.active.Store(credentialName, attemptID)
 	c.userLatest.Store(attempt.UserID, attemptID)
-	callbackURL, err := deviceAuthCallbackURL(ctx)
+	callbackURL, err := c.deviceAuthCallbackURL(ctx)
 	if err != nil {
+		log.Printf("[CODEX_DEVICE_AUTH] Failed to build callback URL for attempt %s: %v", attemptID, err)
 		c.finishAttempt(attempt, codexauth.StatusFailed)
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	workload := codexauth.WorkloadRequest{AttemptID: attemptID, CallbackURL: callbackURL, Token: token, ExpiresAt: attempt.ExpiresAt}
+	log.Printf("[CODEX_DEVICE_AUTH] Launching workload for attempt %s", attemptID)
 	if err := c.launcher.StartCodexDeviceAuth(ctx.Request().Context(), workload); err != nil {
+		log.Printf("[CODEX_DEVICE_AUTH] Failed to launch workload for attempt %s: %v", attemptID, err)
 		c.finishAttempt(attempt, codexauth.StatusFailed)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, fmt.Sprintf("Failed to start Codex device auth: %v", err))
 	}
+	log.Printf("[CODEX_DEVICE_AUTH] Workload accepted for attempt %s", attemptID)
 	return ctx.JSON(http.StatusAccepted, responseForAttempt(attempt))
 }
 
@@ -214,10 +235,12 @@ func (c *CodexDeviceAuthController) PollDeviceAuth(ctx echo.Context) error {
 func (c *CodexDeviceAuthController) ReportChallenge(ctx echo.Context) error {
 	attempt, ok := c.authorizeWorker(ctx)
 	if !ok {
+		log.Printf("[CODEX_DEVICE_AUTH] Rejected unauthorized challenge callback for attempt %s", ctx.Param("attemptId"))
 		return ctx.NoContent(http.StatusUnauthorized)
 	}
 	var challenge codexauth.Challenge
 	if err := bindLimitedJSON(ctx, &challenge); err != nil || challenge.UserCode == "" || !validVerificationURI(challenge.VerificationURI) {
+		log.Printf("[CODEX_DEVICE_AUTH] Invalid challenge callback for attempt %s: %v", attempt.ID, err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid device auth challenge")
 	}
 	attempt.mu.Lock()
@@ -229,18 +252,22 @@ func (c *CodexDeviceAuthController) ReportChallenge(ctx echo.Context) error {
 	attempt.Status = codexauth.StatusWaitingForUser
 	attempt.mu.Unlock()
 	if err := c.persistAttempt(ctx.Request().Context(), attempt); err != nil {
+		log.Printf("[CODEX_DEVICE_AUTH] Failed to persist challenge for attempt %s: %v", attempt.ID, err)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to persist device auth challenge")
 	}
+	log.Printf("[CODEX_DEVICE_AUTH] Challenge accepted for attempt %s", attempt.ID)
 	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (c *CodexDeviceAuthController) ReportResult(ctx echo.Context) error {
 	attempt, ok := c.authorizeWorker(ctx)
 	if !ok {
+		log.Printf("[CODEX_DEVICE_AUTH] Rejected unauthorized result callback for attempt %s", ctx.Param("attemptId"))
 		return ctx.NoContent(http.StatusUnauthorized)
 	}
 	var result codexauth.Result
 	if err := bindLimitedJSON(ctx, &result); err != nil {
+		log.Printf("[CODEX_DEVICE_AUTH] Invalid result callback for attempt %s: %v", attempt.ID, err)
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid device auth result")
 	}
 	attempt.mu.RLock()
@@ -254,6 +281,7 @@ func (c *CodexDeviceAuthController) ReportResult(ctx echo.Context) error {
 			result.Status = codexauth.StatusFailed
 		}
 		c.finishAttempt(attempt, result.Status)
+		log.Printf("[CODEX_DEVICE_AUTH] Attempt %s finished with status=%s error_code=%q", attempt.ID, result.Status, result.ErrorCode)
 		go func() { _ = c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID) }()
 		return ctx.NoContent(http.StatusNoContent)
 	}
@@ -263,9 +291,11 @@ func (c *CodexDeviceAuthController) ReportResult(ctx echo.Context) error {
 	creds := entities.NewCredentials(attempt.CredentialName, json.RawMessage(result.AuthJSON))
 	creds.SetFileType(sessionsettings.FileTypeCodexAuth)
 	if err := c.repo.Save(ctx.Request().Context(), creds); err != nil {
+		log.Printf("[CODEX_DEVICE_AUTH] Failed to save credentials for attempt %s: %v", attempt.ID, err)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to save Codex credentials")
 	}
 	c.finishAttempt(attempt, codexauth.StatusAuthorized)
+	log.Printf("[CODEX_DEVICE_AUTH] Attempt %s finished with status=%s", attempt.ID, codexauth.StatusAuthorized)
 	go func() { _ = c.launcher.CancelCodexDeviceAuth(context.Background(), attempt.ID) }()
 	return ctx.NoContent(http.StatusNoContent)
 }
@@ -299,8 +329,12 @@ func (c *CodexDeviceAuthController) finishAttempt(attempt *deviceAuthAttempt, st
 	attempt.mu.Unlock()
 	c.active.CompareAndDelete(attempt.CredentialName, attempt.ID)
 	if c.store != nil {
-		_ = c.store.Update(context.Background(), durableAttempt(attempt))
-		_ = c.store.Release(context.Background(), durableAttempt(attempt))
+		if err := c.store.Update(context.Background(), durableAttempt(attempt)); err != nil {
+			log.Printf("[CODEX_DEVICE_AUTH] Failed to persist final status for attempt %s status=%s: %v", attempt.ID, status, err)
+		}
+		if err := c.store.Release(context.Background(), durableAttempt(attempt)); err != nil {
+			log.Printf("[CODEX_DEVICE_AUTH] Failed to release attempt %s status=%s: %v", attempt.ID, status, err)
+		}
 	}
 }
 
@@ -313,20 +347,28 @@ func (c *CodexDeviceAuthController) expireAttempt(attempt *deviceAuthAttempt) {
 	}
 }
 
+// loadAttempt resolves an attempt by ID. When a durable store is configured it
+// is authoritative: the parent API can serve the same attempt from several
+// replicas, and a process-local snapshot may lag behind state written by
+// another replica (for example the device challenge reported by the auth
+// worker). Trusting the cached copy would leave the UI polling forever in the
+// "starting" state, so every read goes back to the store and the cache is only
+// used as a fallback when no store is configured.
 func (c *CodexDeviceAuthController) loadAttempt(ctx context.Context, id string) (*deviceAuthAttempt, bool) {
-	value, ok := c.attempts.Load(id)
-	if ok {
-		return value.(*deviceAuthAttempt), true
-	}
 	if c.store != nil {
 		stored, err := c.store.Get(ctx, id)
-		if err == nil {
-			attempt := runtimeAttempt(stored)
-			c.attempts.Store(id, attempt)
-			return attempt, true
+		if err != nil {
+			return nil, false
 		}
+		attempt := runtimeAttempt(stored)
+		c.attempts.Store(id, attempt)
+		return attempt, true
 	}
-	return nil, false
+	value, ok := c.attempts.Load(id)
+	if !ok {
+		return nil, false
+	}
+	return value.(*deviceAuthAttempt), true
 }
 
 func (c *CodexDeviceAuthController) activeAttempt(ctx context.Context, credentialName string) (*deviceAuthAttempt, bool) {
@@ -417,7 +459,25 @@ func newDeviceAuthToken() (string, [sha256.Size]byte, error) {
 	return token, sha256.Sum256([]byte(token)), nil
 }
 
-func deviceAuthCallbackURL(ctx echo.Context) (string, error) {
+// deviceAuthCallbackURL resolves the callback URL advertised to the auth
+// worker. An explicitly configured base URL always wins because the request
+// derived host may only be reachable from the browser.
+func (c *CodexDeviceAuthController) deviceAuthCallbackURL(ctx echo.Context) (string, error) {
+	if base := strings.TrimSuffix(c.callbackBaseURL, "/"); base != "" {
+		parsed, err := url.Parse(base)
+		if err != nil {
+			return "", fmt.Errorf("invalid Codex device auth callback base URL")
+		}
+		httpish := parsed.Scheme == "http" || parsed.Scheme == "https"
+		if !httpish || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", fmt.Errorf("invalid Codex device auth callback base URL")
+		}
+		return base + "/internal/codex-device-auth", nil
+	}
+	return requestDerivedCallbackURL(ctx)
+}
+
+func requestDerivedCallbackURL(ctx echo.Context) (string, error) {
 	scheme := ctx.Request().Header.Get("X-Forwarded-Proto")
 	if scheme == "" {
 		scheme = ctx.Scheme()

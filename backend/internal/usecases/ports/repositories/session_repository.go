@@ -5,7 +5,15 @@ import (
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+// SessionResumePreparer persists parent-owned settings needed to recreate a
+// suspended workload. Stock runners receive these settings directly from the
+// parent and therefore may not have a local restart Secret yet.
+type SessionResumePreparer interface {
+	PrepareSessionResume(context.Context, string, *sessionsettings.SessionSettings) error
+}
 
 // Message represents a message in a conversation
 type Message struct {
@@ -68,6 +76,12 @@ type SessionWorkloadEnsurer interface {
 	EnsureSessionWorkload(ctx context.Context, id string) (session entities.Session, restoring bool, err error)
 }
 
+// SessionSuspender is implemented by managers that can checkpoint, when
+// required by their persistence policy, and suspend a session workload.
+type SessionSuspender interface {
+	SuspendSession(ctx context.Context, id string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`
@@ -84,4 +98,12 @@ type SessionSandboxDomainReader interface {
 // message. The API calls this capability instead of mutating Kubernetes state.
 type SessionToucher interface {
 	TouchSession(ctx context.Context, id string, at time.Time) error
+}
+
+// SessionRestarter atomically holds a workload, checkpoints it and applies complete settings.
+type SessionRestarter interface {
+	ValidateSessionRestart(context.Context, string, *sessionsettings.SessionSettings) error
+	CurrentSessionSettings(context.Context, string) (*sessionsettings.SessionSettings, error)
+	RestartSession(context.Context, string, string, *sessionsettings.SessionSettings) error
+	PauseSession(context.Context, string) error
 }

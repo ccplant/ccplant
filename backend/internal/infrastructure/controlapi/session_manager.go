@@ -8,18 +8,23 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
+	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 )
 
 // SessionManager is a worker-side port that delegates every session operation
-// to the control API. It has no Kubernetes dependency.
+// to HTTP APIs. Trigger-backed creation uses the normal /start API; lifecycle
+// operations use the control API. It has no Kubernetes dependency.
 type SessionManager struct {
 	baseURL, token string
+	sessionAPIURL  string
 	client         *http.Client
 }
 
@@ -31,6 +36,7 @@ type sessionInfo struct {
 	Tags          map[string]string      `json:"tags"`
 	Status        string                 `json:"status"`
 	StartedAt     time.Time              `json:"started_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
 	LastMessageAt time.Time              `json:"last_message_at"`
 }
 
@@ -51,36 +57,54 @@ func (m *SessionManager) ClaimDueSchedules(ctx context.Context) ([]ScheduleJob, 
 }
 
 func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL string, job ScheduleJob) (string, error) {
-	body, err := json.Marshal(job.StartRequest)
+	id, _, err := m.startSession(ctx, apiURL, job.StartRequest, job.ExecutionToken, job.ExecutionID)
+	return id, err
+}
+
+func (m *SessionManager) startSession(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, bool, error) {
+	type startResult struct {
+		id     string
+		reused bool
+	}
+	result, err := telemetry.LoggedOperation(ctx, "controlapi.StartSession", func(operationCtx context.Context) (startResult, error) {
+		id, reused, requestErr := m.startSessionRequest(operationCtx, apiURL, start, token, executionID)
+		return startResult{id: id, reused: reused}, requestErr
+	}, telemetry.String("session.execution_id", executionID), telemetry.Bool("session.reuse_requested", len(start.ReuseMatchTags) > 0))
+	return result.id, result.reused, err
+}
+
+func (m *SessionManager) startSessionRequest(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, bool, error) {
+	body, err := json.Marshal(start)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(apiURL, "/")+"/start", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	req.Header.Set("Authorization", "Bearer "+job.ExecutionToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", job.ExecutionID)
+	req.Header.Set("Idempotency-Key", executionID)
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("session creation API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return "", false, fmt.Errorf("session creation API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	var result struct {
-		SessionID string `json:"session_id"`
+		SessionID     string `json:"session_id"`
+		SessionReused bool   `json:"session_reused"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if result.SessionID == "" {
-		return "", fmt.Errorf("session creation API returned no session_id")
+		return "", false, fmt.Errorf("session creation API returned no session_id")
 	}
-	return result.SessionID, nil
+	return result.SessionID, result.SessionReused, nil
 }
 
 func (m *SessionManager) FinalizeSchedule(ctx context.Context, job ScheduleJob, status, sessionID, message string) error {
@@ -91,10 +115,13 @@ func NewSessionManager(baseURL, token string) *SessionManager {
 	// Stock creation waits for a Kubernetes workload to become ready. Keep the
 	// transport timeout above the session manager's 120-second pod start timeout
 	// so the caller does not cancel an otherwise healthy startup prematurely.
-	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: &http.Client{Timeout: 150 * time.Second}}
+	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: utils.NewHTTPClient(utils.HTTPClientConfig{Timeout: 150 * time.Second})}
 }
 
-func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, _ []byte) (entities.Session, error) {
+func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	if request.Tags["slackbot_id"] != "" || request.Tags["schedule_id"] != "" || request.Tags["webhook_id"] != "" {
+		return m.startTriggerSession(ctx, id, request, webhookPayload)
+	}
 	var info sessionInfo
 	if err := m.do(ctx, http.MethodPost, "/internal/worker/sessions/"+url.PathEscape(id), request, &info); err != nil {
 		return nil, err
@@ -115,8 +142,42 @@ func (m *SessionManager) ListSessions(filter entities.SessionFilter) []entities.
 	return result
 }
 func (m *SessionManager) ListSessionsContext(ctx context.Context, filter entities.SessionFilter) ([]entities.Session, error) {
+	return telemetry.LoggedOperation(ctx, "controlapi.ListSessions", func(operationCtx context.Context) ([]entities.Session, error) {
+		return m.listSessionsContext(operationCtx, filter)
+	}, telemetry.Int64("session.filter_tag_count", int64(len(filter.Tags))))
+}
+
+func (m *SessionManager) listSessionsContext(ctx context.Context, filter entities.SessionFilter) ([]entities.Session, error) {
+	query := make(url.Values)
+	if filter.UserID != "" {
+		query.Set("user_id", filter.UserID)
+	}
+	if filter.Status != "" {
+		query.Set("status", filter.Status)
+	}
+	if filter.Scope != "" {
+		query.Set("scope", string(filter.Scope))
+	}
+	if filter.TeamID != "" {
+		query.Set("team_id", filter.TeamID)
+	}
+	if len(filter.TeamIDs) > 0 {
+		query.Set("team_ids", strings.Join(filter.TeamIDs, ","))
+	}
+	keys := make([]string, 0, len(filter.Tags))
+	for key := range filter.Tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		query.Set("tag."+key, filter.Tags[key])
+	}
+	path := "/internal/worker/sessions"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	var infos []sessionInfo
-	if err := m.do(ctx, http.MethodGet, "/internal/worker/sessions", nil, &infos); err != nil {
+	if err := m.do(ctx, http.MethodGet, path, nil, &infos); err != nil {
 		return nil, err
 	}
 	result := make([]entities.Session, 0, len(infos))
@@ -213,6 +274,7 @@ func (m *SessionManager) do(ctx context.Context, method, path string, input, out
 
 func (i sessionInfo) entity() entities.Session {
 	session := entities.NewProxySessionWithStatus(i.ID, i.UserID, i.Scope, i.TeamID, i.Tags, i.StartedAt, i.Status)
+	session.SetUpdatedAt(i.UpdatedAt)
 	session.SetLastMessageAt(i.LastMessageAt)
 	return session
 }

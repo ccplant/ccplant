@@ -13,13 +13,13 @@
 {{- $assetS3 := $asset.s3 | default dict }}
 {{- $sessionPersistence := .Values.sessionPersistence | default dict }}
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
-{{- $sessionPersistencePath := $sessionPersistence.path | default "/var/lib/agentapi-session-state" }}
 {{- $sessionPersistenceSuspendAfter := $sessionPersistence.suspendAfter | default "1h" }}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict }}
 {{- $valuesMap := .Values | toJson | fromJson }}
 {{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
 {{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 {{- $api := .Values.api | default dict }}
+{{- $githubBroker := $api.githubBroker | default dict }}
 {{- $apiImage := $api.image | default .Values.image }}
 {{- $apiPodAnnotations := $api.podAnnotations | default .Values.podAnnotations }}
 {{- $apiPodLabels := $api.podLabels | default .Values.podLabels }}
@@ -51,6 +51,7 @@
 {{- $apiEnv = $unexcludedApiEnv }}
 {{- /* Prefer canonical structured values over their legacy env entries. */}}
 {{- $canonicalApiEnv := dict }}
+{{- if $githubBroker.inCluster }}{{- $_ := set $canonicalApiEnv "AGENTAPI_GITHUB_BROKER_BASE_URL" true }}{{- end }}
 {{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}
 {{- with .Values.config.auth.github.oauth.allowedRedirectUris }}{{- $_ := set $canonicalApiEnv "OAUTH_ALLOWED_REDIRECT_URIS" true }}{{- end }}
 {{- with .Values.config.vapid.publicKey }}{{- $_ := set $canonicalApiEnv "VAPID_PUBLIC_KEY" true }}{{- end }}
@@ -213,6 +214,10 @@ spec:
             - {name: AGENTAPI_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - name: HOME
               value: "/home/agentapi"
+            {{- if $githubBroker.inCluster }}
+            - name: AGENTAPI_GITHUB_BROKER_BASE_URL
+              value: {{ printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port | quote }}
+            {{- end }}
             {{- if (dig "enabled" false $openTelemetry) }}
             - name: POD_NAME
               valueFrom:
@@ -565,8 +570,6 @@ spec:
             {{- if not $sessionManagerEnabled }}
             - name: AGENTAPI_SESSION_PERSISTENCE_BACKEND
               value: {{ $sessionPersistenceBackend | quote }}
-            - name: AGENTAPI_SESSION_PERSISTENCE_PATH
-              value: {{ $sessionPersistencePath | quote }}
             - name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER
               value: {{ $sessionPersistenceSuspendAfter | quote }}
             {{- if $sessionPersistenceS3.bucket }}
@@ -659,6 +662,8 @@ spec:
             # session-manager workload is enabled.
             - name: AGENTAPI_K8S_SESSION_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
+              value: {{ .Values.kubernetesSession.cliImage | default (include "agentapi-proxy.apiImage" .) | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ .Values.kubernetesSession.image | default (printf "%s:%s" .Values.image.repository .Chart.AppVersion) | quote }}
             - name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE
@@ -904,10 +909,6 @@ spec:
             - name: asset-storage
               mountPath: {{ $assetStoragePath | quote }}
             {{- end }}
-            {{- if and (not $sessionManagerEnabled) (eq $sessionPersistenceBackend "volume") }}
-            - name: session-state
-              mountPath: {{ $sessionPersistencePath | quote }}
-            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -960,11 +961,6 @@ spec:
           {{ else }}
           emptyDir: {}
           {{ end }}
-        {{- end }}
-        {{- if and (not $sessionManagerEnabled) (eq $sessionPersistenceBackend "volume") }}
-        - name: session-state
-          persistentVolumeClaim:
-            claimName: {{ include "agentapi-proxy.fullname" . }}-session-state
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

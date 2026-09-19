@@ -226,10 +226,47 @@ func (w *directRuntimeWorker) execute(ctx context.Context, command core.Command)
 		cancel()
 	}()
 	commandCtx = telemetry.ExtractHTTP(commandCtx, http.Header(command.Headers))
-	w.executeRequest(commandCtx, command)
+	queueDelay := time.Since(command.CreatedAt)
+	log.Printf("[OTEL_TIMING] completed operation=provisioner.DirectRuntime.DequeueCommand status=success duration_ms=%d command_id=%s session_id=%s path=%s",
+		queueDelay.Milliseconds(), command.ID, command.SessionID, command.Path)
+	_ = telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.ExecuteCommand", func(operationCtx context.Context) error {
+		w.executeRequest(operationCtx, command)
+		return nil
+	}, telemetry.String("session.id", command.SessionID), telemetry.String("session.command_id", command.ID),
+		telemetry.String("session.command_path", command.Path), telemetry.Int64("session.queue_delay_ms", queueDelay.Milliseconds()))
 }
 
 func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command core.Command) {
+	if command.Method == http.MethodPost && (command.Path == "/internal/session-prompt" || command.Path == "/internal/session-interrupt-prompt") {
+		// Direct runtime sessions expose an ACP bridge. Force the ACP prompt path
+		// here instead of guessing an HTTP endpoint from the configured agent name.
+		if command.Path == "/internal/session-interrupt-prompt" {
+			if err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.CancelAgent", func(operationCtx context.Context) error {
+				return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID + "-cancel", Type: "cancel"}, w.localURL)
+			}, telemetry.String("session.command_id", command.ID)); err != nil {
+				w.postExecutionError(commandCtx, command, err)
+				return
+			}
+		}
+		err := telemetry.LoggedOperationErr(commandCtx, "provisioner.DirectRuntime.DeliverPrompt", func(operationCtx context.Context) error {
+			return executeControlCommandAtBase(operationCtx, w.client, "acp", controlCommand{ID: command.ID, Type: "prompt", Payload: command.Body}, w.localURL)
+		}, telemetry.String("session.command_id", command.ID), telemetry.String("session.id", command.SessionID))
+		if err != nil {
+			w.postExecutionError(commandCtx, command, err)
+			return
+		}
+		_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
+		return
+	}
+	if command.Method == http.MethodPost && command.Path == "/internal/checkpoint-session-state" {
+		err := executeControlCommand(commandCtx, w.client, os.Getenv("AGENTAPI_AGENT_TYPE"), controlCommand{Type: "checkpoint_session_state"})
+		if err != nil {
+			w.postExecutionError(commandCtx, command, err)
+			return
+		}
+		_ = w.postFrames(commandCtx, []core.ResponseFrame{{ID: uuid.NewString(), RequestID: command.ID, CommandStreamID: command.StreamID, Sequence: 0, Status: http.StatusNoContent, Done: true, CreatedAt: time.Now().UTC()}})
+		return
+	}
 	target := w.localURL + command.Path
 	if command.RawQuery != "" {
 		target += "?" + command.RawQuery
@@ -429,4 +466,18 @@ func minDuration(left, right time.Duration) time.Duration {
 		return left
 	}
 	return right
+}
+
+func confirmRuntimeStart(ctx context.Context, cfg *sessionsettings.ParentRuntimeConfig) error {
+	if cfg == nil || !cfg.Enabled {
+		return nil
+	}
+	client, err := newPullHTTPClient(ctx, os.Getenv("NODE_EXTRA_CA_CERTS"))
+	if err != nil {
+		return err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	worker := &directRuntimeWorker{cfg: cfg, client: client}
+	return worker.postStatus(requestCtx, "starting")
 }

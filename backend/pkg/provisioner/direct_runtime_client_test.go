@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,6 +126,93 @@ func TestDirectRuntimePollAndExecute(t *testing.T) {
 	}
 }
 
+func TestDirectRuntimeSessionPromptUsesACPProtocol(t *testing.T) {
+	var rpcBody map[string]interface{}
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case http.MethodGet + " /session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
+		case http.MethodPost + " /rpc":
+			if err := json.NewDecoder(r.Body).Decode(&rpcBody); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer local.Close()
+
+	var frames []core.ResponseFrame
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Frames []core.ResponseFrame `json:"frames"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		frames = append(frames, body.Frames...)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer parent.Close()
+
+	worker := &directRuntimeWorker{
+		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
+		client: parent.Client(), localURL: local.URL,
+	}
+	worker.executeRequest(context.Background(), core.Command{
+		ID: "prompt-1", StreamID: "1-0", Method: http.MethodPost, Path: "/internal/session-prompt", Body: []byte(`{"content":"continue this thread"}`),
+	})
+
+	if rpcBody["method"] != "session/prompt" {
+		t.Fatalf("rpc body = %#v", rpcBody)
+	}
+	params, _ := rpcBody["params"].(map[string]interface{})
+	if params["sessionId"] != "acp-session" {
+		t.Fatalf("rpc params = %#v", params)
+	}
+	if len(frames) != 1 || frames[0].Status != http.StatusNoContent || !frames[0].Done || frames[0].CommandStreamID != "1-0" {
+		t.Fatalf("frames = %#v", frames)
+	}
+}
+
+func TestDirectRuntimeInterruptPromptCancelsBeforePrompt(t *testing.T) {
+	var methods []string
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case http.MethodGet + " /session":
+			_ = json.NewEncoder(w).Encode(map[string]string{"sessionId": "acp-session"})
+		case http.MethodPost + " /rpc":
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			methods = append(methods, body["method"].(string))
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer local.Close()
+
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer parent.Close()
+
+	worker := &directRuntimeWorker{
+		cfg:    &sessionsettings.ParentRuntimeConfig{Endpoint: parent.URL, SessionID: "public", Token: "secret", Generation: 1},
+		client: parent.Client(), localURL: local.URL,
+	}
+	worker.executeRequest(context.Background(), core.Command{
+		ID: "prompt-1", StreamID: "1-0", Method: http.MethodPost, Path: "/internal/session-interrupt-prompt", Body: []byte(`{"content":"replace current task"}`),
+	})
+
+	if !reflect.DeepEqual(methods, []string{"session/cancel", "session/prompt"}) {
+		t.Fatalf("RPC methods = %#v", methods)
+	}
+}
+
 func TestDirectRuntimeRetriesTemporaryUnauthorizedResponse(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	var polls atomic.Int32
@@ -175,5 +263,19 @@ func TestDirectRuntimeRetriesTemporaryUnauthorizedResponse(t *testing.T) {
 	}
 	if polls.Load() < 2 {
 		t.Fatalf("polls = %d, want at least 2", polls.Load())
+	}
+}
+
+func TestConfirmRuntimeStartRejectsFencedGeneration(t *testing.T) {
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("generation") != "2" || r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("missing generation or runtime token")
+		}
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer parent.Close()
+	err := confirmRuntimeStart(context.Background(), &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: parent.URL, SessionID: "session", Token: "token", Generation: 2})
+	if err == nil {
+		t.Fatal("fenced runtime was allowed to provision")
 	}
 }
