@@ -31,17 +31,20 @@ type apiTokenRecord struct {
 
 // SimpleAuthService implements AuthService with simple in-memory authentication
 type SimpleAuthService struct {
-	mu               sync.RWMutex
-	apiKeys          map[string]*services.APIKey
-	users            map[entities.UserID]*entities.User
-	keyToUserID      map[string]entities.UserID
-	apiTokens        map[string]*apiTokenRecord // keyed by plaintext secret
-	apiTokenRepo     repositories.APITokenRepository
-	localUserRepo    repositories.LocalUserRepository
-	githubProvider   *auth.GitHubAuthProvider
-	githubAuthConfig *config.GitHubAuthConfig
-	teamConfigRepo   repositories.TeamConfigRepository
-	teamDiscovery    []config.TeamDiscoveryRule
+	mu                       sync.RWMutex
+	apiKeys                  map[string]*services.APIKey
+	users                    map[entities.UserID]*entities.User
+	keyToUserID              map[string]entities.UserID
+	apiTokens                map[string]*apiTokenRecord // keyed by plaintext secret
+	apiTokenRepo             repositories.APITokenRepository
+	localUserRepo            repositories.LocalUserRepository
+	githubProvider           *auth.GitHubAuthProvider
+	githubAuthConfig         *config.GitHubAuthConfig
+	teamConfigRepo           repositories.TeamConfigRepository
+	teamDiscovery            []config.TeamDiscoveryRule
+	githubMembershipResolver interface {
+		ResolveTeamMemberships(context.Context, string) ([]auth.GitHubTeamMembership, bool, error)
+	}
 
 	// shadowedSecrets records every plaintext secret that has ever been
 	// registered as a named API token (via LoadAPIToken or ReconcileAPITokens).
@@ -56,6 +59,14 @@ type SimpleAuthService struct {
 	// sticky (revoking or reconciling away a token never unshadows its
 	// secret), re-loading the legacy credential later cannot revive it either.
 	shadowedSecrets map[string]struct{}
+}
+
+func (s *SimpleAuthService) SetGitHubMembershipResolver(resolver interface {
+	ResolveTeamMemberships(context.Context, string) ([]auth.GitHubTeamMembership, bool, error)
+}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.githubMembershipResolver = resolver
 }
 
 // NewSimpleAuthService creates a new SimpleAuthService
@@ -518,6 +529,16 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 		// Try to authenticate with GitHub
 		userContext, err := githubProvider.Authenticate(context.Background(), token)
 		if err == nil && userContext != nil {
+			s.mu.RLock()
+			membershipResolver := s.githubMembershipResolver
+			s.mu.RUnlock()
+			if membershipResolver != nil && userContext.GitHubUser != nil {
+				if linkedTeams, linked, resolveErr := membershipResolver.ResolveTeamMemberships(context.Background(), userContext.UserID); resolveErr != nil {
+					return nil, fmt.Errorf("resolve linked GitHub memberships: %w", resolveErr)
+				} else if linked {
+					userContext.GitHubUser.Teams = linkedTeams
+				}
+			}
 			// Convert GitHub user context to entity user
 			userID := entities.UserID(userContext.UserID)
 

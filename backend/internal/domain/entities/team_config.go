@@ -120,8 +120,8 @@ func (tc *TeamConfig) Validate() error {
 		}
 	}
 	for _, binding := range tc.externalTeams {
-		if binding.ConnectionID == "" || binding.Organization == "" || binding.TeamSlug == "" {
-			return errors.New("external team binding requires connection ID, organization, and team slug")
+		if binding.Organization == "" || binding.TeamSlug == "" {
+			return errors.New("external team binding requires organization and team slug")
 		}
 	}
 

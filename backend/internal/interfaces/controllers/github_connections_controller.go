@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -829,6 +830,100 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 		return token, nil
 	}
 	return "", errors.New("GitHub connection is not linked to this user")
+}
+
+// ResolveTeamMemberships loads and merges memberships for every GitHub identity
+// linked to a principal. Connection IDs are retained as provenance, but are not
+// part of the logical team identity used by ccplant.
+func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context, principalID string) ([]auth.GitHubTeamMembership, bool, error) {
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	memberships := make([]auth.GitHubTeamMembership, 0)
+	seen := make(map[string]struct{})
+	linked := false
+	for _, identity := range identities {
+		if identity.PrincipalID != principalID {
+			continue
+		}
+		linked = true
+		connection, _, _, loadErr := c.loadConnection(ctx, identity.ConnectionID)
+		if loadErr != nil || !connection.Enabled {
+			log.Printf("[GITHUB_MEMBERSHIP] Skipping unavailable connection %q for principal %q: %v", identity.ConnectionID, principalID, loadErr)
+			continue
+		}
+		secret, secretErr := c.client.CoreV1().Secrets(c.namespace).Get(ctx, identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.GetOptions{})
+		if secretErr != nil {
+			log.Printf("[GITHUB_MEMBERSHIP] Skipping identity %q: %v", identity.ID, secretErr)
+			continue
+		}
+		if raw := string(secret.Data[githubExpiresAtKey]); raw != "" {
+			expiresAt, parseErr := time.Parse(time.RFC3339, raw)
+			if parseErr != nil || !expiresAt.After(time.Now().UTC()) {
+				log.Printf("[GITHUB_MEMBERSHIP] Skipping expired identity %q", identity.ID)
+				continue
+			}
+		}
+		token := string(secret.Data[githubAccessTokenKey])
+		if token == "" {
+			continue
+		}
+		teams, fetchErr := c.fetchGitHubTeams(ctx, connection, token)
+		if fetchErr != nil {
+			log.Printf("[GITHUB_MEMBERSHIP] Failed to load teams from connection %q: %v", identity.ConnectionID, fetchErr)
+			continue
+		}
+		for _, team := range teams {
+			key := strings.ToLower(strings.TrimSpace(team.Organization)) + "\x00" + strings.ToLower(strings.TrimSpace(team.TeamSlug))
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			team.ConnectionID = identity.ConnectionID
+			memberships = append(memberships, team)
+		}
+	}
+	return memberships, linked, nil
+}
+
+func (c *GitHubConnectionsController) fetchGitHubTeams(ctx context.Context, connection githubConnection, token string) ([]auth.GitHubTeamMembership, error) {
+	result := make([]auth.GitHubTeamMembership, 0)
+	for page := 1; ; page++ {
+		endpoint := fmt.Sprintf("%s/user/teams?per_page=100&page=%d", strings.TrimSuffix(connection.APIURL, "/"), page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var teams []struct {
+			Slug         string `json:"slug"`
+			Name         string `json:"name"`
+			Permission   string `json:"permission"`
+			Organization struct {
+				Login string `json:"login"`
+			} `json:"organization"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&teams)
+		utils.SafeCloseResponse(resp)
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return nil, fmt.Errorf("GitHub team endpoint returned %d", resp.StatusCode)
+		}
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		for _, team := range teams {
+			result = append(result, auth.GitHubTeamMembership{Organization: team.Organization.Login, TeamSlug: team.Slug, TeamName: team.Name, Role: team.Permission})
+		}
+		if len(teams) < 100 {
+			return result, nil
+		}
+	}
 }
 
 // ResolveConnectionURLs returns the runtime web and API endpoints for a

@@ -163,8 +163,7 @@ func TestLoadConfigParsesTeamDiscovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
 team_discovery:
-  - connection_id: ghes
-    team_pattern: "*/cc-users"
+  - team_pattern: "*/cc-users"
 `), 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +172,7 @@ team_discovery:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(config.TeamDiscovery) != 1 || config.TeamDiscovery[0].ConnectionID != "ghes" || config.TeamDiscovery[0].TeamPattern != "*/cc-users" {
+	if len(config.TeamDiscovery) != 1 || config.TeamDiscovery[0].TeamPattern != "*/cc-users" {
 		t.Fatalf("unexpected team discovery config: %#v", config.TeamDiscovery)
 	}
 }

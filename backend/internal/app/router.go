@@ -108,6 +108,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
+		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
+			simpleAuth.SetGitHubMembershipResolver(githubConnectionsController)
+		}
 	}
 
 	var googleOAuthController *controllers.GoogleOAuthController

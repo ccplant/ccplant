@@ -12,7 +12,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
 
-// TeamMembershipResolver translates connection-aware GitHub memberships into
+// TeamMembershipResolver translates GitHub memberships from all linked connections into
 // stable ccplant team keys and lazily creates/adopts discovered TeamConfigs.
 type TeamMembershipResolver struct {
 	repo  repositories.TeamConfigRepository
@@ -63,9 +63,6 @@ func (r *TeamMembershipResolver) Resolve(ctx context.Context, memberships []enti
 
 		fullName := organization + "/" + teamSlug
 		for _, rule := range r.rules {
-			if rule.ConnectionID != connectionID {
-				continue
-			}
 			matched, matchErr := path.Match(strings.ToLower(rule.TeamPattern), fullName)
 			if matchErr != nil {
 				return nil, true, fmt.Errorf("invalid team discovery pattern %q: %w", rule.TeamPattern, matchErr)
@@ -94,9 +91,9 @@ func (r *TeamMembershipResolver) Resolve(ctx context.Context, memberships []enti
 	return teamIDs, true, nil
 }
 
-func matchesBinding(bindings []entities.ExternalTeamBinding, connectionID, organization, teamSlug string) bool {
+func matchesBinding(bindings []entities.ExternalTeamBinding, _ string, organization, teamSlug string) bool {
 	for _, binding := range bindings {
-		if binding.ConnectionID == connectionID && strings.EqualFold(binding.Organization, organization) && strings.EqualFold(binding.TeamSlug, teamSlug) {
+		if strings.EqualFold(binding.Organization, organization) && strings.EqualFold(binding.TeamSlug, teamSlug) {
 			return true
 		}
 	}

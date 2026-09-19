@@ -66,8 +66,7 @@ auth:
 # Lazily create/adopt ccplant teams from connection-aware GitHub membership.
 # The matched organization/team-slug is preserved as the ccplant team ID.
 team_discovery:
-  - connection_id: "ghes"
-    team_pattern: "*/cc-users"
+  - team_pattern: "*/cc-users"
 # Dedicated libSQL persistence for response-level token usage.
 usage:
   enabled: false

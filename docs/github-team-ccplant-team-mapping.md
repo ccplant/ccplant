@@ -20,7 +20,7 @@
 - **Team principal ID**: ccplant Team に割り当てる不変かつ一意な ID。形式は `team-` + ULID（例: `team-01K4QX7M9N2R8V5Y3C6D1F0GHA`）。表示名や slug 変更の影響を受けない。
 - **Team key**: API や設定で人が指定する一意な論理名。例: `cc-users`。既存互換期間は `team_id` として扱うこともできる。
 - **GitHub connection**: `github.com` または特定 GHES への接続。既存の GitHub Connection の `id` で識別する。
-- **External team binding**: `(connection_id, organization_pattern, team_slug_pattern)` と ccplant Team の対応付け。organization と team slug は完全一致または glob パターンで指定する。
+- **External team binding**: `(organization_pattern, team_slug_pattern)` と ccplant Team の対応付け。connection は取得元として記録するが、マッピングキーには含めない。
 
 ## 提案するデータモデル
 
@@ -77,7 +77,7 @@ type ExternalTeamBinding struct {
 
 binding の正規化規則は次のとおりとする。
 
-- `connection_id` は必須で、存在し enabled な GitHub Connection を参照する。
+- `connection_id` は取得元の監査情報であり、Team の一致判定には使用しない。
 - `organization_pattern` と `team_slug_pattern` は trim 後に小文字化する。
 - パターン構文は既存 `team_role_mapping` と同じ glob (`*`, `?`) に統一し、正規表現は受け付けない。`*` は `/` をまたがず、それぞれ organization または team slug の 1 要素内だけに一致する。
 - 両方に wildcard がない binding は完全一致として扱う。
@@ -110,8 +110,7 @@ GHES の `test/cc-users` から、同名の ccplant `test/cc-users` Team を作�
 
 ```yaml
 team_discovery:
-  - connection_id: ghes
-    team_pattern: "*/cc-users"
+  - team_pattern: "*/cc-users"
     team_key: "{organization}/{team_slug}"
 ```
 
@@ -134,7 +133,7 @@ team_discovery:
 }
 ```
 
-Team の生成契機は、対象 GitHub connection でユーザーの membership をロードしたときとする。たとえば Alice の GHES membership に `test/cc-users` が含まれていれば、resolver は discovery rule にマッチさせ、ccplant `test/cc-users` Team がなければ principal を作成してから Alice をその Team のメンバーとして認可する。全 organization の事前列挙は不要である。
+Team の生成契機は、リンク済み GitHub identity のいずれかでユーザーの membership をロードしたときとする。resolver は connection に関係なく discovery rule にマッチさせる。
 
 同時に複数ユーザーが初回ログインしても principal が二重作成されないよう、正規化済み `team_key` を一意キーとして atomic create を行う。競合した処理は作成済み TeamConfig を再取得する。既定形式の `team_key` は小文字化された `organization/team-slug` とし、空要素や余分な `/` を含む展開結果は認可せず監査ログへ記録する。
 
@@ -152,11 +151,11 @@ discovery で `test/cc-users` Team を一度作成した後、管理者は Team 
 # TeamConfig の UI/API 表現。サーバーの bootstrap config ではない。
 key: test/cc-users
 external_teams:
-  - connection_id: ghes
-    team_pattern: test/cc-users
+  - organization: test
+    team_slug: cc-users
     managed_by: discovery
-  - connection_id: ghec
-    team_pattern: myorg/test-cc-users
+  - organization: myorg
+    team_slug: test-cc-users
     managed_by: api
 ```
 
@@ -238,7 +237,7 @@ teams:
 | `github-com` | `dev/cc-users` | なし | なし |
 | `ghes` | `product/cc-users` | なし | なし |
 
-同じ `dev/cc-users` という Team 名でも、`connection_id` が異なれば別の external Team である。上の例では `ghes` の `dev/cc-users` だけが `cc-users` にマッチし、`github-com` の `dev/cc-users` はマッチしない。
+同じ `dev/cc-users` という Team 名は、`connection_id` が異なっても同じ external Team として扱う。すべてのリンク済み connection から membership を取得し、正規化した `organization/team-slug` の和集合をマッピングする。
 
 ユーザー単位では、以下のように解決する。
 
@@ -267,9 +266,9 @@ Helm values にも同じ `team_discovery` と `teams` を追加し、設定 Conf
 membership の解決はログイン時とトークン再認証時に行う。
 
 1. GitHub identity を既存の仕組みで user principal に解決する。
-2. その identity が属する `connection_id` を確定する。API URL だけで接続を推測しない。
-3. 対象 connection の binding pattern に関係する organization の membership を GitHub API から取得する。organization pattern 自体が wildcard の場合は、ユーザーが所属する organization を列挙してから絞り込む。
-4. membership の `(connection_id, organization, team_slug)` を正規化し、設定済みパターンと照合する。検証時に作成した `(connection_id, external_team_id) -> team_principal_id` index があればそれを優先する。
+2. リンク済み identity ごとに `connection_id` を確定し、その connection の資格情報で GitHub Team membership を取得する。
+3. 全 connection の membership を `(organization, team_slug)` で正規化・重複排除する。
+4. 正規化した membership を connection 非依存の設定済みパターンと照合する。
 5. 一致した ccplant Team の principal ID を重複排除して `AuthorizationContext.TeamScope.Teams` に設定する。
 6. Team ごとの権限を `TeamPermissions` に設定する。
 

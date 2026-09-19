@@ -70,8 +70,8 @@ func (c *TeamConfigController) Update(ctx echo.Context) error {
 		binding.Organization = strings.ToLower(strings.TrimSpace(binding.Organization))
 		binding.TeamSlug = strings.ToLower(strings.TrimSpace(binding.TeamSlug))
 		binding.ManagedBy = "api"
-		if binding.ConnectionID == "" || binding.Organization == "" || binding.TeamSlug == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "connection_id, organization, and team_slug are required")
+		if binding.Organization == "" || binding.TeamSlug == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "organization and team_slug are required")
 		}
 		key := bindingKey(binding)
 		if _, exists := seen[key]; exists {
@@ -108,7 +108,7 @@ func canManageTeam(ctx echo.Context, teamID string) bool {
 }
 
 func bindingKey(binding entities.ExternalTeamBinding) string {
-	return binding.ConnectionID + "\x00" + strings.ToLower(binding.Organization) + "\x00" + strings.ToLower(binding.TeamSlug)
+	return strings.ToLower(binding.Organization) + "\x00" + strings.ToLower(binding.TeamSlug)
 }
 
 func teamConfigResponse(team *entities.TeamConfig) TeamConfigResponse {

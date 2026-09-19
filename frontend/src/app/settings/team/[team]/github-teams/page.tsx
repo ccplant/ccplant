@@ -6,7 +6,7 @@ import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-clien
 import type { ExternalTeamBinding, TeamConfig } from '@/types/team-config'
 import { useSettingsScope } from '../../../SettingsScopeContext'
 
-const emptyBinding = (): ExternalTeamBinding => ({ connection_id: '', organization: '', team_slug: '' })
+const emptyBinding = (): ExternalTeamBinding => ({ organization: '', team_slug: '' })
 
 export default function GitHubTeamsPage() {
   const { scopeId } = useSettingsScope()
@@ -59,14 +59,14 @@ export default function GitHubTeamsPage() {
       </div>
       {error && <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {discovered.map((item) => (
-        <div key={`${item.connection_id}/${item.organization}/${item.team_slug}`} className="rounded-md border p-3 text-sm">
-          <span className="font-mono">{item.connection_id}: {item.organization}/{item.team_slug}</span>
+        <div key={`${item.organization}/${item.team_slug}`} className="rounded-md border p-3 text-sm">
+          <span className="font-mono">{item.organization}/{item.team_slug}</span>
           <span className="ml-2 text-xs text-gray-500">config から自動作成・読み取り専用</span>
         </div>
       ))}
       {editable.map((item, index) => (
-        <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2">
-          {(['connection_id', 'organization', 'team_slug'] as const).map((field) => (
+        <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+          {(['organization', 'team_slug'] as const).map((field) => (
             <input key={field} value={item[field]} placeholder={field} onChange={(event) => setEditable((current) => current.map((value, i) => i === index ? { ...value, [field]: event.target.value } : value))} className="rounded-md border px-3 py-2 text-sm dark:bg-gray-900" />
           ))}
           <button type="button" aria-label="削除" onClick={() => setEditable((current) => current.filter((_, i) => i !== index))} className="rounded-md border p-2"><Trash2 className="h-4 w-4" /></button>

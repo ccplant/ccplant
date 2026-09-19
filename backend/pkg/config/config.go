@@ -83,8 +83,7 @@ type GitHubAuthConfig struct {
 // matches TeamPattern. The initial implementation preserves the matched
 // organization/team-slug as the team key.
 type TeamDiscoveryRule struct {
-	ConnectionID string `json:"connection_id" mapstructure:"connection_id" yaml:"connection_id"`
-	TeamPattern  string `json:"team_pattern" mapstructure:"team_pattern" yaml:"team_pattern"`
+	TeamPattern string `json:"team_pattern" mapstructure:"team_pattern" yaml:"team_pattern"`
 }
 
 // GitHubOAuthConfig represents GitHub OAuth2 configuration

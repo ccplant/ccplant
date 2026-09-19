@@ -60,7 +60,7 @@ func (r *memoryTeamConfigRepository) List(_ context.Context) ([]*entities.TeamCo
 func TestTeamMembershipResolverDiscoversLegacyTeamAndMapsSecondConnection(t *testing.T) {
 	legacy := entities.NewTeamConfig("test/cc-users", nil, map[string]string{"KEEP_ME": "yes"})
 	repo := &memoryTeamConfigRepository{teams: map[string]*entities.TeamConfig{"test/cc-users": legacy}}
-	resolver := NewTeamMembershipResolver(repo, []config.TeamDiscoveryRule{{ConnectionID: "ghes", TeamPattern: "*/cc-users"}})
+	resolver := NewTeamMembershipResolver(repo, []config.TeamDiscoveryRule{{TeamPattern: "*/cc-users"}})
 
 	teamIDs, resolved, err := resolver.Resolve(context.Background(), []entities.GitHubTeamMembership{{ConnectionID: "ghes", Organization: "test", TeamSlug: "cc-users"}})
 	require.NoError(t, err)
@@ -79,4 +79,16 @@ func TestTeamMembershipResolverDiscoversLegacyTeamAndMapsSecondConnection(t *tes
 	require.True(t, resolved)
 	sort.Strings(teamIDs)
 	require.Equal(t, []string{"test/cc-users"}, teamIDs)
+}
+
+func TestTeamMembershipResolverMatchesBindingAcrossConnections(t *testing.T) {
+	team := entities.NewTeamConfig("shared/team", nil, nil)
+	team.SetExternalTeams([]entities.ExternalTeamBinding{{ConnectionID: "ghes", Organization: "example", TeamSlug: "developers", ManagedBy: "api"}})
+	repo := &memoryTeamConfigRepository{teams: map[string]*entities.TeamConfig{"shared/team": team}}
+	resolver := NewTeamMembershipResolver(repo, nil)
+
+	teamIDs, resolved, err := resolver.Resolve(context.Background(), []entities.GitHubTeamMembership{{ConnectionID: "github-com", Organization: "example", TeamSlug: "developers"}})
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Equal(t, []string{"shared/team"}, teamIDs)
 }

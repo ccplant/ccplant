@@ -1,5 +1,5 @@
 export interface ExternalTeamBinding {
-  connection_id: string
+  connection_id?: string
   organization: string
   team_slug: string
   managed_by?: 'discovery' | 'api'

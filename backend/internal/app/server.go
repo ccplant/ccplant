@@ -611,14 +611,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	var githubAuthProvider *auth.GitHubAuthProvider
 	if cfg.Auth.GitHub != nil && cfg.Auth.GitHub.Enabled {
 		log.Printf("[AUTH_INIT] Initializing GitHub auth provider...")
-		connectionID := cfg.Auth.GitHub.ConnectionID
-		if connectionID == "" {
-			connectionID = "github"
-		}
 		for _, rule := range cfg.TeamDiscovery {
-			if rule.ConnectionID == connectionID {
-				cfg.Auth.GitHub.TeamDiscoveryPatterns = append(cfg.Auth.GitHub.TeamDiscoveryPatterns, rule.TeamPattern)
-			}
+			cfg.Auth.GitHub.TeamDiscoveryPatterns = append(cfg.Auth.GitHub.TeamDiscoveryPatterns, rule.TeamPattern)
 		}
 		githubAuthProvider = auth.NewGitHubAuthProvider(cfg.Auth.GitHub)
 
