@@ -13,6 +13,7 @@ import {
   Terminal,
   Ticket,
   TimerOff,
+  Users,
 } from 'lucide-react'
 import { SettingsData } from '@/types/settings'
 
@@ -38,6 +39,14 @@ export interface SettingsNavItem {
  * 並び順がそのままサイドバーの並び順になる。
  */
 export const settingsNavItems: SettingsNavItem[] = [
+  {
+    slug: 'team-profile',
+    label: 'チーム管理',
+    icon: Users,
+    group: '',
+    scopes: ['team'],
+    fields: [],
+  },
   {
     slug: 'sessions',
     label: 'セッション',

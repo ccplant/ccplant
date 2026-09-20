@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Pencil, Plus, Trash2, Users } from 'lucide-react'
+import { ArrowLeft, Plus, Users } from 'lucide-react'
 import { AgentAPIProxyError, createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
 import type { TeamConfig } from '@/types/team-config'
 import { ItemList, ItemListEmpty, ItemListRow, SettingsPageHeader } from '@/components/settings'
@@ -17,9 +17,6 @@ export default function TeamSettingsIndexPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [newTeamId, setNewTeamId] = useState('')
   const [creating, setCreating] = useState(false)
-  const [editingTeam, setEditingTeam] = useState<TeamConfig | null>(null)
-  const [editName, setEditName] = useState('')
-  const [mutatingTeamId, setMutatingTeamId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -56,36 +53,6 @@ export default function TeamSettingsIndexPage() {
       setError(err instanceof AgentAPIProxyError ? err.message : 'チームを作成できませんでした')
     } finally {
       setCreating(false)
-    }
-  }
-
-  const renameTeam = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!editingTeam || !editName.trim()) return
-    setMutatingTeamId(editingTeam.team_id)
-    setError(null)
-    try {
-      const updated = await createAgentAPIProxyClientFromStorage().renameTeam(editingTeam.team_id, editName.trim())
-      setTeams((current) => current.map((team) => team.team_id === updated.team_id ? updated : team))
-      setEditingTeam(null)
-    } catch (err) {
-      setError(err instanceof AgentAPIProxyError ? err.message : 'チーム名を変更できませんでした')
-    } finally {
-      setMutatingTeamId(null)
-    }
-  }
-
-  const deleteTeam = async (team: TeamConfig) => {
-    if (!confirm(`「${team.name}」を削除しますか？この操作は取り消せません。`)) return
-    setMutatingTeamId(team.team_id)
-    setError(null)
-    try {
-      await createAgentAPIProxyClientFromStorage().deleteTeam(team.team_id)
-      setTeams((current) => current.filter((item) => item.team_id !== team.team_id))
-    } catch (err) {
-      setError(err instanceof AgentAPIProxyError ? err.message : 'チームを削除できませんでした')
-    } finally {
-      setMutatingTeamId(null)
     }
   }
 
@@ -154,23 +121,6 @@ export default function TeamSettingsIndexPage() {
         </div>
       )}
 
-      {editingTeam && (
-        <form onSubmit={renameTeam} className="mb-5 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-          <label htmlFor="edit-team-name" className="block text-sm font-medium text-gray-900 dark:text-white">チーム名を変更</label>
-          <div className="mt-3 flex gap-2">
-            <input
-              id="edit-team-name"
-              value={editName}
-              onChange={(event) => setEditName(event.target.value)}
-              autoFocus
-              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900"
-            />
-            <button type="submit" disabled={!editName.trim() || mutatingTeamId === editingTeam.team_id} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">保存</button>
-            <button type="button" onClick={() => setEditingTeam(null)} className="rounded-md border border-gray-300 px-4 py-2 text-sm dark:border-gray-600">キャンセル</button>
-          </div>
-        </form>
-      )}
-
       <ItemList>
         {teams.length === 0 && !error && (
           <ItemListEmpty>所属しているチームがありません</ItemListEmpty>
@@ -186,24 +136,6 @@ export default function TeamSettingsIndexPage() {
             }
             actions={
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setEditingTeam(team); setEditName(team.name) }}
-                  disabled={mutatingTeamId === team.team_id}
-                  className="rounded-md border border-gray-300 p-1.5 text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                  aria-label={`${team.name}の名前を変更`}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => deleteTeam(team)}
-                  disabled={mutatingTeamId === team.team_id}
-                  className="rounded-md border border-red-200 p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/30"
-                  aria-label={`${team.name}を削除`}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
                 <Link
                 href={settingsHref('team', DEFAULT_SETTINGS_SLUG, team.team_id)}
                 className="rounded-md border border-gray-300 px-3 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"

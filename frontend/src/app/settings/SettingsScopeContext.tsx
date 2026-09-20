@@ -29,6 +29,7 @@ interface SettingsScopeValue {
   userName: string
   userTeams: string[]
   userTeamNames: Record<string, string>
+  setUserTeamName: (teamId: string, name: string) => void
 
   settings: SettingsData
   update: (partial: SettingsUpdate) => void
@@ -107,6 +108,9 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
   const { showToast } = useToast()
 
   const scopeId = scopeKind === 'personal' ? principalId : (teamId ?? '')
+  const setUserTeamName = useCallback((id: string, name: string) => {
+    setUserTeamNames((current) => ({ ...current, [id]: name }))
+  }, [])
 
   const dirtyFields = useMemo(
     () => collectDirtyFields(settings, originalSettings),
@@ -320,6 +324,7 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
     userName,
     userTeams,
     userTeamNames,
+    setUserTeamName,
     settings,
     update,
     save,
