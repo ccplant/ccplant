@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import GlobalMenu from './GlobalMenu'
 
@@ -133,7 +134,7 @@ export default function TopBar({
             )}
 
             {/* チーム選択ドロップダウン */}
-            {availableTeams.length > 0 && (
+            {(
               <div className="relative" ref={teamDropdownRef}>
                 <button
                   onClick={() => setShowTeamDropdown(!showTeamDropdown)}
@@ -214,6 +215,16 @@ export default function TopBar({
                           )}
                         </button>
                       ))}
+
+                      <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+                      <Link
+                        href="/settings/team"
+                        onClick={() => setShowTeamDropdown(false)}
+                        className="flex w-full items-center px-3 py-2 text-sm font-medium text-blue-600 transition-colors hover:bg-gray-100 dark:text-blue-400 dark:hover:bg-gray-700"
+                      >
+                        <span className="mr-3 text-lg leading-none">+</span>
+                        新しいチームを作成
+                      </Link>
                     </div>
                   </div>
                 )}

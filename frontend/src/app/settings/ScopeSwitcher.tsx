@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, ChevronDown, User, Users } from 'lucide-react'
+import { Check, ChevronDown, Plus, User, Users } from 'lucide-react'
 import { DEFAULT_SETTINGS_SLUG, SettingsScopeKind, navItemsForScope, settingsHref } from './navConfig'
 
 interface ScopeSwitcherProps {
@@ -132,6 +132,17 @@ export function ScopeSwitcher({
               ))}
             </>
           )}
+          <button
+            type="button"
+            onClick={() => {
+              setIsOpen(false)
+              if (confirmLeave()) router.push('/settings/team')
+            }}
+            className="flex w-full items-center gap-2 border-t border-gray-200 px-3 py-2 text-left text-sm font-medium text-blue-600 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:text-blue-400 dark:hover:bg-gray-700"
+          >
+            <Plus className="h-3.5 w-3.5 flex-shrink-0" />
+            <span>新しいチームを作成</span>
+          </button>
         </div>
       )}
     </div>

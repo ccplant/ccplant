@@ -93,6 +93,22 @@ func TestTeamMembershipResolverMatchesBindingAcrossConnections(t *testing.T) {
 	require.Equal(t, []string{"shared/team"}, teamIDs)
 }
 
+func TestTeamMembershipResolverPreservesUnmappedGitHubTeams(t *testing.T) {
+	team := entities.NewTeamConfig("team-01ARZ3NDEKTSV4RRFFQ69G5FAV", nil, nil)
+	team.SetPrincipalID(team.TeamID())
+	team.SetExternalTeams([]entities.ExternalTeamBinding{{Organization: "example", TeamSlug: "mapped", ManagedBy: "api"}})
+	repo := &memoryTeamConfigRepository{teams: map[string]*entities.TeamConfig{team.TeamID(): team}}
+	resolver := NewTeamMembershipResolver(repo, nil)
+
+	teamIDs, resolved, err := resolver.Resolve(context.Background(), []entities.GitHubTeamMembership{
+		{Organization: "example", TeamSlug: "mapped"},
+		{Organization: "takutaka-lab", TeamSlug: "developers"},
+	})
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Equal(t, []string{"takutaka-lab/developers", team.TeamID()}, teamIDs)
+}
+
 func TestTeamMembershipResolverIncludesOwnedTeam(t *testing.T) {
 	team := entities.NewTeamConfig("team-01ARZ3NDEKTSV4RRFFQ69G5FAV", nil, nil)
 	team.SetPrincipalID(team.TeamID())
