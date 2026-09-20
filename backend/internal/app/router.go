@@ -588,6 +588,8 @@ func (r *Router) registerConditionalRoutes() error {
 	// User info endpoint (requires authentication)
 	log.Printf("[ROUTES] Registering user info endpoint...")
 	r.echo.GET("/user/info", r.handlers.userController.GetUserInfo, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.GET("/teams", r.handlers.teamConfigController.List, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	r.echo.POST("/teams", r.handlers.teamConfigController.Create, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 	r.echo.GET("/teams/:team/config", r.handlers.teamConfigController.Get, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	r.echo.PUT("/teams/:team/config", r.handlers.teamConfigController.Update, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 	log.Printf("[ROUTES] User info endpoint registered")

@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -25,8 +26,60 @@ type updateTeamConfigRequest struct {
 	ExternalTeams []entities.ExternalTeamBinding `json:"external_teams"`
 }
 
+type createTeamConfigRequest struct {
+	TeamID string `json:"team_id"`
+}
+
+var teamIDPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62})(?:/[a-z0-9](?:[a-z0-9._-]{0,62})?)?$`)
+
 func NewTeamConfigController(repo repositories.TeamConfigRepository) *TeamConfigController {
 	return &TeamConfigController{repo: repo}
+}
+
+func (c *TeamConfigController) List(ctx echo.Context) error {
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil {
+		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
+	}
+	teams, err := c.repo.List(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list teams").SetInternal(err)
+	}
+	responses := make([]TeamConfigResponse, 0, len(teams))
+	for _, team := range teams {
+		if authz.TeamScope.IsAdmin || authz.CanAccessTeam(team.TeamID()) {
+			responses = append(responses, teamConfigResponse(team))
+		}
+	}
+	sort.Slice(responses, func(i, j int) bool { return responses[i].TeamID < responses[j].TeamID })
+	return ctx.JSON(http.StatusOK, map[string]any{"teams": responses})
+}
+
+func (c *TeamConfigController) Create(ctx echo.Context) error {
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil || !authz.TeamScope.IsAdmin {
+		return echo.NewHTTPError(http.StatusForbidden, "admin access required")
+	}
+	var request createTeamConfigRequest
+	if err := ctx.Bind(&request); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	teamID := strings.ToLower(strings.TrimSpace(request.TeamID))
+	if !teamIDPattern.MatchString(teamID) {
+		return echo.NewHTTPError(http.StatusBadRequest, "team_id must contain one or two URL-safe name segments")
+	}
+	exists, err := c.repo.Exists(ctx.Request().Context(), teamID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to check team").SetInternal(err)
+	}
+	if exists {
+		return echo.NewHTTPError(http.StatusConflict, "team already exists")
+	}
+	team := entities.NewTeamConfig(teamID, nil, nil)
+	if err := c.repo.Save(ctx.Request().Context(), team); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create team").SetInternal(err)
+	}
+	return ctx.JSON(http.StatusCreated, teamConfigResponse(team))
 }
 
 func (c *TeamConfigController) Get(ctx echo.Context) error {

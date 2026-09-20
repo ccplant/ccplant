@@ -15,6 +15,113 @@
     }
   ],
   "paths": {
+    "/teams": {
+      "get": {
+        "summary": "List accessible ccplant teams",
+        "operationId": "listTeams",
+        "tags": ["Settings"],
+        "responses": {
+          "200": {
+            "description": "Accessible teams",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["teams"],
+                  "properties": {
+                    "teams": {
+                      "type": "array",
+                      "items": {"$ref": "#/components/schemas/TeamConfig"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a ccplant team",
+        "description": "Creates a team with a stable principal ID. Administrator access is required.",
+        "operationId": "createTeam",
+        "tags": ["Settings"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["team_id"],
+                "properties": {
+                  "team_id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)?$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Team created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
+          },
+          "403": {"description": "Administrator access required"},
+          "409": {"description": "Team already exists"}
+        }
+      }
+    },
+    "/teams/{team}/config": {
+      "parameters": [
+        {
+          "name": "team",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string"}
+        }
+      ],
+      "get": {
+        "summary": "Get a ccplant team configuration",
+        "operationId": "getTeamConfig",
+        "tags": ["Settings"],
+        "responses": {
+          "200": {
+            "description": "Team configuration",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
+          },
+          "404": {"description": "Team not found"}
+        }
+      },
+      "put": {
+        "summary": "Update GitHub Team mappings",
+        "operationId": "updateTeamConfig",
+        "tags": ["Settings"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["external_teams"],
+                "properties": {
+                  "external_teams": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/ExternalTeamBinding"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated team configuration",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
+          }
+        }
+      }
+    },
     "/sessions/{sessionId}/restart": {
       "post": {
         "summary": "Reload complete startup settings and restart the same conversation",
@@ -6777,6 +6884,37 @@
   },
   "components": {
     "schemas": {
+      "ExternalTeamBinding": {
+        "type": "object",
+        "required": ["organization", "team_slug"],
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "description": "Optional source connection metadata; not part of mapping identity"
+          },
+          "organization": {"type": "string"},
+          "team_slug": {"type": "string"},
+          "managed_by": {
+            "type": "string",
+            "enum": ["discovery", "api"]
+          }
+        }
+      },
+      "TeamConfig": {
+        "type": "object",
+        "required": ["team_id", "principal_id", "external_teams"],
+        "properties": {
+          "team_id": {"type": "string"},
+          "principal_id": {
+            "type": "string",
+            "pattern": "^team-[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "external_teams": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/ExternalTeamBinding"}
+          }
+        }
+      },
       "GitHubConnectionInput": {
         "type": "object",
         "required": [

@@ -1561,6 +1561,18 @@ export class AgentAPIProxyClient {
     return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`);
   }
 
+  async listTeamConfigs(): Promise<TeamConfig[]> {
+    const response = await this.makeRequest<{ teams: TeamConfig[] }>('/teams');
+    return response.teams;
+  }
+
+  async createTeam(teamId: string): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>('/teams', {
+      method: 'POST',
+      body: JSON.stringify({ team_id: teamId }),
+    });
+  }
+
   async updateTeamConfig(teamId: string, externalTeams: ExternalTeamBinding[]): Promise<TeamConfig> {
     return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`, {
       method: 'PUT',
