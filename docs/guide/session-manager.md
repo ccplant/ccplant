@@ -15,7 +15,7 @@
 - Helm 3
 - `ccplant` CLI
 - 親ccplant APIのURL
-- Session Managerを登録できる親APIのAPIキー
+- 親ccplantの設定画面で発行したSession Manager登録トークン
 
 `ccplant` CLIは[GitHub Releases](https://github.com/ccplant/ccplant/releases)から利用環境に合うアーカイブをダウンロードし、展開したバイナリを`PATH`の通った場所へ配置してください。
 
@@ -31,17 +31,27 @@ helm version
 
 ## インストールする
 
-親APIのAPIキーを環境変数へ設定します。キーはSession Managerの登録にだけ使われ、Kubernetes SecretやHelm valuesには保存されません。
+### 登録トークンを発行する
+
+親ccplantへログインし、設定画面の「セッションマネージャー」から「登録トークンを発行」を選択します。登録トークンは15分間有効で、1回だけ利用できます。発行後は再表示できないため、その場で安全な場所へコピーしてください。
+
+インストール先では、登録トークンだけを保存したファイルを用意します。ファイルを作成するときは、ほかのユーザーから読み取れない権限にしてください。
 
 ```bash
-export AGENTAPI_KEY="<parent-api-key>"
+umask 077
+read -rsp "Registration token: " REGISTRATION_TOKEN
+printf '%s' "$REGISTRATION_TOKEN" > ./registration-token
+unset REGISTRATION_TOKEN
 ```
 
-次のコマンドでSession Managerを登録し、デプロイします。`--upstream`には親ccplant APIの公開URLを指定します。`/api/v1`を省略したURLも利用できます。
+### Session Managerをデプロイする
+
+発行した登録トークンを使い、Session Managerを登録してデプロイします。`--upstream`には親ccplant APIの公開URLを指定します。`/api/v1`を省略したURLも利用できます。
 
 ```bash
 ccplant session-manager install \
   --upstream https://ccplant.example.com \
+  --registration-token-file ./registration-token \
   --namespace ccplant-session \
   --release session-manager \
   --pool default \
@@ -56,9 +66,11 @@ ccplant session-manager install \
 Session manager session-manager installed in namespace ccplant-session (manager <manager-id>)
 ```
 
-### APIキーをファイルから渡す
+登録トークンは初回登録にだけ使用し、永続的な接続トークンへ交換されます。インストールが成功したら、登録トークンのファイルを安全に削除してください。
 
-環境変数の代わりに、APIキーを保存したファイルを指定できます。
+### APIキーで登録トークンを自動発行する
+
+自動化が必要な場合は、親APIのAPIキーを使ってCLIに登録トークンを発行させることもできます。通常の対話的なセットアップでは、設定画面から登録トークンを発行する方法を推奨します。
 
 ```bash
 ccplant session-manager install \
@@ -68,39 +80,25 @@ ccplant session-manager install \
   --version X.Y.Z
 ```
 
-ファイルにはAPIキーだけを保存し、Gitへコミットしないでください。
+APIキーファイルにはAPIキーだけを保存し、Gitへコミットしないでください。`AGENTAPI_KEY`環境変数から渡すこともできます。APIキーは登録にだけ使われ、Kubernetes SecretやHelm valuesには保存されません。
 
-### 発行済みの登録トークンを使う
+`--registration-token`で登録トークンを直接渡すこともできますが、シェル履歴への記録を避けるため`--registration-token-file`を推奨します。
 
-APIキーをインストール先へ持ち込めない場合は、別の環境で発行した1回限りの登録トークンを利用できます。
+## チームのSession Managerとして登録する
+
+設定画面で対象チームのスコープへ切り替えてから登録トークンを発行します。トークンには所有スコープが紐づいているため、インストールコマンドへチームIDを渡す必要はありません。
 
 ```bash
 ccplant session-manager install \
   --upstream https://ccplant.example.com \
   --registration-token-file ./registration-token \
   --namespace ccplant-session \
-  --version X.Y.Z
-```
-
-`--registration-token`で直接渡すこともできますが、シェル履歴への記録を避けるため`--registration-token-file`を推奨します。登録トークンは初回インストール専用です。
-
-## チームのSession Managerとして登録する
-
-デフォルトでは、APIキーの所有ユーザーに属するSession Managerとして登録されます。チーム所有にする場合は、スコープとチームIDを指定します。
-
-```bash
-ccplant session-manager install \
-  --upstream https://ccplant.example.com \
-  --scope team \
-  --team-id <team-id> \
-  --name team-builders \
-  --namespace ccplant-session \
   --release team-builders \
   --pool builders \
   --version X.Y.Z
 ```
 
-APIキーには対象チームへSession Managerを登録できる権限が必要です。
+登録トークンを発行するユーザーには、対象チームへSession Managerを登録できる権限が必要です。APIキーでトークンを自動発行する場合に限り、`--scope team --team-id <team-id>`を指定します。
 
 ## インストールを確認する
 
@@ -135,7 +133,7 @@ ccplant session-manager install \
   --version NEW_VERSION
 ```
 
-接続先URLまたはPoolを変更した場合や、保存済み資格情報を親APIが拒否した場合は、APIキーを使って再登録します。既存インストールの更新時は`--registration-token`を指定しないでください。
+接続先URLまたはPoolを変更した場合、CLIは保存済みの資格情報を使って登録情報を更新します。既存インストールの通常の更新時は、登録トークンを指定しないでください。
 
 資格情報を保持するSecretには`helm.sh/resource-policy: keep`が設定されます。Helm Releaseを削除しても自動では削除されないため、再インストール時に同じ接続情報を再利用できます。
 
@@ -172,13 +170,13 @@ kubectl auth can-i create deployments --namespace ccplant-session
 kubectl auth can-i create secrets --namespace ccplant-session
 ```
 
-### APIキーまたは登録トークンが必要と表示される
+### 登録トークンが必要と表示される
 
-`AGENTAPI_KEY`が現在のシェルに設定されているか確認するか、`--api-key-file`または初回のみ`--registration-token-file`を指定してください。APIキーの値自体をログへ出力しないでください。
+初回インストールでは、設定画面で新しい登録トークンを発行し、`--registration-token-file`で指定してください。トークンは15分で期限切れになり、使用後は再利用できません。
 
 ### 既存の資格情報が親APIに拒否される
 
-同じインストールコマンドへ有効なAPIキーを渡すと、CLIがSession Managerを再登録してKubernetes Secretを更新します。Secretを手動削除すると既存セッションへ影響する可能性があるため、通常は削除しないでください。
+設定画面で対象Manager用の登録トークンを再発行します。既存の接続Secretがある状態では登録トークンを指定できないため、メンテナンス時間を設け、既存セッションへの影響を確認してからSecretを置き換えてください。通常のアップグレードではSecretを削除せず、登録トークンも指定しません。
 
 ### Helmの待機がタイムアウトする
 
