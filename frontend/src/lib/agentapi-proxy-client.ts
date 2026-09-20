@@ -77,6 +77,7 @@ import {
 } from '../types/share';
 import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
+import { TeamConfig, ExternalTeamBinding } from '../types/team-config';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { AdminSessionRunner, ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
@@ -1554,6 +1555,42 @@ export class AgentAPIProxyClient {
       console.log('[AgentAPIProxy] Getting user info');
     }
     return await this.makeRequest<ProxyUserInfo>('/user/info');
+  }
+
+  async getTeamConfig(teamId: string): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`);
+  }
+
+  async listTeamConfigs(): Promise<TeamConfig[]> {
+    const response = await this.makeRequest<{ teams: TeamConfig[] }>('/teams');
+    return response.teams;
+  }
+
+  async createTeam(name: string): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>('/teams', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async renameTeam(teamId: string, name: string): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deleteTeam(teamId: string): Promise<void> {
+    await this.makeRequest<void>(`/teams/${encodeURIComponent(teamId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateTeamConfig(teamId: string, externalTeams: ExternalTeamBinding[]): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`, {
+      method: 'PUT',
+      body: JSON.stringify({ external_teams: externalTeams }),
+    });
   }
 
   /**

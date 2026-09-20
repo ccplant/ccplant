@@ -67,7 +67,7 @@ const buildGroups = (
 function ScopedShell({ scope, children }: { scope: ResolvedScope; children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { dirty, dirtyFields, userName, userTeams } = useSettingsScope()
+  const { dirty, dirtyFields, userName, userTeams, userTeamNames } = useSettingsScope()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
@@ -115,6 +115,7 @@ function ScopedShell({ scope, children }: { scope: ResolvedScope; children: Reac
       teamId={scope.teamId}
       userName={userName}
       userTeams={userTeams}
+      userTeamNames={userTeamNames}
       currentSlug={scope.slug}
       confirmLeave={confirmLeave}
     />

@@ -99,6 +99,7 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 	}
 	authConfig := *s.config.Auth.GitHub
 	authConfig.BaseURL = result.APIURL
+	authConfig.ConnectionID = result.ConnectionID
 	provider := auth.NewGitHubAuthProvider(&authConfig)
 	userContext, err := provider.Authenticate(c.Request().Context(), result.AccessToken)
 	if err != nil {
@@ -107,6 +108,13 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 	userContext.UserID = result.UserID
 	userContext.AuthType = "github_oauth"
 	userContext.AccessToken = result.AccessToken
+	if userContext.GitHubUser != nil {
+		memberships, _, resolveErr := controller.ResolveTeamMemberships(c.Request().Context(), result.UserID)
+		if resolveErr != nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "GitHub team memberships could not be resolved").SetInternal(resolveErr)
+		}
+		userContext.GitHubUser.Teams = memberships
+	}
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
 	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})

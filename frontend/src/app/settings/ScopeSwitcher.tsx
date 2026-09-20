@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, ChevronDown, User, Users } from 'lucide-react'
+import { Check, ChevronDown, Plus, User, Users } from 'lucide-react'
 import { DEFAULT_SETTINGS_SLUG, SettingsScopeKind, navItemsForScope, settingsHref } from './navConfig'
 
 interface ScopeSwitcherProps {
@@ -11,6 +11,7 @@ interface ScopeSwitcherProps {
   teamId?: string
   userName: string
   userTeams: string[]
+  userTeamNames: Record<string, string>
   /** 現在開いているページの slug。切替後も同じページを開くために使う */
   currentSlug: string
   /** 未保存の変更があるときに遷移してよいか確認する */
@@ -22,6 +23,7 @@ export function ScopeSwitcher({
   teamId,
   userName,
   userTeams,
+  userTeamNames,
   currentSlug,
   confirmLeave,
 }: ScopeSwitcherProps) {
@@ -58,7 +60,7 @@ export function ScopeSwitcher({
     router.push(settingsHref(nextScope, slug, nextTeamId))
   }
 
-  const currentLabel = scopeKind === 'personal' ? userName || 'Personal' : teamId || 'Team'
+  const currentLabel = scopeKind === 'personal' ? userName || 'Personal' : (teamId && userTeamNames[teamId]) || teamId || 'Team'
   const CurrentIcon = scopeKind === 'personal' ? User : Users
 
   return (
@@ -124,7 +126,7 @@ export function ScopeSwitcher({
                   }`}
                 >
                   <Users className="h-3.5 w-3.5 flex-shrink-0 text-gray-500 dark:text-gray-400" />
-                  <span className="truncate">{team}</span>
+                  <span className="truncate">{userTeamNames[team] || team}</span>
                   {scopeKind === 'team' && teamId === team && (
                     <Check className="ml-auto h-3.5 w-3.5 flex-shrink-0" />
                   )}
@@ -132,6 +134,17 @@ export function ScopeSwitcher({
               ))}
             </>
           )}
+          <button
+            type="button"
+            onClick={() => {
+              setIsOpen(false)
+              if (confirmLeave()) router.push('/settings/team')
+            }}
+            className="flex w-full items-center gap-2 border-t border-gray-200 px-3 py-2 text-left text-sm font-medium text-blue-600 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:text-blue-400 dark:hover:bg-gray-700"
+          >
+            <Plus className="h-3.5 w-3.5 flex-shrink-0" />
+            <span>新しいチームを作成</span>
+          </button>
         </div>
       )}
     </div>

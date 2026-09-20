@@ -331,6 +331,17 @@ func buildAuthorizationContext(user *entities.User) *AuthorizationContext {
 			}
 		}
 	} else {
+		if teamIDs, resolved := user.ResolvedTeamIDs(); resolved {
+			for _, teamID := range teamIDs {
+				authzCtx.TeamScope.Teams = append(authzCtx.TeamScope.Teams, teamID)
+				authzCtx.TeamScope.TeamPermissions[teamID] = TeamPermissions{
+					TeamID: teamID, CanCreate: user.HasPermission(entities.PermissionSessionCreate),
+					CanRead: user.HasPermission(entities.PermissionSessionRead), CanUpdate: user.HasPermission(entities.PermissionSessionUpdate),
+					CanDelete: user.HasPermission(entities.PermissionSessionDelete),
+				}
+			}
+			return authzCtx
+		}
 		// Extract team information from GitHub user info
 		if githubInfo := user.GitHubInfo(); githubInfo != nil {
 			for _, team := range githubInfo.Teams() {

@@ -245,6 +245,45 @@ func TestResolveLoginPrincipalMigratesLegacyPrincipal(t *testing.T) {
 	require.Equal(t, legacy.ID, resolved.ID)
 }
 
+func TestResolveTeamMembershipsMergesLinkedConnections(t *testing.T) {
+	t.Parallel()
+	teamServer := func(teams []map[string]any) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/user/teams", r.URL.Path)
+			require.NotEmpty(t, r.Header.Get("Authorization"))
+			_ = json.NewEncoder(w).Encode(teams)
+		}))
+	}
+	first := teamServer([]map[string]any{
+		{"slug": "developers", "name": "Developers", "permission": "push", "organization": map[string]any{"login": "Acme"}},
+	})
+	defer first.Close()
+	second := teamServer([]map[string]any{
+		{"slug": "developers", "name": "Developers", "permission": "push", "organization": map[string]any{"login": "acme"}},
+		{"slug": "platform", "name": "Platform", "permission": "pull", "organization": map[string]any{"login": "Acme"}},
+	})
+	defer second.Close()
+
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "", true)
+	connections := []githubConnection{
+		{ID: "ghes", Name: "GHES", BaseURL: first.URL, APIURL: first.URL, Enabled: true},
+		{ID: "ghec", Name: "GHEC", BaseURL: second.URL, APIURL: second.URL, Enabled: true},
+	}
+	for i, connection := range connections {
+		require.NoError(t, controller.saveConnection(context.Background(), connection, "", ""))
+		_, err := controller.linkIdentity(context.Background(), githubIdentity{ID: connection.ID + "-identity", PrincipalID: "principal-1", ConnectionID: connection.ID, GitHubUserID: int64(i + 1), Login: "alice"}, connection.ID+"-token", nil)
+		require.NoError(t, err)
+	}
+
+	memberships, linked, err := controller.ResolveTeamMemberships(context.Background(), "principal-1")
+	require.NoError(t, err)
+	require.True(t, linked)
+	require.Len(t, memberships, 2)
+	require.Equal(t, "developers", memberships[0].TeamSlug)
+	require.Equal(t, "platform", memberships[1].TeamSlug)
+}
+
 func TestLinkIdentityIsIdempotentAndRejectsAnotherPrincipal(t *testing.T) {
 	t.Parallel()
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
