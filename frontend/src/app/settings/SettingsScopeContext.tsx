@@ -28,6 +28,7 @@ interface SettingsScopeValue {
   /** ログイン中のユーザー名。scopeKind に関わらず常に自分自身 */
   userName: string
   userTeams: string[]
+  userTeamNames: Record<string, string>
 
   settings: SettingsData
   update: (partial: SettingsUpdate) => void
@@ -94,6 +95,7 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
   const [principalId, setPrincipalId] = useState('')
   const [userName, setUserName] = useState('')
   const [userTeams, setUserTeams] = useState<string[]>([])
+  const [userTeamNames, setUserTeamNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -141,6 +143,9 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
           setPrincipalId(info.principal_id)
           setUserName(info.username)
           setUserTeams(info.teams || [])
+          setUserTeamNames(Object.fromEntries(
+            (info.team_principals || []).map((team) => [team.team_id, team.name || team.team_id])
+          ))
         } else {
           setError('principal ID を含むユーザー情報の取得に失敗しました')
           setLoading(false)
@@ -314,6 +319,7 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
     scopeId,
     userName,
     userTeams,
+    userTeamNames,
     settings,
     update,
     save,

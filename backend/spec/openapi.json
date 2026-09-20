@@ -68,6 +68,39 @@
         }
       }
     },
+    "/teams/{team}": {
+      "parameters": [
+        {"name": "team", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "patch": {
+        "summary": "Rename a ccplant team",
+        "operationId": "renameTeam",
+        "tags": ["Settings"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {"name": {"type": "string", "minLength": 1}}
+          }}}
+        },
+        "responses": {
+          "200": {"description": "Renamed team", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}},
+          "403": {"description": "Team access denied"},
+          "404": {"description": "Team not found"}
+        }
+      },
+      "delete": {
+        "summary": "Delete a ccplant team",
+        "operationId": "deleteTeam",
+        "tags": ["Settings"],
+        "responses": {
+          "204": {"description": "Team deleted"},
+          "403": {"description": "Team access denied"},
+          "404": {"description": "Team not found"}
+        }
+      }
+    },
     "/teams/{team}/config": {
       "parameters": [
         {

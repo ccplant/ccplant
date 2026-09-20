@@ -1573,6 +1573,19 @@ export class AgentAPIProxyClient {
     });
   }
 
+  async renameTeam(teamId: string, name: string): Promise<TeamConfig> {
+    return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deleteTeam(teamId: string): Promise<void> {
+    await this.makeRequest<void>(`/teams/${encodeURIComponent(teamId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   async updateTeamConfig(teamId: string, externalTeams: ExternalTeamBinding[]): Promise<TeamConfig> {
     return await this.makeRequest<TeamConfig>(`/teams/${encodeURIComponent(teamId)}/config`, {
       method: 'PUT',

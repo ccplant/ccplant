@@ -101,3 +101,32 @@ func TestTeamConfigControllerCreateAndListAsRegularUser(t *testing.T) {
 	require.Equal(t, http.StatusCreated, duplicateRecorder.Code)
 	require.Len(t, repo.teams, 2)
 }
+
+func TestTeamConfigControllerRenameAndDelete(t *testing.T) {
+	team := entities.NewTeamConfig("team-01ARZ3NDEKTSV4RRFFQ69G5FAV", nil, nil)
+	team.SetPrincipalID(team.TeamID())
+	team.SetName("Before")
+	team.SetOwnerIDs([]string{"user-1"})
+	repo := &teamConfigControllerRepo{teams: map[string]*entities.TeamConfig{team.TeamID(): team}}
+	controller := NewTeamConfigController(repo)
+	e := echo.New()
+	authz := &auth.AuthorizationContext{User: entities.NewUser("user-1", entities.UserTypeRegular, "alice")}
+
+	renameRecorder := httptest.NewRecorder()
+	renameCtx := e.NewContext(httptest.NewRequest(http.MethodPatch, "/teams/"+team.TeamID(), bytes.NewBufferString(`{"name":"After"}`)), renameRecorder)
+	renameCtx.SetParamNames("team")
+	renameCtx.SetParamValues(team.TeamID())
+	renameCtx.Request().Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	renameCtx.Set("authz_context", authz)
+	require.NoError(t, controller.Rename(renameCtx))
+	require.Equal(t, "After", team.Name())
+
+	deleteRecorder := httptest.NewRecorder()
+	deleteCtx := e.NewContext(httptest.NewRequest(http.MethodDelete, "/teams/"+team.TeamID(), nil), deleteRecorder)
+	deleteCtx.SetParamNames("team")
+	deleteCtx.SetParamValues(team.TeamID())
+	deleteCtx.Set("authz_context", authz)
+	require.NoError(t, controller.Delete(deleteCtx))
+	require.Equal(t, http.StatusNoContent, deleteRecorder.Code)
+	require.Empty(t, repo.teams)
+}

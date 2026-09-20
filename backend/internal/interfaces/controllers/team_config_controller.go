@@ -30,6 +30,10 @@ type createTeamConfigRequest struct {
 	Name string `json:"name"`
 }
 
+type renameTeamRequest struct {
+	Name string `json:"name"`
+}
+
 func NewTeamConfigController(repo repositories.TeamConfigRepository) *TeamConfigController {
 	return &TeamConfigController{repo: repo}
 }
@@ -104,6 +108,44 @@ func (c *TeamConfigController) Get(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
 	}
 	return ctx.JSON(http.StatusOK, teamConfigResponse(team))
+}
+
+func (c *TeamConfigController) Rename(ctx echo.Context) error {
+	team, err := c.repo.FindByTeamID(ctx.Request().Context(), ctx.Param("team"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "team config not found")
+	}
+	if !canManageTeam(auth.GetAuthorizationContext(ctx), team) {
+		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
+	}
+	var request renameTeamRequest
+	if err := ctx.Bind(&request); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
+	}
+	team.SetName(name)
+	if err := c.repo.Save(ctx.Request().Context(), team); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to rename team").SetInternal(err)
+	}
+	return ctx.JSON(http.StatusOK, teamConfigResponse(team))
+}
+
+func (c *TeamConfigController) Delete(ctx echo.Context) error {
+	teamID := ctx.Param("team")
+	team, err := c.repo.FindByTeamID(ctx.Request().Context(), teamID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "team config not found")
+	}
+	if !canManageTeam(auth.GetAuthorizationContext(ctx), team) {
+		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
+	}
+	if err := c.repo.Delete(ctx.Request().Context(), teamID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete team").SetInternal(err)
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (c *TeamConfigController) Update(ctx echo.Context) error {
