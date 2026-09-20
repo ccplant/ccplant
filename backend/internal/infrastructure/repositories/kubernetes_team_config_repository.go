@@ -31,6 +31,8 @@ const (
 type teamConfigJSON struct {
 	TeamID         string                         `json:"team_id"`
 	PrincipalID    string                         `json:"principal_id,omitempty"`
+	Name           string                         `json:"name,omitempty"`
+	OwnerIDs       []string                       `json:"owner_ids,omitempty"`
 	ExternalTeams  []entities.ExternalTeamBinding `json:"external_teams,omitempty"`
 	ServiceAccount *serviceAccountJSON            `json:"service_account,omitempty"`
 	EnvVars        map[string]string              `json:"env_vars,omitempty"`
@@ -240,6 +242,8 @@ func (r *KubernetesTeamConfigRepository) toJSON(config *entities.TeamConfig) ([]
 	jsonData := &teamConfigJSON{
 		TeamID:        config.TeamID(),
 		PrincipalID:   config.PrincipalID(),
+		Name:          config.Name(),
+		OwnerIDs:      config.OwnerIDs(),
 		ExternalTeams: config.ExternalTeams(),
 		EnvVars:       config.EnvVars(),
 	}
@@ -310,6 +314,8 @@ func (r *KubernetesTeamConfigRepository) fromSecret(secret *corev1.Secret) (*ent
 
 	config := entities.NewTeamConfig(jsonData.TeamID, serviceAccount, jsonData.EnvVars)
 	config.SetPrincipalID(jsonData.PrincipalID)
+	config.SetName(jsonData.Name)
+	config.SetOwnerIDs(jsonData.OwnerIDs)
 	config.SetExternalTeams(jsonData.ExternalTeams)
 	return config, nil
 }

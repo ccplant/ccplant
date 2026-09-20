@@ -1566,10 +1566,10 @@ export class AgentAPIProxyClient {
     return response.teams;
   }
 
-  async createTeam(teamId: string): Promise<TeamConfig> {
+  async createTeam(name: string): Promise<TeamConfig> {
     return await this.makeRequest<TeamConfig>('/teams', {
       method: 'POST',
-      body: JSON.stringify({ team_id: teamId }),
+      body: JSON.stringify({ name }),
     });
   }
 

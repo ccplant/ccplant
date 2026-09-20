@@ -92,3 +92,17 @@ func TestTeamMembershipResolverMatchesBindingAcrossConnections(t *testing.T) {
 	require.True(t, resolved)
 	require.Equal(t, []string{"shared/team"}, teamIDs)
 }
+
+func TestTeamMembershipResolverIncludesOwnedTeam(t *testing.T) {
+	team := entities.NewTeamConfig("team-01ARZ3NDEKTSV4RRFFQ69G5FAV", nil, nil)
+	team.SetPrincipalID(team.TeamID())
+	team.SetName("自由な名前")
+	team.SetOwnerIDs([]string{"user-1"})
+	repo := &memoryTeamConfigRepository{teams: map[string]*entities.TeamConfig{team.TeamID(): team}}
+	resolver := NewTeamMembershipResolver(repo, nil)
+
+	teamIDs, resolved, err := resolver.ResolveForPrincipal(context.Background(), nil, "user-1")
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Equal(t, []string{team.TeamID()}, teamIDs)
+}

@@ -26,13 +26,18 @@ func NewTeamMembershipResolver(repo repositories.TeamConfigRepository, rules []c
 // Resolve returns team keys. resolved is false when no mapping/discovery is
 // configured, which preserves the legacy direct GitHub-team behavior.
 func (r *TeamMembershipResolver) Resolve(ctx context.Context, memberships []entities.GitHubTeamMembership) ([]string, bool, error) {
+	return r.ResolveForPrincipal(ctx, memberships, "")
+}
+
+// ResolveForPrincipal also grants membership to teams created by the principal.
+func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, memberships []entities.GitHubTeamMembership, principalID string) ([]string, bool, error) {
 	configs, err := r.repo.List(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 	configured := len(r.rules) > 0
 	for _, team := range configs {
-		if len(team.ExternalTeams()) > 0 {
+		if len(team.ExternalTeams()) > 0 || (principalID != "" && team.IsOwner(principalID)) {
 			configured = true
 		}
 	}
@@ -41,6 +46,11 @@ func (r *TeamMembershipResolver) Resolve(ctx context.Context, memberships []enti
 	}
 
 	resolved := make(map[string]struct{})
+	for _, team := range configs {
+		if principalID != "" && team.IsOwner(principalID) {
+			resolved[team.TeamID()] = struct{}{}
+		}
+	}
 	for _, membership := range memberships {
 		connectionID := membership.ConnectionID
 		if connectionID == "" {

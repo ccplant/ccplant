@@ -212,7 +212,7 @@ func (s *SimpleAuthService) resolveTeamMemberships(user *entities.User, membersh
 		return nil
 	}
 	resolver := NewTeamMembershipResolver(repo, rules)
-	teamIDs, resolved, err := resolver.Resolve(context.Background(), memberships)
+	teamIDs, resolved, err := resolver.ResolveForPrincipal(context.Background(), memberships, string(user.ID()))
 	if err != nil {
 		return err
 	}

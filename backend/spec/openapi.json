@@ -42,7 +42,7 @@
       },
       "post": {
         "summary": "Create a ccplant team",
-        "description": "Creates a team with a stable principal ID. Administrator access is required.",
+        "description": "Creates a team with a generated team-<ULID> identity. Any authenticated user may create a team, and names need not be unique.",
         "operationId": "createTeam",
         "tags": ["Settings"],
         "requestBody": {
@@ -51,12 +51,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["team_id"],
+                "required": ["name"],
                 "properties": {
-                  "team_id": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)?$"
-                  }
+                  "name": {"type": "string", "minLength": 1}
                 }
               }
             }
@@ -67,8 +64,7 @@
             "description": "Team created",
             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
           },
-          "403": {"description": "Administrator access required"},
-          "409": {"description": "Team already exists"}
+          "403": {"description": "Authentication required"}
         }
       }
     },
@@ -6902,13 +6898,14 @@
       },
       "TeamConfig": {
         "type": "object",
-        "required": ["team_id", "principal_id", "external_teams"],
+        "required": ["team_id", "principal_id", "name", "external_teams"],
         "properties": {
           "team_id": {"type": "string"},
           "principal_id": {
             "type": "string",
             "pattern": "^team-[0-9A-HJKMNP-TV-Z]{26}$"
           },
+          "name": {"type": "string"},
           "external_teams": {
             "type": "array",
             "items": {"$ref": "#/components/schemas/ExternalTeamBinding"}

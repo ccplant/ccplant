@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -24,6 +25,8 @@ type ExternalTeamBinding struct {
 type TeamConfig struct {
 	teamID         string
 	principalID    string
+	name           string
+	ownerIDs       []string
 	externalTeams  []ExternalTeamBinding
 	serviceAccount *ServiceAccount
 	envVars        map[string]string
@@ -61,6 +64,31 @@ func (tc *TeamConfig) PrincipalID() string { return tc.principalID }
 
 // SetPrincipalID assigns the principal during legacy adoption.
 func (tc *TeamConfig) SetPrincipalID(id string) { tc.principalID = id }
+
+// Name returns the human-readable team name. Legacy teams use their team ID.
+func (tc *TeamConfig) Name() string {
+	if tc.name == "" {
+		return tc.teamID
+	}
+	return tc.name
+}
+
+func (tc *TeamConfig) SetName(name string) { tc.name = name }
+
+func (tc *TeamConfig) OwnerIDs() []string { return append([]string(nil), tc.ownerIDs...) }
+
+func (tc *TeamConfig) SetOwnerIDs(ownerIDs []string) {
+	tc.ownerIDs = append([]string(nil), ownerIDs...)
+}
+
+func (tc *TeamConfig) IsOwner(principalID string) bool {
+	for _, ownerID := range tc.ownerIDs {
+		if ownerID == principalID {
+			return true
+		}
+	}
+	return false
+}
 
 // ExternalTeams returns a defensive copy of external GitHub team bindings.
 func (tc *TeamConfig) ExternalTeams() []ExternalTeamBinding {
@@ -112,7 +140,7 @@ func (tc *TeamConfig) Validate() error {
 	}
 	if tc.principalID != "" {
 		raw := tc.principalID
-		if len(raw) <= len(teamPrincipalPrefix) || raw[:len(teamPrincipalPrefix)] != teamPrincipalPrefix {
+		if !strings.HasPrefix(raw, teamPrincipalPrefix) || len(raw) <= len(teamPrincipalPrefix) {
 			return errors.New("team principal ID must use team-<ULID> format")
 		}
 		if _, err := ulid.ParseStrict(raw[len(teamPrincipalPrefix):]); err != nil {

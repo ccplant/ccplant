@@ -56,10 +56,10 @@ func (r *teamConfigControllerRepo) List(_ context.Context) ([]*entities.TeamConf
 	return teams, nil
 }
 
-func TestTeamConfigControllerCreateRequiresAdmin(t *testing.T) {
+func TestTeamConfigControllerCreateRequiresAuthentication(t *testing.T) {
 	controller := NewTeamConfigController(&teamConfigControllerRepo{teams: map[string]*entities.TeamConfig{}})
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"team_id":"platform"}`))
+	req := httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"name":"platform"}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	ctx := e.NewContext(req, httptest.NewRecorder())
 	ctx.Set("authz_context", &auth.AuthorizationContext{TeamScope: auth.TeamScopeAuth{}})
@@ -70,33 +70,34 @@ func TestTeamConfigControllerCreateRequiresAdmin(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, httpErr.Code)
 }
 
-func TestTeamConfigControllerCreateAndList(t *testing.T) {
+func TestTeamConfigControllerCreateAndListAsRegularUser(t *testing.T) {
 	repo := &teamConfigControllerRepo{teams: map[string]*entities.TeamConfig{}}
 	controller := NewTeamConfigController(repo)
 	e := echo.New()
-	authz := &auth.AuthorizationContext{TeamScope: auth.TeamScopeAuth{IsAdmin: true}}
+	authz := &auth.AuthorizationContext{User: entities.NewUser("user-1", entities.UserTypeRegular, "alice")}
 
-	req := httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"team_id":"Platform/Core"}`))
+	req := httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"name":"Platform / コア"}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	recorder := httptest.NewRecorder()
 	ctx := e.NewContext(req, recorder)
 	ctx.Set("authz_context", authz)
 	require.NoError(t, controller.Create(ctx))
 	require.Equal(t, http.StatusCreated, recorder.Code)
-	require.Contains(t, recorder.Body.String(), `"team_id":"platform/core"`)
+	require.Contains(t, recorder.Body.String(), `"team_id":"team-`)
 	require.Contains(t, recorder.Body.String(), `"principal_id":"team-`)
+	require.Contains(t, recorder.Body.String(), `"name":"Platform / コア"`)
 
 	listRecorder := httptest.NewRecorder()
 	listCtx := e.NewContext(httptest.NewRequest(http.MethodGet, "/teams", nil), listRecorder)
 	listCtx.Set("authz_context", authz)
 	require.NoError(t, controller.List(listCtx))
-	require.Contains(t, listRecorder.Body.String(), `"team_id":"platform/core"`)
+	require.Contains(t, listRecorder.Body.String(), `"name":"Platform / コア"`)
 
-	duplicateCtx := e.NewContext(httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"team_id":"platform/core"}`)), httptest.NewRecorder())
+	duplicateRecorder := httptest.NewRecorder()
+	duplicateCtx := e.NewContext(httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"name":"Platform / コア"}`)), duplicateRecorder)
 	duplicateCtx.Request().Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	duplicateCtx.Set("authz_context", authz)
-	err := controller.Create(duplicateCtx)
-	var httpErr *echo.HTTPError
-	require.ErrorAs(t, err, &httpErr)
-	require.Equal(t, http.StatusConflict, httpErr.Code)
+	require.NoError(t, controller.Create(duplicateCtx))
+	require.Equal(t, http.StatusCreated, duplicateRecorder.Code)
+	require.Len(t, repo.teams, 2)
 }

@@ -8,5 +8,6 @@ export interface ExternalTeamBinding {
 export interface TeamConfig {
   team_id: string
   principal_id: string
+  name: string
   external_teams: ExternalTeamBinding[]
 }

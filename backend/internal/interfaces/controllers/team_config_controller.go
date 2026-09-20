@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -19,6 +18,7 @@ type TeamConfigController struct {
 type TeamConfigResponse struct {
 	TeamID        string                         `json:"team_id"`
 	PrincipalID   string                         `json:"principal_id"`
+	Name          string                         `json:"name"`
 	ExternalTeams []entities.ExternalTeamBinding `json:"external_teams"`
 }
 
@@ -27,10 +27,8 @@ type updateTeamConfigRequest struct {
 }
 
 type createTeamConfigRequest struct {
-	TeamID string `json:"team_id"`
+	Name string `json:"name"`
 }
-
-var teamIDPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62})(?:/[a-z0-9](?:[a-z0-9._-]{0,62})?)?$`)
 
 func NewTeamConfigController(repo repositories.TeamConfigRepository) *TeamConfigController {
 	return &TeamConfigController{repo: repo}
@@ -47,7 +45,7 @@ func (c *TeamConfigController) List(ctx echo.Context) error {
 	}
 	responses := make([]TeamConfigResponse, 0, len(teams))
 	for _, team := range teams {
-		if authz.TeamScope.IsAdmin || authz.CanAccessTeam(team.TeamID()) {
+		if canManageTeam(authz, team) {
 			responses = append(responses, teamConfigResponse(team))
 		}
 	}
@@ -57,25 +55,39 @@ func (c *TeamConfigController) List(ctx echo.Context) error {
 
 func (c *TeamConfigController) Create(ctx echo.Context) error {
 	authz := auth.GetAuthorizationContext(ctx)
-	if authz == nil || !authz.TeamScope.IsAdmin {
-		return echo.NewHTTPError(http.StatusForbidden, "admin access required")
+	if authz == nil || authz.User == nil {
+		return echo.NewHTTPError(http.StatusForbidden, "authentication required")
 	}
 	var request createTeamConfigRequest
 	if err := ctx.Bind(&request); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	teamID := strings.ToLower(strings.TrimSpace(request.TeamID))
-	if !teamIDPattern.MatchString(teamID) {
-		return echo.NewHTTPError(http.StatusBadRequest, "team_id must contain one or two URL-safe name segments")
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
-	exists, err := c.repo.Exists(ctx.Request().Context(), teamID)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to check team").SetInternal(err)
+	var teamID string
+	for attempts := 0; attempts < 3; attempts++ {
+		generated, err := entities.NewTeamPrincipalID()
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate team ID").SetInternal(err)
+		}
+		exists, err := c.repo.Exists(ctx.Request().Context(), generated)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to check team ID").SetInternal(err)
+		}
+		if !exists {
+			teamID = generated
+			break
+		}
 	}
-	if exists {
-		return echo.NewHTTPError(http.StatusConflict, "team already exists")
+	if teamID == "" {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to allocate unique team ID")
 	}
 	team := entities.NewTeamConfig(teamID, nil, nil)
+	team.SetPrincipalID(teamID)
+	team.SetName(name)
+	team.SetOwnerIDs([]string{string(authz.User.ID())})
 	if err := c.repo.Save(ctx.Request().Context(), team); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create team").SetInternal(err)
 	}
@@ -84,21 +96,18 @@ func (c *TeamConfigController) Create(ctx echo.Context) error {
 
 func (c *TeamConfigController) Get(ctx echo.Context) error {
 	teamID := ctx.Param("team")
-	if !canManageTeam(ctx, teamID) {
-		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
-	}
 	team, err := c.repo.FindByTeamID(ctx.Request().Context(), teamID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "team config not found")
+	}
+	if !canManageTeam(auth.GetAuthorizationContext(ctx), team) {
+		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
 	}
 	return ctx.JSON(http.StatusOK, teamConfigResponse(team))
 }
 
 func (c *TeamConfigController) Update(ctx echo.Context) error {
 	teamID := ctx.Param("team")
-	if !canManageTeam(ctx, teamID) {
-		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
-	}
 	var request updateTeamConfigRequest
 	if err := ctx.Bind(&request); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
@@ -106,6 +115,9 @@ func (c *TeamConfigController) Update(ctx echo.Context) error {
 	team, err := c.repo.FindByTeamID(ctx.Request().Context(), teamID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "team config not found")
+	}
+	if !canManageTeam(auth.GetAuthorizationContext(ctx), team) {
+		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
 	}
 
 	bindings := make([]entities.ExternalTeamBinding, 0, len(team.ExternalTeams())+len(request.ExternalTeams))
@@ -155,9 +167,9 @@ func (c *TeamConfigController) Update(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, teamConfigResponse(team))
 }
 
-func canManageTeam(ctx echo.Context, teamID string) bool {
-	authz := auth.GetAuthorizationContext(ctx)
-	return authz != nil && (authz.TeamScope.IsAdmin || authz.CanAccessTeam(teamID))
+func canManageTeam(authz *auth.AuthorizationContext, team *entities.TeamConfig) bool {
+	return authz != nil && (authz.TeamScope.IsAdmin || authz.CanAccessTeam(team.TeamID()) ||
+		(authz.User != nil && team.IsOwner(string(authz.User.ID()))))
 }
 
 func bindingKey(binding entities.ExternalTeamBinding) string {
@@ -169,5 +181,5 @@ func teamConfigResponse(team *entities.TeamConfig) TeamConfigResponse {
 	if bindings == nil {
 		bindings = []entities.ExternalTeamBinding{}
 	}
-	return TeamConfigResponse{TeamID: team.TeamID(), PrincipalID: team.PrincipalID(), ExternalTeams: bindings}
+	return TeamConfigResponse{TeamID: team.TeamID(), PrincipalID: team.PrincipalID(), Name: team.Name(), ExternalTeams: bindings}
 }

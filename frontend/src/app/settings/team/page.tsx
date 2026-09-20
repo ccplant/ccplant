@@ -5,15 +5,15 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Plus, Users } from 'lucide-react'
 import { AgentAPIProxyError, createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
+import type { TeamConfig } from '@/types/team-config'
 import { ItemList, ItemListEmpty, ItemListRow, SettingsPageHeader } from '@/components/settings'
 import { DEFAULT_SETTINGS_SLUG, settingsHref } from '../navConfig'
 
 export default function TeamSettingsIndexPage() {
   const router = useRouter()
-  const [teams, setTeams] = useState<string[]>([])
+  const [teams, setTeams] = useState<TeamConfig[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isAdmin, setIsAdmin] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [newTeamId, setNewTeamId] = useState('')
   const [creating, setCreating] = useState(false)
@@ -23,17 +23,9 @@ export default function TeamSettingsIndexPage() {
     const loadTeams = async () => {
       try {
         const client = createAgentAPIProxyClientFromStorage()
-        const info = await client.getUserInfo()
+        const configs = await client.listTeamConfigs()
         if (cancelled) return
-        const admin = info?.is_admin === true
-        setIsAdmin(admin)
-        let list = info?.teams ?? []
-        if (admin) {
-          const configs = await client.listTeamConfigs()
-          if (cancelled) return
-          list = configs.map((team) => team.team_id)
-        }
-        setTeams(list)
+        setTeams(configs)
         setLoading(false)
       } catch (err) {
         if (cancelled) return
@@ -50,19 +42,15 @@ export default function TeamSettingsIndexPage() {
 
   const createTeam = async (event: React.FormEvent) => {
     event.preventDefault()
-    const teamId = newTeamId.trim().toLowerCase()
-    if (!teamId) return
+    const name = newTeamId.trim()
+    if (!name) return
     setCreating(true)
     setError(null)
     try {
-      const created = await createAgentAPIProxyClientFromStorage().createTeam(teamId)
+      const created = await createAgentAPIProxyClientFromStorage().createTeam(name)
       router.push(settingsHref('team', 'github-teams', created.team_id))
     } catch (err) {
-      if (err instanceof AgentAPIProxyError && err.status === 409) {
-        setError('同じIDのチームがすでに存在します')
-      } else {
-        setError('チームを作成できませんでした')
-      }
+      setError(err instanceof AgentAPIProxyError ? err.message : 'チームを作成できませんでした')
     } finally {
       setCreating(false)
     }
@@ -89,7 +77,7 @@ export default function TeamSettingsIndexPage() {
       <SettingsPageHeader
         title="チームを選択"
         description="設定を表示するチームを選んでください。"
-        action={isAdmin ? (
+        action={(
           <button
             type="button"
             onClick={() => setShowCreate((current) => !current)}
@@ -98,21 +86,21 @@ export default function TeamSettingsIndexPage() {
             <Plus className="h-4 w-4" />
             新規作成
           </button>
-        ) : undefined}
+        )}
       />
 
       {showCreate && (
         <form onSubmit={createTeam} className="mb-5 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
           <label htmlFor="new-team-id" className="block text-sm font-medium text-gray-900 dark:text-white">
-            チームID
+            チーム名
           </label>
-          <p className="mt-1 text-xs text-gray-500">例: platform または organization/platform</p>
+          <p className="mt-1 text-xs text-gray-500">同じ名前のチームを複数作成できます</p>
           <div className="mt-3 flex gap-2">
             <input
               id="new-team-id"
               value={newTeamId}
               onChange={(event) => setNewTeamId(event.target.value)}
-              placeholder="organization/team"
+              placeholder="Platform Team"
               autoComplete="off"
               className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900"
             />
@@ -139,16 +127,16 @@ export default function TeamSettingsIndexPage() {
         )}
         {teams.map((team) => (
           <ItemListRow
-            key={team}
+            key={team.team_id}
             name={
               <span className="flex items-center gap-2">
                 <Users className="h-4 w-4 text-gray-500 dark:text-gray-400" />
-                {team}
+                {team.name}
               </span>
             }
             actions={
               <Link
-                href={settingsHref('team', DEFAULT_SETTINGS_SLUG, team)}
+                href={settingsHref('team', DEFAULT_SETTINGS_SLUG, team.team_id)}
                 className="rounded-md border border-gray-300 px-3 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 設定を開く
