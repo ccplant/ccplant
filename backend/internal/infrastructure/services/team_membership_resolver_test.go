@@ -78,7 +78,7 @@ func TestTeamMembershipResolverDiscoversLegacyTeamAndMapsSecondConnection(t *tes
 	require.NoError(t, err)
 	require.True(t, resolved)
 	sort.Strings(teamIDs)
-	require.Equal(t, []string{"test/cc-users"}, teamIDs)
+	require.Equal(t, []string{"myorg/test-cc-users", "test/cc-users"}, teamIDs)
 }
 
 func TestTeamMembershipResolverMatchesBindingAcrossConnections(t *testing.T) {
@@ -90,7 +90,7 @@ func TestTeamMembershipResolverMatchesBindingAcrossConnections(t *testing.T) {
 	teamIDs, resolved, err := resolver.Resolve(context.Background(), []entities.GitHubTeamMembership{{ConnectionID: "github-com", Organization: "example", TeamSlug: "developers"}})
 	require.NoError(t, err)
 	require.True(t, resolved)
-	require.Equal(t, []string{"shared/team"}, teamIDs)
+	require.Equal(t, []string{"example/developers", "shared/team"}, teamIDs)
 }
 
 func TestTeamMembershipResolverPreservesUnmappedGitHubTeams(t *testing.T) {
@@ -106,7 +106,7 @@ func TestTeamMembershipResolverPreservesUnmappedGitHubTeams(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, resolved)
-	require.Equal(t, []string{"takutaka-lab/developers", team.TeamID()}, teamIDs)
+	require.Equal(t, []string{"example/mapped", "takutaka-lab/developers", team.TeamID()}, teamIDs)
 }
 
 func TestTeamMembershipResolverIncludesOwnedTeam(t *testing.T) {

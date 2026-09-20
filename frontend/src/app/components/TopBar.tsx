@@ -29,6 +29,7 @@ export default function TopBar({
   children
 }: TopBarProps) {
   const [showTeamDropdown, setShowTeamDropdown] = useState(false)
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({})
   const teamDropdownRef = useRef<HTMLDivElement>(null)
 
   const { selectedTeam, availableTeams, selectTeam, setAvailableTeams, isLoading: isTeamLoading } = useTeamScope()
@@ -43,6 +44,11 @@ export default function TopBar({
           if (userInfo.proxy?.teams && Array.isArray(userInfo.proxy.teams)) {
             setAvailableTeams(userInfo.proxy.teams)
           }
+          if (userInfo.proxy?.team_principals && Array.isArray(userInfo.proxy.team_principals)) {
+            setTeamNames(Object.fromEntries(
+              userInfo.proxy.team_principals.map((team: { team_id: string; name?: string }) => [team.team_id, team.name || team.team_id])
+            ))
+          }
           if (userInfo.proxy?.repositories && Array.isArray(userInfo.proxy.repositories)) {
             sessionStorage.setItem('user_repositories', JSON.stringify(userInfo.proxy.repositories))
           }
@@ -52,11 +58,8 @@ export default function TopBar({
       }
     }
 
-    // Only fetch if we don't have teams yet
-    if (availableTeams.length === 0) {
-      fetchUserInfo()
-    }
-  }, [availableTeams.length, setAvailableTeams])
+    fetchUserInfo()
+  }, [setAvailableTeams])
 
   // ドロップダウン外クリックで閉じる
   useEffect(() => {
@@ -79,6 +82,7 @@ export default function TopBar({
   const getDisplayName = () => {
     if (isTeamLoading) return '...'
     if (selectedTeam) {
+      if (teamNames[selectedTeam]) return teamNames[selectedTeam]
       // Show short form: team-slug (without org/)
       const parts = selectedTeam.split('/')
       return parts.length > 1 ? parts[1] : selectedTeam
@@ -207,7 +211,7 @@ export default function TopBar({
                           <svg className="w-4 h-4 mr-3 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                           </svg>
-                          <span className="truncate">{team}</span>
+                          <span className="truncate">{teamNames[team] || team}</span>
                           {selectedTeam === team && (
                             <svg className="w-4 h-4 ml-auto flex-shrink-0 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

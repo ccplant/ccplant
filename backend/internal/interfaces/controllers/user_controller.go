@@ -17,6 +17,7 @@ type UserController struct {
 type UserTeamResponse struct {
 	TeamID      string `json:"team_id"`
 	PrincipalID string `json:"principal_id"`
+	Name        string `json:"name"`
 }
 
 // UserInfoResponse represents the response for /user/info endpoint
@@ -74,7 +75,7 @@ func (c *UserController) GetUserInfo(ctx echo.Context) error {
 		for _, teamID := range response.Teams {
 			team, err := c.teamConfigRepo.FindByTeamID(ctx.Request().Context(), teamID)
 			if err == nil {
-				response.TeamPrincipals = append(response.TeamPrincipals, UserTeamResponse{TeamID: teamID, PrincipalID: team.PrincipalID()})
+				response.TeamPrincipals = append(response.TeamPrincipals, UserTeamResponse{TeamID: teamID, PrincipalID: team.PrincipalID(), Name: team.Name()})
 			}
 		}
 	}

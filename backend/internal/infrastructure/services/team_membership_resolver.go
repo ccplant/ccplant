@@ -58,6 +58,10 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 		}
 		organization := strings.ToLower(strings.TrimSpace(membership.Organization))
 		teamSlug := strings.ToLower(strings.TrimSpace(membership.TeamSlug))
+		fullName := organization + "/" + teamSlug
+		// A mapping grants access to an additional ccplant Team. It must not
+		// remove the user's existing direct GitHub Team scope.
+		resolved[fullName] = struct{}{}
 		matchedTeamID := ""
 		for _, team := range configs {
 			if matchesBinding(team.ExternalTeams(), connectionID, organization, teamSlug) {
@@ -71,8 +75,6 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 			resolved[matchedTeamID] = struct{}{}
 		}
 
-		fullName := organization + "/" + teamSlug
-		discovered := false
 		for _, rule := range r.rules {
 			matched, matchErr := path.Match(strings.ToLower(rule.TeamPattern), fullName)
 			if matchErr != nil {
@@ -81,7 +83,6 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 			if !matched {
 				continue
 			}
-			discovered = true
 			team, ensureErr := r.ensureDiscoveredTeam(ctx, fullName, entities.ExternalTeamBinding{
 				ConnectionID: connectionID,
 				Organization: organization,
@@ -92,11 +93,6 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 				return nil, true, ensureErr
 			}
 			resolved[team.TeamID()] = struct{}{}
-		}
-		// Preserve the legacy direct GitHub Team membership unless this
-		// membership was translated to a ccplant Team by mapping/discovery.
-		if matchedTeamID == "" && !discovered {
-			resolved[fullName] = struct{}{}
 		}
 	}
 
