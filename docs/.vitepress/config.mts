@@ -37,7 +37,8 @@ export default defineConfig({
           { text: 'ccplantとは', link: '/guide/what-is-ccplant' },
           { text: 'クイックスタート', link: '/guide/getting-started' },
           { text: 'アーキテクチャ', link: '/guide/architecture' },
-          { text: 'デプロイ', link: '/guide/deployment' }
+          { text: 'デプロイ', link: '/guide/deployment' },
+          { text: 'Session Manager', link: '/guide/session-manager' }
         ]
       },
       {

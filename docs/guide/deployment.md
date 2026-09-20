@@ -40,3 +40,5 @@ agentapi-proxy doctor --namespace ccplant --release ccplant
 - エージェントの認証情報をSecretとして管理する
 
 分離Chartから統合Chartへ移行する場合は、[Helm Chart移行ガイド](../helm-chart-migration)に従ってください。可観測性の例は[Grafana Cloud APM](../grafana-cloud-apm)にあります。
+
+APIとは別のKubernetesクラスタへエージェント実行基盤を追加する場合は、[Session Managerのセットアップ](./session-manager)を参照してください。
