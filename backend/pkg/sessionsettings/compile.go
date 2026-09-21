@@ -103,7 +103,7 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 	}
 
 	// 3e. Append MCP server entries to ~/.codex/config.toml (codex sessions only)
-	if err := generateCodexMCPServers(opts.OutputDir, settings.Codex.MCPServers); err != nil {
+	if err := generateCodexMCPServers(opts.OutputDir, settings.Env, settings.Codex.MCPServers); err != nil {
 		return fmt.Errorf("failed to generate codex MCP servers config: %w", err)
 	}
 
@@ -704,7 +704,7 @@ func tomlString(s string) string {
 // the [mcp_servers.<name>] nested-table format expected by the Codex CLI.
 // Only appends when mcpServers is non-empty; the file is created if absent.
 // The input map mirrors the ClaudeConfig.MCPServers format (name → config map).
-func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}) error {
+func generateCodexMCPServers(outputDir string, sessionEnv map[string]string, mcpServers map[string]interface{}) error {
 	if len(mcpServers) == 0 {
 		return nil
 	}
@@ -747,7 +747,7 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 			log.Printf("[COMPILE-SETTINGS] Warning: skipping MCP server %q: value is not a map", name)
 			continue
 		}
-		envValues := codexMCPEnvValues(config)
+		envValues := codexMCPEnvValues(sessionEnv, config)
 
 		// Use [mcp_servers.<name>] nested-table format (not [[mcp_servers]] array-of-tables).
 		// The Codex CLI expects mcp_servers to be a map keyed by server name.
@@ -815,16 +815,15 @@ func generateCodexMCPServers(outputDir string, mcpServers map[string]interface{}
 	return nil
 }
 
-func codexMCPEnvValues(config map[string]interface{}) map[string]string {
-	env, ok := config["env"].(map[string]interface{})
-	if !ok || len(env) == 0 {
-		return nil
+func codexMCPEnvValues(sessionEnv map[string]string, config map[string]interface{}) map[string]string {
+	env, _ := config["env"].(map[string]interface{})
+	values := make(map[string]string, len(sessionEnv)+len(env))
+	for k, v := range sessionEnv {
+		values[k] = v
 	}
-
-	values := make(map[string]string, len(env))
 	for k, v := range env {
 		if s, ok := v.(string); ok {
-			values[k] = s
+			values[k] = mcputil.ExpandEnvVarsWithMap(s, values)
 		}
 	}
 	return values

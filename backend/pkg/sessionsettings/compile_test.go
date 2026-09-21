@@ -872,6 +872,62 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 		assert.NotContains(t, content, "${MCP_TENANT}")
 	})
 
+	t.Run("expands session env placeholders for http mcp_servers", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-session-env-*")
+		require.NoError(t, err)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		settings := &SessionSettings{
+			Session: SessionMeta{
+				ID:        "test-codex-mcp-session-env",
+				UserID:    "user-codex-mcp-session-env",
+				Scope:     "user",
+				AgentType: "codex-acp",
+			},
+			Env: map[string]string{
+				"MCP_TENANT":       "session-tenant",
+				"GITHUB_MCP_TOKEN": "session-token",
+			},
+			Codex: CodexConfig{
+				MCPServers: map[string]interface{}{
+					"github": map[string]interface{}{
+						"type": "http",
+						"url":  "https://${MCP_TENANT}.example.com/mcp",
+						"headers": map[string]interface{}{
+							"Authorization": "Bearer ${GITHUB_MCP_TOKEN}",
+						},
+					},
+				},
+			},
+		}
+
+		inputPath := filepath.Join(tmpDir, "settings.yaml")
+		yamlData, err := MarshalYAML(settings)
+		require.NoError(t, err)
+		err = os.WriteFile(inputPath, yamlData, 0644)
+		require.NoError(t, err)
+
+		outputDir := filepath.Join(tmpDir, "output")
+		opts := CompileOptions{
+			InputPath:   inputPath,
+			OutputDir:   outputDir,
+			EnvFilePath: filepath.Join(tmpDir, "env"),
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		}
+
+		err = Compile(opts)
+		require.NoError(t, err)
+
+		data, err := os.ReadFile(filepath.Join(outputDir, ".codex/config.toml"))
+		require.NoError(t, err)
+		content := string(data)
+
+		assert.Contains(t, content, `url = "https://session-tenant.example.com/mcp"`)
+		assert.Contains(t, content, `http_headers = {"Authorization" = "Bearer session-token"}`)
+		assert.NotContains(t, content, "${MCP_TENANT}")
+		assert.NotContains(t, content, "${GITHUB_MCP_TOKEN}")
+	})
+
 	t.Run("appends mcp_servers after existing ConfigTOML", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "compile-codex-mcp-append-*")
 		require.NoError(t, err)
