@@ -68,6 +68,8 @@ export default function SessionProfileEditor({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [isDefault, setIsDefault] = useState(false)
+  const [repositorySelector, setRepositorySelector] = useState('')
+  const [otherSelectorTags, setOtherSelectorTags] = useState<Record<string, string>>({})
 
   // Config fields
   const [envPairs, setEnvPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
@@ -151,6 +153,9 @@ export default function SessionProfileEditor({
       setName(editingProfile.name)
       setDescription(editingProfile.description ?? '')
       setIsDefault(editingProfile.is_default ?? false)
+      const selectorEntries = Object.entries(editingProfile.selector_tags ?? {})
+      setRepositorySelector(selectorEntries.find(([key]) => key === 'repository' || key === 'repo')?.[1] ?? '')
+      setOtherSelectorTags(Object.fromEntries(selectorEntries.filter(([key]) => key !== 'repository' && key !== 'repo')))
 
       const cfg = editingProfile.config
       setPool(cfg?.pool || cfg?.params?.pool || '')
@@ -217,6 +222,8 @@ export default function SessionProfileEditor({
       setName('')
       setDescription('')
       setIsDefault(false)
+      setRepositorySelector('')
+      setOtherSelectorTags({})
       setEnvPairs([{ key: '', value: '' }])
       setTagPairs([{ key: '', value: '' }])
       setPool('')
@@ -317,6 +324,12 @@ export default function SessionProfileEditor({
       return
     }
 
+    const selectorRepository = repositorySelector.trim()
+    if (selectorRepository && !/^[^/\s]+\/[^/\s]+$/.test(selectorRepository)) {
+      setError('リポジトリ自動選択は org/repo 形式で入力してください')
+      return
+    }
+
     setIsSubmitting(true)
     try {
       const client = createAgentAPIProxyClientFromStorage()
@@ -327,6 +340,10 @@ export default function SessionProfileEditor({
         ...(claudeModel.trim() ? { ANTHROPIC_MODEL: claudeModel.trim() } : {}),
       }
       const tags = pairsToRecord(tagPairs)
+      const selectorTags = {
+        ...otherSelectorTags,
+        ...(selectorRepository ? { repository: selectorRepository } : {}),
+      }
       const parsedUnsyncedFilePaths = unsyncedFilePaths
         .split('\n')
         .map(path => path.trim())
@@ -402,6 +419,7 @@ export default function SessionProfileEditor({
           name: name.trim(),
           description: description.trim(),
           is_default: isDefault,
+          selector_tags: selectorTags,
           config: Object.keys(config).length > 0 ? config : undefined,
         }
         await client.updateSessionProfile(editingProfile.id, updateData)
@@ -411,6 +429,7 @@ export default function SessionProfileEditor({
           name: name.trim(),
           description: description.trim(),
           is_default: isDefault,
+          ...(Object.keys(selectorTags).length > 0 ? { selector_tags: selectorTags } : {}),
           ...(Object.keys(config).length > 0 ? { config } : {}),
           ...scopeParams,
         }
@@ -503,6 +522,23 @@ export default function SessionProfileEditor({
                   </p>
                 </div>
               </label>
+            </div>
+
+            <div>
+              <label htmlFor="session-profile-repository-selector" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                リポジトリ自動選択
+              </label>
+              <input
+                id="session-profile-repository-selector"
+                type="text"
+                value={repositorySelector}
+                onChange={(e) => setRepositorySelector(e.target.value)}
+                placeholder="例: org/repo"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                org/repo を入力すると、そのリポジトリのセッション起動時にこのプロファイルを自動選択します。
+              </p>
             </div>
 
             

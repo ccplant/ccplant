@@ -166,6 +166,12 @@ func (p *SessionProfile) MatchesSelectorTags(requestTags map[string]string) bool
 		return false
 	}
 	for k, v := range p.selectorTags {
+		if k == "repo" {
+			if requestTags["repository"] != v && requestTags["repo"] != v {
+				return false
+			}
+			continue
+		}
 		if requestTags[k] != v {
 			return false
 		}

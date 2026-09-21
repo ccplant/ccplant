@@ -82,6 +82,12 @@ export default function SessionProfileCard({
 
       {/* Config summary */}
       <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+        {profile.selector_tags?.repository && (
+          <span>リポジトリ: <strong className="text-gray-700 dark:text-gray-300">{profile.selector_tags.repository}</strong></span>
+        )}
+        {profile.selector_tags?.repo && (
+          <span>リポジトリ: <strong className="text-gray-700 dark:text-gray-300">{profile.selector_tags.repo}</strong></span>
+        )}
         {profile.config?.params?.agent_type && (
           <span className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
