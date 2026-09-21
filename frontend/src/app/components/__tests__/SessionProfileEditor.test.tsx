@@ -64,6 +64,31 @@ describe('SessionProfileEditor authentication', () => {
   })
 })
 
+describe('SessionProfileEditor repository selector', () => {
+  it('creates a profile with a repository selector', async () => {
+    render(<SessionProfileEditor createScope={{ scope: 'user' }} onClose={vi.fn()} onSuccess={vi.fn()} />)
+    fireEvent.change(screen.getByPlaceholderText('例: my-profile'), { target: { value: 'Repo profile' } })
+    fireEvent.change(screen.getByLabelText('リポジトリ自動選択'), { target: { value: 'org/repo' } })
+    fireEvent.click(screen.getByRole('button', { name: '作成' }))
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1))
+    expect(mocks.create.mock.calls[0][0].selector_tags).toEqual({ repository: 'org/repo' })
+  })
+
+  it('normalizes the legacy repo selector and preserves other selectors', async () => {
+    render(<SessionProfileEditor onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+      id: 'profile',
+      name: 'Repo profile',
+      created_at: '',
+      updated_at: '',
+      selector_tags: { repo: 'legacy/repo', env: 'dev' },
+    }} />)
+    expect(screen.getByLabelText('リポジトリ自動選択')).toHaveValue('legacy/repo')
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].selector_tags).toEqual({ env: 'dev', repository: 'legacy/repo' })
+  })
+})
+
 it('preserves a stored profile key on edit and explicitly removes the override', async () => {
   render(<SessionProfileEditor section="authentication" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Test', created_at: '', updated_at: '', config: { params: { codex_auth_mode: 'openai_compatible' }, codex_connection: { mode: 'openai_compatible', base_url: 'https://old.example/v1', authentication: 'api_key', has_api_key: true } } }} />)
   expect(screen.getByLabelText('Codex API キー')).toHaveValue('')

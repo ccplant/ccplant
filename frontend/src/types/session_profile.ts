@@ -60,6 +60,7 @@ export interface SessionProfile {
   scope?: ResourceScope;
   team_id?: string;
   is_default?: boolean;
+  selector_tags?: Record<string, string>;
   config?: SessionProfileConfig;
   created_at: string;
   updated_at: string;
@@ -72,6 +73,7 @@ export interface CreateSessionProfileRequest {
   scope?: ResourceScope;
   team_id?: string;
   is_default?: boolean;
+  selector_tags?: Record<string, string>;
   config?: SessionProfileConfig;
 }
 
@@ -80,6 +82,7 @@ export interface UpdateSessionProfileRequest {
   name?: string;
   description?: string;
   is_default?: boolean;
+  selector_tags?: Record<string, string>;
   config?: SessionProfileConfig;
 }
 

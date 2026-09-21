@@ -735,6 +735,42 @@ func TestLaunchChoosesMostSpecificTagSelectedProfile(t *testing.T) {
 	}
 }
 
+func TestLaunchSelectsProfileByRepositoryInfo(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	defaultProfile := entities.NewSessionProfile("profile-default", "default", "user-1")
+	defaultProfile.SetIsDefault(true)
+	defaultCfg := entities.NewSessionProfileConfig()
+	defaultCfg.SetParams(&entities.SessionParams{AgentType: "claude"})
+	defaultProfile.SetConfig(defaultCfg)
+
+	repositoryProfile := entities.NewSessionProfile("profile-repository", "repository", "user-1")
+	repositoryProfile.SetSelectorTags(map[string]string{"repository": "owner/repo"})
+	repositoryCfg := entities.NewSessionProfileConfig()
+	repositoryCfg.SetParams(&entities.SessionParams{AgentType: "codex"})
+	repositoryProfile.SetConfig(repositoryCfg)
+
+	launcher := NewLaunchUseCase(sessionManager).
+		WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{
+			defaultProfile,
+			repositoryProfile,
+		}})
+
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1",
+		Scope:  entities.ScopeUser,
+		RepoInfo: &entities.RepositoryInfo{
+			FullName: "owner/repo",
+			CloneDir: "session-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if sessionManager.req.AgentType != "codex" {
+		t.Fatalf("expected repository-selected profile agent type, got %q", sessionManager.req.AgentType)
+	}
+}
+
 func TestLaunchReuseRoutesMessageToExistingSession(t *testing.T) {
 	sessionManager := &recordingSessionManager{
 		existing: []entities.Session{&launchTestSession{id: "existing-1", userID: "user-1", status: "active"}},

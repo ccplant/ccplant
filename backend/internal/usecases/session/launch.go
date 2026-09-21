@@ -370,7 +370,7 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		log.Printf("[LAUNCH] Warning: could not list session profiles for default lookup: %v", err)
 		return nil, nil
 	}
-	if profile := selectProfileByTags(profiles, req.Tags); profile != nil {
+	if profile := selectProfileByTags(profiles, profileSelectionTags(req)); profile != nil {
 		log.Printf("[LAUNCH] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), req.UserID)
 		return profile, nil
 	}
@@ -381,6 +381,17 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 		}
 	}
 	return nil, nil
+}
+
+func profileSelectionTags(req LaunchRequest) map[string]string {
+	tags := make(map[string]string, len(req.Tags)+1)
+	for key, value := range req.Tags {
+		tags[key] = value
+	}
+	if req.RepoInfo != nil && req.RepoInfo.FullName != "" {
+		tags["repository"] = req.RepoInfo.FullName
+	}
+	return tags
 }
 
 func profileMatchesLaunchTenant(profile *entities.SessionProfile, req LaunchRequest) bool {
