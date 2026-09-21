@@ -45,6 +45,7 @@ type SessionProfileConfig struct {
 	// sourceProfileID references another profile whose environment and MCP
 	// servers are inherited before this profile's local overrides.
 	sourceProfileID string
+	files           []ProfileFile
 	mcpServers      *MCPServersSettings
 }
 
@@ -56,6 +57,15 @@ type ErrSessionProfileAccessDenied struct {
 
 func (e ErrSessionProfileAccessDenied) Error() string {
 	return "session profile access denied: " + e.ID
+}
+
+// ProfileFile represents a file owned by a session profile and written into a
+// container when a session using that profile is created.
+type ProfileFile struct {
+	Name        string `json:"name,omitempty"`
+	Path        string `json:"path"`
+	Content     string `json:"content,omitempty"`
+	Permissions string `json:"permissions,omitempty"`
 }
 
 // NewSessionProfile creates a new SessionProfile
@@ -288,6 +298,18 @@ func (c *SessionProfileConfig) SourceSessionProfileID() string { return c.source
 
 // SetSourceSessionProfileID sets the profile referenced for environment and MCP settings.
 func (c *SessionProfileConfig) SetSourceSessionProfileID(id string) { c.sourceProfileID = id }
+
+// ProfileFiles returns files managed by this profile.
+func (c *SessionProfileConfig) ProfileFiles() []ProfileFile {
+	files := make([]ProfileFile, len(c.files))
+	copy(files, c.files)
+	return files
+}
+
+// SetProfileFiles sets files managed by this profile.
+func (c *SessionProfileConfig) SetProfileFiles(files []ProfileFile) {
+	c.files = append([]ProfileFile(nil), files...)
+}
 
 // MCPServers returns the MCP servers contributed by this profile.
 func (c *SessionProfileConfig) MCPServers() *MCPServersSettings { return c.mcpServers }

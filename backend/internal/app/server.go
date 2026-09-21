@@ -1391,6 +1391,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		CredentialSource:         credentialSource,
 		CodexAuthMode:            codexAuthMode,
 		ClaudeAuthMode:           claudeAuthMode,
+		ProfileFiles:             startReq.ProfileFiles,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 	})
@@ -2154,6 +2155,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		Sandbox: sandbox, Docker: docker,
 		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode,
+		ProfileFiles:             startReq.ProfileFiles,
 		ProfileMCPServers:        startReq.ProfileMCPServers,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 	}

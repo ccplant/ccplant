@@ -11,6 +11,7 @@ import {
   CreateSessionProfileRequest,
   UpdateSessionProfileRequest,
   SessionProfileParams,
+  ProfileFile,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
 import { LogicalSessionPool } from '../../types/session_pool'
@@ -77,6 +78,7 @@ export default function SessionProfileEditor({
   const [codexModel, setCodexModel] = useState('')
   const [claudeModel, setClaudeModel] = useState('')
   const [modelOptions, setModelOptions] = useState('')
+  const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
   const [sourceProfileId, setSourceProfileId] = useState('')
   const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
@@ -203,6 +205,7 @@ export default function SessionProfileEditor({
 
       const paths = cfg?.unsynced_file_paths ?? cfg?.params?.unsynced_file_paths ?? []
       setUnsyncedFilePaths(paths.join('\n'))
+      setProfileFiles(cfg?.files ?? [])
 
       setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
@@ -229,6 +232,7 @@ export default function SessionProfileEditor({
       setSandboxPolicyId('')
       setSessionTTL('')
       setUnsyncedFilePaths('')
+      setProfileFiles([])
       setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
       setCodexConnection(null)
       setClaudeConnection(null)
@@ -289,6 +293,21 @@ export default function SessionProfileEditor({
     return record
   }
 
+  const updateProfileFile = (index: number, field: keyof ProfileFile, value: string) => {
+    setDirty(true)
+    setProfileFiles(prev => prev.map((file, i) => (i === index ? { ...file, [field]: value } : file)))
+  }
+
+  const addProfileFile = () => {
+    setDirty(true)
+    setProfileFiles(prev => [...prev, { path: '', content: '', permissions: '0600' }])
+  }
+
+  const removeProfileFile = (index: number) => {
+    setDirty(true)
+    setProfileFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
@@ -312,6 +331,9 @@ export default function SessionProfileEditor({
         .split('\n')
         .map(path => path.trim())
         .filter(Boolean)
+      const parsedProfileFiles = profileFiles
+        .map(file => ({ ...file, path: file.path.trim(), permissions: file.permissions?.trim() }))
+        .filter(file => file.path)
 
       // Build docker config if enabled
       let dockerConfig: { enabled: boolean; registries?: { server?: string; username?: string; password?: string; secret_name?: string; insecure?: boolean }[] } | undefined
@@ -357,6 +379,7 @@ export default function SessionProfileEditor({
       }
       const extraConfig = { ...editingProfile?.config }
       for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'files'] as const) delete extraConfig[key]
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -371,6 +394,7 @@ export default function SessionProfileEditor({
         ...(sessionTTL.trim() ? { session_ttl: sessionTTL.trim() } : {}),
         ...(parsedUnsyncedFilePaths.length > 0 ? { unsynced_file_paths: parsedUnsyncedFilePaths } : {}),
         ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
+        files: parsedProfileFiles,
       }
 
       if (isEditing && editingProfile) {
@@ -671,6 +695,85 @@ export default function SessionProfileEditor({
                   
             </div>}
             {active.slug === 'files' && <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      登録ファイル
+                    </label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                      このプロファイルでセッション起動時に配置するファイルを登録します。パスは絶対パスで指定してください。
+                    </p>
+                    {profileFiles.length === 0 && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500">登録済みファイルはありません。</p>
+                    )}
+                    <div className="space-y-3">
+                      {profileFiles.map((file, idx) => (
+                        <div key={idx} className="rounded border border-gray-200 dark:border-gray-600 p-3 space-y-2 bg-gray-50 dark:bg-gray-900/40">
+                          <div className="flex items-end gap-2">
+                            <div className="min-w-0 flex-1">
+                              <label htmlFor={`profile-file-${idx}-name`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">表示名</label>
+                              <input
+                                type="text"
+                                id={`profile-file-${idx}-name`}
+                                value={file.name || ''}
+                                onChange={e => updateProfileFile(idx, 'name', e.target.value)}
+                                placeholder="SSH 鍵"
+                                className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={`ファイル ${idx + 1} を削除`}
+                              onClick={() => removeProfileFile(idx)}
+                              className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                          <div>
+                            <label htmlFor={`profile-file-${idx}-path`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">配置パス</label>
+                            <input
+                              type="text"
+                              id={`profile-file-${idx}-path`}
+                              value={file.path}
+                              onChange={e => updateProfileFile(idx, 'path', e.target.value)}
+                              placeholder="/home/agentapi/.ssh/id_rsa"
+                              className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor={`profile-file-${idx}-content`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">内容</label>
+                            <textarea
+                              id={`profile-file-${idx}-content`}
+                              value={file.content || ''}
+                              onChange={e => updateProfileFile(idx, 'content', e.target.value)}
+                              rows={4}
+                              className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono resize-y focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor={`profile-file-${idx}-permissions`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">パーミッション</label>
+                            <input
+                              type="text"
+                              id={`profile-file-${idx}-permissions`}
+                              value={file.permissions || ''}
+                              onChange={e => updateProfileFile(idx, 'permissions', e.target.value)}
+                              placeholder="0600"
+                              className="w-24 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addProfileFile}
+                      className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
+                    >
+                      ファイルを追加
+                    </button>
+                  </div>
 {/* 同期しないファイルパス */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">

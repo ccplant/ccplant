@@ -136,6 +136,28 @@ it('does not prefill agent-specific fields from the legacy shared model', () => 
   expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('')
 })
 
+it('saves profile files registered in the files section', async () => {
+  render(<SessionProfileEditor section="files" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+    id: 'profile', name: 'Files', created_at: '', updated_at: '',
+    config: { files: [{ name: 'Existing', path: '/home/agentapi/keep.txt', content: 'keep' }] },
+  }} />)
+  fireEvent.click(screen.getByRole('button', { name: 'ファイルを追加' }))
+  const nameInputs = screen.getAllByLabelText('表示名')
+  const pathInputs = screen.getAllByLabelText('配置パス')
+  const contentInputs = screen.getAllByLabelText('内容')
+  const permissionInputs = screen.getAllByLabelText('パーミッション')
+  fireEvent.change(nameInputs[1], { target: { value: 'SSH key' } })
+  fireEvent.change(pathInputs[1], { target: { value: '/home/agentapi/.ssh/id_ed25519' } })
+  fireEvent.change(contentInputs[1], { target: { value: 'private-key' } })
+  fireEvent.change(permissionInputs[1], { target: { value: '0600' } })
+  fireEvent.submit(pathInputs[1].closest('form')!)
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+  expect(mocks.update.mock.calls[0][1].config.files).toEqual([
+    { name: 'Existing', path: '/home/agentapi/keep.txt', content: 'keep', permissions: undefined },
+    { name: 'SSH key', path: '/home/agentapi/.ssh/id_ed25519', content: 'private-key', permissions: '0600' },
+  ])
+})
+
 it('creates in the scope from the URL and retains the draft after a save failure', async () => {
   const success = vi.fn()
   mocks.create.mockRejectedValueOnce(new Error('Save failed'))

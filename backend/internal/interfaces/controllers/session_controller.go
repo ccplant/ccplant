@@ -2398,6 +2398,16 @@ func applySessionProfile(
 		startReq.Tags["session_profile_id"] = profile.ID()
 		startReq.ResolvedSessionProfileID = profile.ID()
 		startReq.ProfileMCPServers = cfg.MCPServers()
+		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
+			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
+			for i, file := range profileFiles {
+				startReq.ProfileFiles[i] = sessionsettings.ManagedFile{
+					Path:        file.Path,
+					Content:     file.Content,
+					Permissions: file.Permissions,
+				}
+			}
+		}
 
 		// Keep profile environment separate so it can override team/user
 		// settings without overriding explicit request keys.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type recordingSessionManager struct {
@@ -286,6 +287,38 @@ func TestLaunchRejectsProfileOutsideLaunchTenant(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesProfileFiles(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "files", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetProfileFiles([]entities.ProfileFile{{
+		Name:        "SSH key",
+		Path:        "/home/agentapi/.ssh/id_ed25519",
+		Content:     "private-key",
+		Permissions: "0600",
+	}})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser,
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	want := []sessionsettings.ManagedFile{{
+		Path:        "/home/agentapi/.ssh/id_ed25519",
+		Content:     "private-key",
+		Permissions: "0600",
+	}}
+	if !reflect.DeepEqual(sessionManager.req.ProfileFiles, want) {
+		t.Fatalf("ProfileFiles = %#v, want %#v", sessionManager.req.ProfileFiles, want)
+	}
+}
+
 func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	source := entities.NewSessionProfile("profile-source", "source", "user-1")
@@ -327,7 +360,6 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-
 	for key, want := range map[string]string{
 		"SHARED":       "profile",
 		"SOURCE_ONLY":  "source-value",
