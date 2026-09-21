@@ -1,4 +1,4 @@
-# Session profile MCP servers
+# Session profile MCP servers and environment variables
 
 ## API design
 
@@ -19,11 +19,18 @@
 }
 ```
 
+`SessionProfileConfig` can also contain an optional `environment` map. When a profile is selected, that map is used as an environment-variable source above team/user settings but below explicitly supplied request variables.
+
 The settings layers are resolved from lowest to highest priority:
 
 `base → team → user → session profile → oneshot`
 
 MCP maps merge by server name. A profile replaces a same-named tenant server as one atomic configuration and inherits servers with other names. The selected profile is propagated to direct, scheduled, webhook, SlackBot, and External Session Manager launches.
+An explicit `session_profile_id` must belong to the request tenant: the same user for user scope, or the same team for team scope. Invalid or unauthorized profile IDs fail before profile configuration is applied; defaults and tag selectors resolve only within the requested tenant.
+
+## Profile-to-profile sources
+
+`SessionProfileConfig` accepts an optional `source_session_profile_id`. When the owner profile is selected, the referenced profile supplies base `environment` and `mcp_servers`; the owner profile's same-named entries override them. Sources may chain, and cyclic references are rejected. The source must belong to the same tenant as the owner profile.
 
 Profiles are stored in Kubernetes Secrets, like the rest of the profile configuration. Environment variables and headers may contain credentials and must not be logged.
 

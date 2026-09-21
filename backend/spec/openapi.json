@@ -10622,6 +10622,10 @@
             "/home/agentapi/.codex/auth.json"
           ]
         },
+        "source_session_profile_id": {
+          "type": "string",
+          "description": "Reference to another session profile used as a source for environment variables and MCP servers. The referenced profile must belong to the same tenant. Values in this profile override same-named entries."
+        },
         "mcp_servers": {
           "type": "object",
           "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",

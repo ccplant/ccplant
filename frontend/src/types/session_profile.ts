@@ -39,6 +39,7 @@ export interface SessionProfileConfig {
   sandbox_policy_id?: string;
   session_ttl?: string;
   unsynced_file_paths?: string[];
+  source_session_profile_id?: string;
   mcp_servers?: Record<string, APIMCPServerConfig>;
 }
 
