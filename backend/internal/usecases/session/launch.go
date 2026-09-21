@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
@@ -51,6 +52,7 @@ type LaunchRequest struct {
 	CodexAuthMode            string
 	ClaudeAuthMode           string
 	CredentialSource         string
+	ProfileFiles             []sessionsettings.ManagedFile
 	ProfileMCPServers        *entities.MCPServersSettings
 	ResolvedSessionProfileID string
 
@@ -234,6 +236,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		TriggeredUserID:          req.TriggeredUserID,
 		Environment:              req.Environment,
 		ProfileEnvironment:       req.ProfileEnvironment,
+		ProfileFiles:             req.ProfileFiles,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,
 		TeamID:                   req.TeamID,
@@ -492,6 +495,17 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	}
 	if len(cfg.UnsyncedFilePaths()) > 0 && len(req.UnsyncedFilePaths) == 0 {
 		req.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
+	}
+	profileFiles := cfg.ProfileFiles()
+	if len(profileFiles) > 0 {
+		req.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
+		for i, file := range profileFiles {
+			req.ProfileFiles[i] = sessionsettings.ManagedFile{
+				Path:        file.Path,
+				Content:     file.Content,
+				Permissions: file.Permissions,
+			}
+		}
 	}
 	applyProfileSandboxDefaults(cfg, req)
 }

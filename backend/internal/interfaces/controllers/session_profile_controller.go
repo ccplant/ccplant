@@ -2,8 +2,10 @@ package controllers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,6 +49,7 @@ type SessionProfileConfigRequest struct {
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
 
@@ -101,6 +104,7 @@ type SessionProfileConfigResponse struct {
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
 
@@ -314,6 +318,19 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 	if config.MCPServers() != nil {
 		return config.MCPServers().Validate()
 	}
+	seenPaths := make(map[string]bool)
+	for _, file := range config.ProfileFiles() {
+		if file.Path == "" {
+			return fmt.Errorf("profile file path is required")
+		}
+		if !filepath.IsAbs(file.Path) {
+			return fmt.Errorf("profile file path must be absolute: %s", file.Path)
+		}
+		if seenPaths[file.Path] {
+			return fmt.Errorf("duplicate profile file path: %s", file.Path)
+		}
+		seenPaths[file.Path] = true
+	}
 	return nil
 }
 
@@ -387,6 +404,9 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetSandboxPolicyID(req.SandboxPolicyID)
 	cfg.SetSessionTTL(req.SessionTTL)
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
+	if req.Files != nil {
+		cfg.SetProfileFiles(req.Files)
+	}
 	if req.MCPServers != nil {
 		servers := entities.NewMCPServersSettings()
 		for name, item := range req.MCPServers {
@@ -438,6 +458,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
+			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 		},
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
