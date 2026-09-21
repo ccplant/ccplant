@@ -264,6 +264,29 @@ func TestLaunchKeepsProfileEnvironmentSeparateFromExplicitEnvironment(t *testing
 	}
 }
 
+func TestLaunchRejectsProfileOutsideLaunchTenant(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-other", "other", "other-user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetEnvironment(map[string]string{"SECRET": "other-user-value"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "user-1",
+		Scope:            entities.ScopeUser,
+		SessionProfileID: "profile-other",
+	})
+	if err == nil {
+		t.Fatal("expected access denied error")
+	}
+	if sessionManager.req != nil {
+		t.Fatal("profile environment must not leak to another user")
+	}
+}
+
 func TestLaunchPropagatesProfileFiles(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "files", "user-1")
@@ -293,6 +316,90 @@ func TestLaunchPropagatesProfileFiles(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(sessionManager.req.ProfileFiles, want) {
 		t.Fatalf("ProfileFiles = %#v, want %#v", sessionManager.req.ProfileFiles, want)
+	}
+}
+
+func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	source := entities.NewSessionProfile("profile-source", "source", "user-1")
+	sourceCfg := entities.NewSessionProfileConfig()
+	sourceCfg.SetEnvironment(map[string]string{
+		"SHARED":      "source",
+		"SOURCE_ONLY": "source-value",
+	})
+	github := entities.NewMCPServer("github", "http")
+	github.SetURL("https://source.example/github")
+	servers := entities.NewMCPServersSettings()
+	servers.SetServer("github", github)
+	sourceCfg.SetMCPServers(servers)
+	source.SetConfig(sourceCfg)
+
+	profile := entities.NewSessionProfile("profile-main", "main", "user-1")
+	profileCfg := entities.NewSessionProfileConfig()
+	profileCfg.SetSourceSessionProfileID("profile-source")
+	profileCfg.SetEnvironment(map[string]string{
+		"SHARED":       "profile",
+		"PROFILE_ONLY": "profile-value",
+	})
+	githubOverride := entities.NewMCPServer("github", "http")
+	githubOverride.SetURL("https://profile.example/github")
+	githubOverride.SetHeaders(map[string]string{"Authorization": "Bearer profile"})
+	profileServers := entities.NewMCPServersSettings()
+	profileServers.SetServer("github", githubOverride)
+	profileCfg.SetMCPServers(profileServers)
+	profile.SetConfig(profileCfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile, source}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "user-1",
+		Scope:            entities.ScopeUser,
+		SessionProfileID: "profile-main",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	for key, want := range map[string]string{
+		"SHARED":       "profile",
+		"SOURCE_ONLY":  "source-value",
+		"PROFILE_ONLY": "profile-value",
+	} {
+		if got := sessionManager.req.ProfileEnvironment[key]; got != want {
+			t.Errorf("ProfileEnvironment[%s] = %q, want %q", key, got, want)
+		}
+	}
+	got := sessionManager.req.ProfileMCPServers.GetServer("github")
+	if got == nil || got.URL() != "https://profile.example/github" || got.Headers()["Authorization"] != "Bearer profile" {
+		t.Fatalf("profile MCP override was not applied: %#v", got)
+	}
+}
+
+func TestLaunchRejectsCyclicProfileSource(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	source := entities.NewSessionProfile("profile-source", "source", "user-1")
+	sourceCfg := entities.NewSessionProfileConfig()
+	sourceCfg.SetSourceSessionProfileID("profile-main")
+	source.SetConfig(sourceCfg)
+
+	profile := entities.NewSessionProfile("profile-main", "main", "user-1")
+	profileCfg := entities.NewSessionProfileConfig()
+	profileCfg.SetSourceSessionProfileID("profile-source")
+	profile.SetConfig(profileCfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile, source}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "user-1",
+		Scope:            entities.ScopeUser,
+		SessionProfileID: "profile-main",
+	})
+	if err == nil {
+		t.Fatal("expected cyclic source error")
+	}
+	if sessionManager.req != nil {
+		t.Fatal("cyclic profile source must not launch a session")
 	}
 }
 

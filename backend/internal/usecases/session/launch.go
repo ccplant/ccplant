@@ -178,9 +178,18 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 	// 0. Resolve session profile: merge profile config as base; explicit request fields override.
 	// When SessionProfileID is empty, fall back to the default profile for the user/team.
 	if uc.sessionProfileRepo != nil {
-		profile := uc.resolveSessionProfile(ctx, req)
+		profile, err := uc.resolveSessionProfile(ctx, req)
+		if err != nil {
+			return LaunchResult{}, err
+		}
 		if profile != nil {
-			applyProfileToLaunchRequest(profile.Config(), &req)
+			cfg, err := ResolveEffectiveSessionProfileConfig(
+				ctx, uc.sessionProfileRepo, profile, req.Scope, req.UserID, req.TeamID,
+			)
+			if err != nil {
+				return LaunchResult{}, err
+			}
+			applyProfileToLaunchRequest(cfg, &req)
 			req.ResolvedSessionProfileID = profile.ID()
 			if req.Tags == nil {
 				req.Tags = make(map[string]string)
@@ -332,14 +341,17 @@ func (uc *LaunchUseCase) ensureMemoryExists(ctx context.Context, req LaunchReque
 // resolveSessionProfile returns the session profile to apply for the given request.
 // If SessionProfileID is set, it fetches that profile directly.
 // Otherwise it searches for a selector_tags match before falling back to the default profile.
-func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRequest) *entities.SessionProfile {
+func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRequest) (*entities.SessionProfile, error) {
 	if req.SessionProfileID != "" {
 		profile, err := uc.sessionProfileRepo.Get(ctx, req.SessionProfileID)
 		if err != nil {
 			log.Printf("[LAUNCH] Warning: could not resolve session_profile_id %q: %v", req.SessionProfileID, err)
-			return nil
+			return nil, err
 		}
-		return profile
+		if !profileMatchesLaunchTenant(profile, req) {
+			return nil, entities.ErrSessionProfileAccessDenied{ID: profile.ID()}
+		}
+		return profile, nil
 	}
 
 	scope := req.Scope
@@ -356,19 +368,115 @@ func (uc *LaunchUseCase) resolveSessionProfile(ctx context.Context, req LaunchRe
 	profiles, err := uc.sessionProfileRepo.List(ctx, filter)
 	if err != nil {
 		log.Printf("[LAUNCH] Warning: could not list session profiles for default lookup: %v", err)
-		return nil
+		return nil, nil
 	}
 	if profile := selectProfileByTags(profiles, req.Tags); profile != nil {
 		log.Printf("[LAUNCH] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), req.UserID)
-		return profile
+		return profile, nil
 	}
 	for _, p := range profiles {
 		if p.IsDefault() {
 			log.Printf("[LAUNCH] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), req.UserID)
-			return p
+			return p, nil
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+func profileMatchesLaunchTenant(profile *entities.SessionProfile, req LaunchRequest) bool {
+	return profileMatchesTenant(profile, req.Scope, req.UserID, req.TeamID)
+}
+
+// ResolveEffectiveSessionProfileConfig resolves referenced profile sources and
+// returns a config whose environment and MCP servers include those sources.
+func ResolveEffectiveSessionProfileConfig(
+	ctx context.Context,
+	repo repositories.SessionProfileRepository,
+	profile *entities.SessionProfile,
+	scope entities.ResourceScope,
+	userID string,
+	teamID string,
+) (entities.SessionProfileConfig, error) {
+	if profile == nil {
+		return entities.NewSessionProfileConfig(), nil
+	}
+	return resolveEffectiveSessionProfileConfig(ctx, repo, profile, scope, userID, teamID, map[string]struct{}{profile.ID(): {}})
+}
+
+func resolveEffectiveSessionProfileConfig(
+	ctx context.Context,
+	repo repositories.SessionProfileRepository,
+	profile *entities.SessionProfile,
+	scope entities.ResourceScope,
+	userID string,
+	teamID string,
+	visited map[string]struct{},
+) (entities.SessionProfileConfig, error) {
+	cfg := profile.Config()
+	sourceID := cfg.SourceSessionProfileID()
+	if sourceID == "" {
+		return cfg, nil
+	}
+	if _, cyclic := visited[sourceID]; cyclic {
+		return entities.SessionProfileConfig{}, entities.ErrInvalidSessionProfile{
+			Field:   "source_session_profile_id",
+			Message: "cyclic reference",
+		}
+	}
+	source, err := repo.Get(ctx, sourceID)
+	if err != nil {
+		return entities.SessionProfileConfig{}, err
+	}
+	if !profileMatchesTenant(source, scope, userID, teamID) {
+		return entities.SessionProfileConfig{}, entities.ErrSessionProfileAccessDenied{ID: source.ID()}
+	}
+	visited[source.ID()] = struct{}{}
+	sourceCfg, err := resolveEffectiveSessionProfileConfig(ctx, repo, source, scope, userID, teamID, visited)
+	if err != nil {
+		return entities.SessionProfileConfig{}, err
+	}
+	return mergeProfileConfigSources(sourceCfg, cfg), nil
+}
+
+func profileMatchesTenant(profile *entities.SessionProfile, scope entities.ResourceScope, userID, teamID string) bool {
+	if scope == "" {
+		scope = entities.ScopeUser
+	}
+	switch profile.Scope() {
+	case entities.ScopeUser:
+		return scope == entities.ScopeUser && profile.UserID() == userID
+	case entities.ScopeTeam:
+		return scope == entities.ScopeTeam && profile.TeamID() == teamID
+	default:
+		return false
+	}
+}
+
+func mergeProfileConfigSources(base, override entities.SessionProfileConfig) entities.SessionProfileConfig {
+	local := override
+	if len(local.Environment()) == 0 {
+		local.SetEnvironment(base.Environment())
+	} else if len(base.Environment()) > 0 {
+		freshConfig := entities.NewSessionProfileConfig()
+		environment := freshConfig.Environment()
+		for key, value := range base.Environment() {
+			environment[key] = value
+		}
+		for key, value := range local.Environment() {
+			environment[key] = value
+		}
+		local.SetEnvironment(environment)
+	}
+	if local.MCPServers() == nil || local.MCPServers().IsEmpty() {
+		local.SetMCPServers(base.MCPServers().Clone())
+	} else if base.MCPServers() != nil && !base.MCPServers().IsEmpty() {
+		servers := base.MCPServers().Clone()
+		for name, server := range local.MCPServers().Servers() {
+			servers.SetServer(name, server)
+		}
+		local.SetMCPServers(servers)
+	}
+	return local
 }
 
 func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]string) *entities.SessionProfile {

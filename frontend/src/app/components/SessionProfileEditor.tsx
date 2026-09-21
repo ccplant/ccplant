@@ -80,6 +80,8 @@ export default function SessionProfileEditor({
   const [modelOptions, setModelOptions] = useState('')
   const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
+  const [sourceProfileId, setSourceProfileId] = useState('')
+  const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -131,6 +133,14 @@ export default function SessionProfileEditor({
       } catch {
         setAvailablePools([])
       }
+      try {
+        const response = await client.getSessionProfiles(
+          scope ? { scope, ...(teamId ? { team_id: teamId } : {}) } : getScopeParams(),
+        )
+        setAvailableProfiles(response.session_profiles || [])
+      } catch {
+        setAvailableProfiles([])
+      }
     }
     fetchConfigOptions()
   }, [getScopeParams, scope, teamId])
@@ -149,6 +159,7 @@ export default function SessionProfileEditor({
       setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
       setModelOptions((cfg?.params?.model_options ?? []).join('\n'))
       setMcpServers(cfg?.mcp_servers ?? {})
+      setSourceProfileId(cfg?.source_session_profile_id ?? '')
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -214,6 +225,8 @@ export default function SessionProfileEditor({
       setClaudeModel('')
       setModelOptions('')
       setMcpServers({})
+      setSourceProfileId('')
+      setAvailableProfiles([])
       setDockerEnabled(false)
       setDockerRegistries([])
       setSandboxPolicyId('')
@@ -365,7 +378,8 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'files'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'files'] as const) delete extraConfig[key]
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -379,6 +393,7 @@ export default function SessionProfileEditor({
         ...(sandboxPolicyId ? { sandbox_policy_id: sandboxPolicyId } : {}),
         ...(sessionTTL.trim() ? { session_ttl: sessionTTL.trim() } : {}),
         ...(parsedUnsyncedFilePaths.length > 0 ? { unsynced_file_paths: parsedUnsyncedFilePaths } : {}),
+        ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
         files: parsedProfileFiles,
       }
 
@@ -503,6 +518,24 @@ export default function SessionProfileEditor({
                 }).map(team => <option key={team} value={team}>チーム: {team}</option>)}
               </select>
               <p className="text-xs text-gray-500 mt-2">選んだチームの設定をベースにします。認証方法・モデル・環境変数・MCP は、このプロファイルで指定した項目だけ上書きします。チームの設定自体は変更されません。</p>
+            </div>
+
+            <div>
+              <label htmlFor="profile-source" className="block text-sm font-medium mb-1">設定ソースプロファイル</label>
+              <select
+                id="profile-source"
+                value={sourceProfileId}
+                onChange={(e) => { setSourceProfileId(e.target.value); setDirty(true) }}
+                className="w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white"
+              >
+                <option value="">プロファイルを参照しない</option>
+                {availableProfiles
+                  .filter(profile => profile.id !== editingProfile?.id)
+                  .map(profile => (
+                    <option key={profile.id} value={profile.id}>{profile.name}</option>
+                  ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-2">参照先プロファイルの環境変数と MCP サーバーを取り込みます。このプロファイルの同名設定が優先されます。</p>
             </div>
 
             </div>}

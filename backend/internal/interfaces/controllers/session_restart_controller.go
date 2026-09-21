@@ -18,6 +18,7 @@ import (
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
@@ -467,7 +468,18 @@ func (c *SessionController) reloadSessionSettings(ctx context.Context, cfg *core
 		if !az.CanAccessResource(profile.UserID(), string(profile.Scope()), profile.TeamID()) {
 			return nil, echo.NewHTTPError(403, "session profile access denied")
 		}
-		applySessionProfile(&start, profile, start.Params != nil && start.Params.Sandbox != nil, start.Params != nil && start.Params.Docker != nil)
+		profileCfg, err := sessionuc.ResolveEffectiveSessionProfileConfig(
+			ctx,
+			c.sessionProfileRepo,
+			profile,
+			start.Scope,
+			cfg.UserID,
+			start.TeamID,
+		)
+		if err != nil {
+			return nil, sessionProfileResolutionHTTPError(err)
+		}
+		applySessionProfile(&start, profile, profileCfg, start.Params != nil && start.Params.Sandbox != nil, start.Params != nil && start.Params.Docker != nil)
 	}
 	// Never allow a team member to select another person's private credentials.
 	if start.Params != nil {

@@ -196,6 +196,27 @@ func (m *MCPServersSettings) IsEmpty() bool {
 	return len(m.servers) == 0
 }
 
+// Clone returns a copy of the settings and their server configurations.
+func (m *MCPServersSettings) Clone() *MCPServersSettings {
+	if m == nil {
+		return nil
+	}
+	cloned := NewMCPServersSettings()
+	for name, server := range m.servers {
+		if server == nil {
+			continue
+		}
+		item := NewMCPServer(name, server.Type())
+		item.SetURL(server.URL())
+		item.SetCommand(server.Command())
+		item.SetArgs(server.Args())
+		item.SetEnv(server.Env())
+		item.SetHeaders(server.Headers())
+		cloned.SetServer(name, item)
+	}
+	return cloned
+}
+
 // Validate validates all servers
 func (m *MCPServersSettings) Validate() error {
 	for _, server := range m.servers {

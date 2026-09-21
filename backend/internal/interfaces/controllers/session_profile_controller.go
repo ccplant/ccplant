@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -49,6 +50,7 @@ type SessionProfileConfigRequest struct {
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
@@ -104,6 +106,7 @@ type SessionProfileConfigResponse struct {
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
@@ -148,6 +151,9 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 	profile.SetIsDefault(req.IsDefault)
 	profile.SetSelectorTags(req.SelectorTags)
 	config := c.requestToConfig(req.Config)
+	if err := c.validateSourceSessionProfile(ctx.Request().Context(), profile, config); err != nil {
+		return err
+	}
 	if err := validateProfileSettingsTeam(user, profile, config); err != nil {
 		return err
 	}
@@ -279,6 +285,9 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	}
 	if req.Config != nil {
 		config := c.requestToConfig(*req.Config)
+		if err := c.validateSourceSessionProfile(ctx.Request().Context(), profile, config); err != nil {
+			return err
+		}
 		if err := validateProfileSettingsTeam(user, profile, config); err != nil {
 			return err
 		}
@@ -404,6 +413,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetSandboxPolicyID(req.SandboxPolicyID)
 	cfg.SetSessionTTL(req.SessionTTL)
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
+	cfg.SetSourceSessionProfileID(req.SourceSessionProfileID)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
 	}
@@ -458,6 +468,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
+			SourceSessionProfileID: cfg.SourceSessionProfileID(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 		},
@@ -478,4 +489,51 @@ func validateProfileSettingsTeam(user *entities.User, profile *entities.SessionP
 		return echo.NewHTTPError(http.StatusForbidden, "team membership is required to inherit settings")
 	}
 	return nil
+}
+
+func (c *SessionProfileController) validateSourceSessionProfile(
+	ctx context.Context,
+	profile *entities.SessionProfile,
+	cfg entities.SessionProfileConfig,
+) error {
+	sourceID := cfg.SourceSessionProfileID()
+	if sourceID == "" {
+		return nil
+	}
+	if sourceID == profile.ID() {
+		return echo.NewHTTPError(http.StatusBadRequest, "a session profile cannot reference itself")
+	}
+
+	visited := map[string]struct{}{profile.ID(): {}}
+	for sourceID != "" {
+		if _, cyclic := visited[sourceID]; cyclic {
+			return echo.NewHTTPError(http.StatusBadRequest, "session profile source contains a cyclic reference")
+		}
+		visited[sourceID] = struct{}{}
+
+		source, err := c.repo.Get(ctx, sourceID)
+		if err != nil {
+			if _, ok := err.(entities.ErrSessionProfileNotFound); ok {
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to validate session profile source")
+		}
+		if !sessionProfileSourceMatchesTenant(source, profile) {
+			return echo.NewHTTPError(http.StatusForbidden, "session profile source belongs to another tenant")
+		}
+		sourceCfg := source.Config()
+		sourceID = sourceCfg.SourceSessionProfileID()
+	}
+	return nil
+}
+
+func sessionProfileSourceMatchesTenant(source, profile *entities.SessionProfile) bool {
+	switch profile.Scope() {
+	case entities.ScopeUser:
+		return source.Scope() == entities.ScopeUser && source.UserID() == profile.UserID()
+	case entities.ScopeTeam:
+		return source.Scope() == entities.ScopeTeam && source.TeamID() == profile.TeamID()
+	default:
+		return false
+	}
 }

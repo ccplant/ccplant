@@ -42,8 +42,21 @@ type SessionProfileConfig struct {
 	// Empty string means the global cleanup worker TTL is used.
 	sessionTTL        string
 	unsyncedFilePaths []string
-	files             []ProfileFile
-	mcpServers        *MCPServersSettings
+	// sourceProfileID references another profile whose environment and MCP
+	// servers are inherited before this profile's local overrides.
+	sourceProfileID string
+	files           []ProfileFile
+	mcpServers      *MCPServersSettings
+}
+
+// ErrSessionProfileAccessDenied is returned when a session profile cannot be
+// used as the source of session settings.
+type ErrSessionProfileAccessDenied struct {
+	ID string
+}
+
+func (e ErrSessionProfileAccessDenied) Error() string {
+	return "session profile access denied: " + e.ID
 }
 
 // ProfileFile represents a file owned by a session profile and written into a
@@ -279,6 +292,12 @@ func (c *SessionProfileConfig) UnsyncedFilePaths() []string {
 func (c *SessionProfileConfig) SetUnsyncedFilePaths(paths []string) {
 	c.unsyncedFilePaths = copyStringSlice(paths)
 }
+
+// SourceSessionProfileID returns the profile referenced for environment and MCP settings.
+func (c *SessionProfileConfig) SourceSessionProfileID() string { return c.sourceProfileID }
+
+// SetSourceSessionProfileID sets the profile referenced for environment and MCP settings.
+func (c *SessionProfileConfig) SetSourceSessionProfileID(id string) { c.sourceProfileID = id }
 
 // ProfileFiles returns files managed by this profile.
 func (c *SessionProfileConfig) ProfileFiles() []ProfileFile {

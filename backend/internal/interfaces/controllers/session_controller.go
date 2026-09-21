@@ -387,8 +387,30 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		return echo.NewHTTPError(500, "failed to preserve session input")
 	}
 	if c.sessionProfileRepo != nil {
-		profile := c.resolveSessionProfile(ctx.Request().Context(), startReq.SessionProfileID, userID, startReq.Scope, startReq.TeamID, startReq.Tags)
-		applySessionProfile(&startReq, profile, explicitSandbox, explicitDocker)
+		profile, err := c.resolveSessionProfile(
+			ctx.Request().Context(),
+			startReq.SessionProfileID,
+			userID,
+			startReq.Scope,
+			startReq.TeamID,
+			startReq.Tags,
+			authzCtx,
+		)
+		if err != nil {
+			return err
+		}
+		profileCfg, err := sessionuc.ResolveEffectiveSessionProfileConfig(
+			ctx.Request().Context(),
+			c.sessionProfileRepo,
+			profile,
+			startReq.Scope,
+			userID,
+			startReq.TeamID,
+		)
+		if err != nil {
+			return sessionProfileResolutionHTTPError(err)
+		}
+		applySessionProfile(&startReq, profile, profileCfg, explicitSandbox, explicitDocker)
 	}
 	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
 		config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}
@@ -2206,14 +2228,31 @@ func (c *SessionController) GetSessionSandboxDomains(ctx echo.Context) error {
 // If profileID is set, it fetches that profile directly.
 // Otherwise it searches for a selector_tags match before falling back to the settings default,
 // then the legacy profile-level default flag.
-func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID, userID string, scope entities.ResourceScope, teamID string, tags map[string]string) *entities.SessionProfile {
+func (c *SessionController) resolveSessionProfile(
+	ctx context.Context,
+	profileID,
+	userID string,
+	scope entities.ResourceScope,
+	teamID string,
+	tags map[string]string,
+	authzCtx *auth.AuthorizationContext,
+) (*entities.SessionProfile, error) {
 	if profileID != "" {
 		profile, err := c.sessionProfileRepo.Get(ctx, profileID)
 		if err != nil {
 			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", profileID, err)
-			return nil
+			if _, ok := err.(entities.ErrSessionProfileNotFound); ok {
+				return nil, echo.NewHTTPError(http.StatusNotFound, err.Error())
+			}
+			return nil, echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve session profile")
 		}
-		return profile
+		if !c.canUseSessionProfile(authzCtx, profile, scope, teamID) {
+			return nil, echo.NewHTTPError(
+				http.StatusForbidden,
+				entities.ErrSessionProfileAccessDenied{ID: profile.ID()}.Error(),
+			)
+		}
+		return profile, nil
 	}
 
 	filter := repositories.SessionProfileFilter{
@@ -2226,26 +2265,68 @@ func (c *SessionController) resolveSessionProfile(ctx context.Context, profileID
 	profiles, err := c.sessionProfileRepo.List(ctx, filter)
 	if err != nil {
 		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
-		return nil
+		return nil, nil
 	}
 	if profile := selectSessionProfileByTags(profiles, tags); profile != nil {
 		log.Printf("[SESSION] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
-		return profile
+		return profile, nil
 	}
-	if profile := c.resolveSettingsDefaultSessionProfile(ctx, userID, scope, teamID, profiles); profile != nil {
+	if profile := c.resolveSettingsDefaultSessionProfile(ctx, userID, scope, teamID, profiles, authzCtx); profile != nil {
 		log.Printf("[SESSION] Applying settings default session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
-		return profile
+		return profile, nil
 	}
 	for _, p := range profiles {
 		if p.IsDefault() {
 			log.Printf("[SESSION] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), userID)
-			return p
+			return p, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
-func (c *SessionController) resolveSettingsDefaultSessionProfile(ctx context.Context, userID string, scope entities.ResourceScope, teamID string, profiles []*entities.SessionProfile) *entities.SessionProfile {
+func (c *SessionController) canUseSessionProfile(
+	authzCtx *auth.AuthorizationContext,
+	profile *entities.SessionProfile,
+	requestedScope entities.ResourceScope,
+	requestedTeamID string,
+) bool {
+	if authzCtx == nil || profile == nil {
+		return false
+	}
+	switch profile.Scope() {
+	case entities.ScopeUser:
+		return requestedScope == entities.ScopeUser && profile.UserID() == authzCtx.PersonalScope.UserID
+	case entities.ScopeTeam:
+		return requestedScope == entities.ScopeTeam && profile.TeamID() == requestedTeamID
+	default:
+		return false
+	}
+}
+
+func sessionProfileResolutionHTTPError(err error) error {
+	var notFound entities.ErrSessionProfileNotFound
+	if errors.As(err, &notFound) {
+		return echo.NewHTTPError(http.StatusNotFound, notFound.Error())
+	}
+	var invalid entities.ErrInvalidSessionProfile
+	if errors.As(err, &invalid) {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, invalid.Error())
+	}
+	var accessDenied entities.ErrSessionProfileAccessDenied
+	if errors.As(err, &accessDenied) {
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	}
+	return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve session profile")
+}
+
+func (c *SessionController) resolveSettingsDefaultSessionProfile(
+	ctx context.Context,
+	userID string,
+	scope entities.ResourceScope,
+	teamID string,
+	profiles []*entities.SessionProfile,
+	authzCtx *auth.AuthorizationContext,
+) *entities.SessionProfile {
 	if c.settingsRepo == nil {
 		return nil
 	}
@@ -2266,6 +2347,10 @@ func (c *SessionController) resolveSettingsDefaultSessionProfile(ctx context.Con
 	profile, err := c.sessionProfileRepo.Get(ctx, defaultID)
 	if err != nil {
 		log.Printf("[SESSION] Warning: could not resolve default_session_profile_id %q from settings %q: %v", defaultID, settingsName, err)
+		return nil
+	}
+	if !c.canUseSessionProfile(authzCtx, profile, scope, teamID) {
+		log.Printf("[SESSION] Warning: default session profile %q is not accessible from settings %q", defaultID, settingsName)
 		return nil
 	}
 	return profile
@@ -2296,7 +2381,13 @@ func selectSessionProfileByTags(profiles []*entities.SessionProfile, tags map[st
 	return matches[0]
 }
 
-func applySessionProfile(startReq *entities.StartRequest, profile *entities.SessionProfile, explicitSandbox, explicitDocker bool) {
+func applySessionProfile(
+	startReq *entities.StartRequest,
+	profile *entities.SessionProfile,
+	cfg entities.SessionProfileConfig,
+	explicitSandbox,
+	explicitDocker bool,
+) {
 	// Resolve session profile: merge profile config into startReq fields.
 	// When SessionProfileID is set, use that profile. Otherwise fall back to the
 	// user/team's default profile. The profile is the base; explicit request fields override.
@@ -2305,9 +2396,8 @@ func applySessionProfile(startReq *entities.StartRequest, profile *entities.Sess
 			startReq.Tags = make(map[string]string)
 		}
 		startReq.Tags["session_profile_id"] = profile.ID()
-		cfg := profile.Config()
-		startReq.ProfileMCPServers = cfg.MCPServers()
 		startReq.ResolvedSessionProfileID = profile.ID()
+		startReq.ProfileMCPServers = cfg.MCPServers()
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
 			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
 			for i, file := range profileFiles {
