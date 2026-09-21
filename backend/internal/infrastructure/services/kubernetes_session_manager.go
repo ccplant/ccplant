@@ -7224,6 +7224,16 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		}
 	}
 
+	// Profile files are profile-owned and are included even for team sessions.
+	// They are embedded directly in the provision payload rather than stored in
+	// the user files Secret.
+	if len(req.ProfileFiles) > 0 {
+		profileFiles := make([]sessionsettings.ManagedFile, len(req.ProfileFiles))
+		copy(profileFiles, req.ProfileFiles)
+		settings.Files = append(settings.Files, profileFiles...)
+		log.Printf("[K8S_SESSION] Embedded %d session profile file(s) for session %s", len(profileFiles), session.id)
+	}
+
 	// When CycleMessage is set, write the message into /tmp/check/CYCLE_ENABLED so
 	// the provisioner creates it on startup.  The cycle command reads the message
 	// directly from this file, so no message argument is needed in the Stop hook.

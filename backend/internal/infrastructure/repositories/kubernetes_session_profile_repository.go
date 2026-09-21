@@ -65,6 +65,7 @@ type sessionProfileConfigJSON struct {
 	SandboxPolicyID        string                    `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                    `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                  `json:"unsynced_file_paths,omitempty"`
+	Files                  []entities.ProfileFile    `json:"files,omitempty"`
 	MCPServers             map[string]*mcpServerJSON `json:"mcp_servers,omitempty"`
 }
 
@@ -369,6 +370,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetSandboxPolicyID(pj.Config.SandboxPolicyID)
 	cfg.SetSessionTTL(pj.Config.SessionTTL)
 	cfg.SetUnsyncedFilePaths(pj.Config.UnsyncedFilePaths)
+	cfg.SetProfileFiles(pj.Config.Files)
 	if pj.Config.MCPServers != nil {
 		servers := entities.NewMCPServersSettings()
 		for name, item := range pj.Config.MCPServers {
@@ -420,6 +422,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
+			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 		},
 		CreatedAt: profile.CreatedAt(),

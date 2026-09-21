@@ -36,6 +36,24 @@ func TestMergeSessionParamsRequestPoolOverridesProfilePool(t *testing.T) {
 	require.Equal(t, "profile-pool", profile.Pool)
 }
 
+func TestProfileFilesValidation(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetProfileFiles([]entities.ProfileFile{{Path: "relative/path"}})
+	require.Error(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetProfileFiles([]entities.ProfileFile{
+		{Path: "/home/agentapi/.ssh/id_ed25519"},
+		{Path: "/home/agentapi/.ssh/id_ed25519"},
+	})
+	require.Error(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetProfileFiles([]entities.ProfileFile{
+		{Path: "/home/agentapi/.ssh/id_ed25519", Permissions: "0600"},
+		{Path: "/home/agentapi/.claude/config.json"},
+	})
+	require.NoError(t, validateSessionProfileConfig(cfg))
+}
+
 func TestMergeSessionParamsModelOptions(t *testing.T) {
 	profile := &entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}}
 	merged := mergeSessionParams(profile, &entities.SessionParams{})

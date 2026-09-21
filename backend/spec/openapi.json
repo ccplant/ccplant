@@ -10622,6 +10622,34 @@
             "/home/agentapi/.codex/auth.json"
           ]
         },
+        "files": {
+          "type": "array",
+          "description": "Files owned by this profile and written inside the container when a session starts.",
+          "items": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Human-readable display name"
+              },
+              "path": {
+                "type": "string",
+                "description": "Absolute destination path inside the agent container"
+              },
+              "content": {
+                "type": "string",
+                "description": "File content (plain text or base64-encoded)"
+              },
+              "permissions": {
+                "type": "string",
+                "description": "File permissions hint (e.g. \"0600\")"
+              }
+            }
+          }
+        },
         "mcp_servers": {
           "type": "object",
           "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",

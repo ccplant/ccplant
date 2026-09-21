@@ -141,6 +141,39 @@ func TestBuildSessionSettings_TeamScopeUsesSessionUserCredentialsWhenSelected(t 
 	}
 }
 
+func TestBuildSessionSettings_EmbedsProfileFilesForTeamScope(t *testing.T) {
+	sessionClient := fake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+	)
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000,
+		PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), sessionClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	req := &entities.RunServerRequest{
+		UserID: "test-user", Scope: entities.ScopeTeam, TeamID: "org/team-a",
+		ProfileFiles: []sessionsettings.ManagedFile{{
+			Path:        "/home/agentapi/.ssh/id_ed25519",
+			Content:     "private-key",
+			Permissions: "0600",
+		}},
+	}
+	session := NewKubernetesSession("test-session", req,
+		"test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+	if len(settings.Files) != 1 {
+		t.Fatalf("managed files count = %d, want 1", len(settings.Files))
+	}
+	if got := settings.Files[0]; got.Path != "/home/agentapi/.ssh/id_ed25519" || got.Content != "private-key" || got.Permissions != "0600" {
+		t.Fatalf("profile file = %#v", got)
+	}
+}
+
 func TestBuildSessionSettings_GitHubSenderCredentialsFallBackToTeam(t *testing.T) {
 	tests := []struct {
 		name               string

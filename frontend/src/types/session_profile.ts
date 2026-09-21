@@ -23,6 +23,13 @@ export interface SessionProfileParams {
 
 export type CredentialSource = 'session_user' | 'team' | 'none';
 
+export interface ProfileFile {
+  name?: string;
+  path: string;
+  content?: string;
+  permissions?: string;
+}
+
 // Session profile config
 export interface SessionProfileConfig {
   settings_team_id?: string;
@@ -39,6 +46,7 @@ export interface SessionProfileConfig {
   sandbox_policy_id?: string;
   session_ttl?: string;
   unsynced_file_paths?: string[];
+  files?: ProfileFile[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
 }
 
