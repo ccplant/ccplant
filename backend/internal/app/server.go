@@ -1185,6 +1185,113 @@ func (s *Server) CreateSession(ctx context.Context, sessionID string, startReq e
 	}, telemetry.String("session.scope", string(startReq.Scope)))
 }
 
+// PreviewSession resolves placement and provision settings without creating or
+// persisting any session resources. The returned session ID is only a candidate.
+func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (*entities.SessionStartPreview, error) {
+	if startReq.Params != nil && startReq.Params.ManagerID != "" {
+		esm, err := s.findESMByID(ctx, userID, teams, startReq.Params.ManagerID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find external session manager %s: %w", startReq.Params.ManagerID, err)
+		}
+		if esm == nil {
+			return nil, fmt.Errorf("external session manager not found: %s", startReq.Params.ManagerID)
+		}
+		if s.sessionRunnerStore == nil || esm.Pool == "" {
+			return nil, fmt.Errorf("session manager %s has no runner pool", startReq.Params.ManagerID)
+		}
+		pool, err := s.sessionRunnerStore.GetLogicalPool(ctx, esm.Pool)
+		if err != nil || !pool.Enabled {
+			return nil, fmt.Errorf("session manager pool is unavailable: %s", esm.Pool)
+		}
+		return s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, entities.SessionStartPlacement{
+			Transport: portrepos.SessionRouteTransportDirectRuntime, Pool: pool.Name, ManagerID: esm.ID,
+		})
+	}
+
+	if s.sessionRunnerStore != nil {
+		subject := sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: userID}
+		if startReq.Scope == entities.ScopeTeam {
+			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
+		}
+		resolved, err := s.resolveSessionPool(ctx, subject, requestedSessionPool(startReq), startReq.Tags)
+		if err != nil {
+			return nil, fmt.Errorf("select session pool: %w", err)
+		}
+		if resolved != nil {
+			if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
+				return nil, err
+			}
+			placement := entities.SessionStartPlacement{Transport: portrepos.SessionRouteTransportDirectRuntime, Pool: resolved.Pool.Name}
+			if resolved.Binding != nil {
+				placement.BindingID = resolved.Binding.ID
+			}
+			return s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, placement)
+		}
+	}
+	if requestedPool := requestedSessionPool(startReq); requestedPool != "" {
+		return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requestedPool)
+	}
+
+	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
+	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
+	hasAllocatorSelector := hasAllocatorSelector(startReq.Tags)
+	if hasAllocatorSelector && (sandboxRequested || dindRequested) {
+		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
+	}
+	if !sandboxRequested && !dindRequested {
+		selectedESM, err := s.findAutomaticAssignmentESM(ctx, userID, teams, startReq.Tags)
+		if err != nil {
+			return nil, fmt.Errorf("select external session manager: %w", err)
+		}
+		if selectedESM != nil {
+			if startReq.Params == nil {
+				startReq.Params = &entities.SessionParams{}
+			}
+			startReq.Params.ManagerID = selectedESM.ID
+			return s.PreviewSession(ctx, sessionID, startReq, userID, userRole, teams)
+		}
+		if hasAllocatorSelector {
+			return nil, fmt.Errorf("no external session manager matches allocator.* tags")
+		}
+	}
+	if !s.localSessionFallbackEnabled {
+		return nil, fmt.Errorf("no authorized and healthy session pool is available")
+	}
+
+	mergedEnv, err := services.MergeEnvironmentVariables(services.EnvMergeConfig{
+		RoleEnvFiles: &s.config.RoleEnvFiles, UserRole: userRole,
+		TeamEnvFile: services.ExtractTeamEnvFile(startReq.Tags), RequestEnv: startReq.Environment,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge environment variables: %w", err)
+	}
+	startReq.Environment = mergedEnv
+	return s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, entities.SessionStartPlacement{
+		Transport: "local", LocalFallback: true,
+	})
+}
+
+func (s *Server) previewWithPlacement(ctx context.Context, sessionID string, startReq entities.StartRequest, userID string, teams []string, placement entities.SessionStartPlacement) (*entities.SessionStartPreview, error) {
+	builder, ok := s.sessionManager.(portrepos.RemoteProvisionSettingsBuilder)
+	if !ok {
+		return nil, fmt.Errorf("session settings preview is not supported")
+	}
+	runReq := s.runRequestForStart(sessionID, startReq, userID, teams)
+	runReq.Pool = placement.Pool
+	settings, err := builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq)
+	if err != nil {
+		return nil, fmt.Errorf("resolve session settings: %w", err)
+	}
+	if settings == nil {
+		return nil, fmt.Errorf("session manager returned no provision settings")
+	}
+	settings.WebhookPayload = string(startReq.WebhookPayload)
+	if placement.Pool != "" {
+		s.applyPoolAutoSuspendPolicy(ctx, settings, startReq.Scope, userID, startReq.TeamID)
+	}
+	return &entities.SessionStartPreview{Placement: placement, Settings: settings}, nil
+}
+
 func (s *Server) createSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
 	// Identity and TeamConfig mutation belong to the API. The execution-plane
 	// manager receives an already-authorized request and never initializes the

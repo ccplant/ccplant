@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,10 @@ import (
 type SessionCreator interface {
 	CreateSession(ctx context.Context, sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error)
 	DeleteSessionByID(sessionID string) error
+}
+
+type sessionStartPreviewer interface {
+	PreviewSession(ctx context.Context, sessionID string, req entities.StartRequest, userID, userRole string, teams []string) (*entities.SessionStartPreview, error)
 }
 
 type pendingSessionAllocationDeleter interface {
@@ -222,6 +227,14 @@ func (c *SessionController) StartSession(ctx echo.Context) error {
 
 func (c *SessionController) startSession(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
+	dryRun := false
+	if raw := ctx.QueryParam("dry_run"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "dry_run must be a boolean")
+		}
+		dryRun = parsed
+	}
 
 	sessionID := uuid.New().String()
 	if claims, ok := ctx.Get("trigger_execution_claims").(executiontoken.ExecutionClaims); ok {
@@ -291,19 +304,31 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
 			return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("user is not a member of team %s", startReq.TeamID))
 		}
-		lease, connectionID, matched, err := c.githubTokenResolver.IssueBrokerLeaseForOrganization(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository)
+		var lease, connectionID string
+		var matched bool
+		var err error
+		if dryRun {
+			_, connectionID, matched, err = c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
+			lease = "<generated-at-apply>"
+		} else {
+			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForOrganization(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository)
+		}
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		if matched {
 			brokerConfigured = true
 			if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, connectionID); err != nil {
-				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				if !dryRun {
+					c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				}
 				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
 			brokerURL, err := githubBrokerURL(ctx, sessionID, c.githubBrokerBaseURL)
 			if err != nil {
-				c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				if !dryRun {
+					c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+				}
 				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 			}
 			startReq.Environment["AGENTAPI_GITHUB_BROKER_URL"] = brokerURL
@@ -368,7 +393,16 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
-	if existingID, reused, err := c.reuseStartSession(ctx, startReq, userID); err != nil {
+	if dryRun {
+		if existingID, reused, status, err := c.previewReuseStartSession(ctx, startReq, userID); err != nil {
+			return err
+		} else if reused {
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"dry_run": true, "session_id": existingID, "decision": "reuse",
+				"reuse": map[string]interface{}{"session_id": existingID, "status": status, "stop_before_reuse": startReq.StopBeforeReuse},
+			})
+		}
+	} else if existingID, reused, err := c.reuseStartSession(ctx, startReq, userID); err != nil {
 		return err
 	} else if reused {
 		return ctx.JSON(http.StatusOK, map[string]interface{}{"session_id": existingID, "session_reused": true})
@@ -412,11 +446,58 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		applySessionProfile(&startReq, profile, profileCfg, explicitSandbox, explicitDocker)
 	}
-	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
-		config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}
-		if err := store.CreateConfiguration(ctx.Request().Context(), config); err != nil {
-			return echo.NewHTTPError(503, "failed to preserve session input")
+	if !dryRun {
+		if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
+			config := &sessionrunnercore.Configuration{SessionID: sessionID, TriggeredUserID: startReq.TriggeredUserID, Input: startInput, ProfileID: startReq.ResolvedSessionProfileID, UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Teams: teams}
+			if err := store.CreateConfiguration(ctx.Request().Context(), config); err != nil {
+				return echo.NewHTTPError(503, "failed to preserve session input")
+			}
 		}
+	}
+
+	if dryRun {
+		previewer, ok := c.sessionCreator.(sessionStartPreviewer)
+		if !ok {
+			return echo.NewHTTPError(http.StatusNotImplemented, "session start dry-run is not supported")
+		}
+		preview, err := previewer.PreviewSession(ctx.Request().Context(), sessionID, startReq, userID, userRole, teams)
+		if err != nil {
+			var quotaErr *sessionrunnercore.QuotaExceededError
+			if errors.As(err, &quotaErr) {
+				return ctx.JSON(http.StatusTooManyRequests, map[string]any{
+					"error": quotaErr.Error(), "pool": quotaErr.Pool, "binding_id": quotaErr.BindingID,
+					"max_concurrent": quotaErr.MaxConcurrent, "active": quotaErr.Active,
+				})
+			}
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		effectiveRequest, requestRedactions, err := redactSessionStartPreview(startReq)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode effective request")
+		}
+		settings, settingsRedactions, err := redactSessionStartPreview(preview.Settings)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode session settings")
+		}
+		redactions := make([]string, 0, len(requestRedactions)+len(settingsRedactions))
+		for _, path := range requestRedactions {
+			redactions = append(redactions, "/effective_request"+path)
+		}
+		for _, path := range settingsRedactions {
+			redactions = append(redactions, "/settings"+path)
+		}
+		sort.Strings(redactions)
+		effects := []map[string]interface{}{{"kind": "persist_configuration", "would_execute": true}, {"kind": "create_session", "would_execute": true}}
+		if preview.Placement.Transport == repositories.SessionRouteTransportDirectRuntime {
+			effects = append(effects, map[string]interface{}{"kind": "enqueue_allocation", "would_execute": true}, map[string]interface{}{"kind": "save_session_route", "would_execute": true})
+		}
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"dry_run": true, "session_id": sessionID, "decision": "create",
+			"effective_request": effectiveRequest, "resolved_session_profile_id": startReq.ResolvedSessionProfileID,
+			"placement": preview.Placement, "settings": settings, "redactions": redactions,
+			"effects":  effects,
+			"warnings": []string{"Dry-run does not reserve capacity; a later start may resolve differently."},
+		})
 	}
 
 	session, err := c.sessionCreator.CreateSession(ctx.Request().Context(), sessionID, startReq, userID, userRole, teams)
@@ -439,6 +520,42 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_id": session.ID(),
 	})
+}
+
+func (c *SessionController) previewReuseStartSession(ctx echo.Context, startReq entities.StartRequest, ownerUserID string) (string, bool, string, error) {
+	if len(startReq.ReuseMatchTags) == 0 || startReq.ReuseMessage == "" {
+		return "", false, "", nil
+	}
+	if c.sessionRouteRepo != nil {
+		var routes []*repositories.SessionRoute
+		var err error
+		if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+			routes, err = filtered.ListFiltered(ctx.Request().Context(), repositories.SessionRouteFilter{
+				UserID: ownerUserID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, Tags: startReq.ReuseMatchTags,
+			})
+		} else {
+			routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), ownerUserID)
+		}
+		if err != nil {
+			return "", false, "", echo.NewHTTPError(http.StatusInternalServerError, "failed to list reusable sessions").SetInternal(err)
+		}
+		sort.SliceStable(routes, func(i, j int) bool { return routes[i].StartedAt.After(routes[j].StartedAt) })
+		for _, route := range routes {
+			if route.Transport == repositories.SessionRouteTransportDirectRuntime && route.Scope == string(startReq.Scope) &&
+				route.TeamID == startReq.TeamID && (startReq.Scope == entities.ScopeTeam || route.UserID == ownerUserID) &&
+				tagsContain(route.Tags, startReq.ReuseMatchTags) && !terminalReuseStatus(route.Status) {
+				return route.SessionID, true, route.Status, nil
+			}
+		}
+	}
+	for _, existing := range c.getSessionManager().ListSessions(entities.SessionFilter{Tags: startReq.ReuseMatchTags}) {
+		status := strings.ToLower(existing.Status())
+		if existing.Scope() == startReq.Scope && existing.TeamID() == startReq.TeamID &&
+			(startReq.Scope == entities.ScopeTeam || existing.UserID() == ownerUserID) && !terminalReuseStatus(status) && status != "suspended" {
+			return existing.ID(), true, existing.Status(), nil
+		}
+	}
+	return "", false, "", nil
 }
 
 // reuseStartSession makes tag-based trigger reuse authoritative at /start.

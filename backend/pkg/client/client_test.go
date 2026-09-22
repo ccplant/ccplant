@@ -103,6 +103,26 @@ func TestClient_Start(t *testing.T) {
 	}
 }
 
+func TestClient_DryRunStart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/start" || r.URL.Query().Get("dry_run") != "true" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"dry_run":true,"session_id":"candidate","decision":"create","placement":{"pool":"linux"},"redactions":["/settings/env/TOKEN"]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	response, err := client.DryRunStart(context.Background(), &StartRequest{Scope: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.DryRun || response.SessionID != "candidate" || response.Decision != "create" || response.Placement["pool"] != "linux" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
 func TestClient_Search(t *testing.T) {
 	tests := []struct {
 		name           string

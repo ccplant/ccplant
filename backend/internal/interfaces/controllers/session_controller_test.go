@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type githubConnectionURLResolverStub struct {
@@ -81,6 +83,66 @@ func (quotaErrorSessionCreator) CreateSession(context.Context, string, entities.
 }
 
 func (quotaErrorSessionCreator) DeleteSessionByID(string) error { return nil }
+
+type previewSessionCreator struct {
+	createCalled bool
+}
+
+func (p *previewSessionCreator) CreateSession(context.Context, string, entities.StartRequest, string, string, []string) (entities.Session, error) {
+	p.createCalled = true
+	return nil, errors.New("CreateSession must not be called by dry-run")
+}
+
+func (*previewSessionCreator) DeleteSessionByID(string) error { return nil }
+
+func (*previewSessionCreator) PreviewSession(_ context.Context, _ string, req entities.StartRequest, _ string, _ string, _ []string) (*entities.SessionStartPreview, error) {
+	return &entities.SessionStartPreview{
+		Placement: entities.SessionStartPlacement{Transport: repositories.SessionRouteTransportDirectRuntime, Pool: "linux", BindingID: "binding-alice"},
+		Settings: &sessionsettings.SessionSettings{
+			Session:     sessionsettings.SessionMeta{UserID: "alice", Scope: string(req.Scope)},
+			Env:         map[string]string{"VISIBLE_NAME": "secret-value"},
+			Credentials: "managed-secret",
+		},
+	}, nil
+}
+
+func TestStartSessionDryRunReturnsRedactedPlanWithoutCreatingSession(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/start?dry_run=true", strings.NewReader(`{"scope":"user","environment":{"CUSTOM":"sensitive"},"params":{"github_token":"ghp_secret"}}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "alice", CanCreate: true, CanRead: true},
+	})
+	creator := &previewSessionCreator{}
+	controller := NewSessionController(nil, creator)
+
+	require.NoError(t, controller.StartSession(ctx))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.False(t, creator.createCalled)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, true, body["dry_run"])
+	require.Equal(t, "create", body["decision"])
+	require.Equal(t, "linux", body["placement"].(map[string]interface{})["pool"])
+	effective := body["effective_request"].(map[string]interface{})
+	require.Equal(t, "<redacted>", effective["environment"].(map[string]interface{})["CUSTOM"])
+	require.Equal(t, "<redacted>", effective["params"].(map[string]interface{})["github_token"])
+	settings := body["settings"].(map[string]interface{})
+	require.Equal(t, "<redacted>", settings["env"].(map[string]interface{})["VISIBLE_NAME"])
+	require.Equal(t, "<redacted>", settings["credentials"])
+}
+
+func TestStartSessionRejectsInvalidDryRun(t *testing.T) {
+	e := echo.New()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodPost, "/start?dry_run=maybe", nil), httptest.NewRecorder())
+	err := NewSessionController(nil, nil).StartSession(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusBadRequest, httpErr.Code)
+}
 
 func TestStartSessionReturnsQuotaExceeded(t *testing.T) {
 	e := echo.New()

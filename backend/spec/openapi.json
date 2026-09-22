@@ -1133,6 +1133,18 @@
         "tags": [
           "Sessions"
         ],
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "description": "Resolve authorization, profile, placement, quota, and final provision settings without creating a session. Secret values are redacted and capacity is not reserved.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
         "requestBody": {
           "required": false,
           "content": {
@@ -1182,19 +1194,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "session_id": {
-                      "type": "string",
-                      "description": "Stable public session identifier (UUID). This ID remains valid even when the concrete allocated session has a different ID."
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/StartResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StartDryRunResponse"
                     }
-                  },
-                  "required": [
-                    "session_id"
                   ]
-                },
-                "example": {
-                  "session_id": "abc123-def456-ghi789"
                 }
               }
             }
@@ -7551,6 +7558,99 @@
           }
         }
       },
+      "StartResponse": {
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "Stable public session identifier (UUID)."
+          },
+          "session_reused": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StartDryRunResponse": {
+        "type": "object",
+        "required": [
+          "dry_run",
+          "session_id",
+          "decision"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "enum": [true]
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Candidate session ID used for resolution. It is not reserved or persisted."
+          },
+          "decision": {
+            "type": "string",
+            "enum": ["create", "reuse"]
+          },
+          "effective_request": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Profile-resolved start request with secret values replaced by <redacted>."
+          },
+          "resolved_session_profile_id": {
+            "type": "string"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/SessionStartPlacement"
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Final provision settings. Secret-bearing values are replaced by <redacted>."
+          },
+          "redactions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "RFC 6901 JSON pointers identifying redacted response values."
+          },
+          "effects": {
+            "type": "array",
+            "description": "Side effects that a non-dry-run request would perform.",
+            "items": {
+              "type": "object",
+              "required": ["kind", "would_execute"],
+              "properties": {
+                "kind": {"type": "string"},
+                "would_execute": {"type": "boolean"}
+              }
+            }
+          },
+          "reuse": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SessionStartPlacement": {
+        "type": "object",
+        "required": ["transport"],
+        "properties": {
+          "transport": {"type": "string"},
+          "pool": {"type": "string"},
+          "binding_id": {"type": "string"},
+          "manager_id": {"type": "string"},
+          "local_fallback": {"type": "boolean"}
+        }
+      },
       "StartRequest": {
         "type": "object",
         "properties": {
@@ -10876,6 +10976,7 @@
         "description": "Static API key"
       }
     }
+  }
   },
   "security": [
     {

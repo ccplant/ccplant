@@ -139,6 +139,21 @@ type StartResponse struct {
 	SessionID string `json:"session_id"`
 }
 
+// StartDryRunResponse describes a resolved start without creating a session.
+type StartDryRunResponse struct {
+	DryRun                   bool                     `json:"dry_run"`
+	SessionID                string                   `json:"session_id"`
+	Decision                 string                   `json:"decision"`
+	EffectiveRequest         map[string]interface{}   `json:"effective_request,omitempty"`
+	ResolvedSessionProfileID string                   `json:"resolved_session_profile_id,omitempty"`
+	Placement                map[string]interface{}   `json:"placement,omitempty"`
+	Settings                 map[string]interface{}   `json:"settings,omitempty"`
+	Reuse                    map[string]interface{}   `json:"reuse,omitempty"`
+	Effects                  []map[string]interface{} `json:"effects,omitempty"`
+	Redactions               []string                 `json:"redactions,omitempty"`
+	Warnings                 []string                 `json:"warnings,omitempty"`
+}
+
 // SessionInfo represents information about a session
 type SessionInfo struct {
 	SessionID          string             `json:"session_id"`
@@ -310,6 +325,36 @@ func (c *Client) Start(ctx context.Context, req *StartRequest) (*StartResponse, 
 	}
 
 	return &startResp, nil
+}
+
+// DryRunStart resolves a session start request without creating a session.
+func (c *Client) DryRunStart(ctx context.Context, req *StartRequest) (*StartDryRunResponse, error) {
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/start?dry_run=true", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+	var preview StartDryRunResponse
+	if err := json.NewDecoder(resp.Body).Decode(&preview); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &preview, nil
 }
 
 // Search lists and filters sessions
