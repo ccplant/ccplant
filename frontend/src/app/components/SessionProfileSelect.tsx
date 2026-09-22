@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { SessionProfile } from '../../types/session_profile'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
@@ -23,8 +23,6 @@ export default function SessionProfileSelect({
   const { getScopeParams } = useTeamScope()
   const [profiles, setProfiles] = useState<SessionProfile[]>([])
   const [loading, setLoading] = useState(false)
-  // Prevent auto-select from firing more than once per mount
-  const autoSelectedRef = useRef(false)
 
   useEffect(() => {
     const fetchProfiles = async () => {
@@ -41,18 +39,6 @@ export default function SessionProfileSelect({
     }
     fetchProfiles()
   }, [getScopeParams]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-select the default profile only when no value is set.
-  // This runs after the fetch settles and after the parent may have initialised `value`,
-  // so `value` here is always the current prop (not a stale closure capture).
-  useEffect(() => {
-    if (autoSelectedRef.current || value || loading || profiles.length === 0) return
-    const defaultProfile = profiles.find((p) => p.is_default)
-    if (defaultProfile) {
-      autoSelectedRef.current = true
-      onChange(defaultProfile.id)
-    }
-  }, [profiles, value, loading, onChange])
 
   const selected = profiles.find((p) => p.id === value)
 
