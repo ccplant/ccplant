@@ -65,11 +65,17 @@ describe('SessionProfileEditor authentication', () => {
 
   it('saves independent default models for each authentication method', async () => {
     render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Models', created_at: '', updated_at: '', config: { params: { codex_default_models: { auth_json: 'account-model' }, claude_default_models: { bedrock: 'bedrock-model' } } } }} />)
-    expect(screen.getByLabelText('Codex / auth.json のデフォルトモデル')).toHaveValue('account-model')
-    expect(screen.getByLabelText('Claude / Bedrock のデフォルトモデル')).toHaveValue('bedrock-model')
-    fireEvent.change(screen.getByLabelText('Codex / OpenAI 互換 API のデフォルトモデル'), { target: { value: 'gateway-model' } })
-    fireEvent.change(screen.getByLabelText('Claude / OAuth のデフォルトモデル'), { target: { value: 'oauth-model' } })
-    fireEvent.submit(screen.getByLabelText('Codex / auth.json のデフォルトモデル').closest('form')!)
+    const target = screen.getByLabelText('デフォルトモデルの認証方式')
+    const model = screen.getByLabelText('認証方式別のデフォルトモデル')
+    expect(target).toHaveValue('codex:auth_json')
+    expect(model).toHaveValue('account-model')
+    fireEvent.change(target, { target: { value: 'claude:bedrock' } })
+    expect(model).toHaveValue('bedrock-model')
+    fireEvent.change(target, { target: { value: 'codex:openai_compatible' } })
+    fireEvent.change(model, { target: { value: 'gateway-model' } })
+    fireEvent.change(target, { target: { value: 'claude:oauth' } })
+    fireEvent.change(model, { target: { value: 'oauth-model' } })
+    fireEvent.submit(model.closest('form')!)
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
     expect(mocks.update.mock.calls[0][1].config.params).toMatchObject({
       codex_default_models: { auth_json: 'account-model', openai_compatible: 'gateway-model' },
