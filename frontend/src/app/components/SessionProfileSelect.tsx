@@ -18,7 +18,7 @@ export default function SessionProfileSelect({
   onChange,
   disabled = false,
   className = '',
-  placeholder = 'プロファイルなし',
+  placeholder = '自動選択',
 }: SessionProfileSelectProps) {
   const { getScopeParams } = useTeamScope()
   const [profiles, setProfiles] = useState<SessionProfile[]>([])

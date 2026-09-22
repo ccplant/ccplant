@@ -662,7 +662,7 @@ export default function NewSessionPage() {
                 disabled={isCreating}
               />
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                プロファイルを選択すると、環境変数・タグ・テンプレートなどの設定を適用します
+                プロファイルを選択すると、環境変数・タグ・テンプレートなどの設定を適用します。「自動選択」の場合はリポジトリの selector_tags に一致するプロファイルが優先され、該当がなければデフォルトプロファイルが適用されます。
               </p>
             </div>
 
