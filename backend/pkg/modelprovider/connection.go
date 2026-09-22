@@ -132,15 +132,8 @@ func (c *Connection) Validate(agent string) error {
 			return err
 		}
 	}
-	for mode, model := range c.DefaultModels {
-		if err := validateDefaultModelMode(agent, mode); err != nil {
-			return err
-		}
-		if strings.TrimSpace(model) != "" {
-			if err := ValidateModel(model); err != nil {
-				return err
-			}
-		}
+	if err := ValidateDefaultModels(agent, c.DefaultModels); err != nil {
+		return err
 	}
 	if !c.Compatible() {
 		return nil
@@ -191,12 +184,21 @@ func (c *Connection) Validate(agent string) error {
 	return nil
 }
 
-func validateDefaultModelMode(agent, mode string) error {
-	if (agent == "codex" && (mode == "auth_json" || mode == "openai_compatible")) ||
-		(agent == "claude" && (mode == "oauth" || mode == "bedrock" || mode == "anthropic_compatible")) {
-		return nil
+// ValidateDefaultModels validates an authentication-mode keyed model map.
+func ValidateDefaultModels(agent string, models map[string]string) error {
+	for mode, model := range models {
+		validMode := (agent == "codex" && (mode == "auth_json" || mode == "openai_compatible")) ||
+			(agent == "claude" && (mode == "oauth" || mode == "bedrock" || mode == "anthropic_compatible"))
+		if !validMode {
+			return fmt.Errorf("invalid default model authentication mode")
+		}
+		if strings.TrimSpace(model) != "" {
+			if err := ValidateModel(model); err != nil {
+				return err
+			}
+		}
 	}
-	return fmt.Errorf("invalid default model authentication mode")
+	return nil
 }
 
 // EndpointPath is appended to BaseURL without replacing its existing prefix.

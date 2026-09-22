@@ -62,6 +62,20 @@ describe('SessionProfileEditor authentication', () => {
     expect(mocks.update.mock.calls[1][1].config.params).not.toHaveProperty('codex_auth_mode')
     expect(mocks.update.mock.calls[1][1].config.params).not.toHaveProperty('claude_auth_mode')
   })
+
+  it('saves independent default models for each authentication method', async () => {
+    render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Models', created_at: '', updated_at: '', config: { params: { codex_default_models: { auth_json: 'account-model' }, claude_default_models: { bedrock: 'bedrock-model' } } } }} />)
+    expect(screen.getByLabelText('Codex / auth.json のデフォルトモデル')).toHaveValue('account-model')
+    expect(screen.getByLabelText('Claude / Bedrock のデフォルトモデル')).toHaveValue('bedrock-model')
+    fireEvent.change(screen.getByLabelText('Codex / OpenAI 互換 API のデフォルトモデル'), { target: { value: 'gateway-model' } })
+    fireEvent.change(screen.getByLabelText('Claude / OAuth のデフォルトモデル'), { target: { value: 'oauth-model' } })
+    fireEvent.submit(screen.getByLabelText('Codex / auth.json のデフォルトモデル').closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.params).toMatchObject({
+      codex_default_models: { auth_json: 'account-model', openai_compatible: 'gateway-model' },
+      claude_default_models: { oauth: 'oauth-model', bedrock: 'bedrock-model' },
+    })
+  })
 })
 
 describe('SessionProfileEditor repository selector', () => {

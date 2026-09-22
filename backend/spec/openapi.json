@@ -7705,6 +7705,20 @@
             ],
             "description": "Override the Claude Code authentication method; omitted inherits authentication settings."
           },
+          "codex_default_models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Session-profile default model IDs keyed by Codex authentication mode. CODEX_MODEL remains the higher-priority profile-wide override."
+          },
+          "claude_default_models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Session-profile default model IDs keyed by Claude authentication mode. ANTHROPIC_MODEL remains the higher-priority profile-wide override."
+          },
           "credential_source": {
             "type": "string",
             "enum": [

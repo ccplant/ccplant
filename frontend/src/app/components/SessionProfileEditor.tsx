@@ -79,6 +79,8 @@ export default function SessionProfileEditor({
   const [agentType, setAgentType] = useState('')
   const [codexModel, setCodexModel] = useState('')
   const [claudeModel, setClaudeModel] = useState('')
+  const [codexDefaultModels, setCodexDefaultModels] = useState<NonNullable<SessionProfileParams['codex_default_models']>>({})
+  const [claudeDefaultModels, setClaudeDefaultModels] = useState<NonNullable<SessionProfileParams['claude_default_models']>>({})
   const [modelOptions, setModelOptions] = useState('')
   const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
@@ -162,6 +164,8 @@ export default function SessionProfileEditor({
       setAgentType(normalizeAgentType(cfg?.params?.agent_type))
       setCodexModel(cfg?.environment?.CODEX_MODEL ?? '')
       setClaudeModel(cfg?.environment?.ANTHROPIC_MODEL ?? '')
+      setCodexDefaultModels(cfg?.params?.codex_default_models ?? {})
+      setClaudeDefaultModels(cfg?.params?.claude_default_models ?? {})
       setModelOptions((cfg?.params?.model_options ?? []).join('\n'))
       setMcpServers(cfg?.mcp_servers ?? {})
       setSourceProfileId(cfg?.source_session_profile_id ?? '')
@@ -230,6 +234,8 @@ export default function SessionProfileEditor({
       setAgentType('')
       setCodexModel('')
       setClaudeModel('')
+      setCodexDefaultModels({})
+      setClaudeDefaultModels({})
       setModelOptions('')
       setMcpServers({})
       setSourceProfileId('')
@@ -375,8 +381,13 @@ export default function SessionProfileEditor({
       // Build params if any param is set
       // Preserve fields managed through the API that are not exposed in this editor.
       const extraParams = { ...editingProfile?.config?.params }
-      for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'codex_default_models', 'claude_default_models', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const parsedModelOptions = modelOptions.split('\n').map(line => line.trim()).filter(Boolean)
+      const trimmedModels = <T extends Record<string, string | undefined>>(models: T) => Object.fromEntries(
+        Object.entries(models).map(([mode, model]) => [mode, model?.trim()]).filter((entry): entry is [string, string] => Boolean(entry[1])),
+      )
+      const parsedCodexDefaultModels = trimmedModels(codexDefaultModels)
+      const parsedClaudeDefaultModels = trimmedModels(claudeDefaultModels)
       const params = {
         ...extraParams,
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
@@ -385,6 +396,8 @@ export default function SessionProfileEditor({
         ...(dockerConfig ? { docker: dockerConfig } : {}),
         ...(codexAuthMode ? { codex_auth_mode: codexAuthMode } : {}),
         ...(claudeAuthMode ? { claude_auth_mode: claudeAuthMode } : {}),
+        ...(Object.keys(parsedCodexDefaultModels).length > 0 ? { codex_default_models: parsedCodexDefaultModels } : {}),
+        ...(Object.keys(parsedClaudeDefaultModels).length > 0 ? { claude_default_models: parsedClaudeDefaultModels } : {}),
       }
 
       const connectionPayload = (connection: ModelConnection | null) => {
@@ -642,7 +655,25 @@ export default function SessionProfileEditor({
             {active.slug === 'models' && <div className="space-y-5">
                   <div className="space-y-3">
                     <p className="text-sm font-medium">エージェントごとのモデル</p>
-                    <p className="text-xs text-gray-500">このプロファイルから開始するセッションのモデルをまとめて設定します。空欄のエージェントは、個人・チームの接続設定にあるデフォルトモデルを継承します。</p>
+                    <p className="text-xs text-gray-500">認証方式別の値は個人・チーム接続のデフォルトを上書きします。下の共通モデルを指定すると、認証方式別の値より優先して全セッションに適用します。</p>
+                    {([
+                      ['Codex / auth.json', 'auth_json'],
+                      ['Codex / OpenAI 互換 API', 'openai_compatible'],
+                    ] as const).map(([label, mode]) => <label className="block text-sm" key={mode}>{label} のデフォルトモデル
+                      <input aria-label={`${label} のデフォルトモデル`} value={codexDefaultModels[mode] ?? ''}
+                        onChange={e => { setCodexDefaultModels(current => ({ ...current, [mode]: e.target.value })); setDirty(true) }}
+                        placeholder="接続設定から継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
+                    </label>)}
+                    {([
+                      ['Claude / OAuth', 'oauth'],
+                      ['Claude / Bedrock', 'bedrock'],
+                      ['Claude / Anthropic 互換 API', 'anthropic_compatible'],
+                    ] as const).map(([label, mode]) => <label className="block text-sm" key={mode}>{label} のデフォルトモデル
+                      <input aria-label={`${label} のデフォルトモデル`} value={claudeDefaultModels[mode] ?? ''}
+                        onChange={e => { setClaudeDefaultModels(current => ({ ...current, [mode]: e.target.value })); setDirty(true) }}
+                        placeholder="接続設定から継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
+                    </label>)}
+                    <p className="text-sm font-medium pt-2">全認証方式への上書き（互換設定）</p>
                     <label className="block text-sm">Codex モデル ID
                       <input aria-label="Codex モデル ID" value={codexModel}
                         onChange={e => { setCodexModel(e.target.value); setDirty(true) }}

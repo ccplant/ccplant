@@ -113,7 +113,17 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if c == nil {
 			continue
 		}
-		c.Model = modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment, req.Environment)
+		fallback := c.Model
+		if params := profileConfig.Params(); params != nil {
+			models := params.ClaudeDefaultModels
+			if agent == "codex" {
+				models = params.CodexDefaultModels
+			}
+			if model := strings.TrimSpace(models[c.Mode]); model != "" {
+				fallback = model
+			}
+		}
+		c.Model = modelprovider.ModelForLayers(agent, fallback, req.ProfileEnvironment, req.Environment)
 		if err := c.Validate(agent); err != nil {
 			return fmt.Errorf("invalid %s connection: %w", agent, err)
 		}

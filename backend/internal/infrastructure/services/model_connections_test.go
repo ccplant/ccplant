@@ -177,6 +177,7 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	global.SetCodexConnection(&modelprovider.Connection{Mode: "auth_json", BaseURL: "https://global.example/v1", Model: "default", Authentication: "api_key", APIKey: "global-key"})
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://profile.example/v1", Authentication: "api_key", APIKey: "profile-key"})
+	cfg.SetParams(&entities.SessionParams{CodexDefaultModels: map[string]string{"auth_json": "profile-account-model", "openai_compatible": "profile-gateway-model"}})
 	profile := entities.NewSessionProfile("profile", "Profile", "user")
 	profile.SetConfig(cfg)
 	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": global}}, sessionProfileRepo: profileConnectionRepository{profile: profile}}
@@ -184,7 +185,7 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
 	require.Equal(t, "https://profile.example/v1", req.CodexConnection.BaseURL)
 	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
-	require.Equal(t, "default", req.CodexConnection.Model)
+	require.Equal(t, "profile-gateway-model", req.CodexConnection.Model)
 	require.Equal(t, "global-key", global.CodexConnection().APIKey)
 	// Internal worker transport carries the profile ID, not its secret.
 	encoded, err := json.Marshal(req)
@@ -194,6 +195,7 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	req = &entities.RunServerRequest{UserID: "user", ResolvedSessionProfileID: "profile", CodexAuthMode: "auth_json"}
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
 	require.Equal(t, "auth_json", req.CodexConnection.Mode)
+	require.Equal(t, "profile-account-model", req.CodexConnection.Model)
 	require.Empty(t, req.CodexConnection.APIKey)
 	// A fully specified profile can work without inherited credentials/models.
 	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "profile-model"}}
