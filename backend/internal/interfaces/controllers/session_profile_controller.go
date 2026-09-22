@@ -19,12 +19,13 @@ import (
 
 // SessionProfileController handles session profile CRUD endpoints
 type SessionProfileController struct {
-	repo repositories.SessionProfileRepository
+	repo         repositories.SessionProfileRepository
+	settingsRepo repositories.SettingsRepository
 }
 
 // NewSessionProfileController creates a new SessionProfileController
-func NewSessionProfileController(repo repositories.SessionProfileRepository) *SessionProfileController {
-	return &SessionProfileController{repo: repo}
+func NewSessionProfileController(repo repositories.SessionProfileRepository, settingsRepo repositories.SettingsRepository) *SessionProfileController {
+	return &SessionProfileController{repo: repo, settingsRepo: settingsRepo}
 }
 
 // GetName returns the name of this controller for logging
@@ -109,6 +110,13 @@ type SessionProfileConfigResponse struct {
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
+}
+
+// PreviewSessionProfileRequest is the request body for POST /session-profiles/preview
+type PreviewSessionProfileRequest struct {
+	Tags   map[string]string      `json:"tags,omitempty"`
+	Scope  entities.ResourceScope `json:"scope,omitempty"`
+	TeamID string                 `json:"team_id,omitempty"`
 }
 
 // --- Handlers ---
@@ -212,6 +220,86 @@ func (c *SessionProfileController) ListSessionProfiles(ctx echo.Context) error {
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"session_profiles": responses,
+	})
+}
+
+// PreviewSessionProfile handles POST /session-profiles/preview.
+// It resolves the profile that /start would apply for the given tags without
+// creating a session: selector_tags match, then settings default, then the
+// profile-level default flag.
+func (c *SessionProfileController) PreviewSessionProfile(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	userID := string(user.ID())
+
+	var req PreviewSessionProfileRequest
+	if err := ctx.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	resolvedScope, resolvedTeamID := auth.ResolveUserScope(user, string(req.Scope), req.TeamID)
+	scope := entities.ResourceScope(resolvedScope)
+
+	var userTeamIDs []string
+	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {
+		userTeamIDs = authzCtx.TeamScope.Teams
+	}
+
+	filter := repositories.SessionProfileFilter{
+		Scope:   scope,
+		TeamID:  resolvedTeamID,
+		TeamIDs: userTeamIDs,
+	}
+	if scope != entities.ScopeTeam || resolvedTeamID == "" {
+		filter.UserID = userID
+	}
+
+	profiles, err := c.repo.List(ctx.Request().Context(), filter)
+	if err != nil {
+		log.Printf("Failed to list session profiles for preview: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session profiles")
+	}
+
+	if profile := selectSessionProfileByTags(profiles, req.Tags); profile != nil {
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"source":  "selector_tags",
+			"profile": c.toResponse(profile),
+		})
+	}
+
+	if c.settingsRepo != nil {
+		settingsName := userID
+		if scope == entities.ScopeTeam && resolvedTeamID != "" {
+			settingsName = resolvedTeamID
+		}
+		settings, err := c.settingsRepo.FindByName(ctx.Request().Context(), settingsName)
+		if err == nil && settings != nil && settings.DefaultSessionProfileID() != "" {
+			defaultID := settings.DefaultSessionProfileID()
+			for _, p := range profiles {
+				if p.ID() == defaultID {
+					return ctx.JSON(http.StatusOK, map[string]interface{}{
+						"source":  "settings_default",
+						"profile": c.toResponse(p),
+					})
+				}
+			}
+		}
+	}
+
+	for _, p := range profiles {
+		if p.IsDefault() {
+			return ctx.JSON(http.StatusOK, map[string]interface{}{
+				"source":  "profile_default",
+				"profile": c.toResponse(p),
+			})
+		}
+	}
+
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"source":  "none",
+		"profile": nil,
 	})
 }
 

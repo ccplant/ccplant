@@ -260,7 +260,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	// Create session profile controller if session profile repository is available
 	var sessionProfileController *controllers.SessionProfileController
 	if server.sessionProfileRepo != nil {
-		sessionProfileController = controllers.NewSessionProfileController(server.sessionProfileRepo)
+		sessionProfileController = controllers.NewSessionProfileController(server.sessionProfileRepo, server.settingsRepo)
 		log.Printf("[ROUTER] Session profile controller initialized")
 	}
 
@@ -806,6 +806,7 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Registering session profile endpoints...")
 		r.echo.POST("/session-profiles", r.handlers.sessionProfileController.CreateSessionProfile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.GET("/session-profiles", r.handlers.sessionProfileController.ListSessionProfiles, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/session-profiles/preview", r.handlers.sessionProfileController.PreviewSessionProfile, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/session-profiles/:id", r.handlers.sessionProfileController.GetSessionProfile, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PUT("/session-profiles/:id", r.handlers.sessionProfileController.UpdateSessionProfile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.DELETE("/session-profiles/:id", r.handlers.sessionProfileController.DeleteSessionProfile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
