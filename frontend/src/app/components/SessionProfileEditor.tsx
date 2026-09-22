@@ -24,7 +24,7 @@ import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
 
 interface SessionProfileEditorProps {
   onClose: () => void
-  onSuccess: () => void
+  onSuccess: (savedProfile?: SessionProfile) => void
   editingProfile?: SessionProfile | null
   section?: string
   createScope?: { scope: 'user' | 'team'; team_id?: string }
@@ -414,6 +414,7 @@ export default function SessionProfileEditor({
         files: parsedProfileFiles,
       }
 
+      let savedProfile: SessionProfile
       if (isEditing && editingProfile) {
         const updateData: UpdateSessionProfileRequest = {
           name: name.trim(),
@@ -422,7 +423,7 @@ export default function SessionProfileEditor({
           selector_tags: selectorTags,
           config: Object.keys(config).length > 0 ? config : undefined,
         }
-        await client.updateSessionProfile(editingProfile.id, updateData)
+        savedProfile = await client.updateSessionProfile(editingProfile.id, updateData)
       } else {
         const scopeParams = createScope ?? getScopeParams()
         const createData: CreateSessionProfileRequest = {
@@ -433,12 +434,12 @@ export default function SessionProfileEditor({
           ...(Object.keys(config).length > 0 ? { config } : {}),
           ...scopeParams,
         }
-        await client.createSessionProfile(createData)
+        savedProfile = await client.createSessionProfile(createData)
       }
 
       setDirty(false)
       dirtyRef.current = false
-      onSuccess()
+      onSuccess(savedProfile)
     } catch (err) {
       console.error('Failed to save session profile:', err)
       setError(err instanceof Error ? err.message : 'セッションプロファイルの保存に失敗しました')

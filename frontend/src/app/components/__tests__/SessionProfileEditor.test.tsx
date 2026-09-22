@@ -18,6 +18,17 @@ vi.mock('../../../components/settings/MCPServerSettings', () => ({ MCPServerSett
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 describe('SessionProfileEditor legacy pool settings', () => {
+  it('returns the saved profile without closing the editor', async () => {
+    const saved = { id: 'profile', name: 'Saved', created_at: '', updated_at: '', config: {} }
+    const onSuccess = vi.fn()
+    const onClose = vi.fn()
+    mocks.update.mockResolvedValueOnce(saved)
+    render(<SessionProfileEditor section="basic" onClose={onClose} onSuccess={onSuccess} editingProfile={{ id: 'profile', name: 'Original', created_at: '', updated_at: '', config: {} }} />)
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(saved))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('shows a legacy pool and removes it when automatic selection is saved', async () => {
     render(<SessionProfileEditor section="pool" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config: { params: { pool: 'managed', auth_proxy: true } } }} />)
     const select = screen.getByLabelText('Session Runner Pool')

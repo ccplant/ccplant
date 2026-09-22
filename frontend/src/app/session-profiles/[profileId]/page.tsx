@@ -39,7 +39,15 @@ function ProfilePage() {
   if (error) return <div className="p-8"><p role="alert">{error}</p><Link href="/session-profiles" className="text-blue-600">プロファイル一覧に戻る</Link></div>
   return <SessionProfileEditor key={profileId} editingProfile={profile} section={query.get('section') || 'basic'}
     createScope={query.get('scope') === 'team' && query.get('team_id') ? { scope: 'team', team_id: query.get('team_id')! } : { scope: 'user' }}
-    onClose={() => router.push('/session-profiles')} onSuccess={() => router.push('/session-profiles')} />
+    onClose={() => router.push('/session-profiles')} onSuccess={savedProfile => {
+      if (!savedProfile) return
+      if (profileId === 'new') {
+        const suffix = query.toString()
+        router.replace(`/session-profiles/${savedProfile.id}${suffix ? `?${suffix}` : ''}`)
+        return
+      }
+      setProfile(savedProfile)
+    }} />
 }
 
 export default function Page() {
