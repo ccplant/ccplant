@@ -113,7 +113,20 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if c == nil {
 			continue
 		}
-		c.Model = modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment, req.Environment)
+		// The profile-wide model is a fallback for every authentication mode.
+		// A mode-specific profile value takes priority over that fallback, while
+		// an explicit model on the session request remains the highest layer.
+		fallback := modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment)
+		if params := profileConfig.Params(); params != nil {
+			models := params.ClaudeDefaultModels
+			if agent == "codex" {
+				models = params.CodexDefaultModels
+			}
+			if model := strings.TrimSpace(models[c.Mode]); model != "" {
+				fallback = model
+			}
+		}
+		c.Model = modelprovider.ModelForLayers(agent, fallback, req.Environment)
 		if err := c.Validate(agent); err != nil {
 			return fmt.Errorf("invalid %s connection: %w", agent, err)
 		}
@@ -155,10 +168,10 @@ func applySelectedAgentDefaultModel(req *entities.RunServerRequest) {
 	default:
 		return
 	}
-	// Resolve the model for the selected agent again at the final selection
-	// boundary. This keeps profile/request model overrides authoritative even
-	// when the inherited team connection already carries its default model.
-	req.Model = modelprovider.ModelForLayers(agent, fallback, req.ProfileEnvironment, req.Environment)
+	// prepareModelConnections has already folded the profile-wide fallback and
+	// the authentication-mode-specific profile model into the connection. Only
+	// an explicit per-session model may override that resolved value here.
+	req.Model = modelprovider.ModelForLayers(agent, fallback, req.Environment)
 }
 
 func applyModelConnections(settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) {

@@ -139,6 +139,10 @@ type SessionParams struct {
 	// Empty values inherit the configured method.
 	CodexAuthMode  string `json:"codex_auth_mode,omitempty"`
 	ClaudeAuthMode string `json:"claude_auth_mode,omitempty"`
+	// CodexDefaultModels and ClaudeDefaultModels override both connection defaults
+	// and profile-wide model fallbacks by authentication mode.
+	CodexDefaultModels  map[string]string `json:"codex_default_models,omitempty"`
+	ClaudeDefaultModels map[string]string `json:"claude_default_models,omitempty"`
 }
 
 // SessionAnnotations contains user-managed annotations attached to a session.

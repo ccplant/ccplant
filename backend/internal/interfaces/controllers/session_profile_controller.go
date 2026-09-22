@@ -401,6 +401,12 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 		if err := modelprovider.ValidateAuthModes(params.CodexAuthMode, params.ClaudeAuthMode); err != nil {
 			return err
 		}
+		if err := modelprovider.ValidateDefaultModels("codex", params.CodexDefaultModels); err != nil {
+			return err
+		}
+		if err := modelprovider.ValidateDefaultModels("claude", params.ClaudeDefaultModels); err != nil {
+			return err
+		}
 		if params.Model != "" {
 			if err := modelprovider.ValidateModel(params.Model); err != nil {
 				return err

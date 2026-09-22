@@ -73,6 +73,34 @@ describe('SessionProfileEditor authentication', () => {
     expect(mocks.update.mock.calls[1][1].config.params).not.toHaveProperty('codex_auth_mode')
     expect(mocks.update.mock.calls[1][1].config.params).not.toHaveProperty('claude_auth_mode')
   })
+
+  it('saves independent default models for each authentication method', async () => {
+    render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Models', created_at: '', updated_at: '', config: { params: { codex_default_models: { auth_json: 'account-model' }, claude_default_models: { bedrock: 'bedrock-model' } } } }} />)
+    const target = screen.getByLabelText('デフォルトモデルの認証方式')
+    const model = screen.getByLabelText('認証方式別のデフォルトモデル')
+    expect(target).toHaveValue('codex:auth_json')
+    expect(model).toHaveValue('account-model')
+    fireEvent.change(target, { target: { value: 'claude:bedrock' } })
+    expect(model).toHaveValue('bedrock-model')
+    fireEvent.change(target, { target: { value: 'codex:openai_compatible' } })
+    fireEvent.change(model, { target: { value: 'gateway-model' } })
+    fireEvent.change(target, { target: { value: 'claude:oauth' } })
+    fireEvent.change(model, { target: { value: 'oauth-model' } })
+    fireEvent.change(target, { target: { value: 'codex:all' } })
+    fireEvent.change(model, { target: { value: 'codex-fallback' } })
+    fireEvent.change(target, { target: { value: 'claude:all' } })
+    fireEvent.change(model, { target: { value: 'claude-fallback' } })
+    fireEvent.submit(model.closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.params).toMatchObject({
+      codex_default_models: { auth_json: 'account-model', openai_compatible: 'gateway-model' },
+      claude_default_models: { oauth: 'oauth-model', bedrock: 'bedrock-model' },
+    })
+    expect(mocks.update.mock.calls[0][1].config.environment).toMatchObject({
+      CODEX_MODEL: 'codex-fallback',
+      ANTHROPIC_MODEL: 'claude-fallback',
+    })
+  })
 })
 
 describe('SessionProfileEditor repository selector', () => {
@@ -139,8 +167,11 @@ it('retains edits between sections, discards all edits, and preserves API-only f
   fireEvent.change(screen.getByDisplayValue('Original'), { target: { value: 'Changed' } })
   rerender(<SessionProfileEditor {...props} section="models" />)
   expect(screen.queryByDisplayValue('Changed')).not.toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Codex モデル ID'), { target: { value: 'gpt-test' } })
-  fireEvent.change(screen.getByLabelText('Claude Code (Anthropic) モデル ID'), { target: { value: 'claude-test' } })
+  const target = screen.getByLabelText('デフォルトモデルの認証方式')
+  const model = screen.getByLabelText('認証方式別のデフォルトモデル')
+  fireEvent.change(model, { target: { value: 'gpt-test' } })
+  fireEvent.change(target, { target: { value: 'claude:all' } })
+  fireEvent.change(model, { target: { value: 'claude-test' } })
   rerender(<SessionProfileEditor {...props} section="basic" />)
   expect(screen.getByDisplayValue('Changed')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
@@ -150,16 +181,20 @@ it('retains edits between sections, discards all edits, and preserves API-only f
   fireEvent.click(screen.getByRole('button', { name: '破棄' }))
   expect(screen.getByDisplayValue('Original')).toBeInTheDocument()
   rerender(<SessionProfileEditor {...props} section="models" />)
-  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('')
-  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('')
+  expect(screen.getByLabelText('デフォルトモデルの認証方式')).toHaveValue('codex:all')
+  expect(screen.getByLabelText('認証方式別のデフォルトモデル')).toHaveValue('')
 })
 
 it('loads agent-specific models and keeps them out of the general environment editor', () => {
   const profile = { id: 'profile', name: 'Models', created_at: '', updated_at: '', config: { environment: { CODEX_MODEL: 'gpt-profile', ANTHROPIC_MODEL: 'claude-profile', KEEP_ME: 'yes' } } }
   const props = { editingProfile: profile, onClose: vi.fn(), onSuccess: vi.fn() }
   const { rerender } = render(<SessionProfileEditor {...props} section="models" />)
-  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('gpt-profile')
-  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('claude-profile')
+  const target = screen.getByLabelText('デフォルトモデルの認証方式')
+  const model = screen.getByLabelText('認証方式別のデフォルトモデル')
+  expect(target).toHaveValue('codex:all')
+  expect(model).toHaveValue('gpt-profile')
+  fireEvent.change(target, { target: { value: 'claude:all' } })
+  expect(model).toHaveValue('claude-profile')
   rerender(<SessionProfileEditor {...props} section="environment" />)
   expect(screen.getByDisplayValue('KEEP_ME')).toBeInTheDocument()
   expect(screen.queryByDisplayValue('CODEX_MODEL')).not.toBeInTheDocument()
@@ -168,8 +203,11 @@ it('loads agent-specific models and keeps them out of the general environment ed
 
 it('does not prefill agent-specific fields from the legacy shared model', () => {
   render(<SessionProfileEditor section="models" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Legacy', created_at: '', updated_at: '', config: { params: { model: 'legacy-model' } } }} />)
-  expect(screen.getByLabelText('Codex モデル ID')).toHaveValue('')
-  expect(screen.getByLabelText('Claude Code (Anthropic) モデル ID')).toHaveValue('')
+  const target = screen.getByLabelText('デフォルトモデルの認証方式')
+  const model = screen.getByLabelText('認証方式別のデフォルトモデル')
+  expect(model).toHaveValue('')
+  fireEvent.change(target, { target: { value: 'claude:all' } })
+  expect(model).toHaveValue('')
 })
 
 it('saves profile files registered in the files section', async () => {

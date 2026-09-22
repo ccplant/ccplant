@@ -19,6 +19,8 @@ export interface SessionProfileParams {
   credential_source?: CredentialSource;
   codex_auth_mode?: 'auth_json' | 'openai_compatible';
   claude_auth_mode?: 'oauth' | 'bedrock' | 'anthropic_compatible';
+  codex_default_models?: Partial<Record<'auth_json' | 'openai_compatible', string>>;
+  claude_default_models?: Partial<Record<'oauth' | 'bedrock' | 'anthropic_compatible', string>>;
 }
 
 export type CredentialSource = 'session_user' | 'team' | 'none';

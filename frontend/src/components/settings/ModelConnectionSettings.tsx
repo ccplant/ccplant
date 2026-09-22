@@ -22,14 +22,14 @@ const modeLabels: Record<ModelConnection['mode'], string> = {
 
 export function ModelConnectionSettings({ agent, connection, defaultBaseURL, legacyMode, onSave }: Props) {
   const initialMode = connection?.mode || (agent === 'codex' ? 'auth_json' : legacyMode || 'oauth')
-  const [draft, setDraft] = useState<ModelConnection>({ mode: initialMode, authentication: 'api_key', ...connection })
+  const [draft, setDraft] = useState<ModelConnection>({ mode: initialMode, authentication: 'api_key', ...connection, default_models: { ...(connection?.model ? { [initialMode]: connection.model } : {}), ...connection?.default_models } })
   const [key, setKey] = useState('')
   const [clearKey, setClearKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
   useEffect(() => {
-    setDraft({ mode: initialMode, authentication: 'api_key', ...connection })
+    setDraft({ mode: initialMode, authentication: 'api_key', ...connection, default_models: { ...(connection?.model ? { [initialMode]: connection.model } : {}), ...connection?.default_models } })
     setKey('')
     setClearKey(false)
   }, [connection, initialMode])
@@ -37,12 +37,13 @@ export function ModelConnectionSettings({ agent, connection, defaultBaseURL, leg
   const fieldClass = 'w-full rounded-md border border-gray-300 bg-white p-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white'
   const change = (patch: Partial<ModelConnection>) => { setDraft(prev => ({ ...prev, ...patch })); setSaved(false) }
   const changeMode = (mode: ModelConnection['mode']) => {
-    change({ mode, ...(mode.endsWith('_compatible') && !draft.base_url ? { base_url: defaultBaseURL || '' } : {}) })
+    change({ mode, model: draft.default_models?.[mode] || '', ...(mode.endsWith('_compatible') && !draft.base_url ? { base_url: defaultBaseURL || '' } : {}) })
   }
   const save = async () => {
     setSaving(true); setError(''); setSaved(false)
     try {
-      await onSave({ ...draft, base_url: draft.base_url?.trim(), model: draft.model?.trim(), ...(key ? { api_key: key } : {}), ...(clearKey ? { clear_api_key: true } : {}) })
+      const defaultModels = Object.fromEntries(Object.entries(draft.default_models || {}).map(([mode, model]) => [mode, model?.trim()]).filter(([, model]) => model))
+      await onSave({ ...draft, default_models: defaultModels, base_url: draft.base_url?.trim(), model: draft.default_models?.[draft.mode]?.trim(), ...(key ? { api_key: key } : {}), ...(clearKey ? { clear_api_key: true } : {}) })
       setKey(''); setClearKey(false); setSaved(true)
     } catch (err) { setError(err instanceof Error ? err.message : '接続設定の保存に失敗しました') }
     finally { setSaving(false) }
@@ -63,9 +64,9 @@ export function ModelConnectionSettings({ agent, connection, defaultBaseURL, leg
         </select>
       </label>
       <label className="block text-sm">デフォルトモデル ID
-        <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.model || ''} onChange={e => change({ model: e.target.value })} />
+        <input aria-label={`${agent} デフォルトモデル ID`} className={fieldClass} value={draft.default_models?.[draft.mode] || ''} onChange={e => change({ model: e.target.value, default_models: { ...draft.default_models, [draft.mode]: e.target.value } })} />
       </label>
-      <p className="text-xs text-gray-500">自動選択時も、選ばれたエージェントに対応するこのモデルを使用します。セッションプロファイルの指定がある場合は上書きされます。</p>
+      <p className="text-xs text-gray-500">{modeLabels[draft.mode]} を使うセッションの既定値です。認証方式ごとに別のモデルを保存できます。セッションプロファイルの指定がある場合は上書きされます。</p>
       {compatible && <>
         <label className="block text-sm">Base URL
           <input aria-label={`${agent} Base URL`} className={fieldClass} value={draft.base_url || ''} onChange={e => change({ base_url: e.target.value })} placeholder={agent === 'codex' ? 'https://llm.example.com/v1' : 'https://llm.example.com/anthropic'} />

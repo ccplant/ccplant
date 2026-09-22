@@ -49,8 +49,7 @@ func mergeProfileConnection(previous *modelprovider.Connection, raw json.RawMess
 		}
 	}
 	if model == "" {
-		seed.Model = "inherited-model"
-		delete(patch, "model")
+		patch["model"] = json.RawMessage(`"inherited-model"`)
 	}
 	result, err := mergeModelConnection(seed, patch, agent)
 	if err != nil {
@@ -61,6 +60,7 @@ func mergeProfileConnection(previous *modelprovider.Connection, raw json.RawMess
 	}
 	if model == "" {
 		result.Model = ""
+		delete(result.DefaultModels, result.Mode)
 	}
 	return result, nil
 }

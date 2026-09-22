@@ -51,3 +51,13 @@ func TestConnectionValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultModelsCloneAndSelection(t *testing.T) {
+	c := &Connection{Mode: "openai_compatible", Model: "legacy", DefaultModels: map[string]string{"auth_json": "account", "openai_compatible": "gateway"}}
+	selected, err := SelectAuthMode(c, "auth_json")
+	require.NoError(t, err)
+	require.Equal(t, "account", selected.Model)
+	selected.DefaultModels["auth_json"] = "changed"
+	require.Equal(t, "account", c.DefaultModels["auth_json"])
+	require.Error(t, (&Connection{Mode: "auth_json", DefaultModels: map[string]string{"oauth": "wrong-agent"}}).Validate("codex"))
+}

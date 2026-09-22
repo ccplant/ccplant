@@ -100,22 +100,27 @@ func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {
 	}
 }
 
-func TestSelectedClaudeProfileModelOverridesTeamConnectionDefault(t *testing.T) {
+func TestSelectedAgentKeepsResolvedModeSpecificModel(t *testing.T) {
 	req := &entities.RunServerRequest{
 		AgentType: "claude-acp",
 		ClaudeConnection: &modelprovider.Connection{
 			Mode:  "oauth",
-			Model: "team-model",
+			Model: "mode-specific-model",
 		},
 		ProfileEnvironment: map[string]string{"ANTHROPIC_MODEL": "profile-model"},
 	}
 
 	applySelectedAgentDefaultModel(req)
 
-	require.Equal(t, "profile-model", req.Model)
+	require.Equal(t, "mode-specific-model", req.Model)
 	settings := &sessionsettings.SessionSettings{}
 	applyModelConnections(settings, req)
-	require.Equal(t, "profile-model", settings.Env["ANTHROPIC_MODEL"])
+	require.Equal(t, "mode-specific-model", settings.Env["ANTHROPIC_MODEL"])
+
+	req.Model = ""
+	req.Environment = map[string]string{"ANTHROPIC_MODEL": "session-model"}
+	applySelectedAgentDefaultModel(req)
+	require.Equal(t, "session-model", req.Model)
 }
 
 func TestBuiltInAuthDefaultModelAllowsLegacyCredentialEnvironment(t *testing.T) {
@@ -177,6 +182,7 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	global.SetCodexConnection(&modelprovider.Connection{Mode: "auth_json", BaseURL: "https://global.example/v1", Model: "default", Authentication: "api_key", APIKey: "global-key"})
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetCodexConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://profile.example/v1", Authentication: "api_key", APIKey: "profile-key"})
+	cfg.SetParams(&entities.SessionParams{CodexDefaultModels: map[string]string{"auth_json": "profile-account-model", "openai_compatible": "profile-gateway-model"}})
 	profile := entities.NewSessionProfile("profile", "Profile", "user")
 	profile.SetConfig(cfg)
 	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user": global}}, sessionProfileRepo: profileConnectionRepository{profile: profile}}
@@ -184,7 +190,7 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
 	require.Equal(t, "https://profile.example/v1", req.CodexConnection.BaseURL)
 	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
-	require.Equal(t, "default", req.CodexConnection.Model)
+	require.Equal(t, "profile-gateway-model", req.CodexConnection.Model)
 	require.Equal(t, "global-key", global.CodexConnection().APIKey)
 	// Internal worker transport carries the profile ID, not its secret.
 	encoded, err := json.Marshal(req)
@@ -194,12 +200,17 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	req = &entities.RunServerRequest{UserID: "user", ResolvedSessionProfileID: "profile", CodexAuthMode: "auth_json"}
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
 	require.Equal(t, "auth_json", req.CodexConnection.Mode)
+	require.Equal(t, "profile-account-model", req.CodexConnection.Model)
 	require.Empty(t, req.CodexConnection.APIKey)
 	// A fully specified profile can work without inherited credentials/models.
 	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "profile-model"}}
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
-	require.Equal(t, "profile-model", req.CodexConnection.Model)
+	require.Equal(t, "profile-gateway-model", req.CodexConnection.Model)
 	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
+	// An explicit model supplied for this session still overrides profile defaults.
+	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "profile-model"}, Environment: map[string]string{"CODEX_MODEL": "session-model"}}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "session-model", req.CodexConnection.Model)
 }
 
 func TestProfileTeamSettingsInheritance(t *testing.T) {
