@@ -1,5 +1,6 @@
 import {
   Session,
+  ResourceScope,
   SessionListParams,
   SessionListResponse,
   CreateSessionRequest,
@@ -2360,6 +2361,21 @@ export class AgentAPIProxyClient {
       ...result,
       session_profiles: result.session_profiles || []
     };
+  }
+
+  /**
+   * Preview which session profile /start would resolve for the given tags.
+   * Returns the matched profile and the source that selected it.
+   */
+  async previewSessionProfile(params: {
+    tags?: Record<string, string>;
+    scope?: ResourceScope;
+    team_id?: string;
+  }): Promise<{ source: 'selector_tags' | 'settings_default' | 'profile_default' | 'none'; profile: SessionProfile | null }> {
+    return this.makeRequest('/session-profiles/preview', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
   }
 
   /**

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createAgentAPIClient } from '../../../lib/api'
 import type { AgentAPIProxyClient } from '../../../lib/agentapi-proxy-client'
@@ -75,6 +75,10 @@ export default function NewSessionPage() {
   const [checkoutTarget, setCheckoutTarget] = useState<CheckoutTarget>('')
   const [checkoutBranch, setCheckoutBranch] = useState('')
   const [checkoutPrNumber, setCheckoutPrNumber] = useState('')
+  const previewTags = useMemo(
+    () => buildRepositoryTags(freeFormRepository, checkoutTarget, checkoutBranch, checkoutPrNumber),
+    [freeFormRepository, checkoutTarget, checkoutBranch, checkoutPrNumber]
+  )
   const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState('')
@@ -660,6 +664,7 @@ export default function NewSessionPage() {
                 value={sessionProfileId}
                 onChange={setSessionProfileId}
                 disabled={isCreating}
+                previewTags={Object.keys(previewTags).length > 0 ? previewTags : undefined}
               />
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                 プロファイルを選択すると、環境変数・タグ・テンプレートなどの設定を適用します。「自動選択」の場合はリポジトリの selector_tags に一致するプロファイルが優先され、該当がなければデフォルトプロファイルが適用されます。
