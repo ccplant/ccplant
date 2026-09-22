@@ -168,10 +168,10 @@ func applySelectedAgentDefaultModel(req *entities.RunServerRequest) {
 	default:
 		return
 	}
-	// Resolve the model for the selected agent again at the final selection
-	// boundary. This keeps profile/request model overrides authoritative even
-	// when the inherited team connection already carries its default model.
-	req.Model = modelprovider.ModelForLayers(agent, fallback, req.ProfileEnvironment, req.Environment)
+	// prepareModelConnections has already folded the profile-wide fallback and
+	// the authentication-mode-specific profile model into the connection. Only
+	// an explicit per-session model may override that resolved value here.
+	req.Model = modelprovider.ModelForLayers(agent, fallback, req.Environment)
 }
 
 func applyModelConnections(settings *sessionsettings.SessionSettings, req *entities.RunServerRequest) {
