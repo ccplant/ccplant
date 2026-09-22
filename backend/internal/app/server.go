@@ -1203,9 +1203,13 @@ func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq 
 		if err != nil || !pool.Enabled {
 			return nil, fmt.Errorf("session manager pool is unavailable: %s", esm.Pool)
 		}
-		return s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, entities.SessionStartPlacement{
+		preview, err := s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, entities.SessionStartPlacement{
 			Transport: portrepos.SessionRouteTransportDirectRuntime, Pool: pool.Name, ManagerID: esm.ID,
 		})
+		if preview != nil {
+			preview.Resolution = map[string]interface{}{"placement": map[string]interface{}{"reason": "explicit_manager_selected", "manager_id": esm.ID, "pool": pool.Name}}
+		}
+		return preview, err
 	}
 
 	if s.sessionRunnerStore != nil {
@@ -1213,7 +1217,7 @@ func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq 
 		if startReq.Scope == entities.ScopeTeam {
 			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
 		}
-		resolved, err := s.resolveSessionPool(ctx, subject, requestedSessionPool(startReq), startReq.Tags)
+		resolved, trace, err := s.resolveSessionPoolWithTrace(ctx, subject, requestedSessionPool(startReq), startReq.Tags)
 		if err != nil {
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
@@ -1225,7 +1229,11 @@ func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq 
 			if resolved.Binding != nil {
 				placement.BindingID = resolved.Binding.ID
 			}
-			return s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, placement)
+			preview, err := s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, placement)
+			if preview != nil {
+				preview.Resolution = map[string]interface{}{"pool": trace, "placement": map[string]interface{}{"reason": "session_runner_pool_selected"}}
+			}
+			return preview, err
 		}
 	}
 	if requestedPool := requestedSessionPool(startReq); requestedPool != "" {
@@ -1266,9 +1274,13 @@ func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq 
 		return nil, fmt.Errorf("failed to merge environment variables: %w", err)
 	}
 	startReq.Environment = mergedEnv
-	return s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, entities.SessionStartPlacement{
+	preview, err := s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, entities.SessionStartPlacement{
 		Transport: "local", LocalFallback: true,
 	})
+	if preview != nil {
+		preview.Resolution = map[string]interface{}{"placement": map[string]interface{}{"reason": "no_remote_placement_local_fallback"}}
+	}
+	return preview, err
 }
 
 func (s *Server) previewWithPlacement(ctx context.Context, sessionID string, startReq entities.StartRequest, userID string, teams []string, placement entities.SessionStartPlacement) (*entities.SessionStartPreview, error) {
@@ -1514,6 +1526,14 @@ func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnerco
 		resolver.WithManagerLiveness(s.esmControlStore)
 	}
 	return resolver.Resolve(ctx, subject, requestedPool, tags)
+}
+
+func (s *Server) resolveSessionPoolWithTrace(ctx context.Context, subject sessionrunnercore.Subject, requestedPool string, tags map[string]string) (*sessionrunnercore.ResolvedPool, *sessionrunnercore.ResolutionTrace, error) {
+	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
+	if s.esmControlStore != nil {
+		resolver.WithManagerLiveness(s.esmControlStore)
+	}
+	return resolver.ResolveWithTrace(ctx, subject, requestedPool, tags)
 }
 
 func requestedSessionPool(startReq entities.StartRequest) string {

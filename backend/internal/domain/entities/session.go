@@ -280,8 +280,9 @@ type SessionStartPlacement struct {
 
 // SessionStartPreview is the read-only result of resolving a session start.
 type SessionStartPreview struct {
-	Placement SessionStartPlacement            `json:"placement"`
-	Settings  *sessionsettings.SessionSettings `json:"settings"`
+	Placement  SessionStartPlacement            `json:"placement"`
+	Settings   *sessionsettings.SessionSettings `json:"settings"`
+	Resolution interface{}                      `json:"resolution,omitempty"`
 }
 
 // Session represents a running agentapi session

@@ -393,14 +393,18 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
+	reuseResolution := map[string]interface{}{"reason": "reuse_not_requested", "requested": false}
 	if dryRun {
 		if existingID, reused, status, err := c.previewReuseStartSession(ctx, startReq, userID); err != nil {
 			return err
 		} else if reused {
 			return ctx.JSON(http.StatusOK, map[string]interface{}{
 				"dry_run": true, "session_id": existingID, "decision": "reuse",
-				"reuse": map[string]interface{}{"session_id": existingID, "status": status, "stop_before_reuse": startReq.StopBeforeReuse},
+				"reuse":      map[string]interface{}{"session_id": existingID, "status": status, "stop_before_reuse": startReq.StopBeforeReuse},
+				"resolution": map[string]interface{}{"reuse": map[string]interface{}{"requested": true, "reason": "matching_live_session_selected", "session_id": existingID, "status": status}},
 			})
+		} else if len(startReq.ReuseMatchTags) > 0 && startReq.ReuseMessage != "" {
+			reuseResolution = map[string]interface{}{"reason": "no_matching_live_session", "requested": true}
 		}
 	} else if existingID, reused, err := c.reuseStartSession(ctx, startReq, userID); err != nil {
 		return err
@@ -420,8 +424,9 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(500, "failed to preserve session input")
 	}
+	profileResolution := map[string]interface{}{"reason": "profile_repository_unavailable"}
 	if c.sessionProfileRepo != nil {
-		profile, err := c.resolveSessionProfile(
+		profile, profileReason, err := c.resolveSessionProfile(
 			ctx.Request().Context(),
 			startReq.SessionProfileID,
 			userID,
@@ -432,6 +437,14 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		)
 		if err != nil {
 			return err
+		}
+		profileResolution = map[string]interface{}{"reason": profileReason}
+		if profile != nil {
+			profileResolution["selected_profile_id"] = profile.ID()
+			profileResolution["selected_profile_name"] = profile.Name()
+			if tags := profile.SelectorTags(); len(tags) > 0 {
+				profileResolution["selector_tags"] = tags
+			}
 		}
 		profileCfg, err := sessionuc.ResolveEffectiveSessionProfileConfig(
 			ctx.Request().Context(),
@@ -491,12 +504,19 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		if preview.Placement.Transport == repositories.SessionRouteTransportDirectRuntime {
 			effects = append(effects, map[string]interface{}{"kind": "enqueue_allocation", "would_execute": true}, map[string]interface{}{"kind": "save_session_route", "would_execute": true})
 		}
+		resolution := map[string]interface{}{"reuse": reuseResolution, "profile": profileResolution}
+		if placementResolution, ok := preview.Resolution.(map[string]interface{}); ok {
+			for key, value := range placementResolution {
+				resolution[key] = value
+			}
+		}
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"dry_run": true, "session_id": sessionID, "decision": "create",
 			"effective_request": effectiveRequest, "resolved_session_profile_id": startReq.ResolvedSessionProfileID,
 			"placement": preview.Placement, "settings": settings, "redactions": redactions,
-			"effects":  effects,
-			"warnings": []string{"Dry-run does not reserve capacity; a later start may resolve differently."},
+			"resolution": resolution,
+			"effects":    effects,
+			"warnings":   []string{"Dry-run does not reserve capacity; a later start may resolve differently."},
 		})
 	}
 
@@ -2353,23 +2373,23 @@ func (c *SessionController) resolveSessionProfile(
 	teamID string,
 	tags map[string]string,
 	authzCtx *auth.AuthorizationContext,
-) (*entities.SessionProfile, error) {
+) (*entities.SessionProfile, string, error) {
 	if profileID != "" {
 		profile, err := c.sessionProfileRepo.Get(ctx, profileID)
 		if err != nil {
 			log.Printf("[SESSION] Warning: could not resolve session_profile_id %q: %v", profileID, err)
 			if _, ok := err.(entities.ErrSessionProfileNotFound); ok {
-				return nil, echo.NewHTTPError(http.StatusNotFound, err.Error())
+				return nil, "", echo.NewHTTPError(http.StatusNotFound, err.Error())
 			}
-			return nil, echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve session profile")
+			return nil, "", echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve session profile")
 		}
 		if !c.canUseSessionProfile(authzCtx, profile, scope, teamID) {
-			return nil, echo.NewHTTPError(
+			return nil, "", echo.NewHTTPError(
 				http.StatusForbidden,
 				entities.ErrSessionProfileAccessDenied{ID: profile.ID()}.Error(),
 			)
 		}
-		return profile, nil
+		return profile, "explicit_profile_selected", nil
 	}
 
 	filter := repositories.SessionProfileFilter{
@@ -2382,23 +2402,23 @@ func (c *SessionController) resolveSessionProfile(
 	profiles, err := c.sessionProfileRepo.List(ctx, filter)
 	if err != nil {
 		log.Printf("[SESSION] Warning: could not list session profiles for default lookup: %v", err)
-		return nil, nil
+		return nil, "profile_list_unavailable", nil
 	}
 	if profile := selectSessionProfileByTags(profiles, tags); profile != nil {
 		log.Printf("[SESSION] Applying tag-selected session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
-		return profile, nil
+		return profile, "most_specific_selector_tags_match", nil
 	}
 	if profile := c.resolveSettingsDefaultSessionProfile(ctx, userID, scope, teamID, profiles, authzCtx); profile != nil {
 		log.Printf("[SESSION] Applying settings default session profile %q (%s) for user %s", profile.ID(), profile.Name(), userID)
-		return profile, nil
+		return profile, "settings_default_selected", nil
 	}
 	for _, p := range profiles {
 		if p.IsDefault() {
 			log.Printf("[SESSION] Applying default session profile %q (%s) for user %s", p.ID(), p.Name(), userID)
-			return p, nil
+			return p, "legacy_default_selected", nil
 		}
 	}
-	return nil, nil
+	return nil, "no_matching_or_default_profile", nil
 }
 
 func (c *SessionController) canUseSessionProfile(

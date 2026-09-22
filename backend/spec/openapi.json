@@ -7632,6 +7632,11 @@
             "type": "object",
             "additionalProperties": true
           },
+          "resolution": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Structured decision trace for reuse, profile selection, placement, and pool scheduling. Reason and excluded_by values are stable machine-readable codes. Pool candidates are limited to pools the caller is authorized to use."
+          },
           "warnings": {
             "type": "array",
             "items": {

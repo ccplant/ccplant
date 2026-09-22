@@ -127,6 +127,8 @@ func TestStartSessionDryRunReturnsRedactedPlanWithoutCreatingSession(t *testing.
 	require.Equal(t, true, body["dry_run"])
 	require.Equal(t, "create", body["decision"])
 	require.Equal(t, "linux", body["placement"].(map[string]interface{})["pool"])
+	resolution := body["resolution"].(map[string]interface{})
+	require.Equal(t, "reuse_not_requested", resolution["reuse"].(map[string]interface{})["reason"])
 	effective := body["effective_request"].(map[string]interface{})
 	require.Equal(t, "<redacted>", effective["environment"].(map[string]interface{})["CUSTOM"])
 	require.Equal(t, "<redacted>", effective["params"].(map[string]interface{})["github_token"])
