@@ -41,9 +41,12 @@ export interface APIMCPServerResponse {
 // 認証モード
 export type AuthMode = 'oauth' | 'bedrock' | 'anthropic_compatible';
 
+export type ModelConnectionMode = 'auth_json' | 'openai_compatible' | 'oauth' | 'bedrock' | 'anthropic_compatible'
+
 export interface ModelConnection {
- mode: 'auth_json' | 'openai_compatible' | 'oauth' | 'bedrock' | 'anthropic_compatible';
+ mode: ModelConnectionMode;
  base_url?: string; model?: string; authentication?: 'api_key' | 'none';
+ default_models?: Partial<Record<ModelConnectionMode, string>>;
  api_key?: string; clear_api_key?: boolean; has_api_key?: boolean;
  context_window?: number | null; auto_compact_token_limit?: number | null; supports_reasoning_summaries?: boolean | null;
  web_search_enabled?: boolean | null;

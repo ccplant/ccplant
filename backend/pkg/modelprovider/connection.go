@@ -14,6 +14,7 @@ type Connection struct {
 	Mode                       string            `json:"mode"`
 	BaseURL                    string            `json:"base_url,omitempty"`
 	Model                      string            `json:"model,omitempty"`
+	DefaultModels              map[string]string `json:"default_models,omitempty"`
 	Authentication             string            `json:"authentication,omitempty"`
 	APIKey                     string            `json:"-" yaml:"-"`
 	HasAPIKey                  bool              `json:"has_api_key"`
@@ -50,8 +51,44 @@ func (c *Connection) Clone() *Connection {
 			copy.ModelAliases[k] = v
 		}
 	}
+	if c.DefaultModels != nil {
+		copy.DefaultModels = map[string]string{}
+		for k, v := range c.DefaultModels {
+			copy.DefaultModels[k] = v
+		}
+	}
 	copy.HasAPIKey = c.APIKey != ""
 	return &copy
+}
+
+// DefaultModel returns the model associated with an authentication mode. Model
+// remains as a backward-compatible alias for the currently selected mode.
+func (c *Connection) DefaultModel(mode string) string {
+	if c == nil {
+		return ""
+	}
+	if model := strings.TrimSpace(c.DefaultModels[mode]); model != "" {
+		return model
+	}
+	if mode == c.Mode {
+		return strings.TrimSpace(c.Model)
+	}
+	return ""
+}
+
+// NormalizeDefaultModels migrates the legacy model field and refreshes its
+// active-mode alias.
+func (c *Connection) NormalizeDefaultModels() {
+	if c == nil {
+		return
+	}
+	if c.DefaultModels == nil {
+		c.DefaultModels = map[string]string{}
+	}
+	if model := strings.TrimSpace(c.Model); c.Mode != "" && model != "" && c.DefaultModels[c.Mode] == "" {
+		c.DefaultModels[c.Mode] = model
+	}
+	c.Model = strings.TrimSpace(c.DefaultModels[c.Mode])
 }
 
 func (c *Connection) Compatible() bool {
@@ -93,6 +130,16 @@ func (c *Connection) Validate(agent string) error {
 	if strings.TrimSpace(c.Model) != "" {
 		if err := ValidateModel(c.Model); err != nil {
 			return err
+		}
+	}
+	for mode, model := range c.DefaultModels {
+		if err := validateDefaultModelMode(agent, mode); err != nil {
+			return err
+		}
+		if strings.TrimSpace(model) != "" {
+			if err := ValidateModel(model); err != nil {
+				return err
+			}
 		}
 	}
 	if !c.Compatible() {
@@ -142,6 +189,14 @@ func (c *Connection) Validate(agent string) error {
 		}
 	}
 	return nil
+}
+
+func validateDefaultModelMode(agent, mode string) error {
+	if (agent == "codex" && (mode == "auth_json" || mode == "openai_compatible")) ||
+		(agent == "claude" && (mode == "oauth" || mode == "bedrock" || mode == "anthropic_compatible")) {
+		return nil
+	}
+	return fmt.Errorf("invalid default model authentication mode")
 }
 
 // EndpointPath is appended to BaseURL without replacing its existing prefix.
@@ -206,7 +261,16 @@ func SelectAuthMode(c *Connection, mode string) (*Connection, error) {
 		}
 		result := c.Clone()
 		result.Mode = mode
+		result.Model = result.DefaultModel(mode)
 		return result, nil
 	}
-	return &Connection{Mode: mode}, nil
+	result := &Connection{Mode: mode}
+	if c != nil && c.DefaultModels != nil {
+		result.DefaultModels = map[string]string{}
+		for key, value := range c.DefaultModels {
+			result.DefaultModels[key] = value
+		}
+	}
+	result.Model = c.DefaultModel(mode)
+	return result, nil
 }

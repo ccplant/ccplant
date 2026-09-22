@@ -8833,6 +8833,13 @@
             "type": "string",
             "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
           },
+          "default_models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Default model IDs keyed by authentication mode. The legacy model field aliases the currently selected mode."
+          },
           "authentication": {
             "type": "string",
             "enum": [
@@ -8901,6 +8908,13 @@
             "type": "string",
             "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
           },
+          "default_models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Default model IDs keyed by authentication mode. The legacy model field aliases the currently selected mode."
+          },
           "authentication": {
             "type": "string",
             "enum": [
@@ -8958,6 +8972,13 @@
           "model": {
             "type": "string",
             "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
+          },
+          "default_models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Default model IDs keyed by authentication mode. The legacy model field aliases the currently selected mode."
           },
           "authentication": {
             "type": "string",
@@ -9020,6 +9041,13 @@
           "model": {
             "type": "string",
             "description": "Default model ID. Session profile CODEX_MODEL / ANTHROPIC_MODEL overrides this value; explicit session request wins."
+          },
+          "default_models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Default model IDs keyed by authentication mode. The legacy model field aliases the currently selected mode."
           },
           "authentication": {
             "type": "string",

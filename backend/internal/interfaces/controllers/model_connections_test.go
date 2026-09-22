@@ -62,6 +62,18 @@ func TestConnectionUpdateAtomicAndModeConflict(t *testing.T) {
 	require.Error(t, updateModelConnections(s, request))
 }
 
+func TestConnectionKeepsDefaultModelPerAuthenticationMode(t *testing.T) {
+	original := &modelprovider.Connection{Mode: "auth_json", Model: "gpt-account"}
+	compatible, err := mergeModelConnection(original, connectionPatch(t, `{"mode":"openai_compatible","base_url":"https://gateway.example/v1","model":"gateway-model","authentication":"none"}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"auth_json": "gpt-account", "openai_compatible": "gateway-model"}, compatible.DefaultModels)
+
+	restored, err := mergeModelConnection(compatible, connectionPatch(t, `{"mode":"auth_json"}`), "codex")
+	require.NoError(t, err)
+	require.Equal(t, "gpt-account", restored.Model)
+	require.Equal(t, "gateway-model", restored.DefaultModels["openai_compatible"])
+}
+
 func TestCompatibleConnectionUsesSystemBaseURLDefault(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "https://system-openai.example/v1")
 	t.Setenv("ANTHROPIC_BASE_URL", "https://system-anthropic.example")
