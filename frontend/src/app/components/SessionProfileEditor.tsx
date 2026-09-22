@@ -47,11 +47,13 @@ const profileSections = [
 ]
 
 type KeyValuePair = { key: string; value: string }
-type DefaultModelTarget = 'codex:auth_json' | 'codex:openai_compatible' | 'claude:oauth' | 'claude:bedrock' | 'claude:anthropic_compatible'
+type DefaultModelTarget = 'codex:all' | 'codex:auth_json' | 'codex:openai_compatible' | 'claude:all' | 'claude:oauth' | 'claude:bedrock' | 'claude:anthropic_compatible'
 
 const DEFAULT_MODEL_TARGETS = [
+  { value: 'codex:all', label: 'Codex / 全認証方式' },
   { value: 'codex:auth_json', label: 'Codex / auth.json' },
   { value: 'codex:openai_compatible', label: 'Codex / OpenAI 互換 API' },
+  { value: 'claude:all', label: 'Claude / 全認証方式' },
   { value: 'claude:oauth', label: 'Claude / OAuth' },
   { value: 'claude:bedrock', label: 'Claude / Bedrock' },
   { value: 'claude:anthropic_compatible', label: 'Claude / Anthropic 互換 API' },
@@ -91,7 +93,7 @@ export default function SessionProfileEditor({
   const [claudeModel, setClaudeModel] = useState('')
   const [codexDefaultModels, setCodexDefaultModels] = useState<NonNullable<SessionProfileParams['codex_default_models']>>({})
   const [claudeDefaultModels, setClaudeDefaultModels] = useState<NonNullable<SessionProfileParams['claude_default_models']>>({})
-  const [defaultModelTarget, setDefaultModelTarget] = useState<DefaultModelTarget>('codex:auth_json')
+  const [defaultModelTarget, setDefaultModelTarget] = useState<DefaultModelTarget>('codex:all')
   const [modelOptions, setModelOptions] = useState('')
   const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
@@ -179,11 +181,12 @@ export default function SessionProfileEditor({
       setClaudeDefaultModels(cfg?.params?.claude_default_models ?? {})
       const configuredTarget = DEFAULT_MODEL_TARGETS.find(({ value }) => {
         const [agent, mode] = value.split(':')
+        if (mode === 'all') return agent === 'codex' ? Boolean(cfg?.environment?.CODEX_MODEL) : Boolean(cfg?.environment?.ANTHROPIC_MODEL)
         return agent === 'codex'
           ? Boolean(cfg?.params?.codex_default_models?.[mode as keyof NonNullable<SessionProfileParams['codex_default_models']>])
           : Boolean(cfg?.params?.claude_default_models?.[mode as keyof NonNullable<SessionProfileParams['claude_default_models']>])
       })
-      setDefaultModelTarget(configuredTarget?.value ?? 'codex:auth_json')
+      setDefaultModelTarget(configuredTarget?.value ?? 'codex:all')
       setModelOptions((cfg?.params?.model_options ?? []).join('\n'))
       setMcpServers(cfg?.mcp_servers ?? {})
       setSourceProfileId(cfg?.source_session_profile_id ?? '')
@@ -254,7 +257,7 @@ export default function SessionProfileEditor({
       setClaudeModel('')
       setCodexDefaultModels({})
       setClaudeDefaultModels({})
-      setDefaultModelTarget('codex:auth_json')
+      setDefaultModelTarget('codex:all')
       setModelOptions('')
       setMcpServers({})
       setSourceProfileId('')
@@ -674,14 +677,16 @@ export default function SessionProfileEditor({
             {active.slug === 'models' && <div className="space-y-5">
                   <div className="space-y-3">
                     <p className="text-sm font-medium">エージェントごとのモデル</p>
-                    <p className="text-xs text-gray-500">認証方式別の値は個人・チーム接続のデフォルトを上書きします。下の共通モデルを指定すると、認証方式別の値より優先して全セッションに適用します。</p>
+                    <p className="text-xs text-gray-500">認証方式別の値が最優先です。「全認証方式」は個別の値がない場合のフォールバックとして使われます。</p>
                     <label className="block text-sm">認証方式
                       <select aria-label="デフォルトモデルの認証方式" value={defaultModelTarget}
                         onChange={e => setDefaultModelTarget(e.target.value as DefaultModelTarget)}
                         className="w-full rounded-md border bg-white p-2 dark:bg-gray-800">
                         {DEFAULT_MODEL_TARGETS.map(({ value, label }) => {
                           const [agent, mode] = value.split(':')
-                          const configured = agent === 'codex'
+                          const configured = mode === 'all'
+                            ? Boolean((agent === 'codex' ? codexModel : claudeModel).trim())
+                            : agent === 'codex'
                             ? Boolean(codexDefaultModels[mode as keyof typeof codexDefaultModels]?.trim())
                             : Boolean(claudeDefaultModels[mode as keyof typeof claudeDefaultModels]?.trim())
                           return <option key={value} value={value}>{label}{configured ? ' （設定済み）' : ''}</option>
@@ -691,10 +696,14 @@ export default function SessionProfileEditor({
                     <label className="block text-sm">デフォルトモデル
                       <input aria-label="認証方式別のデフォルトモデル"
                         value={defaultModelTarget.startsWith('codex:')
-                          ? codexDefaultModels[defaultModelTarget.slice(6) as keyof typeof codexDefaultModels] ?? ''
-                          : claudeDefaultModels[defaultModelTarget.slice(7) as keyof typeof claudeDefaultModels] ?? ''}
+                          ? defaultModelTarget === 'codex:all' ? codexModel : codexDefaultModels[defaultModelTarget.slice(6) as keyof typeof codexDefaultModels] ?? ''
+                          : defaultModelTarget === 'claude:all' ? claudeModel : claudeDefaultModels[defaultModelTarget.slice(7) as keyof typeof claudeDefaultModels] ?? ''}
                         onChange={e => {
-                          if (defaultModelTarget.startsWith('codex:')) {
+                          if (defaultModelTarget === 'codex:all') {
+                            setCodexModel(e.target.value)
+                          } else if (defaultModelTarget === 'claude:all') {
+                            setClaudeModel(e.target.value)
+                          } else if (defaultModelTarget.startsWith('codex:')) {
                             setCodexDefaultModels(current => ({ ...current, [defaultModelTarget.slice(6)]: e.target.value }))
                           } else {
                             setClaudeDefaultModels(current => ({ ...current, [defaultModelTarget.slice(7)]: e.target.value }))
@@ -702,17 +711,6 @@ export default function SessionProfileEditor({
                           setDirty(true)
                         }}
                         placeholder="接続設定から継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
-                    </label>
-                    <p className="text-sm font-medium pt-2">全認証方式への上書き（互換設定）</p>
-                    <label className="block text-sm">Codex モデル ID
-                      <input aria-label="Codex モデル ID" value={codexModel}
-                        onChange={e => { setCodexModel(e.target.value); setDirty(true) }}
-                        placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
-                    </label>
-                    <label className="block text-sm">Claude Code (Anthropic) モデル ID
-                      <input aria-label="Claude Code (Anthropic) モデル ID" value={claudeModel}
-                        onChange={e => { setClaudeModel(e.target.value); setDirty(true) }}
-                        placeholder="デフォルトを継承" className="w-full rounded-md border bg-white p-2 dark:bg-gray-800" />
                     </label>
                     <label className="block text-sm">モデル候補（ACP チャットの切り替え候補）
                       <textarea aria-label="モデル候補" value={modelOptions}

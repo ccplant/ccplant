@@ -7710,14 +7710,14 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Session-profile default model IDs keyed by Codex authentication mode. CODEX_MODEL remains the higher-priority profile-wide override."
+            "description": "Session-profile default model IDs keyed by Codex authentication mode. Mode-specific values take priority over the profile-wide CODEX_MODEL fallback."
           },
           "claude_default_models": {
             "type": "object",
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Session-profile default model IDs keyed by Claude authentication mode. ANTHROPIC_MODEL remains the higher-priority profile-wide override."
+            "description": "Session-profile default model IDs keyed by Claude authentication mode. Mode-specific values take priority over the profile-wide ANTHROPIC_MODEL fallback."
           },
           "credential_source": {
             "type": "string",

@@ -113,7 +113,10 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		if c == nil {
 			continue
 		}
-		fallback := c.Model
+		// The profile-wide model is a fallback for every authentication mode.
+		// A mode-specific profile value takes priority over that fallback, while
+		// an explicit model on the session request remains the highest layer.
+		fallback := modelprovider.ModelForLayers(agent, c.Model, req.ProfileEnvironment)
 		if params := profileConfig.Params(); params != nil {
 			models := params.ClaudeDefaultModels
 			if agent == "codex" {
@@ -123,7 +126,7 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 				fallback = model
 			}
 		}
-		c.Model = modelprovider.ModelForLayers(agent, fallback, req.ProfileEnvironment, req.Environment)
+		c.Model = modelprovider.ModelForLayers(agent, fallback, req.Environment)
 		if err := c.Validate(agent); err != nil {
 			return fmt.Errorf("invalid %s connection: %w", agent, err)
 		}

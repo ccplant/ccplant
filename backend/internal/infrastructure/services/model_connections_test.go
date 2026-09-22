@@ -200,8 +200,12 @@ func TestProfileConnectionOverridesEndpointAndKey(t *testing.T) {
 	// A fully specified profile can work without inherited credentials/models.
 	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "profile-model"}}
 	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
-	require.Equal(t, "profile-model", req.CodexConnection.Model)
+	require.Equal(t, "profile-gateway-model", req.CodexConnection.Model)
 	require.Equal(t, "profile-key", req.CodexConnection.APIKey)
+	// An explicit model supplied for this session still overrides profile defaults.
+	req = &entities.RunServerRequest{UserID: "user", CredentialSource: "none", ResolvedSessionProfileID: "profile", CodexAuthMode: "openai_compatible", ProfileEnvironment: map[string]string{"CODEX_MODEL": "profile-model"}, Environment: map[string]string{"CODEX_MODEL": "session-model"}}
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "session-model", req.CodexConnection.Model)
 }
 
 func TestProfileTeamSettingsInheritance(t *testing.T) {
