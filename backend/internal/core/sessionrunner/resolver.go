@@ -19,6 +19,27 @@ type ManagerLiveness interface {
 	IsManagerConnected(context.Context, string) (bool, error)
 }
 
+// ResolutionTrace explains the scheduling decision made by ResolveWithTrace.
+// Candidates only contains pools the subject is authorized to use, so the trace
+// does not disclose pools belonging to other users or teams.
+type ResolutionTrace struct {
+	RequestedPool string                    `json:"requested_pool,omitempty"`
+	SelectedPool  string                    `json:"selected_pool,omitempty"`
+	Reason        string                    `json:"reason"`
+	Candidates    []PoolCandidateResolution `json:"candidates"`
+}
+
+type PoolCandidateResolution struct {
+	Pool             string            `json:"pool"`
+	BindingID        string            `json:"binding_id"`
+	Priority         int               `json:"priority"`
+	ExplicitOnly     bool              `json:"explicit_only,omitempty"`
+	HealthySuppliers int               `json:"healthy_suppliers"`
+	Eligible         bool              `json:"eligible"`
+	ExcludedBy       []string          `json:"excluded_by,omitempty"`
+	RequiredLabels   map[string]string `json:"required_labels,omitempty"`
+}
+
 func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
 }
@@ -83,34 +104,105 @@ func (r *Resolver) AvailablePools(ctx context.Context, subject Subject) ([]*Logi
 }
 
 func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedPool, error) {
-	available, err := r.availablePools(ctx, subject)
+	resolved, _, err := r.ResolveWithTrace(ctx, subject, requestedPool, tags)
+	return resolved, err
+}
+
+// ResolveWithTrace applies the same scheduling algorithm as Resolve and also
+// returns stable reason codes suitable for dry-run assertions.
+func (r *Resolver) ResolveWithTrace(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedPool, *ResolutionTrace, error) {
+	pools, err := r.store.ListLogicalPools(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	managers, err := r.store.ListManagers(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	bindings, err := r.store.ListBindings(ctx, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	suppliers, err := r.store.ListPoolSuppliers(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	healthyManagers := make(map[string]bool, len(managers))
+	for _, manager := range managers {
+		available, err := r.managerAvailable(ctx, manager)
+		if err != nil {
+			return nil, nil, err
+		}
+		healthyManagers[manager.ID] = available
+	}
+	healthySuppliers := make(map[string]int)
+	for _, supplier := range suppliers {
+		if supplier.Enabled && !supplier.Draining && healthyManagers[supplier.ManagerID] {
+			healthySuppliers[supplier.Pool]++
+		}
 	}
 	requested := strings.TrimSpace(requestedPool)
+	trace := &ResolutionTrace{RequestedPool: requested, Reason: "no_eligible_pool", Candidates: []PoolCandidateResolution{}}
 	var candidates []*ResolvedPool
-	for _, resolved := range available {
-		if requested == "" && resolved.Binding.ExplicitOnly {
+	for _, pool := range pools {
+		binding := effectiveBinding(bindings, pool.Name, subject)
+		// Do not expose the existence or state of pools the caller cannot use.
+		if binding == nil || !binding.Role.GrantsUse() || !binding.Enabled {
 			continue
 		}
-		if !poolMatchesTags(resolved.Pool, tags) {
+		candidate := PoolCandidateResolution{Pool: pool.Name, BindingID: binding.ID, Priority: binding.Priority, ExplicitOnly: binding.ExplicitOnly, HealthySuppliers: healthySuppliers[pool.Name], RequiredLabels: allocatorLabels(tags)}
+		if !pool.Enabled {
+			candidate.ExcludedBy = append(candidate.ExcludedBy, "pool_disabled")
+		}
+		if candidate.HealthySuppliers == 0 {
+			candidate.ExcludedBy = append(candidate.ExcludedBy, "no_healthy_supplier")
+		}
+		if requested == "" && binding.ExplicitOnly {
+			candidate.ExcludedBy = append(candidate.ExcludedBy, "explicit_selection_required")
+		}
+		if !poolMatchesTags(pool, tags) {
+			candidate.ExcludedBy = append(candidate.ExcludedBy, "allocator_labels_mismatch")
+		}
+		if requested != "" && pool.Name != requested {
+			candidate.ExcludedBy = append(candidate.ExcludedBy, "not_requested_pool")
+		}
+		candidate.Eligible = len(candidate.ExcludedBy) == 0
+		trace.Candidates = append(trace.Candidates, candidate)
+		if !candidate.Eligible {
 			continue
 		}
-		if requested != "" && resolved.Pool.Name != requested {
-			continue
-		}
+		resolved := &ResolvedPool{Pool: pool, Binding: binding}
 		candidates = append(candidates, resolved)
 	}
+	sort.Slice(trace.Candidates, func(i, j int) bool { return trace.Candidates[i].Pool < trace.Candidates[j].Pool })
 	if requested != "" {
 		if len(candidates) == 0 {
-			return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requested)
+			trace.Reason = "requested_pool_not_eligible"
+			return nil, trace, fmt.Errorf("no authorized and healthy session pool matches %q", requested)
 		}
-		return firstPoolByPriority(candidates), nil
+		selected := firstPoolByPriority(candidates)
+		trace.SelectedPool, trace.Reason = selected.Pool.Name, "requested_pool_selected"
+		return selected, trace, nil
 	}
 	if len(candidates) == 0 {
-		return nil, nil
+		return nil, trace, nil
 	}
-	return firstPoolByPriority(candidates), nil
+	selected := firstPoolByPriority(candidates)
+	trace.SelectedPool, trace.Reason = selected.Pool.Name, "highest_priority_eligible_binding"
+	return selected, trace, nil
+}
+
+func allocatorLabels(tags map[string]string) map[string]string {
+	result := map[string]string{}
+	for key, value := range tags {
+		if strings.HasPrefix(key, "allocator.") && key != "allocator.pool" {
+			result[strings.TrimPrefix(key, "allocator.")] = value
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func firstPoolByPriority(pools []*ResolvedPool) *ResolvedPool {

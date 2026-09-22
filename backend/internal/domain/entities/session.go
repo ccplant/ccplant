@@ -273,6 +273,22 @@ type RunServerRequest struct {
 	SettingsTeamID string `json:"-"`
 }
 
+// SessionStartPlacement describes where a session would be started.
+type SessionStartPlacement struct {
+	Transport     string `json:"transport"`
+	Pool          string `json:"pool,omitempty"`
+	BindingID     string `json:"binding_id,omitempty"`
+	ManagerID     string `json:"manager_id,omitempty"`
+	LocalFallback bool   `json:"local_fallback,omitempty"`
+}
+
+// SessionStartPreview is the read-only result of resolving a session start.
+type SessionStartPreview struct {
+	Placement  SessionStartPlacement            `json:"placement"`
+	Settings   *sessionsettings.SessionSettings `json:"settings"`
+	Resolution interface{}                      `json:"resolution,omitempty"`
+}
+
 // Session represents a running agentapi session
 type Session interface {
 	// ID returns the unique session identifier

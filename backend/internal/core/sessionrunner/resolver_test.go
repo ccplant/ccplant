@@ -128,6 +128,36 @@ func TestResolverSelectsHighestPriorityEffectiveBinding(t *testing.T) {
 	require.Equal(t, "lower", resolved.Pool.Name)
 }
 
+func TestResolverTraceExplainsSelectionAndExclusions(t *testing.T) {
+	store := &resolverStore{
+		managers: []*Manager{{ID: "manager-a", Enabled: true}},
+		pools: []*LogicalPool{
+			{Name: "selected", Enabled: true, Labels: map[string]string{"arch": "amd64"}},
+			{Name: "explicit", Enabled: true, Labels: map[string]string{"arch": "amd64"}},
+			{Name: "private", Enabled: true},
+		},
+		suppliers: []*PoolSupplier{
+			{Pool: "selected", ManagerID: "manager-a", Enabled: true},
+			{Pool: "explicit", ManagerID: "manager-a", Enabled: true},
+			{Pool: "private", ManagerID: "manager-a", Enabled: true},
+		},
+		bindings: []*Binding{
+			{ID: "binding-selected", Pool: "selected", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 20},
+			{ID: "binding-explicit", Pool: "explicit", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 100, ExplicitOnly: true},
+			{ID: "binding-private", Pool: "private", SubjectType: SubjectUser, SubjectID: "bob", Enabled: true},
+		},
+	}
+
+	resolved, trace, err := NewResolver(store, 0).ResolveWithTrace(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, "", map[string]string{"allocator.arch": "amd64"})
+	require.NoError(t, err)
+	require.Equal(t, "selected", resolved.Pool.Name)
+	require.Equal(t, "highest_priority_eligible_binding", trace.Reason)
+	require.Equal(t, "selected", trace.SelectedPool)
+	require.Len(t, trace.Candidates, 2, "unauthorized pools must not be disclosed")
+	require.Equal(t, []string{"explicit_selection_required"}, trace.Candidates[0].ExcludedBy)
+	require.True(t, trace.Candidates[1].Eligible)
+}
+
 func TestResolverExplicitOnlyPoolRequiresPoolSelector(t *testing.T) {
 	store := &resolverStore{
 		managers:  []*Manager{{ID: "manager-a", Enabled: true}},
