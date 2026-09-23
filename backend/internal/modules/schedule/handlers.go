@@ -263,7 +263,9 @@ func (h *Handlers) ListSchedules(c echo.Context) error {
 	if user != nil {
 		userID = string(user.ID())
 		// Extract user's team IDs for filtering team-scoped schedules
-		if githubInfo := user.GitHubInfo(); githubInfo != nil {
+		if resolved, ok := user.ResolvedTeamIDs(); ok {
+			userTeamIDs = resolved
+		} else if githubInfo := user.GitHubInfo(); githubInfo != nil {
 			for _, team := range githubInfo.Teams() {
 				teamSlug := fmt.Sprintf("%s/%s", team.Organization, team.TeamSlug)
 				userTeamIDs = append(userTeamIDs, teamSlug)
