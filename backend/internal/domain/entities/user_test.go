@@ -14,6 +14,10 @@ func makeGitHubUser(teamMemberships []GitHubTeamMembership) *User {
 }
 
 func TestIsMemberOfTeam(t *testing.T) {
+	resolvedMember := makeGitHubUser([]GitHubTeamMembership{{Organization: "org", TeamSlug: "github-team"}})
+	resolvedMember.SetResolvedTeamIDs([]string{"team-01M36CUSTOM"})
+	resolvedEmpty := makeGitHubUser([]GitHubTeamMembership{{Organization: "org", TeamSlug: "github-team"}})
+	resolvedEmpty.SetResolvedTeamIDs(nil)
 	tests := []struct {
 		name     string
 		user     *User
@@ -64,6 +68,24 @@ func TestIsMemberOfTeam(t *testing.T) {
 			name:     "github user: no githubInfo",
 			user:     &User{userType: UserTypeGitHub},
 			teamID:   "org/myteam",
+			expected: false,
+		},
+		{
+			name:     "resolved teams: member of custom team",
+			user:     resolvedMember,
+			teamID:   "team-01M36CUSTOM",
+			expected: true,
+		},
+		{
+			name:     "resolved teams: canonical list overrides github fallback",
+			user:     resolvedMember,
+			teamID:   "org/github-team",
+			expected: false,
+		},
+		{
+			name:     "resolved teams: explicit empty list suppresses github fallback",
+			user:     resolvedEmpty,
+			teamID:   "org/github-team",
 			expected: false,
 		},
 	}

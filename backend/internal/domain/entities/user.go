@@ -441,6 +441,14 @@ func (u *User) IsMemberOfTeam(teamID string) bool {
 	if u.userType == UserTypeServiceAccount {
 		return u.teamID == teamID
 	}
+	if u.teamsResolved {
+		for _, resolvedTeamID := range u.resolvedTeamIDs {
+			if resolvedTeamID == teamID {
+				return true
+			}
+		}
+		return false
+	}
 
 	if u.githubInfo == nil {
 		return false
