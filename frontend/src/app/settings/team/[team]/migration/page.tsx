@@ -10,21 +10,25 @@ import type { Webhook } from '@/types/webhook'
 import type { SlackBot } from '@/types/slackbot'
 import type { SessionProfile } from '@/types/session_profile'
 import type { SandboxPolicy } from '@/types/sandbox_policy'
+import type { Schedule } from '@/types/schedule'
 
-type MigratablePayload = Memory | Webhook | SlackBot | SessionProfile | SandboxPolicy
-type Resource = { id: string; name: string; description?: string; type: TransferableResourceType; payload?: MigratablePayload }
+type MigrationResourceType = TransferableResourceType | 'schedule'
+type MigratablePayload = Memory | Webhook | SlackBot | Schedule | SessionProfile | SandboxPolicy
+type Resource = { id: string; name: string; description?: string; type: MigrationResourceType; payload?: MigratablePayload }
 type SourceMode = 'current' | 'external'
 
 interface ExternalSourceResponse {
   memories: Memory[] | { memories?: Memory[] }
   webhooks: Webhook[] | { webhooks?: Webhook[] }
   slackbots: SlackBot[] | { slackbots?: SlackBot[] }
+  schedules: Schedule[] | { schedules?: Schedule[] }
   profiles: SessionProfile[] | { session_profiles?: SessionProfile[] }
   policies: SandboxPolicy[] | { sandbox_policies?: SandboxPolicy[] }
 }
 
-const groups: { type: TransferableResourceType; label: string }[] = [
+const groups: { type: MigrationResourceType; label: string }[] = [
   { type: 'session_profile', label: 'セッションプロファイル' },
+  { type: 'schedule', label: 'スケジュール' },
   { type: 'sandbox_policy', label: 'サンドボックスポリシー' },
   { type: 'memory', label: 'メモリ' },
   { type: 'webhook', label: 'Webhook' },
@@ -64,6 +68,7 @@ export default function TeamMigrationPage() {
       let memories: Memory[]
       let webhooks: Webhook[]
       let slackbots: SlackBot[]
+      let schedules: Schedule[]
       let profiles: SessionProfile[]
       let policies: SandboxPolicy[]
       if (sourceMode === 'external') {
@@ -77,6 +82,7 @@ export default function TeamMigrationPage() {
         memories = Array.isArray(data.memories) ? data.memories : data.memories.memories || []
         webhooks = Array.isArray(data.webhooks) ? data.webhooks : data.webhooks.webhooks || []
         slackbots = Array.isArray(data.slackbots) ? data.slackbots : data.slackbots.slackbots || []
+        schedules = Array.isArray(data.schedules) ? data.schedules : data.schedules.schedules || []
         profiles = Array.isArray(data.profiles) ? data.profiles : data.profiles.session_profiles || []
         policies = Array.isArray(data.policies) ? data.policies : data.policies.sandbox_policies || []
       } else {
@@ -85,18 +91,21 @@ export default function TeamMigrationPage() {
           client.listMemories({ scope: 'team', team_id: sourceTeam }),
           client.getWebhooks({ scope: 'team', team_id: sourceTeam, limit: 100 }),
           client.getSlackBots({ scope: 'team', team_id: sourceTeam, limit: 100 }),
+          client.getSchedules({ scope: 'team', team_id: sourceTeam, limit: 100 }),
           client.getSessionProfiles({ scope: 'team', team_id: sourceTeam }),
           client.getSandboxPolicies({ scope: 'team', team_id: sourceTeam }),
         ])
         memories = result[0].memories
         webhooks = result[1].webhooks
         slackbots = result[2].slackbots
-        profiles = result[3].session_profiles
-        policies = result[4].sandbox_policies
+        schedules = result[3].schedules
+        profiles = result[4].session_profiles
+        policies = result[5].sandbox_policies
       }
       const next: Resource[] = [
         ...policies.map((item) => ({ id: item.id, name: item.name, description: item.description, type: 'sandbox_policy' as const, payload: item })),
         ...profiles.map((item) => ({ id: item.id, name: item.name, description: item.description, type: 'session_profile' as const, payload: item })),
+        ...schedules.map((item) => ({ id: item.id, name: item.name, description: item.cron_expr || item.scheduled_at, type: 'schedule' as const, payload: item })),
         ...memories.map((item) => ({ id: item.id, name: item.title, description: item.content, type: 'memory' as const, payload: item })),
         ...webhooks.map((item) => ({ id: item.id, name: item.name, description: `${item.type} · ${item.status}`, type: 'webhook' as const, payload: item })),
         ...slackbots.map((item) => ({ id: item.id, name: item.name, description: item.status, type: 'slackbot' as const, payload: item })),
@@ -132,7 +141,7 @@ export default function TeamMigrationPage() {
       const client = createAgentAPIProxyClientFromStorage()
       const idMap = new Map<string, string>()
       for (const item of chosen) {
-        if (sourceMode === 'current') {
+        if (sourceMode === 'current' && item.type !== 'schedule') {
           const request = { resource_type: item.type, resource_id: item.id, target_scope: 'team' as const, target_team_id: scopeId }
           await client.transferResource({ ...request, dry_run: true })
           await client.transferResource(request)
@@ -152,6 +161,13 @@ export default function TeamMigrationPage() {
           } else if (item.type === 'memory') {
             const value = item.payload as Memory
             const created = await client.createMemory({ title: value.title, content: value.content, tags: value.tags, scope: 'team', team_id: scopeId })
+            idMap.set(item.id, created.id)
+          } else if (item.type === 'schedule') {
+            const value = item.payload as Schedule
+            const sessionConfig = value.session_config ? structuredClone(value.session_config) : undefined
+            if (sourceMode === 'external' && sessionConfig?.session_profile_id) sessionConfig.session_profile_id = idMap.get(sessionConfig.session_profile_id)
+            const created = await client.createSchedule({ name: value.name, scheduled_at: value.scheduled_at, cron_expr: value.cron_expr, timezone: value.timezone, session_config: sessionConfig, scope: 'team', team_id: scopeId })
+            if (value.status !== 'active') await client.updateSchedule(created.id, { status: value.status })
             idMap.set(item.id, created.id)
           } else if (item.type === 'webhook') {
             const value = item.payload as Webhook
@@ -228,7 +244,7 @@ export default function TeamMigrationPage() {
           const allSelected = allItems.length > 0 && allItems.every((item) => selected.has(`${item.type}:${item.id}`))
           return <div key={group.type} className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"><div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-800/50"><label className="flex items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={allSelected} disabled={!allItems.length} onChange={() => setSelected((current) => { const next = new Set(current); allItems.forEach((item) => allSelected ? next.delete(`${item.type}:${item.id}`) : next.add(`${item.type}:${item.id}`)); return next })} />{group.label}</label><span className="text-xs text-gray-500">{allItems.filter((item) => selected.has(`${item.type}:${item.id}`)).length} / {allItems.length}</span></div><div className="divide-y divide-gray-100 dark:divide-gray-800">{items.length ? items.map((item) => { const key = `${item.type}:${item.id}`; return <label key={key} className="flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/40"><input className="mt-1" type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} /><span className="min-w-0"><span className="block text-sm font-medium text-gray-900 dark:text-white">{item.name}</span>{item.description && <span className="block truncate text-xs text-gray-500">{item.description}</span>}</span></label> }) : <p className="px-4 py-3 text-sm text-gray-400">リソースはありません</p>}</div></div>
         })}
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><div className="flex gap-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>{sourceMode === 'external' ? '別インスタンスには元データを残したまま、新しいリソースを作成します。Webhook の secret と SlackBot の token は安全上取得できないため、移行後に再設定してください。' : '所有権を付け替える操作です。Webhook や SlackBot が参照するプロファイルも一緒に選択してください。移行前に各リソースを検証します。'}</p></div></div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><div className="flex gap-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>{sourceMode === 'external' ? '別インスタンスには元データを残したまま、新しいリソースを作成します。Webhook の secret と SlackBot の token は安全上取得できないため、移行後に再設定してください。' : 'リソースの所有権を付け替えます。Schedule は移行元にも残るコピーとして作成されます。参照するプロファイルも一緒に選択してください。'}</p></div></div>
         <div className="flex items-center justify-between"><button onClick={() => setStep(1)} disabled={migrating} className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"><ChevronLeft className="size-4" />戻る</button><button onClick={migrate} disabled={!chosen.length || migrating} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{migrating ? <Loader2 className="size-4 animate-spin" /> : <WandSparkles className="size-4" />}{migrating ? `${completed} / ${chosen.length} 移行中` : `${chosen.length}件を移行`}</button></div>
       </section>}
 
