@@ -172,6 +172,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		ReuseMatchTags:           tags,
 		ReuseMessage:             reuseMessage,
 		StopBeforeReuse:          true,
+		DeferReuseToStart:        true,
 		MaxSessions:              webhook.MaxSessions(),
 		LimitMatchTags:           map[string]string{"webhook_id": webhook.ID()},
 	})
