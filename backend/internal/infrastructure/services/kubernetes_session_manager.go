@@ -4018,7 +4018,7 @@ func (m *KubernetesSessionManager) getInitialMessageFromSecret(ctx context.Conte
 }
 
 // getSessionMetaFromSecret reads the settings secret and returns the SessionMeta
-// (including MemoryKey, Teams, AgentType, Oneshot etc.) for session restore.
+// (including Teams and AgentType) for session restore.
 func (m *KubernetesSessionManager) getSessionMetaFromSecret(ctx context.Context, serviceName string) *sessionsettings.SessionMeta {
 	settingsSecretName := strings.TrimSuffix(serviceName, "-svc") + "-settings"
 	secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, settingsSecretName, metav1.GetOptions{})
@@ -6086,11 +6086,9 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
-	// Extract MemoryKey and Teams from session meta if available.
-	var memoryKey map[string]string
+	// Extract teams from session meta if available.
 	var teams []string
 	if sessionMeta != nil {
-		memoryKey = sessionMeta.MemoryKey
 		teams = sessionMeta.Teams
 	}
 
@@ -6139,7 +6137,6 @@ func (m *KubernetesSessionManager) restoreSessionFromService(svc *corev1.Service
 			Scope:          scope,
 			TeamID:         teamID,
 			InitialMessage: initialMessage,
-			MemoryKey:      memoryKey,
 			Teams:          teams,
 			SessionTTL:     sessionTTL,
 			AgentType:      agentType,
@@ -6221,11 +6218,9 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 	}
 	sessionMeta := m.getSessionMetaFromSecret(restoreCtx, svc.Name)
 
-	// Extract MemoryKey, Teams, and Oneshot from session meta if available
-	var memoryKey map[string]string
+	// Extract teams from session meta if available.
 	var teams []string
 	if sessionMeta != nil {
-		memoryKey = sessionMeta.MemoryKey
 		teams = sessionMeta.Teams
 	}
 
@@ -6274,7 +6269,6 @@ func (m *KubernetesSessionManager) restoreSessionFromServiceWithWorkload(svc *co
 			Scope:          scope,
 			TeamID:         teamID,
 			InitialMessage: initialMessage,
-			MemoryKey:      memoryKey,
 			Teams:          teams,
 			SessionTTL:     sessionTTL,
 			AgentType:      agentType,
@@ -6681,7 +6675,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		TeamID:             req.TeamID,
 		AgentType:          req.AgentType,
 		Teams:              req.Teams,
-		MemoryKey:          req.MemoryKey,
 		ResumeFrom:         req.ResumeFrom,
 		PersistenceEnabled: m.config.SessionPersistence.Backend != "",
 	}
@@ -6852,33 +6845,6 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	}
 
 	m.injectSciaProxyEnv(env, req)
-
-	// Memory integration: generate MEMORY_KEY_FLAGS and AGENTAPI_SCOPE for startup script
-	// and memory-sync sidecar. Flags are sorted for deterministic shell script expansion.
-	if len(req.MemoryKey) > 0 {
-		keys := make([]string, 0, len(req.MemoryKey))
-		for k := range req.MemoryKey {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		var flags []string
-		for _, k := range keys {
-			flags = append(flags, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
-		}
-		env["MEMORY_KEY_FLAGS"] = strings.Join(flags, " ")
-
-		memoryScope := "user"
-		if req.Scope == entities.ScopeTeam {
-			memoryScope = "team"
-		}
-		env["AGENTAPI_SCOPE"] = memoryScope
-	}
-
-	// Cache the resolved API key in the session for use by the memory-sync sidecar
-	if apiKey, ok := env["AGENTAPI_KEY"]; ok && apiKey != "" {
-		session.SetResolvedAPIKey(apiKey)
-	}
 
 	// codex-acp explicitly sends its selected sandbox policy with every turn,
 	// overriding sandbox_mode from ~/.codex/config.toml. Session Pods are already

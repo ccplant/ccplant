@@ -101,8 +101,8 @@ func TestScheduleAcceptance_OneTimeLifecycle(t *testing.T) {
 	ids := &sequenceIDs{ids: []string{"schedule-fixed", "session-fixed"}}
 	manager := NewKubernetesManager(fake.NewSimpleClientset(), "default").WithRuntime(clock, nil)
 	sessions := newMockProxySessionManager()
-	handlers := NewHandlersWithTimezone(manager, sessions, nil, nil, "UTC").WithRuntime(clock, ids)
-	worker := NewWorker(manager, sessions, nil, WorkerConfig{Enabled: true}, nil).WithRuntime(clock, ids)
+	handlers := NewHandlersWithTimezone(manager, sessions, nil, "UTC").WithRuntime(clock, ids)
+	worker := NewWorker(manager, sessions, WorkerConfig{Enabled: true}, nil).WithRuntime(clock, ids)
 
 	e := echo.New()
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {

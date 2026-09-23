@@ -13,7 +13,6 @@ export interface ScheduleSessionConfig {
     oneshot?: boolean;
     [key: string]: unknown;
   };
-  memory_key?: Record<string, string>;
   /** When true, reuse an existing active session matching schedule_id instead of creating a new one */
   reuse_session?: boolean;
   /** Message sent to the reused session. Falls back to params.message when empty. */

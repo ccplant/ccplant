@@ -8,7 +8,6 @@ import {
 } from '../../types/slackbot'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
-import MemoryKeyInput, { MemoryKeyPair, memoryKeyPairsToRecord, recordToMemoryKeyPairs } from './MemoryKeyInput'
 import SessionProfileSelect from './SessionProfileSelect'
 
 interface SlackbotFormModalProps {
@@ -53,9 +52,6 @@ export default function SlackbotFormModal({
   const [tagPairs, setTagPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
   const [repoFullName, setRepoFullName] = useState('')
 
-  // Memory key
-  const [memoryKeyPairs, setMemoryKeyPairs] = useState<MemoryKeyPair[]>([{ key: '', value: '' }])
-  const [showCustomMemory, setShowCustomMemory] = useState(false)
   const [sessionProfileId, setSessionProfileId] = useState('')
 
   // UI state
@@ -103,27 +99,6 @@ export default function SlackbotFormModal({
         setRepoFullName('')
       }
 
-      // Restore memory key pairs from existing memory_key
-      if (sc?.memory_key && Object.keys(sc.memory_key).length > 0) {
-        const mk = sc.memory_key as Record<string, string>
-        setMemoryKeyPairs(recordToMemoryKeyPairs(mk))
-        setShowAdvanced(true)
-        // カスタム判定: 既知のプリセットに合致しない場合はカスタム表示
-        const knownPresets = [
-          { bot_id: '{{ .bot_id }}' },
-          { channel: '{{ .event.channel }}' },
-          { user: '{{ .event.user }}' },
-        ]
-        const isKnown = knownPresets.some(preset =>
-          Object.keys(preset).length === Object.keys(mk).length &&
-          Object.entries(preset).every(([k, v]) => mk[k] === v)
-        )
-        setShowCustomMemory(!isKnown)
-      } else {
-        setMemoryKeyPairs([{ key: '', value: '' }])
-        setShowCustomMemory(false)
-      }
-
       // Auto-expand sections if data exists
       const hasBotToken = !!editingSlackbot.bot_token_secret_name
       setShowBotTokenSection(hasBotToken)
@@ -146,8 +121,6 @@ export default function SlackbotFormModal({
       setReuseMessageTemplate('{{ .event.text }}')
       setEnvPairs([{ key: '', value: '' }])
       setTagPairs([{ key: '', value: '' }])
-      setMemoryKeyPairs([{ key: '', value: '' }])
-      setShowCustomMemory(false)
       setShowBotTokenSection(false)
       setShowAdvanced(false)
       setRepoFullName('')
@@ -268,9 +241,6 @@ export default function SlackbotFormModal({
       const environment = pairsToRecord(envPairs)
       const tags = pairsToRecord(tagPairs)
 
-      // Build memory_key from pairs (Go template values like {{ .bot_id }} are resolved server-side at runtime)
-      const memoryKey = memoryKeyPairsToRecord(memoryKeyPairs)
-
       // Build session params (only include non-empty values)
       const sessionParams = {
         ...(repoFullName.trim() ? { repo_full_name: repoFullName.trim() } : {}),
@@ -299,10 +269,7 @@ export default function SlackbotFormModal({
           max_sessions: maxSessions,
           notify_on_session_created: notifyOnSessionCreated,
           allow_bot_messages: allowBotMessages,
-          session_config: {
-            ...sessionConfig,
-            ...(memoryKey ? { memory_key: memoryKey } : {}),
-          },
+          session_config: sessionConfig,
         }
         await client.updateSlackBot(editingSlackbot.id, updateData)
       } else {
@@ -746,67 +713,6 @@ export default function SlackbotFormModal({
                         追加
                       </button>
                     </div>
-                  </div>
-
-                  {/* Memory Key */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      セッション間の記憶を有効化する
-                    </label>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      Slackのメッセージをきっかけに起動するセッション間で、記憶を引き継ぐ範囲を指定します。指定しない場合は記憶を引き継ぎません。
-                    </p>
-                    {/* Template preset buttons */}
-                    <div className="flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => { setMemoryKeyPairs([{ key: 'bot_id', value: '{{ .bot_id }}' }]); setShowCustomMemory(false) }}
-                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${!showCustomMemory && memoryKeyPairs.length === 1 && memoryKeyPairs[0].key === 'bot_id' && memoryKeyPairs[0].value === '{{ .bot_id }}' ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                        title="このBotの全セッションで記憶を共有します"
-                      >
-                        Bot 全体で共有
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setMemoryKeyPairs([{ key: 'channel', value: '{{ .event.channel }}' }]); setShowCustomMemory(false) }}
-                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${!showCustomMemory && memoryKeyPairs.length === 1 && memoryKeyPairs[0].key === 'channel' && memoryKeyPairs[0].value === '{{ .event.channel }}' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                        title="同じチャンネルのセッション間で記憶を共有します"
-                      >
-                        チャンネルごとに分ける
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setMemoryKeyPairs([{ key: 'user', value: '{{ .event.user }}' }]); setShowCustomMemory(false) }}
-                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${!showCustomMemory && memoryKeyPairs.length === 1 && memoryKeyPairs[0].key === 'user' && memoryKeyPairs[0].value === '{{ .event.user }}' ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                        title="同じユーザーのセッション間で記憶を共有します"
-                      >
-                        ユーザーごとに分ける
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowCustomMemory(true)}
-                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${showCustomMemory ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                      >
-                        カスタム
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setMemoryKeyPairs([{ key: '', value: '' }]); setShowCustomMemory(false) }}
-                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${!showCustomMemory && memoryKeyPairs.every(p => !p.key) ? 'border-gray-500 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300' : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-                      >
-                        無効
-                      </button>
-                    </div>
-                    {showCustomMemory && (
-                      <div className="mt-3">
-                        <MemoryKeyInput
-                          pairs={memoryKeyPairs}
-                          onChange={setMemoryKeyPairs}
-                          disabled={isSubmitting}
-                          helpText='記憶を識別するキーと値を入力します。Goテンプレート形式も使用できます（例: {{ .event.channel }} でチャンネルID、{{ .bot_id }} でBot ID）'
-                        />
-                      </div>
-                    )}
                   </div>
 
                   {/* Session Profile */}

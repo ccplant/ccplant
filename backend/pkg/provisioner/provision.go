@@ -345,7 +345,6 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 	// ── Step 4: fetch memory from proxy → inject into CLAUDE.md ──────────────
 	s.setPhase("provision:fetch-memory")
-	s.fetchAndInjectMemory(envMap)
 
 	// ── Step 4.5: expose managed instructions and MCP servers to Pi ──────────
 	s.setPhase("provision:write-agent-files")
@@ -2013,71 +2012,6 @@ func countNonEmptyMessages(client *http.Client, agentapiURL string) int {
 		}
 	}
 	return count
-}
-
-// fetchAndInjectMemory fetches session memory from the proxy and appends it to
-// CLAUDE.md, replicating the bash memory injection in buildClaudeStartCommand.
-// getEnv returns the value of key from envMap if present, falling back to os.Getenv.
-func getEnv(envMap map[string]string, key string) string {
-	if v, ok := envMap[key]; ok {
-		return v
-	}
-	return os.Getenv(key)
-}
-
-func (s *Server) fetchAndInjectMemory(envMap map[string]string) {
-	memoryKeyFlags := getEnv(envMap, "MEMORY_KEY_FLAGS")
-	if memoryKeyFlags == "" {
-		return
-	}
-
-	proxyHost := getEnv(envMap, "AGENTAPI_PROXY_SERVICE_HOST")
-	proxyPort := getEnv(envMap, "AGENTAPI_PROXY_SERVICE_PORT_HTTP")
-	if proxyHost == "" || proxyPort == "" {
-		log.Printf("[PROVISIONER] AGENTAPI_PROXY_SERVICE_HOST or PORT not set, skipping memory fetch")
-		return
-	}
-	proxyEndpoint := fmt.Sprintf("http://%s:%s", proxyHost, proxyPort)
-
-	scope := getEnv(envMap, "AGENTAPI_SCOPE")
-	if scope == "" {
-		scope = "user"
-	}
-
-	args := []string{
-		"client", "memory", "list",
-		"--scope", scope,
-		"--union",
-		"--format", "markdown",
-		"--endpoint", proxyEndpoint,
-	}
-
-	// Append memory key flags (e.g. "--key foo --key bar").
-	args = append(args, strings.Fields(memoryKeyFlags)...)
-
-	if scope == "team" {
-		if teamID := getEnv(envMap, "AGENTAPI_TEAM_ID"); teamID != "" {
-			args = append(args, "--team-id", teamID)
-		}
-	}
-
-	log.Printf("[PROVISIONER] Fetching session memory (keys: %s)", memoryKeyFlags)
-	agentapiProxyBinary := proxybinary.FromMap(envMap)
-	out, err := exec.Command(agentapiProxyBinary, args...).Output()
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
-		log.Printf("[PROVISIONER] No memory found for this session (non-fatal)")
-		return
-	}
-
-	f, err := os.OpenFile(claudeMDPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		log.Printf("[PROVISIONER] Warning: failed to open CLAUDE.md for memory injection: %v", err)
-		return
-	}
-	defer func() { _ = f.Close() }()
-
-	_, _ = fmt.Fprintf(f, "\n---\n\n%s\n", bytes.TrimSpace(out))
-	log.Printf("[PROVISIONER] Memory injected into CLAUDE.md")
 }
 
 // writeWebhookPayloadFile writes the webhook payload JSON string to

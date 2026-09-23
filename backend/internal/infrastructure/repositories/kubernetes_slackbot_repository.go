@@ -465,9 +465,6 @@ func (r *KubernetesSlackBotRepository) sessionConfigJSONToSlackBotEntity(scj *we
 	sc.SetReuseMessageTemplate(scj.ReuseMessageTemplate)
 	sc.SetReuseSession(scj.ReuseSession)
 	sc.SetMountPayload(scj.MountPayload)
-	if scj.MemoryKey != nil {
-		sc.SetMemoryKey(scj.MemoryKey)
-	}
 	if scj.Params != nil {
 		sc.SetParams(scj.Params)
 	}
@@ -487,7 +484,6 @@ func (r *KubernetesSlackBotRepository) sessionConfigSlackBotEntityToJSON(sc *ent
 		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
 		ReuseSession:           sc.ReuseSession(),
 		MountPayload:           sc.MountPayload(),
-		MemoryKey:              sc.MemoryKey(),
 		SessionProfileID:       sc.SessionProfileID(),
 	}
 	if params := sc.Params(); params != nil {

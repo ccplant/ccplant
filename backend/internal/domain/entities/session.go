@@ -178,10 +178,6 @@ type StartRequest struct {
 	Scope ResourceScope `json:"scope,omitempty"`
 	// TeamID is the team identifier (e.g., "org/team-slug") when Scope is "team"
 	TeamID string `json:"team_id,omitempty"`
-	// MemoryKey is a custom tag map to identify memories for this session.
-	// If non-empty, memories matching these tags are fetched and injected into CLAUDE.md at startup.
-	// If empty, memory integration is disabled.
-	MemoryKey map[string]string `json:"memory_key,omitempty"`
 	// SessionProfileID is an optional reference to a SessionProfile.
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
@@ -231,18 +227,17 @@ type RunServerRequest struct {
 	StopBeforeReuse          bool
 	LimitMatchTags           map[string]string
 	MaxSessions              int
-	Teams                    []string          // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
-	GithubToken              string            // GitHub token passed via params.github_token
-	Scope                    ResourceScope     // Resource scope ("user" or "team")
-	TeamID                   string            // Team identifier when Scope is "team"
-	AgentType                string            // Agent type for the session
-	Model                    string            // Model override interpreted for the selected agent
-	ModelOptions             []string          // Model switching candidates exposed to the ACP chat UI
-	SlackParams              *SlackParams      // Slack integration parameters
-	InitialMessageWaitSecond *int              // Seconds to wait before sending initial message (default: 2)
-	MemoryKey                map[string]string // Tag map to identify memories; nil means use Tags
-	CycleMessage             string            // Message to send to session after each Claude stop event (injects Stop hook)
-	CycleMaxCount            int               // Maximum number of cycles (0 = unlimited); requires CycleMessage
+	Teams                    []string      // GitHub team slugs (e.g., ["org/team-a", "org/team-b"])
+	GithubToken              string        // GitHub token passed via params.github_token
+	Scope                    ResourceScope // Resource scope ("user" or "team")
+	TeamID                   string        // Team identifier when Scope is "team"
+	AgentType                string        // Agent type for the session
+	Model                    string        // Model override interpreted for the selected agent
+	ModelOptions             []string      // Model switching candidates exposed to the ACP chat UI
+	SlackParams              *SlackParams  // Slack integration parameters
+	InitialMessageWaitSecond *int          // Seconds to wait before sending initial message (default: 2)
+	CycleMessage             string        // Message to send to session after each Claude stop event (injects Stop hook)
+	CycleMaxCount            int           // Maximum number of cycles (0 = unlimited); requires CycleMessage
 	// Sandbox configures network isolation for the session.
 	Sandbox *SandboxParams
 	// Docker configures Docker-in-Docker (DinD) for the session.

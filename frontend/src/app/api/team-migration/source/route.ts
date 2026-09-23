@@ -59,15 +59,14 @@ export async function POST(request: NextRequest) {
     if (!token) return NextResponse.json({ message: 'API token を入力してください' }, { status: 400 })
     if (!teamId) return NextResponse.json({ message: '移行元 Team ID を入力してください' }, { status: 400 })
     const query = `scope=team&team_id=${encodeURIComponent(teamId)}`
-    const [memories, webhooks, slackbots, schedules, profiles, policies] = await Promise.all([
-      sourceFetch(base, `memories?${query}`, token),
+    const [webhooks, slackbots, schedules, profiles, policies] = await Promise.all([
       sourceCollection(base, `webhooks?${query}`, token, 'webhooks'),
       sourceCollection(base, `slackbots?${query}`, token, 'slackbots'),
       sourceCollection(base, `schedules?${query}`, token, 'schedules'),
       sourceFetch(base, `session-profiles?${query}`, token),
       sourceFetch(base, `sandbox-policies?${query}`, token),
     ])
-    return NextResponse.json({ memories, webhooks, slackbots, schedules, profiles, policies }, { headers: { 'Cache-Control': 'no-store' } })
+    return NextResponse.json({ webhooks, slackbots, schedules, profiles, policies }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : '移行元へ接続できませんでした'
     return NextResponse.json({ message }, { status: 400 })

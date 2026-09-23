@@ -249,7 +249,7 @@ func registerScheduleHandlers(proxyServer *app.Server) {
 	scheduleManager := proxyServer.GetScheduleManager()
 
 	// Create and register schedule handlers
-	scheduleHandlers := schedule.NewHandlers(scheduleManager, newTriggerSessionManager(proxyServer.GetConfig()), proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
+	scheduleHandlers := schedule.NewHandlers(scheduleManager, newTriggerSessionManager(proxyServer.GetConfig()), proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(scheduleHandlers)
 
 	log.Printf("[SCHEDULE_HANDLERS] Schedule handlers registered successfully")
@@ -317,7 +317,6 @@ func startScheduleWorker(configData *config.Config, proxyServer *app.Server) *sc
 		schedule.NewRedisLeaseClient(redisClient),
 		workerConfig,
 		electionConfig,
-		proxyServer.GetMemoryRepository(),
 		proxyServer.GetSessionProfileRepository(),
 	)
 
@@ -531,7 +530,7 @@ func registerWebhookHandlers(configData *config.Config, proxyServer *app.Server)
 	}
 
 	// Create and register webhook handlers with baseURL from config
-	webhookHandlers := webhook.NewHandlers(webhookRepo, newTriggerSessionManager(configData), configData.Webhook.BaseURL, proxyServer.GetMemoryRepository(), proxyServer.GetSessionProfileRepository())
+	webhookHandlers := webhook.NewHandlers(webhookRepo, newTriggerSessionManager(configData), configData.Webhook.BaseURL, proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(webhookHandlers)
 
 	if configData.Webhook.BaseURL != "" {
@@ -621,7 +620,6 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 		channelResolver,
 		configData.Webhook.BaseURL,
 		configData.Slack.DryRun,
-		proxyServer.GetMemoryRepository(),
 		proxyServer.GetSessionProfileRepository(),
 	)
 	if configData.Slack.DryRun {

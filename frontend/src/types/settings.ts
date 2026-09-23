@@ -132,8 +132,6 @@ export interface SettingsData {
   env_var_keys?: string[];  // 環境変数のキーのみ（読み取り時のみ、セキュリティのため値は含まない）
   preferred_team_id?: string;  // 使用するチームの ID（"org/team-slug" 形式）
   github_app_installation_id?: string;  // Team sessions で使用する GitHub App installation ID
-  memory_enabled?: boolean;  // メモリ機能の有効/無効（個人・チーム設定で使用）
-  memory_summarize_drafts?: boolean;  // ドラフトメモリの自動集約設定（個人・チーム設定で使用）
   slack_user_id?: string;  // Slack User ID（設定すると Slack DM 通知が有効になる）
   notification_channels?: string[];  // Active notification channels (e.g. ["web", "slack"])
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers
@@ -250,8 +248,6 @@ export interface GlobalSettings {
   agentApiType?: AgentApiType  // デフォルト 'auto'
   enterKeyBehavior?: EnterKeyBehavior  // デフォルト 'newline' (Enter で改行、Command/Ctrl+Enter で送信)
   fontSettings?: FontSettings  // デフォルト { fontSize: 14, fontFamily: 'sans-serif' }
-  memoryEnabled?: boolean  // デフォルト true（メモリ機能の有効/無効）
-  memorySummarizeDrafts?: boolean  // デフォルト undefined（プロキシのグローバル設定に従う）
   acpServerEnabled?: boolean  // デフォルト false（グローバル ACP サーバーモードの有効/無効）
   created_at: string
   updated_at: string
@@ -411,18 +407,6 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
 
   if (data.github_app_installation_id !== undefined) {
     prepared.github_app_installation_id = data.github_app_installation_id.trim()
-  }
-
-  // Memory Enabled の処理
-  // undefined の場合はフィールドを送信しない（設定なし扱い）
-  if (data.memory_enabled !== undefined) {
-    prepared.memory_enabled = data.memory_enabled
-  }
-
-  // Memory Summarize Drafts の処理
-  // undefined の場合はフィールドを送信しない（プロキシのデフォルト設定に従う）
-  if (data.memory_summarize_drafts !== undefined) {
-    prepared.memory_summarize_drafts = data.memory_summarize_drafts
   }
 
   // Slack User ID の処理
@@ -837,30 +821,6 @@ export const setAgentApiType = (type: AgentApiType): void => {
   const settings = loadFullGlobalSettings()
   settings.agentApiType = type
   delete (settings as { useClaudeAgentAPI?: boolean }).useClaudeAgentAPI
-  saveFullGlobalSettings(settings)
-}
-
-// Memory Settings utilities
-export const getMemoryEnabled = (): boolean => {
-  const settings = loadFullGlobalSettings()
-  // デフォルトは true（メモリ機能は有効）
-  return settings.memoryEnabled ?? true
-}
-
-export const setMemoryEnabled = (enabled: boolean): void => {
-  const settings = loadFullGlobalSettings()
-  settings.memoryEnabled = enabled
-  saveFullGlobalSettings(settings)
-}
-
-export const getMemorySummarizeDrafts = (): boolean | undefined => {
-  const settings = loadFullGlobalSettings()
-  return settings.memorySummarizeDrafts
-}
-
-export const setMemorySummarizeDrafts = (enabled: boolean | undefined): void => {
-  const settings = loadFullGlobalSettings()
-  settings.memorySummarizeDrafts = enabled
   saveFullGlobalSettings(settings)
 }
 

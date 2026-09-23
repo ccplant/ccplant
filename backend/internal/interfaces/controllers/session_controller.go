@@ -2587,18 +2587,6 @@ func applySessionProfile(
 			removeImplicitAllocatorCapabilities(startReq.Params, explicitSandbox, explicitDocker)
 		}
 
-		// MemoryKey: profile is base, request keys override
-		if len(cfg.MemoryKey()) > 0 {
-			merged := make(map[string]string, len(cfg.MemoryKey()))
-			for k, v := range cfg.MemoryKey() {
-				merged[k] = v
-			}
-			for k, v := range startReq.MemoryKey {
-				merged[k] = v
-			}
-			startReq.MemoryKey = merged
-		}
-
 		// SandboxPolicyID: apply profile's policy when request does not already specify one.
 		if startReq.Params == nil {
 			startReq.Params = &entities.SessionParams{}

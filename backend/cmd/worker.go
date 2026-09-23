@@ -85,7 +85,6 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken).WithSessionAPIURL(cfg.Worker.SessionAPIURL)
-	memoryRepo := repositories.NewKubernetesMemoryRepository(persistence, persistenceNamespace)
 	encryption, err := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION").Create()
 	if err != nil {
 		return err
@@ -119,7 +118,7 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 			cleanupWorker.Run(ctx)
 		}()
 	}
-	socketManager := newRemoteSlackSocketManager(cfg, persistence, persistenceNamespace, runtimeNamespace, remote, memoryRepo, profileRepo, leaseClient)
+	socketManager := newRemoteSlackSocketManager(cfg, persistence, persistenceNamespace, runtimeNamespace, remote, profileRepo, leaseClient)
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -177,10 +176,10 @@ func configureWorkerSlackCredential(ctx context.Context, cfg *config.Config, per
 	return nil
 }
 
-func newRemoteSlackSocketManager(cfg *config.Config, persistence kubernetes.Interface, persistenceNamespace, runtimeNamespace string, remote *controlapi.SessionManager, memory *repositories.KubernetesMemoryRepository, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient) *slackbot.SlackSocketManager {
+func newRemoteSlackSocketManager(cfg *config.Config, persistence kubernetes.Interface, persistenceNamespace, runtimeNamespace string, remote *controlapi.SessionManager, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient) *slackbot.SlackSocketManager {
 	repo := repositories.NewKubernetesSlackBotRepository(persistence, persistenceNamespace)
 	resolver := slackbot.NewSlackChannelResolver(persistence, persistenceNamespace).WithSecretClient(persistence)
-	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, resolver, cfg.Webhook.BaseURL, cfg.Slack.DryRun, memory, profiles)
+	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, resolver, cfg.Webhook.BaseURL, cfg.Slack.DryRun, profiles)
 	appSecret := cfg.Slack.AppTokenSecretName
 	if appSecret == "" {
 		appSecret = cfg.KubernetesSession.SlackBotTokenSecretName

@@ -65,18 +65,11 @@ import {
   UpdateSandboxPolicyRequest
 } from '../types/sandbox_policy';
 import {
-  Memory,
-  MemoryListParams,
-  MemoryListResponse,
-  CreateMemoryRequest,
-  UpdateMemoryRequest
-} from '../types/memory';
-import {
   CreateShareResponse,
   ShareStatus,
   RevokeShareResponse
 } from '../types/share';
-import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, getMemoryEnabled, getMemorySummarizeDrafts, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
+import { loadFullGlobalSettings, getDefaultProxySettings, addRepositoryToHistory, SettingsData, GoogleOAuthStatus, SciaAuthorizationURLResponse, SciaIntegrationsResponse, SciaRevokeResponse, AvailableManager, ExternalSessionManagerConfig, ExternalSessionManagerRegistrationToken, ExternalSessionManagerOperationalStatus, ExternalSessionManagerLogs } from '../types/settings';
 import { ProxyUserInfo } from '../types/user';
 import { TeamConfig, ExternalTeamBinding } from '../types/team-config';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
@@ -117,7 +110,7 @@ export interface CredentialsMetadata {
   updated_at: string;
 }
 
-export type TransferableResourceType = 'memory' | 'webhook' | 'slackbot' | 'session_profile' | 'sandbox_policy';
+export type TransferableResourceType = 'webhook' | 'slackbot' | 'session_profile' | 'sandbox_policy';
 
 export interface TransferResourceResult {
   resource_type: TransferableResourceType;
@@ -1096,24 +1089,6 @@ export class AgentAPIProxyClient {
       data = {
         metadata: (sessionData as Record<string, unknown>) || { source: 'agentapi-ui' }
       };
-    }
-
-    // Apply memory settings from global settings
-    if (typeof window !== 'undefined') {
-      const memoryEnabled = getMemoryEnabled();
-      if (!memoryEnabled) {
-        // メモリ機能が無効の場合: memory_key を空のオブジェクトに設定し、
-        // かつ tags も空にすることでメモリ統合を無効化する
-        data.memory_key = {};
-        // memory_summarize_drafts も false に設定してドラフト集約を抑制する
-        data.memory_summarize_drafts = false;
-      } else {
-        // メモリ機能が有効の場合: memory_summarize_drafts の設定を適用する
-        const memorySummarizeDrafts = getMemorySummarizeDrafts();
-        if (memorySummarizeDrafts !== undefined) {
-          data.memory_summarize_drafts = memorySummarizeDrafts;
-        }
-      }
     }
 
     const session = await this.makeRequest<Session>('/start', {
@@ -2564,91 +2539,6 @@ export class AgentAPIProxyClient {
     if (this.debug) {
       console.log(`[AgentAPIProxy] Deleted API token: ${tokenId}`);
     }
-  }
-
-  // ============================================================
-  // Memory methods
-  // ============================================================
-
-  /**
-   * List memory entries
-   * includeTags is expanded to include_tag.{key}={value} query params
-   */
-  async listMemories(params?: MemoryListParams): Promise<MemoryListResponse> {
-    const searchParams = new URLSearchParams();
-    if (params?.scope) searchParams.set('scope', params.scope);
-    if (params?.team_id) searchParams.set('team_id', params.team_id);
-    if (params?.includeTags) {
-      for (const [key, value] of Object.entries(params.includeTags)) {
-        searchParams.set(`include_tag.${key}`, value);
-      }
-    }
-    const endpoint = `/memories${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
-    const result = await this.makeRequest<Memory[] | MemoryListResponse>(endpoint);
-    if (Array.isArray(result)) {
-      return { memories: result, total: result.length };
-    }
-    return {
-      memories: result.memories || [],
-      total: result.total ?? (result.memories?.length ?? 0),
-    };
-  }
-
-  /**
-   * Create a memory entry
-   */
-  async createMemory(data: CreateMemoryRequest): Promise<Memory> {
-    if (this.debug) {
-      console.log('[AgentAPIProxy] Creating memory');
-    }
-    const memory = await this.makeRequest<Memory>('/memories', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    if (this.debug) {
-      console.log(`[AgentAPIProxy] Created memory: ${memory.id}`);
-    }
-    return memory;
-  }
-
-  /**
-   * Get a specific memory entry by ID
-   */
-  async getMemory(memoryId: string): Promise<Memory> {
-    return this.makeRequest<Memory>(`/memories/${memoryId}`);
-  }
-
-  /**
-   * Update a memory entry
-   */
-  async updateMemory(memoryId: string, data: UpdateMemoryRequest): Promise<Memory> {
-    if (this.debug) {
-      console.log(`[AgentAPIProxy] Updating memory ${memoryId}`);
-    }
-    const memory = await this.makeRequest<Memory>(`/memories/${memoryId}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-    if (this.debug) {
-      console.log(`[AgentAPIProxy] Updated memory: ${memory.id}`);
-    }
-    return memory;
-  }
-
-  /**
-   * Delete a memory entry
-   */
-  async deleteMemory(memoryId: string): Promise<{ success: boolean }> {
-    if (this.debug) {
-      console.log(`[AgentAPIProxy] Deleting memory: ${memoryId}`);
-    }
-    const result = await this.makeRequest<{ success: boolean }>(`/memories/${memoryId}`, {
-      method: 'DELETE',
-    });
-    if (this.debug) {
-      console.log(`[AgentAPIProxy] Deleted memory: ${memoryId}`);
-    }
-    return result;
   }
 
   // ---------------------------------------------------------------------------

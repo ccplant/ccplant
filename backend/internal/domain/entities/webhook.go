@@ -526,7 +526,6 @@ type WebhookSessionConfig struct {
 	params                 *SessionParams
 	reuseSession           bool
 	mountPayload           bool
-	memoryKey              map[string]string
 	// sessionProfileID is an optional reference to a SessionProfile.
 	// When set, the profile's config is used as a base; explicit fields override it.
 	sessionProfileID string
@@ -585,12 +584,6 @@ func (c *WebhookSessionConfig) MountPayload() bool { return c.mountPayload }
 
 // SetMountPayload sets whether to mount the webhook payload
 func (c *WebhookSessionConfig) SetMountPayload(mount bool) { c.mountPayload = mount }
-
-// MemoryKey returns the memory key map for memory integration
-func (c *WebhookSessionConfig) MemoryKey() map[string]string { return c.memoryKey }
-
-// SetMemoryKey sets the memory key map for memory integration
-func (c *WebhookSessionConfig) SetMemoryKey(key map[string]string) { c.memoryKey = key }
 
 // SessionProfileID returns the optional session profile ID reference
 func (c *WebhookSessionConfig) SessionProfileID() string { return c.sessionProfileID }

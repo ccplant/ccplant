@@ -6,7 +6,7 @@ import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-c
 import CronExpressionInput from './CronExpressionInput'
 import { OrganizationHistory } from '../../utils/organizationHistory'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
-import MemoryKeyInput, { MemoryKeyPair, memoryKeyPairsToRecord, recordToMemoryKeyPairs } from './MemoryKeyInput'
+import KeyValueInput, { KeyValuePair, keyValuePairsToRecord, recordToKeyValuePairs } from './KeyValueInput'
 import SessionProfileSelect from './SessionProfileSelect'
 
 interface ScheduleFormModalProps {
@@ -39,9 +39,7 @@ export default function ScheduleFormModal({
   const [oneshot, setOneshot] = useState(false)
   const [reuseSession, setReuseSession] = useState(false)
   const [reuseMessage, setReuseMessage] = useState('')
-  const [memoryKeyPairs, setMemoryKeyPairs] = useState<MemoryKeyPair[]>([{ key: '', value: '' }])
-  const [showCustomMemory, setShowCustomMemory] = useState(false)
-  const [envVarPairs, setEnvVarPairs] = useState<MemoryKeyPair[]>([{ key: '', value: '' }])
+  const [envVarPairs, setEnvVarPairs] = useState<KeyValuePair[]>([{ key: '', value: '' }])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -58,14 +56,7 @@ export default function ScheduleFormModal({
       setOneshot(editingSchedule.session_config?.params?.oneshot === true)
       setReuseSession(editingSchedule.session_config?.reuse_session === true)
       setReuseMessage(editingSchedule.session_config?.reuse_message || '')
-      const loadedPairs = recordToMemoryKeyPairs(editingSchedule.session_config?.memory_key as Record<string, string> | undefined)
-      setMemoryKeyPairs(loadedPairs)
-      // カスタム判定: presetに合致しないがキーがある場合はカスタム表示
-      const mk = editingSchedule.session_config?.memory_key as Record<string, string> | undefined
-      const isKnownPreset = !mk || Object.keys(mk).length === 0
-        || (Object.keys(mk).length === 1 && mk['schedule_id'] === '{{ .schedule_id }}')
-      setShowCustomMemory(!isKnownPreset)
-      setEnvVarPairs(recordToMemoryKeyPairs(editingSchedule.session_config?.environment))
+      setEnvVarPairs(recordToKeyValuePairs(editingSchedule.session_config?.environment))
 
       if (editingSchedule.cron_expr) {
         setExecutionType('recurring')
@@ -110,8 +101,6 @@ export default function ScheduleFormModal({
     setOneshot(false)
     setReuseSession(false)
     setReuseMessage('')
-    setMemoryKeyPairs([{ key: '', value: '' }])
-    setShowCustomMemory(false)
     setEnvVarPairs([{ key: '', value: '' }])
     setError(null)
   }
@@ -195,7 +184,7 @@ export default function ScheduleFormModal({
       if (oneshot) sessionParams.oneshot = true
       const hasParams = Object.keys(sessionParams).length > 0
 
-      const environment = memoryKeyPairsToRecord(envVarPairs)
+      const environment = keyValuePairsToRecord(envVarPairs)
 
       const scheduleData: CreateScheduleRequest = {
         name: name.trim(),
@@ -215,15 +204,6 @@ export default function ScheduleFormModal({
         scheduleData.cron_expr = cronExpr.trim()
       } else {
         scheduleData.scheduled_at = new Date(scheduledAt).toISOString()
-      }
-
-      // Build memory_key from pairs (Go template values like {{ .schedule_id }} are resolved server-side at runtime)
-      const memoryKey = memoryKeyPairsToRecord(memoryKeyPairs)
-      if (memoryKey) {
-        scheduleData.session_config = {
-          ...scheduleData.session_config,
-          memory_key: memoryKey,
-        }
       }
 
       if (isEditing && editingSchedule) {
@@ -504,70 +484,6 @@ export default function ScheduleFormModal({
             )}
           </div>
 
-          {/* Memory Key */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              セッション間の記憶を有効化する
-            </label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-              スケジュールを繰り返し実行するとき、前回のセッションの記憶を引き継ぐことができます。
-            </p>
-            {/* Preset + Custom buttons */}
-            <div className="flex flex-wrap gap-1.5">
-              {/* このスケジュールで共有 */}
-              <button
-                type="button"
-                onClick={() => { setMemoryKeyPairs([{ key: 'schedule_id', value: '{{ .schedule_id }}' }]); setShowCustomMemory(false) }}
-                disabled={isSubmitting}
-                className={`px-2.5 py-1 text-xs rounded-md border transition-colors disabled:opacity-50 ${
-                  !showCustomMemory && memoryKeyPairs.some(p => p.key === 'schedule_id')
-                    ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 font-medium'
-                    : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-                title="このスケジュールの実行ごとに同じ記憶を引き継ぎます"
-              >
-                このスケジュールで共有
-              </button>
-              {/* カスタム */}
-              <button
-                type="button"
-                onClick={() => setShowCustomMemory(true)}
-                disabled={isSubmitting}
-                className={`px-2.5 py-1 text-xs rounded-md border transition-colors disabled:opacity-50 ${
-                  showCustomMemory
-                    ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 font-medium'
-                    : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              >
-                カスタム
-              </button>
-              {/* 無効 */}
-              <button
-                type="button"
-                onClick={() => { setMemoryKeyPairs([{ key: '', value: '' }]); setShowCustomMemory(false) }}
-                disabled={isSubmitting}
-                className={`px-2.5 py-1 text-xs rounded-md border transition-colors disabled:opacity-50 ${
-                  !showCustomMemory && memoryKeyPairs.every(p => !p.key)
-                    ? 'bg-gray-100 dark:bg-gray-600 border-gray-400 dark:border-gray-500 text-gray-700 dark:text-gray-200 font-medium'
-                    : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              >
-                無効
-              </button>
-            </div>
-            {/* カスタム入力欄 */}
-            {showCustomMemory && (
-              <div className="mt-3">
-                <MemoryKeyInput
-                  pairs={memoryKeyPairs}
-                  onChange={setMemoryKeyPairs}
-                  disabled={isSubmitting}
-                  helpText='記憶を識別するキーと値を入力します。Goテンプレート形式も使用できます（例: {{ .schedule_id }}）'
-                />
-              </div>
-            )}
-          </div>
-
           {/* Environment Variables */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -576,7 +492,7 @@ export default function ScheduleFormModal({
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
               セッション実行時に渡す環境変数を設定します。
             </p>
-            <MemoryKeyInput
+            <KeyValueInput
               pairs={envVarPairs}
               onChange={setEnvVarPairs}
               disabled={isSubmitting}

@@ -122,7 +122,7 @@ type s3SessionStateStore struct {
 	bucket, prefix string
 }
 
-func newS3SessionStateStore(ctx context.Context, cfg *config.MemoryS3Config) (SessionStateStore, error) {
+func newS3SessionStateStore(ctx context.Context, cfg *config.S3StorageConfig) (SessionStateStore, error) {
 	if cfg == nil || cfg.Bucket == "" {
 		return nil, fmt.Errorf("session persistence S3 bucket is required")
 	}

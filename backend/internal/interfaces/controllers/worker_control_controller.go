@@ -69,7 +69,7 @@ func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
 			tags[k] = v
 		}
 		tags["schedule_id"] = item.ID
-		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, MemoryKey: item.SessionConfig.MemoryKey, SessionProfileID: item.SessionConfig.SessionProfileID}})
+		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, SessionProfileID: item.SessionConfig.SessionProfileID}})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"jobs": jobs})
 }

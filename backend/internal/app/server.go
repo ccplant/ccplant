@@ -15,14 +15,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
@@ -80,7 +78,6 @@ type Server struct {
 	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
 	shareRepo                   portrepos.ShareRepository                       // Share repository for session sharing
 	teamConfigRepo              portrepos.TeamConfigRepository                  // Team configuration repository
-	memoryRepo                  portrepos.MemoryRepository                      // Memory repository
 	sandboxPolicyRepo           portrepos.SandboxPolicyRepository               // Sandbox policy repository
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
@@ -167,7 +164,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "memories" && firstSegment != "assets" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "assets" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
 			}
 			return false
 		},
@@ -424,34 +421,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	localUserRepo := repositories.NewKubernetesLocalUserRepository(persistenceClient, namespace)
 	log.Printf("[SERVER] Local user repository initialized")
 
-	// Initialize memory repository based on backend configuration.
-	// Supported backends: "kubernetes" (default), "s3", "external".
-	var memoryRepo portrepos.MemoryRepository
-	switch cfg.Memory.Backend {
-	case "s3":
-		if cfg.Memory.S3 == nil {
-			log.Fatalf("[SERVER] Memory backend is 's3' but no S3 configuration provided")
-		}
-		s3MemRepo, s3Err := repositories.NewS3MemoryRepository(context.Background(), cfg.Memory.S3)
-		if s3Err != nil {
-			log.Fatalf("[SERVER] Failed to initialize S3 memory repository: %v", s3Err)
-		}
-		memoryRepo = s3MemRepo
-		log.Printf("[SERVER] Memory repository initialized (backend: s3, bucket: %s)", cfg.Memory.S3.Bucket)
-	case "external":
-		if cfg.Memory.External == nil || cfg.Memory.External.URL == "" {
-			log.Fatalf("[SERVER] Memory backend is 'external' but no external configuration provided (set AGENTAPI_MEMORY_EXTERNAL_URL)")
-		}
-		memoryRepo = repositories.NewExternalMemoryRepository(cfg.Memory.External, personalAPIKeyRepo, teamConfigRepo)
-		log.Printf("[SERVER] Memory repository initialized (backend: external, url: %s)", cfg.Memory.External.URL)
-	default:
-		memoryRepo = repositories.NewKubernetesMemoryRepository(
-			persistenceClient,
-			namespace,
-		)
-		log.Printf("[SERVER] Memory repository initialized (backend: kubernetes)")
-	}
-
 	// Initialize sandbox policy repository (Kubernetes ConfigMap-backed)
 	sandboxPolicyRepo := portrepos.SandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(
 		persistenceClient,
@@ -576,7 +545,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		credentialsRepo:             credentialsRepo,
 		shareRepo:                   shareRepo,
 		teamConfigRepo:              teamConfigRepo,
-		memoryRepo:                  memoryRepo,
 		sandboxPolicyRepo:           sandboxPolicyRepo,
 		sandboxDomainRepo:           sandboxDomainRepo,
 		sessionRouteRepo:            sessionRouteRepo,
@@ -762,24 +730,6 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 				log.Printf("[SERVER] ServiceAccountEnsurer configured for KubernetesSessionManager")
 			}
 		}
-	}
-
-	// Register memory dump handler on KubernetesSessionManager.
-	// This ensures dumpSessionToMemory is called for every session deletion path
-	// (HTTP DELETE, Slackbot cleanup, etc.) without requiring callers to know about it.
-	if k8sManager, ok := sessionManager.(*services.KubernetesSessionManager); ok && memoryRepo != nil {
-		k8sManager.AddSessionDeletedHandler(func(ctx context.Context, sess entities.Session) {
-			ks, ok := sess.(*services.KubernetesSession)
-			if !ok {
-				return
-			}
-			req := ks.Request()
-			if len(req.MemoryKey) == 0 {
-				return
-			}
-			s.dumpSessionToMemory(sess.ID(), ks, req)
-		})
-		log.Printf("[SERVER] Memory dump handler registered for session deletion")
 	}
 
 	// Local allocation may expose a stable public session ID while running the
@@ -1478,8 +1428,7 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		}
 	}
 
-	launcher := sessionuc.NewLaunchUseCase(s.sessionManager).
-		WithMemoryRepository(s.memoryRepo)
+	launcher := sessionuc.NewLaunchUseCase(s.sessionManager)
 	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
 		WebhookPayload:           startReq.WebhookPayload,
 		ResumeFrom:               resumeFrom,
@@ -1499,7 +1448,6 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 		ModelOptions:             modelOptions,
 		SlackParams:              slackParams,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
-		MemoryKey:                startReq.MemoryKey,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
 		Sandbox:                  sandbox,
@@ -1564,7 +1512,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 	}
 	if settings == nil {
 		settings = &sessionsettings.SessionSettings{
-			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Teams: teams, MemoryKey: startReq.MemoryKey},
+			Session: sessionsettings.SessionMeta{UserID: userID, Scope: string(startReq.Scope), TeamID: startReq.TeamID, AgentType: agentType, Teams: teams},
 			Env:     startReq.Environment, InitialMessage: initialMessage, UnsyncedFilePaths: runReq.UnsyncedFilePaths,
 		}
 	}
@@ -1863,140 +1811,6 @@ func (s *Server) DeleteSessionPoolAllocation(ctx context.Context, sessionID stri
 	return s.sessionRunnerStore.DeleteAllocation(ctx, sessionID)
 }
 
-// dumpSessionToMemory fetches messages from the session, stores them as a draft memory,
-// and creates an integration session to summarize and merge the draft into permanent memory.
-// All errors are logged and non-fatal — session deletion continues regardless.
-func (s *Server) dumpSessionToMemory(sessionID string, session *services.KubernetesSession, req *entities.RunServerRequest) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// 1. メッセージ取得
-	messages, err := s.sessionManager.GetMessages(ctx, sessionID)
-	if err != nil {
-		log.Printf("[MEMORY_DUMP] Failed to get messages for session %s: %v", sessionID, err)
-		return
-	}
-	if len(messages) == 0 {
-		log.Printf("[MEMORY_DUMP] No messages to dump for session %s, skipping", sessionID)
-		return
-	}
-
-	// 2. メッセージをフォーマット
-	content := formatMessagesForDump(messages)
-
-	// 3. ドラフトメモリのタグ = MemoryKey + draft=true
-	tags := make(map[string]string, len(req.MemoryKey)+1)
-	for k, v := range req.MemoryKey {
-		tags[k] = v
-	}
-	tags["draft"] = "true"
-
-	// 4. ドラフトメモリ保存
-	memID := uuid.New().String()
-	title := fmt.Sprintf("Draft: Session %s (%s)", sessionID[:8], time.Now().Format("2006-01-02 15:04"))
-	memory := entities.NewMemoryWithTags(memID, title, content, req.Scope, req.UserID, req.TeamID, tags)
-	if err := s.memoryRepo.Create(context.Background(), memory); err != nil {
-		log.Printf("[MEMORY_DUMP] Failed to save draft memory for session %s: %v", sessionID, err)
-		return
-	}
-	log.Printf("[MEMORY_DUMP] Saved draft memory %s for session %s", memID, sessionID)
-
-	// 5. 統合セッション作成
-	s.createMemoryIntegrationSession(req, memID)
-}
-
-// createMemoryIntegrationSession creates a hidden oneshot session whose task is to
-// summarize the given draft memory and merge it into the permanent memories.
-func (s *Server) createMemoryIntegrationSession(req *entities.RunServerRequest, draftMemoryID string) {
-	// MemoryKey フラグ生成（決定的な順序）
-	keys := make([]string, 0, len(req.MemoryKey))
-	for k := range req.MemoryKey {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var tagFlagParts []string // for --tag k=v (used in memory list)
-	var keyFlagParts []string // for --key k=v (used in memory upsert)
-	for _, k := range keys {
-		tagFlagParts = append(tagFlagParts, fmt.Sprintf("--tag %s=%s", k, req.MemoryKey[k]))
-		keyFlagParts = append(keyFlagParts, fmt.Sprintf("--key %s=%s", k, req.MemoryKey[k]))
-	}
-	memTagFlags := strings.Join(tagFlagParts, " ")
-	memKeyFlags := strings.Join(keyFlagParts, " ")
-
-	scope := "user"
-	if req.Scope == entities.ScopeTeam {
-		scope = "team"
-	}
-
-	prompt := buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID)
-
-	// 削除されたセッションの環境変数（AGENTAPI_KEY 等）を引き継ぐ
-	env := make(map[string]string, len(req.Environment))
-	for k, v := range req.Environment {
-		env[k] = v
-	}
-
-	integrationReq := &entities.RunServerRequest{
-		UserID:         req.UserID,
-		Teams:          req.Teams,
-		Scope:          req.Scope,
-		TeamID:         req.TeamID,
-		Tags:           map[string]string{"hidden": "true"},
-		MemoryKey:      nil, // MemoryKey を渡さない: 統合セッション削除時に再ダンプが走るのを防ぐ
-		InitialMessage: prompt,
-		SessionTTL:     "1m",
-		Environment:    env,
-	}
-
-	newSessionID := uuid.New().String()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if _, err := s.sessionManager.CreateSession(ctx, newSessionID, integrationReq, nil); err != nil {
-		log.Printf("[MEMORY_DUMP] Failed to create integration session: %v", err)
-		return
-	}
-	log.Printf("[MEMORY_DUMP] Created integration session %s for memory consolidation (draft: %s)", newSessionID, draftMemoryID)
-}
-
-// formatMessagesForDump formats a slice of messages as a markdown conversation log.
-func formatMessagesForDump(messages []portrepos.Message) string {
-	var sb strings.Builder
-	for _, msg := range messages {
-		fmt.Fprintf(&sb, "## [%s] %s\n\n%s\n\n---\n\n",
-			msg.Timestamp.Format("2006-01-02 15:04:05"), msg.Role, msg.Content)
-	}
-	return sb.String()
-}
-
-// buildIntegrationPrompt generates the initial message for the memory integration session.
-// memTagFlags: space-joined "--tag k=v" flags for memory list
-// memKeyFlags: space-joined "--key k=v" flags for memory upsert
-func buildIntegrationPrompt(memTagFlags, memKeyFlags, scope, draftMemoryID string) string {
-	return fmt.Sprintf(`あなたはメモリ統合エージェントです。以下のタスクを順番に実行してください。
-
-## タスク
-
-1. ドラフトメモリ（ID: %s）の内容を取得する:
-   agentapi-proxy client memory get %s
-
-2. 既存の永続メモリ一覧を取得する:
-   agentapi-proxy client memory list %s --scope %s --exclude-tag draft=true
-   （CLAUDE.md にすでに注入済みのメモリも参照してください）
-
-3. ドラフトの内容を分析・要約し、既存メモリとの重複を避けながら統合する。
-   統合した内容を /tmp/integrated_memory.md に保存する。
-
-4. 統合した内容でメモリを作成または更新する:
-   agentapi-proxy client memory upsert %s --scope %s --title "統合メモリ" --content-file /tmp/integrated_memory.md
-   （既存メモリがある場合は更新、ない場合は新規作成）
-
-5. 作業完了後、必ずドラフトメモリ（ID: %s）を削除する:
-   agentapi-proxy client memory delete %s
-
-重要: ステップ5のドラフトメモリ削除は必ず実行してください。すべての作業が完了したら、その旨を報告してください。`, draftMemoryID, draftMemoryID, memTagFlags, scope, memKeyFlags, scope, draftMemoryID, draftMemoryID)
-}
-
 // Shutdown gracefully stops all running sessions and waits for them to terminate
 func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.runtimeConfigCancel != nil {
@@ -2043,16 +1857,6 @@ func (s *Server) GetNotificationService() *notification.Service {
 // GetSettingsRepository returns the settings repository
 func (s *Server) GetSettingsRepository() portrepos.SettingsRepository {
 	return s.settingsRepo
-}
-
-// GetMemoryRepository returns the memory repository
-func (s *Server) GetMemoryRepository() portrepos.MemoryRepository {
-	return s.memoryRepo
-}
-
-// SetMemoryRepository allows configuration of a custom memory repository (for testing)
-func (s *Server) SetMemoryRepository(repo portrepos.MemoryRepository) {
-	s.memoryRepo = repo
 }
 
 // GetSessionProfileRepository returns the session profile repository
@@ -2276,7 +2080,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		TriggeredUserID: startReq.TriggeredUserID,
 		Pool:            requestedSessionPool(startReq), AgentType: agentType, Model: model, SessionTTL: sessionTTL, Environment: startReq.Environment,
 		ModelOptions:       modelOptions,
-		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags, MemoryKey: startReq.MemoryKey,
+		ProfileEnvironment: startReq.ProfileEnvironment, Tags: startReq.Tags,
 		InitialMessage: initialMessage, RepoInfo: s.extractRepositoryInfo(sessionID, startReq.Tags),
 		GithubToken: githubTokenForStartRequest(startReq), AuthProxy: authProxy,
 		Sandbox: sandbox, Docker: docker,

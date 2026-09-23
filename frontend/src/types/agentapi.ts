@@ -245,8 +245,6 @@ export interface CreateSessionRequest {
   };
   scope?: ResourceScope;
   team_id?: string;
-  memory_key?: Record<string, string>;
-  memory_summarize_drafts?: boolean;
   session_profile_id?: string;
 }
 

@@ -383,31 +383,13 @@ type KubernetesSessionConfig struct {
 	DinDMemoryLimit   string `json:"dind_memory_limit" mapstructure:"dind_memory_limit"`
 }
 
-// MemoryConfig represents memory backend configuration
-type MemoryConfig struct {
-	// Backend is the storage backend type: "kubernetes" (default), "s3", or "external"
-	Backend  string                `json:"backend" mapstructure:"backend"`
-	S3       *MemoryS3Config       `json:"s3,omitempty" mapstructure:"s3"`
-	External *MemoryExternalConfig `json:"external,omitempty" mapstructure:"external"`
-}
-
-// MemoryExternalConfig represents configuration for the external memory-server backend.
-// The external backend delegates all memory storage to a takutakahashi/memory-server instance.
-type MemoryExternalConfig struct {
-	// URL is the base URL of the memory-server (e.g., "http://memory-server:8080")
-	URL string `json:"url" mapstructure:"url"`
-	// AdminToken is used as ADMIN_TOKEN to create users in memory-server on demand.
-	// Typically populated from the AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN environment variable.
-	AdminToken string `json:"admin_token" mapstructure:"admin_token"`
-}
-
-// MemoryS3Config represents S3 backend configuration for memory storage
-type MemoryS3Config struct {
+// S3StorageConfig represents shared S3 storage configuration.
+type S3StorageConfig struct {
 	// Bucket is the S3 bucket name (required)
 	Bucket string `json:"bucket" mapstructure:"bucket"`
 	// Region is the AWS region (optional, uses AWS default config if empty)
 	Region string `json:"region" mapstructure:"region"`
-	// Prefix is the key prefix for all memory objects (default: "agentapi-memory/")
+	// Prefix is the key prefix for stored objects.
 	Prefix string `json:"prefix" mapstructure:"prefix"`
 	// Endpoint is a custom S3-compatible endpoint URL (e.g., for rustfs or other S3-compatible services)
 	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
@@ -416,10 +398,10 @@ type MemoryS3Config struct {
 // SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
 // to each Kubernetes session's workdir PVC; "s3" uses an S3-compatible service.
 type SessionPersistenceConfig struct {
-	Backend      string          `json:"backend" mapstructure:"backend"`
-	Path         string          `json:"path" mapstructure:"path"`
-	SuspendAfter string          `json:"suspend_after" mapstructure:"suspend_after"`
-	S3           *MemoryS3Config `json:"s3,omitempty" mapstructure:"s3"`
+	Backend      string           `json:"backend" mapstructure:"backend"`
+	Path         string           `json:"path" mapstructure:"path"`
+	SuspendAfter string           `json:"suspend_after" mapstructure:"suspend_after"`
+	S3           *S3StorageConfig `json:"s3,omitempty" mapstructure:"s3"`
 }
 
 // AssetConfig represents static asset upload configuration.
@@ -583,9 +565,7 @@ type Config struct {
 	// Webhook is the configuration for webhook functionality
 	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
 	// Scia is the configuration for scia OAuth token broker/proxy integration.
-	Scia SciaConfig `json:"scia" mapstructure:"scia"`
-	// Memory is the configuration for memory storage backend
-	Memory             MemoryConfig             `json:"memory" mapstructure:"memory"`
+	Scia               SciaConfig               `json:"scia" mapstructure:"scia"`
 	SessionPersistence SessionPersistenceConfig `json:"session_persistence" mapstructure:"session_persistence"`
 	// Asset is the configuration for static asset upload and serving.
 	Asset AssetConfig `json:"asset" mapstructure:"asset"`
@@ -847,7 +827,7 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 	config.SessionPersistence.Path = v.GetString("session_persistence.path")
 	config.SessionPersistence.SuspendAfter = v.GetString("session_persistence.suspend_after")
 	if bucket := v.GetString("session_persistence.s3.bucket"); bucket != "" {
-		config.SessionPersistence.S3 = &MemoryS3Config{
+		config.SessionPersistence.S3 = &S3StorageConfig{
 			Bucket: bucket, Region: v.GetString("session_persistence.s3.region"),
 			Prefix: v.GetString("session_persistence.s3.prefix"), Endpoint: v.GetString("session_persistence.s3.endpoint"),
 		}
@@ -1254,12 +1234,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
 	_ = v.BindEnv("worker.session_api_url", "AGENTAPI_WORKER_SESSION_API_URL")
 
-	// Memory backend configuration
-	_ = v.BindEnv("memory.backend", "AGENTAPI_MEMORY_BACKEND")
-	_ = v.BindEnv("memory.s3.bucket", "AGENTAPI_MEMORY_S3_BUCKET")
-	_ = v.BindEnv("memory.s3.region", "AGENTAPI_MEMORY_S3_REGION")
-	_ = v.BindEnv("memory.s3.prefix", "AGENTAPI_MEMORY_S3_PREFIX")
-	_ = v.BindEnv("memory.s3.endpoint", "AGENTAPI_MEMORY_S3_ENDPOINT")
 	_ = v.BindEnv("session_persistence.backend", "AGENTAPI_SESSION_PERSISTENCE_BACKEND")
 	_ = v.BindEnv("session_persistence.path", "AGENTAPI_SESSION_PERSISTENCE_PATH")
 	_ = v.BindEnv("session_persistence.suspend_after", "AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER")
@@ -1278,8 +1252,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("asset.s3.endpoint", "AGENTAPI_ASSET_S3_ENDPOINT")
 
 	// External memory-server backend configuration
-	_ = v.BindEnv("memory.external.url", "AGENTAPI_MEMORY_EXTERNAL_URL")
-	_ = v.BindEnv("memory.external.admin_token", "AGENTAPI_MEMORY_EXTERNAL_ADMIN_TOKEN")
 
 	// Redis configuration
 	_ = v.BindEnv("redis.addr", "AGENTAPI_REDIS_ADDR")
@@ -1422,17 +1394,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scia.todoist_hosts", []string{"api.todoist.com"})
 	v.SetDefault("scia.todoist_paths", []string{"/api/v1/*", "/rest/v2/*", "/sync/v9/*"})
 
-	// Memory backend defaults
-	v.SetDefault("memory.backend", "kubernetes")
-	v.SetDefault("memory.s3.prefix", "agentapi-memory/")
-	v.SetDefault("memory.s3.region", "")
-	v.SetDefault("memory.s3.endpoint", "")
 	v.SetDefault("session_persistence.backend", "")
 	v.SetDefault("session_persistence.path", "/var/lib/agentapi-session-state")
 	v.SetDefault("session_persistence.suspend_after", "1h")
 	v.SetDefault("session_persistence.s3.prefix", "agentapi-sessions/")
-	v.SetDefault("memory.external.url", "")
-	v.SetDefault("memory.external.admin_token", "")
 
 	// Asset backend defaults
 	v.SetDefault("asset.backend", "nginx")

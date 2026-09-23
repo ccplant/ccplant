@@ -24,13 +24,11 @@ type Handlers struct {
 }
 
 // NewHandlers creates a new Handlers instance
-func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository) *Handlers {
+func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, sessionProfileRepo portrepos.SessionProfileRepository) *Handlers {
 	return &Handlers{
-		manager:        manager,
-		sessionManager: sessionManager,
-		launcher: sessionuc.NewLaunchUseCase(sessionManager).
-			WithMemoryRepository(memoryRepo).
-			WithSessionProfileRepository(sessionProfileRepo),
+		manager:         manager,
+		sessionManager:  sessionManager,
+		launcher:        sessionuc.NewLaunchUseCase(sessionManager).WithSessionProfileRepository(sessionProfileRepo),
 		defaultTimezone: "Asia/Tokyo",
 		clock:           realClock{},
 		ids:             uuidGenerator{},
@@ -38,13 +36,11 @@ func NewHandlers(manager Manager, sessionManager portrepos.SessionManager, memor
 }
 
 // NewHandlersWithTimezone creates a new Handlers instance with a custom default timezone
-func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository, defaultTimezone string) *Handlers {
+func NewHandlersWithTimezone(manager Manager, sessionManager portrepos.SessionManager, sessionProfileRepo portrepos.SessionProfileRepository, defaultTimezone string) *Handlers {
 	return &Handlers{
-		manager:        manager,
-		sessionManager: sessionManager,
-		launcher: sessionuc.NewLaunchUseCase(sessionManager).
-			WithMemoryRepository(memoryRepo).
-			WithSessionProfileRepository(sessionProfileRepo),
+		manager:         manager,
+		sessionManager:  sessionManager,
+		launcher:        sessionuc.NewLaunchUseCase(sessionManager).WithSessionProfileRepository(sessionProfileRepo),
 		defaultTimezone: defaultTimezone,
 		clock:           realClock{},
 		ids:             uuidGenerator{},
@@ -578,7 +574,6 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
 		SessionTTL:               sessionTTL,
-		MemoryKey:                schedule.SessionConfig.MemoryKey,
 		RepoInfo:                 extractRepositoryInfo(tags, sessionID),
 		SessionProfileID:         schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id

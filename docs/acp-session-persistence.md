@@ -115,7 +115,6 @@ SQLite index（WAL/SHM を含む）と session index も同じ checkpoint に含
 - `~/.codex/auth.json`（既存 managed files / credentials）
 - `~/.codex/config.toml`, hooks, skills（起動時 compile）
 - `history.jsonl`, logs, cache, `state_*.sqlite`（履歴一覧や検索の補助状態）
-- `memories/`（会話再開とは別機能）
 
 Codex には Claude SDK の `SessionStore` に相当する、ACP package から設定可能な安定した
 オブジェクトストレージ adapter は現時点でない。upstream には experimental
