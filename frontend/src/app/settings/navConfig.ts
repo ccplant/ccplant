@@ -13,6 +13,7 @@ import {
   Terminal,
   Ticket,
   TimerOff,
+  WandSparkles,
   Users,
 } from 'lucide-react'
 import { SettingsData } from '@/types/settings'
@@ -43,6 +44,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     slug: 'team-profile',
     label: 'チーム管理',
     icon: Users,
+    group: '',
+    scopes: ['team'],
+    fields: [],
+  },
+  {
+    slug: 'migration',
+    label: '移行アシスタント',
+    icon: WandSparkles,
     group: '',
     scopes: ['team'],
     fields: [],

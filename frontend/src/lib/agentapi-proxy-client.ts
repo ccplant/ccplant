@@ -117,6 +117,18 @@ export interface CredentialsMetadata {
   updated_at: string;
 }
 
+export type TransferableResourceType = 'memory' | 'webhook' | 'slackbot' | 'session_profile' | 'sandbox_policy';
+
+export interface TransferResourceResult {
+  resource_type: TransferableResourceType;
+  resource_id: string;
+  from: { scope: ResourceScope; user_id?: string; team_id?: string };
+  to: { scope: ResourceScope; user_id?: string; team_id?: string };
+  status: 'transferred' | 'dry_run';
+  dry_run: boolean;
+  warnings?: string[];
+}
+
 // CodexDeviceAuthConfig is returned by GET /codex/device-auth/config
 export interface CodexDeviceAuthConfig {
   configured: boolean;
@@ -2459,6 +2471,21 @@ export class AgentAPIProxyClient {
   async deleteSandboxPolicy(policyId: string): Promise<void> {
     await this.makeRequest<void>(`/sandbox-policies/${policyId}`, {
       method: 'DELETE',
+    });
+  }
+
+  /** Validate or perform an ownership transfer between user/team scopes. */
+  async transferResource(data: {
+    resource_type: TransferableResourceType;
+    resource_id: string;
+    target_scope: ResourceScope;
+    target_user_id?: string;
+    target_team_id?: string;
+    dry_run?: boolean;
+  }): Promise<TransferResourceResult> {
+    return this.makeRequest<TransferResourceResult>('/resources/transfer', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
