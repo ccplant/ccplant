@@ -38,6 +38,7 @@ export interface SessionParams {
   agent_type?: string;
   model?: string;
   oneshot?: boolean;
+  session_ttl?: string;
   credential_source?: 'session_user' | 'triggered_user' | 'team' | 'none';
 }
 

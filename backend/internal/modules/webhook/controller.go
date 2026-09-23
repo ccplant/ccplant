@@ -197,6 +197,7 @@ type SessionParamsResponse struct {
 	AgentType        string `json:"agent_type,omitempty"`
 	Model            string `json:"model,omitempty"`
 	Oneshot          bool   `json:"oneshot,omitempty"`
+	SessionTTL       string `json:"session_ttl,omitempty"`
 	AuthProxy        *bool  `json:"auth_proxy,omitempty"`
 	CredentialSource string `json:"credential_source,omitempty"`
 }
@@ -798,6 +799,7 @@ func (c *WebhookController) sessionConfigToResponse(sc *entities.WebhookSessionC
 			AgentType:        params.AgentType,
 			Model:            params.Model,
 			Oneshot:          params.Oneshot,
+			SessionTTL:       params.SessionTTL,
 			AuthProxy:        params.AuthProxy,
 			CredentialSource: params.CredentialSource,
 		}
