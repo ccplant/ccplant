@@ -31,6 +31,7 @@ export default function ScheduleFormModal({
   const [scheduledAt, setScheduledAt] = useState('')
   const [timezone, setTimezone] = useState('Asia/Tokyo')
   const [message, setMessage] = useState('')
+  const [model, setModel] = useState('')
   const [repository, setRepository] = useState('')
   const [repositorySuggestions, setRepositorySuggestions] = useState<string[]>([])
   const [showRepositorySuggestions, setShowRepositorySuggestions] = useState(false)
@@ -51,6 +52,7 @@ export default function ScheduleFormModal({
       setName(editingSchedule.name)
       setTimezone(editingSchedule.timezone || 'Asia/Tokyo')
       setMessage(editingSchedule.session_config?.params?.message || '')
+      setModel(editingSchedule.session_config?.params?.model || '')
       setRepository(editingSchedule.session_config?.tags?.repository || '')
       setSessionProfileId(editingSchedule.session_config?.session_profile_id || '')
       setOneshot(editingSchedule.session_config?.params?.oneshot === true)
@@ -96,6 +98,7 @@ export default function ScheduleFormModal({
     setScheduledAt('')
     setTimezone('Asia/Tokyo')
     setMessage('')
+    setModel('')
     setRepository('')
     setSessionProfileId('')
     setOneshot(false)
@@ -181,6 +184,7 @@ export default function ScheduleFormModal({
 
       const sessionParams: ScheduleSessionConfig['params'] = {}
       if (message.trim()) sessionParams.message = message.trim()
+      if (model.trim()) sessionParams.model = model.trim()
       if (oneshot) sessionParams.oneshot = true
       const hasParams = Object.keys(sessionParams).length > 0
 
@@ -385,6 +389,25 @@ export default function ScheduleFormModal({
               rows={3}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white resize-y"
             />
+          </div>
+
+          {/* Model */}
+          <div>
+            <label htmlFor="model" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              モデル
+            </label>
+            <input
+              id="model"
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="例: gpt-5.4、claude-sonnet-4-6"
+              disabled={isSubmitting}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              このスケジュールから起動するセッションのモデルを指定します。空欄の場合はセッションプロファイルまたは既定値を使用します。
+            </p>
           </div>
 
           {/* Repository */}
