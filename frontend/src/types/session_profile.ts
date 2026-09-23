@@ -43,7 +43,6 @@ export interface SessionProfileConfig {
   initial_message_template?: string;
   reuse_message_template?: string;
   reuse_session?: boolean;
-  memory_key?: Record<string, string>;
   params?: SessionProfileParams;
   sandbox_policy_id?: string;
   session_ttl?: string;

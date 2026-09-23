@@ -25,10 +25,10 @@ type WebhookGitHubController struct {
 }
 
 // NewWebhookGitHubController creates a new GitHub webhook controller
-func NewWebhookGitHubController(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, memoryRepo repositories.MemoryRepository, sessionProfileRepo repositories.SessionProfileRepository) *WebhookGitHubController {
+func NewWebhookGitHubController(repo repositories.WebhookRepository, sessionManager repositories.SessionManager, sessionProfileRepo repositories.SessionProfileRepository) *WebhookGitHubController {
 	return &WebhookGitHubController{
 		repo:                repo,
-		sessionService:      NewWebhookSessionService(repo, sessionManager, memoryRepo, sessionProfileRepo),
+		sessionService:      NewWebhookSessionService(repo, sessionManager, sessionProfileRepo),
 		signatureVerifier:   infra.NewSignatureVerifier(),
 		gotemplateEvaluator: infra.NewGoTemplateEvaluator(),
 	}

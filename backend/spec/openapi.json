@@ -19,7 +19,9 @@
       "get": {
         "summary": "List accessible ccplant teams",
         "operationId": "listTeams",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "responses": {
           "200": {
             "description": "Accessible teams",
@@ -27,11 +29,15 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["teams"],
+                  "required": [
+                    "teams"
+                  ],
                   "properties": {
                     "teams": {
                       "type": "array",
-                      "items": {"$ref": "#/components/schemas/TeamConfig"}
+                      "items": {
+                        "$ref": "#/components/schemas/TeamConfig"
+                      }
                     }
                   }
                 }
@@ -44,16 +50,23 @@
         "summary": "Create a ccplant team",
         "description": "Creates a team with a generated team-<ULID> identity. Any authenticated user may create a team, and names need not be unique.",
         "operationId": "createTeam",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "properties": {
-                  "name": {"type": "string", "minLength": 1}
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               }
             }
@@ -62,42 +75,91 @@
         "responses": {
           "201": {
             "description": "Team created",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamConfig"
+                }
+              }
+            }
           },
-          "403": {"description": "Authentication required"}
+          "403": {
+            "description": "Authentication required"
+          }
         }
       }
     },
     "/teams/{team}": {
       "parameters": [
-        {"name": "team", "in": "path", "required": true, "schema": {"type": "string"}}
+        {
+          "name": "team",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
       ],
       "patch": {
         "summary": "Rename a ccplant team",
         "operationId": "renameTeam",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {
-            "type": "object",
-            "required": ["name"],
-            "properties": {"name": {"type": "string", "minLength": 1}}
-          }}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Renamed team", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}},
-          "403": {"description": "Team access denied"},
-          "404": {"description": "Team not found"}
+          "200": {
+            "description": "Renamed team",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamConfig"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Team access denied"
+          },
+          "404": {
+            "description": "Team not found"
+          }
         }
       },
       "delete": {
         "summary": "Delete a ccplant team",
         "operationId": "deleteTeam",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "responses": {
-          "204": {"description": "Team deleted"},
-          "403": {"description": "Team access denied"},
-          "404": {"description": "Team not found"}
+          "204": {
+            "description": "Team deleted"
+          },
+          "403": {
+            "description": "Team access denied"
+          },
+          "404": {
+            "description": "Team not found"
+          }
         }
       }
     },
@@ -107,36 +169,54 @@
           "name": "team",
           "in": "path",
           "required": true,
-          "schema": {"type": "string"}
+          "schema": {
+            "type": "string"
+          }
         }
       ],
       "get": {
         "summary": "Get a ccplant team configuration",
         "operationId": "getTeamConfig",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "responses": {
           "200": {
             "description": "Team configuration",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamConfig"
+                }
+              }
+            }
           },
-          "404": {"description": "Team not found"}
+          "404": {
+            "description": "Team not found"
+          }
         }
       },
       "put": {
         "summary": "Update GitHub Team mappings",
         "operationId": "updateTeamConfig",
-        "tags": ["Settings"],
+        "tags": [
+          "Settings"
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["external_teams"],
+                "required": [
+                  "external_teams"
+                ],
                 "properties": {
                   "external_teams": {
                     "type": "array",
-                    "items": {"$ref": "#/components/schemas/ExternalTeamBinding"}
+                    "items": {
+                      "$ref": "#/components/schemas/ExternalTeamBinding"
+                    }
                   }
                 }
               }
@@ -146,7 +226,13 @@
         "responses": {
           "200": {
             "description": "Updated team configuration",
-            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TeamConfig"}}}
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamConfig"
+                }
+              }
+            }
           }
         }
       }
@@ -977,37 +1063,144 @@
       "put": {
         "summary": "Upload or rotate the GitHub App PEM for a connection",
         "operationId": "updateGitHubAppPrivateKey",
-        "tags": ["GitHub Connections"],
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
-        "requestBody": {"required":true,"content":{"application/json":{"schema":{"type":"object","required":["value"],"properties":{"value":{"type":"string","format":"password","writeOnly":true}}}}}},
-        "responses": {"200":{"description":"Private key updated; plaintext is never returned"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "value"
+                ],
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Private key updated; plaintext is never returned"
+          }
+        }
       },
       "delete": {
         "summary": "Delete the GitHub App PEM from a connection",
         "operationId": "deleteGitHubAppPrivateKey",
-        "tags": ["GitHub Connections"],
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
-        "responses": {"204":{"description":"Private key deleted"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Private key deleted"
+          }
+        }
       }
     },
     "/admin/github-connections/{id}/github-app/test": {
       "post": {
         "summary": "Test a connection GitHub App against a repository",
         "operationId": "testGitHubApp",
-        "tags": ["GitHub Connections"],
-        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}],
-        "requestBody": {"required":true,"content":{"application/json":{"schema":{"type":"object","required":["repository"],"properties":{"repository":{"type":"string","pattern":"^[^/]+/[^/]+$"}}}}}},
-        "responses": {"200":{"description":"GitHub App token mint succeeded"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repository"
+                ],
+                "properties": {
+                  "repository": {
+                    "type": "string",
+                    "pattern": "^[^/]+/[^/]+$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "GitHub App token mint succeeded"
+          }
+        }
       }
     },
     "/internal/sessions/{sessionId}/github-credentials": {
       "get": {
         "summary": "Get a current repository-scoped token using a session broker credential",
         "operationId": "getSessionGitHubCredentials",
-        "tags": ["GitHub Connections"],
-        "security": [{"bearerAuth":[]}],
-        "parameters": [{"name":"sessionId","in":"path","required":true,"schema":{"type":"string"}}],
-        "responses": {"200":{"description":"Current short-lived credential"},"401":{"description":"Invalid or expired broker credential"}}
+        "tags": [
+          "GitHub Connections"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current short-lived credential"
+          },
+          "401": {
+            "description": "Invalid or expired broker credential"
+          }
+        }
       }
     },
     "/github-connections": {
@@ -4632,306 +4825,6 @@
         }
       }
     },
-    "/memories": {
-      "post": {
-        "summary": "Create a memory entry",
-        "description": "Creates a new memory entry for a user or team. User-scoped memories are private to the owner. Team-scoped memories are accessible to all team members.",
-        "operationId": "createMemory",
-        "tags": [
-          "Memory"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMemoryRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Memory entry created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Memory"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          }
-        }
-      },
-      "get": {
-        "summary": "List memory entries",
-        "description": "Lists memory entries accessible to the authenticated user. User-scoped queries return only the user's own entries. Team-scoped queries return entries for teams the user belongs to.",
-        "operationId": "listMemories",
-        "tags": [
-          "Memory"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "scope",
-            "in": "query",
-            "description": "Filter by scope: 'user' or 'team'. Omit to return both.",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "user",
-                "team"
-              ]
-            }
-          },
-          {
-            "name": "team_id",
-            "in": "query",
-            "description": "Filter by team ID (required when scope=team)",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "description": "Full-text search query applied to title and content (case-insensitive)",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "include_tag.{key}",
-            "in": "query",
-            "description": "Include only memories whose tags contain ALL of the specified key=value pairs. For example, `include_tag.category=news` returns only memories tagged with `category=news`. Multiple include_tag parameters are AND-combined.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "example": "include_tag.category=news"
-          },
-          {
-            "name": "exclude_tag.{key}",
-            "in": "query",
-            "description": "Exclude memories whose tags contain ALL of the specified key=value pairs. For example, `exclude_tag.category=news` excludes memories tagged with `category=news`. Multiple exclude_tag parameters are AND-combined.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            },
-            "example": "exclude_tag.category=news"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of memory entries",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          }
-        }
-      }
-    },
-    "/memories/{memoryId}": {
-      "get": {
-        "summary": "Get a memory entry",
-        "description": "Retrieves a specific memory entry by ID. Access is restricted to the owner (user-scoped) or team members (team-scoped). Admin privilege does NOT bypass these restrictions.",
-        "operationId": "getMemory",
-        "tags": [
-          "Memory"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "memoryId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the memory entry",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Memory entry",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Memory"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Memory entry not found"
-          }
-        }
-      },
-      "put": {
-        "summary": "Update a memory entry",
-        "description": "Updates a memory entry. Only the owner (user-scoped) or team members (team-scoped) can update. Omitted fields are not changed.",
-        "operationId": "updateMemory",
-        "tags": [
-          "Memory"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "memoryId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the memory entry",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateMemoryRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated memory entry",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Memory"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Memory entry not found"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete a memory entry",
-        "description": "Deletes a memory entry. Only the owner (user-scoped) or team members (team-scoped) can delete.",
-        "operationId": "deleteMemory",
-        "tags": [
-          "Memory"
-        ],
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "memoryId",
-            "in": "path",
-            "required": true,
-            "description": "UUID of the memory entry",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Deletion result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Memory entry not found"
-          }
-        }
-      }
-    },
     "/resources/transfer": {
       "post": {
         "summary": "Transfer a resource",
@@ -5309,7 +5202,14 @@
                     },
                     "status": {
                       "type": "string",
-                      "enum": ["starting", "waiting_for_user", "authorized", "denied", "failed", "cancelled"]
+                      "enum": [
+                        "starting",
+                        "waiting_for_user",
+                        "authorized",
+                        "denied",
+                        "failed",
+                        "cancelled"
+                      ]
                     },
                     "user_code": {
                       "type": "string",
@@ -5353,25 +5253,73 @@
       "get": {
         "summary": "Get a Codex device authorization attempt",
         "operationId": "getCodexDeviceAuthAttempt",
-        "tags": ["Codex"],
-        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
-        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "tags": [
+          "Codex"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "attemptId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "200": {"description": "Current attempt state"},
-          "401": {"description": "Unauthorized"},
-          "404": {"description": "Attempt not found"}
+          "200": {
+            "description": "Current attempt state"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Attempt not found"
+          }
         }
       },
       "delete": {
         "summary": "Cancel a Codex device authorization attempt",
         "operationId": "cancelCodexDeviceAuthAttempt",
-        "tags": ["Codex"],
-        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
-        "parameters": [{"name": "attemptId", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "tags": [
+          "Codex"
+        ],
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "attemptId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "204": {"description": "Attempt cancelled"},
-          "401": {"description": "Unauthorized"},
-          "404": {"description": "Attempt not found"}
+          "204": {
+            "description": "Attempt cancelled"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Attempt not found"
+          }
         }
       }
     },
@@ -6377,9 +6325,13 @@
         "summary": "List live status for manageable session pools and their managers",
         "description": "Returns only pools on which the authenticated subject has an enabled manage binding (all pools for admins). Session manager operational data is fetched live through each manager's outbound control channel.",
         "operationId": "listManageableSessionPoolStatus",
-        "tags": ["Session Pools"],
+        "tags": [
+          "Session Pools"
+        ],
         "responses": {
-          "200": {"description": "Manageable pools and live manager status"}
+          "200": {
+            "description": "Manageable pools and live manager status"
+          }
         }
       }
     },
@@ -6388,15 +6340,40 @@
         "summary": "Read session manager logs",
         "description": "Requires manage access to at least one pool supplied by the manager.",
         "operationId": "getSessionManagerLogs",
-        "tags": ["Session Pools"],
+        "tags": [
+          "Session Pools"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000,
+              "default": 200
+            }
+          }
         ],
         "responses": {
-          "200": {"description": "Log lines and source"},
-          "404": {"description": "Manager is not manageable by the caller"},
-          "503": {"description": "Manager control channel is offline"}
+          "200": {
+            "description": "Log lines and source"
+          },
+          "404": {
+            "description": "Manager is not manageable by the caller"
+          },
+          "503": {
+            "description": "Manager control channel is offline"
+          }
         }
       }
     },
@@ -6405,15 +6382,40 @@
         "summary": "Read session runner logs",
         "description": "Requires manage access to the runner's pool.",
         "operationId": "getSessionRunnerLogs",
-        "tags": ["Session Pools"],
+        "tags": [
+          "Session Pools"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000,
+              "default": 200
+            }
+          }
         ],
         "responses": {
-          "200": {"description": "Runner log lines and source"},
-          "404": {"description": "Runner is not manageable by the caller"},
-          "503": {"description": "Runner's manager control channel is offline"}
+          "200": {
+            "description": "Runner log lines and source"
+          },
+          "404": {
+            "description": "Runner is not manageable by the caller"
+          },
+          "503": {
+            "description": "Runner's manager control channel is offline"
+          }
         }
       }
     },
@@ -6422,10 +6424,16 @@
         "summary": "List all session runners",
         "description": "Returns the administrator inventory of pooled and direct runners, including live status, pool origin, and linked session.",
         "operationId": "listAdminSessionRunners",
-        "tags": ["Session Pools"],
+        "tags": [
+          "Session Pools"
+        ],
         "responses": {
-          "200": {"description": "Runner inventory"},
-          "403": {"description": "Admin permission required"}
+          "200": {
+            "description": "Runner inventory"
+          },
+          "403": {
+            "description": "Admin permission required"
+          }
         }
       }
     },
@@ -6434,17 +6442,51 @@
         "summary": "Read any session runner logs",
         "description": "Reads logs for a pooled or direct runner. Requires admin permission.",
         "operationId": "getAdminSessionRunnerLogs",
-        "tags": ["Session Pools"],
+        "tags": [
+          "Session Pools"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "tail", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 200}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "manager_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000,
+              "default": 200
+            }
+          }
         ],
         "responses": {
-          "200": {"description": "Runner log lines and source"},
-          "403": {"description": "Admin permission required"},
-          "404": {"description": "Session manager not found"},
-          "503": {"description": "Session manager control channel is offline"}
+          "200": {
+            "description": "Runner log lines and source"
+          },
+          "403": {
+            "description": "Admin permission required"
+          },
+          "404": {
+            "description": "Session manager not found"
+          },
+          "503": {
+            "description": "Session manager control channel is offline"
+          }
         }
       }
     },
@@ -6453,16 +6495,40 @@
         "summary": "Delete a session runner and its resources",
         "description": "Deletes the runner workload through its session manager, including Service, Deployment or Pod, PVC, session-labelled Secrets, allocation, and route metadata. Requires admin permission.",
         "operationId": "deleteAdminSessionRunner",
-        "tags": ["Session Pools"],
+        "tags": [
+          "Session Pools"
+        ],
         "parameters": [
-          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "manager_id", "in": "query", "required": true, "schema": {"type": "string"}}
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "manager_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "204": {"description": "Runner and related resources deleted"},
-          "403": {"description": "Admin permission required"},
-          "404": {"description": "Session manager not found"},
-          "503": {"description": "Session manager control channel is offline"}
+          "204": {
+            "description": "Runner and related resources deleted"
+          },
+          "403": {
+            "description": "Admin permission required"
+          },
+          "404": {
+            "description": "Session manager not found"
+          },
+          "503": {
+            "description": "Session manager control channel is offline"
+          }
         }
       }
     },
@@ -6922,33 +6988,54 @@
     "schemas": {
       "ExternalTeamBinding": {
         "type": "object",
-        "required": ["organization", "team_slug"],
+        "required": [
+          "organization",
+          "team_slug"
+        ],
         "properties": {
           "connection_id": {
             "type": "string",
             "description": "Optional source connection metadata; not part of mapping identity"
           },
-          "organization": {"type": "string"},
-          "team_slug": {"type": "string"},
+          "organization": {
+            "type": "string"
+          },
+          "team_slug": {
+            "type": "string"
+          },
           "managed_by": {
             "type": "string",
-            "enum": ["discovery", "api"]
+            "enum": [
+              "discovery",
+              "api"
+            ]
           }
         }
       },
       "TeamConfig": {
         "type": "object",
-        "required": ["team_id", "principal_id", "name", "external_teams"],
+        "required": [
+          "team_id",
+          "principal_id",
+          "name",
+          "external_teams"
+        ],
         "properties": {
-          "team_id": {"type": "string"},
+          "team_id": {
+            "type": "string"
+          },
           "principal_id": {
             "type": "string",
             "pattern": "^team-[0-9A-HJKMNP-TV-Z]{26}$"
           },
-          "name": {"type": "string"},
+          "name": {
+            "type": "string"
+          },
           "external_teams": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/ExternalTeamBinding"}
+            "items": {
+              "$ref": "#/components/schemas/ExternalTeamBinding"
+            }
           }
         }
       },
@@ -6997,7 +7084,9 @@
           },
           "github_app": {
             "type": "object",
-            "required": ["app_id"],
+            "required": [
+              "app_id"
+            ],
             "properties": {
               "app_id": {
                 "type": "integer",
@@ -7228,146 +7317,6 @@
           }
         }
       },
-      "Memory": {
-        "type": "object",
-        "description": "A memory entry belonging to a user or team",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Unique identifier (UUID)"
-          },
-          "title": {
-            "type": "string",
-            "description": "Title of the memory entry"
-          },
-          "content": {
-            "type": "string",
-            "description": "Text content of the memory entry"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "team"
-            ],
-            "description": "Scope of the memory entry"
-          },
-          "owner_id": {
-            "type": "string",
-            "description": "User ID of the owner who created this entry"
-          },
-          "team_id": {
-            "type": "string",
-            "description": "Team ID (populated when scope is 'team')"
-          },
-          "tags": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Key-value tags for filtering"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Creation timestamp"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Last update timestamp"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "content",
-          "scope",
-          "owner_id",
-          "created_at",
-          "updated_at"
-        ]
-      },
-      "CreateMemoryRequest": {
-        "type": "object",
-        "description": "Request body for creating a memory entry",
-        "required": [
-          "title",
-          "scope"
-        ],
-        "properties": {
-          "title": {
-            "type": "string",
-            "description": "Title of the memory entry"
-          },
-          "content": {
-            "type": "string",
-            "description": "Text content of the memory entry"
-          },
-          "scope": {
-            "type": "string",
-            "enum": [
-              "user",
-              "team"
-            ],
-            "description": "Scope of the memory entry"
-          },
-          "team_id": {
-            "type": "string",
-            "description": "Team ID (required when scope is 'team')"
-          },
-          "tags": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Key-value tags for filtering"
-          }
-        }
-      },
-      "UpdateMemoryRequest": {
-        "type": "object",
-        "description": "Request body for updating a memory entry. All fields are optional; omitted fields are not changed.",
-        "properties": {
-          "title": {
-            "type": "string",
-            "description": "New title (omit to keep existing)"
-          },
-          "content": {
-            "type": "string",
-            "description": "New content (omit to keep existing)"
-          },
-          "tags": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "New tags (when present, replaces ALL existing tags; omit to keep existing)"
-          }
-        }
-      },
-      "MemoryListResponse": {
-        "type": "object",
-        "description": "Response containing a list of memory entries",
-        "properties": {
-          "memories": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Memory"
-            },
-            "description": "List of memory entries"
-          },
-          "total": {
-            "type": "integer",
-            "description": "Total number of entries in the response"
-          }
-        },
-        "required": [
-          "memories",
-          "total"
-        ]
-      },
       "UsageEventBatch": {
         "type": "object",
         "required": [
@@ -7583,7 +7532,9 @@
         "properties": {
           "dry_run": {
             "type": "boolean",
-            "enum": [true]
+            "enum": [
+              true
+            ]
           },
           "session_id": {
             "type": "string",
@@ -7591,7 +7542,10 @@
           },
           "decision": {
             "type": "string",
-            "enum": ["create", "reuse"]
+            "enum": [
+              "create",
+              "reuse"
+            ]
           },
           "effective_request": {
             "type": "object",
@@ -7621,10 +7575,17 @@
             "description": "Side effects that a non-dry-run request would perform.",
             "items": {
               "type": "object",
-              "required": ["kind", "would_execute"],
+              "required": [
+                "kind",
+                "would_execute"
+              ],
               "properties": {
-                "kind": {"type": "string"},
-                "would_execute": {"type": "boolean"}
+                "kind": {
+                  "type": "string"
+                },
+                "would_execute": {
+                  "type": "boolean"
+                }
               }
             }
           },
@@ -7647,13 +7608,25 @@
       },
       "SessionStartPlacement": {
         "type": "object",
-        "required": ["transport"],
+        "required": [
+          "transport"
+        ],
         "properties": {
-          "transport": {"type": "string"},
-          "pool": {"type": "string"},
-          "binding_id": {"type": "string"},
-          "manager_id": {"type": "string"},
-          "local_fallback": {"type": "boolean"}
+          "transport": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "manager_id": {
+            "type": "string"
+          },
+          "local_fallback": {
+            "type": "boolean"
+          }
         }
       },
       "StartRequest": {
@@ -7688,17 +7661,6 @@
           "team_id": {
             "type": "string",
             "description": "Team identifier (e.g., 'org/team-slug') when scope is 'team'"
-          },
-          "memory_key": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Custom tag map to identify memories for this session. If not specified or empty, the session tags are used as the memory key. If both are empty, memory integration is disabled.",
-            "example": {
-              "project": "myapp",
-              "env": "production"
-            }
           }
         }
       },
@@ -8395,13 +8357,6 @@
           },
           "params": {
             "$ref": "#/components/schemas/SessionParams"
-          },
-          "memory_key": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Tag map used to identify memories for this session. When non-empty, memories matching these tags are injected into CLAUDE.md at startup. Supports Go template expressions (e.g. {{ .schedule_id }})."
           },
           "reuse_session": {
             "type": "boolean",
@@ -9502,7 +9457,10 @@
       },
       "AutoSuspendSettings": {
         "type": "object",
-        "required": ["enabled", "idle_timeout_minutes"],
+        "required": [
+          "enabled",
+          "idle_timeout_minutes"
+        ],
         "properties": {
           "enabled": {
             "type": "boolean"
@@ -10740,13 +10698,6 @@
           "type": "boolean",
           "description": "Whether to reuse an existing session instead of creating a new one"
         },
-        "memory_key": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Memory key mapping for session context"
-        },
         "params": {
           "$ref": "#/components/schemas/SessionParams"
         },
@@ -10774,256 +10725,255 @@
           "description": "Reference to another session profile used as a source for environment variables and MCP servers. The referenced profile must belong to the same tenant. Values in this profile override same-named entries."
         },
         "files": {
-        "files": {
-          "type": "array",
-          "description": "Files owned by this profile and written inside the container when a session starts.",
-          "items": {
-            "type": "object",
-            "required": [
-              "path"
-            ],
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Human-readable display name"
-              },
-              "path": {
-                "type": "string",
-                "description": "Absolute destination path inside the agent container"
-              },
-              "content": {
-                "type": "string",
-                "description": "File content (plain text or base64-encoded)"
-              },
-              "permissions": {
-                "type": "string",
-                "description": "File permissions hint (e.g. \"0600\")"
+          "files": {
+            "type": "array",
+            "description": "Files owned by this profile and written inside the container when a session starts.",
+            "items": {
+              "type": "object",
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Human-readable display name"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Absolute destination path inside the agent container"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "File content (plain text or base64-encoded)"
+                },
+                "permissions": {
+                  "type": "string",
+                  "description": "File permissions hint (e.g. \"0600\")"
+                }
               }
             }
-          }
-        },
-        "mcp_servers": {
-          "type": "object",
-          "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",
-          "additionalProperties": {
-            "$ref": "#/components/schemas/MCPServerRequest"
-          }
-        }
-      }
-    },
-    "CreateSessionProfileRequest": {
-      "type": "object",
-      "required": [
-        "name"
-      ],
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Profile name"
-        },
-        "description": {
-          "type": "string",
-          "description": "Human-readable description"
-        },
-        "scope": {
-          "$ref": "#/components/schemas/ResourceScope"
-        },
-        "team_id": {
-          "type": "string",
-          "description": "Team ID when scope is 'team'"
-        },
-        "is_default": {
-          "type": "boolean",
-          "description": "Whether this is the default profile for the tenant"
-        },
-        "selector_tags": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
           },
-          "description": "Tag selector used to choose this profile when launching a session"
-        },
-        "config": {
-          "$ref": "#/components/schemas/SessionProfileConfig"
-        }
-      }
-    },
-    "UpdateSessionProfileRequest": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Profile name"
-        },
-        "description": {
-          "type": "string",
-          "description": "Human-readable description"
-        },
-        "is_default": {
-          "type": "boolean",
-          "description": "Whether this is the default profile for the tenant"
-        },
-        "selector_tags": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Tag selector used to choose this profile when launching a session"
-        },
-        "config": {
-          "$ref": "#/components/schemas/SessionProfileConfig"
-        }
-      }
-    },
-    "SessionProfileResponse": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Session profile ID"
-        },
-        "name": {
-          "type": "string",
-          "description": "Profile name"
-        },
-        "description": {
-          "type": "string",
-          "description": "Human-readable description"
-        },
-        "user_id": {
-          "type": "string",
-          "description": "Owner user ID"
-        },
-        "scope": {
-          "$ref": "#/components/schemas/ResourceScope"
-        },
-        "team_id": {
-          "type": "string",
-          "description": "Team ID when scope is 'team'"
-        },
-        "is_default": {
-          "type": "boolean",
-          "description": "Whether this is the default profile for the tenant"
-        },
-        "selector_tags": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Tag selector used to choose this profile when launching a session"
-        },
-        "config": {
-          "$ref": "#/components/schemas/SessionProfileConfig"
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "TransferResourceRequest": {
-      "type": "object",
-      "required": [
-        "resource_type",
-        "resource_id",
-        "target_scope"
-      ],
-      "properties": {
-        "resource_type": {
-          "type": "string",
-          "enum": [
-            "memory",
-            "webhook",
-            "slackbot",
-            "session_profile",
-            "sandbox_policy"
-          ]
-        },
-        "resource_id": {
-          "type": "string"
-        },
-        "target_scope": {
-          "$ref": "#/components/schemas/ResourceScope"
-        },
-        "target_user_id": {
-          "type": "string",
-          "description": "Target user ID when target_scope is user. Defaults to current user."
-        },
-        "target_team_id": {
-          "type": "string",
-          "description": "Target team ID when target_scope is team."
-        },
-        "dry_run": {
-          "type": "boolean",
-          "description": "Validate the transfer without mutating the resource."
-        }
-      }
-    },
-    "TransferEndpoint": {
-      "type": "object",
-      "properties": {
-        "scope": {
-          "$ref": "#/components/schemas/ResourceScope"
-        },
-        "user_id": {
-          "type": "string"
-        },
-        "team_id": {
-          "type": "string"
-        }
-      }
-    },
-    "TransferResourceResponse": {
-      "type": "object",
-      "properties": {
-        "resource_type": {
-          "type": "string"
-        },
-        "resource_id": {
-          "type": "string"
-        },
-        "from": {
-          "$ref": "#/components/schemas/TransferEndpoint"
-        },
-        "to": {
-          "$ref": "#/components/schemas/TransferEndpoint"
-        },
-        "status": {
-          "type": "string",
-          "enum": [
-            "transferred",
-            "dry_run"
-          ]
-        },
-        "dry_run": {
-          "type": "boolean"
-        },
-        "warnings": {
-          "type": "array",
-          "items": {
-            "type": "string"
+          "mcp_servers": {
+            "type": "object",
+            "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MCPServerRequest"
+            }
           }
         }
-      }
-    },
-    "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "description": "GitHub OAuth token"
       },
-      "apiKey": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-Key",
-        "description": "Static API key"
+      "CreateSessionProfileRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Profile name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID when scope is 'team'"
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether this is the default profile for the tenant"
+          },
+          "selector_tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tag selector used to choose this profile when launching a session"
+          },
+          "config": {
+            "$ref": "#/components/schemas/SessionProfileConfig"
+          }
+        }
+      },
+      "UpdateSessionProfileRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Profile name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description"
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether this is the default profile for the tenant"
+          },
+          "selector_tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tag selector used to choose this profile when launching a session"
+          },
+          "config": {
+            "$ref": "#/components/schemas/SessionProfileConfig"
+          }
+        }
+      },
+      "SessionProfileResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Session profile ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Profile name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team ID when scope is 'team'"
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether this is the default profile for the tenant"
+          },
+          "selector_tags": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Tag selector used to choose this profile when launching a session"
+          },
+          "config": {
+            "$ref": "#/components/schemas/SessionProfileConfig"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TransferResourceRequest": {
+        "type": "object",
+        "required": [
+          "resource_type",
+          "resource_id",
+          "target_scope"
+        ],
+        "properties": {
+          "resource_type": {
+            "type": "string",
+            "enum": [
+              "webhook",
+              "slackbot",
+              "session_profile",
+              "sandbox_policy"
+            ]
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "target_scope": {
+            "$ref": "#/components/schemas/ResourceScope"
+          },
+          "target_user_id": {
+            "type": "string",
+            "description": "Target user ID when target_scope is user. Defaults to current user."
+          },
+          "target_team_id": {
+            "type": "string",
+            "description": "Target team ID when target_scope is team."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Validate the transfer without mutating the resource."
+          }
+        }
+      },
+      "TransferEndpoint": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/ResourceScope"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string"
+          }
+        }
+      },
+      "TransferResourceResponse": {
+        "type": "object",
+        "properties": {
+          "resource_type": {
+            "type": "string"
+          },
+          "resource_id": {
+            "type": "string"
+          },
+          "from": {
+            "$ref": "#/components/schemas/TransferEndpoint"
+          },
+          "to": {
+            "$ref": "#/components/schemas/TransferEndpoint"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "transferred",
+              "dry_run"
+            ]
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "securitySchemes": {
+        "bearerAuth": {
+          "type": "http",
+          "scheme": "bearer",
+          "description": "GitHub OAuth token"
+        },
+        "apiKey": {
+          "type": "apiKey",
+          "in": "header",
+          "name": "X-API-Key",
+          "description": "Static API key"
+        }
       }
     }
-  }
   },
   "security": [
     {
@@ -11089,10 +11039,6 @@
     {
       "name": "Notifications",
       "description": "Push notification management"
-    },
-    {
-      "name": "Memory",
-      "description": "User and team memory management. Supports tagging, full-text search, and fine-grained access control. User-scoped memories are completely private (admin cannot bypass)."
     },
     {
       "name": "Files",

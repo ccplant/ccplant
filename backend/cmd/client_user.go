@@ -16,7 +16,7 @@ var localUsername, localDisplayName, localEmail, localRole, localTokenName, loca
 
 var userCmd = &cobra.Command{Use: "user", Short: "Manage users"}
 var userCreateCmd = &cobra.Command{Use: "create", RunE: func(cmd *cobra.Command, _ []string) error {
-	c, err := resolveMemoryClient()
+	c, err := resolveBaseClient()
 	if err != nil {
 		return err
 	}
@@ -27,7 +27,7 @@ var userCreateCmd = &cobra.Command{Use: "create", RunE: func(cmd *cobra.Command,
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 }}
 var userGetCmd = &cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-	c, err := resolveMemoryClient()
+	c, err := resolveBaseClient()
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ var userTokenCreateCmd = &cobra.Command{Use: "create <user-id>", Args: cobra.Exa
 			_ = os.Remove(path)
 		}
 	}()
-	c, err := resolveMemoryClient()
+	c, err := resolveBaseClient()
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ var userTokenCreateCmd = &cobra.Command{Use: "create <user-id>", Args: cobra.Exa
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(out.Token)
 }}
 var userTokenListCmd = &cobra.Command{Use: "list <user-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-	c, err := resolveMemoryClient()
+	c, err := resolveBaseClient()
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ var userTokenListCmd = &cobra.Command{Use: "list <user-id>", Args: cobra.ExactAr
 	return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 }}
 var userTokenRevokeCmd = &cobra.Command{Use: "revoke <user-id> <token-id>", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-	c, err := resolveMemoryClient()
+	c, err := resolveBaseClient()
 	if err != nil {
 		return err
 	}

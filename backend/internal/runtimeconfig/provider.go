@@ -359,7 +359,7 @@ func applySections(cfg *config.Config, sections map[string]interface{}) error {
 	}
 	if storage.SessionPersistenceBucket != nil {
 		if cfg.SessionPersistence.S3 == nil {
-			cfg.SessionPersistence.S3 = &config.MemoryS3Config{}
+			cfg.SessionPersistence.S3 = &config.S3StorageConfig{}
 		}
 		cfg.SessionPersistence.S3.Bucket = *storage.SessionPersistenceBucket
 	}

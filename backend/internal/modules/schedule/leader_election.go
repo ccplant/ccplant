@@ -161,8 +161,8 @@ type LeaderWorker struct {
 	elector *LeaderElector
 }
 
-func NewLeaderWorker(manager Manager, sessionManager portrepos.SessionManager, client LeaseClient, workerConfig WorkerConfig, electionConfig LeaderElectionConfig, memoryRepo portrepos.MemoryRepository, sessionProfileRepo portrepos.SessionProfileRepository) *LeaderWorker {
-	return &LeaderWorker{worker: NewWorker(manager, sessionManager, memoryRepo, workerConfig, sessionProfileRepo), elector: NewLeaderElector(client, electionConfig)}
+func NewLeaderWorker(manager Manager, sessionManager portrepos.SessionManager, client LeaseClient, workerConfig WorkerConfig, electionConfig LeaderElectionConfig, sessionProfileRepo portrepos.SessionProfileRepository) *LeaderWorker {
+	return &LeaderWorker{worker: NewWorker(manager, sessionManager, workerConfig, sessionProfileRepo), elector: NewLeaderElector(client, electionConfig)}
 }
 
 var ErrRedisRequired = errors.New("worker leader election requires Redis")

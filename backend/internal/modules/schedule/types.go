@@ -86,9 +86,6 @@ type SessionConfig struct {
 	Tags map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters like initial message
 	Params *entities.SessionParams `json:"params,omitempty"`
-	// MemoryKey is an optional tag map used to identify memories for this session.
-	// When non-empty, memories matching these tags are injected into CLAUDE.md at startup.
-	MemoryKey map[string]string `json:"memory_key,omitempty"`
 	// ReuseSession when true, will reuse an existing active session matching schedule_id tag
 	// instead of creating a new session. The existing session receives the initial message (or
 	// ReuseMessage if set) instead of starting a new process.

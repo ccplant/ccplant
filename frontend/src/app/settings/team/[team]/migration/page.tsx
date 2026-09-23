@@ -5,7 +5,6 @@ import { AlertTriangle, ArrowRight, Check, ChevronLeft, Loader2, Search, WandSpa
 import { AgentAPIProxyError, createAgentAPIProxyClientFromStorage, TransferableResourceType } from '@/lib/agentapi-proxy-client'
 import { SettingsPageHeader } from '@/components/settings'
 import { useSettingsScope } from '../../../SettingsScopeContext'
-import type { Memory } from '@/types/memory'
 import type { Webhook } from '@/types/webhook'
 import type { SlackBot } from '@/types/slackbot'
 import type { SessionProfile } from '@/types/session_profile'
@@ -13,12 +12,11 @@ import type { SandboxPolicy } from '@/types/sandbox_policy'
 import type { Schedule } from '@/types/schedule'
 
 type MigrationResourceType = TransferableResourceType | 'schedule'
-type MigratablePayload = Memory | Webhook | SlackBot | Schedule | SessionProfile | SandboxPolicy
+type MigratablePayload = Webhook | SlackBot | Schedule | SessionProfile | SandboxPolicy
 type Resource = { id: string; name: string; description?: string; type: MigrationResourceType; payload?: MigratablePayload }
 type SourceMode = 'current' | 'external'
 
 interface ExternalSourceResponse {
-  memories: Memory[] | { memories?: Memory[] }
   webhooks: Webhook[] | { webhooks?: Webhook[] }
   slackbots: SlackBot[] | { slackbots?: SlackBot[] }
   schedules: Schedule[] | { schedules?: Schedule[] }
@@ -30,7 +28,6 @@ const groups: { type: MigrationResourceType; label: string }[] = [
   { type: 'session_profile', label: 'セッションプロファイル' },
   { type: 'schedule', label: 'スケジュール' },
   { type: 'sandbox_policy', label: 'サンドボックスポリシー' },
-  { type: 'memory', label: 'メモリ' },
   { type: 'webhook', label: 'Webhook' },
   { type: 'slackbot', label: 'SlackBot' },
 ]
@@ -65,7 +62,6 @@ export default function TeamMigrationPage() {
     setLoading(true)
     setError(null)
     try {
-      let memories: Memory[]
       let webhooks: Webhook[]
       let slackbots: SlackBot[]
       let schedules: Schedule[]
@@ -79,7 +75,6 @@ export default function TeamMigrationPage() {
         })
         const data = await response.json() as ExternalSourceResponse & { message?: string }
         if (!response.ok) throw new Error(data.message || '移行元へ接続できませんでした')
-        memories = Array.isArray(data.memories) ? data.memories : data.memories.memories || []
         webhooks = Array.isArray(data.webhooks) ? data.webhooks : data.webhooks.webhooks || []
         slackbots = Array.isArray(data.slackbots) ? data.slackbots : data.slackbots.slackbots || []
         schedules = Array.isArray(data.schedules) ? data.schedules : data.schedules.schedules || []
@@ -88,25 +83,22 @@ export default function TeamMigrationPage() {
       } else {
         const client = createAgentAPIProxyClientFromStorage()
         const result = await Promise.all([
-          client.listMemories({ scope: 'team', team_id: sourceTeam }),
           client.getWebhooks({ scope: 'team', team_id: sourceTeam, limit: 100 }),
           client.getSlackBots({ scope: 'team', team_id: sourceTeam, limit: 100 }),
           client.getSchedules({ scope: 'team', team_id: sourceTeam, limit: 100 }),
           client.getSessionProfiles({ scope: 'team', team_id: sourceTeam }),
           client.getSandboxPolicies({ scope: 'team', team_id: sourceTeam }),
         ])
-        memories = result[0].memories
-        webhooks = result[1].webhooks
-        slackbots = result[2].slackbots
-        schedules = result[3].schedules
-        profiles = result[4].session_profiles
-        policies = result[5].sandbox_policies
+        webhooks = result[0].webhooks
+        slackbots = result[1].slackbots
+        schedules = result[2].schedules
+        profiles = result[3].session_profiles
+        policies = result[4].sandbox_policies
       }
       const next: Resource[] = [
         ...policies.map((item) => ({ id: item.id, name: item.name, description: item.description, type: 'sandbox_policy' as const, payload: item })),
         ...profiles.map((item) => ({ id: item.id, name: item.name, description: item.description, type: 'session_profile' as const, payload: item })),
         ...schedules.map((item) => ({ id: item.id, name: item.name, description: item.cron_expr || item.scheduled_at, type: 'schedule' as const, payload: item })),
-        ...memories.map((item) => ({ id: item.id, name: item.title, description: item.content, type: 'memory' as const, payload: item })),
         ...webhooks.map((item) => ({ id: item.id, name: item.name, description: `${item.type} · ${item.status}`, type: 'webhook' as const, payload: item })),
         ...slackbots.map((item) => ({ id: item.id, name: item.name, description: item.status, type: 'slackbot' as const, payload: item })),
       ]
@@ -157,10 +149,6 @@ export default function TeamMigrationPage() {
             if (config?.source_session_profile_id) config.source_session_profile_id = idMap.get(config.source_session_profile_id)
             if (config?.settings_team_id) config.settings_team_id = scopeId
             const created = await client.createSessionProfile({ name: value.name, description: value.description, is_default: value.is_default, selector_tags: value.selector_tags, config, scope: 'team', team_id: scopeId })
-            idMap.set(item.id, created.id)
-          } else if (item.type === 'memory') {
-            const value = item.payload as Memory
-            const created = await client.createMemory({ title: value.title, content: value.content, tags: value.tags, scope: 'team', team_id: scopeId })
             idMap.set(item.id, created.id)
           } else if (item.type === 'schedule') {
             const value = item.payload as Schedule

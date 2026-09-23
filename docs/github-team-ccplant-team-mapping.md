@@ -97,7 +97,7 @@ GitHub identity ──membership──> External team binding
                             principal_id = team-...
                                       │
                                       ▼
-                         sessions / settings / memories
+                         sessions / settings
 ```
 
 ## 設定スキーマと自動作成

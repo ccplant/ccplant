@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/takutakahashi/agentapi-proxy/internal/core/configrender"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
@@ -46,18 +45,16 @@ type Worker struct {
 }
 
 // NewWorker creates a new schedule worker
-func NewWorker(manager Manager, sessionManager portrepos.SessionManager, memoryRepo portrepos.MemoryRepository, config WorkerConfig, sessionProfileRepo portrepos.SessionProfileRepository) *Worker {
+func NewWorker(manager Manager, sessionManager portrepos.SessionManager, config WorkerConfig, sessionProfileRepo portrepos.SessionProfileRepository) *Worker {
 	return &Worker{
 		manager:        manager,
 		sessionManager: sessionManager,
-		launcher: sessionuc.NewLaunchUseCase(sessionManager).
-			WithMemoryRepository(memoryRepo).
-			WithSessionProfileRepository(sessionProfileRepo),
-		config: config,
-		logger: log.Default(),
-		clock:  realClock{},
-		ids:    uuidGenerator{},
-		stopCh: make(chan struct{}),
+		launcher:       sessionuc.NewLaunchUseCase(sessionManager).WithSessionProfileRepository(sessionProfileRepo),
+		config:         config,
+		logger:         log.Default(),
+		clock:          realClock{},
+		ids:            uuidGenerator{},
+		stopCh:         make(chan struct{}),
 	}
 }
 
@@ -291,23 +288,6 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		sessionTTL = sessionuc.ResolveSessionTTL(schedule.SessionConfig.Params)
 	}
 
-	// Render memory_key values as Go templates with schedule context.
-	// This allows values like {{ .schedule_id }} to be resolved at runtime.
-	memoryKey := schedule.SessionConfig.MemoryKey
-	if len(memoryKey) > 0 {
-		schedulePayload := map[string]interface{}{
-			"schedule_id":   schedule.ID,
-			"schedule_name": schedule.Name,
-			"timezone":      schedule.Timezone,
-		}
-		rendered, err := configrender.RenderTemplateMap(memoryKey, schedulePayload)
-		if err != nil {
-			log.Printf("[SCHEDULE_WORKER] Failed to render memory_key templates for schedule %s: %v", schedule.ID, err)
-		} else {
-			memoryKey = rendered
-		}
-	}
-
 	return sessionuc.LaunchRequest{
 		UserID: schedule.UserID,
 		Scope:  scheduleScope,
@@ -329,7 +309,6 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,
 		SessionTTL:               sessionTTL,
-		MemoryKey:                memoryKey,
 		RepoInfo:                 extractRepositoryInfo(tags, sessionID),
 		SessionProfileID:         schedule.SessionConfig.SessionProfileID,
 		// Session reuse: when enabled, an existing active session matching schedule_id

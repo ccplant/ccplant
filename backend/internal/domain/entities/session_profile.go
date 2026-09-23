@@ -33,7 +33,6 @@ type SessionProfileConfig struct {
 	reuseMessageTemplate   string
 	params                 *SessionParams
 	reuseSession           bool
-	memoryKey              map[string]string
 	// sandboxPolicyID is a reference to a SandboxPolicy resource.
 	// When set, the sandbox sidecar is enabled automatically with this policy applied.
 	sandboxPolicyID string
@@ -270,12 +269,6 @@ func (c *SessionProfileConfig) ReuseSession() bool { return c.reuseSession }
 
 // SetReuseSession sets whether to reuse an existing session
 func (c *SessionProfileConfig) SetReuseSession(reuse bool) { c.reuseSession = reuse }
-
-// MemoryKey returns the memory key map
-func (c *SessionProfileConfig) MemoryKey() map[string]string { return c.memoryKey }
-
-// SetMemoryKey sets the memory key map
-func (c *SessionProfileConfig) SetMemoryKey(key map[string]string) { c.memoryKey = key }
 
 // SandboxPolicyID returns the sandbox policy ID
 func (c *SessionProfileConfig) SandboxPolicyID() string { return c.sandboxPolicyID }

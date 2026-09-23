@@ -61,7 +61,6 @@ type sessionProfileConfigJSON struct {
 	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
 	Params                 *entities.SessionParams   `json:"params,omitempty"`
 	ReuseSession           bool                      `json:"reuse_session,omitempty"`
-	MemoryKey              map[string]string         `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                    `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                    `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                  `json:"unsynced_file_paths,omitempty"`
@@ -367,7 +366,6 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetReuseMessageTemplate(pj.Config.ReuseMessageTemplate)
 	cfg.SetParams(pj.Config.Params)
 	cfg.SetReuseSession(pj.Config.ReuseSession)
-	cfg.SetMemoryKey(pj.Config.MemoryKey)
 	cfg.SetSandboxPolicyID(pj.Config.SandboxPolicyID)
 	cfg.SetSessionTTL(pj.Config.SessionTTL)
 	cfg.SetUnsyncedFilePaths(pj.Config.UnsyncedFilePaths)
@@ -420,7 +418,6 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			Params:                 cfg.Params(),
 			ReuseSession:           cfg.ReuseSession(),
-			MemoryKey:              cfg.MemoryKey(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),

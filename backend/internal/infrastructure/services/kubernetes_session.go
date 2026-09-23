@@ -29,7 +29,6 @@ type KubernetesSession struct {
 	description       string // Preserved description from Secret (not truncated by label limits)
 	annotations       entities.SessionAnnotations
 	webhookPayload    []byte                           // Webhook payload JSON
-	resolvedAPIKey    string                           // API key resolved during session creation, used by memory-sync sidecar
 	provisionSettings *sessionsettings.SessionSettings // Settings used for provisioning (stored after successful provisioning)
 	isStock           bool                             // Whether this is a pre-warmed stock session
 
@@ -320,17 +319,6 @@ func (s *KubernetesSession) ModelOptions() []string {
 }
 
 func (s *KubernetesSession) SetRequest(request *entities.RunServerRequest) { s.request = request }
-
-// SetResolvedAPIKey stores the API key resolved during session creation.
-// This is used by the memory-sync sidecar to authenticate with the proxy.
-func (s *KubernetesSession) SetResolvedAPIKey(key string) {
-	s.resolvedAPIKey = key
-}
-
-// ResolvedAPIKey returns the API key resolved during session creation.
-func (s *KubernetesSession) ResolvedAPIKey() string {
-	return s.resolvedAPIKey
-}
 
 // SetProvisionSettings stores the SessionSettings used for provisioning.
 // This is called after successful provisioning to enable Pod restart recovery.

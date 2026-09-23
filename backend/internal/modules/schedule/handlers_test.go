@@ -18,7 +18,7 @@ func TestHandlers_CreateSchedule(t *testing.T) {
 	e := echo.New()
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
-	handlers := NewHandlers(manager, nil, nil, nil)
+	handlers := NewHandlers(manager, nil, nil)
 
 	tests := []struct {
 		name       string
@@ -139,7 +139,7 @@ func TestHandlers_ListSchedules(t *testing.T) {
 	e := echo.New()
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
-	handlers := NewHandlers(manager, nil, nil, nil)
+	handlers := NewHandlers(manager, nil, nil)
 
 	// Create some schedules
 	ctx := context.Background()
@@ -185,7 +185,7 @@ func TestHandlers_GetSchedule(t *testing.T) {
 	e := echo.New()
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
-	handlers := NewHandlers(manager, nil, nil, nil)
+	handlers := NewHandlers(manager, nil, nil)
 
 	// Create a schedule
 	ctx := context.Background()
@@ -250,7 +250,7 @@ func TestHandlers_UpdateSchedule(t *testing.T) {
 	e := echo.New()
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
-	handlers := NewHandlers(manager, nil, nil, nil)
+	handlers := NewHandlers(manager, nil, nil)
 
 	// Create a schedule
 	ctx := context.Background()
@@ -303,7 +303,7 @@ func TestHandlers_DeleteSchedule(t *testing.T) {
 	e := echo.New()
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
-	handlers := NewHandlers(manager, nil, nil, nil)
+	handlers := NewHandlers(manager, nil, nil)
 
 	// Create a schedule
 	ctx := context.Background()

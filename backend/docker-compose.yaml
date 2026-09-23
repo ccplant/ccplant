@@ -14,7 +14,7 @@ services:
     working_dir: /home/agentapi
     restart: unless-stopped
 
-  # rustfs: S3-compatible object storage (used for local development of the S3 memory backend)
+  # rustfs: S3-compatible object storage used for local development
   # Access key / secret: rustfsadmin / rustfsadmin
   # S3 API endpoint : http://localhost:9000
   # Management console: http://localhost:9001

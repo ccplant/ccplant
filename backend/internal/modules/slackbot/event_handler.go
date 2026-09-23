@@ -73,15 +73,12 @@ func NewSlackBotEventHandler(
 	channelResolver *SlackChannelResolver,
 	baseURL string,
 	dryRun bool,
-	memoryRepo repositories.MemoryRepository,
 	sessionProfileRepo repositories.SessionProfileRepository,
 ) *SlackBotEventHandler {
 	return &SlackBotEventHandler{
-		repo:           repo,
-		sessionManager: sessionManager,
-		launcher: sessionuc.NewLaunchUseCase(sessionManager).
-			WithMemoryRepository(memoryRepo).
-			WithSessionProfileRepository(sessionProfileRepo),
+		repo:                      repo,
+		sessionManager:            sessionManager,
+		launcher:                  sessionuc.NewLaunchUseCase(sessionManager).WithSessionProfileRepository(sessionProfileRepo),
 		channelResolver:           channelResolver,
 		defaultBotTokenSecretName: defaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  defaultBotTokenSecretKey,
@@ -419,18 +416,6 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 			return
 		}
 
-		// Build memory key by rendering Go templates from session_config.memory_key values.
-		// This allows values like {{ .event.channel }} to be resolved at runtime.
-		var memoryKey map[string]string
-		if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().MemoryKey() != nil {
-			renderedMemoryKey, renderErr := configrender.RenderTemplateMap(bot.SessionConfig().MemoryKey(), payloadMap)
-			if renderErr != nil {
-				log.Printf("[SLACKBOT] Failed to render memory_key: %v", renderErr)
-			} else {
-				memoryKey = renderedMemoryKey
-			}
-		}
-
 		// Build RepoInfo for the session.
 		// Use the already-computed effective repo (configuredRepo takes priority, then detectedRepo).
 		var repoInfo *entities.RepositoryInfo
@@ -486,7 +471,6 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 				LimitMatchTags:           map[string]string{"slackbot_id": botID},
 				AgentType:                agentType,
 				Model:                    model,
-				MemoryKey:                memoryKey,
 				RepoInfo:                 repoInfo,
 				Sandbox:                  slackSandbox,
 				Docker:                   slackDocker,

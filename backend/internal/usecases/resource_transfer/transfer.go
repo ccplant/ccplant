@@ -12,7 +12,6 @@ import (
 type ResourceType string
 
 const (
-	ResourceMemory         ResourceType = "memory"
 	ResourceWebhook        ResourceType = "webhook"
 	ResourceSlackBot       ResourceType = "slackbot"
 	ResourceSessionProfile ResourceType = "session_profile"
@@ -46,7 +45,6 @@ type Result struct {
 }
 
 type UseCase struct {
-	memoryRepo         portrepos.MemoryRepository
 	webhookRepo        portrepos.WebhookRepository
 	slackBotRepo       portrepos.SlackBotRepository
 	sessionProfileRepo portrepos.SessionProfileRepository
@@ -61,10 +59,6 @@ func New(opts ...Option) *UseCase {
 		opt(uc)
 	}
 	return uc
-}
-
-func WithMemoryRepository(repo portrepos.MemoryRepository) Option {
-	return func(uc *UseCase) { uc.memoryRepo = repo }
 }
 
 func WithWebhookRepository(repo portrepos.WebhookRepository) Option {
@@ -105,8 +99,6 @@ func (uc *UseCase) Transfer(ctx context.Context, req Request) (Result, error) {
 	}
 
 	switch req.ResourceType {
-	case ResourceMemory:
-		return uc.transferMemory(ctx, req, targetUserID)
 	case ResourceWebhook:
 		return uc.transferWebhook(ctx, req, targetUserID)
 	case ResourceSlackBot:
@@ -176,46 +168,6 @@ func result(req Request, from Endpoint, targetUserID string) Result {
 		Status:       status,
 		DryRun:       req.DryRun,
 	}
-}
-
-func (uc *UseCase) transferMemory(ctx context.Context, req Request, targetUserID string) (Result, error) {
-	if uc.memoryRepo == nil {
-		return Result{}, fmt.Errorf("memory repository is not configured")
-	}
-	m, err := uc.memoryRepo.GetByID(ctx, req.ResourceID)
-	if err != nil {
-		return Result{}, err
-	}
-	if !canModify(req.Actor, m.OwnerID(), m.Scope(), m.TeamID()) {
-		return Result{}, fmt.Errorf("access denied")
-	}
-	res := result(req, endpoint(m.Scope(), m.OwnerID(), m.TeamID()), targetUserID)
-	if req.DryRun {
-		return res, nil
-	}
-	m.SetOwnership(req.TargetScope, targetUserID, req.TargetTeamID)
-	if err := uc.memoryRepo.Update(ctx, m); err != nil {
-		return Result{}, err
-	}
-	updated, err := uc.memoryRepo.GetByID(ctx, req.ResourceID)
-	if err != nil {
-		return Result{}, err
-	}
-	if !sameOwnership(updated.Scope(), updated.OwnerID(), updated.TeamID(), req.TargetScope, targetUserID, req.TargetTeamID) {
-		return Result{}, fmt.Errorf("memory ownership transfer was not persisted")
-	}
-	log.Printf("[RESOURCE_TRANSFER] actor=%s type=%s id=%s from=%+v to=%+v", req.Actor.ID(), req.ResourceType, req.ResourceID, res.From, res.To)
-	return res, nil
-}
-
-func sameOwnership(actualScope entities.ResourceScope, actualOwnerID, actualTeamID string, targetScope entities.ResourceScope, targetOwnerID, targetTeamID string) bool {
-	if actualScope != targetScope {
-		return false
-	}
-	if targetScope == entities.ScopeTeam {
-		return actualTeamID == targetTeamID
-	}
-	return actualOwnerID == targetOwnerID
 }
 
 func (uc *UseCase) transferWebhook(ctx context.Context, req Request, targetUserID string) (Result, error) {

@@ -28,7 +28,7 @@ agentapi-proxy は [coder/agentapi](https://github.com/coder/agentapi) のプロ
 ```
 internal/
   domain/         # エンティティ・インターフェース定義 (外部依存なし)
-    entities/     # Session, Memory, Schedule など
+    entities/     # Session, Schedule など
     services/     # EncryptionService インターフェース
   usecases/       # ビジネスロジック
     ports/        # repositories/ (SessionManager, SettingsRepository など Port インターフェース)
@@ -36,7 +36,7 @@ internal/
     auth/         # 認証 UseCase
     notification/ # 通知 UseCase
   infrastructure/ # 実装詳細
-    repositories/ # Kubernetes CRD/Secret/ConfigMap を使った実装、S3/メモリ実装
+    repositories/ # Kubernetes CRD/Secret/ConfigMap や S3 を使った実装
     services/     # KubernetesSessionManager, SimpleAuthService など
   interfaces/
     controllers/  # Echo ハンドラ (各エンドポイントのビジネスロジック呼び出し)

@@ -54,7 +54,7 @@ func TestTriggerStartPreservesConfigurationAndIdentity(t *testing.T) {
 				UserID: "owner", TriggeredUserID: "actor", Scope: entities.ScopeTeam, TeamID: "org/team", Teams: []string{"org/team"},
 				Tags: map[string]string{origin: "trigger", "branch": "main", "pr": "42"}, Pool: "pool", AgentType: "codex-acp", Model: "model",
 				InitialMessage: "finish", SessionTTL: "2m", InitialMessageWaitSecond: &wait,
-				Environment: map[string]string{"EXPLICIT": "value"}, MemoryKey: map[string]string{"task": "test"}, ResolvedSessionProfileID: "profile",
+				Environment: map[string]string{"EXPLICIT": "value"}, ResolvedSessionProfileID: "profile",
 				RepoInfo: &entities.RepositoryInfo{FullName: "org/repo"}, CycleMessage: "continue", CycleMaxCount: 2,
 				Docker: &entities.DockerParams{Enabled: true}, Sandbox: &entities.SandboxParams{Enabled: true}, AuthProxy: &authProxy,
 				CredentialSource: "triggered_user", CodexAuthMode: "oauth", ClaudeAuthMode: "api_key", UnsyncedFilePaths: []string{"/tmp/private"},
@@ -71,7 +71,6 @@ func TestTriggerStartPreservesConfigurationAndIdentity(t *testing.T) {
 			require.Equal(t, "execution", claims.SessionID)
 			require.Equal(t, "trigger", map[string]string{"schedule_id": claims.ScheduleID, "webhook_id": claims.WebhookID, "slackbot_id": claims.SlackBotID}[origin])
 			require.Equal(t, req.Environment, start.Environment)
-			require.Equal(t, req.MemoryKey, start.MemoryKey)
 			require.Equal(t, "profile", start.SessionProfileID)
 			require.Equal(t, payload, start.WebhookPayload)
 			require.Equal(t, "org/repo", start.Tags["repository"])

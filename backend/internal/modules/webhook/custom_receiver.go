@@ -31,16 +31,13 @@ type WebhookCustomController struct {
 func NewWebhookCustomController(
 	repo repositories.WebhookRepository,
 	sessionManager repositories.SessionManager,
-	memoryRepo repositories.MemoryRepository,
 	sessionProfileRepo repositories.SessionProfileRepository,
 ) *WebhookCustomController {
 	return &WebhookCustomController{
-		repo:           repo,
-		sessionService: NewWebhookSessionService(repo, sessionManager, memoryRepo, sessionProfileRepo),
-		sessionManager: sessionManager,
-		launcher: sessionuc.NewLaunchUseCase(sessionManager).
-			WithMemoryRepository(memoryRepo).
-			WithSessionProfileRepository(sessionProfileRepo),
+		repo:                repo,
+		sessionService:      NewWebhookSessionService(repo, sessionManager, sessionProfileRepo),
+		sessionManager:      sessionManager,
+		launcher:            sessionuc.NewLaunchUseCase(sessionManager).WithSessionProfileRepository(sessionProfileRepo),
 		signatureVerifier:   infra.NewSignatureVerifier(),
 		gotemplateEvaluator: infra.NewGoTemplateEvaluator(),
 	}

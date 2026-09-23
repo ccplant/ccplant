@@ -23,88 +23,6 @@ func TestClientCmd(t *testing.T) {
 	assert.Equal(t, "AgentAPI Client CLI", ClientCmd.Short)
 }
 
-func TestSummarizeDraftsCmd(t *testing.T) {
-	assert.Equal(t, "summarize-drafts", summarizeDraftsCmd.Use)
-	assert.NotNil(t, summarizeDraftsCmd.Run)
-
-	// Verify flags are registered
-	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("source-session-id"))
-	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("scope"))
-	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("team-id"))
-	assert.NotNil(t, summarizeDraftsCmd.Flags().Lookup("key"))
-}
-
-func TestBuildSummarizationMessage(t *testing.T) {
-	msg := buildSummarizationMessage("session-abc123", "2026-03-01")
-
-	// Must contain the source session ID
-	assert.Contains(t, msg, "session-abc123")
-	// Must contain the date
-	assert.Contains(t, msg, "2026-03-01")
-	// Must reference draft=true tag
-	assert.Contains(t, msg, "draft=true")
-	// Must mention delete_memory tool
-	assert.Contains(t, msg, "delete_memory")
-	// Must mention list_memories tool
-	assert.Contains(t, msg, "list_memories")
-}
-
-func TestSummarizeDraftsWithMockServer(t *testing.T) {
-	// Create a mock server that records the /start request
-	var receivedBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/start" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		var err error
-		receivedBody, err = io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		resp := client.StartResponse{SessionID: "summarization-session-xyz"}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	// Set up flags
-	endpoint = server.URL
-	summarizeDraftsSourceSessionID = "src-session-111"
-	summarizeDraftsScope = "user"
-	summarizeDraftsTeamID = ""
-	summarizeDraftsKeys = []string{"project=myapp"}
-
-	var buf bytes.Buffer
-	summarizeDraftsCmd.SetOut(&buf)
-
-	// Run the command (wraps runSummarizeDrafts but doesn't call os.Exit on success)
-	runSummarizeDrafts(summarizeDraftsCmd, []string{})
-
-	// Verify the request body contains the expected fields
-	var reqBody map[string]interface{}
-	err := json.Unmarshal(receivedBody, &reqBody)
-	assert.NoError(t, err)
-
-	assert.Equal(t, "user", reqBody["scope"])
-
-	params, ok := reqBody["params"].(map[string]interface{})
-	assert.True(t, ok, "params should be present")
-	assert.Equal(t, true, params["oneshot"])
-	assert.Contains(t, params["message"], "src-session-111")
-
-	// memory_key must NOT be set to prevent infinite summarization loops:
-	// if a summarization session had memory_key, it would get its own memory-sync sidecar,
-	// which would create a draft, triggering another summarization session recursively.
-	assert.Nil(t, reqBody["memory_key"], "memory_key must not be present in summarization session request")
-
-	// Reset flags
-	endpoint = ""
-	summarizeDraftsSourceSessionID = ""
-	summarizeDraftsKeys = nil
-}
-
 func TestClientCmdInit(t *testing.T) {
 	// Test that subcommands are properly registered
 	// Note: init() is called automatically when package is loaded
@@ -563,42 +481,6 @@ func TestRunDeleteSessionWithEnv(t *testing.T) {
 	// Note: This test would require mocking os.Exit and stdin for the confirmation prompt
 	// For now, we just verify the command structure exists
 	t.Skip("Skipping full integration test - would require mocking os.Exit and stdin")
-}
-
-func TestFormatMemoriesMarkdown(t *testing.T) {
-	tests := []struct {
-		name     string
-		memories []*client.MemoryEntry
-		want     string
-	}{
-		{
-			name:     "empty list",
-			memories: []*client.MemoryEntry{},
-			want:     "",
-		},
-		{
-			name: "single entry",
-			memories: []*client.MemoryEntry{
-				{Title: "My Note", Content: "Some content here."},
-			},
-			want: "## My Note\n\nSome content here.\n",
-		},
-		{
-			name: "multiple entries separated by horizontal rule",
-			memories: []*client.MemoryEntry{
-				{Title: "First", Content: "Content A"},
-				{Title: "Second", Content: "Content B"},
-			},
-			want: "## First\n\nContent A\n\n---\n\n## Second\n\nContent B\n",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatMemoriesMarkdown(tt.memories)
-			assert.Equal(t, tt.want, got)
-		})
-	}
 }
 
 func TestCycleCmd(t *testing.T) {

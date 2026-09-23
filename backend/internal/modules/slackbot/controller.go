@@ -93,7 +93,6 @@ type SlackBotSessionConfig struct {
 	Tags                   map[string]string      `json:"tags,omitempty"`
 	Environment            map[string]string      `json:"environment,omitempty"`
 	Params                 *SlackBotSessionParams `json:"params,omitempty"`
-	MemoryKey              map[string]string      `json:"memory_key,omitempty"`
 	SessionProfileID       string                 `json:"session_profile_id,omitempty"`
 }
 
@@ -461,9 +460,6 @@ func toEntitySessionConfig(cfg *SlackBotSessionConfig) *entities.WebhookSessionC
 	if cfg.Environment != nil {
 		sc.SetEnvironment(cfg.Environment)
 	}
-	if cfg.MemoryKey != nil {
-		sc.SetMemoryKey(cfg.MemoryKey)
-	}
 	if cfg.SessionProfileID != "" {
 		sc.SetSessionProfileID(cfg.SessionProfileID)
 	}
@@ -490,7 +486,6 @@ func fromEntitySessionConfig(sc *entities.WebhookSessionConfig) *SlackBotSession
 		ReuseMessageTemplate:   sc.ReuseMessageTemplate(),
 		Tags:                   sc.Tags(),
 		Environment:            sc.Environment(),
-		MemoryKey:              sc.MemoryKey(),
 		SessionProfileID:       sc.SessionProfileID(),
 	}
 	if sc.Params() != nil {

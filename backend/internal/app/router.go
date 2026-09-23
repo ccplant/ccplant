@@ -44,7 +44,6 @@ type HandlerRegistry struct {
 	personalAPIKeyController       *controllers.PersonalAPIKeyController
 	apiTokenController             *controllers.APITokenController
 	adminLocalUserController       *controllers.AdminLocalUserController
-	memoryController               *controllers.MemoryController
 	sandboxPolicyController        *controllers.SandboxPolicyController
 	resourceTransferController     *controllers.ResourceTransferController
 	fileController                 *controllers.FileController
@@ -214,13 +213,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		log.Printf("[ROUTER] API token controller initialized")
 	}
 
-	// Create memory controller if memory repository is available
-	var memoryController *controllers.MemoryController
-	if server.memoryRepo != nil {
-		memoryController = controllers.NewMemoryController(server.memoryRepo)
-		log.Printf("[ROUTER] Memory controller initialized")
-	}
-
 	// Create sandbox policy controller if sandbox policy repository is available
 	var sandboxPolicyController *controllers.SandboxPolicyController
 	if server.sandboxPolicyRepo != nil {
@@ -229,7 +221,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	}
 
 	resourceTransferOptions := []resource_transfer.Option{
-		resource_transfer.WithMemoryRepository(server.memoryRepo),
 		resource_transfer.WithSessionProfileRepository(server.sessionProfileRepo),
 		resource_transfer.WithSandboxPolicyRepository(server.sandboxPolicyRepo),
 	}
@@ -343,7 +334,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			personalAPIKeyController:       personalAPIKeyController,
 			apiTokenController:             apiTokenController,
 			adminLocalUserController:       adminLocalUserController,
-			memoryController:               memoryController,
 			sandboxPolicyController:        sandboxPolicyController,
 			resourceTransferController:     resourceTransferController,
 			fileController:                 fileController,
@@ -749,19 +739,6 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] API token endpoints registered")
 	} else {
 		log.Printf("[ROUTES] API token controller not available, skipping API token routes")
-	}
-
-	// Add memory routes if memory repository is available (Kubernetes mode only)
-	if r.server.memoryRepo != nil && r.handlers.memoryController != nil {
-		log.Printf("[ROUTES] Registering memory endpoints...")
-		r.echo.POST("/memories", r.handlers.memoryController.CreateMemory, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		r.echo.GET("/memories", r.handlers.memoryController.ListMemories, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.GET("/memories/:memoryId", r.handlers.memoryController.GetMemory, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
-		r.echo.PUT("/memories/:memoryId", r.handlers.memoryController.UpdateMemory, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		r.echo.DELETE("/memories/:memoryId", r.handlers.memoryController.DeleteMemory, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
-		log.Printf("[ROUTES] Memory endpoints registered")
-	} else {
-		log.Printf("[ROUTES] Memory repository not available, skipping memory routes")
 	}
 
 	// Add sandbox policy routes if sandbox policy repository is available (Kubernetes mode only)

@@ -47,7 +47,6 @@ type SessionProfileConfigRequest struct {
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
 	ReuseSession           bool                         `json:"reuse_session,omitempty"`
-	MemoryKey              map[string]string            `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
@@ -103,7 +102,6 @@ type SessionProfileConfigResponse struct {
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
 	ReuseSession           bool                         `json:"reuse_session,omitempty"`
-	MemoryKey              map[string]string            `json:"memory_key,omitempty"`
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
@@ -498,9 +496,6 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(req.ReuseMessageTemplate)
 	cfg.SetReuseSession(req.ReuseSession)
-	if req.MemoryKey != nil {
-		cfg.SetMemoryKey(req.MemoryKey)
-	}
 	if req.Params != nil {
 		cfg.SetParams(req.Params)
 	}
@@ -558,7 +553,6 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
 			Params:                 cfg.Params(),
 			ReuseSession:           cfg.ReuseSession(),
-			MemoryKey:              cfg.MemoryKey(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
