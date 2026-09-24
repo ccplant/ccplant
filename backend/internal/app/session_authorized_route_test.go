@@ -61,7 +61,7 @@ func testAuthorizedRoute(t *testing.T, pool string, binding *sessionrunnercore.B
 		pool:    &sessionrunnercore.LogicalPool{Name: pool, Enabled: true},
 		binding: binding,
 	}
-	route, err := sessionrunnercore.NewResolver(store, 0).ResolveRoute(context.Background(), sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: "test-user"}, pool, nil)
+	route, err := sessionrunnercore.NewResolver(store, 0).ResolveRoute(context.Background(), sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: "test-user"}, sessionrunnercore.RouteRequest{RequestedPool: pool})
 	require.NoError(t, err)
 	require.NotNil(t, route)
 	return route

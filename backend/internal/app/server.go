@@ -1175,7 +1175,7 @@ func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq 
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
-			route, err := s.resolveSessionRoute(ctx, subject, resolved.Pool.Name, startReq.Tags)
+			route, err := s.resolveSessionRoute(ctx, subject, sessionrunnercore.RouteRequest{RequestedPool: resolved.Pool.Name, Tags: startReq.Tags})
 			if err != nil {
 				return nil, fmt.Errorf("resolve authorized session route: %w", err)
 			}
@@ -1274,20 +1274,9 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	if startReq.Params != nil {
 		explicitManagerID = strings.TrimSpace(startReq.Params.ManagerID)
 	}
-	if explicitManagerID != "" {
-		esm, err := s.findESMByID(ctx, userID, teams, explicitManagerID)
-		if err != nil {
-			return nil, fmt.Errorf("find requested session manager: %w", err)
-		}
-		if esm == nil || esm.Pool == "" {
-			return nil, fmt.Errorf("requested session manager has no session pool")
-		}
-		if requestedPool != "" && requestedPool != esm.Pool {
-			return nil, fmt.Errorf("requested manager does not supply session pool %q", requestedPool)
-		}
-		requestedPool = esm.Pool
-	}
-	route, err := s.resolveSessionRoute(ctx, subject, requestedPool, startReq.Tags)
+	route, err := s.resolveSessionRoute(ctx, subject, sessionrunnercore.RouteRequest{
+		RequestedPool: requestedPool, Tags: startReq.Tags, RequiredManagerID: explicitManagerID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("select authorized session route: %w", err)
 	}
@@ -1392,13 +1381,13 @@ func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnerco
 	return resolver.Resolve(ctx, subject, requestedPool, tags)
 }
 
-func (s *Server) resolveSessionRoute(ctx context.Context, subject sessionrunnercore.Subject, requestedPool string, tags map[string]string) (sessionrunnercore.AuthorizedRoute, error) {
+func (s *Server) resolveSessionRoute(ctx context.Context, subject sessionrunnercore.Subject, request sessionrunnercore.RouteRequest) (sessionrunnercore.AuthorizedRoute, error) {
 	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
 	if s.esmControlStore != nil {
 		resolver.WithManagerLiveness(s.esmControlStore)
 	}
 	resolver.WithLocalFallback(s.localSessionFallbackEnabled)
-	return resolver.ResolveRoute(ctx, subject, requestedPool, tags)
+	return resolver.ResolveRoute(ctx, subject, request)
 }
 
 func authorizedRouteContainsManager(route sessionrunnercore.AuthorizedRoute, managerID string) bool {

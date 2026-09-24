@@ -58,6 +58,15 @@ type PoolCandidateResolution struct {
 	RequiredLabels   map[string]string `json:"required_labels,omitempty"`
 }
 
+// RouteRequest contains every caller-controlled placement constraint. Keeping
+// these constraints together prevents session entry points from resolving a
+// pool first and applying a manager override afterwards.
+type RouteRequest struct {
+	RequestedPool     string
+	Tags              map[string]string
+	RequiredManagerID string
+}
+
 // AuthorizedRoute is a sealed capability produced only by Resolver. External
 // packages can consume a route but cannot construct or implement one, so no
 // workload can forge authorization by assembling placement values itself.
@@ -166,13 +175,43 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool s
 // ResolveRoute is the single authorization and routing entry point for new
 // workloads. It prefers an enabled bound pool with a healthy supplier, then
 // optionally returns the lowest-priority local route. Otherwise it fails closed.
-func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (AuthorizedRoute, error) {
-	resolved, err := r.Resolve(ctx, subject, requestedPool, tags)
+func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, request RouteRequest) (AuthorizedRoute, error) {
+	requestedPool := strings.TrimSpace(request.RequestedPool)
+	managerID := strings.TrimSpace(request.RequiredManagerID)
+	var resolved *ResolvedPool
+	var err error
+	if managerID == "" || requestedPool != "" {
+		resolved, err = r.Resolve(ctx, subject, requestedPool, request.Tags)
+	} else {
+		// A manager may supply several logical pools; its install pool is not an
+		// authorization boundary. Resolve each supplied pool through the normal
+		// binding checks and select by binding priority.
+		suppliers, listErr := r.store.ListPoolSuppliers(ctx)
+		if listErr != nil {
+			return nil, listErr
+		}
+		candidates := make([]*ResolvedPool, 0)
+		for _, supplier := range suppliers {
+			if supplier == nil || supplier.ManagerID != managerID || !supplier.Enabled || supplier.Draining {
+				continue
+			}
+			candidate, resolveErr := r.Resolve(ctx, subject, supplier.Pool, request.Tags)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			if candidate != nil {
+				candidates = append(candidates, candidate)
+			}
+		}
+		if len(candidates) > 0 {
+			resolved = firstPoolByPriority(candidates)
+		}
+	}
 	if err != nil || resolved == nil {
 		if err != nil {
 			return nil, err
 		}
-		if r.localFallback && strings.TrimSpace(requestedPool) == "" && len(allocatorLabels(tags)) == 0 {
+		if managerID == "" && r.localFallback && requestedPool == "" && len(allocatorLabels(request.Tags)) == 0 {
 			return &authorizedRoute{kind: RouteKindLocal}, nil
 		}
 		return nil, nil
@@ -200,7 +239,7 @@ func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedP
 		if err != nil {
 			return nil, err
 		}
-		if available {
+		if available && (managerID == "" || manager.ID == managerID) {
 			route.managers = append(route.managers, manager)
 		}
 	}

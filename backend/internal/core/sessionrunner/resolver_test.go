@@ -67,7 +67,7 @@ func TestResolveRouteReturnsSealedAuthorizedRoute(t *testing.T) {
 		bindings:  []*Binding{{ID: "binding-alice", Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
 	}
 
-	route, err := NewResolver(store, 0).ResolveRoute(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, "", nil)
+	route, err := NewResolver(store, 0).ResolveRoute(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, RouteRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, route)
 	require.Equal(t, "linux", route.PoolName())
@@ -90,12 +90,12 @@ func TestResolveRouteUsesLocalOnlyAsLowestPriority(t *testing.T) {
 	resolver := NewResolver(store, 0).WithLocalFallback(true)
 	subject := Subject{Type: SubjectUser, ID: "alice"}
 
-	route, err := resolver.ResolveRoute(context.Background(), subject, "", nil)
+	route, err := resolver.ResolveRoute(context.Background(), subject, RouteRequest{})
 	require.NoError(t, err)
 	require.Equal(t, RouteKindPool, route.Kind(), "an eligible pool must always outrank local")
 
 	store.bindings = nil
-	route, err = resolver.ResolveRoute(context.Background(), subject, "", nil)
+	route, err = resolver.ResolveRoute(context.Background(), subject, RouteRequest{})
 	require.NoError(t, err)
 	require.Equal(t, RouteKindLocal, route.Kind())
 	require.Empty(t, route.PoolName())
@@ -106,13 +106,38 @@ func TestResolveRouteDoesNotUseLocalForExplicitSelection(t *testing.T) {
 	resolver := NewResolver(&resolverStore{}, 0).WithLocalFallback(true)
 	subject := Subject{Type: SubjectUser, ID: "alice"}
 
-	route, err := resolver.ResolveRoute(context.Background(), subject, "private", nil)
+	route, err := resolver.ResolveRoute(context.Background(), subject, RouteRequest{RequestedPool: "private"})
 	require.Error(t, err)
 	require.Nil(t, route)
 
-	route, err = resolver.ResolveRoute(context.Background(), subject, "", map[string]string{"allocator.region": "west"})
+	route, err = resolver.ResolveRoute(context.Background(), subject, RouteRequest{Tags: map[string]string{"allocator.region": "west"}})
 	require.NoError(t, err)
 	require.Nil(t, route)
+}
+
+func TestResolveRouteConstrainsExplicitManagerThroughSuppliedAuthorizedPool(t *testing.T) {
+	store := &resolverStore{
+		managers: []*Manager{{ID: "manager-a", Enabled: true}, {ID: "manager-b", Enabled: true}},
+		pools:    []*LogicalPool{{Name: "high", Enabled: true}, {Name: "manager-pool", Enabled: true}},
+		suppliers: []*PoolSupplier{
+			{Pool: "high", ManagerID: "manager-b", Enabled: true},
+			{Pool: "manager-pool", ManagerID: "manager-a", Enabled: true},
+		},
+		bindings: []*Binding{
+			{ID: "high-binding", Pool: "high", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 100},
+			{ID: "manager-binding", Pool: "manager-pool", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true, Priority: 10},
+		},
+	}
+
+	route, err := NewResolver(store, 0).ResolveRoute(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, RouteRequest{RequiredManagerID: "manager-a"})
+	require.NoError(t, err)
+	require.NotNil(t, route)
+	require.Equal(t, "manager-pool", route.PoolName())
+	require.Equal(t, []string{"manager-a"}, []string{route.Managers()[0].ID})
+
+	route, err = NewResolver(store, 0).WithLocalFallback(true).ResolveRoute(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, RouteRequest{RequiredManagerID: "missing"})
+	require.NoError(t, err)
+	require.Nil(t, route, "an explicit manager must never fall back to local")
 }
 
 func TestResolverManageBindingDoesNotGrantUseAccess(t *testing.T) {
