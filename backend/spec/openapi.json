@@ -8829,6 +8829,32 @@
             "type": "boolean",
             "description": "If true, mount the webhook payload as /opt/webhook/payload.json in the session container",
             "default": false
+          },
+          "params": {
+            "type": "object",
+            "description": "Non-sensitive session parameters. Sensitive fields such as github_token are excluded.",
+            "properties": {
+              "agent_type": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "oneshot": {
+                "type": "boolean"
+              },
+              "session_ttl": {
+                "type": "string",
+                "description": "Duration after processing ends before the session is automatically deleted, in Go duration format.",
+                "example": "48h"
+              },
+              "auth_proxy": {
+                "type": "boolean"
+              },
+              "credential_source": {
+                "type": "string"
+              }
+            }
           }
         },
         "description": "Session configuration in responses (sensitive params like github_token are excluded)"

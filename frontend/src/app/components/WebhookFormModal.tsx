@@ -36,6 +36,7 @@ interface TriggerFormData {
   reuseSession: boolean
   mountPayload: boolean
   oneshot: boolean
+  sessionTTL: string
   model: string
   credentialSource: '' | 'session_user' | 'triggered_user' | 'team' | 'none'
   goTemplate?: string
@@ -56,6 +57,7 @@ const emptyTrigger: TriggerFormData = {
   reuseSession: false,
   mountPayload: false,
   oneshot: false,
+  sessionTTL: '',
   model: '',
   credentialSource: '',
   goTemplate: '',
@@ -116,6 +118,7 @@ export default function WebhookFormModal({
             reuseSession: t.session_config?.reuse_session ?? false,
             mountPayload: t.session_config?.mount_payload ?? false,
             oneshot: t.session_config?.params?.oneshot ?? false,
+            sessionTTL: t.session_config?.params?.session_ttl || '',
             model: t.session_config?.params?.model || '',
             credentialSource: t.session_config?.params?.credential_source || '',
             goTemplate: t.conditions.go_template || '',
@@ -410,6 +413,9 @@ export default function WebhookFormModal({
         }
         // Always set oneshot explicitly (true or false)
         session_config.params.oneshot = t.oneshot
+        if (t.sessionTTL.trim()) {
+          session_config.params.session_ttl = t.sessionTTL.trim()
+        }
         if (t.model.trim()) {
           session_config.params.model = t.model.trim()
         }
@@ -1161,6 +1167,28 @@ export default function WebhookFormModal({
                       <p className="text-xs text-gray-500 dark:text-gray-400 -mt-3 ml-6">
                         有効にすると、セッション終了後に自動的に削除されます
                       </p>
+
+                      {/* Session TTL */}
+                      <div>
+                        <label
+                          htmlFor={`trigger-session-ttl-${index}`}
+                          className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                        >
+                          セッション自動削除 TTL
+                        </label>
+                        <input
+                          id={`trigger-session-ttl-${index}`}
+                          type="text"
+                          value={trigger.sessionTTL}
+                          onChange={(e) => updateTrigger(index, 'sessionTTL', e.target.value)}
+                          placeholder="例: 48h"
+                          disabled={isSubmitting}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-sm font-mono"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          このトリガーが作成したセッションを処理終了後に自動削除するまでの期間。Go duration 形式（例: 30m、48h）で指定します
+                        </p>
+                      </div>
 
                       {/* Credential Source */}
                       <div>
