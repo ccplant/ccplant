@@ -1222,7 +1222,8 @@
                   "type": "object",
                   "required": [
                     "secret_id",
-                    "expires_at"
+                    "expires_at",
+                    "local_url"
                   ],
                   "properties": {
                     "secret_id": {
@@ -1232,6 +1233,11 @@
                     "expires_at": {
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "local_url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Loopback-only provisioner URL that the session agent can use without receiving its runtime bearer token"
                     }
                   }
                 }

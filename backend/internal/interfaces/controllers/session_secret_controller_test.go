@@ -71,9 +71,11 @@ func TestSessionSecretCreateAndConsumeOnce(t *testing.T) {
 	require.Equal(t, http.StatusCreated, createRec.Code)
 	var created struct {
 		SecretID string `json:"secret_id"`
+		LocalURL string `json:"local_url"`
 	}
 	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
 	require.NotEmpty(t, created.SecretID)
+	require.Equal(t, "http://127.0.0.1:9001/one-time-secrets/"+created.SecretID, created.LocalURL)
 	require.NotContains(t, createRec.Body.String(), "very-secret")
 
 	consume := func(token string) *httptest.ResponseRecorder {

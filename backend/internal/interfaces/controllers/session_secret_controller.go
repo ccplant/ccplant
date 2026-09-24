@@ -99,7 +99,11 @@ func (c *SessionSecretController) Create(ctx echo.Context) error {
 	if _, err := c.client.CoreV1().Secrets(c.namespace).Create(ctx.Request().Context(), secret, metav1.CreateOptions{}); err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to register secret")
 	}
-	return ctx.JSON(http.StatusCreated, map[string]interface{}{"secret_id": id, "expires_at": expiresAt})
+	return ctx.JSON(http.StatusCreated, map[string]interface{}{
+		"secret_id":  id,
+		"expires_at": expiresAt,
+		"local_url":  "http://127.0.0.1:9001/one-time-secrets/" + id,
+	})
 }
 
 // Consume returns the value exactly once. Clearing it uses Kubernetes resource
