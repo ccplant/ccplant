@@ -59,6 +59,27 @@ func TestResolverRequiresBindingAndSelectsPool(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestResolveRouteReturnsSealedAuthorizedRoute(t *testing.T) {
+	store := &resolverStore{
+		managers:  []*Manager{{ID: "manager-a", Enabled: true}, {ID: "manager-b", Enabled: true}},
+		pools:     []*LogicalPool{{Name: "linux", Enabled: true}},
+		suppliers: []*PoolSupplier{{Pool: "linux", ManagerID: "manager-a", Enabled: true}, {Pool: "private", ManagerID: "manager-b", Enabled: true}},
+		bindings:  []*Binding{{ID: "binding-alice", Pool: "linux", SubjectType: SubjectUser, SubjectID: "alice", Enabled: true}},
+	}
+
+	route, err := NewResolver(store, 0).ResolveRoute(context.Background(), Subject{Type: SubjectUser, ID: "alice"}, "", nil)
+	require.NoError(t, err)
+	require.NotNil(t, route)
+	require.Equal(t, "linux", route.PoolName())
+	require.Equal(t, "binding-alice", route.BindingID())
+	require.Equal(t, []string{"manager-a"}, []string{route.Managers()[0].ID})
+
+	managers := route.Managers()
+	managers = append(managers, store.managers[1])
+	require.Len(t, managers, 2)
+	require.Len(t, route.Managers(), 1, "callers must not be able to add managers to an authorized route")
+}
+
 func TestResolverManageBindingDoesNotGrantUseAccess(t *testing.T) {
 	store := &resolverStore{
 		managers:  []*Manager{{ID: "manager-a", Enabled: true}},

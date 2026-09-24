@@ -50,6 +50,30 @@ type PoolCandidateResolution struct {
 	RequiredLabels   map[string]string `json:"required_labels,omitempty"`
 }
 
+// AuthorizedRoute is a sealed capability produced only by Resolver. External
+// packages can consume a route but cannot construct or implement one, so a
+// direct-manager workload cannot forge authorization by assembling pool and
+// manager values itself.
+type AuthorizedRoute interface {
+	PoolName() string
+	BindingID() string
+	Managers() []*Manager
+	authorizedRoute()
+}
+
+type authorizedRoute struct {
+	poolName  string
+	bindingID string
+	managers  []*Manager
+}
+
+func (r *authorizedRoute) PoolName() string     { return r.poolName }
+func (r *authorizedRoute) BindingID() string    { return r.bindingID }
+func (r *authorizedRoute) Managers() []*Manager { return append([]*Manager(nil), r.managers...) }
+func (r *authorizedRoute) authorizedRoute()     {}
+
+var _ AuthorizedRoute = (*authorizedRoute)(nil)
+
 func NewResolver(store ResolverStore, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
 }
@@ -121,7 +145,7 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool s
 // ResolveRoute is the single authorization and routing entry point for direct
 // manager workloads. It fails closed unless the subject has an enabled use
 // binding to an enabled pool with at least one healthy, enabled supplier.
-func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedRoute, error) {
+func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (AuthorizedRoute, error) {
 	resolved, err := r.Resolve(ctx, subject, requestedPool, tags)
 	if err != nil || resolved == nil {
 		return nil, err
@@ -140,7 +164,7 @@ func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedP
 			allowed[supplier.ManagerID] = true
 		}
 	}
-	route := &ResolvedRoute{Pool: resolved.Pool, Binding: resolved.Binding}
+	route := &authorizedRoute{poolName: resolved.Pool.Name, bindingID: resolved.Binding.ID}
 	for _, manager := range managers {
 		if manager == nil || !allowed[manager.ID] {
 			continue
@@ -150,13 +174,13 @@ func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedP
 			return nil, err
 		}
 		if available {
-			route.Managers = append(route.Managers, manager)
+			route.managers = append(route.managers, manager)
 		}
 	}
-	if len(route.Managers) == 0 {
+	if len(route.managers) == 0 {
 		return nil, nil
 	}
-	sort.Slice(route.Managers, func(i, j int) bool { return route.Managers[i].ID < route.Managers[j].ID })
+	sort.Slice(route.managers, func(i, j int) bool { return route.managers[i].ID < route.managers[j].ID })
 	return route, nil
 }
 

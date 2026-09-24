@@ -71,7 +71,7 @@ func NewCodexDeviceAuthLauncher(tunnel ControlTunnel, directory PoolDirectory) *
 // authorizedRouteResolver deliberately exposes only complete, authorized
 // routes. StartCodexDeviceAuth cannot obtain raw managers through this field.
 type authorizedRouteResolver interface {
-	ResolveRoute(context.Context, sessionrunnercore.Subject, string, map[string]string) (*sessionrunnercore.ResolvedRoute, error)
+	ResolveRoute(context.Context, sessionrunnercore.Subject, string, map[string]string) (sessionrunnercore.AuthorizedRoute, error)
 }
 
 var _ codexauth.WorkloadLauncher = (*CodexDeviceAuthLauncher)(nil)
@@ -124,8 +124,8 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 	if resolved == nil {
 		return "", errors.New("no authorized and healthy session pool is available for Codex auth")
 	}
-	managers := orderManagers(resolved.Managers)
-	log.Printf("[CODEX_AUTH_ESM] Attempt %s resolved pool=%s binding=%s with %d candidate manager(s)", request.AttemptID, resolved.Pool.Name, resolved.Binding.ID, len(managers))
+	managers := orderManagers(resolved.Managers())
+	log.Printf("[CODEX_AUTH_ESM] Attempt %s resolved pool=%s binding=%s with %d candidate manager(s)", request.AttemptID, resolved.PoolName(), resolved.BindingID(), len(managers))
 	lastErr := errors.New("no connected session manager is available for codex device auth")
 	for _, manager := range managers {
 		if !l.tunnel.IsConnected(ctx, manager.ID) {
