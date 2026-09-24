@@ -21,6 +21,21 @@ type fakeTunnel struct {
 	err       error
 }
 
+type fakeLocalLauncher struct {
+	starts  []codexauth.WorkloadRequest
+	cancels []string
+}
+
+func (l *fakeLocalLauncher) StartCodexDeviceAuth(_ context.Context, request codexauth.WorkloadRequest) error {
+	l.starts = append(l.starts, request)
+	return nil
+}
+
+func (l *fakeLocalLauncher) CancelCodexDeviceAuth(_ context.Context, attemptID string) error {
+	l.cancels = append(l.cancels, attemptID)
+	return nil
+}
+
 type recordedRequest struct {
 	managerID string
 	sessionID string
@@ -183,6 +198,43 @@ func TestLauncherStartFailsClosedWithoutSubjectBinding(t *testing.T) {
 	}
 	if len(tunnel.requests) != 0 {
 		t.Fatalf("unauthorized workload reached managers: %#v", tunnel.requests)
+	}
+}
+
+func TestLauncherStartUsesResolverSelectedLocalRoute(t *testing.T) {
+	directory := authorizedDirectory()
+	local := &fakeLocalLauncher{}
+	launcher := NewCodexDeviceAuthLauncher(nil, directory, local)
+
+	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.starts) != 1 || local.starts[0].AttemptID != validWorkload().AttemptID {
+		t.Fatalf("local starts = %#v", local.starts)
+	}
+	if err := launcher.CancelCodexDeviceAuth(context.Background(), validWorkload().AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.cancels) != 1 || local.cancels[0] != validWorkload().AttemptID {
+		t.Fatalf("local cancels = %#v", local.cancels)
+	}
+}
+
+func TestLauncherPoolRouteOutranksLocalRoute(t *testing.T) {
+	manager := managerEntry("pool-manager", nil)
+	directory := authorizedDirectory(manager)
+	tunnel := &fakeTunnel{connected: map[string]bool{manager.ID: true}}
+	local := &fakeLocalLauncher{}
+	launcher := NewCodexDeviceAuthLauncher(tunnel, directory, local)
+
+	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.starts) != 0 {
+		t.Fatalf("local route was selected ahead of pool: %#v", local.starts)
+	}
+	if len(tunnel.requests) != 1 || tunnel.requests[0].managerID != manager.ID {
+		t.Fatalf("requests = %#v", tunnel.requests)
 	}
 }
 

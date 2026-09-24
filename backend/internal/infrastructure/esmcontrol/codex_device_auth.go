@@ -52,18 +52,25 @@ type CodexDeviceAuthLauncher struct {
 	tunnel   ControlTunnel
 	routes   authorizedRouteResolver
 	managers ManagerDirectory
+	local    codexauth.WorkloadLauncher
 	// active remembers which manager owns each running attempt so cancel is
 	// routed to the right execution plane. Lost entries (parent restart) fall
 	// back to a best-effort broadcast.
 	active sync.Map
 }
 
-func NewCodexDeviceAuthLauncher(tunnel ControlTunnel, directory PoolDirectory) *CodexDeviceAuthLauncher {
+func NewCodexDeviceAuthLauncher(tunnel ControlTunnel, directory PoolDirectory, local ...codexauth.WorkloadLauncher) *CodexDeviceAuthLauncher {
 	launcher := &CodexDeviceAuthLauncher{tunnel: tunnel, managers: directory}
+	if len(local) > 0 {
+		launcher.local = local[0]
+	}
 	if directory == nil {
 		return launcher
 	}
-	resolver := sessionrunnercore.NewResolver(directory, 0).WithManagerLiveness(tunnelLiveness{tunnel: tunnel})
+	resolver := sessionrunnercore.NewResolver(directory, 0).WithLocalFallback(launcher.local != nil)
+	if tunnel != nil {
+		resolver.WithManagerLiveness(tunnelLiveness{tunnel: tunnel})
+	}
 	launcher.routes = resolver
 	return launcher
 }
@@ -80,7 +87,10 @@ var _ codexauth.WorkloadLauncher = (*CodexDeviceAuthLauncher)(nil)
 // now. It backs GET /codex/device-auth/config so the frontend can tell "no
 // execution plane" apart from "feature disabled".
 func (l *CodexDeviceAuthLauncher) Available(ctx context.Context) bool {
-	if l.managers == nil {
+	if l.local != nil {
+		return true
+	}
+	if l.managers == nil || l.tunnel == nil {
 		return false
 	}
 	managers, err := l.managers.ListManagers(ctx)
@@ -124,13 +134,29 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 	if resolved == nil {
 		return "", errors.New("no authorized and healthy session pool is available for Codex auth")
 	}
+	if resolved.Kind() == sessionrunnercore.RouteKindLocal {
+		if l.local == nil {
+			return "", errors.New("local Codex auth workload launcher is unavailable")
+		}
+		if err := l.local.StartCodexDeviceAuth(ctx, request); err != nil {
+			return "", fmt.Errorf("start local Codex auth workload: %w", err)
+		}
+		l.active.Store(request.AttemptID, activeCodexAuthTarget{local: true})
+		return "local", nil
+	}
 	if resolved.Kind() != sessionrunnercore.RouteKindPool {
-		return "", errors.New("Codex auth requires an authorized session pool route")
+		return "", fmt.Errorf("unsupported authorized route kind %q", resolved.Kind())
+	}
+	if l.tunnel == nil {
+		return "", errors.New("external Codex auth workload tunnel is unavailable")
 	}
 	managers := orderManagers(resolved.Managers())
 	log.Printf("[CODEX_AUTH_ESM] Attempt %s resolved pool=%s binding=%s with %d candidate manager(s)", request.AttemptID, resolved.PoolName(), resolved.BindingID(), len(managers))
 	lastErr := errors.New("no connected session manager is available for codex device auth")
 	for _, manager := range managers {
+		if l.tunnel == nil {
+			break
+		}
 		if !l.tunnel.IsConnected(ctx, manager.ID) {
 			log.Printf("[CODEX_AUTH_ESM] Skipping disconnected manager %s for attempt %s", manager.ID, request.AttemptID)
 			continue
@@ -147,7 +173,7 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 		switch status {
 		case http.StatusAccepted:
 			log.Printf("[CODEX_AUTH_ESM] Manager %s accepted attempt %s", manager.ID, request.AttemptID)
-			l.active.Store(request.AttemptID, manager.ID)
+			l.active.Store(request.AttemptID, activeCodexAuthTarget{managerID: manager.ID})
 			return manager.ID, nil
 		case http.StatusNotFound, http.StatusNotImplemented:
 			log.Printf("[CODEX_AUTH_ESM] Manager %s does not support attempt %s (status=%d)", manager.ID, request.AttemptID, status)
@@ -172,8 +198,11 @@ func (l *CodexDeviceAuthLauncher) CancelCodexDeviceAuth(ctx context.Context, att
 	defer cancel()
 	if owner, ok := l.active.Load(attemptID); ok {
 		l.active.Delete(attemptID)
-		managerID, _ := owner.(string)
-		return l.deleteWorkload(ctx, managerID, attemptID)
+		target, _ := owner.(activeCodexAuthTarget)
+		if target.local {
+			return l.local.CancelCodexDeviceAuth(ctx, attemptID)
+		}
+		return l.deleteWorkload(ctx, target.managerID, attemptID)
 	}
 	if l.managers == nil {
 		return errors.New("session pool directory is unavailable")
@@ -185,6 +214,11 @@ func (l *CodexDeviceAuthLauncher) CancelCodexDeviceAuth(ctx context.Context, att
 		return err
 	}
 	var lastErr error
+	if l.local != nil {
+		if err := l.local.CancelCodexDeviceAuth(ctx, attemptID); err != nil {
+			lastErr = err
+		}
+	}
 	for _, manager := range managers {
 		if !l.tunnel.IsConnected(ctx, manager.ID) {
 			continue
@@ -194,6 +228,11 @@ func (l *CodexDeviceAuthLauncher) CancelCodexDeviceAuth(ctx context.Context, att
 		}
 	}
 	return lastErr
+}
+
+type activeCodexAuthTarget struct {
+	managerID string
+	local     bool
 }
 
 // orderManagers applies workload-specific preference only after the core

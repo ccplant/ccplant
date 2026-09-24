@@ -515,17 +515,20 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	if esmControlStore != nil {
 		esmControlTunnel = infraesmcontrol.NewTunnel(esmControlStore)
 	}
+	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
 	// Codex device auth workloads always run on a session manager's execution
 	// plane, never inside the API process (whose Kubernetes client may be a
 	// fake in compositions without cluster access). Route every attempt to an
 	// enrolled, connected external session manager over the outbound control
 	// tunnel; the manager creates the short-lived authentication Pod.
-	if esmControlTunnel != nil && sessionRunnerStore != nil {
-		codexDeviceAuthLauncher = infraesmcontrol.NewCodexDeviceAuthLauncher(esmControlTunnel, sessionRunnerStore)
-		log.Printf("[SERVER] Codex device auth workloads are delegated to external session managers")
+	var localCodexAuthLauncher codexauth.WorkloadLauncher
+	if localSessionFallbackEnabled && k8sSessionManager != nil {
+		localCodexAuthLauncher = k8sSessionManager
 	}
-
-	localSessionFallbackEnabled := !strings.EqualFold(os.Getenv("AGENTAPI_LOCAL_SESSION_FALLBACK_ENABLED"), "false")
+	if sessionRunnerStore != nil && (esmControlTunnel != nil || localCodexAuthLauncher != nil) {
+		codexDeviceAuthLauncher = infraesmcontrol.NewCodexDeviceAuthLauncher(esmControlTunnel, sessionRunnerStore, localCodexAuthLauncher)
+		log.Printf("[SERVER] Codex device auth workloads use authorized session routes")
+	}
 	scheduleManager := schedule.NewKubernetesManager(persistenceClient, namespace)
 
 	s := &Server{
