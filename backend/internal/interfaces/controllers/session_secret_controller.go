@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ const (
 	oneTimeSecretSessionID       = "agentapi.proxy/session-id"
 	oneTimeSecretExpiresAt       = "agentapi.proxy/expires-at"
 	oneTimeSecretConsumedAt      = "agentapi.proxy/consumed-at"
+	oneTimeSecretSessionHash     = "agentapi.proxy/session-hash"
 	defaultOneTimeSecretLifetime = 10 * time.Minute
 	maxOneTimeSecretLifetime     = time.Hour
 	maxOneTimeSecretBytes        = 64 << 10
@@ -87,7 +89,10 @@ func (c *SessionSecretController) Create(ctx echo.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      oneTimeSecretName(sessionID, id),
 			Namespace: c.namespace,
-			Labels:    map[string]string{"agentapi.proxy/one-time-secret": "true"},
+			Labels: map[string]string{
+				"agentapi.proxy/one-time-secret": "true",
+				oneTimeSecretSessionHash:         oneTimeSecretSessionLabel(sessionID),
+			},
 			Annotations: map[string]string{
 				oneTimeSecretSessionID: sessionID,
 				oneTimeSecretExpiresAt: expiresAt.Format(time.RFC3339Nano),
@@ -150,6 +155,63 @@ func (c *SessionSecretController) Consume(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, map[string]string{"value": string(value)})
 }
 
+// ConsumeNext returns the oldest unconsumed value for the session. Callers do
+// not need to know the server-generated secret ID.
+func (c *SessionSecretController) ConsumeNext(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	if !c.authorizeSession(ctx, sessionID) {
+		return ctx.NoContent(http.StatusUnauthorized)
+	}
+	secrets := c.client.CoreV1().Secrets(c.namespace)
+	for attempts := 0; attempts < 5; attempts++ {
+		items, err := secrets.List(ctx.Request().Context(), metav1.ListOptions{LabelSelector: oneTimeSecretSessionHash + "=" + oneTimeSecretSessionLabel(sessionID)})
+		if err != nil {
+			return ctx.NoContent(http.StatusServiceUnavailable)
+		}
+		sort.Slice(items.Items, func(i, j int) bool {
+			if items.Items[i].CreationTimestamp.Equal(&items.Items[j].CreationTimestamp) {
+				return items.Items[i].Name < items.Items[j].Name
+			}
+			return items.Items[i].CreationTimestamp.Before(&items.Items[j].CreationTimestamp)
+		})
+		conflicted := false
+		for i := range items.Items {
+			secret := &items.Items[i]
+			if secret.Annotations[oneTimeSecretSessionID] != sessionID || secret.Annotations[oneTimeSecretConsumedAt] != "" {
+				continue
+			}
+			expiresAt, err := time.Parse(time.RFC3339Nano, secret.Annotations[oneTimeSecretExpiresAt])
+			if err != nil || !c.now().Before(expiresAt) {
+				secret.Data = nil
+				secret.Annotations[oneTimeSecretConsumedAt] = c.now().UTC().Format(time.RFC3339Nano)
+				_, _ = secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
+				continue
+			}
+			value, ok := secret.Data[oneTimeSecretValueKey]
+			if !ok {
+				continue
+			}
+			secret.Data = nil
+			secret.Annotations[oneTimeSecretConsumedAt] = c.now().UTC().Format(time.RFC3339Nano)
+			updated, err := secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
+			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+				conflicted = true
+				break
+			}
+			if err != nil {
+				return ctx.NoContent(http.StatusServiceUnavailable)
+			}
+			_ = secrets.Delete(ctx.Request().Context(), updated.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &updated.UID, ResourceVersion: &updated.ResourceVersion}})
+			ctx.Response().Header().Set("Cache-Control", "no-store")
+			return ctx.JSON(http.StatusOK, map[string]string{"value": string(value)})
+		}
+		if !conflicted {
+			return ctx.NoContent(http.StatusNotFound)
+		}
+	}
+	return ctx.NoContent(http.StatusNotFound)
+}
+
 func (c *SessionSecretController) sessionOwner(ctx echo.Context, sessionID string) (string, string, string, bool, error) {
 	if c.manager != nil {
 		if session := c.manager.GetSession(sessionID); session != nil {
@@ -195,4 +257,9 @@ func (c *SessionSecretController) authorizeSession(ctx echo.Context, sessionID s
 func oneTimeSecretName(sessionID, id string) string {
 	digest := sha256.Sum256([]byte(sessionID + "\x00" + id))
 	return oneTimeSecretPrefix + hex.EncodeToString(digest[:])
+}
+
+func oneTimeSecretSessionLabel(sessionID string) string {
+	digest := sha256.Sum256([]byte(sessionID))
+	return hex.EncodeToString(digest[:16])
 }

@@ -131,3 +131,36 @@ func TestSessionSecretDirectRuntimeAuthAndExpiry(t *testing.T) {
 	require.NoError(t, controller.Consume(ctx))
 	require.Equal(t, http.StatusGone, rec.Code)
 }
+
+func TestSessionSecretConsumeNextWithoutID(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	session := entities.NewProxySession("session-next", "user-1", entities.ScopeUser, "", nil, time.Now())
+	controller := NewSessionSecretController(client, "default", oneTimeSecretManagerStub{session: session, token: "session-token"}, nil)
+	fixedNow := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	controller.now = func() time.Time { return fixedNow }
+
+	e := echo.New()
+	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"value":"next-secret"}`))
+	createReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	createCtx := e.NewContext(createReq, httptest.NewRecorder())
+	createCtx.SetParamNames("sessionId")
+	createCtx.SetParamValues("session-next")
+	createCtx.Set("authz_context", &auth.AuthorizationContext{User: entities.NewUser("user-1", entities.UserTypeRegular, "user-1"), PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true, CanCreate: true}})
+	require.NoError(t, controller.Create(createCtx))
+
+	consume := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer session-token")
+		rec := httptest.NewRecorder()
+		ctx := e.NewContext(req, rec)
+		ctx.SetParamNames("sessionId")
+		ctx.SetParamValues("session-next")
+		require.NoError(t, controller.ConsumeNext(ctx))
+		return rec
+	}
+	first := consume()
+	require.Equal(t, http.StatusOK, first.Code)
+	require.JSONEq(t, `{"value":"next-secret"}`, first.Body.String())
+	require.Equal(t, "no-store", first.Header().Get("Cache-Control"))
+	require.Equal(t, http.StatusNotFound, consume().Code)
+}

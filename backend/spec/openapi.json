@@ -1253,6 +1253,22 @@
         }
       }
     },
+    "/internal/session-control/{sessionId}/secrets/next": {
+      "get": {
+        "summary": "Consume the oldest pending session secret exactly once without its ID",
+        "operationId": "consumeNextSessionSecret",
+        "tags": ["Sessions"],
+        "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "generation", "in": "query", "description": "Required for direct-runtime sessions to fence replaced runtimes", "schema": {"type": "integer", "format": "int64"}}
+        ],
+        "responses": {
+          "200": {"description": "Secret returned and atomically consumed"},
+          "404": {"description": "No unconsumed secret is pending"}
+        }
+      }
+    },
     "/internal/session-control/{sessionId}/secrets/{secretId}": {
       "get": {
         "summary": "Consume a session secret exactly once",

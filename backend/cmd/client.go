@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -121,6 +122,13 @@ var reportUsageCmd = &cobra.Command{
 	Short: "Report token usage from a Stop hook transcript",
 	Args:  cobra.NoArgs,
 	RunE:  runReportUsage,
+}
+
+var consumeSecretCmd = &cobra.Command{
+	Use:   "consume-secret",
+	Short: "Consume the next one-time secret registered for this session",
+	Args:  cobra.NoArgs,
+	RunE:  runConsumeSecret,
 }
 
 var sendCmd = &cobra.Command{
@@ -261,6 +269,7 @@ func init() {
 
 	ClientCmd.AddCommand(cycleCmd)
 	ClientCmd.AddCommand(reportUsageCmd)
+	ClientCmd.AddCommand(consumeSecretCmd)
 	ClientCmd.AddCommand(sendCmd)
 	ClientCmd.AddCommand(historyCmd)
 	ClientCmd.AddCommand(statusCmd)
@@ -272,6 +281,37 @@ func init() {
 	ClientCmd.AddCommand(backupSessionStateCmd)
 	ClientCmd.AddCommand(scheduleSessionSuspendCmd)
 }
+
+func runConsumeSecret(cmd *cobra.Command, _ []string) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+	defer cancel()
+	return consumeSecret(ctx, http.DefaultClient, "http://127.0.0.1:9001/one-time-secrets/next", cmd.OutOrStdout())
+}
+
+func consumeSecret(ctx context.Context, client *http.Client, endpoint string, output io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("consume one-time secret: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("consume one-time secret: local endpoint returned %s", resp.Status)
+	}
+	var result struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxOneTimeSecretResponseBytes)).Decode(&result); err != nil {
+		return fmt.Errorf("decode one-time secret: %w", err)
+	}
+	_, err = fmt.Fprintln(output, result.Value)
+	return err
+}
+
+const maxOneTimeSecretResponseBytes = 65 << 10
 
 func runReportUsage(cmd *cobra.Command, args []string) error {
 	hookInput, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))

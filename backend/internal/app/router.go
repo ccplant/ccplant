@@ -439,6 +439,7 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionSecretController != nil {
 		r.echo.POST("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.Create,
 			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/internal/session-control/:sessionId/secrets/next", r.handlers.sessionSecretController.ConsumeNext)
 		r.echo.GET("/internal/session-control/:sessionId/secrets/:secretId", r.handlers.sessionSecretController.Consume)
 	}
 	if r.handlers.sessionPoolController != nil {
