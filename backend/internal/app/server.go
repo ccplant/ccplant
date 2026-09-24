@@ -1172,13 +1172,17 @@ func (s *Server) PreviewSession(ctx context.Context, sessionID string, startReq 
 			return nil, fmt.Errorf("select session pool: %w", err)
 		}
 		if resolved != nil {
-			if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
+			route, err := s.resolveSessionRoute(ctx, subject, resolved.Pool.Name, startReq.Tags)
+			if err != nil {
+				return nil, fmt.Errorf("resolve authorized session route: %w", err)
+			}
+			if route == nil {
+				return nil, fmt.Errorf("no authorized and healthy session route is available")
+			}
+			if err := s.checkSessionPoolQuota(ctx, route); err != nil {
 				return nil, err
 			}
-			placement := entities.SessionStartPlacement{Transport: portrepos.SessionRouteTransportDirectRuntime, Pool: resolved.Pool.Name}
-			if resolved.Binding != nil {
-				placement.BindingID = resolved.Binding.ID
-			}
+			placement := entities.SessionStartPlacement{Transport: portrepos.SessionRouteTransportDirectRuntime, Pool: route.PoolName(), BindingID: route.BindingID()}
 			preview, err := s.previewWithPlacement(ctx, sessionID, startReq, userID, teams, placement)
 			if preview != nil {
 				preview.Resolution = map[string]interface{}{"pool": trace, "placement": map[string]interface{}{"reason": "session_runner_pool_selected"}}
@@ -1255,6 +1259,42 @@ func (s *Server) previewWithPlacement(ctx context.Context, sessionID string, sta
 }
 
 func (s *Server) createSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+	if s.sessionRunnerStore == nil {
+		return nil, fmt.Errorf("authorized session routing is unavailable")
+	}
+	subject := sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: userID}
+	if startReq.Scope == entities.ScopeTeam {
+		subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
+	}
+	requestedPool := requestedSessionPool(startReq)
+	explicitManagerID := ""
+	if startReq.Params != nil {
+		explicitManagerID = strings.TrimSpace(startReq.Params.ManagerID)
+	}
+	if explicitManagerID != "" {
+		esm, err := s.findESMByID(ctx, userID, teams, explicitManagerID)
+		if err != nil {
+			return nil, fmt.Errorf("find requested session manager: %w", err)
+		}
+		if esm == nil || esm.Pool == "" {
+			return nil, fmt.Errorf("requested session manager has no session pool")
+		}
+		if requestedPool != "" && requestedPool != esm.Pool {
+			return nil, fmt.Errorf("requested manager does not supply session pool %q", requestedPool)
+		}
+		requestedPool = esm.Pool
+	}
+	route, err := s.resolveSessionRoute(ctx, subject, requestedPool, startReq.Tags)
+	if err != nil {
+		return nil, fmt.Errorf("select authorized session route: %w", err)
+	}
+	if route == nil {
+		return nil, fmt.Errorf("no authorized and healthy session route is available")
+	}
+	if explicitManagerID != "" && !authorizedRouteContainsManager(route, explicitManagerID) {
+		return nil, fmt.Errorf("requested session manager is not an authorized supplier of pool %q", route.PoolName())
+	}
+
 	// Identity and TeamConfig mutation belong to the API. The execution-plane
 	// manager receives an already-authorized request and never initializes the
 	// public authentication service.
@@ -1271,196 +1311,69 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 			return nil, fmt.Errorf("ensure personal API key: %w", err)
 		}
 	}
-	// If ManagerID is set, forward session creation to an external session manager (External Session Manager)
-	if startReq.Params != nil && startReq.Params.ManagerID != "" {
-		return s.createRemoteSession(ctx, sessionID, startReq, userID, teams)
+	switch route.Kind() {
+	case sessionrunnercore.RouteKindPool:
+		return s.createPoolSession(ctx, route, sessionID, startReq, userID, teams)
+	case sessionrunnercore.RouteKindLocal:
+		return s.createLocalSession(ctx, route, sessionID, startReq, userID, userRole, teams)
+	default:
+		return nil, fmt.Errorf("unsupported authorized session route kind %q", route.Kind())
 	}
-	if s.sessionRunnerStore != nil {
-		subject := sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: userID}
-		if startReq.Scope == entities.ScopeTeam {
-			subject = sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: startReq.TeamID}
-		}
-		requestedPool := ""
-		if startReq.Params != nil {
-			requestedPool = startReq.Params.Pool
-		}
-		resolved, err := s.resolveSessionPool(ctx, subject, requestedPool, startReq.Tags)
-		if err != nil {
-			return nil, fmt.Errorf("select session pool: %w", err)
-		}
-		if resolved != nil {
-			return s.createPoolSession(ctx, resolved, sessionID, startReq, userID, teams)
-		}
-	}
-	if requestedPool := requestedSessionPool(startReq); requestedPool != "" {
-		return nil, fmt.Errorf("no authorized and healthy session pool matches %q", requestedPool)
-	}
+}
 
-	// Preserve automatic assignment only for legacy ESMs that do not have a runner pool.
-	// Skip ESM forwarding when sandbox or DinD is requested: the remote proxy may not support
-	// these features, which require local Kubernetes deployment to add init containers/sidecars.
-	sandboxRequested := startReq.Params != nil && startReq.Params.Sandbox != nil && startReq.Params.Sandbox.Enabled
-	dindRequested := startReq.Params != nil && startReq.Params.Docker != nil && startReq.Params.Docker.Enabled
-	hasAllocatorSelector := hasAllocatorSelector(startReq.Tags)
-	if hasAllocatorSelector && (sandboxRequested || dindRequested) {
-		return nil, fmt.Errorf("allocator.* routing does not support sandbox or Docker-in-Docker")
+func (s *Server) createLocalSession(ctx context.Context, route sessionrunnercore.AuthorizedRoute, sessionID string, startReq entities.StartRequest, userID, userRole string, teams []string) (entities.Session, error) {
+	if route == nil || route.Kind() != sessionrunnercore.RouteKindLocal {
+		return nil, fmt.Errorf("authorized local session route is required")
 	}
-	if !sandboxRequested && !dindRequested {
-		selectedESM, err := s.findAutomaticAssignmentESM(ctx, userID, teams, startReq.Tags)
-		if err != nil {
-			return nil, fmt.Errorf("select external session manager: %w", err)
-		}
-		if selectedESM != nil {
-			log.Printf("[SESSION] Using external session manager %s (%s) for session %s", selectedESM.Name, selectedESM.ID, sessionID)
-			if startReq.Params == nil {
-				startReq.Params = &entities.SessionParams{}
-			}
-			startReq.Params.ManagerID = selectedESM.ID
-			return s.createRemoteSession(ctx, sessionID, startReq, userID, teams)
-		}
-		if hasAllocatorSelector {
-			return nil, fmt.Errorf("no external session manager matches allocator.* tags")
-		}
-	}
-	if !s.localSessionFallbackEnabled {
-		return nil, fmt.Errorf("no authorized and healthy session pool is available")
-	}
-
-	// Get auth team env file from user context if available
-	var authTeamEnvFile string
-	// Note: This would need to be passed from the handler if required
-
-	// Merge environment variables from multiple sources
-	envConfig := services.EnvMergeConfig{
-		RoleEnvFiles:    &s.config.RoleEnvFiles,
-		UserRole:        userRole,
-		TeamEnvFile:     services.ExtractTeamEnvFile(startReq.Tags),
-		AuthTeamEnvFile: authTeamEnvFile,
-		RequestEnv:      startReq.Environment,
-	}
-
-	mergedEnv, err := services.MergeEnvironmentVariables(envConfig)
+	mergedEnv, err := services.MergeEnvironmentVariables(services.EnvMergeConfig{
+		RoleEnvFiles: &s.config.RoleEnvFiles, UserRole: userRole,
+		TeamEnvFile: services.ExtractTeamEnvFile(startReq.Tags), RequestEnv: startReq.Environment,
+	})
 	if err != nil {
-		log.Printf("[ENV] Failed to merge environment variables: %v", err)
 		return nil, fmt.Errorf("failed to merge environment variables: %w", err)
 	}
-
-	// Replace the request environment with merged values
 	startReq.Environment = mergedEnv
-
-	// Extract repository information from tags
 	repoInfo := s.extractRepositoryInfo(sessionID, startReq.Tags)
-
-	// Determine initial message from Params.Message
-	var initialMessage string
-	if startReq.Params != nil && startReq.Params.Message != "" {
-		initialMessage = startReq.Params.Message
-	}
-
-	// Determine GitHub token from Params.GithubToken
-	// Note: github_token is not passed for team-scoped sessions (use GitHub App auth instead)
-	githubToken := githubTokenForStartRequest(startReq)
-
-	// Determine agent type from Params.AgentType
-	var agentType string
-	if startReq.Params != nil && startReq.Params.AgentType != "" {
-		agentType = startReq.Params.AgentType
-	}
-
-	// Determine Slack parameters from Params.Slack
+	var initialMessage, agentType, sessionTTL string
 	var slackParams *entities.SlackParams
-	if startReq.Params != nil && startReq.Params.Slack != nil {
-		slackParams = startReq.Params.Slack
-	}
-
-	// Determine initial message wait second from Params.InitialMessageWaitSecond
 	var initialMessageWaitSecond *int
-	if startReq.Params != nil && startReq.Params.InitialMessageWaitSecond != nil {
-		initialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
-	}
-
-	// Determine cycle params from Params.CycleMessage / Params.CycleMaxCount
 	var cycleMessage string
 	var cycleMaxCount int
+	var sandbox *entities.SandboxParams
+	var docker *entities.DockerParams
+	var authProxy *bool
+	var unsyncedFilePaths, modelOptions []string
+	var credentialSource, codexAuthMode, claudeAuthMode, model, resumeFrom string
 	if startReq.Params != nil {
+		initialMessage = startReq.Params.Message
+		agentType = startReq.Params.AgentType
+		slackParams = startReq.Params.Slack
+		initialMessageWaitSecond = startReq.Params.InitialMessageWaitSecond
 		cycleMessage = startReq.Params.CycleMessage
 		cycleMaxCount = startReq.Params.CycleMaxCount
-	}
-
-	// Determine sandbox params from Params.Sandbox
-	var sandbox *entities.SandboxParams
-	if startReq.Params != nil && startReq.Params.Sandbox != nil {
 		sandbox = startReq.Params.Sandbox
-	}
-
-	// Determine docker params from Params.Docker
-	var docker *entities.DockerParams
-	if startReq.Params != nil && startReq.Params.Docker != nil {
 		docker = startReq.Params.Docker
-	}
-
-	// Determine auth proxy params from Params.AuthProxy
-	var authProxy *bool
-	if startReq.Params != nil && startReq.Params.AuthProxy != nil {
 		authProxy = startReq.Params.AuthProxy
-	}
-
-	// Determine session TTL from Params.SessionTTL
-	var sessionTTL string
-	if startReq.Params != nil {
 		sessionTTL = sessionuc.ResolveSessionTTL(startReq.Params)
-	}
-
-	var unsyncedFilePaths, modelOptions []string
-	var credentialSource, codexAuthMode, claudeAuthMode, model string
-	var resumeFrom string
-	if startReq.Params != nil && len(startReq.Params.UnsyncedFilePaths) > 0 {
 		unsyncedFilePaths = append([]string(nil), startReq.Params.UnsyncedFilePaths...)
-	}
-	if startReq.Params != nil {
 		credentialSource = startReq.Params.CredentialSource
 		codexAuthMode = startReq.Params.CodexAuthMode
 		claudeAuthMode = startReq.Params.ClaudeAuthMode
 		resumeFrom = startReq.Params.ResumeFrom
 		model = startReq.Params.Model
-		if len(startReq.Params.ModelOptions) > 0 {
-			modelOptions = append([]string(nil), startReq.Params.ModelOptions...)
-		}
+		modelOptions = append([]string(nil), startReq.Params.ModelOptions...)
 	}
-
-	launcher := sessionuc.NewLaunchUseCase(s.sessionManager)
-	result, err := launcher.Launch(context.Background(), sessionID, sessionuc.LaunchRequest{
-		WebhookPayload:           startReq.WebhookPayload,
-		ResumeFrom:               resumeFrom,
-		TriggeredUserID:          startReq.TriggeredUserID,
-		UserID:                   userID,
-		Environment:              startReq.Environment,
-		ProfileEnvironment:       startReq.ProfileEnvironment,
-		Tags:                     startReq.Tags,
-		RepoInfo:                 repoInfo,
-		InitialMessage:           initialMessage,
-		Teams:                    teams,
-		GithubToken:              githubToken,
-		Scope:                    startReq.Scope,
-		TeamID:                   startReq.TeamID,
-		AgentType:                agentType,
-		Model:                    model,
-		ModelOptions:             modelOptions,
-		SlackParams:              slackParams,
-		InitialMessageWaitSecond: initialMessageWaitSecond,
-		CycleMessage:             cycleMessage,
-		CycleMaxCount:            cycleMaxCount,
-		Sandbox:                  sandbox,
-		Docker:                   docker,
-		AuthProxy:                authProxy,
-		SessionTTL:               sessionTTL,
-		UnsyncedFilePaths:        unsyncedFilePaths,
-		CredentialSource:         credentialSource,
-		CodexAuthMode:            codexAuthMode,
-		ClaudeAuthMode:           claudeAuthMode,
-		ProfileFiles:             startReq.ProfileFiles,
-		ProfileMCPServers:        startReq.ProfileMCPServers,
-		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
+	result, err := sessionuc.NewLaunchUseCase(s.sessionManager).Launch(ctx, sessionID, sessionuc.LaunchRequest{
+		WebhookPayload: startReq.WebhookPayload, ResumeFrom: resumeFrom, TriggeredUserID: startReq.TriggeredUserID,
+		UserID: userID, Environment: startReq.Environment, ProfileEnvironment: startReq.ProfileEnvironment,
+		Tags: startReq.Tags, RepoInfo: repoInfo, InitialMessage: initialMessage, Teams: teams,
+		GithubToken: githubTokenForStartRequest(startReq), Scope: startReq.Scope, TeamID: startReq.TeamID,
+		AgentType: agentType, Model: model, ModelOptions: modelOptions, SlackParams: slackParams,
+		InitialMessageWaitSecond: initialMessageWaitSecond, CycleMessage: cycleMessage, CycleMaxCount: cycleMaxCount,
+		Sandbox: sandbox, Docker: docker, AuthProxy: authProxy, SessionTTL: sessionTTL,
+		UnsyncedFilePaths: unsyncedFilePaths, CredentialSource: credentialSource,
+		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode, ProfileFiles: startReq.ProfileFiles,
+		ProfileMCPServers: startReq.ProfileMCPServers, ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 	})
 	if err != nil {
 		return nil, err
@@ -1474,6 +1387,24 @@ func (s *Server) resolveSessionPool(ctx context.Context, subject sessionrunnerco
 		resolver.WithManagerLiveness(s.esmControlStore)
 	}
 	return resolver.Resolve(ctx, subject, requestedPool, tags)
+}
+
+func (s *Server) resolveSessionRoute(ctx context.Context, subject sessionrunnercore.Subject, requestedPool string, tags map[string]string) (sessionrunnercore.AuthorizedRoute, error) {
+	resolver := sessionrunnercore.NewResolver(s.sessionRunnerStore, 90*time.Second)
+	if s.esmControlStore != nil {
+		resolver.WithManagerLiveness(s.esmControlStore)
+	}
+	resolver.WithLocalFallback(s.localSessionFallbackEnabled)
+	return resolver.ResolveRoute(ctx, subject, requestedPool, tags)
+}
+
+func authorizedRouteContainsManager(route sessionrunnercore.AuthorizedRoute, managerID string) bool {
+	for _, manager := range route.Managers() {
+		if manager.ID == managerID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) resolveSessionPoolWithTrace(ctx context.Context, subject sessionrunnercore.Subject, requestedPool string, tags map[string]string) (*sessionrunnercore.ResolvedPool, *sessionrunnercore.ResolutionTrace, error) {
@@ -1491,9 +1422,12 @@ func requestedSessionPool(startReq entities.StartRequest) string {
 	return strings.TrimSpace(startReq.Params.Pool)
 }
 
-func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnercore.ResolvedPool, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
-	pool := resolved.Pool.Name
-	if err := s.checkSessionPoolQuota(ctx, resolved.Binding); err != nil {
+func (s *Server) createPoolSession(ctx context.Context, route sessionrunnercore.AuthorizedRoute, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
+	if route == nil {
+		return nil, fmt.Errorf("authorized session route is required")
+	}
+	pool := route.PoolName()
+	if err := s.checkSessionPoolQuota(ctx, route); err != nil {
 		return nil, err
 	}
 	runReq := s.runRequestForStart(sessionID, startReq, userID, teams)
@@ -1527,7 +1461,7 @@ func (s *Server) createPoolSession(ctx context.Context, resolved *sessionrunnerc
 		return nil, fmt.Errorf("create pool runtime credential: %w", err)
 	}
 	allocation := &sessionrunnercore.Allocation{
-		SessionID: sessionID, Pool: pool, BindingID: resolved.Binding.ID, Generation: 1,
+		SessionID: sessionID, Pool: pool, BindingID: route.BindingID(), Generation: 1,
 		Requirements: map[string]string{
 			"agent_type": agentType,
 			"dind":       fmt.Sprintf("%t", docker != nil && docker.Enabled),
@@ -1577,24 +1511,24 @@ func (s *Server) applyPoolAutoSuspendPolicy(ctx context.Context, settings *sessi
 	settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 }
 
-func (s *Server) checkSessionPoolQuota(ctx context.Context, binding *sessionrunnercore.Binding) error {
-	if binding == nil || binding.MaxConcurrent <= 0 {
+func (s *Server) checkSessionPoolQuota(ctx context.Context, route sessionrunnercore.AuthorizedRoute) error {
+	if route == nil || route.MaxConcurrent() <= 0 {
 		return nil
 	}
-	allocations, err := s.sessionRunnerStore.ListAllocations(ctx, binding.Pool)
+	allocations, err := s.sessionRunnerStore.ListAllocations(ctx, route.PoolName())
 	if err != nil {
 		return fmt.Errorf("list session pool allocations: %w", err)
 	}
 	active := 0
 	for _, allocation := range allocations {
-		if allocation.BindingID == binding.ID && allocationCountsTowardQuota(allocation.Status) {
+		if allocation.BindingID == route.BindingID() && allocationCountsTowardQuota(allocation.Status) {
 			active++
 		}
 	}
-	if active >= binding.MaxConcurrent {
+	if active >= route.MaxConcurrent() {
 		return &sessionrunnercore.QuotaExceededError{
-			Pool: binding.Pool, BindingID: binding.ID,
-			MaxConcurrent: binding.MaxConcurrent, Active: active,
+			Pool: route.PoolName(), BindingID: route.BindingID(),
+			MaxConcurrent: route.MaxConcurrent(), Active: active,
 		}
 	}
 	return nil
@@ -1635,26 +1569,6 @@ func (s *Server) EnsurePersonalAPIKey(ctx context.Context, userID string) error 
 		return simpleAuth.LoadPersonalAPIKey(ctx, key)
 	}
 	return errors.New("personal API-key auth service is unavailable")
-}
-
-// createRemoteSession forwards session creation to an external session manager (External Session Manager).
-func (s *Server) createRemoteSession(ctx context.Context, sessionID string, startReq entities.StartRequest, userID string, teams []string) (entities.Session, error) {
-	managerID := startReq.Params.ManagerID
-	esm, err := s.findESMByID(ctx, userID, teams, managerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find external session manager %s: %w", managerID, err)
-	}
-	if esm == nil {
-		return nil, fmt.Errorf("external session manager not found: %s", managerID)
-	}
-	if s.sessionRunnerStore == nil || esm.Pool == "" {
-		return nil, fmt.Errorf("session manager %s has no runner pool", managerID)
-	}
-	pool, err := s.sessionRunnerStore.GetLogicalPool(ctx, esm.Pool)
-	if err != nil || !pool.Enabled {
-		return nil, fmt.Errorf("session manager pool is unavailable: %s", esm.Pool)
-	}
-	return s.createPoolSession(ctx, &sessionrunnercore.ResolvedPool{Pool: pool}, sessionID, startReq, userID, teams)
 }
 
 func newDirectRuntimeToken() (string, string, error) {

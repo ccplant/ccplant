@@ -13,16 +13,23 @@ import (
 // MCPSessionToolsUseCase provides use cases for MCP session tools
 type MCPSessionToolsUseCase struct {
 	sessionManager repositories.SessionManager
+	sessionCreator SessionCreator
 	shareRepo      repositories.ShareRepository
+}
+
+type SessionCreator interface {
+	CreateSession(context.Context, string, entities.StartRequest, string, string, []string) (entities.Session, error)
 }
 
 // NewMCPSessionToolsUseCase creates a new MCPSessionToolsUseCase
 func NewMCPSessionToolsUseCase(
 	sessionManager repositories.SessionManager,
+	sessionCreator SessionCreator,
 	shareRepo repositories.ShareRepository,
 ) *MCPSessionToolsUseCase {
 	return &MCPSessionToolsUseCase{
 		sessionManager: sessionManager,
+		sessionCreator: sessionCreator,
 		shareRepo:      shareRepo,
 	}
 }
@@ -113,7 +120,11 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 	// Generate session ID
 	sessionID := uuid.New().String()
 
-	// Build RunServerRequest
+	if uc.sessionCreator == nil {
+		return "", fmt.Errorf("authorized session creator is unavailable")
+	}
+	// Build the public start request so MCP creation passes through the same
+	// sealed AuthorizedRoute gate as every other control-plane entry point.
 	tags := req.Tags
 	if tags == nil {
 		tags = make(map[string]string)
@@ -122,17 +133,14 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 		tags["user_id"] = req.UserID
 	}
 
-	runReq := &entities.RunServerRequest{
-		UserID:      req.UserID,
+	startReq := entities.StartRequest{
 		Environment: req.Environment,
 		Tags:        tags,
 		Scope:       entities.ScopeUser,
-		Teams:       req.Teams,
-		GithubToken: req.GithubToken,
+		Params:      &entities.SessionParams{GithubToken: req.GithubToken},
 	}
 
-	// Create session using SessionManager
-	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, nil)
+	session, err := uc.sessionCreator.CreateSession(ctx, sessionID, startReq, req.UserID, "", req.Teams)
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}

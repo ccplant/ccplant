@@ -29,14 +29,15 @@ func TestCheckSessionPoolQuota(t *testing.T) {
 	}
 
 	server := &Server{sessionRunnerStore: store}
-	if err := server.checkSessionPoolQuota(ctx, binding); err != nil {
+	route := testAuthorizedRoute(t, "linux", binding)
+	if err := server.checkSessionPoolQuota(ctx, route); err != nil {
 		t.Fatalf("quota below limit: %v", err)
 	}
 	if err := store.Enqueue(ctx, &sessionrunnercore.Allocation{SessionID: "session-2", Pool: "linux", BindingID: binding.ID}); err != nil {
 		t.Fatal(err)
 	}
 
-	err := server.checkSessionPoolQuota(ctx, binding)
+	err := server.checkSessionPoolQuota(ctx, route)
 	var quotaErr *sessionrunnercore.QuotaExceededError
 	if !errors.As(err, &quotaErr) {
 		t.Fatalf("quota error = %v, want QuotaExceededError", err)
@@ -48,7 +49,7 @@ func TestCheckSessionPoolQuota(t *testing.T) {
 
 func TestCheckSessionPoolQuotaUnlimited(t *testing.T) {
 	server := &Server{}
-	if err := server.checkSessionPoolQuota(context.Background(), &sessionrunnercore.Binding{MaxConcurrent: 0}); err != nil {
+	if err := server.checkSessionPoolQuota(context.Background(), testAuthorizedRoute(t, "linux", &sessionrunnercore.Binding{MaxConcurrent: 0})); err != nil {
 		t.Fatalf("unlimited quota returned error: %v", err)
 	}
 }

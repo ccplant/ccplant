@@ -124,6 +124,9 @@ func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request co
 	if resolved == nil {
 		return "", errors.New("no authorized and healthy session pool is available for Codex auth")
 	}
+	if resolved.Kind() != sessionrunnercore.RouteKindPool {
+		return "", errors.New("Codex auth requires an authorized session pool route")
+	}
 	managers := orderManagers(resolved.Managers())
 	log.Printf("[CODEX_AUTH_ESM] Attempt %s resolved pool=%s binding=%s with %d candidate manager(s)", request.AttemptID, resolved.PoolName(), resolved.BindingID(), len(managers))
 	lastErr := errors.New("no connected session manager is available for codex device auth")

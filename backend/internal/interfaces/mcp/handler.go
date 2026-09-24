@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	mcpusecases "github.com/takutakahashi/agentapi-proxy/internal/usecases/mcp"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	portservices "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -24,6 +25,7 @@ const userContextKey contextKey = "mcp_authenticated_user"
 // MCPHandler implements the CustomHandler interface for MCP endpoints
 type MCPHandler struct {
 	sessionManager repositories.SessionManager
+	sessionCreator mcpusecases.SessionCreator
 	shareRepo      repositories.ShareRepository
 	authService    portservices.AuthService
 	httpHandler    http.Handler
@@ -44,6 +46,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 
 	handler := &MCPHandler{
 		sessionManager: sessionManager,
+		sessionCreator: server,
 		shareRepo:      shareRepo,
 		authService:    server.GetContainer().AuthService,
 	}
@@ -84,7 +87,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		}
 
 		// Create new MCP server instance with authenticated user and repositories
-		mcpServer := NewMCPServer(sessionManager, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
+		mcpServer := NewMCPServer(sessionManager, handler.sessionCreator, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()

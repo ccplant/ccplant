@@ -9,11 +9,19 @@ import (
 )
 
 type Resolver struct {
-	store        ResolverStore
-	liveness     ManagerLiveness
-	heartbeatTTL time.Duration
-	now          func() time.Time
+	store         ResolverStore
+	liveness      ManagerLiveness
+	localFallback bool
+	heartbeatTTL  time.Duration
+	now           func() time.Time
 }
+
+type RouteKind string
+
+const (
+	RouteKindPool  RouteKind = "pool"
+	RouteKindLocal RouteKind = "local"
+)
 
 // ResolverStore is the read-only pool inventory required to make an
 // authorization and routing decision. Keeping this boundary small lets every
@@ -51,24 +59,29 @@ type PoolCandidateResolution struct {
 }
 
 // AuthorizedRoute is a sealed capability produced only by Resolver. External
-// packages can consume a route but cannot construct or implement one, so a
-// direct-manager workload cannot forge authorization by assembling pool and
-// manager values itself.
+// packages can consume a route but cannot construct or implement one, so no
+// workload can forge authorization by assembling placement values itself.
 type AuthorizedRoute interface {
+	Kind() RouteKind
 	PoolName() string
 	BindingID() string
+	MaxConcurrent() int
 	Managers() []*Manager
 	authorizedRoute()
 }
 
 type authorizedRoute struct {
-	poolName  string
-	bindingID string
-	managers  []*Manager
+	kind          RouteKind
+	poolName      string
+	bindingID     string
+	maxConcurrent int
+	managers      []*Manager
 }
 
+func (r *authorizedRoute) Kind() RouteKind      { return r.kind }
 func (r *authorizedRoute) PoolName() string     { return r.poolName }
 func (r *authorizedRoute) BindingID() string    { return r.bindingID }
+func (r *authorizedRoute) MaxConcurrent() int   { return r.maxConcurrent }
 func (r *authorizedRoute) Managers() []*Manager { return append([]*Manager(nil), r.managers...) }
 func (r *authorizedRoute) authorizedRoute()     {}
 
@@ -80,6 +93,14 @@ func NewResolver(store ResolverStore, heartbeatTTL time.Duration) *Resolver {
 
 func (r *Resolver) WithManagerLiveness(liveness ManagerLiveness) *Resolver {
 	r.liveness = liveness
+	return r
+}
+
+// WithLocalFallback adds a synthetic local route below every pool binding.
+// It is considered only for automatic placement; explicit pool or allocator
+// requests never fall back to local execution.
+func (r *Resolver) WithLocalFallback(enabled bool) *Resolver {
+	r.localFallback = enabled
 	return r
 }
 
@@ -142,13 +163,19 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool s
 	return resolved, err
 }
 
-// ResolveRoute is the single authorization and routing entry point for direct
-// manager workloads. It fails closed unless the subject has an enabled use
-// binding to an enabled pool with at least one healthy, enabled supplier.
+// ResolveRoute is the single authorization and routing entry point for new
+// workloads. It prefers an enabled bound pool with a healthy supplier, then
+// optionally returns the lowest-priority local route. Otherwise it fails closed.
 func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (AuthorizedRoute, error) {
 	resolved, err := r.Resolve(ctx, subject, requestedPool, tags)
 	if err != nil || resolved == nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		if r.localFallback && strings.TrimSpace(requestedPool) == "" && len(allocatorLabels(tags)) == 0 {
+			return &authorizedRoute{kind: RouteKindLocal}, nil
+		}
+		return nil, nil
 	}
 	managers, err := r.store.ListManagers(ctx)
 	if err != nil {
@@ -164,7 +191,7 @@ func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedP
 			allowed[supplier.ManagerID] = true
 		}
 	}
-	route := &authorizedRoute{poolName: resolved.Pool.Name, bindingID: resolved.Binding.ID}
+	route := &authorizedRoute{kind: RouteKindPool, poolName: resolved.Pool.Name, bindingID: resolved.Binding.ID, maxConcurrent: resolved.Binding.MaxConcurrent}
 	for _, manager := range managers {
 		if manager == nil || !allowed[manager.ID] {
 			continue

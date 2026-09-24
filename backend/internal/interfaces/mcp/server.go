@@ -19,9 +19,9 @@ type MCPServer struct {
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(sessionManager repositories.SessionManager, shareRepo repositories.ShareRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
+func NewMCPServer(sessionManager repositories.SessionManager, sessionCreator mcpusecases.SessionCreator, shareRepo repositories.ShareRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
 	// Create session use case with actual dependencies
-	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, shareRepo)
+	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, sessionCreator, shareRepo)
 
 	// Create MCP server
 	impl := &mcp.Implementation{
