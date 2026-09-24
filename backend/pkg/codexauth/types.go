@@ -28,6 +28,8 @@ type WorkloadRequest struct {
 	CallbackURL string    `json:"callback_url"`
 	Token       string    `json:"token"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	SubjectType string    `json:"subject_type"`
+	SubjectID   string    `json:"subject_id"`
 }
 
 type Challenge struct {

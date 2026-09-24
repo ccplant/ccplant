@@ -9,10 +9,20 @@ import (
 )
 
 type Resolver struct {
-	store        Store
+	store        ResolverStore
 	liveness     ManagerLiveness
 	heartbeatTTL time.Duration
 	now          func() time.Time
+}
+
+// ResolverStore is the read-only pool inventory required to make an
+// authorization and routing decision. Keeping this boundary small lets every
+// workload type use the same resolver without depending on allocation writes.
+type ResolverStore interface {
+	ListLogicalPools(context.Context) ([]*LogicalPool, error)
+	ListManagers(context.Context) ([]*Manager, error)
+	ListBindings(context.Context, string) ([]*Binding, error)
+	ListPoolSuppliers(context.Context) ([]*PoolSupplier, error)
 }
 
 type ManagerLiveness interface {
@@ -40,7 +50,7 @@ type PoolCandidateResolution struct {
 	RequiredLabels   map[string]string `json:"required_labels,omitempty"`
 }
 
-func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
+func NewResolver(store ResolverStore, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
 }
 
