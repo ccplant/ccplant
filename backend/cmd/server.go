@@ -580,7 +580,7 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
 
 	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
-	slackbotHandlers := slackbot.NewHandlers(slackbotRepo)
+	slackbotHandlers := slackbot.NewHandlers(slackbotRepo, newTriggerSessionManager(configData), proxyServer.GetSessionProfileRepository())
 	proxyServer.AddCustomHandler(slackbotHandlers)
 
 	log.Printf("[SLACKBOT_HANDLERS] SlackBot management handlers registered successfully")

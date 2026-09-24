@@ -14,8 +14,8 @@ type Handlers struct {
 
 // NewHandlers creates a new SlackBot Handlers instance (management API only).
 // Socket Mode event handling is managed separately by SlackSocketManager.
-func NewHandlers(repo repositories.SlackBotRepository) *Handlers {
-	controller := NewSlackBotController(repo)
+func NewHandlers(repo repositories.SlackBotRepository, dependencies ...interface{}) *Handlers {
+	controller := NewSlackBotController(repo, dependencies...)
 	return &Handlers{
 		controller: controller,
 	}
@@ -34,6 +34,7 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.POST("", h.controller.CreateSlackBot)
 	g.GET("", h.controller.ListSlackBots)
 	g.GET("/:id", h.controller.GetSlackBot)
+	g.POST("/:id/simulate", h.controller.SimulateSlackBot)
 	g.PUT("/:id", h.controller.UpdateSlackBot)
 	g.DELETE("/:id", h.controller.DeleteSlackBot)
 

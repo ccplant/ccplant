@@ -3776,6 +3776,58 @@
         }
       }
     },
+    "/slackbots/{id}/simulate": {
+      "post": {
+        "summary": "Simulate a SlackBot event",
+        "description": "Evaluates filters, templates, tags, environment, and session launch settings without contacting Slack, creating or stopping a session, or posting a message.",
+        "operationId": "simulateSlackBot",
+        "tags": [
+          "SlackBots"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "SlackBot ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlackBotSimulationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Side-effect-free simulation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackBotSimulationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid synthetic event"
+          },
+          "403": {
+            "description": "Forbidden - can only access own SlackBots"
+          },
+          "404": {
+            "description": "SlackBot not found"
+          }
+        }
+      }
+    },
     "/session-profiles": {
       "post": {
         "summary": "Create a new session profile",
@@ -10694,6 +10746,98 @@
           "type": "string",
           "description": "Slack app-level token for Socket Mode (xapp-...). Write-only: stored securely in the bot's Kubernetes Secret, never returned in API responses.",
           "example": "xapp-..."
+        }
+      }
+    },
+    "SlackBotSimulationRequest": {
+      "type": "object",
+      "required": [
+        "event"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "default": "event_callback"
+        },
+        "team_id": {
+          "type": "string"
+        },
+        "channel_name": {
+          "type": "string",
+          "description": "Offline replacement for Slack channel-name resolution. Required when the bot has channel filters."
+        },
+        "thread_messages": {
+          "type": "array",
+          "description": "Offline replacement for Slack conversations.replies output.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "user": { "type": "string" },
+              "bot_id": { "type": "string" },
+              "text": { "type": "string" },
+              "ts": { "type": "string" },
+              "subtype": { "type": "string" }
+            }
+          }
+        },
+        "event": {
+          "type": "object",
+          "required": [
+            "type",
+            "user",
+            "channel",
+            "ts"
+          ],
+          "properties": {
+            "type": { "type": "string", "example": "app_mention" },
+            "subtype": { "type": "string" },
+            "bot_id": { "type": "string" },
+            "text": { "type": "string" },
+            "user": { "type": "string", "example": "U_DEBUG" },
+            "channel": { "type": "string", "example": "C_DEBUG" },
+            "ts": { "type": "string", "example": "debug-001" },
+            "thread_ts": { "type": "string" }
+          }
+        }
+      }
+    },
+    "SlackBotSimulationResponse": {
+      "type": "object",
+      "required": [
+        "dry_run",
+        "decision",
+        "side_effects"
+      ],
+      "properties": {
+        "dry_run": { "type": "boolean", "enum": [true] },
+        "decision": {
+          "type": "string",
+          "enum": ["create_or_reuse", "stop", "ignore", "error"]
+        },
+        "reason": { "type": "string" },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "session_id": { "type": "string" },
+            "initial_message": { "type": "string" },
+            "reuse_message": { "type": "string" },
+            "tags": { "type": "object", "additionalProperties": { "type": "string" } },
+            "environment": { "type": "object", "additionalProperties": { "type": "string" } },
+            "params": { "$ref": "#/components/schemas/SlackBotSessionParams" },
+            "repository": { "type": "string" },
+            "reuse_match_tags": { "type": "object", "additionalProperties": { "type": "string" } },
+            "max_sessions": { "type": "integer" },
+            "would_post_to_slack": { "type": "boolean" }
+          }
+        },
+        "side_effects": {
+          "type": "array",
+          "description": "Actions a production event would attempt; none are performed by simulation.",
+          "items": { "type": "string" }
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     },

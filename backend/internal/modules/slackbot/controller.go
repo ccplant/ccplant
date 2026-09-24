@@ -13,12 +13,23 @@ import (
 
 // SlackBotController handles SlackBot management API requests
 type SlackBotController struct {
-	repo repositories.SlackBotRepository
+	repo               repositories.SlackBotRepository
+	sessionManager     repositories.SessionManager
+	sessionProfileRepo repositories.SessionProfileRepository
 }
 
 // NewSlackBotController creates a new SlackBotController
-func NewSlackBotController(repo repositories.SlackBotRepository) *SlackBotController {
-	return &SlackBotController{repo: repo}
+func NewSlackBotController(repo repositories.SlackBotRepository, dependencies ...interface{}) *SlackBotController {
+	controller := &SlackBotController{repo: repo}
+	for _, dependency := range dependencies {
+		switch typed := dependency.(type) {
+		case repositories.SessionManager:
+			controller.sessionManager = typed
+		case repositories.SessionProfileRepository:
+			controller.sessionProfileRepo = typed
+		}
+	}
+	return controller
 }
 
 // --- Request/Response DTOs ---
@@ -301,6 +312,32 @@ func (c *SlackBotController) GetSlackBot(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, c.toResponse(bot))
+}
+
+// SimulateSlackBot evaluates a synthetic event without contacting Slack or creating a session.
+func (c *SlackBotController) SimulateSlackBot(ctx echo.Context) error {
+	id := ctx.Param("id")
+	if id == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "id is required")
+	}
+	bot, err := c.repo.Get(ctx.Request().Context(), id)
+	if err != nil {
+		if _, ok := err.(entities.ErrSlackBotNotFound); ok {
+			return echo.NewHTTPError(http.StatusNotFound, "slackbot not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get slackbot")
+	}
+	if !c.userCanAccess(ctx, bot, getSlackBotUserID(ctx)) {
+		return echo.NewHTTPError(http.StatusForbidden, "access denied")
+	}
+	var req SlackBotSimulationRequest
+	if err := ctx.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if req.Event.Type == "" || req.Event.Channel == "" || req.Event.User == "" || req.Event.Ts == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "event.type, event.channel, event.user, and event.ts are required")
+	}
+	return ctx.JSON(http.StatusOK, SimulateSlackBotEvent(ctx.Request().Context(), c.repo, c.sessionManager, c.sessionProfileRepo, bot, req))
 }
 
 // UpdateSlackBot handles PUT /slackbots/:id

@@ -166,6 +166,19 @@ Examples:
 	Run:  runSlackBotDelete,
 }
 
+var slackbotSimulateCmd = &cobra.Command{
+	Use:   "simulate <id>",
+	Short: "Preview a Slack event without contacting Slack",
+	Long: `Evaluate filters, templates, tags, environment, and session launch settings
+without contacting Slack, creating a session, or posting a message.
+
+Reads a synthetic event from --file or stdin. Example:
+  echo '{"channel_name":"dev","event":{"type":"app_mention","user":"U_DEBUG","channel":"C_DEBUG","text":"org/repo investigate this","ts":"debug-001"}}' |
+    agentapi-proxy client slackbot simulate <id>`,
+	Args: cobra.ExactArgs(1),
+	Run:  runSlackBotSimulate,
+}
+
 func init() {
 	// list flags
 	slackbotListCmd.Flags().StringVar(&slackbotFilterStatus, "status", "", `Filter by status: "active" or "paused"`)
@@ -175,14 +188,35 @@ func init() {
 	// create / apply flags
 	slackbotCreateCmd.Flags().StringVarP(&slackbotFile, "file", "f", "", `Path to JSON file, or "-" for stdin (default: stdin)`)
 	slackbotApplyCmd.Flags().StringVarP(&slackbotFile, "file", "f", "", `Path to JSON file, or "-" for stdin (default: stdin)`)
+	slackbotSimulateCmd.Flags().StringVarP(&slackbotFile, "file", "f", "", `Path to JSON file, or "-" for stdin (default: stdin)`)
 
 	slackbotCmd.AddCommand(slackbotListCmd)
 	slackbotCmd.AddCommand(slackbotGetCmd)
 	slackbotCmd.AddCommand(slackbotCreateCmd)
 	slackbotCmd.AddCommand(slackbotApplyCmd)
 	slackbotCmd.AddCommand(slackbotDeleteCmd)
+	slackbotCmd.AddCommand(slackbotSimulateCmd)
 
 	ClientCmd.AddCommand(slackbotCmd)
+}
+
+func runSlackBotSimulate(cmd *cobra.Command, args []string) {
+	data, err := readJSONInput(slackbotFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		os.Exit(1)
+	}
+	c, err := resolveBaseClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
+		os.Exit(1)
+	}
+	result, err := c.SimulateSlackBot(context.Background(), args[0], data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error simulating SlackBot %q: %v\n", args[0], err)
+		os.Exit(1)
+	}
+	fmt.Println(prettyJSONOutput(result))
 }
 
 func runSlackBotList(cmd *cobra.Command, args []string) {
