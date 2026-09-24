@@ -252,7 +252,7 @@ COPY config/CLAUDE.md /etc/claude-code/CLAUDE.md
 COPY config/managed-settings.json /etc/claude-code/managed-settings.json
 
 # Copy Codex configuration files for entrypoint script
-# AGENTS.md is the Codex equivalent of CLAUDE.md (user-level instructions → ~/.codex/instructions.md)
+# Codex discovers global instructions at ~/.codex/AGENTS.md.
 # codex-config.toml is the Codex equivalent of claude.json (bypasses interactive prompts)
 COPY config/AGENTS.md /tmp/config/AGENTS.md
 COPY config/codex-config.toml /tmp/config/codex-config.toml

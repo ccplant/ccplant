@@ -317,7 +317,7 @@ type CodexConfig struct {
 	// ConfigTOML is written to ~/.codex/config.toml (codex-acp sessions only).
 	// Use it to set approval-mode and other Codex CLI settings that bypass permission prompts.
 	ConfigTOML string `yaml:"config_toml,omitempty" json:"config_toml,omitempty"`
-	// InstructionsMD is written to ~/.codex/instructions.md.
+	// InstructionsMD is written to ~/.codex/AGENTS.md.
 	// It provides user-level instructions to the Codex CLI, equivalent to
 	// ~/.claude/CLAUDE.md for Claude Code.  When non-empty it overrides the
 	// default instructions baked into the Docker image.

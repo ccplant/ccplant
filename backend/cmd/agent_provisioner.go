@@ -111,7 +111,7 @@ func installAgentInstructions() error {
 	}
 	files := [][2]string{
 		{"/tmp/config/CLAUDE.md", filepath.Join(home, ".claude", "CLAUDE.md")},
-		{"/tmp/config/AGENTS.md", filepath.Join(home, ".codex", "instructions.md")},
+		{"/tmp/config/AGENTS.md", filepath.Join(home, ".codex", "AGENTS.md")},
 	}
 	for _, file := range files {
 		data, err := os.ReadFile(file[0])

@@ -17,10 +17,10 @@ fi
 # Create .codex directory if it doesn't exist
 mkdir -p /home/agentapi/.codex
 
-# Copy AGENTS.md (Codex user-level instructions) if it doesn't exist or if it's older than the source
-if [ ! -f /home/agentapi/.codex/instructions.md ] || [ /tmp/config/AGENTS.md -nt /home/agentapi/.codex/instructions.md ]; then
-    echo "Copying AGENTS.md to .codex/instructions.md..."
-    cp /tmp/config/AGENTS.md /home/agentapi/.codex/instructions.md
+# Copy AGENTS.md to Codex's documented global instruction path.
+if [ ! -f /home/agentapi/.codex/AGENTS.md ] || [ /tmp/config/AGENTS.md -nt /home/agentapi/.codex/AGENTS.md ]; then
+    echo "Copying AGENTS.md to .codex/AGENTS.md..."
+    cp /tmp/config/AGENTS.md /home/agentapi/.codex/AGENTS.md
     echo "AGENTS.md copied successfully"
 fi
 
