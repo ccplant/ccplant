@@ -454,23 +454,35 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 
 		result, err := telemetry.LoggedOperation(bgCtx, "slackbot.LaunchSession", func(launchCtx context.Context) (sessionuc.LaunchResult, error) {
 			return h.launcher.Launch(launchCtx, sessionID, sessionuc.LaunchRequest{
-				UserID:                   userID,
-				TriggeredUserID:          triggeredUserID,
-				Scope:                    scope,
-				TeamID:                   teamID,
-				Teams:                    teams,
-				Environment:              env,
-				Tags:                     tags,
-				InitialMessage:           initialMessage,
-				ReuseSession:             true,
-				ReuseMatchTags:           reuseFilter.Tags,
-				ReuseMessage:             h.buildMessage(bot, payloadMap, event.Text, true),
-				StopBeforeReuse:          true,
-				DeferReuseToStart:        true,
-				MaxSessions:              maxSessions,
-				LimitMatchTags:           map[string]string{"slackbot_id": botID},
-				AgentType:                agentType,
-				Model:                    model,
+				UserID:            userID,
+				TriggeredUserID:   triggeredUserID,
+				Scope:             scope,
+				TeamID:            teamID,
+				Teams:             teams,
+				Environment:       env,
+				Tags:              tags,
+				InitialMessage:    initialMessage,
+				ReuseSession:      true,
+				ReuseMatchTags:    reuseFilter.Tags,
+				ReuseMessage:      h.buildMessage(bot, payloadMap, event.Text, true),
+				StopBeforeReuse:   true,
+				DeferReuseToStart: true,
+				MaxSessions:       maxSessions,
+				LimitMatchTags:    map[string]string{"slackbot_id": botID},
+				AgentType:         agentType,
+				Model:             model,
+				Pool: func() string {
+					if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+						return bot.SessionConfig().Params().Pool
+					}
+					return ""
+				}(),
+				ManagerID: func() string {
+					if bot != nil && bot.SessionConfig() != nil && bot.SessionConfig().Params() != nil {
+						return bot.SessionConfig().Params().ManagerID
+					}
+					return ""
+				}(),
 				RepoInfo:                 repoInfo,
 				Sandbox:                  slackSandbox,
 				Docker:                   slackDocker,
