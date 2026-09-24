@@ -832,6 +832,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [showTemplates, setShowTemplates] = useState(false);
   const [recentMessages, setRecentMessages] = useState<string[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showComposerMenu, setShowComposerMenu] = useState(false);
   const [showPRLinks, setShowPRLinks] = useState(false);
   const [sessionAnnotations, setSessionAnnotations] = useState<SessionAnnotations | undefined>();
   const [sessionModelOptions, setSessionModelOptions] = useState<string[]>([]);
@@ -1317,18 +1318,20 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           setShowPRLinks(false)
         } else if (showFontSettings) {
           setShowFontSettings(false)
+        } else if (showComposerMenu) {
+          setShowComposerMenu(false)
         }
       }
     }
 
-    if (showQuestionModal || showTemplateModal || showPRLinks || showFontSettings) {
+    if (showQuestionModal || showTemplateModal || showPRLinks || showFontSettings || showComposerMenu) {
       document.addEventListener('keydown', handleKeyDown)
     }
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [showQuestionModal, showTemplateModal, showPRLinks, showFontSettings])
+  }, [showQuestionModal, showTemplateModal, showPRLinks, showFontSettings, showComposerMenu])
 
   // Listen for font settings changes
   useEffect(() => {
@@ -2710,7 +2713,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 ))}
               </div>
             )}
-            <div className="flex items-center justify-between mt-3">
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs text-gray-500 dark:text-gray-400 hidden sm:block">
                 {(() => {
                   const enterKeyBehavior = getEnterKeyBehavior();
@@ -2737,7 +2740,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   }
                 })()}
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
                 <button
                   type="button"
                   onClick={() => {
@@ -2768,55 +2771,59 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                     </svg>
                   </button>
                 )}
-                {isACPSession ? (
+                <div className="relative">
                   <button
-                    onClick={() => setShowSessionInfo(prev => !prev)}
-                    disabled={!sessionId}
-                    className={`px-2 py-2 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white text-xs rounded-md transition-colors disabled:cursor-not-allowed flex items-center ${
-                      showSessionInfo ? 'bg-gray-700 hover:bg-gray-800' : 'bg-gray-600 hover:bg-gray-700'
-                    }`}
-                    title="セッション情報"
-                    aria-label="セッション情報"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setShowControlPanel(!showControlPanel)}
+                    type="button"
+                    onClick={() => setShowComposerMenu(prev => !prev)}
                     disabled={!isConnected}
-                    className="px-2 py-2 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white text-xs rounded-md transition-colors disabled:cursor-not-allowed flex items-center"
-                    title="Toggle Control Panel"
+                    className="flex items-center rounded-md bg-gray-600 px-2 py-2 text-xs text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
+                    title="その他の操作"
+                    aria-label="その他の操作"
+                    aria-expanded={showComposerMenu}
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                    <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="5" cy="12" r="2" />
+                      <circle cx="12" cy="12" r="2" />
+                      <circle cx="19" cy="12" r="2" />
                     </svg>
                   </button>
-                )}
-
-                {/* Font Settings Button */}
-                <button
-                  onClick={() => setShowFontSettings(!showFontSettings)}
-                  className="px-2 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded-md transition-colors flex items-center relative"
-                  title="フォント設定"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-                  </svg>
-                </button>
-
-                {/* Template Button */}
-                <button
-                  onClick={() => setShowTemplateModal(true)}
-                  disabled={!isConnected || isLoading}
-                  className="px-2 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white text-xs rounded-md transition-colors disabled:cursor-not-allowed flex items-center"
-                  title="テンプレートから選択"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </button>
+                  {showComposerMenu && (
+                    <div className="absolute bottom-full right-0 z-40 mb-2 w-48 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isACPSession) setShowSessionInfo(prev => !prev);
+                          else setShowControlPanel(prev => !prev);
+                          setShowComposerMenu(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        セッション情報
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowFontSettings(true);
+                          setShowComposerMenu(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        文字表示設定
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTemplateModal(true);
+                          setShowComposerMenu(false);
+                        }}
+                        disabled={isLoading}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        履歴・テンプレート
+                      </button>
+                    </div>
+                  )}
+                </div>
                 
                 <button
                   onClick={() => sendMessage()}
