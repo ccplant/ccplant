@@ -152,14 +152,14 @@ func (c *WebhookCustomController) verifyWebhookSignature(ctx echo.Context, body 
 
 	if headerValue == "" {
 		log.Printf("[WEBHOOK_CUSTOM] Missing signature header '%s' for webhook %s", headerName, wh.ID())
-		return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Missing signature header"})
+		return echo.NewHTTPError(http.StatusUnauthorized, "Missing signature header")
 	}
 
 	switch wh.SignatureType() {
 	case entities.WebhookSignatureTypeStatic:
 		if headerValue != wh.Secret() {
 			log.Printf("[WEBHOOK_CUSTOM] Token verification failed for webhook %s (header: %s)", wh.ID(), headerName)
-			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Token verification failed"})
+			return echo.NewHTTPError(http.StatusUnauthorized, "Token verification failed")
 		}
 		log.Printf("[WEBHOOK_CUSTOM] Static token verified for webhook %s (%s)", wh.ID(), wh.Name())
 
@@ -173,7 +173,7 @@ func (c *WebhookCustomController) verifyWebhookSignature(ctx echo.Context, body 
 		}
 		if !c.signatureVerifier.Verify(body, headerValue, config) {
 			log.Printf("[WEBHOOK_CUSTOM] Signature verification failed for webhook %s (header: %s)", wh.ID(), headerName)
-			return ctx.JSON(http.StatusUnauthorized, map[string]string{"error": "Signature verification failed"})
+			return echo.NewHTTPError(http.StatusUnauthorized, "Signature verification failed")
 		}
 		log.Printf("[WEBHOOK_CUSTOM] HMAC signature verified for webhook %s (%s)", wh.ID(), wh.Name())
 	}

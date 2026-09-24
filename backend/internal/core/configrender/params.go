@@ -26,6 +26,8 @@ func RenderSessionParams(sessionConfig *entities.WebhookSessionConfig, payload m
 		dest *string
 		name string
 	}{
+		{params.Pool, &result.Pool, "params.pool"},
+		{params.ManagerID, &result.ManagerID, "params.manager_id"},
 		{params.Message, &result.Message, "params.message"},
 		{params.GithubToken, &result.GithubToken, "params.github_token"},
 		{params.AgentType, &result.AgentType, "params.agent_type"},

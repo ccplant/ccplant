@@ -24,3 +24,15 @@ func TestRenderSessionParamsPreservesCredentialSource(t *testing.T) {
 		t.Fatalf("Model = %q, want gpt-test", got.Model)
 	}
 }
+
+func TestRenderSessionParamsPreservesPlacementConstraints(t *testing.T) {
+	config := entities.NewWebhookSessionConfig()
+	config.SetParams(&entities.SessionParams{Pool: "pool-{{.suffix}}", ManagerID: "manager-{{.suffix}}"})
+	got, err := RenderSessionParams(config, map[string]interface{}{"suffix": "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pool != "pool-a" || got.ManagerID != "manager-a" {
+		t.Fatalf("placement = %q/%q", got.Pool, got.ManagerID)
+	}
+}

@@ -86,7 +86,7 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 	}
 
 	// Determine session params fields from rendered params
-	var githubToken, agentType, model string
+	var githubToken, agentType, model, pool, managerID string
 	var initialMessageWaitSecond *int
 	var cycleMessage, sessionTTL string
 	var cycleMaxCount int
@@ -94,6 +94,8 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		githubToken = renderedParams.GithubToken
 		agentType = renderedParams.AgentType
 		model = renderedParams.Model
+		pool = renderedParams.Pool
+		managerID = renderedParams.ManagerID
 		initialMessageWaitSecond = renderedParams.InitialMessageWaitSecond
 		cycleMessage = renderedParams.CycleMessage
 		cycleMaxCount = renderedParams.CycleMaxCount
@@ -157,6 +159,8 @@ func (s *WebhookSessionService) CreateSessionFromWebhook(ctx context.Context, pa
 		GithubToken:              githubToken,
 		AgentType:                agentType,
 		Model:                    model,
+		Pool:                     pool,
+		ManagerID:                managerID,
 		InitialMessageWaitSecond: initialMessageWaitSecond,
 		CycleMessage:             cycleMessage,
 		CycleMaxCount:            cycleMaxCount,

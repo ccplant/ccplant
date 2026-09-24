@@ -36,6 +36,7 @@ type LaunchRequest struct {
 	Model                    string
 	ModelOptions             []string
 	Pool                     string
+	ManagerID                string
 	SlackParams              *entities.SlackParams
 	RepoInfo                 *entities.RepositoryInfo
 	InitialMessageWaitSecond *int
@@ -235,6 +236,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		Model:                    req.Model,
 		ModelOptions:             req.ModelOptions,
 		Pool:                     req.Pool,
+		ManagerID:                req.ManagerID,
 		SlackParams:              req.SlackParams,
 		RepoInfo:                 req.RepoInfo,
 		InitialMessageWaitSecond: req.InitialMessageWaitSecond,

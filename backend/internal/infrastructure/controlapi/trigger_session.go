@@ -36,7 +36,7 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 		tags[k] = v
 	}
 	params := &entities.SessionParams{
-		Pool: req.Pool, ResumeFrom: req.ResumeFrom, Message: req.InitialMessage,
+		Pool: req.Pool, ManagerID: req.ManagerID, ResumeFrom: req.ResumeFrom, Message: req.InitialMessage,
 		GithubToken: req.GithubToken, AgentType: req.AgentType, Model: req.Model,
 		Slack: req.SlackParams, InitialMessageWaitSecond: req.InitialMessageWaitSecond,
 		CycleMessage: req.CycleMessage, CycleMaxCount: req.CycleMaxCount,
