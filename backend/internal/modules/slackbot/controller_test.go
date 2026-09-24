@@ -282,6 +282,7 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 			Tags:                   map[string]string{"team": "engineering"},
 			Environment:            map[string]string{"LOG_LEVEL": "debug"},
 			SessionProfileID:       "profile-slack",
+			Params:                 &SlackBotSessionParams{Pool: "pool-a", ManagerID: "manager-a"},
 		},
 	}, "user-1")
 
@@ -303,6 +304,9 @@ func TestCreateSlackBot_WithAllOptionalFields(t *testing.T) {
 	assert.Equal(t, "engineering", resp.SessionConfig.Tags["team"])
 	assert.Equal(t, "debug", resp.SessionConfig.Environment["LOG_LEVEL"])
 	assert.Equal(t, "profile-slack", resp.SessionConfig.SessionProfileID)
+	require.NotNil(t, resp.SessionConfig.Params)
+	assert.Equal(t, "pool-a", resp.SessionConfig.Params.Pool)
+	assert.Equal(t, "manager-a", resp.SessionConfig.Params.ManagerID)
 }
 
 func TestCreateSlackBot_WithTeamScope(t *testing.T) {

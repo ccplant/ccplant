@@ -9,10 +9,28 @@ import (
 )
 
 type Resolver struct {
-	store        Store
-	liveness     ManagerLiveness
-	heartbeatTTL time.Duration
-	now          func() time.Time
+	store         ResolverStore
+	liveness      ManagerLiveness
+	localFallback bool
+	heartbeatTTL  time.Duration
+	now           func() time.Time
+}
+
+type RouteKind string
+
+const (
+	RouteKindPool  RouteKind = "pool"
+	RouteKindLocal RouteKind = "local"
+)
+
+// ResolverStore is the read-only pool inventory required to make an
+// authorization and routing decision. Keeping this boundary small lets every
+// workload type use the same resolver without depending on allocation writes.
+type ResolverStore interface {
+	ListLogicalPools(context.Context) ([]*LogicalPool, error)
+	ListManagers(context.Context) ([]*Manager, error)
+	ListBindings(context.Context, string) ([]*Binding, error)
+	ListPoolSuppliers(context.Context) ([]*PoolSupplier, error)
 }
 
 type ManagerLiveness interface {
@@ -40,12 +58,58 @@ type PoolCandidateResolution struct {
 	RequiredLabels   map[string]string `json:"required_labels,omitempty"`
 }
 
-func NewResolver(store Store, heartbeatTTL time.Duration) *Resolver {
+// RouteRequest contains every caller-controlled placement constraint. Keeping
+// these constraints together prevents session entry points from resolving a
+// pool first and applying a manager override afterwards.
+type RouteRequest struct {
+	RequestedPool     string
+	Tags              map[string]string
+	RequiredManagerID string
+}
+
+// AuthorizedRoute is a sealed capability produced only by Resolver. External
+// packages can consume a route but cannot construct or implement one, so no
+// workload can forge authorization by assembling placement values itself.
+type AuthorizedRoute interface {
+	Kind() RouteKind
+	PoolName() string
+	BindingID() string
+	MaxConcurrent() int
+	Managers() []*Manager
+	authorizedRoute()
+}
+
+type authorizedRoute struct {
+	kind          RouteKind
+	poolName      string
+	bindingID     string
+	maxConcurrent int
+	managers      []*Manager
+}
+
+func (r *authorizedRoute) Kind() RouteKind      { return r.kind }
+func (r *authorizedRoute) PoolName() string     { return r.poolName }
+func (r *authorizedRoute) BindingID() string    { return r.bindingID }
+func (r *authorizedRoute) MaxConcurrent() int   { return r.maxConcurrent }
+func (r *authorizedRoute) Managers() []*Manager { return append([]*Manager(nil), r.managers...) }
+func (r *authorizedRoute) authorizedRoute()     {}
+
+var _ AuthorizedRoute = (*authorizedRoute)(nil)
+
+func NewResolver(store ResolverStore, heartbeatTTL time.Duration) *Resolver {
 	return &Resolver{store: store, heartbeatTTL: heartbeatTTL, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (r *Resolver) WithManagerLiveness(liveness ManagerLiveness) *Resolver {
 	r.liveness = liveness
+	return r
+}
+
+// WithLocalFallback adds a synthetic local route below every pool binding.
+// It is considered only for automatic placement; explicit pool or allocator
+// requests never fall back to local execution.
+func (r *Resolver) WithLocalFallback(enabled bool) *Resolver {
+	r.localFallback = enabled
 	return r
 }
 
@@ -106,6 +170,84 @@ func (r *Resolver) AvailablePools(ctx context.Context, subject Subject) ([]*Logi
 func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedPool, error) {
 	resolved, _, err := r.ResolveWithTrace(ctx, subject, requestedPool, tags)
 	return resolved, err
+}
+
+// ResolveRoute is the single authorization and routing entry point for new
+// workloads. It prefers an enabled bound pool with a healthy supplier, then
+// optionally returns the lowest-priority local route. Otherwise it fails closed.
+func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, request RouteRequest) (AuthorizedRoute, error) {
+	requestedPool := strings.TrimSpace(request.RequestedPool)
+	managerID := strings.TrimSpace(request.RequiredManagerID)
+	var resolved *ResolvedPool
+	var err error
+	if managerID == "" || requestedPool != "" {
+		resolved, err = r.Resolve(ctx, subject, requestedPool, request.Tags)
+	} else {
+		// A manager may supply several logical pools; its install pool is not an
+		// authorization boundary. Resolve each supplied pool through the normal
+		// binding checks and select by binding priority.
+		suppliers, listErr := r.store.ListPoolSuppliers(ctx)
+		if listErr != nil {
+			return nil, listErr
+		}
+		candidates := make([]*ResolvedPool, 0)
+		for _, supplier := range suppliers {
+			if supplier == nil || supplier.ManagerID != managerID || !supplier.Enabled || supplier.Draining {
+				continue
+			}
+			candidate, resolveErr := r.Resolve(ctx, subject, supplier.Pool, request.Tags)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			if candidate != nil {
+				candidates = append(candidates, candidate)
+			}
+		}
+		if len(candidates) > 0 {
+			resolved = firstPoolByPriority(candidates)
+		}
+	}
+	if err != nil || resolved == nil {
+		if err != nil {
+			return nil, err
+		}
+		if managerID == "" && r.localFallback && requestedPool == "" && len(allocatorLabels(request.Tags)) == 0 {
+			return &authorizedRoute{kind: RouteKindLocal}, nil
+		}
+		return nil, nil
+	}
+	managers, err := r.store.ListManagers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	suppliers, err := r.store.ListPoolSuppliers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool)
+	for _, supplier := range suppliers {
+		if supplier != nil && supplier.Pool == resolved.Pool.Name && supplier.Enabled && !supplier.Draining {
+			allowed[supplier.ManagerID] = true
+		}
+	}
+	route := &authorizedRoute{kind: RouteKindPool, poolName: resolved.Pool.Name, bindingID: resolved.Binding.ID, maxConcurrent: resolved.Binding.MaxConcurrent}
+	for _, manager := range managers {
+		if manager == nil || !allowed[manager.ID] {
+			continue
+		}
+		available, err := r.managerAvailable(ctx, manager)
+		if err != nil {
+			return nil, err
+		}
+		if available && (managerID == "" || manager.ID == managerID) {
+			route.managers = append(route.managers, manager)
+		}
+	}
+	if len(route.managers) == 0 {
+		return nil, nil
+	}
+	sort.Slice(route.managers, func(i, j int) bool { return route.managers[i].ID < route.managers[j].ID })
+	return route, nil
 }
 
 // ResolveWithTrace applies the same scheduling algorithm as Resolve and also

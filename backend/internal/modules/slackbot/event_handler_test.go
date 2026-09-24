@@ -52,6 +52,8 @@ func (m *mockSessionManager) CreateSession(_ context.Context, id string, req *en
 		maxSessions:     req.MaxSessions,
 		repoInfo:        req.RepoInfo,
 		slackParams:     req.SlackParams,
+		pool:            req.Pool,
+		managerID:       req.ManagerID,
 	}
 	m.mu.Lock()
 	m.createdSessions = append(m.createdSessions, sess)
@@ -153,6 +155,8 @@ type mockSession struct {
 	maxSessions     int
 	repoInfo        *entities.RepositoryInfo
 	slackParams     *entities.SlackParams
+	pool            string
+	managerID       string
 }
 
 func (s *mockSession) ID() string                    { return s.id }
@@ -1832,6 +1836,8 @@ func TestProcessEvent_ConfiguredRepo_UsedWhenNoMessageRepo(t *testing.T) {
 	sc := entities.NewWebhookSessionConfig()
 	sc.SetParams(&entities.SessionParams{
 		RepoFullName: "myorg/configured-repo",
+		Pool:         "pool-a",
+		ManagerID:    "manager-a",
 	})
 	bot.SetSessionConfig(sc)
 	repo.bots[botID] = bot
@@ -1855,6 +1861,8 @@ func TestProcessEvent_ConfiguredRepo_UsedWhenNoMessageRepo(t *testing.T) {
 	require.NotNil(t, sess.repoInfo, "RepoInfo should be set from configured repo")
 	assert.Equal(t, "myorg/configured-repo", sess.repoInfo.FullName)
 	assert.Equal(t, "/home/agentapi/workdir/repo", sess.repoInfo.CloneDir)
+	assert.Equal(t, "pool-a", sess.pool)
+	assert.Equal(t, "manager-a", sess.managerID)
 }
 
 // TestProcessEvent_ConfiguredRepo_TakesPriorityOverMessageRepo verifies that when

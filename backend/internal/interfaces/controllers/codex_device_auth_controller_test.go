@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 )
@@ -188,6 +189,8 @@ func TestCodexDeviceAuthWorkloadFlow(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, startRecorder.Code)
 	require.Regexp(t, `^cda-[0-9a-f]{32}$`, launcher.request.AttemptID)
 	assert.Equal(t, "https://proxy.example/internal/codex-device-auth", launcher.request.CallbackURL)
+	assert.Equal(t, string(sessionrunnercore.SubjectUser), launcher.request.SubjectType)
+	assert.Equal(t, "alice", launcher.request.SubjectID)
 
 	challengeRecorder := httptest.NewRecorder()
 	challengeRequest := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"user_code":"ABCD-EFGH","verification_uri":"https://auth.openai.com/device"}`))

@@ -206,6 +206,7 @@ type RepositoryInfo struct {
 // RunServerRequest contains parameters needed to run an agentapi server
 type RunServerRequest struct {
 	Pool                     string
+	ManagerID                string
 	ModelConnectionsResolved bool                      `json:"-"`
 	CodexConnection          *modelprovider.Connection `json:"-"`
 	ClaudeConnection         *modelprovider.Connection `json:"-"`

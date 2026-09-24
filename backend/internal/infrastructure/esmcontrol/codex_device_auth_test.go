@@ -21,6 +21,21 @@ type fakeTunnel struct {
 	err       error
 }
 
+type fakeLocalLauncher struct {
+	starts  []codexauth.WorkloadRequest
+	cancels []string
+}
+
+func (l *fakeLocalLauncher) StartCodexDeviceAuth(_ context.Context, request codexauth.WorkloadRequest) error {
+	l.starts = append(l.starts, request)
+	return nil
+}
+
+func (l *fakeLocalLauncher) CancelCodexDeviceAuth(_ context.Context, attemptID string) error {
+	l.cancels = append(l.cancels, attemptID)
+	return nil
+}
+
 type recordedRequest struct {
 	managerID string
 	sessionID string
@@ -51,12 +66,27 @@ func (t *fakeTunnel) Do(_ context.Context, managerID, sessionID, _ string, req *
 }
 
 type fakeDirectory struct {
-	managers []*sessionrunnercore.Manager
-	err      error
+	managers  []*sessionrunnercore.Manager
+	pools     []*sessionrunnercore.LogicalPool
+	bindings  []*sessionrunnercore.Binding
+	suppliers []*sessionrunnercore.PoolSupplier
+	err       error
 }
 
 func (d *fakeDirectory) ListManagers(context.Context) ([]*sessionrunnercore.Manager, error) {
 	return d.managers, d.err
+}
+
+func (d *fakeDirectory) ListLogicalPools(context.Context) ([]*sessionrunnercore.LogicalPool, error) {
+	return d.pools, d.err
+}
+
+func (d *fakeDirectory) ListBindings(context.Context, string) ([]*sessionrunnercore.Binding, error) {
+	return d.bindings, d.err
+}
+
+func (d *fakeDirectory) ListPoolSuppliers(context.Context) ([]*sessionrunnercore.PoolSupplier, error) {
+	return d.suppliers, d.err
 }
 
 func managerEntry(id string, mutate func(*sessionrunnercore.Manager)) *sessionrunnercore.Manager {
@@ -73,15 +103,30 @@ func validWorkload() codexauth.WorkloadRequest {
 		CallbackURL: "https://api.example.internal/internal/codex-device-auth",
 		Token:       "bootstrap-token",
 		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		SubjectType: string(sessionrunnercore.SubjectUser),
+		SubjectID:   "alice",
+	}
+}
+
+func authorizedDirectory(managers ...*sessionrunnercore.Manager) *fakeDirectory {
+	suppliers := make([]*sessionrunnercore.PoolSupplier, 0, len(managers))
+	for _, manager := range managers {
+		suppliers = append(suppliers, &sessionrunnercore.PoolSupplier{Pool: "authorized", ManagerID: manager.ID, Enabled: true})
+	}
+	return &fakeDirectory{
+		managers:  managers,
+		pools:     []*sessionrunnercore.LogicalPool{{Name: "authorized", Enabled: true}},
+		bindings:  []*sessionrunnercore.Binding{{ID: "binding-alice", Pool: "authorized", SubjectType: sessionrunnercore.SubjectUser, SubjectID: "alice", Role: sessionrunnercore.BindingRoleUse, Enabled: true}},
+		suppliers: suppliers,
 	}
 }
 
 func TestLauncherStartRoutesToFirstConnectedManager(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{"manager-b": true}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("manager-a", nil),
 		managerEntry("manager-b", nil),
-	}})
+	))
 	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +150,10 @@ func TestLauncherStartSkipsManagersWithoutWorkloadSupport(t *testing.T) {
 		connected: map[string]bool{"manager-a": true, "manager-b": true},
 		statuses:  map[string]int{"manager-a": http.StatusNotFound, "manager-b": http.StatusAccepted},
 	}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("manager-a", nil),
 		managerEntry("manager-b", nil),
-	}})
+	))
 	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
 		t.Fatal(err)
 	}
@@ -122,12 +167,12 @@ func TestLauncherStartSkipsManagersWithoutWorkloadSupport(t *testing.T) {
 
 func TestLauncherStartFailsWithoutConnectedManager(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("manager-a", nil),
-	}})
+	))
 	err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload())
-	if err == nil || !strings.Contains(err.Error(), "no connected session manager") {
-		t.Fatalf("err = %v, want no connected manager error", err)
+	if err == nil || !strings.Contains(err.Error(), "no authorized and healthy session pool") {
+		t.Fatalf("err = %v, want no eligible pool error", err)
 	}
 }
 
@@ -140,13 +185,87 @@ func TestLauncherStartRejectsIncompleteRequests(t *testing.T) {
 	}
 }
 
+func TestLauncherStartFailsClosedWithoutSubjectBinding(t *testing.T) {
+	manager := managerEntry("private-manager", nil)
+	directory := authorizedDirectory(manager)
+	directory.bindings[0].SubjectID = "bob"
+	tunnel := &fakeTunnel{connected: map[string]bool{"private-manager": true}}
+	launcher := NewCodexDeviceAuthLauncher(tunnel, directory)
+
+	err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload())
+	if err == nil || !strings.Contains(err.Error(), "no authorized and healthy session pool") {
+		t.Fatalf("err = %v, want fail-closed authorization error", err)
+	}
+	if len(tunnel.requests) != 0 {
+		t.Fatalf("unauthorized workload reached managers: %#v", tunnel.requests)
+	}
+}
+
+func TestLauncherStartUsesResolverSelectedLocalRoute(t *testing.T) {
+	directory := authorizedDirectory()
+	local := &fakeLocalLauncher{}
+	launcher := NewCodexDeviceAuthLauncher(nil, directory, local)
+
+	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.starts) != 1 || local.starts[0].AttemptID != validWorkload().AttemptID {
+		t.Fatalf("local starts = %#v", local.starts)
+	}
+	if err := launcher.CancelCodexDeviceAuth(context.Background(), validWorkload().AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.cancels) != 1 || local.cancels[0] != validWorkload().AttemptID {
+		t.Fatalf("local cancels = %#v", local.cancels)
+	}
+}
+
+func TestLauncherPoolRouteOutranksLocalRoute(t *testing.T) {
+	manager := managerEntry("pool-manager", nil)
+	directory := authorizedDirectory(manager)
+	tunnel := &fakeTunnel{connected: map[string]bool{manager.ID: true}}
+	local := &fakeLocalLauncher{}
+	launcher := NewCodexDeviceAuthLauncher(tunnel, directory, local)
+
+	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.starts) != 0 {
+		t.Fatalf("local route was selected ahead of pool: %#v", local.starts)
+	}
+	if len(tunnel.requests) != 1 || tunnel.requests[0].managerID != manager.ID {
+		t.Fatalf("requests = %#v", tunnel.requests)
+	}
+}
+
+func TestLauncherStartOnlyUsesSupplierOfResolvedPool(t *testing.T) {
+	authorized := managerEntry("authorized-manager", nil)
+	unauthorized := managerEntry("unauthorized-manager", func(m *sessionrunnercore.Manager) {
+		m.Capabilities = []string{sessionrunnercore.CapabilityCodexDeviceAuthV1}
+		m.Default = true
+	})
+	directory := authorizedDirectory(authorized)
+	directory.managers = append(directory.managers, unauthorized)
+	directory.pools = append(directory.pools, &sessionrunnercore.LogicalPool{Name: "private", Enabled: true})
+	directory.suppliers = append(directory.suppliers, &sessionrunnercore.PoolSupplier{Pool: "private", ManagerID: unauthorized.ID, Enabled: true})
+	tunnel := &fakeTunnel{connected: map[string]bool{authorized.ID: true, unauthorized.ID: true}}
+	launcher := NewCodexDeviceAuthLauncher(tunnel, directory)
+
+	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
+		t.Fatal(err)
+	}
+	if len(tunnel.requests) != 1 || tunnel.requests[0].managerID != authorized.ID {
+		t.Fatalf("requests = %#v, want only authorized pool supplier", tunnel.requests)
+	}
+}
+
 func TestLauncherStartIgnoresDisabledAndDrainingManagers(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{"disabled": true, "draining": true, "enabled": true}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("disabled", func(m *sessionrunnercore.Manager) { m.Enabled = false }),
 		managerEntry("draining", func(m *sessionrunnercore.Manager) { m.Draining = true }),
 		managerEntry("enabled", nil),
-	}})
+	))
 	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
 		t.Fatal(err)
 	}
@@ -157,14 +276,14 @@ func TestLauncherStartIgnoresDisabledAndDrainingManagers(t *testing.T) {
 
 func TestLauncherPrefersCapabilityThenDefaultThenHeartbeat(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{"plain": true, "default": true, "capable": true, "fresh": true}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("plain", nil),
 		managerEntry("default", func(m *sessionrunnercore.Manager) { m.Default = true }),
 		managerEntry("capable", func(m *sessionrunnercore.Manager) {
 			m.Capabilities = []string{sessionrunnercore.CapabilityCodexDeviceAuthV1}
 		}),
 		managerEntry("fresh", func(m *sessionrunnercore.Manager) { m.LastHeartbeatAt = time.Now() }),
-	}})
+	))
 	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
 		t.Fatal(err)
 	}
@@ -175,9 +294,9 @@ func TestLauncherPrefersCapabilityThenDefaultThenHeartbeat(t *testing.T) {
 
 func TestLauncherCancelTargetsOwnerManager(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{"manager-a": true, "manager-b": true}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("manager-a", nil), managerEntry("manager-b", nil),
-	}})
+	))
 	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +314,7 @@ func TestLauncherCancelTargetsOwnerManager(t *testing.T) {
 
 func TestLauncherCancelToleratesMissingWorkload(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{"manager-a": true}, statuses: map[string]int{}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{managerEntry("manager-a", nil)}})
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(managerEntry("manager-a", nil)))
 	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
 		t.Fatal(err)
 	}
@@ -207,9 +326,9 @@ func TestLauncherCancelToleratesMissingWorkload(t *testing.T) {
 
 func TestLauncherCancelUnknownAttemptBroadcasts(t *testing.T) {
 	tunnel := &fakeTunnel{connected: map[string]bool{"manager-a": true, "manager-b": true, "manager-c": false}}
-	launcher := NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
 		managerEntry("manager-a", nil), managerEntry("manager-b", nil), managerEntry("manager-c", nil),
-	}})
+	))
 	if err := launcher.CancelCodexDeviceAuth(context.Background(), "cda-unknown"); err != nil {
 		t.Fatal(err)
 	}
@@ -221,13 +340,13 @@ func TestLauncherCancelUnknownAttemptBroadcasts(t *testing.T) {
 func TestLauncherAvailableRequiresConnectedManager(t *testing.T) {
 	launcher := NewCodexDeviceAuthLauncher(
 		&fakeTunnel{connected: map[string]bool{"manager-a": false}},
-		&fakeDirectory{managers: []*sessionrunnercore.Manager{managerEntry("manager-a", nil)}},
+		authorizedDirectory(managerEntry("manager-a", nil)),
 	)
 	if launcher.Available(context.Background()) {
 		t.Fatal("available = true, want false without a connected manager")
 	}
 	tunnel := &fakeTunnel{connected: map[string]bool{"manager-a": true}}
-	launcher = NewCodexDeviceAuthLauncher(tunnel, &fakeDirectory{managers: []*sessionrunnercore.Manager{managerEntry("manager-a", nil)}})
+	launcher = NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(managerEntry("manager-a", nil)))
 	if !launcher.Available(context.Background()) {
 		t.Fatal("available = false, want true with a connected manager")
 	}

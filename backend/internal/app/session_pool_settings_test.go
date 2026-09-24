@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	infrasessionrunner "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
@@ -52,7 +51,7 @@ func TestPoolSessionPreservesDockerRequirement(t *testing.T) {
 
 	_, err := server.createPoolSession(
 		context.Background(),
-		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		testAuthorizedRoute(t, "pool", nil),
 		"session",
 		entities.StartRequest{Params: &entities.SessionParams{Docker: &entities.DockerParams{Enabled: true}}},
 		"user",
@@ -70,7 +69,7 @@ func TestPoolSessionPreservesDockerRequirement(t *testing.T) {
 func TestPoolSessionDoesNotIgnoreSettingsAuthorizationError(t *testing.T) {
 	// No allocation store: the function must stop before enqueueing anything.
 	server := &Server{sessionManager: rejectedProfileSettingsManager{}}
-	result, err := server.createPoolSession(context.Background(), &sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}}, "session", entities.StartRequest{ResolvedSessionProfileID: "profile"}, "user", nil)
+	result, err := server.createPoolSession(context.Background(), testAuthorizedRoute(t, "pool", nil), "session", entities.StartRequest{ResolvedSessionProfileID: "profile"}, "user", nil)
 	require.Nil(t, result)
 	require.ErrorContains(t, err, "team membership is required")
 }
@@ -86,7 +85,7 @@ func TestPoolSessionOverlaysScopedAutoSuspendPolicy(t *testing.T) {
 	}
 
 	_, err := server.createPoolSession(context.Background(),
-		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		testAuthorizedRoute(t, "pool", nil),
 		"session", entities.StartRequest{Scope: entities.ScopeUser}, "user", nil)
 	require.NoError(t, err)
 	allocation, err := store.GetAllocation(context.Background(), "session")
@@ -106,7 +105,7 @@ func TestPoolSessionDoesNotAddDeprecatedPoolTag(t *testing.T) {
 
 	result, err := server.createPoolSession(
 		context.Background(),
-		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		testAuthorizedRoute(t, "pool", nil),
 		"session",
 		entities.StartRequest{Tags: tags},
 		"user",
@@ -126,7 +125,7 @@ func TestPoolSessionPreservesSlackLaunchParameters(t *testing.T) {
 	slack := &entities.SlackParams{Channel: "channel", ThreadTS: "123.45", BotTokenSecretName: "custom-bot"}
 	delay := 5
 	_, err := server.createPoolSession(context.Background(),
-		&sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}},
+		testAuthorizedRoute(t, "pool", nil),
 		"session", entities.StartRequest{TriggeredUserID: "actor", Params: &entities.SessionParams{Slack: slack, ResumeFrom: "previous", InitialMessageWaitSecond: &delay, CycleMessage: "continue", CycleMaxCount: 3}}, "owner", nil)
 	require.NoError(t, err)
 	require.Equal(t, slack, manager.request.SlackParams)
@@ -142,7 +141,7 @@ func TestPoolSessionPreservesWebhookPayloadAndResolvesOneshotTTL(t *testing.T) {
 	routes := &recordingSessionRouteRepository{}
 	server := &Server{sessionRunnerStore: store, sessionRouteRepo: routes}
 	payload := []byte(`{"action":"opened"}`)
-	_, err := server.createPoolSession(context.Background(), &sessionrunnercore.ResolvedPool{Pool: &sessionrunnercore.LogicalPool{Name: "pool"}, Binding: &sessionrunnercore.Binding{}}, "session", entities.StartRequest{WebhookPayload: payload, Params: &entities.SessionParams{Oneshot: true, Message: "finish"}}, "owner", nil)
+	_, err := server.createPoolSession(context.Background(), testAuthorizedRoute(t, "pool", nil), "session", entities.StartRequest{WebhookPayload: payload, Params: &entities.SessionParams{Oneshot: true, Message: "finish"}}, "owner", nil)
 	require.NoError(t, err)
 	allocation, err := store.GetAllocation(context.Background(), "session")
 	require.NoError(t, err)

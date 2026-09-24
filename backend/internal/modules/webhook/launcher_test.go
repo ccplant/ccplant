@@ -67,6 +67,7 @@ func TestCreateSessionFromWebhookDefersReuseToStartAPI(t *testing.T) {
 	config.SetInitialMessageTemplate("initial")
 	config.SetReuseMessageTemplate("reuse")
 	config.SetReuseSession(true)
+	config.SetParams(&entities.SessionParams{Pool: "pool-a", ManagerID: "manager-a"})
 	webhook := entities.NewWebhook("webhook-1", "test", "user-1", entities.WebhookTypeCustom)
 	webhook.SetSessionConfig(config)
 	trigger := entities.NewWebhookTrigger("trigger-1", "test")
@@ -86,6 +87,9 @@ func TestCreateSessionFromWebhookDefersReuseToStartAPI(t *testing.T) {
 	}
 	if manager.createdRequest == nil {
 		t.Fatal("CreateSession was not called")
+	}
+	if manager.createdRequest.Pool != "pool-a" || manager.createdRequest.ManagerID != "manager-a" {
+		t.Fatalf("placement = %q/%q, want pool-a/manager-a", manager.createdRequest.Pool, manager.createdRequest.ManagerID)
 	}
 	if got := manager.createdRequest.ReuseMessage; got != "reuse" {
 		t.Fatalf("ReuseMessage = %q, want reuse", got)

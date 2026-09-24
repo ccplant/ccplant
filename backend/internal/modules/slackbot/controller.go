@@ -98,6 +98,8 @@ type SlackBotSessionConfig struct {
 
 // SlackBotSessionParams contains session parameters for SlackBot sessions
 type SlackBotSessionParams struct {
+	Pool             string `json:"pool,omitempty"`
+	ManagerID        string `json:"manager_id,omitempty"`
 	AgentType        string `json:"agent_type,omitempty"`
 	Model            string `json:"model,omitempty"`
 	Oneshot          bool   `json:"oneshot,omitempty"`
@@ -465,6 +467,8 @@ func toEntitySessionConfig(cfg *SlackBotSessionConfig) *entities.WebhookSessionC
 	}
 	if cfg.Params != nil {
 		params := &entities.SessionParams{
+			Pool:             cfg.Params.Pool,
+			ManagerID:        cfg.Params.ManagerID,
 			AgentType:        cfg.Params.AgentType,
 			Model:            cfg.Params.Model,
 			Oneshot:          cfg.Params.Oneshot,
@@ -490,6 +494,8 @@ func fromEntitySessionConfig(sc *entities.WebhookSessionConfig) *SlackBotSession
 	}
 	if sc.Params() != nil {
 		cfg.Params = &SlackBotSessionParams{
+			Pool:             sc.Params().Pool,
+			ManagerID:        sc.Params().ManagerID,
 			AgentType:        sc.Params().AgentType,
 			Model:            sc.Params().Model,
 			Oneshot:          sc.Params().Oneshot,

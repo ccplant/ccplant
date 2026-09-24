@@ -614,7 +614,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,
-		proxyServer.GetSessionManager(),
+		newTriggerSessionManager(configData),
 		configData.KubernetesSession.SlackBotTokenSecretName,
 		configData.KubernetesSession.SlackBotTokenSecretKey,
 		channelResolver,

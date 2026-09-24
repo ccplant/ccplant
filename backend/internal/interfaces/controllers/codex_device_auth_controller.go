@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
@@ -171,7 +172,11 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 		c.finishAttempt(attempt, codexauth.StatusFailed)
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	workload := codexauth.WorkloadRequest{AttemptID: attemptID, CallbackURL: callbackURL, Token: token, ExpiresAt: attempt.ExpiresAt}
+	subject := deviceAuthSubject(user, req)
+	workload := codexauth.WorkloadRequest{
+		AttemptID: attemptID, CallbackURL: callbackURL, Token: token, ExpiresAt: attempt.ExpiresAt,
+		SubjectType: string(subject.Type), SubjectID: subject.ID,
+	}
 	log.Printf("[CODEX_DEVICE_AUTH] Launching workload for attempt %s", attemptID)
 	if err := c.launcher.StartCodexDeviceAuth(ctx.Request().Context(), workload); err != nil {
 		log.Printf("[CODEX_DEVICE_AUTH] Failed to launch workload for attempt %s: %v", attemptID, err)
@@ -180,6 +185,13 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 	}
 	log.Printf("[CODEX_DEVICE_AUTH] Workload accepted for attempt %s", attemptID)
 	return ctx.JSON(http.StatusAccepted, responseForAttempt(attempt))
+}
+
+func deviceAuthSubject(user *entities.User, req StartDeviceAuthRequest) sessionrunnercore.Subject {
+	if strings.TrimSpace(req.Scope) == string(entities.ScopeTeam) {
+		return sessionrunnercore.Subject{Type: sessionrunnercore.SubjectTeam, ID: strings.TrimSpace(req.TeamID)}
+	}
+	return sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: string(user.ID())}
 }
 
 func (c *CodexDeviceAuthController) GetAttempt(ctx echo.Context) error {
