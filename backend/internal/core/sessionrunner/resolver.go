@@ -118,6 +118,48 @@ func (r *Resolver) Resolve(ctx context.Context, subject Subject, requestedPool s
 	return resolved, err
 }
 
+// ResolveRoute is the single authorization and routing entry point for direct
+// manager workloads. It fails closed unless the subject has an enabled use
+// binding to an enabled pool with at least one healthy, enabled supplier.
+func (r *Resolver) ResolveRoute(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedRoute, error) {
+	resolved, err := r.Resolve(ctx, subject, requestedPool, tags)
+	if err != nil || resolved == nil {
+		return nil, err
+	}
+	managers, err := r.store.ListManagers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	suppliers, err := r.store.ListPoolSuppliers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]bool)
+	for _, supplier := range suppliers {
+		if supplier != nil && supplier.Pool == resolved.Pool.Name && supplier.Enabled && !supplier.Draining {
+			allowed[supplier.ManagerID] = true
+		}
+	}
+	route := &ResolvedRoute{Pool: resolved.Pool, Binding: resolved.Binding}
+	for _, manager := range managers {
+		if manager == nil || !allowed[manager.ID] {
+			continue
+		}
+		available, err := r.managerAvailable(ctx, manager)
+		if err != nil {
+			return nil, err
+		}
+		if available {
+			route.Managers = append(route.Managers, manager)
+		}
+	}
+	if len(route.Managers) == 0 {
+		return nil, nil
+	}
+	sort.Slice(route.Managers, func(i, j int) bool { return route.Managers[i].ID < route.Managers[j].ID })
+	return route, nil
+}
+
 // ResolveWithTrace applies the same scheduling algorithm as Resolve and also
 // returns stable reason codes suitable for dry-run assertions.
 func (r *Resolver) ResolveWithTrace(ctx context.Context, subject Subject, requestedPool string, tags map[string]string) (*ResolvedPool, *ResolutionTrace, error) {

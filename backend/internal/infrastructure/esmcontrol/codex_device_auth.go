@@ -36,10 +36,11 @@ type ControlTunnel interface {
 // PoolDirectory is the read-only inventory needed by the shared pool resolver
 // and by the final pool-to-manager routing step.
 type PoolDirectory interface {
+	sessionrunnercore.ResolverStore
+}
+
+type ManagerDirectory interface {
 	ListManagers(context.Context) ([]*sessionrunnercore.Manager, error)
-	ListLogicalPools(context.Context) ([]*sessionrunnercore.LogicalPool, error)
-	ListBindings(context.Context, string) ([]*sessionrunnercore.Binding, error)
-	ListPoolSuppliers(context.Context) ([]*sessionrunnercore.PoolSupplier, error)
 }
 
 // CodexDeviceAuthLauncher delegates Codex device authentication attempts to a
@@ -48,8 +49,9 @@ type PoolDirectory interface {
 // Kubernetes access (for example the Fly.io API) still executes the workload
 // on the real execution plane.
 type CodexDeviceAuthLauncher struct {
-	tunnel    ControlTunnel
-	directory PoolDirectory
+	tunnel   ControlTunnel
+	routes   authorizedRouteResolver
+	managers ManagerDirectory
 	// active remembers which manager owns each running attempt so cancel is
 	// routed to the right execution plane. Lost entries (parent restart) fall
 	// back to a best-effort broadcast.
@@ -57,7 +59,19 @@ type CodexDeviceAuthLauncher struct {
 }
 
 func NewCodexDeviceAuthLauncher(tunnel ControlTunnel, directory PoolDirectory) *CodexDeviceAuthLauncher {
-	return &CodexDeviceAuthLauncher{tunnel: tunnel, directory: directory}
+	launcher := &CodexDeviceAuthLauncher{tunnel: tunnel, managers: directory}
+	if directory == nil {
+		return launcher
+	}
+	resolver := sessionrunnercore.NewResolver(directory, 0).WithManagerLiveness(tunnelLiveness{tunnel: tunnel})
+	launcher.routes = resolver
+	return launcher
+}
+
+// authorizedRouteResolver deliberately exposes only complete, authorized
+// routes. StartCodexDeviceAuth cannot obtain raw managers through this field.
+type authorizedRouteResolver interface {
+	ResolveRoute(context.Context, sessionrunnercore.Subject, string, map[string]string) (*sessionrunnercore.ResolvedRoute, error)
 }
 
 var _ codexauth.WorkloadLauncher = (*CodexDeviceAuthLauncher)(nil)
@@ -66,10 +80,10 @@ var _ codexauth.WorkloadLauncher = (*CodexDeviceAuthLauncher)(nil)
 // now. It backs GET /codex/device-auth/config so the frontend can tell "no
 // execution plane" apart from "feature disabled".
 func (l *CodexDeviceAuthLauncher) Available(ctx context.Context) bool {
-	if l.directory == nil {
+	if l.managers == nil {
 		return false
 	}
-	managers, err := l.directory.ListManagers(ctx)
+	managers, err := l.managers.ListManagers(ctx)
 	if err != nil {
 		return false
 	}
@@ -89,6 +103,9 @@ func (l *CodexDeviceAuthLauncher) StartCodexDeviceAuth(ctx context.Context, requ
 	if subjectType != sessionrunnercore.SubjectUser && subjectType != sessionrunnercore.SubjectTeam {
 		return errors.New("subject_type must be user or team")
 	}
+	if l.routes == nil {
+		return errors.New("authorized session route resolver is unavailable")
+	}
 	if _, err := l.startOnManager(ctx, request); err != nil {
 		return err
 	}
@@ -100,18 +117,14 @@ func (l *CodexDeviceAuthLauncher) StartCodexDeviceAuth(ctx context.Context, requ
 func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request codexauth.WorkloadRequest) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, codexDeviceAuthStartTimeout)
 	defer cancel()
-	resolver := sessionrunnercore.NewResolver(l.directory, 0).WithManagerLiveness(tunnelLiveness{tunnel: l.tunnel})
-	resolved, err := resolver.Resolve(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectType(request.SubjectType), ID: request.SubjectID}, "", nil)
+	resolved, err := l.routes.ResolveRoute(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectType(request.SubjectType), ID: request.SubjectID}, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("resolve authorized pool for Codex auth: %w", err)
 	}
 	if resolved == nil {
 		return "", errors.New("no authorized and healthy session pool is available for Codex auth")
 	}
-	managers, err := l.candidates(ctx, resolved.Pool.Name)
-	if err != nil {
-		return "", err
-	}
+	managers := orderManagers(resolved.Managers)
 	log.Printf("[CODEX_AUTH_ESM] Attempt %s resolved pool=%s binding=%s with %d candidate manager(s)", request.AttemptID, resolved.Pool.Name, resolved.Binding.ID, len(managers))
 	lastErr := errors.New("no connected session manager is available for codex device auth")
 	for _, manager := range managers {
@@ -159,12 +172,12 @@ func (l *CodexDeviceAuthLauncher) CancelCodexDeviceAuth(ctx context.Context, att
 		managerID, _ := owner.(string)
 		return l.deleteWorkload(ctx, managerID, attemptID)
 	}
-	if l.directory == nil {
+	if l.managers == nil {
 		return errors.New("session pool directory is unavailable")
 	}
 	// Unknown attempt (for example after a parent restart). Broadcast the
 	// cancel to every connected manager; deletion is idempotent there.
-	managers, err := l.directory.ListManagers(ctx)
+	managers, err := l.managers.ListManagers(ctx)
 	if err != nil {
 		return err
 	}
@@ -180,32 +193,11 @@ func (l *CodexDeviceAuthLauncher) CancelCodexDeviceAuth(ctx context.Context, att
 	return lastErr
 }
 
-// candidates returns only managers that supply the already-authorized pool.
-func (l *CodexDeviceAuthLauncher) candidates(ctx context.Context, pool string) ([]*sessionrunnercore.Manager, error) {
-	if l.directory == nil {
-		return nil, errors.New("session pool directory is unavailable")
-	}
-	managers, err := l.directory.ListManagers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list session managers: %w", err)
-	}
-	suppliers, err := l.directory.ListPoolSuppliers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list pool suppliers: %w", err)
-	}
-	allowed := make(map[string]bool)
-	for _, supplier := range suppliers {
-		if supplier != nil && supplier.Pool == pool && supplier.Enabled && !supplier.Draining {
-			allowed[supplier.ManagerID] = true
-		}
-	}
-	result := make([]*sessionrunnercore.Manager, 0, len(managers))
-	for _, manager := range managers {
-		if manager == nil || !manager.Enabled || manager.Draining || !allowed[manager.ID] {
-			continue
-		}
-		result = append(result, manager)
-	}
+// orderManagers applies workload-specific preference only after the core
+// resolver has produced an authorized route. It cannot add a manager that was
+// not an enabled supplier of the selected pool.
+func orderManagers(authorized []*sessionrunnercore.Manager) []*sessionrunnercore.Manager {
+	result := append([]*sessionrunnercore.Manager(nil), authorized...)
 	sort.SliceStable(result, func(i, j int) bool {
 		a, b := result[i], result[j]
 		if ca, cb := hasCapability(a, sessionrunnercore.CapabilityCodexDeviceAuthV1), hasCapability(b, sessionrunnercore.CapabilityCodexDeviceAuthV1); ca != cb {
@@ -219,7 +211,7 @@ func (l *CodexDeviceAuthLauncher) candidates(ctx context.Context, pool string) (
 		}
 		return a.ID < b.ID
 	})
-	return result, nil
+	return result
 }
 
 type tunnelLiveness struct{ tunnel ControlTunnel }

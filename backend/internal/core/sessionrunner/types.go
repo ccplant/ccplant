@@ -104,6 +104,15 @@ type ResolvedPool struct {
 	Binding *Binding     `json:"binding"`
 }
 
+// ResolvedRoute is the complete authorization boundary for workloads that run
+// directly on a session manager rather than being claimed by a pooled runner.
+// Managers contains only healthy, enabled suppliers of the authorized pool.
+type ResolvedRoute struct {
+	Pool     *LogicalPool `json:"pool"`
+	Binding  *Binding     `json:"binding"`
+	Managers []*Manager   `json:"managers"`
+}
+
 type RunnerStatus string
 
 const (

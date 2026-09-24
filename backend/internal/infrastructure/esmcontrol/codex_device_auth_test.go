@@ -58,6 +58,22 @@ type fakeDirectory struct {
 	err       error
 }
 
+type fakeAuthorizedRouteResolver struct {
+	route *sessionrunnercore.ResolvedRoute
+	err   error
+}
+
+func (r fakeAuthorizedRouteResolver) ResolveRoute(context.Context, sessionrunnercore.Subject, string, map[string]string) (*sessionrunnercore.ResolvedRoute, error) {
+	return r.route, r.err
+}
+
+type startForbiddenManagerDirectory struct{ called bool }
+
+func (d *startForbiddenManagerDirectory) ListManagers(context.Context) ([]*sessionrunnercore.Manager, error) {
+	d.called = true
+	return nil, errors.New("raw manager directory must not be used during start")
+}
+
 func (d *fakeDirectory) ListManagers(context.Context) ([]*sessionrunnercore.Manager, error) {
 	return d.managers, d.err
 }
@@ -204,6 +220,31 @@ func TestLauncherStartOnlyUsesSupplierOfResolvedPool(t *testing.T) {
 	}
 	if len(tunnel.requests) != 1 || tunnel.requests[0].managerID != authorized.ID {
 		t.Fatalf("requests = %#v, want only authorized pool supplier", tunnel.requests)
+	}
+}
+
+func TestLauncherStartConsumesOnlyAuthorizedRoute(t *testing.T) {
+	manager := managerEntry("authorized-manager", nil)
+	tunnel := &fakeTunnel{connected: map[string]bool{manager.ID: true}}
+	rawManagers := &startForbiddenManagerDirectory{}
+	launcher := &CodexDeviceAuthLauncher{
+		tunnel: tunnel,
+		routes: fakeAuthorizedRouteResolver{route: &sessionrunnercore.ResolvedRoute{
+			Pool:     &sessionrunnercore.LogicalPool{Name: "authorized", Enabled: true},
+			Binding:  &sessionrunnercore.Binding{ID: "binding-alice", Enabled: true},
+			Managers: []*sessionrunnercore.Manager{manager},
+		}},
+		managers: rawManagers,
+	}
+
+	if err := launcher.StartCodexDeviceAuth(context.Background(), validWorkload()); err != nil {
+		t.Fatal(err)
+	}
+	if rawManagers.called {
+		t.Fatal("start path bypassed the authorized route resolver")
+	}
+	if len(tunnel.requests) != 1 || tunnel.requests[0].managerID != manager.ID {
+		t.Fatalf("requests = %#v", tunnel.requests)
 	}
 }
 
