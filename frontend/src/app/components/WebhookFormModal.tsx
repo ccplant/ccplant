@@ -36,6 +36,7 @@ interface TriggerFormData {
   reuseSession: boolean
   mountPayload: boolean
   oneshot: boolean
+  model: string
   credentialSource: '' | 'session_user' | 'triggered_user' | 'team' | 'none'
   goTemplate?: string
   environment: Record<string, string>
@@ -55,6 +56,7 @@ const emptyTrigger: TriggerFormData = {
   reuseSession: false,
   mountPayload: false,
   oneshot: false,
+  model: '',
   credentialSource: '',
   goTemplate: '',
   environment: {},
@@ -114,6 +116,7 @@ export default function WebhookFormModal({
             reuseSession: t.session_config?.reuse_session ?? false,
             mountPayload: t.session_config?.mount_payload ?? false,
             oneshot: t.session_config?.params?.oneshot ?? false,
+            model: t.session_config?.params?.model || '',
             credentialSource: t.session_config?.params?.credential_source || '',
             goTemplate: t.conditions.go_template || '',
             environment: t.session_config?.environment || {},
@@ -407,6 +410,9 @@ export default function WebhookFormModal({
         }
         // Always set oneshot explicitly (true or false)
         session_config.params.oneshot = t.oneshot
+        if (t.model.trim()) {
+          session_config.params.model = t.model.trim()
+        }
         if (t.credentialSource) {
           session_config.params.credential_source = t.credentialSource
         }
@@ -930,6 +936,25 @@ export default function WebhookFormModal({
                         />
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                           Goテンプレート形式。例: {'{{.pull_request.Number}}'}
+                        </p>
+                      </div>
+
+                      {/* Model */}
+                      <div>
+                        <label htmlFor={`trigger-model-${index}`} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          モデル
+                        </label>
+                        <input
+                          id={`trigger-model-${index}`}
+                          type="text"
+                          value={trigger.model}
+                          onChange={(e) => updateTrigger(index, 'model', e.target.value)}
+                          placeholder="例: gpt-5.4、claude-sonnet-4-6"
+                          disabled={isSubmitting}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          このトリガーから起動するセッションのモデルを指定します。空欄の場合はセッションプロファイルまたは既定値を使用します。
                         </p>
                       </div>
 
