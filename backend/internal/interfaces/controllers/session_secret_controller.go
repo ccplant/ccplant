@@ -49,8 +49,10 @@ func NewSessionSecretController(client kubernetes.Interface, namespace string, m
 	return &SessionSecretController{client: client, namespace: namespace, manager: manager, routes: routes, now: time.Now}
 }
 
-// Create registers a short-lived value for a running session. The value is
-// deliberately omitted from the response and cannot be listed through this API.
+// Create registers a short-lived value for a running session. Each request is
+// an independent registration, even when the same value is already pending.
+// The value is deliberately omitted from the response and cannot be listed
+// through this API.
 func (c *SessionSecretController) Create(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
 	ownerID, scope, teamID, found, err := c.sessionOwner(ctx, sessionID)

@@ -164,3 +164,52 @@ func TestSessionSecretConsumeNextWithoutID(t *testing.T) {
 	require.Equal(t, "no-store", first.Header().Get("Cache-Control"))
 	require.Equal(t, http.StatusNotFound, consume().Code)
 }
+
+func TestSessionSecretAllowsRegisteringTheSameValueAgain(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	session := entities.NewProxySession("session-duplicate", "user-1", entities.ScopeUser, "", nil, time.Now())
+	controller := NewSessionSecretController(client, "default", oneTimeSecretManagerStub{session: session, token: "session-token"}, nil)
+
+	e := echo.New()
+	register := func() string {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"value":"same-secret"}`))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		ctx := e.NewContext(req, rec)
+		ctx.SetParamNames("sessionId")
+		ctx.SetParamValues("session-duplicate")
+		ctx.Set("authz_context", &auth.AuthorizationContext{
+			User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+			PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true, CanCreate: true},
+		})
+		require.NoError(t, controller.Create(ctx))
+		require.Equal(t, http.StatusCreated, rec.Code)
+		var created struct {
+			SecretID string `json:"secret_id"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+		return created.SecretID
+	}
+
+	firstID := register()
+	secondID := register()
+	require.NotEqual(t, firstID, secondID)
+
+	consumeNext := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer session-token")
+		rec := httptest.NewRecorder()
+		ctx := e.NewContext(req, rec)
+		ctx.SetParamNames("sessionId")
+		ctx.SetParamValues("session-duplicate")
+		require.NoError(t, controller.ConsumeNext(ctx))
+		return rec
+	}
+
+	for range 2 {
+		result := consumeNext()
+		require.Equal(t, http.StatusOK, result.Code)
+		require.JSONEq(t, `{"value":"same-secret"}`, result.Body.String())
+	}
+	require.Equal(t, http.StatusNotFound, consumeNext().Code)
+}

@@ -1174,6 +1174,7 @@
     "/sessions/{sessionId}/secrets": {
       "post": {
         "summary": "Register a short-lived secret for one-time retrieval by an existing session",
+        "description": "Each request creates an independent registration, including when the same value is already pending.",
         "operationId": "createSessionSecret",
         "tags": [
           "Sessions"
