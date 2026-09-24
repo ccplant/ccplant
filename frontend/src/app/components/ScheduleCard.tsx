@@ -147,6 +147,14 @@ export default function ScheduleCard({
           </div>
         )}
 
+        {/* Session Config - Model */}
+        {schedule.session_config?.params?.model && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+            <span>モデル:</span>
+            <span className="font-mono">{schedule.session_config.params.model}</span>
+          </div>
+        )}
+
         {/* Session Config - Message */}
         {schedule.session_config?.params?.message && (
           <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-700/50 rounded text-xs text-gray-600 dark:text-gray-400 line-clamp-2">
