@@ -2457,7 +2457,18 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         )}
 
         {showSessionInfo && (
-          <div className="mb-3 grid gap-2 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3 text-xs">
+          <div className="relative mb-3 grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-3 pr-10 text-xs dark:border-gray-700 dark:bg-gray-800">
+            <button
+              type="button"
+              onClick={() => setShowSessionInfo(false)}
+              className="absolute right-2 top-2 rounded-md p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+              aria-label="セッション情報を閉じる"
+              title="閉じる"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
             <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2">
               <span className="text-gray-500 dark:text-gray-400">Session ID</span>
               <span className="break-all font-mono text-gray-900 dark:text-gray-100">{sessionId || '-'}</span>
