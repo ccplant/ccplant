@@ -10830,6 +10830,11 @@
             "would_post_to_slack": { "type": "boolean" }
           }
         },
+        "session_dry_run": {
+          "type": "object",
+          "description": "The redacted response returned by the production POST /start?dry_run=true path.",
+          "additionalProperties": true
+        },
         "side_effects": {
           "type": "array",
           "description": "Actions a production event would attempt; none are performed by simulation.",

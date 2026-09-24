@@ -103,3 +103,29 @@ func TestTriggerStartFailureDoesNotFallBack(t *testing.T) {
 		})
 	}
 }
+
+func TestDryRunTriggerSessionUsesStartDryRunAPI(t *testing.T) {
+	var received entities.StartRequest
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/start", r.URL.Path)
+		require.Equal(t, "true", r.URL.Query().Get("dry_run"))
+		require.Equal(t, "execution", r.Header.Get("Idempotency-Key"))
+		_, err := executiontoken.VerifyExecutionToken([]byte("secret"), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), time.Now())
+		require.NoError(t, err)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"dry_run": true, "session_id": "execution", "decision": "create",
+			"placement": map[string]interface{}{"transport": "direct_runtime", "pool": "dev"},
+		})
+	}))
+	defer api.Close()
+
+	manager := NewSessionManager(api.URL, "secret")
+	response, err := manager.DryRunTriggerSession(context.Background(), "execution", &entities.RunServerRequest{
+		UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"}, InitialMessage: "debug this",
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, true, response["dry_run"])
+	require.Equal(t, "create", response["decision"])
+	require.Equal(t, "debug this", received.Params.Message)
+}

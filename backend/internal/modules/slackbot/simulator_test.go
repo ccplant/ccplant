@@ -1,12 +1,23 @@
 package slackbot
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
+
+type simulationDryRunManager struct {
+	*mockSessionManager
+	response map[string]interface{}
+	err      error
+}
+
+func (m *simulationDryRunManager) DryRunTriggerSession(context.Context, string, *entities.RunServerRequest, []byte) (map[string]interface{}, error) {
+	return m.response, m.err
+}
 
 func TestSimulateSlackBotEventBuildsOfflinePlan(t *testing.T) {
 	bot := entities.NewSlackBot("bot-1", "debug", "owner")
@@ -38,6 +49,26 @@ func TestSimulateSlackBotEventBuildsOfflinePlan(t *testing.T) {
 	assert.Equal(t, "C1", result.Plan.Environment["PROMPT_SOURCE"])
 	assert.Equal(t, "codex", result.Plan.Params.AgentType)
 	assert.Equal(t, []string{"create_or_reuse_session", "post_message_to_slack"}, result.SideEffects)
+}
+
+func TestSimulateSlackBotEventIncludesStartAPIDryRunResponse(t *testing.T) {
+	bot := entities.NewSlackBot("bot-1", "debug", "owner")
+	repo := newMockSlackBotRepository()
+	require.NoError(t, repo.Create(t.Context(), bot))
+	manager := &simulationDryRunManager{mockSessionManager: &mockSessionManager{}, response: map[string]interface{}{
+		"dry_run": true, "session_id": "candidate", "decision": "create",
+		"placement": map[string]interface{}{"transport": "direct_runtime", "pool": "dev"},
+	}}
+
+	result := SimulateSlackBotEvent(t.Context(), repo, manager, nil, bot, SlackBotSimulationRequest{
+		ChannelName: "debug",
+		Event:       SlackEvent{Type: "message", Text: "investigate", User: "U1", Channel: "C1", Ts: "1"},
+	})
+
+	require.Equal(t, simulationDecisionCreateOrReuse, result.Decision)
+	require.NotNil(t, result.SessionDryRun)
+	assert.Equal(t, true, result.SessionDryRun["dry_run"])
+	assert.Equal(t, "create", result.SessionDryRun["decision"])
 }
 
 func TestSimulateSlackBotEventExplainsIgnoredAndInvalidEvents(t *testing.T) {

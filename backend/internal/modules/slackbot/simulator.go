@@ -40,12 +40,17 @@ type SlackBotSimulationPlan struct {
 }
 
 type SlackBotSimulationResponse struct {
-	DryRun      bool                    `json:"dry_run"`
-	Decision    string                  `json:"decision"`
-	Reason      string                  `json:"reason,omitempty"`
-	Plan        *SlackBotSimulationPlan `json:"plan,omitempty"`
-	SideEffects []string                `json:"side_effects"`
-	Errors      []string                `json:"errors,omitempty"`
+	DryRun        bool                    `json:"dry_run"`
+	Decision      string                  `json:"decision"`
+	Reason        string                  `json:"reason,omitempty"`
+	Plan          *SlackBotSimulationPlan `json:"plan,omitempty"`
+	SessionDryRun map[string]interface{}  `json:"session_dry_run,omitempty"`
+	SideEffects   []string                `json:"side_effects"`
+	Errors        []string                `json:"errors,omitempty"`
+}
+
+type triggerSessionDryRunner interface {
+	DryRunTriggerSession(context.Context, string, *entities.RunServerRequest, []byte) (map[string]interface{}, error)
 }
 
 // SimulateSlackBotEvent enters through SlackBotEventHandler.ProcessEvent, exactly
@@ -53,6 +58,9 @@ type SlackBotSimulationResponse struct {
 // replaced with recorders, and deferred work is run synchronously for the response.
 func SimulateSlackBotEvent(ctx context.Context, repo repositories.SlackBotRepository, sessionManager repositories.SessionManager, profileRepo repositories.SessionProfileRepository, bot *entities.SlackBot, req SlackBotSimulationRequest) SlackBotSimulationResponse {
 	recorder := &simulationSessionManager{reader: sessionManager}
+	if dryRunner, ok := sessionManager.(triggerSessionDryRunner); ok {
+		recorder.dryRunner = dryRunner
+	}
 	slack := &simulationSlackClient{channelName: req.ChannelName, threadMessages: req.ThreadMessages}
 	handler := NewSlackBotEventHandler(repo, recorder, "simulation-secret", "bot-token", slack, "https://simulation.invalid", false, profileRepo)
 	handler.synchronous = true
@@ -72,6 +80,7 @@ func SimulateSlackBotEvent(ctx context.Context, repo repositories.SlackBotReposi
 	if recorder.createRequest != nil {
 		response.Plan = simulationPlan(recorder.sessionID, recorder.createRequest, len(slack.posts) > 0)
 	}
+	response.SessionDryRun = recorder.sessionDryRun
 	if len(slack.posts) > 0 {
 		response.SideEffects = append(response.SideEffects, "post_message_to_slack")
 	}
@@ -116,14 +125,23 @@ func (s *simulationSlackClient) PostMessage(_ context.Context, _, _, message, _ 
 
 type simulationSessionManager struct {
 	reader        repositories.SessionManager
+	dryRunner     triggerSessionDryRunner
 	sessionID     string
 	createRequest *entities.RunServerRequest
+	sessionDryRun map[string]interface{}
 	stopped       []string
 	sent          []string
 }
 
-func (s *simulationSessionManager) CreateSession(_ context.Context, id string, req *entities.RunServerRequest, _ []byte) (entities.Session, error) {
+func (s *simulationSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	s.sessionID, s.createRequest = id, req
+	if s.dryRunner != nil {
+		preview, err := s.dryRunner.DryRunTriggerSession(ctx, id, req, webhookPayload)
+		if err != nil {
+			return nil, fmt.Errorf("session start dry-run failed: %w", err)
+		}
+		s.sessionDryRun = preview
+	}
 	return &simulationSession{id: id, req: req}, nil
 }
 func (s *simulationSessionManager) GetSession(id string) entities.Session {
