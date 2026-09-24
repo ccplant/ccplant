@@ -56,6 +56,7 @@ type HandlerRegistry struct {
 	sessionControlReaderController *controllers.SessionControlReaderController
 	esmControlController           *controllers.ESMControlController
 	sessionRuntimeController       *controllers.SessionRuntimeController
+	sessionSecretController        *controllers.SessionSecretController
 	sessionPoolController          *controllers.SessionPoolController
 	usageController                *controllers.UsageController
 	customHandlers                 []CustomHandler
@@ -262,6 +263,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var sessionControlReaderController *controllers.SessionControlReaderController
 	var esmControlController *controllers.ESMControlController
 	var sessionRuntimeController *controllers.SessionRuntimeController
+	var sessionSecretController *controllers.SessionSecretController
+	if server.persistenceClient != nil {
+		sessionSecretController = controllers.NewSessionSecretController(server.persistenceClient, server.namespace, server.sessionManager, server.sessionRouteRepo)
+	}
 	if k8sManager, ok := server.sessionManager.(*services.KubernetesSessionManager); ok {
 		provisionerController = controllers.NewProvisionerController(k8sManager, k8sManager, server.settingsRepo, server.sessionRouteRepo, server.sessionStateStore)
 		if server.sessionControlStore != nil {
@@ -346,6 +351,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionControlReaderController: sessionControlReaderController,
 			esmControlController:           esmControlController,
 			sessionRuntimeController:       sessionRuntimeController,
+			sessionSecretController:        sessionSecretController,
 			sessionPoolController:          sessionPoolController,
 			usageController:                usageController,
 			customHandlers:                 make([]CustomHandler, 0),
@@ -430,6 +436,12 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.POST("/sessions/:sessionId/pause", r.handlers.sessionController.PauseSession)
 	r.echo.POST("/sessions/:sessionId/suspend", r.handlers.sessionController.SuspendSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
+	if r.handlers.sessionSecretController != nil {
+		r.echo.POST("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.Create,
+			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/internal/session-control/:sessionId/secrets/next", r.handlers.sessionSecretController.ConsumeNext)
+		r.echo.GET("/internal/session-control/:sessionId/secrets/:secretId", r.handlers.sessionSecretController.Consume)
+	}
 	if r.handlers.sessionPoolController != nil {
 		r.echo.GET("/available-session-pools", r.handlers.sessionPoolController.ListAvailablePools,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))

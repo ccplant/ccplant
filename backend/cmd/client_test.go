@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,18 @@ func TestClientCmd(t *testing.T) {
 	// Test command structure
 	assert.Equal(t, "client", ClientCmd.Use)
 	assert.Equal(t, "AgentAPI Client CLI", ClientCmd.Short)
+}
+
+func TestConsumeSecretPrintsOnlyValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		_, _ = w.Write([]byte(`{"value":"injected-secret"}`))
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	err := consumeSecret(context.Background(), server.Client(), server.URL, &output)
+	assert.NoError(t, err)
+	assert.Equal(t, "injected-secret\n", output.String())
 }
 
 func TestClientCmdInit(t *testing.T) {

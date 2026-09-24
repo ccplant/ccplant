@@ -1232,6 +1232,18 @@ func TestGeneratePiModelsJSONSkipsEmptyConfig(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(outputDir, ".pi", "agent", "models.json"))
 }
 
+func TestGenerateCodexInstructionsUsesDiscoveredGlobalPath(t *testing.T) {
+	outputDir := t.TempDir()
+	require.NoError(t, generateCodexInstructionsMD(outputDir, "follow these instructions"))
+
+	agentsPath := filepath.Join(outputDir, ".codex", "AGENTS.md")
+	assert.FileExists(t, agentsPath)
+	assert.NoFileExists(t, filepath.Join(outputDir, ".codex", "instructions.md"))
+	content, err := os.ReadFile(agentsPath)
+	require.NoError(t, err)
+	assert.Equal(t, "follow these instructions", string(content))
+}
+
 func TestCompile_MissingInput(t *testing.T) {
 	opts := CompileOptions{
 		InputPath:   "/nonexistent/settings.yaml",

@@ -97,9 +97,9 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 		return fmt.Errorf("failed to generate codex config.toml: %w", err)
 	}
 
-	// 3d. Generate ~/.codex/instructions.md (codex sessions only)
+	// 3d. Generate ~/.codex/AGENTS.md (codex sessions only)
 	if err := generateCodexInstructionsMD(opts.OutputDir, settings.Codex.InstructionsMD); err != nil {
-		return fmt.Errorf("failed to generate codex instructions.md: %w", err)
+		return fmt.Errorf("failed to generate codex AGENTS.md: %w", err)
 	}
 
 	// 3e. Append MCP server entries to ~/.codex/config.toml (codex sessions only)
@@ -482,8 +482,8 @@ func mergeCodexManagedHooks(hooksJSON map[string]interface{}) map[string]interfa
 	return merged
 }
 
-// generateCodexInstructionsMD creates ~/.codex/instructions.md for user-level Codex
-// CLI instructions, equivalent to ~/.claude/CLAUDE.md for Claude Code.
+// generateCodexInstructionsMD creates ~/.codex/AGENTS.md for global Codex CLI
+// instructions, equivalent to ~/.claude/CLAUDE.md for Claude Code.
 // Only written when instructionsMD is non-empty; the default baked into the
 // Docker image (copied by entrypoint.sh) remains when this is empty.
 func generateCodexInstructionsMD(outputDir string, instructionsMD string) error {
@@ -496,9 +496,9 @@ func generateCodexInstructionsMD(outputDir string, instructionsMD string) error 
 		return fmt.Errorf("failed to create .codex directory: %w", err)
 	}
 
-	instructionsPath := filepath.Join(codexDir, "instructions.md")
+	instructionsPath := filepath.Join(codexDir, "AGENTS.md")
 	if err := os.WriteFile(instructionsPath, []byte(instructionsMD), 0644); err != nil {
-		return fmt.Errorf("failed to write codex instructions.md: %w", err)
+		return fmt.Errorf("failed to write codex AGENTS.md: %w", err)
 	}
 
 	log.Printf("[COMPILE-SETTINGS] Generated %s", instructionsPath)

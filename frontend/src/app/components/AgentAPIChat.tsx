@@ -803,6 +803,11 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const [showControlPanel, setShowControlPanel] = useState(false);
+  const [showSecretModal, setShowSecretModal] = useState(false);
+  const [secretValue, setSecretValue] = useState('');
+  const [secretLifetime, setSecretLifetime] = useState(600);
+  const [isRegisteringSecret, setIsRegisteringSecret] = useState(false);
+  const [secretFeedback, setSecretFeedback] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
 
@@ -827,6 +832,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [showTemplates, setShowTemplates] = useState(false);
   const [recentMessages, setRecentMessages] = useState<string[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showComposerMenu, setShowComposerMenu] = useState(false);
   const [showPRLinks, setShowPRLinks] = useState(false);
   const [sessionAnnotations, setSessionAnnotations] = useState<SessionAnnotations | undefined>();
   const [sessionModelOptions, setSessionModelOptions] = useState<string[]>([]);
@@ -1312,18 +1318,20 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           setShowPRLinks(false)
         } else if (showFontSettings) {
           setShowFontSettings(false)
+        } else if (showComposerMenu) {
+          setShowComposerMenu(false)
         }
       }
     }
 
-    if (showQuestionModal || showTemplateModal || showPRLinks || showFontSettings) {
+    if (showQuestionModal || showTemplateModal || showPRLinks || showFontSettings || showComposerMenu) {
       document.addEventListener('keydown', handleKeyDown)
     }
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [showQuestionModal, showTemplateModal, showPRLinks, showFontSettings])
+  }, [showQuestionModal, showTemplateModal, showPRLinks, showFontSettings, showComposerMenu])
 
   // Listen for font settings changes
   useEffect(() => {
@@ -1911,6 +1919,28 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const sendArrowUp = () => {
     // Send up arrow key (raw message)
     sendMessage('raw', '\u001b[A');
+  };
+
+  const registerOneTimeSecret = async () => {
+    if (!sessionId || !agentAPIRef.current || !secretValue) return;
+    setIsRegisteringSecret(true);
+    setSecretFeedback(null);
+    try {
+      await agentAPIRef.current.createSessionSecret(sessionId, secretValue, secretLifetime);
+      setSecretValue('');
+      setShowSecretModal(false);
+      setSecretFeedback('秘匿情報を登録しました。エージェントに取得を依頼してください。');
+    } catch (err) {
+      setError(`秘匿情報の登録に失敗しました: ${err instanceof Error ? err.message : '不明なエラー'}`);
+    } finally {
+      setIsRegisteringSecret(false);
+    }
+  };
+
+  const closeSecretModal = () => {
+    if (isRegisteringSecret) return;
+    setSecretValue('');
+    setShowSecretModal(false);
   };
 
   const sendArrowDown = () => {
@@ -2599,6 +2629,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
             </div>
           </div>
           <div className="flex-1 relative">
+            {secretFeedback && (
+              <div className="mb-2 flex items-start justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                <span>{secretFeedback}</span>
+                <button type="button" onClick={() => setSecretFeedback(null)} aria-label="通知を閉じる" className="ml-3 font-bold">×</button>
+              </div>
+            )}
             {attachedImages.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {attachedImages.map((image, index) => (
@@ -2677,7 +2713,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 ))}
               </div>
             )}
-            <div className="flex items-center justify-between mt-3">
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs text-gray-500 dark:text-gray-400 hidden sm:block">
                 {(() => {
                   const enterKeyBehavior = getEnterKeyBehavior();
@@ -2704,7 +2740,22 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   }
                 })()}
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setShowSecretModal(true);
+                  }}
+                  disabled={!isConnected || !isInitialLoadComplete || !sessionId}
+                  className="rounded-md bg-amber-600 px-2 py-2 text-xs text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
+                  title="このセッションへ一度だけ取得できる秘匿情報を渡す"
+                  aria-label="秘匿情報を渡す"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11V7a4 4 0 00-8 0v4m2 0h12a2 2 0 012 2v7H4v-7a2 2 0 012-2h2m4 4v2" />
+                  </svg>
+                </button>
                 {isACPSession && (
                   <button
                     type="button"
@@ -2720,55 +2771,59 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                     </svg>
                   </button>
                 )}
-                {isACPSession ? (
+                <div className="relative">
                   <button
-                    onClick={() => setShowSessionInfo(prev => !prev)}
-                    disabled={!sessionId}
-                    className={`px-2 py-2 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white text-xs rounded-md transition-colors disabled:cursor-not-allowed flex items-center ${
-                      showSessionInfo ? 'bg-gray-700 hover:bg-gray-800' : 'bg-gray-600 hover:bg-gray-700'
-                    }`}
-                    title="セッション情報"
-                    aria-label="セッション情報"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setShowControlPanel(!showControlPanel)}
+                    type="button"
+                    onClick={() => setShowComposerMenu(prev => !prev)}
                     disabled={!isConnected}
-                    className="px-2 py-2 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white text-xs rounded-md transition-colors disabled:cursor-not-allowed flex items-center"
-                    title="Toggle Control Panel"
+                    className="flex items-center rounded-md bg-gray-600 px-2 py-2 text-xs text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600"
+                    title="その他の操作"
+                    aria-label="その他の操作"
+                    aria-expanded={showComposerMenu}
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
+                    <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="5" cy="12" r="2" />
+                      <circle cx="12" cy="12" r="2" />
+                      <circle cx="19" cy="12" r="2" />
                     </svg>
                   </button>
-                )}
-
-                {/* Font Settings Button */}
-                <button
-                  onClick={() => setShowFontSettings(!showFontSettings)}
-                  className="px-2 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded-md transition-colors flex items-center relative"
-                  title="フォント設定"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
-                  </svg>
-                </button>
-
-                {/* Template Button */}
-                <button
-                  onClick={() => setShowTemplateModal(true)}
-                  disabled={!isConnected || isLoading}
-                  className="px-2 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 text-white text-xs rounded-md transition-colors disabled:cursor-not-allowed flex items-center"
-                  title="テンプレートから選択"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </button>
+                  {showComposerMenu && (
+                    <div className="absolute bottom-full right-0 z-40 mb-2 w-48 overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isACPSession) setShowSessionInfo(prev => !prev);
+                          else setShowControlPanel(prev => !prev);
+                          setShowComposerMenu(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        セッション情報
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowFontSettings(true);
+                          setShowComposerMenu(false);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        文字表示設定
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTemplateModal(true);
+                          setShowComposerMenu(false);
+                        }}
+                        disabled={isLoading}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-400 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        履歴・テンプレート
+                      </button>
+                    </div>
+                  )}
+                </div>
                 
                 <button
                   onClick={() => sendMessage()}
@@ -2789,6 +2844,69 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       </div> {/* end: Body (sidebar + chat) */}
 
       {/* Template Selection Modal */}
+      {showSecretModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeSecretModal();
+          }}
+        >
+          <div className="w-full max-w-lg rounded-lg bg-white shadow-xl dark:bg-gray-800">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">秘匿情報を一度だけ渡す</h2>
+              <button
+                type="button"
+                onClick={closeSecretModal}
+                disabled={isRegisteringSecret}
+                aria-label="閉じる"
+                className="text-gray-400 hover:text-gray-600 disabled:cursor-not-allowed dark:hover:text-gray-200"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-4 px-6 py-5">
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                値はチャット履歴には保存されず、エージェントが取得すると削除されます。登録後、チャットで取得を依頼してください。
+              </p>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                秘匿情報
+                <textarea
+                  value={secretValue}
+                  onChange={(event) => setSecretValue(event.target.value)}
+                  rows={5}
+                  maxLength={65536}
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoFocus
+                  aria-label="一度だけ渡す秘匿情報"
+                  className="mt-1 w-full resize-y rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                />
+              </label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                有効期限
+                <select
+                  value={secretLifetime}
+                  onChange={(event) => setSecretLifetime(Number(event.target.value))}
+                  className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                >
+                  <option value={600}>10分</option>
+                  <option value={1800}>30分</option>
+                  <option value={3600}>60分</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4 dark:border-gray-700">
+              <button type="button" onClick={closeSecretModal} disabled={isRegisteringSecret} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                キャンセル
+              </button>
+              <button type="button" onClick={() => void registerOneTimeSecret()} disabled={!secretValue || isRegisteringSecret} className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600">
+                {isRegisteringSecret ? '登録中…' : '一度だけ渡す'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showTemplateModal && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"

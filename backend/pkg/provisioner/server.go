@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -148,6 +149,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/restart", s.handleRestartAgent)
 	mux.HandleFunc("/sandbox-domains", s.handleSandboxDomains)
 	mux.HandleFunc("/sandbox-policy", s.handleSandboxPolicy)
+	mux.HandleFunc("/one-time-secrets/", s.handleOneTimeSecret)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -167,6 +169,59 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("provisioner server error: %w", err)
 	}
 	return nil
+}
+
+// handleOneTimeSecret lets the agent process consume a value without exposing
+// the parent runtime bearer token to that process. This server is reachable
+// through a Kubernetes Service, so the endpoint is explicitly loopback-only.
+func (s *Server) handleOneTimeSecret(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || !net.ParseIP(host).IsLoopback() {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	secretID := strings.TrimPrefix(r.URL.Path, "/one-time-secrets/")
+	if secretID == "" || strings.Contains(secretID, "/") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	s.mu.RLock()
+	settings := s.activeSettings
+	var runtime *sessionsettings.ParentRuntimeConfig
+	if settings != nil && settings.ParentRuntime != nil {
+		copy := *settings.ParentRuntime
+		runtime = &copy
+	}
+	s.mu.RUnlock()
+	if runtime == nil || !runtime.Enabled || runtime.Endpoint == "" || runtime.SessionID == "" || runtime.Token == "" {
+		http.Error(w, "parent runtime unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-control/" + url.PathEscape(runtime.SessionID) + "/secrets/" + url.PathEscape(secretID)
+	query := url.Values{}
+	query.Set("generation", fmt.Sprintf("%d", runtime.Generation))
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint+"?"+query.Encode(), nil)
+	if err != nil {
+		http.Error(w, "failed to create parent request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+runtime.Token)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		http.Error(w, "parent runtime unavailable", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *Server) SetRestartSettingsHandler(handler func(*sessionsettings.SessionSettings)) {

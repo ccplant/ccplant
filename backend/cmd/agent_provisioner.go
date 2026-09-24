@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -45,6 +48,9 @@ func init() {
 }
 
 func runAgentProvisioner(cmd *cobra.Command, args []string) error {
+	if err := installAgentInstructions(); err != nil {
+		return err
+	}
 	port, err := cmd.Flags().GetInt("port")
 	if err != nil {
 		return err
@@ -96,4 +102,31 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func installAgentInstructions() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory for agent instructions: %w", err)
+	}
+	files := [][2]string{
+		{"/tmp/config/CLAUDE.md", filepath.Join(home, ".claude", "CLAUDE.md")},
+		{"/tmp/config/AGENTS.md", filepath.Join(home, ".codex", "AGENTS.md")},
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file[0])
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read agent instructions %s: %w", file[0], err)
+		}
+		if err := os.MkdirAll(filepath.Dir(file[1]), 0o755); err != nil {
+			return fmt.Errorf("create agent instructions directory: %w", err)
+		}
+		if err := os.WriteFile(file[1], data, 0o644); err != nil {
+			return fmt.Errorf("write agent instructions %s: %w", file[1], err)
+		}
+	}
+	return nil
 }

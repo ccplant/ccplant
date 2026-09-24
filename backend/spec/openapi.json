@@ -1171,6 +1171,183 @@
         }
       }
     },
+    "/sessions/{sessionId}/secrets": {
+      "post": {
+        "summary": "Register a short-lived secret for one-time retrieval by an existing session",
+        "operationId": "createSessionSecret",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "value"
+                ],
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "expires_in_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "default": 600
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Secret registered; the value is intentionally omitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "secret_id",
+                    "expires_at",
+                    "local_url"
+                  ],
+                  "properties": {
+                    "secret_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "local_url": {
+                      "type": "string",
+                      "format": "uri",
+                      "description": "Loopback-only provisioner URL that the session agent can use without receiving its runtime bearer token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller cannot access the session"
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
+    },
+    "/internal/session-control/{sessionId}/secrets/next": {
+      "get": {
+        "summary": "Consume the oldest pending session secret exactly once without its ID",
+        "operationId": "consumeNextSessionSecret",
+        "tags": ["Sessions"],
+        "security": [{"bearerAuth": []}],
+        "parameters": [
+          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "generation", "in": "query", "description": "Required for direct-runtime sessions to fence replaced runtimes", "schema": {"type": "integer", "format": "int64"}}
+        ],
+        "responses": {
+          "200": {"description": "Secret returned and atomically consumed"},
+          "404": {"description": "No unconsumed secret is pending"}
+        }
+      }
+    },
+    "/internal/session-control/{sessionId}/secrets/{secretId}": {
+      "get": {
+        "summary": "Consume a session secret exactly once",
+        "operationId": "consumeSessionSecret",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "secretId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "generation",
+            "in": "query",
+            "description": "Required for direct-runtime sessions to fence replaced runtimes",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret consumed; subsequent requests return 404",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "example": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid session credential"
+          },
+          "404": {
+            "description": "Secret not found or already consumed"
+          },
+          "410": {
+            "description": "Secret expired"
+          }
+        }
+      }
+    },
     "/internal/sessions/{sessionId}/github-credentials": {
       "get": {
         "summary": "Get a current repository-scoped token using a session broker credential",

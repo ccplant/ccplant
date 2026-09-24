@@ -233,8 +233,7 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 	}
 
-	// Aggregate SKILL.md files from installed marketplaces into ~/.codex/instructions.md
-	// so that the Codex CLI agent benefits from the same skill definitions as Claude Code.
+	// Copy installed marketplace skills into ~/.codex/skills so Codex can discover them.
 	if err := syncCodexSkills(opts.OutputDir, marketplacesDir); err != nil {
 		log.Printf("[SYNC] Warning: failed to sync Codex skills: %v", err)
 	}

@@ -178,6 +178,12 @@ export interface ProxySessionStatusEvent {
   timestamp: string;
 }
 
+export interface CreateSessionSecretResponse {
+  secret_id: string;
+  expires_at: string;
+  local_url: string;
+}
+
 /**
  * Response from GET /sessions/:sessionId/messages/wait (long-poll).
  * Returns updated: true with session_id and timestamp when a message_update event occurred,
@@ -1149,6 +1155,20 @@ export class AgentAPIProxyClient {
     if (this.debug) {
       console.log(`[AgentAPIProxy] Successfully deleted session: ${sessionId}`);
     }
+  }
+
+  async createSessionSecret(
+    sessionId: string,
+    value: string,
+    expiresInSeconds = 600,
+  ): Promise<CreateSessionSecretResponse> {
+    return this.makeRequest<CreateSessionSecretResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/secrets`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ value, expires_in_seconds: expiresInSeconds }),
+      },
+    );
   }
 
   async resumeSession(sessionId: string): Promise<{ session_id: string; status: string }> {
