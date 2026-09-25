@@ -49,10 +49,8 @@ func NewSessionSecretController(client kubernetes.Interface, namespace string, m
 	return &SessionSecretController{client: client, namespace: namespace, manager: manager, routes: routes, now: time.Now}
 }
 
-// Create registers a short-lived value for a running session. Each request is
-// an independent registration, even when the same value is already pending.
-// The value is deliberately omitted from the response and cannot be listed
-// through this API.
+// Create registers a short-lived value for a running session. The value is
+// deliberately omitted from the response and cannot be listed through this API.
 func (c *SessionSecretController) Create(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
 	ownerID, scope, teamID, found, err := c.sessionOwner(ctx, sessionID)
@@ -113,8 +111,70 @@ func (c *SessionSecretController) Create(ctx echo.Context) error {
 	})
 }
 
-// Consume returns the value exactly once. Clearing it uses Kubernetes resource
-// version compare-and-swap, so concurrent callers cannot both succeed.
+// Reauthorize permits one more retrieval of a previously consumed secret. The
+// caller never sends or receives the value; it remains in the Kubernetes Secret.
+func (c *SessionSecretController) Reauthorize(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	ownerID, scope, teamID, found, err := c.sessionOwner(ctx, sessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to look up session")
+	}
+	if !found {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil || !authz.CanAccessResource(ownerID, scope, teamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "you don't have permission to access this session")
+	}
+
+	var input struct {
+		ExpiresInSeconds int64 `json:"expires_in_seconds,omitempty"`
+	}
+	if err := ctx.Bind(&input); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+	}
+	lifetime := defaultOneTimeSecretLifetime
+	if input.ExpiresInSeconds != 0 {
+		lifetime = time.Duration(input.ExpiresInSeconds) * time.Second
+		if lifetime <= 0 || lifetime > maxOneTimeSecretLifetime {
+			return echo.NewHTTPError(http.StatusBadRequest, "expires_in_seconds must be between 1 and 3600")
+		}
+	}
+
+	secrets := c.client.CoreV1().Secrets(c.namespace)
+	secret, err := secrets.Get(ctx.Request().Context(), oneTimeSecretName(sessionID, ctx.Param("secretId")), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return echo.NewHTTPError(http.StatusNotFound, "secret not found")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to look up secret")
+	}
+	if secret.Annotations[oneTimeSecretSessionID] != sessionID {
+		return echo.NewHTTPError(http.StatusNotFound, "secret not found")
+	}
+	if secret.Annotations[oneTimeSecretConsumedAt] == "" {
+		return echo.NewHTTPError(http.StatusConflict, "secret has not been consumed")
+	}
+	if _, ok := secret.Data[oneTimeSecretValueKey]; !ok {
+		return echo.NewHTTPError(http.StatusGone, "secret value is no longer available")
+	}
+
+	expiresAt := c.now().UTC().Add(lifetime)
+	delete(secret.Annotations, oneTimeSecretConsumedAt)
+	secret.Annotations[oneTimeSecretExpiresAt] = expiresAt.Format(time.RFC3339Nano)
+	if _, err := secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{}); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to reauthorize secret")
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"secret_id":  ctx.Param("secretId"),
+		"expires_at": expiresAt,
+		"local_url":  "http://127.0.0.1:9001/one-time-secrets/" + ctx.Param("secretId"),
+	})
+}
+
+// Consume returns the value once per human authorization. Marking it consumed
+// uses Kubernetes resource version compare-and-swap, so concurrent callers
+// cannot both succeed.
 func (c *SessionSecretController) Consume(ctx echo.Context) error {
 	sessionID := ctx.Param("sessionId")
 	if !c.authorizeSession(ctx, sessionID) {
@@ -134,7 +194,6 @@ func (c *SessionSecretController) Consume(ctx echo.Context) error {
 	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, secret.Annotations[oneTimeSecretExpiresAt])
 	if err != nil || !c.now().Before(expiresAt) {
-		secret.Data = nil
 		secret.Annotations[oneTimeSecretConsumedAt] = c.now().UTC().Format(time.RFC3339Nano)
 		_, _ = secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
 		return ctx.NoContent(http.StatusGone)
@@ -143,16 +202,14 @@ func (c *SessionSecretController) Consume(ctx echo.Context) error {
 	if !ok {
 		return ctx.NoContent(http.StatusNotFound)
 	}
-	secret.Data = nil
 	secret.Annotations[oneTimeSecretConsumedAt] = c.now().UTC().Format(time.RFC3339Nano)
-	updated, err := secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
+	_, err = secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
 	if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 		return ctx.NoContent(http.StatusNotFound)
 	}
 	if err != nil {
 		return ctx.NoContent(http.StatusServiceUnavailable)
 	}
-	_ = secrets.Delete(ctx.Request().Context(), updated.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &updated.UID, ResourceVersion: &updated.ResourceVersion}})
 	ctx.Response().Header().Set("Cache-Control", "no-store")
 	return ctx.JSON(http.StatusOK, map[string]string{"value": string(value)})
 }
@@ -184,7 +241,6 @@ func (c *SessionSecretController) ConsumeNext(ctx echo.Context) error {
 			}
 			expiresAt, err := time.Parse(time.RFC3339Nano, secret.Annotations[oneTimeSecretExpiresAt])
 			if err != nil || !c.now().Before(expiresAt) {
-				secret.Data = nil
 				secret.Annotations[oneTimeSecretConsumedAt] = c.now().UTC().Format(time.RFC3339Nano)
 				_, _ = secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
 				continue
@@ -193,9 +249,8 @@ func (c *SessionSecretController) ConsumeNext(ctx echo.Context) error {
 			if !ok {
 				continue
 			}
-			secret.Data = nil
 			secret.Annotations[oneTimeSecretConsumedAt] = c.now().UTC().Format(time.RFC3339Nano)
-			updated, err := secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
+			_, err = secrets.Update(ctx.Request().Context(), secret, metav1.UpdateOptions{})
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 				conflicted = true
 				break
@@ -203,7 +258,6 @@ func (c *SessionSecretController) ConsumeNext(ctx echo.Context) error {
 			if err != nil {
 				return ctx.NoContent(http.StatusServiceUnavailable)
 			}
-			_ = secrets.Delete(ctx.Request().Context(), updated.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &updated.UID, ResourceVersion: &updated.ResourceVersion}})
 			ctx.Response().Header().Set("Cache-Control", "no-store")
 			return ctx.JSON(http.StatusOK, map[string]string{"value": string(value)})
 		}

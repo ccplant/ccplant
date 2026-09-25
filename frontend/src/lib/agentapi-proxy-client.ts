@@ -1171,6 +1171,20 @@ export class AgentAPIProxyClient {
     );
   }
 
+  async reauthorizeSessionSecret(
+    sessionId: string,
+    secretId: string,
+    expiresInSeconds = 600,
+  ): Promise<CreateSessionSecretResponse> {
+    return this.makeRequest<CreateSessionSecretResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/secrets/${encodeURIComponent(secretId)}/reauthorize`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ expires_in_seconds: expiresInSeconds }),
+      },
+    );
+  }
+
   async resumeSession(sessionId: string): Promise<{ session_id: string; status: string }> {
     return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/resume`, {
       method: 'POST',

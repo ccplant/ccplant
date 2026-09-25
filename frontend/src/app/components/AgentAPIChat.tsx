@@ -807,7 +807,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [secretValue, setSecretValue] = useState('');
   const [secretLifetime, setSecretLifetime] = useState(600);
   const [isRegisteringSecret, setIsRegisteringSecret] = useState(false);
-  const [isSecretRegistered, setIsSecretRegistered] = useState(false);
+  const [reauthorizableSecretId, setReauthorizableSecretId] = useState<string | null>(null);
   const [secretFeedback, setSecretFeedback] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false); // initialized via effect
@@ -815,6 +815,14 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   useEffect(() => {
     if (isInitialLoadComplete) setIsResuming(false);
   }, [isInitialLoadComplete]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setReauthorizableSecretId(null);
+      return;
+    }
+    setReauthorizableSecretId(sessionStorage.getItem(`session-secret:${sessionId}`));
+  }, [sessionId]);
 
   // Restore sidebar visibility from localStorage after mount
   useEffect(() => {
@@ -1927,9 +1935,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
     setIsRegisteringSecret(true);
     setSecretFeedback(null);
     try {
-      await agentAPIRef.current.createSessionSecret(sessionId, secretValue, secretLifetime);
-      setIsSecretRegistered(true);
-      setSecretFeedback('秘匿情報を送信しました。エージェントに取得を依頼してください。');
+      const created = await agentAPIRef.current.createSessionSecret(sessionId, secretValue, secretLifetime);
+      setReauthorizableSecretId(created.secret_id);
+      sessionStorage.setItem(`session-secret:${sessionId}`, created.secret_id);
+      setSecretValue('');
+      setShowSecretModal(false);
+      setSecretFeedback('秘匿情報を登録しました。取得後は明示的に再取得を許可できます。');
     } catch (err) {
       setError(`秘匿情報の登録に失敗しました: ${err instanceof Error ? err.message : '不明なエラー'}`);
     } finally {
@@ -1940,8 +1951,22 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const closeSecretModal = () => {
     if (isRegisteringSecret) return;
     setSecretValue('');
-    setIsSecretRegistered(false);
     setShowSecretModal(false);
+  };
+
+  const reauthorizeOneTimeSecret = async () => {
+    if (!sessionId || !agentAPIRef.current || !reauthorizableSecretId) return;
+    setIsRegisteringSecret(true);
+    setSecretFeedback(null);
+    try {
+      await agentAPIRef.current.reauthorizeSessionSecret(sessionId, reauthorizableSecretId, secretLifetime);
+      setShowSecretModal(false);
+      setSecretFeedback('同じ秘匿情報の再取得を1回許可しました。');
+    } catch (err) {
+      setError(`再取得の許可に失敗しました: ${err instanceof Error ? err.message : '不明なエラー'}`);
+    } finally {
+      setIsRegisteringSecret(false);
+    }
   };
 
   const sendArrowDown = () => {
@@ -2758,7 +2783,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   onClick={() => {
                     setError(null);
                     setSecretFeedback(null);
-                    setIsSecretRegistered(false);
                     setShowSecretModal(true);
                   }}
                   disabled={!isConnected || !isInitialLoadComplete || !sessionId}
@@ -2882,19 +2906,19 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 値はチャット履歴には保存されず、エージェントが取得すると削除されます。登録後、チャットで取得を依頼してください。
               </p>
-              {isSecretRegistered && (
-                <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  送信しました。同じ値をもう一度渡す場合は「再送する」を押してください。
+              {reauthorizableSecretId && (
+                <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                  <p>直前に登録した秘匿情報をエージェントが取得済みの場合、同じ値の再取得を1回だけ許可できます。</p>
+                  <button type="button" onClick={() => void reauthorizeOneTimeSecret()} disabled={isRegisteringSecret} className="rounded-md border border-amber-500 px-3 py-2 font-medium hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-amber-900">
+                    {isRegisteringSecret ? '許可中…' : '再取得を許可'}
+                  </button>
                 </div>
               )}
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-200">
                 秘匿情報
                 <textarea
                   value={secretValue}
-                  onChange={(event) => {
-                    setSecretValue(event.target.value);
-                    setIsSecretRegistered(false);
-                  }}
+                  onChange={(event) => setSecretValue(event.target.value)}
                   rows={5}
                   maxLength={65536}
                   autoComplete="off"
@@ -2922,7 +2946,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 キャンセル
               </button>
               <button type="button" onClick={() => void registerOneTimeSecret()} disabled={!secretValue || isRegisteringSecret} className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600">
-                {isRegisteringSecret ? '送信中…' : isSecretRegistered ? '再送する' : '一度だけ渡す'}
+                {isRegisteringSecret ? '登録中…' : '一度だけ渡す'}
               </button>
             </div>
           </div>

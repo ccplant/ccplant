@@ -439,6 +439,8 @@ func (r *Router) registerCoreRoutes() error {
 	if r.handlers.sessionSecretController != nil {
 		r.echo.POST("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.Create,
 			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.POST("/sessions/:sessionId/secrets/:secretId/reauthorize", r.handlers.sessionSecretController.Reauthorize,
+			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.GET("/internal/session-control/:sessionId/secrets/next", r.handlers.sessionSecretController.ConsumeNext)
 		r.echo.GET("/internal/session-control/:sessionId/secrets/:secretId", r.handlers.sessionSecretController.Consume)
 	}
