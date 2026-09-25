@@ -91,6 +91,6 @@ type failingListStore struct {
 	*memoryKVStore
 }
 
-func (s *failingListStore) List(context.Context, kvstore.Query) ([]kvstore.Record, error) {
+func (s *failingListStore) Scan(context.Context, kvstore.ScanQuery) ([]kvstore.Record, error) {
 	return nil, errors.New("list failed")
 }

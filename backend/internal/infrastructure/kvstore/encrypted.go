@@ -117,8 +117,12 @@ func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, name
 	if mode, ok := backend.(interface{ expectEncryptedValues() }); ok {
 		mode.expectEncryptedValues()
 	}
+	scanner, ok := backend.(Scanner)
+	if !ok {
+		return result, errors.New("KV backend does not support administrative scanning")
+	}
 	for _, kind := range []Kind{KindSecret, KindConfigMap} {
-		records, err := backend.List(ctx, Query{Kind: kind, Namespace: namespace})
+		records, err := scanner.Scan(ctx, ScanQuery{Kind: kind, Namespace: namespace})
 		if err != nil {
 			return result, err
 		}
@@ -224,6 +228,23 @@ func (s *encryptedStore) Delete(ctx context.Context, kind Kind, namespace, key s
 
 func (s *encryptedStore) List(ctx context.Context, query Query) ([]Record, error) {
 	records, err := s.backend.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		if err := s.open(ctx, &records[i]); err != nil {
+			return nil, err
+		}
+	}
+	return records, nil
+}
+
+func (s *encryptedStore) Scan(ctx context.Context, query ScanQuery) ([]Record, error) {
+	scanner, ok := s.backend.(Scanner)
+	if !ok {
+		return nil, errors.New("encrypted KV backend does not support scanning")
+	}
+	records, err := scanner.Scan(ctx, query)
 	if err != nil {
 		return nil, err
 	}

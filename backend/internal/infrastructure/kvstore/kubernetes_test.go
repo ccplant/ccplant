@@ -47,3 +47,22 @@ func TestKubernetesStoreSecretLifecycle(t *testing.T) {
 		t.Fatalf("Get() error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestKubernetesStoreSeparatesBoundedListFromScan(t *testing.T) {
+	ctx := context.Background()
+	store := NewKubernetesStore(fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "ns", Labels: map[string]string{"app": "test"}},
+	}))
+
+	if _, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns"}); !errors.Is(err, ErrUnboundedQuery) {
+		t.Fatalf("List() error = %v, want ErrUnboundedQuery", err)
+	}
+	records, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns", LabelSelector: "app=test"})
+	if err != nil || len(records) != 1 {
+		t.Fatalf("List() records = %d, error = %v", len(records), err)
+	}
+	scanned, err := store.Scan(ctx, ScanQuery{Kind: KindSecret, Namespace: "ns"})
+	if err != nil || len(scanned) != 1 {
+		t.Fatalf("Scan() records = %d, error = %v", len(scanned), err)
+	}
+}

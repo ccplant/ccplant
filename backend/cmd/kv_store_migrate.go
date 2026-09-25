@@ -276,11 +276,15 @@ func collectApplicationKVRecords(ctx context.Context, client kubernetes.Interfac
 }
 
 func collectApplicationKVStoreRecords(ctx context.Context, source kvstore.Store, namespace string) ([]kvstore.Record, error) {
-	secrets, err := source.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: namespace})
+	scanner, ok := source.(kvstore.Scanner)
+	if !ok {
+		return nil, errors.New("source KV store does not support administrative scanning")
+	}
+	secrets, err := scanner.Scan(ctx, kvstore.ScanQuery{Kind: kvstore.KindSecret, Namespace: namespace})
 	if err != nil {
 		return nil, fmt.Errorf("list source Secrets: %w", err)
 	}
-	configMaps, err := source.List(ctx, kvstore.Query{Kind: kvstore.KindConfigMap, Namespace: namespace})
+	configMaps, err := scanner.Scan(ctx, kvstore.ScanQuery{Kind: kvstore.KindConfigMap, Namespace: namespace})
 	if err != nil {
 		return nil, fmt.Errorf("list source ConfigMaps: %w", err)
 	}

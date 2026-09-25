@@ -332,11 +332,19 @@ func (s *memoryKVStore) Delete(_ context.Context, kind kvstore.Kind, namespace, 
 }
 
 func (s *memoryKVStore) List(_ context.Context, query kvstore.Query) ([]kvstore.Record, error) {
+	return s.recordsFor(query.Kind, query.Namespace), nil
+}
+
+func (s *memoryKVStore) Scan(_ context.Context, query kvstore.ScanQuery) ([]kvstore.Record, error) {
+	return s.recordsFor(query.Kind, query.Namespace), nil
+}
+
+func (s *memoryKVStore) recordsFor(kind kvstore.Kind, namespace string) []kvstore.Record {
 	var records []kvstore.Record
 	for _, record := range s.records {
-		if record.Kind == query.Kind && record.Namespace == query.Namespace {
+		if record.Kind == kind && record.Namespace == namespace {
 			records = append(records, record)
 		}
 	}
-	return records, nil
+	return records
 }

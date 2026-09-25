@@ -64,6 +64,9 @@ func (s *memoryStore) List(_ context.Context, q Query) ([]Record, error) {
 	}
 	return out, nil
 }
+func (s *memoryStore) Scan(_ context.Context, q ScanQuery) ([]Record, error) {
+	return s.List(context.Background(), Query{Kind: q.Kind, Namespace: q.Namespace})
+}
 func (s *memoryStore) Close() error { return nil }
 
 func TestAdapterPersistsSecretAndConfigMap(t *testing.T) {

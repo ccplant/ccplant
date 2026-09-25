@@ -320,6 +320,17 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 }
 
 func (s *LibSQLStore) List(ctx context.Context, query Query) ([]Record, error) {
+	if err := ValidateListQuery(query); err != nil {
+		return nil, err
+	}
+	return s.list(ctx, query)
+}
+
+func (s *LibSQLStore) Scan(ctx context.Context, query ScanQuery) ([]Record, error) {
+	return s.list(ctx, Query{Kind: query.Kind, Namespace: query.Namespace})
+}
+
+func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
 	selector, err := labels.Parse(query.LabelSelector)
 	if err != nil {
 		return nil, fmt.Errorf("parse label selector: %w", err)

@@ -10,6 +10,20 @@ The boundary is dependency-based rather than name-based. The
 repository and handler outside it receives the persistence client, which is
 backed exclusively by the selected KV backend.
 
+## Bounded application queries
+
+Request-serving code cannot issue an unqualified KV list. Every `Store.List`
+query must contain at least one positive label equality or `in` requirement;
+empty, negative-only, and existence-only selectors are rejected with
+`ErrUnboundedQuery`. Key prefixes may narrow a query further, but do not replace
+the required indexed label partition because Kubernetes does not support
+server-side name-prefix filtering.
+
+Migration, verification, and key-rotation commands intentionally need to visit
+every application record. That capability is exposed separately as `Scanner`
+and must not be injected into online application components. This separation
+makes an unbounded traversal explicit in both code review and dependency wiring.
+
 ```yaml
 kv_store:
   backend: libsql

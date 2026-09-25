@@ -23,6 +23,8 @@ import (
 const (
 	adminSettingsHeadKey       = "agentapi-admin-system-settings-head"
 	adminSettingsVersionPrefix = "agentapi-admin-system-settings-v"
+	adminSettingsTypeLabel     = "agentapi.proxy/type"
+	adminSettingsVersionType   = "admin-system-settings-version"
 	adminSettingsDataKey       = "settings.json"
 	adminSettingsHeadDataKey   = "head.json"
 	maxAdminSettingsSize       = 1024 * 1024
@@ -128,7 +130,12 @@ func (c *AdminSettingsController) Get(ctx echo.Context) error {
 }
 
 func (c *AdminSettingsController) ListVersions(ctx echo.Context) error {
-	records, err := c.store.List(ctx.Request().Context(), kvstore.Query{Kind: kvstore.KindSecret, Namespace: c.namespace})
+	records, err := c.store.List(ctx.Request().Context(), kvstore.Query{
+		Kind:          kvstore.KindSecret,
+		Namespace:     c.namespace,
+		KeyPrefix:     adminSettingsVersionPrefix,
+		LabelSelector: adminSettingsTypeLabel + "=" + adminSettingsVersionType,
+	})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to list admin settings versions").SetInternal(err)
 	}
