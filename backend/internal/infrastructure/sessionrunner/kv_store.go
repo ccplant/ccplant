@@ -324,6 +324,7 @@ func (s *Store) DeletePoolSupplier(ctx context.Context, managerID, pool string) 
 }
 
 func (s *Store) CreateBinding(ctx context.Context, binding *core.Binding) error {
+	binding.NormalizeRoles()
 	existing, err := s.ListBindings(ctx, binding.Pool)
 	if err != nil {
 		return err
@@ -350,6 +351,7 @@ func (s *Store) ListBindings(ctx context.Context, pool string) ([]*core.Binding,
 			if value.Role == "" {
 				value.Role = core.BindingRoleUse
 			}
+			value.NormalizeRoles()
 			result = append(result, &value)
 		}
 		return nil
@@ -364,6 +366,7 @@ func (s *Store) ListBindings(ctx context.Context, pool string) ([]*core.Binding,
 }
 
 func (s *Store) UpdateBinding(ctx context.Context, binding *core.Binding) error {
+	binding.NormalizeRoles()
 	bindings, err := s.ListBindings(ctx, binding.Pool)
 	if err != nil {
 		return err

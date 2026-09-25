@@ -3273,8 +3273,9 @@ export class AgentAPIProxyClient {
     return result.pool_bindings ?? [];
   }
 
-  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, role: 'use' | 'manage' | 'manage_and_use' = 'use', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
-    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent }) });
+  async createSessionPoolBinding(pool: string, subjectType: 'user' | 'team' | 'all', subjectID: string, roles: 'use' | 'manage' | 'manage_and_use' | Array<'use' | 'manage'> = 'use', priority = 0, maxConcurrent = 0): Promise<SessionPoolBinding> {
+    const roleInput = Array.isArray(roles) ? { roles } : { role: roles };
+    return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, ...roleInput, priority, max_concurrent: maxConcurrent }) });
   }
 
   async listManagedSessionPools(): Promise<LogicalSessionPool[]> {
@@ -3320,7 +3321,7 @@ export class AgentAPIProxyClient {
     return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings`, { method: 'POST', body: JSON.stringify({ subject_type: subjectType, subject_id: subjectID, role, priority, max_concurrent: maxConcurrent, enabled }) });
   }
 
-  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage' | 'manage_and_use'; enabled?: boolean; priority?: number; max_concurrent?: number }): Promise<SessionPoolBinding> {
+  async patchManagedSessionPoolBinding(pool: string, bindingID: string, input: { role?: 'use' | 'manage' | 'manage_and_use'; roles?: Array<'use' | 'manage'>; enabled?: boolean; priority?: number; max_concurrent?: number }): Promise<SessionPoolBinding> {
     return this.makeRequest(`/session-pools/${encodeURIComponent(pool)}/bindings/${encodeURIComponent(bindingID)}`, { method: 'PATCH', body: JSON.stringify(input) });
   }
 
