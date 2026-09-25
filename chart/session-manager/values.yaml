@@ -79,7 +79,7 @@ sessionPersistence:
       key: secret-access-key
 
 session:
-  image: "ghcr.io/ccplant/ccplant-agent:assets-9262f5992256ef59b54750af802cf36f"
+  image: "ghcr.io/ccplant/ccplant-agent:assets-72b69b7fd81da09527c7e13a33bfacf2"
   # CLI source follows the manager release; override for a custom registry.
   cliImage: ""
   serviceAccountName: agentapi-proxy-session
