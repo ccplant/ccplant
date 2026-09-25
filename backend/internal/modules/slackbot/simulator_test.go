@@ -71,6 +71,29 @@ func TestSimulateSlackBotEventIncludesStartAPIDryRunResponse(t *testing.T) {
 	assert.Equal(t, "create", result.SessionDryRun["decision"])
 }
 
+func TestSimulateSlackBotEventCanCreateRealSession(t *testing.T) {
+	bot := entities.NewSlackBot("bot-1", "debug", "owner")
+	repo := newMockSlackBotRepository()
+	require.NoError(t, repo.Create(t.Context(), bot))
+	manager := &mockSessionManager{}
+	dryRun := false
+
+	result := SimulateSlackBotEvent(t.Context(), repo, manager, nil, bot, SlackBotSimulationRequest{
+		DryRun:      &dryRun,
+		ChannelName: "debug",
+		Event:       SlackEvent{Type: "message", Text: "create this", User: "U1", Channel: "C1", Ts: "1"},
+	})
+
+	require.Equal(t, simulationDecisionCreateOrReuse, result.Decision)
+	assert.False(t, result.DryRun)
+	assert.Nil(t, result.SessionDryRun)
+	require.NotNil(t, result.Session)
+	assert.Equal(t, result.Plan.SessionID, result.Session.ID)
+	assert.Equal(t, "active", result.Session.Status)
+	assert.False(t, result.Session.Reused)
+	assert.Equal(t, 1, manager.createdCount())
+}
+
 func TestSimulateSlackBotEventExplainsIgnoredAndInvalidEvents(t *testing.T) {
 	bot := entities.NewSlackBot("bot-1", "debug", "owner")
 	bot.SetAllowedChannelNames([]string{"production"})

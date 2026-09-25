@@ -103,7 +103,8 @@ func (c *Client) GetSlackBot(ctx context.Context, id string) (json.RawMessage, e
 	return json.RawMessage(body), nil
 }
 
-// SimulateSlackBot evaluates a synthetic Slack event without external side effects.
+// SimulateSlackBot evaluates a synthetic Slack event. The API defaults to dry-run;
+// callers may explicitly request real session creation with dry_run=false.
 func (c *Client) SimulateSlackBot(ctx context.Context, id string, data []byte) (json.RawMessage, error) {
 	if id == "" {
 		return nil, fmt.Errorf("SlackBot ID is required")

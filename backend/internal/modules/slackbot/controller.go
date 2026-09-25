@@ -314,7 +314,8 @@ func (c *SlackBotController) GetSlackBot(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, c.toResponse(bot))
 }
 
-// SimulateSlackBot evaluates a synthetic event without contacting Slack or creating a session.
+// SimulateSlackBot evaluates a synthetic event without contacting Slack. Session
+// creation is disabled by default and requires dry_run=false.
 func (c *SlackBotController) SimulateSlackBot(ctx echo.Context) error {
 	id := ctx.Param("id")
 	if id == "" {

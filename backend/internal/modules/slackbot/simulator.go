@@ -19,11 +19,18 @@ const (
 // SlackBotSimulationRequest supplies the Socket Mode payload and the Slack API
 // responses needed after receipt. No real Slack call is made during simulation.
 type SlackBotSimulationRequest struct {
+	// DryRun defaults to true. Set it explicitly to false to create or reuse a
+	// real session through the production /start API.
+	DryRun         *bool          `json:"dry_run,omitempty"`
 	Type           string         `json:"type,omitempty"`
 	TeamID         string         `json:"team_id,omitempty"`
 	ChannelName    string         `json:"channel_name,omitempty"`
 	ThreadMessages []SlackMessage `json:"thread_messages,omitempty"`
 	Event          SlackEvent     `json:"event"`
+}
+
+func (r SlackBotSimulationRequest) isDryRun() bool {
+	return r.DryRun == nil || *r.DryRun
 }
 
 type SlackBotSimulationPlan struct {
@@ -40,13 +47,20 @@ type SlackBotSimulationPlan struct {
 }
 
 type SlackBotSimulationResponse struct {
-	DryRun        bool                    `json:"dry_run"`
-	Decision      string                  `json:"decision"`
-	Reason        string                  `json:"reason,omitempty"`
-	Plan          *SlackBotSimulationPlan `json:"plan,omitempty"`
-	SessionDryRun map[string]interface{}  `json:"session_dry_run,omitempty"`
-	SideEffects   []string                `json:"side_effects"`
-	Errors        []string                `json:"errors,omitempty"`
+	DryRun        bool                       `json:"dry_run"`
+	Decision      string                     `json:"decision"`
+	Reason        string                     `json:"reason,omitempty"`
+	Plan          *SlackBotSimulationPlan    `json:"plan,omitempty"`
+	SessionDryRun map[string]interface{}     `json:"session_dry_run,omitempty"`
+	Session       *SlackBotSimulationSession `json:"session,omitempty"`
+	SideEffects   []string                   `json:"side_effects"`
+	Errors        []string                   `json:"errors,omitempty"`
+}
+
+type SlackBotSimulationSession struct {
+	ID     string `json:"id"`
+	Status string `json:"status,omitempty"`
+	Reused bool   `json:"reused"`
 }
 
 type triggerSessionDryRunner interface {
@@ -57,7 +71,8 @@ type triggerSessionDryRunner interface {
 // like Socket Mode after payload decoding. Only its Slack and session adapters are
 // replaced with recorders, and deferred work is run synchronously for the response.
 func SimulateSlackBotEvent(ctx context.Context, repo repositories.SlackBotRepository, sessionManager repositories.SessionManager, profileRepo repositories.SessionProfileRepository, bot *entities.SlackBot, req SlackBotSimulationRequest) SlackBotSimulationResponse {
-	recorder := &simulationSessionManager{reader: sessionManager}
+	dryRun := req.isDryRun()
+	recorder := &simulationSessionManager{reader: sessionManager, execute: !dryRun}
 	if dryRunner, ok := sessionManager.(triggerSessionDryRunner); ok {
 		recorder.dryRunner = dryRunner
 	}
@@ -69,7 +84,7 @@ func SimulateSlackBotEvent(ctx context.Context, repo repositories.SlackBotReposi
 		payloadType = "event_callback"
 	}
 	err := handler.ProcessEvent(ctx, bot.ID(), SlackPayload{Type: payloadType, TeamID: req.TeamID, Event: &req.Event})
-	response := SlackBotSimulationResponse{DryRun: true, Decision: handler.eventOutcome(), SideEffects: recorder.sideEffects()}
+	response := SlackBotSimulationResponse{DryRun: dryRun, Decision: handler.eventOutcome(), SideEffects: recorder.sideEffects()}
 	if response.Decision == "" {
 		response.Decision = simulationDecisionIgnore
 	}
@@ -81,6 +96,13 @@ func SimulateSlackBotEvent(ctx context.Context, repo repositories.SlackBotReposi
 		response.Plan = simulationPlan(recorder.sessionID, recorder.createRequest, len(slack.posts) > 0)
 	}
 	response.SessionDryRun = recorder.sessionDryRun
+	if recorder.session != nil {
+		reused := false
+		if aware, ok := recorder.session.(interface{ SessionReused() bool }); ok {
+			reused = aware.SessionReused()
+		}
+		response.Session = &SlackBotSimulationSession{ID: recorder.session.ID(), Status: recorder.session.Status(), Reused: reused}
+	}
 	if len(slack.posts) > 0 {
 		response.SideEffects = append(response.SideEffects, "post_message_to_slack")
 	}
@@ -126,15 +148,28 @@ func (s *simulationSlackClient) PostMessage(_ context.Context, _, _, message, _ 
 type simulationSessionManager struct {
 	reader        repositories.SessionManager
 	dryRunner     triggerSessionDryRunner
+	execute       bool
 	sessionID     string
 	createRequest *entities.RunServerRequest
 	sessionDryRun map[string]interface{}
+	session       entities.Session
 	stopped       []string
 	sent          []string
 }
 
 func (s *simulationSessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
 	s.sessionID, s.createRequest = id, req
+	if s.execute {
+		if s.reader == nil {
+			return nil, fmt.Errorf("session execution is unavailable")
+		}
+		session, err := s.reader.CreateSession(ctx, id, req, webhookPayload)
+		if err != nil {
+			return nil, err
+		}
+		s.session = session
+		return session, nil
+	}
 	if s.dryRunner != nil {
 		preview, err := s.dryRunner.DryRunTriggerSession(ctx, id, req, webhookPayload)
 		if err != nil {

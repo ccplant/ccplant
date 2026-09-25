@@ -10755,6 +10755,11 @@
         "event"
       ],
       "properties": {
+        "dry_run": {
+          "type": "boolean",
+          "default": true,
+          "description": "When false, creates or reuses a real session through the production /start API. Slack APIs are never called."
+        },
         "type": {
           "type": "string",
           "default": "event_callback"
@@ -10809,7 +10814,7 @@
         "side_effects"
       ],
       "properties": {
-        "dry_run": { "type": "boolean", "enum": [true] },
+        "dry_run": { "type": "boolean" },
         "decision": {
           "type": "string",
           "enum": ["create_or_reuse", "stop", "ignore", "error"]
@@ -10835,9 +10840,19 @@
           "description": "The redacted response returned by the production POST /start?dry_run=true path.",
           "additionalProperties": true
         },
+        "session": {
+          "type": "object",
+          "description": "The created or reused session when dry_run is false.",
+          "required": ["id", "reused"],
+          "properties": {
+            "id": { "type": "string" },
+            "status": { "type": "string" },
+            "reused": { "type": "boolean" }
+          }
+        },
         "side_effects": {
           "type": "array",
-          "description": "Actions a production event would attempt; none are performed by simulation.",
+          "description": "Actions attempted by this request. Session creation/reuse is performed only when dry_run is false; Slack calls are always recorded only.",
           "items": { "type": "string" }
         },
         "errors": {
