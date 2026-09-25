@@ -411,6 +411,36 @@ describe('AgentAPIProxyClient ACP message history', () => {
     expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('one-time-value');
   });
 
+  it('lists session secret metadata without secret values', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        secrets: [{
+          secret_id: 'secret-1',
+          status: 'consumed',
+          created_at: '2026-09-25T05:00:00Z',
+          expires_at: '2026-09-25T05:10:00Z',
+          consumed_at: '2026-09-25T05:01:00Z',
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({
+      baseURL: 'http://proxy.example.test',
+      apiKey: 'login-api-key',
+    });
+
+    const response = await client.listSessionSecrets('session/one');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/sessions/session%2Fone/secrets',
+      expect.any(Object),
+    );
+    expect(response.secrets[0]).toMatchObject({ secret_id: 'secret-1', status: 'consumed' });
+    expect(JSON.stringify(response)).not.toContain('one-time-value');
+  });
+
   it('never enables debug logging in production even when requested', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);

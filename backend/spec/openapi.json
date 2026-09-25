@@ -1172,6 +1172,45 @@
       }
     },
     "/sessions/{sessionId}/secrets": {
+      "get": {
+        "summary": "List session secret metadata without exposing values",
+        "operationId": "listSessionSecrets",
+        "tags": ["Sessions"],
+        "parameters": [
+          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Registered secret metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["secrets"],
+                  "properties": {
+                    "secrets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["secret_id", "status", "created_at", "expires_at"],
+                        "properties": {
+                          "secret_id": {"type": "string", "format": "uuid"},
+                          "status": {"type": "string", "enum": ["pending", "consumed", "expired"]},
+                          "created_at": {"type": "string", "format": "date-time"},
+                          "expires_at": {"type": "string", "format": "date-time"},
+                          "consumed_at": {"type": "string", "format": "date-time"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {"description": "Caller cannot access the session"},
+          "404": {"description": "Session not found"}
+        }
+      },
       "post": {
         "summary": "Register a short-lived secret for one-time retrieval by an existing session",
         "operationId": "createSessionSecret",

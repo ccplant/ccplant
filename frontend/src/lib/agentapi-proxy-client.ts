@@ -184,6 +184,18 @@ export interface CreateSessionSecretResponse {
   local_url: string;
 }
 
+export interface SessionSecretMetadata {
+  secret_id: string;
+  status: 'pending' | 'consumed' | 'expired';
+  created_at: string;
+  expires_at: string;
+  consumed_at?: string;
+}
+
+export interface SessionSecretListResponse {
+  secrets: SessionSecretMetadata[];
+}
+
 /**
  * Response from GET /sessions/:sessionId/messages/wait (long-poll).
  * Returns updated: true with session_id and timestamp when a message_update event occurred,
@@ -1168,6 +1180,12 @@ export class AgentAPIProxyClient {
         method: 'POST',
         body: JSON.stringify({ value, expires_in_seconds: expiresInSeconds }),
       },
+    );
+  }
+
+  async listSessionSecrets(sessionId: string): Promise<SessionSecretListResponse> {
+    return this.makeRequest<SessionSecretListResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/secrets`,
     );
   }
 

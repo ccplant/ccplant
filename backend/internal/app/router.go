@@ -437,6 +437,8 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.POST("/sessions/:sessionId/suspend", r.handlers.sessionController.SuspendSession)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionSecretController != nil {
+		r.echo.GET("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.List,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.POST("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.Create,
 			auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.POST("/sessions/:sessionId/secrets/:secretId/reauthorize", r.handlers.sessionSecretController.Reauthorize,

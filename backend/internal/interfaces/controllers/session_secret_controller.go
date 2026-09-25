@@ -28,6 +28,7 @@ const (
 	oneTimeSecretExpiresAt       = "agentapi.proxy/expires-at"
 	oneTimeSecretConsumedAt      = "agentapi.proxy/consumed-at"
 	oneTimeSecretSessionHash     = "agentapi.proxy/session-hash"
+	oneTimeSecretID              = "agentapi.proxy/secret-id"
 	defaultOneTimeSecretLifetime = 10 * time.Minute
 	maxOneTimeSecretLifetime     = time.Hour
 	maxOneTimeSecretBytes        = 64 << 10
@@ -96,6 +97,7 @@ func (c *SessionSecretController) Create(ctx echo.Context) error {
 			Annotations: map[string]string{
 				oneTimeSecretSessionID: sessionID,
 				oneTimeSecretExpiresAt: expiresAt.Format(time.RFC3339Nano),
+				oneTimeSecretID:        id,
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -109,6 +111,63 @@ func (c *SessionSecretController) Create(ctx echo.Context) error {
 		"expires_at": expiresAt,
 		"local_url":  "http://127.0.0.1:9001/one-time-secrets/" + id,
 	})
+}
+
+// List returns metadata for the session's registered secrets without exposing
+// their values. This lets human clients reauthorize a consumed secret without
+// retaining its ID in browser storage.
+func (c *SessionSecretController) List(ctx echo.Context) error {
+	sessionID := ctx.Param("sessionId")
+	ownerID, scope, teamID, found, err := c.sessionOwner(ctx, sessionID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to look up session")
+	}
+	if !found {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil || !authz.CanAccessResource(ownerID, scope, teamID) {
+		return echo.NewHTTPError(http.StatusForbidden, "you don't have permission to access this session")
+	}
+
+	items, err := c.client.CoreV1().Secrets(c.namespace).List(ctx.Request().Context(), metav1.ListOptions{
+		LabelSelector: oneTimeSecretSessionHash + "=" + oneTimeSecretSessionLabel(sessionID),
+	})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to list secrets")
+	}
+	sort.Slice(items.Items, func(i, j int) bool {
+		return items.Items[i].CreationTimestamp.After(items.Items[j].CreationTimestamp.Time)
+	})
+
+	result := make([]map[string]interface{}, 0, len(items.Items))
+	for i := range items.Items {
+		secret := &items.Items[i]
+		id := secret.Annotations[oneTimeSecretID]
+		if secret.Annotations[oneTimeSecretSessionID] != sessionID || id == "" {
+			continue
+		}
+		expiresAt, parseErr := time.Parse(time.RFC3339Nano, secret.Annotations[oneTimeSecretExpiresAt])
+		status := "pending"
+		consumedAt := secret.Annotations[oneTimeSecretConsumedAt]
+		if consumedAt != "" {
+			status = "consumed"
+		} else if parseErr != nil || !c.now().Before(expiresAt) {
+			status = "expired"
+		}
+		entry := map[string]interface{}{
+			"secret_id":  id,
+			"status":     status,
+			"created_at": secret.CreationTimestamp.Time,
+			"expires_at": expiresAt,
+		}
+		if consumedAt != "" {
+			entry["consumed_at"] = consumedAt
+		}
+		result = append(result, entry)
+	}
+	ctx.Response().Header().Set("Cache-Control", "no-store")
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"secrets": result})
 }
 
 // Reauthorize permits one more retrieval of a previously consumed secret. The
