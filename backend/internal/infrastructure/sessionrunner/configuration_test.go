@@ -65,3 +65,17 @@ func TestConfigurationOwnerReferenceIsPersisted(t *testing.T) {
 		t.Fatalf("owner references = %#v, want %#v", doc.Metadata.OwnerReferences, owner)
 	}
 }
+
+func TestDeleteConfiguration(t *testing.T) {
+	ctx := context.Background()
+	store := newVersionedTestStore(t)
+	if err := store.CreateConfiguration(ctx, &core.Configuration{SessionID: "one", Input: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteConfiguration(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetConfiguration(ctx, "one"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("GetConfiguration() error = %v, want ErrNotFound", err)
+	}
+}

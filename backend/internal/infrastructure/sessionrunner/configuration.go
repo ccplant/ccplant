@@ -52,6 +52,13 @@ func (s *Store) SetConfigurationOwnerReference(ctx context.Context, id string, o
 	return core.ErrConflict
 }
 
+// DeleteConfiguration removes saved startup input after the session lifecycle
+// ends. This is required for non-Kubernetes KV backends where ownerReferences
+// are metadata only and no garbage collector observes them.
+func (s *Store) DeleteConfiguration(ctx context.Context, id string) error {
+	return s.delete(ctx, configurationName(id))
+}
+
 // Compare-and-swap, deliberately without retrying a stale configuration.
 func (s *Store) SaveConfiguration(ctx context.Context, c *core.Configuration) error {
 	record, err := s.kv.Get(ctx, kvstore.KindSecret, s.namespace, configurationName(c.SessionID))

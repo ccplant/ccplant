@@ -33,6 +33,10 @@ type sessionConfigurationStore interface {
 type sessionConfigurationOwnerStore interface {
 	SetConfigurationOwnerReference(context.Context, string, core.OwnerReference) error
 }
+
+type sessionConfigurationDeleter interface {
+	DeleteConfiguration(context.Context, string) error
+}
 type restartSettingsResolver interface {
 	ResolveRestartSettings(context.Context, string, entities.StartRequest, string, []string) (*sessionsettings.SessionSettings, error)
 }
