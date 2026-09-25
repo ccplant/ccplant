@@ -11,8 +11,38 @@ import (
 	"github.com/stretchr/testify/require"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestKVStoreSecretListsUseResourceSelectors(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := NewStore(kvstore.NewKubernetesStore(client), "test")
+	require.NoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Enabled: true}))
+	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux"}))
+	require.NoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux"}))
+
+	_, err := store.ListManagers(ctx)
+	require.NoError(t, err)
+	_, found, err := store.ClaimNext(ctx, "linux", "runner-a", time.Minute)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	var selectors []labels.Selector
+	for _, action := range client.Actions() {
+		listAction, ok := action.(k8stesting.ListAction)
+		if ok && action.GetResource().Resource == "secrets" {
+			selectors = append(selectors, listAction.GetListRestrictions().Labels)
+		}
+	}
+	require.Len(t, selectors, 2)
+	require.True(t, selectors[0].Matches(labels.Set{labelResource: "manager"}))
+	require.False(t, selectors[0].Matches(labels.Set{}))
+	require.True(t, selectors[1].Matches(labels.Set{labelResource: "allocation", labelPoolHash: hashName("linux")}))
+	require.False(t, selectors[1].Matches(labels.Set{labelResource: "allocation", labelPoolHash: hashName("other")}))
+}
 
 func TestKVStorePoolBindings(t *testing.T) {
 	ctx := context.Background()
