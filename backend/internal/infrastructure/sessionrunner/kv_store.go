@@ -175,7 +175,12 @@ func (s *Store) delete(ctx context.Context, name string) error {
 }
 
 func (s *Store) list(ctx context.Context, resource string, decode func([]byte) error) error {
-	items, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace, KeyPrefix: resourcePrefix(resource)})
+	items, err := s.kv.List(ctx, kvstore.Query{
+		Kind:          kvstore.KindSecret,
+		Namespace:     s.namespace,
+		KeyPrefix:     resourcePrefix(resource),
+		LabelSelector: labelResource + "=" + resource,
+	})
 	if err != nil {
 		return err
 	}
@@ -471,7 +476,12 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 	if runner.Pool != pool {
 		return nil, false, core.ErrUnauthorized
 	}
-	records, err := s.kv.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: s.namespace, KeyPrefix: allocationPrefix})
+	records, err := s.kv.List(ctx, kvstore.Query{
+		Kind:          kvstore.KindSecret,
+		Namespace:     s.namespace,
+		KeyPrefix:     allocationPrefix,
+		LabelSelector: labelResource + "=allocation," + labelPoolHash + "=" + hashName(pool),
+	})
 	if err != nil {
 		return nil, false, err
 	}
