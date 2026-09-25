@@ -1172,6 +1172,45 @@
       }
     },
     "/sessions/{sessionId}/secrets": {
+      "get": {
+        "summary": "List session secret metadata without exposing values",
+        "operationId": "listSessionSecrets",
+        "tags": ["Sessions"],
+        "parameters": [
+          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Registered secret metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["secrets"],
+                  "properties": {
+                    "secrets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["secret_id", "status", "created_at", "expires_at"],
+                        "properties": {
+                          "secret_id": {"type": "string", "format": "uuid"},
+                          "status": {"type": "string", "enum": ["pending", "consumed", "expired"]},
+                          "created_at": {"type": "string", "format": "date-time"},
+                          "expires_at": {"type": "string", "format": "date-time"},
+                          "consumed_at": {"type": "string", "format": "date-time"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {"description": "Caller cannot access the session"},
+          "404": {"description": "Session not found"}
+        }
+      },
       "post": {
         "summary": "Register a short-lived secret for one-time retrieval by an existing session",
         "operationId": "createSessionSecret",
@@ -1253,6 +1292,37 @@
         }
       }
     },
+    "/sessions/{sessionId}/secrets/{secretId}/reauthorize": {
+      "post": {
+        "summary": "Permit one more retrieval of a consumed session secret",
+        "description": "Reauthorizes a consumed secret without requiring the human caller to submit or receive its value again.",
+        "operationId": "reauthorizeSessionSecret",
+        "tags": ["Sessions"],
+        "parameters": [
+          {"name": "sessionId", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "secretId", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expires_in_seconds": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 600}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "One additional retrieval permitted; the value is intentionally omitted"},
+          "403": {"description": "Caller cannot access the session"},
+          "404": {"description": "Session or secret not found"},
+          "409": {"description": "Secret has not been consumed yet"},
+          "410": {"description": "Secret value is no longer available"}
+        }
+      }
+    },
     "/internal/session-control/{sessionId}/secrets/next": {
       "get": {
         "summary": "Consume the oldest pending session secret exactly once without its ID",
@@ -1311,7 +1381,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Secret consumed; subsequent requests return 404",
+            "description": "Secret consumed; subsequent requests return 404 until a human reauthorizes it",
             "headers": {
               "Cache-Control": {
                 "schema": {

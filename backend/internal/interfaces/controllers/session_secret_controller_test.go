@@ -94,6 +94,48 @@ func TestSessionSecretCreateAndConsumeOnce(t *testing.T) {
 	require.JSONEq(t, `{"value":"very-secret"}`, first.Body.String())
 	require.Equal(t, "no-store", first.Header().Get("Cache-Control"))
 	require.Equal(t, http.StatusNotFound, consume("session-token").Code)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	listRec := httptest.NewRecorder()
+	listCtx := e.NewContext(listReq, listRec)
+	listCtx.SetParamNames("sessionId")
+	listCtx.SetParamValues("session-1")
+	listCtx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true, CanCreate: true},
+	})
+	require.NoError(t, controller.List(listCtx))
+	require.Equal(t, http.StatusOK, listRec.Code)
+	require.Equal(t, "no-store", listRec.Header().Get("Cache-Control"))
+	require.NotContains(t, listRec.Body.String(), "very-secret")
+	var listed struct {
+		Secrets []struct {
+			SecretID string `json:"secret_id"`
+			Status   string `json:"status"`
+		} `json:"secrets"`
+	}
+	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &listed))
+	require.Equal(t, created.SecretID, listed.Secrets[0].SecretID)
+	require.Equal(t, "consumed", listed.Secrets[0].Status)
+
+	reauthorizeReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"expires_in_seconds":120}`))
+	reauthorizeReq.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	reauthorizeRec := httptest.NewRecorder()
+	reauthorizeCtx := e.NewContext(reauthorizeReq, reauthorizeRec)
+	reauthorizeCtx.SetParamNames("sessionId", "secretId")
+	reauthorizeCtx.SetParamValues("session-1", created.SecretID)
+	reauthorizeCtx.Set("authz_context", &auth.AuthorizationContext{
+		User:          entities.NewUser("user-1", entities.UserTypeRegular, "user-1"),
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true, CanCreate: true},
+	})
+	require.NoError(t, controller.Reauthorize(reauthorizeCtx))
+	require.Equal(t, http.StatusOK, reauthorizeRec.Code)
+	require.NotContains(t, reauthorizeRec.Body.String(), "very-secret")
+
+	second := consume("session-token")
+	require.Equal(t, http.StatusOK, second.Code)
+	require.JSONEq(t, `{"value":"very-secret"}`, second.Body.String())
+	require.Equal(t, http.StatusNotFound, consume("session-token").Code)
 }
 
 func TestSessionSecretDirectRuntimeAuthAndExpiry(t *testing.T) {
