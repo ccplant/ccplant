@@ -84,7 +84,10 @@ type Binding struct {
 	SubjectType SubjectType `json:"subject_type"`
 	SubjectID   string      `json:"subject_id"`
 	Role        BindingRole `json:"role"`
-	Enabled     bool        `json:"enabled"`
+	// Roles is the multi-value representation of the permissions granted by the
+	// binding. Role is retained for persisted-data and API compatibility.
+	Roles   []BindingRole `json:"roles,omitempty"`
+	Enabled bool          `json:"enabled"`
 	// ExplicitOnly makes the pool available for explicit selection without
 	// allowing the resolver to choose it for requests that omit params.pool.
 	ExplicitOnly  bool      `json:"explicit_only,omitempty"`
@@ -92,6 +95,56 @@ type Binding struct {
 	MaxConcurrent int       `json:"max_concurrent,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// NormalizeRoles keeps the legacy scalar role and the multi-value roles in
+// sync. New callers may specify use and manage independently, while old
+// records and clients continue to use manage_and_use.
+func (b *Binding) NormalizeRoles() {
+	if len(b.Roles) == 0 {
+		switch b.Role {
+		case BindingRoleManageAndUse:
+			b.Roles = []BindingRole{BindingRoleManage, BindingRoleUse}
+		case BindingRoleManage, BindingRoleUse:
+			b.Roles = []BindingRole{b.Role}
+		}
+		return
+	}
+	hasUse, hasManage := false, false
+	for _, role := range b.Roles {
+		hasUse = hasUse || role == BindingRoleUse
+		hasManage = hasManage || role == BindingRoleManage
+	}
+	// A scalar role changed by a legacy caller wins when it disagrees with a
+	// previously hydrated Roles slice. New multi-role requests clear Role before
+	// normalization, so their array remains authoritative.
+	if b.Role == BindingRoleUse || b.Role == BindingRoleManage || b.Role == BindingRoleManageAndUse {
+		if b.Role.GrantsUse() != hasUse || b.Role.GrantsManage() != hasManage {
+			b.Roles = nil
+			b.NormalizeRoles()
+			return
+		}
+	}
+	switch {
+	case hasUse && hasManage:
+		b.Role = BindingRoleManageAndUse
+	case hasManage:
+		b.Role = BindingRoleManage
+	case hasUse:
+		b.Role = BindingRoleUse
+	default:
+		b.Role = ""
+	}
+}
+
+func (b *Binding) GrantsUse() bool {
+	b.NormalizeRoles()
+	return b.Role.GrantsUse()
+}
+
+func (b *Binding) GrantsManage() bool {
+	b.NormalizeRoles()
+	return b.Role.GrantsManage()
 }
 
 type Subject struct {

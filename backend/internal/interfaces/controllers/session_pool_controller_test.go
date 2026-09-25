@@ -1060,6 +1060,30 @@ func TestPoolCreatorReceivesManageAndUseBinding(t *testing.T) {
 	}
 }
 
+func TestCreateBindingAcceptsMultipleRoles(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
+		map[string]any{"name": "linux"}, nil, nil, alice)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create pool status=%d body=%s", created.Code, created.Body.String())
+	}
+
+	result := callSessionPoolHandlerAs(t, controller.CreateBinding, http.MethodPost, "/session-pools/linux/bindings",
+		map[string]any{"subject_type": "user", "subject_id": "bob", "roles": []string{"manage", "use"}}, map[string]string{"pool": "linux"}, nil, alice)
+	if result.Code != http.StatusCreated {
+		t.Fatalf("create multi-role binding status=%d body=%s", result.Code, result.Body.String())
+	}
+	var binding core.Binding
+	if err := json.Unmarshal(result.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if !binding.GrantsManage() || !binding.GrantsUse() || len(binding.Roles) != 2 {
+		t.Fatalf("multi-role binding not preserved: %+v", binding)
+	}
+}
+
 func TestLastEnabledManageBindingCannotBeRemoved(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)

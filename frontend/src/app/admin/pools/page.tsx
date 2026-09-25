@@ -52,7 +52,7 @@ export default function SessionPoolsAdminPage() {
   const [maxRunners, setMaxRunners] = useState(10)
   const [subjectType, setSubjectType] = useState<'user' | 'team' | 'all'>('team')
   const [subjectID, setSubjectID] = useState('')
-  const [bindingRole, setBindingRole] = useState<'use' | 'manage' | 'manage_and_use'>('use')
+  const [bindingRoles, setBindingRoles] = useState<Array<'use' | 'manage'>>(['use'])
   const [bindingPool, setBindingPool] = useState('')
   const [bindingPriority, setBindingPriority] = useState(0)
   const [maxConcurrent, setMaxConcurrent] = useState(0)
@@ -148,7 +148,7 @@ export default function SessionPoolsAdminPage() {
   const addBinding = async (event: FormEvent) => {
     event.preventDefault()
     try {
-      await client.createSessionPoolBinding(bindingPool, subjectType, subjectID, bindingRole, bindingPriority, maxConcurrent)
+      await client.createSessionPoolBinding(bindingPool, subjectType, subjectID, bindingRoles, bindingPriority, maxConcurrent)
       setSubjectID('')
       await reload()
     } catch (reason) {
@@ -334,24 +334,33 @@ export default function SessionPoolsAdminPage() {
               setSubjectType(nextType)
               if (nextType === 'all') {
                 setSubjectID('')
-                setBindingRole('use')
+                setBindingRoles(['use'])
               }
             }}>
               <option value="team">Team</option>
               <option value="user">User</option>
               <option value="all">All users and teams</option>
             </select>
-            <select className={input} value={bindingRole} onChange={(event) => setBindingRole(event.target.value as 'use' | 'manage' | 'manage_and_use')}>
-              <option value="use">Use</option>
-              <option value="manage" disabled={subjectType === 'all'}>Manage</option>
-              <option value="manage_and_use" disabled={subjectType === 'all'}>Manage and use</option>
-            </select>
+            <fieldset className="flex gap-4 rounded-lg border border-gray-300 px-3 py-2 dark:border-gray-700">
+              <legend className="px-1 text-xs text-gray-500 dark:text-gray-400">Roles</legend>
+              {(['use', 'manage'] as const).map((role) => <label key={role} className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={bindingRoles.includes(role)}
+                  disabled={role === 'manage' && subjectType === 'all'}
+                  onChange={(event) => setBindingRoles((current) => event.target.checked
+                    ? [...current, role]
+                    : current.filter((item) => item !== role))}
+                />
+                {role === 'use' ? 'Use' : 'Manage'}
+              </label>)}
+            </fieldset>
             <input required={subjectType !== 'all'} disabled={subjectType === 'all'} className={input} value={subjectID} onChange={(event) => setSubjectID(event.target.value)} placeholder={subjectType === 'all' ? 'Subject ID は不要です' : subjectType === 'team' ? 'org/team' : 'user-id'} />
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs text-gray-500 dark:text-gray-400">Priority<input type="number" className={input} value={bindingPriority} onChange={(event) => setBindingPriority(Number(event.target.value))} /></label>
               <label className="text-xs text-gray-500 dark:text-gray-400">Max concurrent<input min={0} type="number" className={input} value={maxConcurrent} onChange={(event) => setMaxConcurrent(Number(event.target.value))} /></label>
             </div>
-            <button disabled={!bindingPool} className={stepButton}>Binding を追加</button>
+            <button disabled={!bindingPool || bindingRoles.length === 0} className={stepButton}>Binding を追加</button>
           </form>
         </div>
       </SettingsSubsection>
@@ -435,7 +444,7 @@ export default function SessionPoolsAdminPage() {
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {poolBindings.map((binding) => (
                         <span key={binding.id} className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                          {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.role || 'use'}, priority {binding.priority || 0}, max {binding.max_concurrent || '∞'})
+                          {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.roles?.join(', ') || binding.role || 'use'}, priority {binding.priority || 0}, max {binding.max_concurrent || '∞'})
                           <button
                             type="button"
                             aria-label={`${binding.subject_id}のBindingを削除`}
