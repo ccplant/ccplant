@@ -20,6 +20,7 @@ import {
   SettingsSubsection,
   StatusBadge,
 } from '@/components/settings'
+import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
 
 function LogPanel({ target, result, onClose }: { target: string; result: SessionPoolLogs | null; onClose: () => void }) {
   return <div className="mt-3 rounded-lg border border-gray-700 bg-gray-950 p-3 text-gray-100">
@@ -416,8 +417,7 @@ export default function SessionPoolsAdminPage() {
                       <div key={supplier.manager_id} className="mt-1 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
                         <span>{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span>
                         <span className="text-gray-500 dark:text-gray-400">idle {supplier.idle_runners || 0} / max {supplier.max_runners || '∞'}</span>
-                        <button type="button" className="text-amber-700 hover:underline dark:text-amber-300" onClick={() => void patchSupplier(supplier, { draining: !supplier.draining })}>{supplier.draining ? 'Drain解除' : 'Drain'}</button>
-                        <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => void patchSupplier(supplier, { enabled: !supplier.enabled })}>{supplier.enabled ? '供給停止' : '供給再開'}</button>
+                        <PoolSupplierControls supplier={supplier} onPatch={(patch) => void patchSupplier(supplier, patch)} />
                         <button
                           type="button"
                           aria-label={`${supplier.pool}のSupplierを削除`}
