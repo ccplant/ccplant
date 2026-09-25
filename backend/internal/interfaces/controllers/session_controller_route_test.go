@@ -74,8 +74,9 @@ func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Reques
 }
 
 type allocationReader struct {
-	allocation *sessionrunnercore.Allocation
-	err        error
+	allocation           *sessionrunnercore.Allocation
+	err                  error
+	deletedConfiguration string
 }
 
 type resumeSettingsRepo struct{ settings *entities.Settings }
@@ -92,6 +93,11 @@ func (r *resumeSettingsRepo) List(context.Context) ([]*entities.Settings, error)
 
 func (s *allocationReader) GetAllocation(context.Context, string) (*sessionrunnercore.Allocation, error) {
 	return s.allocation, s.err
+}
+
+func (s *allocationReader) DeleteConfiguration(_ context.Context, sessionID string) error {
+	s.deletedConfiguration = sessionID
+	return nil
 }
 
 func (t *lifecycleTunnel) Enqueue(_ context.Context, _, _, _ string, req *http.Request) (string, error) {
@@ -522,10 +528,12 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 		SessionID: "public-id", RemoteSessionID: "allocated-runner-id", ManagerID: "manager-a",
 		Transport: repositories.SessionRouteTransportDirectRuntime,
 	}}
+	store := &allocationReader{}
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager}, nil,
 		controllers.WithSessionRouteRepository(routeRepo),
 		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(store),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
 
@@ -553,6 +561,9 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK || !routeRepo.deleted {
 		t.Fatalf("completed deletion was not finalized: status=%d repo=%#v", rec.Code, routeRepo)
+	}
+	if store.deletedConfiguration != "public-id" {
+		t.Fatalf("deleted configuration = %q, want public-id", store.deletedConfiguration)
 	}
 }
 

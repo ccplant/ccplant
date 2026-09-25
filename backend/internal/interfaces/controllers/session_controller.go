@@ -90,6 +90,10 @@ type sessionModelOptionsProvider interface {
 	ModelOptions() []string
 }
 
+type sessionConfigurationOwnerProvider interface {
+	ConfigurationOwnerReference() (apiVersion, kind, name, uid string)
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -535,6 +539,14 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
+	}
+	if owner, ok := session.(sessionConfigurationOwnerProvider); ok {
+		if store, ok := c.sessionRunnerStore.(sessionConfigurationOwnerStore); ok {
+			apiVersion, kind, name, uid := owner.ConfigurationOwnerReference()
+			if err := store.SetConfigurationOwnerReference(ctx.Request().Context(), sessionID, sessionrunnercore.OwnerReference{APIVersion: apiVersion, Kind: kind, Name: name, UID: uid}); err != nil {
+				log.Printf("Failed to set configuration owner reference for session %s: %v", sessionID, err)
+			}
+		}
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
@@ -1357,6 +1369,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		}
 		log.Printf("Pending session allocation %s deletion completed successfully", sessionID)
 		c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+		c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message":    "Session allocation deleted successfully",
 			"session_id": sessionID,
@@ -1371,6 +1384,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
 	c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
+	c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
@@ -1743,6 +1757,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 			log.Printf("Failed to delete stale session alias %s: %v", route.SessionID, err)
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session alias")
 		}
+		c.cleanupSessionConfiguration(ctx.Request().Context(), route.SessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message": "Stale session alias removed", "session_id": route.SessionID, "status": "terminated",
 		})
@@ -1757,6 +1772,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 	if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), route.SessionID); err != nil {
 		log.Printf("Failed to delete session alias %s: %v", route.SessionID, err)
 	}
+	c.cleanupSessionConfiguration(ctx.Request().Context(), route.SessionID)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message": "Session terminated successfully", "session_id": route.SessionID, "status": "terminated",
 	})
@@ -1991,6 +2007,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 			}
 		}
 		c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
+		c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message":    "Pending external session removed",
 			"session_id": sessionID,
@@ -2085,6 +2102,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		}
 	}
 	c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
+	c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
 
 	log.Printf("[REMOTE_DELETE] Deleted remote session %s (remote ID: %s) over outbound control", sessionID, route.RemoteSessionID)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
@@ -2122,6 +2140,7 @@ func (c *SessionController) reconcileQueuedDeletion(ctx context.Context, route *
 		return false
 	}
 	c.cleanupRemoteProvisionRequest(ctx, route.SessionID)
+	c.cleanupSessionConfiguration(ctx, route.SessionID)
 	log.Printf("[REMOTE_DELETE] Finalized queued deletion for session %s", route.SessionID)
 	return true
 }
@@ -2172,6 +2191,16 @@ func (c *SessionController) cleanupRemoteProvisionRequest(ctx context.Context, s
 		if err := cleaner.DeleteSessionPoolAllocation(ctx, sessionID); err != nil {
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete session pool allocation for %s: %v", sessionID, err)
 		}
+	}
+}
+
+func (c *SessionController) cleanupSessionConfiguration(ctx context.Context, sessionID string) {
+	store, ok := c.sessionRunnerStore.(sessionConfigurationDeleter)
+	if !ok {
+		return
+	}
+	if err := store.DeleteConfiguration(ctx, sessionID); err != nil {
+		log.Printf("Warning: failed to delete session configuration for %s: %v", sessionID, err)
 	}
 }
 

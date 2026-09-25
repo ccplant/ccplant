@@ -48,9 +48,10 @@ type secretDocument struct {
 }
 
 type documentMetadata struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
+	Name            string                `json:"name"`
+	Namespace       string                `json:"namespace,omitempty"`
+	Labels          map[string]string     `json:"labels,omitempty"`
+	OwnerReferences []core.OwnerReference `json:"ownerReferences,omitempty"`
 }
 
 func hashName(value string) string {

@@ -196,3 +196,12 @@ type Configuration struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 	Version         int64     `json:"-"`
 }
+
+// OwnerReference is the storage-neutral subset of a Kubernetes owner reference
+// needed to tie per-session configuration to its canonical session resource.
+type OwnerReference struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	UID        string `json:"uid"`
+}

@@ -21,6 +21,44 @@ func (s *Store) GetConfiguration(ctx context.Context, id string) (*core.Configur
 	return &c, err
 }
 
+// SetConfigurationOwnerReference makes the configuration follow the lifecycle
+// of the canonical per-session Kubernetes resource.
+func (s *Store) SetConfigurationOwnerReference(ctx context.Context, id string, owner core.OwnerReference) error {
+	if owner.APIVersion == "" || owner.Kind == "" || owner.Name == "" || owner.UID == "" {
+		return errors.New("configuration owner reference is incomplete")
+	}
+	for attempts := 0; attempts < 5; attempts++ {
+		record, err := s.kv.Get(ctx, kvstore.KindSecret, s.namespace, configurationName(id))
+		if errors.Is(err, kvstore.ErrNotFound) {
+			return core.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var doc secretDocument
+		if err := json.Unmarshal(record.Value, &doc); err != nil {
+			return err
+		}
+		doc.Metadata.OwnerReferences = []core.OwnerReference{owner}
+		record.Value, err = json.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		if _, err = s.kv.Update(ctx, record); errors.Is(err, kvstore.ErrConflict) {
+			continue
+		}
+		return err
+	}
+	return core.ErrConflict
+}
+
+// DeleteConfiguration removes saved startup input after the session lifecycle
+// ends. This is required for non-Kubernetes KV backends where ownerReferences
+// are metadata only and no garbage collector observes them.
+func (s *Store) DeleteConfiguration(ctx context.Context, id string) error {
+	return s.delete(ctx, configurationName(id))
+}
+
 // Compare-and-swap, deliberately without retrying a stale configuration.
 func (s *Store) SaveConfiguration(ctx context.Context, c *core.Configuration) error {
 	record, err := s.kv.Get(ctx, kvstore.KindSecret, s.namespace, configurationName(c.SessionID))
