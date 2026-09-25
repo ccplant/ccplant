@@ -39,6 +39,14 @@ func (s *ReplicatedStore) List(ctx context.Context, query Query) ([]Record, erro
 	return s.primary.List(ctx, query)
 }
 
+func (s *ReplicatedStore) Scan(ctx context.Context, query ScanQuery) ([]Record, error) {
+	scanner, ok := s.primary.(Scanner)
+	if !ok {
+		return nil, errors.New("primary KV store does not support scanning")
+	}
+	return scanner.Scan(ctx, query)
+}
+
 func (s *ReplicatedStore) Create(ctx context.Context, record Record) (Record, error) {
 	created, err := s.primary.Create(ctx, record)
 	if err != nil {

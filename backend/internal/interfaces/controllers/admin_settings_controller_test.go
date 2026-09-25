@@ -131,7 +131,11 @@ func TestAdminSettingsControllerVersionsAndMasksSecrets(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "secret", secret)
 
-	records, err := store.List(context.Background(), kvstore.Query{Kind: kvstore.KindSecret, Namespace: "default"})
+	records, err := store.List(context.Background(), kvstore.Query{
+		Kind:          kvstore.KindSecret,
+		Namespace:     "default",
+		LabelSelector: "agentapi.proxy/type in (admin-system-settings-head,admin-system-settings-version)",
+	})
 	require.NoError(t, err)
 	require.Len(t, records, 3) // head plus two immutable settings.json snapshots
 }

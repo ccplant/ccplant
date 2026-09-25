@@ -99,6 +99,17 @@ func (s *KubernetesStore) Delete(ctx context.Context, kind Kind, namespace, key 
 }
 
 func (s *KubernetesStore) List(ctx context.Context, query Query) ([]Record, error) {
+	if err := ValidateListQuery(query); err != nil {
+		return nil, err
+	}
+	return s.list(ctx, query)
+}
+
+func (s *KubernetesStore) Scan(ctx context.Context, query ScanQuery) ([]Record, error) {
+	return s.list(ctx, Query{Kind: query.Kind, Namespace: query.Namespace})
+}
+
+func (s *KubernetesStore) list(ctx context.Context, query Query) ([]Record, error) {
 	var records []Record
 	switch query.Kind {
 	case KindSecret:
