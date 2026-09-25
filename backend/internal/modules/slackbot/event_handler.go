@@ -37,7 +37,7 @@ type SlackBotEventHandler struct {
 	repo            repositories.SlackBotRepository
 	sessionManager  repositories.SessionManager
 	launcher        *sessionuc.LaunchUseCase
-	channelResolver *SlackChannelResolver
+	channelResolver SlackEventClient
 	// Default SlackBot configuration (from server startup config)
 	defaultBotTokenSecretName string
 	defaultBotTokenSecretKey  string
@@ -47,6 +47,11 @@ type SlackBotEventHandler struct {
 	// dryRun disables actual session creation and Slack posts; actions are only logged.
 	// Enabled via AGENTAPI_SLACK_DRY_RUN environment variable.
 	dryRun bool
+	// synchronous runs deferred session work inline. Production leaves this false;
+	// the simulator enables it so it can return the exact effects of the shared path.
+	synchronous bool
+	outcomeMu   sync.Mutex
+	outcome     string
 	// pendingThreads serializes session creation/reuse requests for each Slack thread.
 	// Distinct messages in one thread must be queued rather than discarded while an
 	// earlier request is in flight. Exact duplicate callbacks are handled separately by
@@ -70,7 +75,7 @@ func NewSlackBotEventHandler(
 	sessionManager repositories.SessionManager,
 	defaultBotTokenSecretName string,
 	defaultBotTokenSecretKey string,
-	channelResolver *SlackChannelResolver,
+	channelResolver SlackEventClient,
 	baseURL string,
 	dryRun bool,
 	sessionProfileRepo repositories.SessionProfileRepository,
@@ -86,6 +91,35 @@ func NewSlackBotEventHandler(
 		dryRun:                    dryRun,
 		pendingThreads:            make(map[string]*pendingThreadQueue),
 	}
+}
+
+// SlackEventClient is the Slack boundary used after Socket Mode has decoded an event.
+// Simulation replaces this boundary while retaining the complete production event path.
+type SlackEventClient interface {
+	ResolveChannelName(ctx context.Context, channelID, botToken string) (string, error)
+	GetBotToken(ctx context.Context, secretName, secretKey string) (string, error)
+	FetchThreadReplies(ctx context.Context, channel, threadTS, botToken string) ([]SlackMessage, error)
+	PostMessage(ctx context.Context, channel, threadTS, message, botToken string) error
+}
+
+func (h *SlackBotEventHandler) setOutcome(outcome string) {
+	h.outcomeMu.Lock()
+	h.outcome = outcome
+	h.outcomeMu.Unlock()
+}
+
+func (h *SlackBotEventHandler) eventOutcome() string {
+	h.outcomeMu.Lock()
+	defer h.outcomeMu.Unlock()
+	return h.outcome
+}
+
+func (h *SlackBotEventHandler) runDeferred(fn func()) {
+	if h.synchronous {
+		fn()
+		return
+	}
+	go fn()
 }
 
 // reserveThreadTurn appends work to a per-thread FIFO queue. It returns a wait
@@ -149,6 +183,7 @@ func (h *SlackBotEventHandler) ProcessEvent(ctx context.Context, botID string, p
 }
 
 func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, payload SlackPayload) error {
+	h.setOutcome(simulationDecisionIgnore)
 	log.Printf("[SLACKBOT] ProcessEvent called: botID=%s, type=%s", botID, payload.Type)
 	// We only process event_callback type
 	if payload.Type != "event_callback" || payload.Event == nil {
@@ -267,6 +302,7 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 
 	// Handle /stop command: interrupt the running agent in the associated session
 	if isStopCommand(event.Text) {
+		h.setOutcome(simulationDecisionStop)
 		h.handleStopCommand(ctx, channel, threadKey, bot)
 		return nil
 	}
@@ -399,7 +435,9 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 	waitForTurn, releaseTurn := h.reserveThreadTurn(pendingKey)
 
 	// Create session asynchronously so we don't block event processing
-	go func(asyncCtx context.Context) {
+	h.setOutcome(simulationDecisionCreateOrReuse)
+	h.runDeferred(func() {
+		asyncCtx := ctx
 		queueStartedAt := time.Now()
 		waitForTurn()
 		log.Printf("[OTEL_TIMING] completed operation=slackbot.ThreadQueueWait status=success duration_ms=%d bot_id=%s channel=%s thread=%s",
@@ -516,6 +554,7 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 			})
 		}, telemetry.String("slackbot.id", botID), telemetry.String("slack.channel", channel), telemetry.String("slack.thread_ts", threadKey))
 		if err != nil {
+			h.setOutcome(simulationDecisionError)
 			h.processedEvents.Delete(eventKey)
 			log.Printf("[SLACKBOT] Failed to create session: %v", err)
 			return
@@ -528,7 +567,7 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 		if !result.SessionReused && bot.NotifyOnSessionCreated() {
 			h.postSessionURLToSlack(bgCtx, channel, threadKey, result.SessionID, tags["repository"], bot)
 		}
-	}(ctx)
+	})
 
 	return nil
 }
@@ -657,22 +696,25 @@ func (h *SlackBotEventHandler) isBotAllowedInChannel(ctx context.Context, bot *e
 
 // buildMessage constructs the message to send to the session
 func (h *SlackBotEventHandler) buildMessage(bot *entities.SlackBot, payload map[string]interface{}, fallbackText string, isReuse bool) string {
+	rendered, err := renderSlackBotMessage(bot, payload, fallbackText, isReuse)
+	if err != nil {
+		log.Printf("[SLACKBOT] Failed to render message template: %v", err)
+		return fallbackText
+	}
+	return rendered
+}
+
+func renderSlackBotMessage(bot *entities.SlackBot, payload map[string]interface{}, fallback string, reuse bool) (string, error) {
 	if bot != nil && bot.SessionConfig() != nil {
-		var tmpl string
-		if isReuse && bot.SessionConfig().ReuseMessageTemplate() != "" {
+		tmpl := bot.SessionConfig().InitialMessageTemplate()
+		if reuse && bot.SessionConfig().ReuseMessageTemplate() != "" {
 			tmpl = bot.SessionConfig().ReuseMessageTemplate()
-		} else if bot.SessionConfig().InitialMessageTemplate() != "" {
-			tmpl = bot.SessionConfig().InitialMessageTemplate()
 		}
 		if tmpl != "" {
-			rendered, err := configrender.RenderTemplate(tmpl, payload)
-			if err == nil {
-				return rendered
-			}
-			log.Printf("[SLACKBOT] Failed to render message template: %v", err)
+			return configrender.RenderTemplate(tmpl, payload)
 		}
 	}
-	return fallbackText
+	return fallback, nil
 }
 
 // getBotToken retrieves the Slack bot token for the given bot.
@@ -811,7 +853,7 @@ func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, t
 	}
 
 	session := liveSessions[0]
-	go func() {
+	h.runDeferred(func() {
 		bgCtx := context.Background()
 
 		if h.dryRun {
@@ -833,7 +875,7 @@ func (h *SlackBotEventHandler) handleStopCommand(ctx context.Context, channel, t
 
 		log.Printf("[SLACKBOT] Successfully stopped agent for session %s", session.ID())
 		h.postStopConfirmationToSlack(bgCtx, channel, threadKey, bot)
-	}()
+	})
 }
 
 // postStopConfirmationToSlack posts a confirmation message to the Slack thread

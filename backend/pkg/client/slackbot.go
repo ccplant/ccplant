@@ -103,6 +103,39 @@ func (c *Client) GetSlackBot(ctx context.Context, id string) (json.RawMessage, e
 	return json.RawMessage(body), nil
 }
 
+// SimulateSlackBot evaluates a synthetic Slack event. The API defaults to dry-run;
+// callers may explicitly request real session creation with dry_run=false.
+func (c *Client) SimulateSlackBot(ctx context.Context, id string, data []byte) (json.RawMessage, error) {
+	if id == "" {
+		return nil, fmt.Errorf("SlackBot ID is required")
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("request body is required")
+	}
+	reqURL := fmt.Sprintf("%s/slackbots/%s/simulate", c.baseURL, id)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.applyMiddlewares(httpReq); err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return json.RawMessage(body), nil
+}
+
 // CreateSlackBot creates a new SlackBot from the given JSON body and returns the raw JSON response.
 func (c *Client) CreateSlackBot(ctx context.Context, data []byte) (json.RawMessage, error) {
 	if len(data) == 0 {

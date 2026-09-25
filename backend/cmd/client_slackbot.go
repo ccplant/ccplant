@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -15,6 +16,7 @@ var (
 	slackbotFilterScope  string
 	slackbotFilterTeamID string
 	slackbotFile         string
+	slackbotExecute      bool
 )
 
 var slackbotCmd = &cobra.Command{
@@ -166,6 +168,21 @@ Examples:
 	Run:  runSlackBotDelete,
 }
 
+var slackbotSimulateCmd = &cobra.Command{
+	Use:   "simulate <id>",
+	Short: "Preview a Slack event without contacting Slack",
+	Long: `Evaluate filters, templates, tags, environment, and session launch settings.
+By default no session is created and no message is posted to Slack. Pass --execute
+to create or reuse a real session through the production /start API; Slack is
+still not contacted.
+
+Reads a synthetic event from --file or stdin. Example:
+  echo '{"channel_name":"dev","event":{"type":"app_mention","user":"U_DEBUG","channel":"C_DEBUG","text":"org/repo investigate this","ts":"debug-001"}}' |
+    agentapi-proxy client slackbot simulate <id>`,
+	Args: cobra.ExactArgs(1),
+	Run:  runSlackBotSimulate,
+}
+
 func init() {
 	// list flags
 	slackbotListCmd.Flags().StringVar(&slackbotFilterStatus, "status", "", `Filter by status: "active" or "paused"`)
@@ -175,14 +192,49 @@ func init() {
 	// create / apply flags
 	slackbotCreateCmd.Flags().StringVarP(&slackbotFile, "file", "f", "", `Path to JSON file, or "-" for stdin (default: stdin)`)
 	slackbotApplyCmd.Flags().StringVarP(&slackbotFile, "file", "f", "", `Path to JSON file, or "-" for stdin (default: stdin)`)
+	slackbotSimulateCmd.Flags().StringVarP(&slackbotFile, "file", "f", "", `Path to JSON file, or "-" for stdin (default: stdin)`)
+	slackbotSimulateCmd.Flags().BoolVar(&slackbotExecute, "execute", false, "Create or reuse a real session through the /start API")
 
 	slackbotCmd.AddCommand(slackbotListCmd)
 	slackbotCmd.AddCommand(slackbotGetCmd)
 	slackbotCmd.AddCommand(slackbotCreateCmd)
 	slackbotCmd.AddCommand(slackbotApplyCmd)
 	slackbotCmd.AddCommand(slackbotDeleteCmd)
+	slackbotCmd.AddCommand(slackbotSimulateCmd)
 
 	ClientCmd.AddCommand(slackbotCmd)
+}
+
+func runSlackBotSimulate(cmd *cobra.Command, args []string) {
+	data, err := readJSONInput(slackbotFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		os.Exit(1)
+	}
+	if slackbotExecute {
+		var request map[string]interface{}
+		if err := json.Unmarshal(data, &request); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing input: %v\n", err)
+			os.Exit(1)
+		}
+		request["dry_run"] = false
+		data, err = json.Marshal(request)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding input: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	c, err := resolveBaseClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n%s\n", err, endpointHint)
+		os.Exit(1)
+	}
+	result, err := c.SimulateSlackBot(context.Background(), args[0], data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error simulating SlackBot %q: %v\n", args[0], err)
+		os.Exit(1)
+	}
+	fmt.Println(prettyJSONOutput(result))
 }
 
 func runSlackBotList(cmd *cobra.Command, args []string) {

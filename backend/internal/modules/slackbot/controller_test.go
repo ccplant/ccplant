@@ -188,6 +188,41 @@ func makeSlackBotEchoContextWithTeams(t *testing.T, method, path string, body in
 	return c, rec
 }
 
+func TestSlackBotControllerSimulate(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot("bot-1", "debug", "owner")
+	bot.SetAllowedChannelNames([]string{"dev"})
+	require.NoError(t, repo.Create(context.Background(), bot))
+	controller := NewSlackBotController(repo)
+	body := SlackBotSimulationRequest{ChannelName: "dev", Event: SlackEvent{Type: "app_mention", User: "U1", Channel: "C1", Text: "hello", Ts: "1.0"}}
+	ctx, rec := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots/bot-1/simulate", body, "owner")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues("bot-1")
+
+	require.NoError(t, controller.SimulateSlackBot(ctx))
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var response SlackBotSimulationResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.Equal(t, simulationDecisionCreateOrReuse, response.Decision)
+	assert.True(t, response.DryRun)
+}
+
+func TestSlackBotControllerSimulateRejectsOtherOwner(t *testing.T) {
+	repo := newMockSlackBotRepository()
+	bot := entities.NewSlackBot("bot-1", "debug", "owner")
+	require.NoError(t, repo.Create(context.Background(), bot))
+	controller := NewSlackBotController(repo)
+	body := SlackBotSimulationRequest{Event: SlackEvent{Type: "message", User: "U1", Channel: "C1", Ts: "1.0"}}
+	ctx, _ := makeSlackBotEchoContext(t, http.MethodPost, "/slackbots/bot-1/simulate", body, "other")
+	ctx.SetParamNames("id")
+	ctx.SetParamValues("bot-1")
+
+	err := controller.SimulateSlackBot(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, http.StatusForbidden, httpErr.Code)
+}
+
 // --- CreateSlackBot tests ---
 
 func TestCreateSlackBot_Success(t *testing.T) {

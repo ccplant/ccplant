@@ -2,6 +2,7 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -17,8 +18,42 @@ func (m *SessionManager) WithSessionAPIURL(apiURL string) *SessionManager {
 }
 
 func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	start, token, err := m.triggerStartRequest(id, req, webhookPayload)
+	if err != nil {
+		return nil, err
+	}
+	apiURL := m.triggerSessionAPIURL()
+	sessionID, reused, err := m.startSession(ctx, apiURL, start, token, id)
+	if err != nil {
+		return nil, err
+	}
+	tags := start.Tags
+	session := entities.NewProxySessionWithStatus(sessionID, req.UserID, req.Scope, req.TeamID, tags, time.Now(), "creating")
+	session.SetSessionReused(reused)
+	return session, nil
+}
+
+// DryRunTriggerSession sends the trigger-derived request through the public
+// /start API without creating or persisting a session.
+func (m *SessionManager) DryRunTriggerSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (map[string]interface{}, error) {
+	start, token, err := m.triggerStartRequest(id, req, webhookPayload)
+	if err != nil {
+		return nil, err
+	}
+	data, err := m.startSessionResponse(ctx, m.triggerSessionAPIURL(), start, token, id, true)
+	if err != nil {
+		return nil, err
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("decode session dry-run response: %w", err)
+	}
+	return response, nil
+}
+
+func (m *SessionManager) triggerStartRequest(id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.StartRequest, string, error) {
 	if m.token == "" {
-		return nil, fmt.Errorf("worker execution signing key is required")
+		return entities.StartRequest{}, "", fmt.Errorf("worker execution signing key is required")
 	}
 	claims := executiontoken.ExecutionClaims{
 		SlackBotID: req.Tags["slackbot_id"], ExecutionID: id, SessionID: id,
@@ -29,7 +64,7 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 	}
 	token, err := executiontoken.SignExecutionToken([]byte(m.token), claims)
 	if err != nil {
-		return nil, err
+		return entities.StartRequest{}, "", err
 	}
 	tags := make(map[string]string, len(req.Tags)+1)
 	for k, v := range req.Tags {
@@ -55,15 +90,13 @@ func (m *SessionManager) startTriggerSession(ctx context.Context, id string, req
 		StopBeforeReuse: req.StopBeforeReuse,
 		LimitMatchTags:  req.LimitMatchTags, MaxSessions: req.MaxSessions,
 	}
+	return start, token, nil
+}
+
+func (m *SessionManager) triggerSessionAPIURL() string {
 	apiURL := m.sessionAPIURL
 	if apiURL == "" {
 		apiURL = m.baseURL
 	}
-	sessionID, reused, err := m.startSession(ctx, apiURL, start, token, id)
-	if err != nil {
-		return nil, err
-	}
-	session := entities.NewProxySessionWithStatus(sessionID, req.UserID, req.Scope, req.TeamID, tags, time.Now(), "creating")
-	session.SetSessionReused(reused)
-	return session, nil
+	return apiURL
 }
