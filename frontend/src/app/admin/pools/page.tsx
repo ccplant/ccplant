@@ -20,7 +20,7 @@ import {
   SettingsSubsection,
   StatusBadge,
 } from '@/components/settings'
-import { PoolSupplierControls, PoolSupplierOperationGuide } from '@/components/settings/PoolSupplierControls'
+import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
 
 function LogPanel({ target, result, onClose }: { target: string; result: SessionPoolLogs | null; onClose: () => void }) {
   return <div className="mt-3 rounded-lg border border-gray-700 bg-gray-950 p-3 text-gray-100">
@@ -392,7 +392,6 @@ export default function SessionPoolsAdminPage() {
       </SettingsSubsection>
 
       <SettingsSubsection title="Logical Pools" description="Pool ごとの供給元と利用権限">
-        <div className="mb-3"><PoolSupplierOperationGuide /></div>
         <ItemList>
           {pools.length === 0 && <ItemListEmpty>Logical Pool はまだありません</ItemListEmpty>}
           {pools.map((pool) => {

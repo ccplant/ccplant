@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Boxes, Plus, RefreshCw, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { ESMRegistrationToken, SettingsPageHeader, SettingsSubsection } from '@/components/settings'
 import { ExternalSessionManagerList } from '@/components/settings/ExternalSessionManagerList'
-import { PoolSupplierControls, PoolSupplierOperationGuide } from '@/components/settings/PoolSupplierControls'
+import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import type { ExternalSessionManagerConfig } from '@/types/settings'
 import type { LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '@/types/session_pool'
@@ -299,8 +299,7 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
       </div>}
 
       {activeTab === 'assignments' && <div className="space-y-4">
-        <div><h2 className="text-base font-semibold text-gray-950 dark:text-white">割り当て設定</h2><p className="mt-1 text-sm text-gray-500">ManagerをPoolへ割り当て、供給と退避の状態を管理します。</p></div>
-        <PoolSupplierOperationGuide />
+        <div><h2 className="text-base font-semibold text-gray-950 dark:text-white">割り当て設定</h2><p className="mt-1 text-sm text-gray-500">ManagerをPoolへ割り当て、供給の有効・無効を管理します。</p></div>
         {runtimes.length === 0 && <div className={`${card} py-8 text-center text-sm text-gray-500`}>先にPoolを作成してください。</div>}
         {runtimes.filter(({ scopeBinding }) => (scopeBinding.role === 'manage' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled).map(({ pool, suppliers, bindings }) => <section key={pool.name} className={card}>
           <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="break-all font-semibold text-gray-950 dark:text-white">{pool.name}</h3><button type="button" onClick={() => { setAssigningPool(assigningPool === pool.name ? null : pool.name); setAssignManagerID('') }} className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:text-blue-300"><UserPlus className="h-3.5 w-3.5" /> Managerを割り当て</button></div>
