@@ -16,6 +16,7 @@ type KubernetesSession struct {
 	request           *entities.RunServerRequest
 	deploymentName    string
 	serviceName       string
+	serviceUID        string
 	pvcName           string
 	servicePort       int
 	namespace         string
@@ -287,6 +288,20 @@ func (s *KubernetesSession) DeploymentName() string {
 // ServiceName returns the Kubernetes Service name
 func (s *KubernetesSession) ServiceName() string {
 	return s.serviceName
+}
+
+// ConfigurationOwnerReference identifies the canonical Service that owns all
+// per-session Kubernetes resources.
+func (s *KubernetesSession) ConfigurationOwnerReference() (string, string, string, string) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return "v1", "Service", s.serviceName, s.serviceUID
+}
+
+func (s *KubernetesSession) setServiceUID(uid string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.serviceUID = uid
 }
 
 // PVCName returns the Kubernetes PVC name

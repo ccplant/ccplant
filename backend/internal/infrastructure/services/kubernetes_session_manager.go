@@ -4796,7 +4796,10 @@ func (m *KubernetesSessionManager) createServiceWithLabels(ctx context.Context, 
 		},
 	}
 
-	_, err := m.client.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
+	created, err := m.client.CoreV1().Services(m.namespace).Create(ctx, service, metav1.CreateOptions{})
+	if err == nil {
+		session.setServiceUID(string(created.UID))
+	}
 	return err
 }
 

@@ -29,6 +29,10 @@ type sessionConfigurationStore interface {
 	SaveConfiguration(context.Context, *core.Configuration) error
 	UpdateProvisionSettings(context.Context, string, []byte) error
 }
+
+type sessionConfigurationOwnerStore interface {
+	SetConfigurationOwnerReference(context.Context, string, core.OwnerReference) error
+}
 type restartSettingsResolver interface {
 	ResolveRestartSettings(context.Context, string, entities.StartRequest, string, []string) (*sessionsettings.SessionSettings, error)
 }

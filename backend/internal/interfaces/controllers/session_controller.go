@@ -90,6 +90,10 @@ type sessionModelOptionsProvider interface {
 	ModelOptions() []string
 }
 
+type sessionConfigurationOwnerProvider interface {
+	ConfigurationOwnerReference() (apiVersion, kind, name, uid string)
+}
+
 // SessionController handles session management endpoints
 type SessionController struct {
 	sessionManagerProvider SessionManagerProvider
@@ -535,6 +539,14 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
+	}
+	if owner, ok := session.(sessionConfigurationOwnerProvider); ok {
+		if store, ok := c.sessionRunnerStore.(sessionConfigurationOwnerStore); ok {
+			apiVersion, kind, name, uid := owner.ConfigurationOwnerReference()
+			if err := store.SetConfigurationOwnerReference(ctx.Request().Context(), sessionID, sessionrunnercore.OwnerReference{APIVersion: apiVersion, Kind: kind, Name: name, UID: uid}); err != nil {
+				log.Printf("Failed to set configuration owner reference for session %s: %v", sessionID, err)
+			}
+		}
 	}
 
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
