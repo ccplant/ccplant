@@ -714,13 +714,16 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}
 	binding.Pool = ctx.Param("pool")
-	if binding.Role == "" {
+	if len(binding.Roles) > 0 {
+		binding.Role = ""
+	} else if binding.Role == "" {
 		binding.Role = core.BindingRoleUse
 	}
+	binding.NormalizeRoles()
 	if err := validatePoolBindingSubject(binding.SubjectType, binding.SubjectID); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
+	if err := validatePoolBindingRole(binding.SubjectType, &binding); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if binding.MaxConcurrent < 0 {
@@ -780,7 +783,7 @@ func (c *SessionPoolController) DeleteBinding(ctx echo.Context) error {
 	if !found {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
-	if target.Enabled && target.Role.GrantsManage() && !hasOtherEnabledManageBinding(bindings, target.ID) {
+	if target.Enabled && target.GrantsManage() && !hasOtherEnabledManageBinding(bindings, target.ID) {
 		return echo.NewHTTPError(http.StatusConflict, "cannot remove the last enabled manage binding")
 	}
 	if err := c.store.DeleteBinding(ctx.Request().Context(), ctx.Param("bindingId")); err != nil {
@@ -833,12 +836,13 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	if binding == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "binding not found")
 	}
-	wasEnabledManage := binding.Enabled && binding.Role.GrantsManage()
+	wasEnabledManage := binding.Enabled && binding.GrantsManage()
 	var patch struct {
-		Role          *core.BindingRole `json:"role,omitempty"`
-		Enabled       *bool             `json:"enabled,omitempty"`
-		Priority      *int              `json:"priority,omitempty"`
-		MaxConcurrent *int              `json:"max_concurrent,omitempty"`
+		Role          *core.BindingRole   `json:"role,omitempty"`
+		Roles         *[]core.BindingRole `json:"roles,omitempty"`
+		Enabled       *bool               `json:"enabled,omitempty"`
+		Priority      *int                `json:"priority,omitempty"`
+		MaxConcurrent *int                `json:"max_concurrent,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -861,6 +865,12 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 	}
 	if patch.Role != nil {
 		binding.Role = *patch.Role
+		binding.Roles = nil
+	}
+	if patch.Roles != nil {
+		binding.Roles = *patch.Roles
+		binding.Role = ""
+		binding.NormalizeRoles()
 	}
 	if patch.Enabled != nil {
 		binding.Enabled = *patch.Enabled
@@ -874,10 +884,10 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 		}
 		binding.MaxConcurrent = *patch.MaxConcurrent
 	}
-	if err := validatePoolBindingRole(binding.SubjectType, binding.Role); err != nil {
+	if err := validatePoolBindingRole(binding.SubjectType, binding); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	if wasEnabledManage && (!binding.Role.GrantsManage() || !binding.Enabled) {
+	if wasEnabledManage && (!binding.GrantsManage() || !binding.Enabled) {
 		if !hasOtherEnabledManageBinding(bindings, binding.ID) {
 			return echo.NewHTTPError(http.StatusConflict, "cannot remove the last enabled manage binding")
 		}
@@ -890,7 +900,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 
 func hasOtherEnabledManageBinding(bindings []*core.Binding, bindingID string) bool {
 	for _, binding := range bindings {
-		if binding.ID != bindingID && binding.Enabled && binding.Role.GrantsManage() {
+		if binding.ID != bindingID && binding.Enabled && binding.GrantsManage() {
 			return true
 		}
 	}
@@ -1477,9 +1487,15 @@ func validatePoolBindingSubject(kind core.SubjectType, id string) error {
 	return validatePoolSubject(kind, id)
 }
 
-func validatePoolBindingRole(kind core.SubjectType, role core.BindingRole) error {
+func validatePoolBindingRole(kind core.SubjectType, binding *core.Binding) error {
+	for _, role := range binding.Roles {
+		if role != core.BindingRoleUse && role != core.BindingRoleManage {
+			return errors.New("roles may only contain use and manage")
+		}
+	}
+	role := binding.Role
 	if role != core.BindingRoleUse && role != core.BindingRoleManage && role != core.BindingRoleManageAndUse {
-		return errors.New("role must be use, manage, or manage_and_use")
+		return errors.New("at least one of use or manage role is required")
 	}
 	if kind == core.SubjectAll && role.GrantsManage() {
 		return errors.New("all binding cannot have manage role")
@@ -1513,7 +1529,7 @@ func (c *SessionPoolController) canManagePool(ctx context.Context, user *entitie
 		return false, err
 	}
 	for _, binding := range bindings {
-		if !binding.Enabled || !binding.Role.GrantsManage() {
+		if !binding.Enabled || !binding.GrantsManage() {
 			continue
 		}
 		if binding.SubjectType == core.SubjectUser && binding.SubjectID == string(user.ID()) {

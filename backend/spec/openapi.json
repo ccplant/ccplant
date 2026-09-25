@@ -7516,6 +7516,19 @@
             ],
             "default": "use"
           },
+          "roles": {
+            "type": "array",
+            "description": "Roles granted by this binding. Supports use and manage together. When supplied, this takes precedence over the legacy role field.",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "use",
+                "manage"
+              ]
+            }
+          },
           "enabled": {
             "type": "boolean",
             "default": true

@@ -147,7 +147,7 @@ func (r *Resolver) availablePools(ctx context.Context, subject Subject) ([]*Reso
 	result := make([]*ResolvedPool, 0, len(pools))
 	for _, pool := range pools {
 		binding := effectiveBinding(bindings, pool.Name, subject)
-		if binding == nil || !binding.Role.GrantsUse() || !binding.Enabled || !pool.Enabled || !healthy[pool.Name] {
+		if binding == nil || !binding.GrantsUse() || !binding.Enabled || !pool.Enabled || !healthy[pool.Name] {
 			continue
 		}
 		result = append(result, &ResolvedPool{Pool: pool, Binding: binding})
@@ -289,7 +289,7 @@ func (r *Resolver) ResolveWithTrace(ctx context.Context, subject Subject, reques
 	for _, pool := range pools {
 		binding := effectiveBinding(bindings, pool.Name, subject)
 		// Do not expose the existence or state of pools the caller cannot use.
-		if binding == nil || !binding.Role.GrantsUse() || !binding.Enabled {
+		if binding == nil || !binding.GrantsUse() || !binding.Enabled {
 			continue
 		}
 		candidate := PoolCandidateResolution{Pool: pool.Name, BindingID: binding.ID, Priority: binding.Priority, ExplicitOnly: binding.ExplicitOnly, HealthySuppliers: healthySuppliers[pool.Name], RequiredLabels: allocatorLabels(tags)}
