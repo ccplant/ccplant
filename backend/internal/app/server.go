@@ -450,6 +450,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	sessionRunnerStore := infrasessionrunner.NewStore(sessionRunnerKVStore, namespace)
 	log.Printf("[SERVER] Session runner pool repository initialized")
+	startBuiltInSessionManagerReconciler(runtimeConfigCtx, sessionRunnerStore, cfg)
 
 	// Initialize user file repository (Kubernetes Secret-backed)
 	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(

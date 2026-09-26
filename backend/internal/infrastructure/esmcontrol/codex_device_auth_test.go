@@ -145,6 +145,28 @@ func TestLauncherStartRoutesToFirstConnectedManager(t *testing.T) {
 	}
 }
 
+func TestLauncherStartRequiresRequestedManager(t *testing.T) {
+	tunnel := &fakeTunnel{connected: map[string]bool{"manager-a": true, "manager-b": true}}
+	launcher := NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(
+		managerEntry("manager-a", nil),
+		managerEntry("manager-b", nil),
+	))
+	request := validWorkload()
+	request.ManagerID = "manager-b"
+	if err := launcher.StartCodexDeviceAuth(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if len(tunnel.requests) != 1 {
+		t.Fatalf("requests = %d, want one request to the requested manager", len(tunnel.requests))
+	}
+	if tunnel.requests[0].managerID != "manager-b" {
+		t.Fatalf("manager id = %q, want manager-b", tunnel.requests[0].managerID)
+	}
+	if !strings.Contains(tunnel.requests[0].body, `"manager_id":"manager-b"`) {
+		t.Fatalf("body = %q, want requested manager id", tunnel.requests[0].body)
+	}
+}
+
 func TestLauncherStartSkipsManagersWithoutWorkloadSupport(t *testing.T) {
 	tunnel := &fakeTunnel{
 		connected: map[string]bool{"manager-a": true, "manager-b": true},
@@ -347,7 +369,7 @@ func TestLauncherAvailableRequiresConnectedManager(t *testing.T) {
 	}
 	tunnel := &fakeTunnel{connected: map[string]bool{"manager-a": true}}
 	launcher = NewCodexDeviceAuthLauncher(tunnel, authorizedDirectory(managerEntry("manager-a", nil)))
-	if !launcher.Available(context.Background()) {
+	if !launcher.AvailableForSubject(context.Background(), sessionrunnercore.Subject{Type: sessionrunnercore.SubjectUser, ID: "alice"}) {
 		t.Fatal("available = false, want true with a connected manager")
 	}
 }

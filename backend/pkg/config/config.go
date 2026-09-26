@@ -459,17 +459,40 @@ type SessionManagerConfig struct {
 	AutoUpgrade bool `json:"auto_upgrade" mapstructure:"auto_upgrade"`
 	// UpgradeVersionURL is an optional HTTP endpoint polled by a standalone
 	// Kubernetes manager. It must return JSON containing a "version" field.
-	UpgradeVersionURL string                         `json:"upgrade_version_url" mapstructure:"upgrade_version_url"`
-	DeploymentName    string                         `json:"deployment_name" mapstructure:"deployment_name"`
-	ImageRepository   string                         `json:"image_repository" mapstructure:"image_repository"`
-	CurrentVersion    string                         `json:"current_version" mapstructure:"current_version"`
-	Allocation        SessionManagerAllocationConfig `json:"allocation" mapstructure:"allocation"`
+	UpgradeVersionURL string                                  `json:"upgrade_version_url" mapstructure:"upgrade_version_url"`
+	DeploymentName    string                                  `json:"deployment_name" mapstructure:"deployment_name"`
+	ImageRepository   string                                  `json:"image_repository" mapstructure:"image_repository"`
+	CurrentVersion    string                                  `json:"current_version" mapstructure:"current_version"`
+	Allocation        SessionManagerAllocationConfig          `json:"allocation" mapstructure:"allocation"`
+	Builtin           SessionManagerBuiltinRegistrationConfig `json:"builtin" mapstructure:"builtin"`
 }
 
 type SessionManagerAllocationConfig struct {
 	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
 	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
 	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+}
+
+type SessionManagerBuiltinBindingConfig struct {
+	SubjectType string `json:"subject_type" mapstructure:"subject_type"`
+	Role        string `json:"role" mapstructure:"role"`
+}
+
+type SessionManagerBuiltinPoolConfig struct {
+	Name         string                             `json:"name" mapstructure:"name"`
+	Labels       map[string]string                  `json:"labels" mapstructure:"labels"`
+	LabelsJSON   string                             `json:"pool_labels_json" mapstructure:"pool_labels_json"`
+	ExplicitOnly bool                               `json:"explicit_only" mapstructure:"explicit_only"`
+	Priority     int                                `json:"priority" mapstructure:"priority"`
+	Binding      SessionManagerBuiltinBindingConfig `json:"binding" mapstructure:"binding"`
+}
+
+type SessionManagerBuiltinRegistrationConfig struct {
+	Enabled         bool                            `json:"enabled" mapstructure:"enabled"`
+	ManagerID       string                          `json:"manager_id" mapstructure:"manager_id"`
+	Name            string                          `json:"name" mapstructure:"name"`
+	ConnectionToken string                          `json:"connection_token" mapstructure:"connection_token"`
+	Pool            SessionManagerBuiltinPoolConfig `json:"pool" mapstructure:"pool"`
 }
 
 // WorkerConfig contains the only control-plane dependency of the worker.
@@ -1227,6 +1250,16 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
 	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
 	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")
+	_ = v.BindEnv("session_manager.builtin.enabled", "AGENTAPI_SESSION_MANAGER_BUILTIN_ENABLED")
+	_ = v.BindEnv("session_manager.builtin.manager_id", "AGENTAPI_SESSION_MANAGER_BUILTIN_MANAGER_ID")
+	_ = v.BindEnv("session_manager.builtin.name", "AGENTAPI_SESSION_MANAGER_BUILTIN_NAME")
+	_ = v.BindEnv("session_manager.builtin.connection_token", "AGENTAPI_SESSION_MANAGER_BUILTIN_CONNECTION_TOKEN")
+	_ = v.BindEnv("session_manager.builtin.pool.name", "AGENTAPI_SESSION_MANAGER_BUILTIN_POOL")
+	_ = v.BindEnv("session_manager.builtin.pool.explicit_only", "AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_EXPLICIT_ONLY")
+	_ = v.BindEnv("session_manager.builtin.pool.priority", "AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_PRIORITY")
+	_ = v.BindEnv("session_manager.builtin.pool.labels_json", "AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_LABELS")
+	_ = v.BindEnv("session_manager.builtin.pool.binding.subject_type", "AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_SUBJECT_TYPE")
+	_ = v.BindEnv("session_manager.builtin.pool.binding.role", "AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_ROLE")
 
 	// Background-worker control plane. These values are deliberately not part
 	// of kubernetes_session: the worker must never receive a provisioner token.
@@ -1339,6 +1372,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("session_manager.allocation.lease_duration", "15s")
 	v.SetDefault("session_manager.allocation.renew_deadline", "10s")
 	v.SetDefault("session_manager.allocation.retry_period", "2s")
+	v.SetDefault("session_manager.builtin.enabled", false)
+	v.SetDefault("session_manager.builtin.manager_id", "")
+	v.SetDefault("session_manager.builtin.name", "Built-in session manager")
+	v.SetDefault("session_manager.builtin.pool.name", "")
+	v.SetDefault("session_manager.builtin.pool.explicit_only", false)
+	v.SetDefault("session_manager.builtin.pool.priority", -1)
+	v.SetDefault("session_manager.builtin.pool.binding.subject_type", "all")
+	v.SetDefault("session_manager.builtin.pool.binding.role", "use")
 
 	// Settings base secret default (single base Secret shared by all sessions,
 	// merged with team/user settings at session settings generation time)

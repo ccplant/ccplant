@@ -80,9 +80,10 @@ func (c *CodexDeviceAuthController) WithCallbackBaseURL(baseURL string) *CodexDe
 func (c *CodexDeviceAuthController) GetName() string { return "CodexDeviceAuthController" }
 
 type StartDeviceAuthRequest struct {
-	Scope   string `json:"scope,omitempty"`
-	TeamID  string `json:"team_id,omitempty"`
-	Replace bool   `json:"replace,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	TeamID    string `json:"team_id,omitempty"`
+	Replace   bool   `json:"replace,omitempty"`
+	ManagerID string `json:"manager_id,omitempty"`
 }
 
 type StartDeviceAuthResponse struct {
@@ -109,13 +110,20 @@ type workloadAvailability interface {
 	Available(context.Context) bool
 }
 
+type subjectWorkloadAvailability interface {
+	AvailableForSubject(context.Context, sessionrunnercore.Subject) bool
+}
+
 func (c *CodexDeviceAuthController) GetConfig(ctx echo.Context) error {
 	if auth.GetUserFromContext(ctx) == nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 	}
 	configured := c.launcher != nil
-	if configured {
-		if provider, ok := c.launcher.(workloadAvailability); ok {
+	if configured && auth.GetUserFromContext(ctx) != nil {
+		request := StartDeviceAuthRequest{Scope: strings.TrimSpace(ctx.QueryParam("scope")), TeamID: strings.TrimSpace(ctx.QueryParam("team_id"))}
+		if provider, ok := c.launcher.(subjectWorkloadAvailability); ok {
+			configured = provider.AvailableForSubject(ctx.Request().Context(), deviceAuthSubject(auth.GetUserFromContext(ctx), request))
+		} else if provider, ok := c.launcher.(workloadAvailability); ok {
 			configured = provider.Available(ctx.Request().Context())
 		}
 	}
@@ -177,6 +185,8 @@ func (c *CodexDeviceAuthController) StartDeviceAuth(ctx echo.Context) error {
 		AttemptID: attemptID, CallbackURL: callbackURL, Token: token, ExpiresAt: attempt.ExpiresAt,
 		SubjectType: string(subject.Type), SubjectID: subject.ID,
 	}
+	workload.ManagerID = strings.TrimSpace(req.ManagerID)
+	workload.ManagerID = strings.TrimSpace(req.ManagerID)
 	log.Printf("[CODEX_DEVICE_AUTH] Launching workload for attempt %s", attemptID)
 	if err := c.launcher.StartCodexDeviceAuth(ctx.Request().Context(), workload); err != nil {
 		log.Printf("[CODEX_DEVICE_AUTH] Failed to launch workload for attempt %s: %v", attemptID, err)

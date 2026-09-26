@@ -7,7 +7,8 @@
 {{- $encryptionToken := dig "encryption" "keySecretRef" (dict) $manager }}
 {{- $registration := $manager.externalRegistration | default dict }}
 {{- $runner := $manager.runner | default dict }}
-{{- $remoteMode := or (dig "enabled" false $registration) (dig "enabled" false $runner) }}
+{{- $builtin := $manager.builtin | default dict }}
+{{- $remoteMode := or (dig "enabled" false $registration) (dig "enabled" false $runner) (dig "enabled" false $builtin) }}
 {{- $kv := $manager.kvStore | default dict }}
 {{- $redisClient := $manager.redis | default dict }}
 {{- $sessionPersistence := $manager.sessionPersistence | default dict }}
@@ -159,12 +160,29 @@ spec:
                   and codex device auth workloads) never registers, so every
                   tunneled command 404s. Default to the runner connection token
                   so runner-mode managers keep the surface enabled. */}}
-            {{- $runnerHMACName := dig "hmacSecretRef" "name" "" $runner }}
             - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ ternary $runnerHMACName (dig "connectionTokenSecretRef" "name" "" $runner) (ne $runnerHMACName "") | quote }}
-                  key: {{ ternary (dig "hmacSecretRef" "key" "hmac-secret" $runner) (dig "connectionTokenSecretRef" "key" "connection-token" $runner) (ne $runnerHMACName "") | quote }}
+                  name: {{ default (dig "connectionTokenSecretRef" "name" "" $runner) (dig "hmacSecretRef" "name" "" $runner) | quote }}
+                  key: {{ default (dig "connectionTokenSecretRef" "key" "connection-token" $runner) (dig "hmacSecretRef" "key" "" $runner) | quote }}
+            {{- end }}
+            {{- if and (not (dig "enabled" false $registration)) (not (dig "enabled" false $runner)) (dig "enabled" false $builtin) }}
+            - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "sessionManager.builtin.managerId is required when builtin mode is enabled" (dig "managerId" "" $builtin) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "sessionManager.builtin.pool is required when builtin mode is enabled" (dig "pool" "" $builtin) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ default (printf "http://%s:%v" (include "agentapi-proxy.fullname" .) .Values.service.port) $manager.apiUrl | quote }}}
+            - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sessionManager.builtin.connectionTokenSecretRef.name is required when builtin mode is enabled" (dig "connectionTokenSecretRef" "name" "" $builtin) | quote }}
+                  key: {{ dig "connectionTokenSecretRef" "key" "connection-token" $builtin | quote }}
+            {{- /* The outbound control worker signs local commands with the
+                  HMAC secret. Like runner mode, fall back to the connection
+                  token so lifecycle and Codex device-auth workloads are enabled. */}}
+            - name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (dig "connectionTokenSecretRef" "name" "" $builtin) (dig "hmacSecretRef" "name" "" $builtin) | quote }}
+                  key: {{ default (dig "connectionTokenSecretRef" "key" "connection-token" $builtin) (dig "hmacSecretRef" "key" "" $builtin) | quote }}
             {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}
