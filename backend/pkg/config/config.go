@@ -481,7 +481,7 @@ type SessionManagerBuiltinBindingConfig struct {
 type SessionManagerBuiltinPoolConfig struct {
 	Name         string                             `json:"name" mapstructure:"name"`
 	Labels       map[string]string                  `json:"labels" mapstructure:"labels"`
-	LabelsJSON   string                             `json:"pool_labels_json" mapstructure:"pool_labels_json"`
+	LabelsJSON   string                             `json:"labels_json" mapstructure:"labels_json"`
 	ExplicitOnly bool                               `json:"explicit_only" mapstructure:"explicit_only"`
 	Priority     int                                `json:"priority" mapstructure:"priority"`
 	Binding      SessionManagerBuiltinBindingConfig `json:"binding" mapstructure:"binding"`
@@ -846,6 +846,42 @@ func commaSeparatedList(value string) []string {
 
 // initializeConfigStructsFromEnv initializes config structs from environment variables
 func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_ENABLED"); ok {
+		config.SessionManager.Builtin.Enabled, _ = strconv.ParseBool(value)
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_MANAGER_ID"); ok {
+		config.SessionManager.Builtin.ManagerID = value
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_NAME"); ok {
+		config.SessionManager.Builtin.Name = value
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_CONNECTION_TOKEN"); ok {
+		config.SessionManager.Builtin.ConnectionToken = value
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_POOL"); ok {
+		config.SessionManager.Builtin.Pool.Name = value
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_EXPLICIT_ONLY"); ok {
+		config.SessionManager.Builtin.Pool.ExplicitOnly, _ = strconv.ParseBool(value)
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_PRIORITY"); ok {
+		config.SessionManager.Builtin.Pool.Priority, _ = strconv.Atoi(value)
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_SUBJECT_TYPE"); ok {
+		config.SessionManager.Builtin.Pool.Binding.SubjectType = value
+	}
+	if value, ok := os.LookupEnv("AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_ROLE"); ok {
+		config.SessionManager.Builtin.Pool.Binding.Role = value
+	}
+	if labelsJSON := os.Getenv("AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_LABELS"); labelsJSON != "" {
+		var labels map[string]string
+		if err := json.Unmarshal([]byte(labelsJSON), &labels); err != nil {
+			log.Printf("[CONFIG] Warning: invalid built-in session manager pool labels: %v", err)
+		} else {
+			config.SessionManager.Builtin.Pool.Labels = labels
+		}
+	}
+
 	config.SessionPersistence.Backend = v.GetString("session_persistence.backend")
 	config.SessionPersistence.Path = v.GetString("session_persistence.path")
 	config.SessionPersistence.SuspendAfter = v.GetString("session_persistence.suspend_after")
@@ -1375,7 +1411,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("session_manager.builtin.enabled", false)
 	v.SetDefault("session_manager.builtin.manager_id", "")
 	v.SetDefault("session_manager.builtin.name", "Built-in session manager")
+	v.SetDefault("session_manager.builtin.connection_token", "")
 	v.SetDefault("session_manager.builtin.pool.name", "")
+	v.SetDefault("session_manager.builtin.pool.labels_json", "")
 	v.SetDefault("session_manager.builtin.pool.explicit_only", false)
 	v.SetDefault("session_manager.builtin.pool.priority", -1)
 	v.SetDefault("session_manager.builtin.pool.binding.subject_type", "all")
