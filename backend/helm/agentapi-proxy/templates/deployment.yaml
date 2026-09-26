@@ -875,19 +875,19 @@ spec:
                   name: {{ required "sessionManager.externalRegistration.hmacSecretRef.name is required when external registration is enabled" (dig "name" "" $externalHMACRef) | quote }}
                   key: {{ dig "key" "hmac-secret" $externalHMACRef | quote }}
             {{- end }}
-            {{- $apiBuiltin := dig "builtin" (dict) (dig "sessionManager" (dict) $api) }}
-            {{- if (dig "enabled" false $apiBuiltin) }}
-            {{- $builtinConnectionRef := dig "connectionTokenSecretRef" (dict) $apiBuiltin }}
+            {{- $builtin := dig "builtin" (dict) (.Values.sessionManager | default dict) }}
+            {{- if (dig "enabled" false $builtin) }}
+            {{- $builtinConnectionRef := dig "connectionTokenSecretRef" (dict) $builtin }}
             - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_ENABLED, value: "true"}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_MANAGER_ID, value: {{ required "api.sessionManager.builtin.managerId is required when builtin registration is enabled" (dig "managerId" "" $apiBuiltin) | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_NAME, value: {{ dig "name" "Built-in session manager" $apiBuiltin | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_CONNECTION_TOKEN, valueFrom: {secretKeyRef: {name: {{ required "api.sessionManager.builtin.connectionTokenSecretRef.name is required when builtin registration is enabled" (dig "name" "" $builtinConnectionRef) | quote }}, key: {{ dig "key" "connection-token" $builtinConnectionRef | quote }}}}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL, value: {{ required "api.sessionManager.builtin.pool.name is required when builtin registration is enabled" (dig "pool" "name" "" $apiBuiltin) | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_LABELS, value: {{ dig "pool" "labels" (dict) $apiBuiltin | toJson | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_EXPLICIT_ONLY, value: {{ dig "pool" "explicitOnly" false $apiBuiltin | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_PRIORITY, value: {{ dig "pool" "priority" -1 $apiBuiltin | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_SUBJECT_TYPE, value: {{ dig "pool" "binding" "subjectType" "all" $apiBuiltin | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_ROLE, value: {{ dig "pool" "binding" "role" "use" $apiBuiltin | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_MANAGER_ID, value: {{ required "sessionManager.builtin.managerId is required when builtin registration is enabled" (dig "managerId" "" $builtin) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_NAME, value: {{ dig "name" "Built-in session manager" $builtin | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_CONNECTION_TOKEN, valueFrom: {secretKeyRef: {name: {{ required "sessionManager.builtin.connectionTokenSecretRef.name is required when builtin registration is enabled" (dig "name" "" $builtinConnectionRef) | quote }}, key: {{ dig "key" "connection-token" $builtinConnectionRef | quote }}}}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL, value: {{ required "sessionManager.builtin.pool.name is required when builtin registration is enabled" (dig "pool" "name" "" $builtin) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_LABELS, value: {{ dig "pool" "labels" (dict) $builtin | toJson | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_EXPLICIT_ONLY, value: {{ dig "pool" "explicitOnly" false $builtin | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_POOL_PRIORITY, value: {{ dig "pool" "priority" -1 $builtin | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_SUBJECT_TYPE, value: {{ dig "pool" "binding" "subjectType" "all" $builtin | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_BUILTIN_BINDING_ROLE, value: {{ dig "pool" "binding" "role" "use" $builtin | quote }}}
             {{- end }}
             {{- end }}
             {{- range $apiEnv }}

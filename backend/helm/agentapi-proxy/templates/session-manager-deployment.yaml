@@ -168,7 +168,7 @@ spec:
             {{- end }}
             {{- if and (not (dig "enabled" false $registration)) (not (dig "enabled" false $runner)) (dig "enabled" false $builtin) }}
             - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "sessionManager.builtin.managerId is required when builtin mode is enabled" (dig "managerId" "" $builtin) | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "sessionManager.builtin.pool is required when builtin mode is enabled" (dig "pool" "" $builtin) | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_RUNNER_POOL, value: {{ required "sessionManager.builtin.pool.name is required when builtin mode is enabled" (dig "pool" "name" "" $builtin) | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ default (printf "http://%s:%v" (include "agentapi-proxy.fullname" .) .Values.service.port) $manager.apiUrl | quote }}}
             - name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN
               valueFrom:

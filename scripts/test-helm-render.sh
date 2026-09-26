@@ -392,51 +392,32 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_CONNECTION_TOKEN' "$TMP_DIR/back
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_HMAC_SECRET' "$TMP_DIR/backend-manager-registration.yaml"
 
 # The built-in manager can opt in to the same runner/ESM registry while keeping
-# its private API role. The API and manager must share the stable identity,
-# pool, and connection token.
-if "$HELM_BIN" template invalid-builtin-api "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  "${all_role_args[@]}" \
-  --set api.sessionManager.builtin.enabled=true \
-  --set api.sessionManager.builtin.managerId=builtin-separation \
-  --set api.sessionManager.builtin.connectionTokenSecretRef.name=builtin-connection \
-  >"$TMP_DIR/backend-invalid-builtin-api.yaml" 2>/dev/null; then
-  echo "built-in API registration without a pool unexpectedly passed" >&2
-  exit 1
-fi
-if "$HELM_BIN" template invalid-builtin-manager "$REPO_ROOT/backend/helm/agentapi-proxy" \
+# its private API role. One values block feeds both the API and manager Pods.
+if "$HELM_BIN" template invalid-builtin "$REPO_ROOT/backend/helm/agentapi-proxy" \
   "${all_role_args[@]}" \
   --set sessionManager.builtin.enabled=true \
   --set sessionManager.builtin.managerId=builtin-separation \
-  --set sessionManager.builtin.pool=builtin \
   --set sessionManager.builtin.connectionTokenSecretRef.name=builtin-connection \
-  >"$TMP_DIR/backend-invalid-builtin-manager.yaml" 2>/dev/null; then
-  echo "built-in manager registration without parent API registration unexpectedly passed" >&2
+  >"$TMP_DIR/backend-invalid-builtin.yaml" 2>/dev/null; then
+  echo "built-in registration without a pool unexpectedly passed" >&2
   exit 1
 fi
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --show-only templates/deployment.yaml \
   "${all_role_args[@]}" \
-  --set api.sessionManager.builtin.enabled=true \
-  --set api.sessionManager.builtin.managerId=builtin-separation \
-  --set api.sessionManager.builtin.name='Built-in Kubernetes manager' \
-  --set api.sessionManager.builtin.connectionTokenSecretRef.name=builtin-connection \
-  --set api.sessionManager.builtin.pool.name=builtin \
   --set sessionManager.builtin.enabled=true \
   --set sessionManager.builtin.managerId=builtin-separation \
-  --set sessionManager.builtin.pool=builtin \
+  --set sessionManager.builtin.name='Built-in Kubernetes manager' \
+  --set sessionManager.builtin.pool.name=builtin \
   --set sessionManager.builtin.connectionTokenSecretRef.name=builtin-connection \
   >"$TMP_DIR/backend-builtin-api.yaml"
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --show-only templates/session-manager-deployment.yaml \
   "${all_role_args[@]}" \
-  --set api.sessionManager.builtin.enabled=true \
-  --set api.sessionManager.builtin.managerId=builtin-separation \
-  --set api.sessionManager.builtin.name='Built-in Kubernetes manager' \
-  --set api.sessionManager.builtin.connectionTokenSecretRef.name=builtin-connection \
-  --set api.sessionManager.builtin.pool.name=builtin \
   --set sessionManager.builtin.enabled=true \
   --set sessionManager.builtin.managerId=builtin-separation \
-  --set sessionManager.builtin.pool=builtin \
+  --set sessionManager.builtin.name='Built-in Kubernetes manager' \
+  --set sessionManager.builtin.pool.name=builtin \
   --set sessionManager.builtin.connectionTokenSecretRef.name=builtin-connection \
   >"$TMP_DIR/backend-builtin-manager.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_BUILTIN_MANAGER_ID, value: "builtin-separation"' "$TMP_DIR/backend-builtin-api.yaml"

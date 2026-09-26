@@ -70,8 +70,7 @@ builtin-<namespace>-<release>
 | Logical pool | `builtin` | `Built-in session manager` |
 | Pool supplier | `builtin` + the manager ID | Same as the manager display value |
 | Binding | A generated binding ID on pool `builtin` | `all` with role `use` by default |
-| Helm parent API key | `api.sessionManager.builtin` | — |
-| Helm execution-plane key | `sessionManager.builtin` | — |
+| Helm configuration key | `sessionManager.builtin` | — |
 | Origin marker | `builtin` | — |
 | Manager kind label | `agentapi.proxy/manager-kind=builtin` | — |
 
@@ -106,36 +105,26 @@ api:
     url: http://agentapi-proxy-session-manager:8080
     tokenSecretRef:
       name: manager-internal
-    builtin:
-      enabled: true
-      managerId: builtin-agentapi-default
-      name: Built-in Kubernetes manager
-      connectionTokenSecretRef:
-        name: builtin-manager-connection
-      hmacSecretRef:
-        name: builtin-manager-hmac
-      pool:
-        name: builtin
-        labels:
-          runtime: kubernetes
-        autoAssign: true
-        explicitOnly: false
-        priority: -1
-        binding:
-          subjectType: all
-          role: use
 
 sessionManager:
   enabled: true
-  runner:
+  builtin:
     enabled: true
     managerId: builtin-agentapi-default
-    pool: builtin
-    upstreamUrl: http://agentapi-proxy:8080
+    name: Built-in Kubernetes manager
     connectionTokenSecretRef:
       name: builtin-manager-connection
     hmacSecretRef:
       name: builtin-manager-hmac
+    pool:
+      name: builtin
+      labels:
+        runtime: kubernetes
+      explicitOnly: false
+      priority: -1
+      binding:
+        subjectType: all
+        role: use
 ```
 
 `priority: -1` keeps the built-in pool below operator-created pools that use the

@@ -171,24 +171,6 @@ api:
     tokenSecretRef:
       name: ""
       key: token
-    # Pool registration for the in-cluster built-in session manager. This is
-    # opt-in and must share managerId/pool/connection token with
-    # sessionManager.builtin.
-    builtin:
-      enabled: false
-      managerId: ""
-      name: ""
-      connectionTokenSecretRef:
-        name: ""
-        key: connection-token
-      pool:
-        name: ""
-        labels: {}
-        explicitOnly: false
-        priority: -1
-        binding:
-          subjectType: all
-          role: use
 
 # Optional Google Cloud Run output. The application configuration continues to
 # come from this chart's existing api/config/github/asset/scia
@@ -388,19 +370,26 @@ sessionManager:
       name: ""
       key: ""
   # First-class runner/ESM registration for this chart's own built-in manager.
-  # Enable api.sessionManager.builtin at the same time. Both roles use the same
-  # manager process: private API for existing sessions and ESM for new pool and
-  # Codex auth placements.
+  # This single block configures both the API-side registry reconciliation and
+  # the execution-plane manager process.
   builtin:
     enabled: false
     managerId: ""
-    pool: ""
+    name: "Built-in session manager"
     connectionTokenSecretRef:
       name: ""
       key: connection-token
     hmacSecretRef:
       name: ""
       key: ""
+    pool:
+      name: ""
+      labels: {}
+      explicitOnly: false
+      priority: -1
+      binding:
+        subjectType: all
+        role: use
   # Credential accepted only by the session-manager internal API. The API
   # client references the same Secret independently under api.sessionManager.
   internalApi:

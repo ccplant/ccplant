@@ -75,8 +75,7 @@
           "required": ["url", "tokenSecretRef"],
           "properties": {
             "url": { "type": "string" },
-            "tokenSecretRef": { "$ref": "#/definitions/secretRef" },
-            "builtin": { "$ref": "#/definitions/builtinParentRegistration" }
+            "tokenSecretRef": { "$ref": "#/definitions/secretRef" }
           }
         }
       }
@@ -200,7 +199,7 @@
           ]
         },
         "externalRegistration": { "$ref": "#/definitions/externalRegistration" },
-        "builtin": { "$ref": "#/definitions/builtinExecutionRegistration" },
+        "builtin": { "$ref": "#/definitions/builtinRegistration" },
         "internalApi": {
           "type": "object",
           "required": ["tokenSecretRef"],
@@ -327,61 +326,6 @@
           { "properties": { "api": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
         ]
       }
-    },
-    {
-      "if": {
-        "properties": {
-          "api": {
-            "properties": {
-              "sessionManager": {
-                "properties": {
-                  "builtin": {
-                    "properties": {
-                      "enabled": { "const": true }
-                    },
-                    "required": ["enabled"]
-                  }
-                },
-                "required": ["builtin"]
-              }
-            },
-            "required": ["sessionManager"]
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "sessionManager": { "properties": { "builtin": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "sessionManager": {
-            "properties": {
-              "builtin": {
-                "properties": {
-                  "enabled": { "const": true }
-                },
-                "required": ["enabled"]
-              }
-            },
-            "required": ["builtin"]
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "api": {
-            "properties": {
-              "sessionManager": {
-                "properties": { "builtin": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } }
-              }
-            }
-          }
-        }
-      }
     }
   ],
   "definitions": {
@@ -448,35 +392,31 @@
         }
       ]
     },
-    "builtinParentRegistration": {
+    "builtinRegistration": {
       "type": "object",
-      "required": ["enabled", "managerId", "connectionTokenSecretRef"],
+      "required": ["enabled", "managerId", "name", "pool", "connectionTokenSecretRef", "hmacSecretRef"],
       "properties": {
         "enabled": { "type": "boolean" },
         "managerId": { "type": "string" },
         "name": { "type": "string" },
-        "connectionTokenSecretRef": { "$ref": "#/definitions/secretRef" }
-      },
-      "allOf": [
-        {
-          "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
-          "then": {
-            "properties": {
-              "managerId": { "minLength": 1 },
-              "name": { "minLength": 1 },
-              "connectionTokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] }
+        "pool": {
+          "type": "object",
+          "required": ["name", "labels", "explicitOnly", "priority", "binding"],
+          "properties": {
+            "name": { "type": "string" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "explicitOnly": { "type": "boolean" },
+            "priority": { "type": "integer" },
+            "binding": {
+              "type": "object",
+              "required": ["subjectType", "role"],
+              "properties": {
+                "subjectType": { "type": "string", "enum": ["all", "user", "team"] },
+                "role": { "type": "string", "enum": ["use", "manage"] }
+              }
             }
           }
-        }
-      ]
-    },
-    "builtinExecutionRegistration": {
-      "type": "object",
-      "required": ["enabled", "managerId", "pool", "connectionTokenSecretRef", "hmacSecretRef"],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "managerId": { "type": "string" },
-        "pool": { "type": "string" },
+        },
         "connectionTokenSecretRef": { "$ref": "#/definitions/secretRef" },
         "hmacSecretRef": {
           "type": "object",
@@ -493,7 +433,8 @@
           "then": {
             "properties": {
               "managerId": { "minLength": 1 },
-              "pool": { "minLength": 1 },
+              "name": { "minLength": 1 },
+              "pool": { "properties": { "name": { "minLength": 1 } } },
               "connectionTokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] }
             }
           }
