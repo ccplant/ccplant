@@ -87,22 +87,24 @@ var _ codexauth.WorkloadLauncher = (*CodexDeviceAuthLauncher)(nil)
 // now. It backs GET /codex/device-auth/config so the frontend can tell "no
 // execution plane" apart from "feature disabled".
 func (l *CodexDeviceAuthLauncher) Available(ctx context.Context) bool {
+	return l.AvailableForSubject(ctx, sessionrunnercore.Subject{})
+}
+
+func (l *CodexDeviceAuthLauncher) AvailableForSubject(ctx context.Context, subject sessionrunnercore.Subject) bool {
 	if l.local != nil {
 		return true
 	}
 	if l.managers == nil || l.tunnel == nil {
 		return false
 	}
-	managers, err := l.managers.ListManagers(ctx)
+	if l.routes == nil {
+		return false
+	}
+	route, err := l.routes.ResolveRoute(ctx, subject, sessionrunnercore.RouteRequest{})
 	if err != nil {
 		return false
 	}
-	for _, manager := range managers {
-		if l.tunnel.IsConnected(ctx, manager.ID) {
-			return true
-		}
-	}
-	return false
+	return route != nil
 }
 
 func (l *CodexDeviceAuthLauncher) StartCodexDeviceAuth(ctx context.Context, request codexauth.WorkloadRequest) error {
@@ -127,7 +129,7 @@ func (l *CodexDeviceAuthLauncher) StartCodexDeviceAuth(ctx context.Context, requ
 func (l *CodexDeviceAuthLauncher) startOnManager(ctx context.Context, request codexauth.WorkloadRequest) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, codexDeviceAuthStartTimeout)
 	defer cancel()
-	resolved, err := l.routes.ResolveRoute(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectType(request.SubjectType), ID: request.SubjectID}, sessionrunnercore.RouteRequest{})
+	resolved, err := l.routes.ResolveRoute(ctx, sessionrunnercore.Subject{Type: sessionrunnercore.SubjectType(request.SubjectType), ID: request.SubjectID}, sessionrunnercore.RouteRequest{RequiredManagerID: request.ManagerID})
 	if err != nil {
 		return "", fmt.Errorf("resolve authorized pool for Codex auth: %w", err)
 	}

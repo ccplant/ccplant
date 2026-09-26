@@ -30,6 +30,7 @@ type WorkloadRequest struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	SubjectType string    `json:"subject_type"`
 	SubjectID   string    `json:"subject_id"`
+	ManagerID   string    `json:"manager_id,omitempty"`
 }
 
 type Challenge struct {

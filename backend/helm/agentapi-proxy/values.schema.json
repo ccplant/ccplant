@@ -199,6 +199,7 @@
           ]
         },
         "externalRegistration": { "$ref": "#/definitions/externalRegistration" },
+        "builtin": { "$ref": "#/definitions/builtinRegistration" },
         "internalApi": {
           "type": "object",
           "required": ["tokenSecretRef"],
@@ -369,7 +370,14 @@
         "enabled": { "type": "boolean" },
         "upstreamUrl": { "type": "string" },
         "connectionTokenSecretRef": { "$ref": "#/definitions/secretRef" },
-        "hmacSecretRef": { "$ref": "#/definitions/secretRef" }
+        "hmacSecretRef": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string" }
+          }
+        }
       },
       "allOf": [
         {
@@ -379,6 +387,55 @@
               "upstreamUrl": { "minLength": 1 },
               "connectionTokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] },
               "hmacSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] }
+            }
+          }
+        }
+      ]
+    },
+    "builtinRegistration": {
+      "type": "object",
+      "required": ["enabled", "managerId", "name", "pool", "connectionTokenSecretRef", "hmacSecretRef"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "managerId": { "type": "string" },
+        "name": { "type": "string" },
+        "pool": {
+          "type": "object",
+          "required": ["name", "labels", "explicitOnly", "priority", "binding"],
+          "properties": {
+            "name": { "type": "string" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "explicitOnly": { "type": "boolean" },
+            "priority": { "type": "integer" },
+            "binding": {
+              "type": "object",
+              "required": ["subjectType", "role"],
+              "properties": {
+                "subjectType": { "type": "string", "enum": ["all", "user", "team"] },
+                "role": { "type": "string", "enum": ["use", "manage"] }
+              }
+            }
+          }
+        },
+        "connectionTokenSecretRef": { "$ref": "#/definitions/secretRef" },
+        "hmacSecretRef": {
+          "type": "object",
+          "required": ["name", "key"],
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+          "then": {
+            "properties": {
+              "managerId": { "minLength": 1 },
+              "name": { "minLength": 1 },
+              "pool": { "properties": { "name": { "minLength": 1 } } },
+              "connectionTokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] }
             }
           }
         }

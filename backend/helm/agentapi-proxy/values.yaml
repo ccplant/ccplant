@@ -369,6 +369,27 @@ sessionManager:
     hmacSecretRef:
       name: ""
       key: ""
+  # First-class runner/ESM registration for this chart's own built-in manager.
+  # This single block configures both the API-side registry reconciliation and
+  # the execution-plane manager process.
+  builtin:
+    enabled: false
+    managerId: ""
+    name: "Built-in session manager"
+    connectionTokenSecretRef:
+      name: ""
+      key: connection-token
+    hmacSecretRef:
+      name: ""
+      key: ""
+    pool:
+      name: ""
+      labels: {}
+      explicitOnly: false
+      priority: -1
+      binding:
+        subjectType: all
+        role: use
   # Credential accepted only by the session-manager internal API. The API
   # client references the same Secret independently under api.sessionManager.
   internalApi:

@@ -6,6 +6,7 @@ const (
 	CapabilityRunnerClaimV1     = "runner_claim_v1"
 	CapabilityDirectRuntimeV1   = "direct_session_runtime_v1"
 	CapabilityCodexDeviceAuthV1 = "codex_device_auth_v1"
+	ManagerOriginBuiltin        = "builtin"
 )
 
 type ManagerScope string
@@ -38,6 +39,7 @@ func (r BindingRole) GrantsManage() bool {
 
 type Manager struct {
 	ID                    string            `json:"id"`
+	Origin                string            `json:"origin,omitempty"`
 	Name                  string            `json:"name"`
 	Scope                 ManagerScope      `json:"scope"`
 	OwnerID               string            `json:"owner_id,omitempty"`

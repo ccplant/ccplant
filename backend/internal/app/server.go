@@ -222,22 +222,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		if clientErr != nil {
 			log.Fatalf("[SERVER] Failed to initialize session-manager client: %v", clientErr)
 		}
-		healthCtx, healthCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		var healthErr error
-		for healthCtx.Err() == nil {
-			healthErr = remoteManager.Health(healthCtx)
-			if healthErr == nil {
-				break
-			}
-			select {
-			case <-healthCtx.Done():
-			case <-time.After(time.Second):
-			}
-		}
-		healthCancel()
-		if healthErr != nil {
-			log.Fatalf("[SERVER] Session manager is unavailable after startup grace period: %v", healthErr)
-		}
+		// Do not make API startup depend on session-manager readiness. The
+		// in-cluster manager may itself register with this API during startup, so
+		// waiting here creates a circular dependency during simultaneous rollouts.
+		// Requests that need the manager surface the client error until it becomes
+		// available.
 		sessionManager = remoteManager
 		remoteSessionManager = remoteManager
 		var apiKVClient kubernetes.Interface = fake.NewSimpleClientset()
@@ -450,6 +439,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 	}
 	sessionRunnerStore := infrasessionrunner.NewStore(sessionRunnerKVStore, namespace)
 	log.Printf("[SERVER] Session runner pool repository initialized")
+	startBuiltInSessionManagerReconciler(runtimeConfigCtx, sessionRunnerStore, cfg)
 
 	// Initialize user file repository (Kubernetes Secret-backed)
 	userFileRepo := portrepos.UserFileRepository(repositories.NewKubernetesUserFileRepository(
