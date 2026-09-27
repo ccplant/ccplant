@@ -24,11 +24,24 @@ func TestLibSQLSessionCountRepositoryUpsertsAndListsDimensions(t *testing.T) {
 		ActiveCount:           2,
 		RunningCount:          1,
 	}}))
-	// A retry for the same collection bucket replaces counts instead of
-	// creating a duplicate row.
+	// A retry for the same collection bucket is idempotent.
 	require.NoError(t, repository.SaveSnapshot(ctx, sampledAt, []entities.SessionCountSample{{
 		SessionCountDimension: dimension,
 		SampledAt:             sampledAt,
+		ActiveCount:           2,
+		RunningCount:          1,
+	}}))
+	// The transition to zero is recorded.
+	require.NoError(t, repository.SaveSnapshot(ctx, sampledAt.Add(time.Minute), []entities.SessionCountSample{{
+		SessionCountDimension: dimension,
+		SampledAt:             sampledAt.Add(time.Minute),
+		ActiveCount:           0,
+		RunningCount:          0,
+	}}))
+	// An unchanged zero in a later collection bucket is deliberately omitted.
+	require.NoError(t, repository.SaveSnapshot(ctx, sampledAt.Add(2*time.Minute), []entities.SessionCountSample{{
+		SessionCountDimension: dimension,
+		SampledAt:             sampledAt.Add(2 * time.Minute),
 		ActiveCount:           0,
 		RunningCount:          0,
 	}}))
@@ -39,8 +52,9 @@ func TestLibSQLSessionCountRepositoryUpsertsAndListsDimensions(t *testing.T) {
 
 	concrete := repository.(*LibSQLSessionCountRepository)
 	var rows, active, running int
-	require.NoError(t, concrete.db.QueryRowContext(ctx, `SELECT COUNT(*), active_count, running_count FROM agentapi_session_count_samples`).Scan(&rows, &active, &running))
-	require.Equal(t, 1, rows)
+	require.NoError(t, concrete.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_session_count_samples`).Scan(&rows))
+	require.NoError(t, concrete.db.QueryRowContext(ctx, `SELECT active_count,running_count FROM agentapi_session_count_samples ORDER BY sampled_at DESC LIMIT 1`).Scan(&active, &running))
+	require.Equal(t, 2, rows)
 	require.Zero(t, active)
 	require.Zero(t, running)
 }

@@ -82,8 +82,34 @@ func (r *LibSQLSessionCountRepository) SaveSnapshot(ctx context.Context, sampled
 		return fmt.Errorf("begin session count snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	type count struct{ active, running int }
+	latest := map[entities.SessionCountDimension]count{}
+	rows, err := tx.QueryContext(ctx, `SELECT sample.pool,sample.principal_id,sample.active_count,sample.running_count
+FROM agentapi_session_count_samples sample
+JOIN (SELECT pool,principal_id,MAX(sampled_at) AS sampled_at
+      FROM agentapi_session_count_samples GROUP BY pool,principal_id) newest
+ON sample.pool=newest.pool AND sample.principal_id=newest.principal_id AND sample.sampled_at=newest.sampled_at`)
+	if err != nil {
+		return fmt.Errorf("list latest session counts: %w", err)
+	}
+	for rows.Next() {
+		var dimension entities.SessionCountDimension
+		var value count
+		if err := rows.Scan(&dimension.Pool, &dimension.PrincipalID, &value.active, &value.running); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan latest session count: %w", err)
+		}
+		latest[dimension] = value
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close latest session counts: %w", err)
+	}
 	timestamp := sampledAt.UTC().Format(time.RFC3339Nano)
 	for _, sample := range samples {
+		previous, exists := latest[sample.SessionCountDimension]
+		if exists && previous.active == sample.ActiveCount && previous.running == sample.RunningCount {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_count_dimensions (pool,principal_id) VALUES (?,?)`, sample.Pool, sample.PrincipalID); err != nil {
 			return fmt.Errorf("save session count dimension: %w", err)
 		}

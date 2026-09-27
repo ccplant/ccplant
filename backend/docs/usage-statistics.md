@@ -66,7 +66,8 @@ session_count:
 
 Snapshots use the table `agentapi_session_count_samples`. Active counts include
 `pending`, `leased`, `claimed`, and `running` allocations, while
-`running_count` includes only `running`. Previously observed and explicitly
-bound pool/principal pairs receive a row containing zero after their last
-session stops. A missing timestamp therefore indicates a failed collection,
-not a zero count.
+`running_count` includes only `running`. Samples are change points: the worker
+writes the initial value and subsequent changes, but does not repeat an
+unchanged count every minute. Previously observed and explicitly bound
+pool/principal pairs receive a row containing zero after their last session
+stops. Consumers reconstruct a time series by carrying the last value forward.
