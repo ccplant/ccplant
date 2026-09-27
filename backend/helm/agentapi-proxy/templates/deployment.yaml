@@ -361,6 +361,24 @@ spec:
                   name: {{ required "config.usage.authTokenSecretRef.name is required when usage is enabled" (dig "usage" "authTokenSecretRef" "name" "" .Values.config) | quote }}
                   key: {{ dig "usage" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
             {{- end }}
+            - name: AGENTAPI_SESSION_COUNT_ENABLED
+              value: {{ dig "sessionCount" "enabled" false .Values.config | quote }}
+            {{- if (dig "sessionCount" "enabled" false .Values.config) }}
+            - name: AGENTAPI_SESSION_COUNT_BACKEND
+              value: {{ dig "sessionCount" "backend" "libsql" .Values.config | quote }}
+            - name: AGENTAPI_SESSION_COUNT_CHECK_INTERVAL
+              value: {{ dig "sessionCount" "checkInterval" "1m" .Values.config | quote }}
+            - name: AGENTAPI_SESSION_COUNT_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "config.sessionCount.databaseUrlSecretRef.name is required when session counting is enabled" (dig "sessionCount" "databaseUrlSecretRef" "name" "" .Values.config) | quote }}
+                  key: {{ dig "sessionCount" "databaseUrlSecretRef" "key" "database-url" .Values.config | quote }}
+            - name: AGENTAPI_SESSION_COUNT_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "config.sessionCount.authTokenSecretRef.name is required when session counting is enabled" (dig "sessionCount" "authTokenSecretRef" "name" "" .Values.config) | quote }}
+                  key: {{ dig "sessionCount" "authTokenSecretRef" "key" "auth-token" .Values.config | quote }}
+            {{- end }}
             # Application configuration via environment variables (AGENTAPI_ prefix)
             - name: AGENTAPI_AUTH_BOOTSTRAP_ADMIN_ENABLED
               value: {{ .Values.config.auth.bootstrapAdmin.enabled | quote }}

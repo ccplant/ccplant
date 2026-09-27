@@ -153,6 +153,7 @@ func runProxy(cmd *cobra.Command, args []string) {
 	// the next reconciliation pass. Legacy static/personal API keys are
 	// unaffected.
 	proxyServer.StartAPITokenReconciler(serverCtx, 30*time.Second)
+	proxyServer.StartSessionCountWorker(serverCtx)
 
 	// Start session monitoring after proxy is initialized
 	proxyServer.StartMonitoring()

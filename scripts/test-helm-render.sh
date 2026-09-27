@@ -79,6 +79,17 @@ assert_not_contains 'AGENTAPI_K8S_SESSION_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-default.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_' "$TMP_DIR/backend-default.yaml"
 
+assert_contains 'name: AGENTAPI_SESSION_COUNT_ENABLED' "$TMP_DIR/backend-default.yaml"
+"$HELM_BIN" template session-count "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/deployment.yaml \
+  --set config.sessionCount.enabled=true \
+  --set config.sessionCount.databaseUrlSecretRef.name=session-count-db \
+  --set config.sessionCount.authTokenSecretRef.name=session-count-db \
+  >"$TMP_DIR/session-count.yaml"
+assert_contains 'name: AGENTAPI_SESSION_COUNT_BACKEND' "$TMP_DIR/session-count.yaml"
+assert_contains 'name: AGENTAPI_SESSION_COUNT_DATABASE_URL' "$TMP_DIR/session-count.yaml"
+assert_contains 'name: "session-count-db"' "$TMP_DIR/session-count.yaml"
+
 # Cloudflare R2 session persistence injects credentials only into the API role
 # when the in-process session manager owns suspend/resume checkpoints.
 "$HELM_BIN" template backend-r2 "$REPO_ROOT/backend/helm/agentapi-proxy" \

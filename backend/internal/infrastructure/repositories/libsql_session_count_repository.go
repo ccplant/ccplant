@@ -1,0 +1,105 @@
+package repositories
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/tursodatabase/libsql-client-go/libsql"
+)
+
+type LibSQLSessionCountRepository struct{ db *sql.DB }
+
+var _ portrepos.SessionCountRepository = (*LibSQLSessionCountRepository)(nil)
+
+func NewLibSQLSessionCountRepository(ctx context.Context, databaseURL, authToken string) (*LibSQLSessionCountRepository, error) {
+	if databaseURL == "" {
+		return nil, fmt.Errorf("session count database URL is required")
+	}
+	opts := []libsql.Option{}
+	if authToken != "" {
+		opts = append(opts, libsql.WithAuthToken(authToken))
+	}
+	connector, err := libsql.NewConnector(databaseURL, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("create session count libSQL connector: %w", err)
+	}
+	db := sql.OpenDB(connector)
+	db.SetMaxOpenConns(8)
+	r := &LibSQLSessionCountRepository{db: db}
+	if err := r.initialize(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *LibSQLSessionCountRepository) initialize(ctx context.Context) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS agentapi_session_count_dimensions (
+pool TEXT NOT NULL, principal_id TEXT NOT NULL,
+PRIMARY KEY (pool, principal_id))`,
+		`CREATE TABLE IF NOT EXISTS agentapi_session_count_samples (
+sampled_at TEXT NOT NULL, pool TEXT NOT NULL, principal_id TEXT NOT NULL,
+active_count INTEGER NOT NULL, running_count INTEGER NOT NULL,
+PRIMARY KEY (sampled_at, pool, principal_id))`,
+		`CREATE INDEX IF NOT EXISTS agentapi_session_count_samples_principal_time
+ON agentapi_session_count_samples(principal_id, sampled_at)`,
+		`CREATE INDEX IF NOT EXISTS agentapi_session_count_samples_pool_time
+ON agentapi_session_count_samples(pool, sampled_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := r.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("initialize session count schema: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *LibSQLSessionCountRepository) ListDimensions(ctx context.Context) ([]entities.SessionCountDimension, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT pool, principal_id FROM agentapi_session_count_dimensions ORDER BY pool, principal_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list session count dimensions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []entities.SessionCountDimension{}
+	for rows.Next() {
+		var dimension entities.SessionCountDimension
+		if err := rows.Scan(&dimension.Pool, &dimension.PrincipalID); err != nil {
+			return nil, fmt.Errorf("scan session count dimension: %w", err)
+		}
+		result = append(result, dimension)
+	}
+	return result, rows.Err()
+}
+
+func (r *LibSQLSessionCountRepository) SaveSnapshot(ctx context.Context, sampledAt time.Time, samples []entities.SessionCountSample) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin session count snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	timestamp := sampledAt.UTC().Format(time.RFC3339Nano)
+	for _, sample := range samples {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_count_dimensions (pool,principal_id) VALUES (?,?)`, sample.Pool, sample.PrincipalID); err != nil {
+			return fmt.Errorf("save session count dimension: %w", err)
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO agentapi_session_count_samples
+(sampled_at,pool,principal_id,active_count,running_count) VALUES (?,?,?,?,?)
+ON CONFLICT(sampled_at,pool,principal_id) DO UPDATE SET
+active_count=excluded.active_count,running_count=excluded.running_count`,
+			timestamp, sample.Pool, sample.PrincipalID, sample.ActiveCount, sample.RunningCount)
+		if err != nil {
+			return fmt.Errorf("save session count sample: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit session count snapshot: %w", err)
+	}
+	return nil
+}
+
+func (r *LibSQLSessionCountRepository) Close() error { return r.db.Close() }

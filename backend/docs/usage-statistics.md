@@ -48,3 +48,25 @@ generating the file. It includes timestamps, session/model identifiers, and
 token counts, but excludes user IDs, team IDs, event IDs, and message content.
 The frontend helper in `src/lib/usage-parquet.ts` loads this file into a local
 DuckDB-Wasm `usage_events` view so visualization SQL remains browser-local.
+
+## Active session count snapshots
+
+The proxy can also periodically persist active session counts by logical pool
+and stable user or team principal. This collector has an independent backend
+selection and repository interface; `libsql` is currently implemented.
+
+```yaml
+session_count:
+  enabled: true
+  backend: libsql
+  database_url: libsql://statistics.example
+  auth_token: "..."
+  check_interval: 1m
+```
+
+Snapshots use the table `agentapi_session_count_samples`. Active counts include
+`pending`, `leased`, `claimed`, and `running` allocations, while
+`running_count` includes only `running`. Previously observed and explicitly
+bound pool/principal pairs receive a row containing zero after their last
+session stops. A missing timestamp therefore indicates a failed collection,
+not a zero count.
