@@ -72,3 +72,11 @@ usage:
   enabled: false
   database_url: ""
   auth_token: ""
+
+# Periodic active session counts grouped by logical pool and stable principal.
+session_count:
+  enabled: false
+  backend: libsql
+  database_url: ""
+  auth_token: ""
+  check_interval: 1m

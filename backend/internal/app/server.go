@@ -38,6 +38,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionmanagerapi"
 	infrasessionrunner "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessioncount"
 	"github.com/takutakahashi/agentapi-proxy/internal/runtimeconfig"
 	personalapikeyuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -74,6 +75,9 @@ type Server struct {
 	persistenceClient           kubernetes.Interface // Secret/ConfigMap client for non-session application data
 	kvStore                     kvstore.Store        // non-nil when persistenceClient is backed by libSQL
 	usageRepo                   portrepos.UsageRepository
+	sessionCountRepo            portrepos.SessionCountRepository
+	sessionCountWorkers         sync.WaitGroup
+	sessionCountCancel          context.CancelFunc
 	settingsRepo                portrepos.SettingsRepository                    // Settings repository
 	credentialsRepo             portrepos.CredentialsRepository                 // Credentials repository
 	shareRepo                   portrepos.ShareRepository                       // Share repository for session sharing
@@ -298,6 +302,14 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			log.Fatalf("Failed to initialize usage store: %v", err)
 		}
 		log.Printf("[SERVER] Usage persistence initialized")
+	}
+	var sessionCountRepo portrepos.SessionCountRepository
+	if cfg.SessionCount.Enabled {
+		sessionCountRepo, err = repositories.NewSessionCountRepository(context.Background(), cfg.SessionCount.Backend, cfg.SessionCount.DatabaseURL, cfg.SessionCount.AuthToken)
+		if err != nil {
+			log.Fatalf("Failed to initialize session count store: %v", err)
+		}
+		log.Printf("[SERVER] Session count persistence initialized with backend %s", cfg.SessionCount.Backend)
 	}
 
 	// Initialize cross-pod status synchronisation via Redis (optional).
@@ -534,6 +546,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		persistenceClient:           persistenceClient,
 		kvStore:                     applicationKVStore,
 		usageRepo:                   usageRepo,
+		sessionCountRepo:            sessionCountRepo,
 		settingsRepo:                settingsRepo,
 		credentialsRepo:             credentialsRepo,
 		shareRepo:                   shareRepo,
@@ -969,6 +982,27 @@ func cleanupLocalSessionRoutes(ctx context.Context, repo portrepos.SessionRouteR
 // StartMonitoring starts the session monitoring (called after server is fully initialized)
 func (s *Server) StartMonitoring() {
 	// Session monitoring disabled - notifications handled by Claude Code hooks
+}
+
+// StartSessionCountWorker starts periodic pool/principal snapshots when enabled.
+func (s *Server) StartSessionCountWorker(ctx context.Context) {
+	if s.sessionCountRepo == nil {
+		return
+	}
+	interval, err := time.ParseDuration(s.config.SessionCount.CheckInterval)
+	if err != nil || interval <= 0 {
+		log.Printf("[SESSION_COUNT_WORKER] Invalid check_interval %q; using 1m", s.config.SessionCount.CheckInterval)
+		interval = time.Minute
+	}
+	worker := sessioncount.NewWorker(s.sessionRunnerStore, s.sessionRouteRepo, s.teamConfigRepo, s.sessionCountRepo, interval)
+	workerCtx, cancel := context.WithCancel(ctx)
+	s.sessionCountCancel = cancel
+	s.sessionCountWorkers.Add(1)
+	go func() {
+		defer s.sessionCountWorkers.Done()
+		worker.Run(workerCtx)
+	}()
+	log.Printf("[SESSION_COUNT_WORKER] Started with interval %s", interval)
 }
 
 // loggingMiddleware returns Echo middleware for request logging
@@ -1464,7 +1498,8 @@ func (s *Server) createPoolSession(ctx context.Context, route sessionrunnercore.
 	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
 		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
-		TeamID: startReq.TeamID, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
+		TeamID: startReq.TeamID, Pool: pool, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
+		Status: "creating", StatusUpdatedAt: startedAt,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}
@@ -1720,14 +1755,22 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.usageRepo != nil {
 		usageErr = s.usageRepo.Close()
 	}
+	var sessionCountErr error
+	if s.sessionCountRepo != nil {
+		if s.sessionCountCancel != nil {
+			s.sessionCountCancel()
+		}
+		s.sessionCountWorkers.Wait()
+		sessionCountErr = s.sessionCountRepo.Close()
+	}
 	var notifierErr error
 	if s.sessionAllocationRedis != nil {
 		notifierErr = s.sessionAllocationRedis.Close()
 	}
 	if s.kvStore != nil {
-		return errors.Join(managerErr, usageErr, notifierErr, s.kvStore.Close())
+		return errors.Join(managerErr, usageErr, sessionCountErr, notifierErr, s.kvStore.Close())
 	}
-	return errors.Join(managerErr, usageErr, notifierErr)
+	return errors.Join(managerErr, usageErr, sessionCountErr, notifierErr)
 }
 
 // GetEcho returns the Echo instance for external access

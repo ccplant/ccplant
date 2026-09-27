@@ -303,6 +303,7 @@ func (pc *ProvisionerController) CompleteSessionAllocation(c echo.Context) error
 			SessionID:       allocation.SessionID,
 			RemoteSessionID: result.AllocatedSessionID,
 			StartedAt:       time.Now(),
+			Status:          "starting",
 		}
 		if allocation.Request != nil {
 			route.UserID = allocation.Request.UserID
@@ -407,6 +408,7 @@ func (pc *ProvisionerController) CompleteExternalSessionAllocation(c echo.Contex
 			route = &repositories.SessionRoute{
 				SessionID:  allocation.SessionID,
 				StartedAt:  time.Now(),
+				Status:     "starting",
 				HMACSecret: managerSecret,
 				ManagerID:  managerID,
 			}

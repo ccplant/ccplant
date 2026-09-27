@@ -861,6 +861,19 @@ config:
       name: ""
       key: "auth-token"
 
+  # Active session count snapshots grouped by logical pool and stable principal.
+  # The storage backend is selected independently from the application KV store.
+  sessionCount:
+    enabled: false
+    backend: libsql
+    checkInterval: 1m
+    databaseUrlSecretRef:
+      name: ""
+      key: "database-url"
+    authTokenSecretRef:
+      name: ""
+      key: "auth-token"
+
   # 認証設定
   auth:
     # Single admin API key for the X-API-Key header. Prefer adminKeySecretRef
