@@ -40,6 +40,7 @@ type routeJSON struct {
 	UserID            string            `json:"user_id,omitempty"`
 	Scope             string            `json:"scope,omitempty"`
 	TeamID            string            `json:"team_id,omitempty"`
+	Pool              string            `json:"pool,omitempty"`
 	Tags              map[string]string `json:"tags,omitempty"`
 	StartedAt         time.Time         `json:"started_at,omitempty"`
 	InitialMessage    string            `json:"initial_message,omitempty"`
@@ -91,6 +92,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		UserID:            route.UserID,
 		Scope:             route.Scope,
 		TeamID:            route.TeamID,
+		Pool:              route.Pool,
 		Tags:              route.Tags,
 		StartedAt:         route.StartedAt,
 		InitialMessage:    route.InitialMessage,
@@ -198,6 +200,7 @@ func (r *KubernetesSessionRouteRepository) load(ctx context.Context, sessionID s
 		UserID:            rj.UserID,
 		Scope:             rj.Scope,
 		TeamID:            rj.TeamID,
+		Pool:              rj.Pool,
 		Tags:              rj.Tags,
 		StartedAt:         rj.StartedAt,
 		InitialMessage:    rj.InitialMessage,
@@ -332,6 +335,7 @@ func decodeSessionRoutes(secrets []corev1.Secret) []*portrepos.SessionRoute {
 			UserID:            rj.UserID,
 			Scope:             rj.Scope,
 			TeamID:            rj.TeamID,
+			Pool:              rj.Pool,
 			Tags:              rj.Tags,
 			StartedAt:         rj.StartedAt,
 			InitialMessage:    rj.InitialMessage,

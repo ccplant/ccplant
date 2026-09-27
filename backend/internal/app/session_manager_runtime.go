@@ -749,7 +749,7 @@ func (c *localAllocationClient) Complete(ctx context.Context, sessionID string, 
 		if allocation.SessionID != sessionID {
 			return fmt.Errorf("load allocation %s before saving session route: durable allocation has session ID %s", sessionID, allocation.SessionID)
 		}
-		route := &portrepos.SessionRoute{SessionID: allocation.SessionID, RemoteSessionID: result.AllocatedSessionID, StartedAt: time.Now()}
+		route := &portrepos.SessionRoute{SessionID: allocation.SessionID, RemoteSessionID: result.AllocatedSessionID, StartedAt: time.Now(), Status: "starting"}
 		if allocation.Request != nil {
 			route.UserID = allocation.Request.UserID
 			route.Scope = string(allocation.Request.Scope)

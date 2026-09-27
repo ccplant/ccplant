@@ -64,8 +64,11 @@ session_count:
   check_interval: 1m
 ```
 
-Snapshots use the table `agentapi_session_count_samples`. `all_count` includes
-allocations in every status. `active_count` includes sessions whose public
+Snapshots use the table `agentapi_session_count_samples`. Counts are derived
+from durable, user-visible session routes; allocations only backfill the pool
+for legacy routes. `all_count` includes routes in a recognized UI status but
+excludes `terminating`, deletion-pending, incomplete, and orphaned records.
+`active_count` includes sessions whose public
 status is `active` or `stable` (the green/available UI state), while
 `running_count` includes sessions whose public status is `running` (the yellow
 UI state), and `suspended_count` includes sessions whose public status is

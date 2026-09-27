@@ -75,9 +75,9 @@ func (w *Worker) Collect(ctx context.Context) error {
 		return fmt.Errorf("list stored dimensions: %w", err)
 	}
 
-	routeBySession := make(map[string]*repositories.SessionRoute, len(routes))
-	for _, route := range routes {
-		routeBySession[route.SessionID] = route
+	allocationBySession := make(map[string]*sessionrunner.Allocation, len(allocations))
+	for _, allocation := range allocations {
+		allocationBySession[allocation.SessionID] = allocation
 	}
 
 	type count struct{ all, active, running, suspended int }
@@ -96,11 +96,18 @@ func (w *Worker) Collect(ctx context.Context) error {
 			counts[entities.SessionCountDimension{Pool: binding.Pool, PrincipalID: principalID}] = count{}
 		}
 	}
-	for _, allocation := range allocations {
-		route := routeBySession[allocation.SessionID]
-		if route == nil {
-			// Enqueue happens immediately before route persistence. Avoid inventing
-			// an owner during that short window; the next snapshot will include it.
+	for _, route := range routes {
+		status := route.Status
+		if route.DeletionRequestID != "" || !isVisibleSessionStatus(status) {
+			continue
+		}
+		pool := route.Pool
+		if pool == "" {
+			if allocation := allocationBySession[route.SessionID]; allocation != nil {
+				pool = allocation.Pool
+			}
+		}
+		if pool == "" {
 			continue
 		}
 		principalID, err := w.routePrincipalID(ctx, route)
@@ -110,10 +117,10 @@ func (w *Worker) Collect(ctx context.Context) error {
 		if principalID == "" {
 			continue
 		}
-		dimension := entities.SessionCountDimension{Pool: allocation.Pool, PrincipalID: principalID}
+		dimension := entities.SessionCountDimension{Pool: pool, PrincipalID: principalID}
 		value := counts[dimension]
 		value.all++
-		switch route.Status {
+		switch status {
 		case "active", "stable":
 			value.active++
 		case "running":
@@ -139,6 +146,15 @@ func (w *Worker) Collect(ctx context.Context) error {
 		return fmt.Errorf("save snapshot: %w", err)
 	}
 	return nil
+}
+
+func isVisibleSessionStatus(status string) bool {
+	switch status {
+	case "active", "stable", "running", "suspended", "creating", "starting", "resuming", "restoring", "suspending", "stopped", "error", "timeout", "unhealthy":
+		return true
+	default:
+		return false
+	}
 }
 
 func (w *Worker) routePrincipalID(ctx context.Context, route *repositories.SessionRoute) (string, error) {

@@ -27,6 +27,7 @@ type SessionRoute struct {
 	UserID          string
 	Scope           string
 	TeamID          string
+	Pool            string // Stable pool dimension retained after allocation cleanup.
 	Tags            map[string]string
 	StartedAt       time.Time
 	InitialMessage  string // The initial message/prompt for the session (shown as description)

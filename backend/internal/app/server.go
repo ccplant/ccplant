@@ -1498,7 +1498,8 @@ func (s *Server) createPoolSession(ctx context.Context, route sessionrunnercore.
 	if err := s.sessionRouteRepo.Save(ctx, &portrepos.SessionRoute{
 		SessionID: sessionID, Transport: portrepos.SessionRouteTransportDirectRuntime,
 		RuntimeTokenHash: tokenHash, Generation: 1, UserID: userID, Scope: string(startReq.Scope),
-		TeamID: startReq.TeamID, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
+		TeamID: startReq.TeamID, Pool: pool, Tags: routeTags, StartedAt: startedAt, InitialMessage: initialMessage,
+		Status: "creating", StatusUpdatedAt: startedAt,
 	}); err != nil {
 		return nil, fmt.Errorf("save pending pool session route: %w", err)
 	}

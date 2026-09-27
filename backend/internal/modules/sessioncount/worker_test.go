@@ -79,7 +79,6 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 		allocations: []*sessionrunner.Allocation{
 			{SessionID: "user-running", Pool: "linux", Status: sessionrunner.AllocationRunning},
 			{SessionID: "user-stable", Pool: "linux", Status: sessionrunner.AllocationRunning},
-			{SessionID: "user-suspended", Pool: "linux", Status: sessionrunner.AllocationRunning},
 			{SessionID: "team-pending", Pool: "linux", Status: sessionrunner.AllocationPending},
 			{SessionID: "completed", Pool: "linux", Status: sessionrunner.AllocationCompleted},
 		},
@@ -91,7 +90,7 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 	routes := &fakeRouteRepository{routes: []*portrepos.SessionRoute{
 		{SessionID: "user-running", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "running"},
 		{SessionID: "user-stable", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "stable"},
-		{SessionID: "user-suspended", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "suspended"},
+		{SessionID: "user-suspended", Scope: string(entities.ScopeUser), UserID: "user-principal", Pool: "linux", Status: "suspended"},
 		{SessionID: "team-pending", Scope: string(entities.ScopeTeam), TeamID: "org/platform", UserID: "creator-principal", Status: "active"},
 		{SessionID: "completed", Scope: string(entities.ScopeUser), UserID: "user-principal"},
 	}}
@@ -102,10 +101,13 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 	require.NoError(t, worker.Collect(context.Background()))
 	require.Equal(t, []entities.SessionCountSample{
 		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "team-01ABC"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 1, ActiveCount: 1},
-		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 4, ActiveCount: 1, RunningCount: 1, SuspendedCount: 1},
+		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 3, ActiveCount: 1, RunningCount: 1, SuspendedCount: 1},
 	}, repository.snapshots[0])
 
 	store.allocations = nil
+	for _, route := range routes.routes {
+		route.Status = "terminating"
+	}
 	worker.now = func() time.Time { return time.Date(2026, 9, 27, 12, 1, 5, 0, time.UTC) }
 	require.NoError(t, worker.Collect(context.Background()))
 	require.Len(t, repository.snapshots[1], 2)
