@@ -78,6 +78,7 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 	store := &fakeAllocationStore{
 		allocations: []*sessionrunner.Allocation{
 			{SessionID: "user-running", Pool: "linux", Status: sessionrunner.AllocationRunning},
+			{SessionID: "user-stable", Pool: "linux", Status: sessionrunner.AllocationRunning},
 			{SessionID: "user-suspended", Pool: "linux", Status: sessionrunner.AllocationRunning},
 			{SessionID: "team-pending", Pool: "linux", Status: sessionrunner.AllocationPending},
 			{SessionID: "completed", Pool: "linux", Status: sessionrunner.AllocationCompleted},
@@ -88,9 +89,10 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 		},
 	}
 	routes := &fakeRouteRepository{routes: []*portrepos.SessionRoute{
-		{SessionID: "user-running", Scope: string(entities.ScopeUser), UserID: "user-principal"},
+		{SessionID: "user-running", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "running"},
+		{SessionID: "user-stable", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "stable"},
 		{SessionID: "user-suspended", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "suspended"},
-		{SessionID: "team-pending", Scope: string(entities.ScopeTeam), TeamID: "org/platform", UserID: "creator-principal"},
+		{SessionID: "team-pending", Scope: string(entities.ScopeTeam), TeamID: "org/platform", UserID: "creator-principal", Status: "active"},
 		{SessionID: "completed", Scope: string(entities.ScopeUser), UserID: "user-principal"},
 	}}
 	repository := &memoryCountRepository{}
@@ -100,7 +102,7 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 	require.NoError(t, worker.Collect(context.Background()))
 	require.Equal(t, []entities.SessionCountSample{
 		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "team-01ABC"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 1, ActiveCount: 1},
-		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 3, ActiveCount: 1, RunningCount: 1},
+		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 4, ActiveCount: 1, RunningCount: 1},
 	}, repository.snapshots[0])
 
 	store.allocations = nil

@@ -113,16 +113,10 @@ func (w *Worker) Collect(ctx context.Context) error {
 		dimension := entities.SessionCountDimension{Pool: allocation.Pool, PrincipalID: principalID}
 		value := counts[dimension]
 		value.all++
-		if route.Status == "suspended" {
-			counts[dimension] = value
-			continue
-		}
-		if !isActive(allocation.Status) {
-			counts[dimension] = value
-			continue
-		}
-		value.active++
-		if allocation.Status == sessionrunner.AllocationRunning {
+		switch route.Status {
+		case "active", "stable":
+			value.active++
+		case "running":
 			value.running++
 		}
 		counts[dimension] = value
@@ -174,14 +168,5 @@ func (w *Worker) bindingPrincipalID(ctx context.Context, binding *sessionrunner.
 		return team.PrincipalID(), nil
 	default:
 		return "", nil
-	}
-}
-
-func isActive(status sessionrunner.AllocationStatus) bool {
-	switch status {
-	case sessionrunner.AllocationPending, sessionrunner.AllocationLeased, sessionrunner.AllocationClaimed, sessionrunner.AllocationRunning:
-		return true
-	default:
-		return false
 	}
 }
