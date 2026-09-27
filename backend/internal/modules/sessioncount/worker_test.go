@@ -102,7 +102,7 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 	require.NoError(t, worker.Collect(context.Background()))
 	require.Equal(t, []entities.SessionCountSample{
 		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "team-01ABC"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 1, ActiveCount: 1},
-		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 4, ActiveCount: 1, RunningCount: 1},
+		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 4, ActiveCount: 1, RunningCount: 1, SuspendedCount: 1},
 	}, repository.snapshots[0])
 
 	store.allocations = nil
@@ -113,5 +113,6 @@ func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
 		require.Zero(t, sample.AllCount)
 		require.Zero(t, sample.ActiveCount)
 		require.Zero(t, sample.RunningCount)
+		require.Zero(t, sample.SuspendedCount)
 	}
 }

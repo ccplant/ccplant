@@ -68,7 +68,8 @@ Snapshots use the table `agentapi_session_count_samples`. `all_count` includes
 allocations in every status. `active_count` includes sessions whose public
 status is `active` or `stable` (the green/available UI state), while
 `running_count` includes sessions whose public status is `running` (the yellow
-UI state). Suspended sessions are excluded from both active and running counts.
+UI state), and `suspended_count` includes sessions whose public status is
+`suspended`. Suspended sessions are excluded from active and running counts.
 Samples are change points: the worker
 writes the initial value and subsequent changes, but does not repeat an
 unchanged count every minute. Previously observed and explicitly bound

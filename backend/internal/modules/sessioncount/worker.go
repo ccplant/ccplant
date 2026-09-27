@@ -80,7 +80,7 @@ func (w *Worker) Collect(ctx context.Context) error {
 		routeBySession[route.SessionID] = route
 	}
 
-	type count struct{ all, active, running int }
+	type count struct{ all, active, running, suspended int }
 	counts := map[entities.SessionCountDimension]count{}
 	for _, dimension := range previous {
 		if dimension.Pool != "" && dimension.PrincipalID != "" {
@@ -118,6 +118,8 @@ func (w *Worker) Collect(ctx context.Context) error {
 			value.active++
 		case "running":
 			value.running++
+		case "suspended":
+			value.suspended++
 		}
 		counts[dimension] = value
 	}
@@ -125,7 +127,7 @@ func (w *Worker) Collect(ctx context.Context) error {
 	sampledAt := w.now().UTC().Truncate(w.interval)
 	samples := make([]entities.SessionCountSample, 0, len(counts))
 	for dimension, value := range counts {
-		samples = append(samples, entities.SessionCountSample{SessionCountDimension: dimension, SampledAt: sampledAt, AllCount: value.all, ActiveCount: value.active, RunningCount: value.running})
+		samples = append(samples, entities.SessionCountSample{SessionCountDimension: dimension, SampledAt: sampledAt, AllCount: value.all, ActiveCount: value.active, RunningCount: value.running, SuspendedCount: value.suspended})
 	}
 	sort.Slice(samples, func(i, j int) bool {
 		if samples[i].Pool == samples[j].Pool {

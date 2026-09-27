@@ -11,8 +11,9 @@ type SessionCountDimension struct {
 // SessionCountSample is a point-in-time count of active pool allocations.
 type SessionCountSample struct {
 	SessionCountDimension
-	SampledAt    time.Time `json:"sampled_at"`
-	AllCount     int       `json:"all_count"`
-	ActiveCount  int       `json:"active_count"`
-	RunningCount int       `json:"running_count"`
+	SampledAt      time.Time `json:"sampled_at"`
+	AllCount       int       `json:"all_count"`
+	ActiveCount    int       `json:"active_count"`
+	RunningCount   int       `json:"running_count"`
+	SuspendedCount int       `json:"suspended_count"`
 }

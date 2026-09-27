@@ -48,6 +48,7 @@ sampled_at TEXT NOT NULL, pool TEXT NOT NULL, principal_id TEXT NOT NULL,
 active_count INTEGER NOT NULL, running_count INTEGER NOT NULL,
 PRIMARY KEY (sampled_at, pool, principal_id))`,
 		`ALTER TABLE agentapi_session_count_samples ADD COLUMN all_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE agentapi_session_count_samples ADD COLUMN suspended_count INTEGER NOT NULL DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS agentapi_session_count_samples_principal_time
 ON agentapi_session_count_samples(principal_id, sampled_at)`,
 		`CREATE INDEX IF NOT EXISTS agentapi_session_count_samples_pool_time
@@ -55,7 +56,7 @@ ON agentapi_session_count_samples(pool, sampled_at)`,
 	}
 	for index, statement := range statements {
 		if _, err := r.db.ExecContext(ctx, statement); err != nil {
-			if index == 2 && isDuplicateColumnError(err) {
+			if (index == 2 || index == 3) && isDuplicateColumnError(err) {
 				continue
 			}
 			return fmt.Errorf("initialize session count schema: %w", err)
@@ -87,9 +88,9 @@ func (r *LibSQLSessionCountRepository) SaveSnapshot(ctx context.Context, sampled
 		return fmt.Errorf("begin session count snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	type count struct{ all, active, running int }
+	type count struct{ all, active, running, suspended int }
 	latest := map[entities.SessionCountDimension]count{}
-	rows, err := tx.QueryContext(ctx, `SELECT sample.pool,sample.principal_id,sample.all_count,sample.active_count,sample.running_count
+	rows, err := tx.QueryContext(ctx, `SELECT sample.pool,sample.principal_id,sample.all_count,sample.active_count,sample.running_count,sample.suspended_count
 FROM agentapi_session_count_samples sample
 JOIN (SELECT pool,principal_id,MAX(sampled_at) AS sampled_at
       FROM agentapi_session_count_samples GROUP BY pool,principal_id) newest
@@ -100,7 +101,7 @@ ON sample.pool=newest.pool AND sample.principal_id=newest.principal_id AND sampl
 	for rows.Next() {
 		var dimension entities.SessionCountDimension
 		var value count
-		if err := rows.Scan(&dimension.Pool, &dimension.PrincipalID, &value.all, &value.active, &value.running); err != nil {
+		if err := rows.Scan(&dimension.Pool, &dimension.PrincipalID, &value.all, &value.active, &value.running, &value.suspended); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("scan latest session count: %w", err)
 		}
@@ -112,17 +113,17 @@ ON sample.pool=newest.pool AND sample.principal_id=newest.principal_id AND sampl
 	timestamp := sampledAt.UTC().Format(time.RFC3339Nano)
 	for _, sample := range samples {
 		previous, exists := latest[sample.SessionCountDimension]
-		if exists && previous.all == sample.AllCount && previous.active == sample.ActiveCount && previous.running == sample.RunningCount {
+		if exists && previous.all == sample.AllCount && previous.active == sample.ActiveCount && previous.running == sample.RunningCount && previous.suspended == sample.SuspendedCount {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_count_dimensions (pool,principal_id) VALUES (?,?)`, sample.Pool, sample.PrincipalID); err != nil {
 			return fmt.Errorf("save session count dimension: %w", err)
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO agentapi_session_count_samples
-(sampled_at,pool,principal_id,all_count,active_count,running_count) VALUES (?,?,?,?,?,?)
+(sampled_at,pool,principal_id,all_count,active_count,running_count,suspended_count) VALUES (?,?,?,?,?,?,?)
 ON CONFLICT(sampled_at,pool,principal_id) DO UPDATE SET
-all_count=excluded.all_count,active_count=excluded.active_count,running_count=excluded.running_count`,
-			timestamp, sample.Pool, sample.PrincipalID, sample.AllCount, sample.ActiveCount, sample.RunningCount)
+all_count=excluded.all_count,active_count=excluded.active_count,running_count=excluded.running_count,suspended_count=excluded.suspended_count`,
+			timestamp, sample.Pool, sample.PrincipalID, sample.AllCount, sample.ActiveCount, sample.RunningCount, sample.SuspendedCount)
 		if err != nil {
 			return fmt.Errorf("save session count sample: %w", err)
 		}
