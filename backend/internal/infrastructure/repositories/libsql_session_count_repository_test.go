@@ -21,6 +21,7 @@ func TestLibSQLSessionCountRepositoryUpsertsAndListsDimensions(t *testing.T) {
 	require.NoError(t, repository.SaveSnapshot(ctx, sampledAt, []entities.SessionCountSample{{
 		SessionCountDimension: dimension,
 		SampledAt:             sampledAt,
+		AllCount:              3,
 		ActiveCount:           2,
 		RunningCount:          1,
 	}}))
@@ -28,6 +29,7 @@ func TestLibSQLSessionCountRepositoryUpsertsAndListsDimensions(t *testing.T) {
 	require.NoError(t, repository.SaveSnapshot(ctx, sampledAt, []entities.SessionCountSample{{
 		SessionCountDimension: dimension,
 		SampledAt:             sampledAt,
+		AllCount:              3,
 		ActiveCount:           2,
 		RunningCount:          1,
 	}}))
@@ -51,10 +53,11 @@ func TestLibSQLSessionCountRepositoryUpsertsAndListsDimensions(t *testing.T) {
 	require.Equal(t, []entities.SessionCountDimension{dimension}, dimensions)
 
 	concrete := repository.(*LibSQLSessionCountRepository)
-	var rows, active, running int
+	var rows, all, active, running int
 	require.NoError(t, concrete.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_session_count_samples`).Scan(&rows))
-	require.NoError(t, concrete.db.QueryRowContext(ctx, `SELECT active_count,running_count FROM agentapi_session_count_samples ORDER BY sampled_at DESC LIMIT 1`).Scan(&active, &running))
+	require.NoError(t, concrete.db.QueryRowContext(ctx, `SELECT all_count,active_count,running_count FROM agentapi_session_count_samples ORDER BY sampled_at DESC LIMIT 1`).Scan(&all, &active, &running))
 	require.Equal(t, 2, rows)
+	require.Zero(t, all)
 	require.Zero(t, active)
 	require.Zero(t, running)
 }

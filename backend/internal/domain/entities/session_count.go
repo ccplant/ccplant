@@ -12,6 +12,7 @@ type SessionCountDimension struct {
 type SessionCountSample struct {
 	SessionCountDimension
 	SampledAt    time.Time `json:"sampled_at"`
+	AllCount     int       `json:"all_count"`
 	ActiveCount  int       `json:"active_count"`
 	RunningCount int       `json:"running_count"`
 }

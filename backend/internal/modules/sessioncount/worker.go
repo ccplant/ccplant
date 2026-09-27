@@ -80,7 +80,7 @@ func (w *Worker) Collect(ctx context.Context) error {
 		routeBySession[route.SessionID] = route
 	}
 
-	type count struct{ active, running int }
+	type count struct{ all, active, running int }
 	counts := map[entities.SessionCountDimension]count{}
 	for _, dimension := range previous {
 		if dimension.Pool != "" && dimension.PrincipalID != "" {
@@ -97,9 +97,6 @@ func (w *Worker) Collect(ctx context.Context) error {
 		}
 	}
 	for _, allocation := range allocations {
-		if !isActive(allocation.Status) {
-			continue
-		}
 		route := routeBySession[allocation.SessionID]
 		if route == nil {
 			// Enqueue happens immediately before route persistence. Avoid inventing
@@ -115,6 +112,15 @@ func (w *Worker) Collect(ctx context.Context) error {
 		}
 		dimension := entities.SessionCountDimension{Pool: allocation.Pool, PrincipalID: principalID}
 		value := counts[dimension]
+		value.all++
+		if route.Status == "suspended" {
+			counts[dimension] = value
+			continue
+		}
+		if !isActive(allocation.Status) {
+			counts[dimension] = value
+			continue
+		}
 		value.active++
 		if allocation.Status == sessionrunner.AllocationRunning {
 			value.running++
@@ -125,7 +131,7 @@ func (w *Worker) Collect(ctx context.Context) error {
 	sampledAt := w.now().UTC().Truncate(w.interval)
 	samples := make([]entities.SessionCountSample, 0, len(counts))
 	for dimension, value := range counts {
-		samples = append(samples, entities.SessionCountSample{SessionCountDimension: dimension, SampledAt: sampledAt, ActiveCount: value.active, RunningCount: value.running})
+		samples = append(samples, entities.SessionCountSample{SessionCountDimension: dimension, SampledAt: sampledAt, AllCount: value.all, ActiveCount: value.active, RunningCount: value.running})
 	}
 	sort.Slice(samples, func(i, j int) bool {
 		if samples[i].Pool == samples[j].Pool {

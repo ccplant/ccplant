@@ -64,9 +64,11 @@ session_count:
   check_interval: 1m
 ```
 
-Snapshots use the table `agentapi_session_count_samples`. Active counts include
-`pending`, `leased`, `claimed`, and `running` allocations, while
-`running_count` includes only `running`. Samples are change points: the worker
+Snapshots use the table `agentapi_session_count_samples`. `all_count` includes
+allocations in every status. Active counts include `pending`, `leased`,
+`claimed`, and `running` allocations, while `running_count` includes only
+`running`. Suspended sessions are excluded from both active and running counts.
+Samples are change points: the worker
 writes the initial value and subsequent changes, but does not repeat an
 unchanged count every minute. Previously observed and explicitly bound
 pool/principal pairs receive a row containing zero after their last session
