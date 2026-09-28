@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   client: {
     getSandboxPolicies: vi.fn().mockResolvedValue({ sandbox_policies: [] }),
     getAvailableSessionPools: vi.fn().mockResolvedValue([]),
+    getSessionProfiles: vi.fn().mockResolvedValue({ session_profiles: [] }),
+    getUserInfo: vi.fn().mockResolvedValue({ principal_id: 'user-1' }),
+    listSettingsSecrets: vi.fn().mockResolvedValue([{ id: 'secret-1', name: 'Deploy key', keys: ['token'], version: 1 }]),
   },
 }))
 vi.mock('next/navigation', () => ({ usePathname: () => '/session-profiles/profile', useSearchParams: () => new URLSearchParams() }))
@@ -100,6 +103,17 @@ describe('SessionProfileEditor authentication', () => {
       CODEX_MODEL: 'codex-fallback',
       ANTHROPIC_MODEL: 'claude-fallback',
     })
+  })
+})
+
+describe('SessionProfileEditor secrets', () => {
+  it('selects a settings secret and saves its reference', async () => {
+    render(<SessionProfileEditor section="secrets" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Secrets', created_at: '', updated_at: '', config: {} }} />)
+    const secret = await screen.findByRole('checkbox', { name: /Deploy key/ })
+    fireEvent.click(secret)
+    fireEvent.submit(secret.closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.secret_ids).toEqual(['secret-1'])
   })
 })
 

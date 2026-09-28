@@ -175,8 +175,59 @@ type Settings struct {
 	defaultSessionProfileID string // ID of the default session profile for this tenant
 	defaultAgentType        string // Agent type used when a session does not specify one
 	autoSuspend             *AutoSuspendSettings
+	secretSettings          []SecretSetting
 	createdAt               time.Time
 	updatedAt               time.Time
+}
+
+// SecretProjection controls whether one key from a SecretSetting is exposed to
+// agent sessions. An empty Type keeps the value server-side only.
+type SecretProjection struct {
+	Key         string `json:"key"`
+	Type        string `json:"type"` // "", "env", or "file"
+	EnvName     string `json:"env_name,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Permissions string `json:"permissions,omitempty"`
+}
+
+// SecretSetting is a named, settings-scoped collection of encrypted values.
+// Values are never serialized directly by API response DTOs.
+type SecretSetting struct {
+	ID          string
+	Name        string
+	Values      map[string]string
+	Projections []SecretProjection
+	Version     int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// SecretSettings returns a deep copy of the configured secrets.
+func (s *Settings) SecretSettings() []SecretSetting {
+	result := make([]SecretSetting, len(s.secretSettings))
+	for i := range s.secretSettings {
+		result[i] = cloneSecretSetting(s.secretSettings[i])
+	}
+	return result
+}
+
+// SetSecretSettings replaces all settings-scoped secrets.
+func (s *Settings) SetSecretSettings(values []SecretSetting) {
+	s.secretSettings = make([]SecretSetting, len(values))
+	for i := range values {
+		s.secretSettings[i] = cloneSecretSetting(values[i])
+	}
+	s.updatedAt = time.Now()
+}
+
+func cloneSecretSetting(value SecretSetting) SecretSetting {
+	result := value
+	result.Values = make(map[string]string, len(value.Values))
+	for key, item := range value.Values {
+		result.Values[key] = item
+	}
+	result.Projections = append([]SecretProjection(nil), value.Projections...)
+	return result
 }
 
 // NewSettings creates a new Settings

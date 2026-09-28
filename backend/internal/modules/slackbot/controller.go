@@ -16,6 +16,7 @@ type SlackBotController struct {
 	repo               repositories.SlackBotRepository
 	sessionManager     repositories.SessionManager
 	sessionProfileRepo repositories.SessionProfileRepository
+	settingsRepo       repositories.SettingsRepository
 }
 
 // NewSlackBotController creates a new SlackBotController
@@ -27,9 +28,19 @@ func NewSlackBotController(repo repositories.SlackBotRepository, dependencies ..
 			controller.sessionManager = typed
 		case repositories.SessionProfileRepository:
 			controller.sessionProfileRepo = typed
+		case repositories.SettingsRepository:
+			controller.settingsRepo = typed
 		}
 	}
 	return controller
+}
+
+// SlackBotSecretRef points at keys in a Settings Secret. The values are never
+// copied into the SlackBot record or returned by this API.
+type SlackBotSecretRef struct {
+	SecretID    string `json:"secret_id"`
+	BotTokenKey string `json:"bot_token_key,omitempty"`
+	AppTokenKey string `json:"app_token_key,omitempty"`
 }
 
 // --- Request/Response DTOs ---
@@ -63,7 +74,8 @@ type CreateSlackBotRequest struct {
 	// BotToken is the Slack bot token (xoxb-...). Write-only: stored in K8s Secret, never returned.
 	BotToken string `json:"bot_token,omitempty"`
 	// AppToken is the Slack app-level token (xapp-...). Write-only: stored in K8s Secret, never returned.
-	AppToken string `json:"app_token,omitempty"`
+	AppToken string             `json:"app_token,omitempty"`
+	Secret   *SlackBotSecretRef `json:"secret,omitempty"`
 }
 
 // UpdateSlackBotRequest is the request body for updating a SlackBot
@@ -94,7 +106,8 @@ type UpdateSlackBotRequest struct {
 	// BotToken is the Slack bot token (xoxb-...). Write-only: stored in K8s Secret, never returned.
 	BotToken string `json:"bot_token,omitempty"`
 	// AppToken is the Slack app-level token (xapp-...). Write-only: stored in K8s Secret, never returned.
-	AppToken string `json:"app_token,omitempty"`
+	AppToken string             `json:"app_token,omitempty"`
+	Secret   *SlackBotSecretRef `json:"secret,omitempty"`
 }
 
 // SlackBotSessionConfig is the session configuration for a SlackBot
@@ -142,6 +155,7 @@ type SlackBotResponse struct {
 	AllowBotMessages       bool                    `json:"allow_bot_messages"`
 	CreatedAt              time.Time               `json:"created_at"`
 	UpdatedAt              time.Time               `json:"updated_at"`
+	Secret                 *SlackBotSecretRef      `json:"secret,omitempty"`
 }
 
 // --- Handler methods ---
@@ -237,6 +251,12 @@ func (c *SlackBotController) CreateSlackBot(ctx echo.Context) error {
 	}
 	if req.AppToken != "" {
 		bot.SetAppToken(req.AppToken)
+	}
+	if req.Secret != nil {
+		if err := c.validateSecretRef(ctx, bot, req.Secret); err != nil {
+			return err
+		}
+		bot.SetSettingsSecret(req.Secret.SecretID, req.Secret.BotTokenKey, req.Secret.AppTokenKey)
 	}
 
 	if err := bot.Validate(); err != nil {
@@ -416,6 +436,12 @@ func (c *SlackBotController) UpdateSlackBot(ctx echo.Context) error {
 	if req.AppToken != "" {
 		bot.SetAppToken(req.AppToken)
 	}
+	if req.Secret != nil {
+		if err := c.validateSecretRef(ctx, bot, req.Secret); err != nil {
+			return err
+		}
+		bot.SetSettingsSecret(req.Secret.SecretID, req.Secret.BotTokenKey, req.Secret.AppTokenKey)
+	}
 
 	if err := c.repo.Update(ctx.Request().Context(), bot); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update slackbot")
@@ -476,7 +502,50 @@ func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotRespons
 	if bot.SessionConfig() != nil {
 		resp.SessionConfig = fromEntitySessionConfig(bot.SessionConfig())
 	}
+	if bot.SettingsSecretID() != "" {
+		resp.Secret = &SlackBotSecretRef{SecretID: bot.SettingsSecretID(), BotTokenKey: bot.SettingsBotTokenKey(), AppTokenKey: bot.SettingsAppTokenKey()}
+	}
 	return resp
+}
+
+func (c *SlackBotController) validateSecretRef(ctx echo.Context, bot *entities.SlackBot, ref *SlackBotSecretRef) error {
+	if c.settingsRepo == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "settings secrets are unavailable")
+	}
+	if ref.SecretID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "secret.secret_id is required")
+	}
+	settingsName := bot.UserID()
+	if bot.Scope() == entities.ScopeTeam {
+		settingsName = bot.TeamID()
+	}
+	settings, err := c.settingsRepo.FindByName(ctx.Request().Context(), settingsName)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "referenced secret was not found")
+	}
+	botKey, appKey := ref.BotTokenKey, ref.AppTokenKey
+	if botKey == "" {
+		botKey = "bot-token"
+	}
+	if appKey == "" {
+		appKey = "app-token"
+	}
+	for _, secret := range settings.SecretSettings() {
+		if secret.ID != ref.SecretID {
+			continue
+		}
+		if secret.Values[botKey] == "" || secret.Values[appKey] == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "referenced secret must contain non-empty bot and app token keys")
+		}
+		for _, projection := range secret.Projections {
+			if projection.Key == botKey || projection.Key == appKey {
+				return echo.NewHTTPError(http.StatusBadRequest, "Slack token keys cannot be projected")
+			}
+		}
+		ref.BotTokenKey, ref.AppTokenKey = botKey, appKey
+		return nil
+	}
+	return echo.NewHTTPError(http.StatusBadRequest, "referenced secret was not found")
 }
 
 func (c *SlackBotController) userCanAccess(ctx echo.Context, bot *entities.SlackBot, userID string) bool {

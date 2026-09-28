@@ -44,8 +44,12 @@ type SessionProfileConfig struct {
 	// sourceProfileID references another profile whose environment and MCP
 	// servers are inherited before this profile's local overrides.
 	sourceProfileID string
-	files           []ProfileFile
-	mcpServers      *MCPServersSettings
+	// secretIDs selects settings-scoped secrets whose projections are exposed to
+	// sessions created with this profile. An empty list preserves the legacy
+	// behavior of exposing every projected secret in the settings scope.
+	secretIDs  []string
+	files      []ProfileFile
+	mcpServers *MCPServersSettings
 }
 
 // ErrSessionProfileAccessDenied is returned when a session profile cannot be
@@ -297,6 +301,12 @@ func (c *SessionProfileConfig) SourceSessionProfileID() string { return c.source
 
 // SetSourceSessionProfileID sets the profile referenced for environment and MCP settings.
 func (c *SessionProfileConfig) SetSourceSessionProfileID(id string) { c.sourceProfileID = id }
+
+// SecretIDs returns the settings Secret references selected by this profile.
+func (c *SessionProfileConfig) SecretIDs() []string { return copyStringSlice(c.secretIDs) }
+
+// SetSecretIDs sets the settings Secret references selected by this profile.
+func (c *SessionProfileConfig) SetSecretIDs(ids []string) { c.secretIDs = copyStringSlice(ids) }
 
 // ProfileFiles returns files managed by this profile.
 func (c *SessionProfileConfig) ProfileFiles() []ProfileFile {

@@ -31,6 +31,28 @@ type fakeUserFileRepository struct {
 	files map[string][]*entities.UserFile
 }
 
+func TestResolveProjectedSecretsFiltersProfileReferences(t *testing.T) {
+	settings := entities.NewSettings("user-1")
+	settings.SetSecretSettings([]entities.SecretSetting{
+		{ID: "selected", Values: map[string]string{"token": "selected-value"}, Projections: []entities.SecretProjection{{Key: "token", Type: "env", EnvName: "SELECTED"}}},
+		{ID: "other", Values: map[string]string{"token": "other-value"}, Projections: []entities.SecretProjection{{Key: "token", Type: "env", EnvName: "OTHER"}}},
+	})
+	manager := &KubernetesSessionManager{settingsRepo: &fakeSettingsRepository{settings: map[string]*entities.Settings{"user-1": settings}}}
+
+	env, files := manager.resolveProjectedSecrets(context.Background(), &entities.RunServerRequest{
+		UserID: "user-1", Scope: entities.ScopeUser, ProfileSecretIDs: []string{"selected"},
+	})
+	if env["SELECTED"] != "selected-value" {
+		t.Fatalf("SELECTED = %q", env["SELECTED"])
+	}
+	if _, ok := env["OTHER"]; ok {
+		t.Fatal("unreferenced secret was projected")
+	}
+	if len(files) != 0 {
+		t.Fatalf("files = %#v", files)
+	}
+}
+
 func (r *fakeUserFileRepository) Save(_ context.Context, userID string, file *entities.UserFile) error {
 	r.files[userID] = append(r.files[userID], file)
 	return nil

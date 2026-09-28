@@ -2,6 +2,7 @@ import { ResourceScope } from './agentapi';
 
 // SlackBot status types
 export type SlackBotStatus = 'active' | 'paused';
+export interface SlackBotSecretRef { secret_id: string; bot_token_key?: string; app_token_key?: string }
 
 // Session parameters for SlackBot sessions
 export interface SlackBotSessionParams {
@@ -44,6 +45,7 @@ export interface SlackBot {
   allow_bot_messages?: boolean;
   created_at: string;
   updated_at: string;
+  secret?: SlackBotSecretRef;
 }
 
 // Create SlackBot request
@@ -55,6 +57,7 @@ export interface CreateSlackBotRequest {
   bot_token?: string;
   /** Slack App-Level Token (xapp-...). write-only, レスポンスには返らない */
   app_token?: string;
+  secret?: SlackBotSecretRef;
   bot_token_secret_name?: string;
   bot_token_secret_key?: string;
   allowed_event_types?: string[];
@@ -77,6 +80,7 @@ export interface UpdateSlackBotRequest {
   bot_token?: string;
   /** Slack App-Level Token (xapp-...). write-only, レスポンスには返らない */
   app_token?: string;
+  secret?: SlackBotSecretRef;
   bot_token_secret_name?: string;
   bot_token_secret_key?: string;
   allowed_event_types?: string[];

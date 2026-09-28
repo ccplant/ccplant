@@ -623,6 +623,11 @@ func (r *Router) registerConditionalRoutes() error {
 	if r.server.settingsRepo != nil && r.handlers.settingsController != nil {
 		log.Printf("[ROUTES] Registering settings endpoints...")
 		r.echo.GET("/settings/managers", r.handlers.settingsController.GetAvailableManagers, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/settings/:name/secrets", r.handlers.settingsController.ListSecrets, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/settings/:name/secrets", r.handlers.settingsController.CreateSecret, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.PATCH("/settings/:name/secrets/:secretId", r.handlers.settingsController.UpdateSecret, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.PUT("/settings/:name/secrets/:secretId/values", r.handlers.settingsController.UpdateSecretValues, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/settings/:name/secrets/:secretId", r.handlers.settingsController.DeleteSecret, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.GET("/settings/:name", r.handlers.settingsController.GetSettings, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.PUT("/settings/:name", r.handlers.settingsController.UpdateSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 		r.echo.DELETE("/settings/:name", r.handlers.settingsController.DeleteSettings, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))

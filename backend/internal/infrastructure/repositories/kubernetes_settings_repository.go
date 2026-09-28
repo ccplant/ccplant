@@ -39,6 +39,17 @@ type encryptedEnvVarJSON struct {
 	Version        string    `json:"ver,omitempty"`
 }
 
+type secretSettingJSON struct {
+	ID              string                         `json:"id"`
+	Name            string                         `json:"name"`
+	Values          map[string]string              `json:"values,omitempty"`
+	EncryptedValues map[string]encryptedEnvVarJSON `json:"encrypted_values,omitempty"`
+	Projections     []entities.SecretProjection    `json:"projections,omitempty"`
+	Version         int64                          `json:"version"`
+	CreatedAt       time.Time                      `json:"created_at"`
+	UpdatedAt       time.Time                      `json:"updated_at"`
+}
+
 // settingsJSON is the JSON representation of settings stored in Secret
 type settingsJSON struct {
 	CodexConnection         *connectionJSON                        `json:"codex_connection,omitempty"`
@@ -60,6 +71,7 @@ type settingsJSON struct {
 	DefaultSessionProfileID string                                 `json:"default_session_profile_id,omitempty"`
 	DefaultAgentType        string                                 `json:"default_agent_type,omitempty"`
 	AutoSuspend             *entities.AutoSuspendSettings          `json:"auto_suspend,omitempty"`
+	SecretSettings          []secretSettingJSON                    `json:"secret_settings,omitempty"`
 	CreatedAt               time.Time                              `json:"created_at"`
 	UpdatedAt               time.Time                              `json:"updated_at"`
 }
@@ -369,6 +381,30 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 		sj.DefaultAgentType = agentType
 	}
 	sj.AutoSuspend = settings.AutoSuspend()
+	for _, secretSetting := range settings.SecretSettings() {
+		stored := secretSettingJSON{
+			ID: secretSetting.ID, Name: secretSetting.Name,
+			Projections: secretSetting.Projections, Version: secretSetting.Version,
+			CreatedAt: secretSetting.CreatedAt, UpdatedAt: secretSetting.UpdatedAt,
+		}
+		if enc := r.encryptionSvc(); enc != nil && enc.Algorithm() != "noop" {
+			stored.EncryptedValues = make(map[string]encryptedEnvVarJSON, len(secretSetting.Values))
+			for key, value := range secretSetting.Values {
+				encrypted, err := enc.Encrypt(ctx, value)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encrypt secret setting %q key %q: %w", secretSetting.ID, key, err)
+				}
+				stored.EncryptedValues[key] = encryptedEnvVarJSON{
+					EncryptedValue: encrypted.EncryptedValue, Algorithm: encrypted.Metadata.Algorithm,
+					KeyID: encrypted.Metadata.KeyID, EncryptedAt: encrypted.Metadata.EncryptedAt,
+					Version: encrypted.Metadata.Version,
+				}
+			}
+		} else {
+			stored.Values = secretSetting.Values
+		}
+		sj.SecretSettings = append(sj.SecretSettings, stored)
+	}
 
 	return json.Marshal(sj)
 }
@@ -394,6 +430,41 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 	settings := entities.NewSettings(settingsName)
 	settings.SetCreatedAt(sj.CreatedAt)
 	settings.SetUpdatedAt(sj.UpdatedAt)
+	if len(sj.SecretSettings) > 0 {
+		secretSettings := make([]entities.SecretSetting, 0, len(sj.SecretSettings))
+		for _, stored := range sj.SecretSettings {
+			values := make(map[string]string, len(stored.Values)+len(stored.EncryptedValues))
+			for key, value := range stored.Values {
+				values[key] = value
+			}
+			for key, encrypted := range stored.EncryptedValues {
+				decSvc := r.decryptionSvc(domainservices.EncryptionMetadata{
+					Algorithm: encrypted.Algorithm, KeyID: encrypted.KeyID,
+					EncryptedAt: encrypted.EncryptedAt, Version: encrypted.Version,
+				})
+				if decSvc == nil {
+					return nil, fmt.Errorf("no decryption service for secret setting %q key %q", stored.ID, key)
+				}
+				plaintext, err := decSvc.Decrypt(ctx, &domainservices.EncryptedData{
+					EncryptedValue: encrypted.EncryptedValue,
+					Metadata: domainservices.EncryptionMetadata{
+						Algorithm: encrypted.Algorithm, KeyID: encrypted.KeyID,
+						EncryptedAt: encrypted.EncryptedAt, Version: encrypted.Version,
+					},
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt secret setting %q key %q: %w", stored.ID, key, err)
+				}
+				values[key] = plaintext
+			}
+			secretSettings = append(secretSettings, entities.SecretSetting{
+				ID: stored.ID, Name: stored.Name, Values: values, Projections: stored.Projections,
+				Version: stored.Version, CreatedAt: stored.CreatedAt, UpdatedAt: stored.UpdatedAt,
+			})
+		}
+		settings.SetSecretSettings(secretSettings)
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
 
 	if sj.Bedrock != nil {
 		bedrock := entities.NewBedrockSettings(sj.Bedrock.Enabled)

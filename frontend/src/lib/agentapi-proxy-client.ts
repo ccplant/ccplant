@@ -1815,6 +1815,33 @@ export class AgentAPIProxyClient {
     }
   }
 
+  async listSettingsSecrets(name: string): Promise<import('../types/settings').SettingsSecret[]> {
+    const result = await this.makeRequest<{ secrets: import('../types/settings').SettingsSecret[] }>(
+      `/settings/${encodeURIComponent(name)}/secrets`,
+    );
+    return result.secrets || [];
+  }
+
+  async createSettingsSecret(
+    name: string,
+    data: { name: string; values: Record<string, string>; projections?: import('../types/settings').SecretProjection[] },
+  ): Promise<import('../types/settings').SettingsSecret> {
+    return this.makeRequest(`/settings/${encodeURIComponent(name)}/secrets`, {
+      method: 'POST', body: JSON.stringify(data),
+    });
+  }
+
+  async updateSettingsSecretValues(name: string, secretId: string, values: Record<string, string>, baseVersion: number) {
+    return this.makeRequest<import('../types/settings').SettingsSecret>(
+      `/settings/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secretId)}/values`,
+      { method: 'PUT', body: JSON.stringify({ values, base_version: baseVersion }) },
+    );
+  }
+
+  async deleteSettingsSecret(name: string, secretId: string): Promise<void> {
+    await this.makeRequest(`/settings/${encodeURIComponent(name)}/secrets/${encodeURIComponent(secretId)}`, { method: 'DELETE' });
+  }
+
   /**
    * Save settings for a user or team
    * @param name - User name or team name

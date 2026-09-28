@@ -835,3 +835,20 @@ export const setACPServerEnabled = (enabled: boolean): void => {
   settings.acpServerEnabled = enabled
   saveFullGlobalSettings(settings)
 }
+export interface SecretProjection {
+  key: string
+  type: 'env' | 'file'
+  env_name?: string
+  path?: string
+  permissions?: '0400' | '0600'
+}
+
+export interface SettingsSecret {
+  id: string
+  name: string
+  keys: string[]
+  projections?: SecretProjection[]
+  version: number
+  created_at: string
+  updated_at: string
+}

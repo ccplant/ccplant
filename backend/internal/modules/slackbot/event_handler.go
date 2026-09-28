@@ -198,7 +198,7 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 	}
 
 	// Resolve the bot entity (nil for "default" when no registered bot matches)
-	bot, err := h.resolveSlackBot(ctx, botID)
+	bot, err := h.resolveSlackBot(ctx, botID, event.Channel)
 	if err != nil {
 		return fmt.Errorf("failed to resolve slackbot: %w", err)
 	}
@@ -574,9 +574,12 @@ func (h *SlackBotEventHandler) processEvent(ctx context.Context, botID string, p
 
 // resolveSlackBot retrieves the SlackBot entity.
 // Returns (bot, error). For id="default", returns nil bot (uses server defaults).
-func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (*entities.SlackBot, error) {
+func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id, channelID string) (*entities.SlackBot, error) {
 	if id == slackBotDefaultID {
 		return nil, nil
+	}
+	if strings.HasPrefix(id, settingsSecretBotKeyPrefix) {
+		return h.resolveBotBySettingsSecret(ctx, strings.TrimPrefix(id, settingsSecretBotKeyPrefix), channelID)
 	}
 
 	bot, err := h.repo.Get(ctx, id)
@@ -584,6 +587,48 @@ func (h *SlackBotEventHandler) resolveSlackBot(ctx context.Context, id string) (
 		return nil, fmt.Errorf("slackbot not found: %s", id)
 	}
 	return bot, nil
+}
+
+func (h *SlackBotEventHandler) resolveBotBySettingsSecret(ctx context.Context, secretID, channelID string) (*entities.SlackBot, error) {
+	internalRepo, ok := h.repo.(repositories.SlackBotInternalRepository)
+	if !ok {
+		return nil, fmt.Errorf("internal slackbot repository is not configured")
+	}
+	bots, err := internalRepo.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]*entities.SlackBot, 0)
+	for _, bot := range bots {
+		if bot.SettingsSecretID() == secretID && bot.Status() == entities.SlackBotStatusActive {
+			if bot.IsChannelNameAllowed(channelID) {
+				return bot, nil
+			}
+			candidates = append(candidates, bot)
+		}
+	}
+	if len(candidates) > 0 {
+		resolver, ok := h.channelResolver.(interface {
+			GetSettingsSecretValue(context.Context, string, string, string) (string, error)
+		})
+		if ok {
+			owner := candidates[0].UserID()
+			if candidates[0].Scope() == entities.ScopeTeam {
+				owner = candidates[0].TeamID()
+			}
+			token, tokenErr := resolver.GetSettingsSecretValue(ctx, owner, secretID, candidates[0].SettingsBotTokenKey())
+			if tokenErr == nil {
+				if name, resolveErr := h.channelResolver.ResolveChannelName(ctx, channelID, token); resolveErr == nil {
+					for _, candidate := range candidates {
+						if candidate.IsChannelNameAllowed(name) {
+							return candidate, nil
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("no active slackbot uses settings secret %s", secretID)
 }
 
 func (h *SlackBotEventHandler) resolveBotFromReusableSession(ctx context.Context, channelID, threadTS string) *entities.SlackBot {
@@ -726,6 +771,19 @@ func (h *SlackBotEventHandler) getBotToken(ctx context.Context, bot *entities.Sl
 	secretName := h.defaultBotTokenSecretName
 	secretKey := h.defaultBotTokenSecretKey
 	if bot != nil {
+		if bot.SettingsSecretID() != "" {
+			settingsName := bot.UserID()
+			if bot.Scope() == entities.ScopeTeam {
+				settingsName = bot.TeamID()
+			}
+			resolver, ok := h.channelResolver.(interface {
+				GetSettingsSecretValue(context.Context, string, string, string) (string, error)
+			})
+			if !ok {
+				return "", fmt.Errorf("channel resolver does not support settings secrets")
+			}
+			return resolver.GetSettingsSecretValue(ctx, settingsName, bot.SettingsSecretID(), bot.SettingsBotTokenKey())
+		}
 		if bot.BotTokenSecretName() != "" {
 			secretName = bot.BotTokenSecretName()
 		}
