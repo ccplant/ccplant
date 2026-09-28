@@ -301,7 +301,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			_ = manager.Shutdown(5 * time.Second)
 			return nil, fmt.Errorf("create Kubernetes session-manager lease: %w", lockErr)
 		}
-		go leaderelection.RunOrDie(runtimeCtx, leaderelection.LeaderElectionConfig{
+		leaderElectionConfig := leaderelection.LeaderElectionConfig{
 			Lock: lock, LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry, ReleaseOnCancel: true,
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(leaderCtx context.Context) {
@@ -318,10 +318,45 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 				OnStoppedLeading: func() { log.Printf("[SESSION_MANAGER] Lost remote execution leadership") },
 				OnNewLeader:      func(identity string) { log.Printf("[SESSION_MANAGER] Remote execution leader is %s", identity) },
 			},
+		}
+		go runRecoveringLeaderElection(runtimeCtx, retry, func() (leaderElectionRunner, error) {
+			return leaderelection.NewLeaderElector(leaderElectionConfig)
 		})
 	}
 
 	return &SessionManagerRuntime{config: cfg, echo: e, manager: manager, kvStore: applicationStore, redis: redisClient, allocator: allocator, runtimeCancel: runtimeCancel}, nil
+}
+
+type leaderElectionRunner interface {
+	Run(context.Context)
+}
+
+// runRecoveringLeaderElection restarts leader election after a lost lease.
+// client-go's LeaderElector.Run returns when renewal fails; without this loop
+// the process remains healthy but never attempts to become leader again.
+func runRecoveringLeaderElection(ctx context.Context, retryPeriod time.Duration, newRunner func() (leaderElectionRunner, error)) {
+	for ctx.Err() == nil {
+		runner, err := newRunner()
+		if err != nil {
+			log.Printf("[SESSION_MANAGER] Initialize remote leader election: %v", err)
+		} else {
+			runner.Run(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("[SESSION_MANAGER] Remote leader election stopped; retrying")
+		}
+		if retryPeriod <= 0 {
+			retryPeriod = time.Second
+		}
+		timer := time.NewTimer(retryPeriod)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 type sessionManagerStockPurger interface {
