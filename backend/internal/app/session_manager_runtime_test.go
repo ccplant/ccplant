@@ -48,6 +48,53 @@ func TestRemoteSessionManagerStoresDoNotUseRedis(t *testing.T) {
 	}
 }
 
+type fakeLeaderElectionRunner struct {
+	run func(context.Context)
+}
+
+func (r fakeLeaderElectionRunner) Run(ctx context.Context) { r.run(ctx) }
+
+func TestRunRecoveringLeaderElectionRestartsAfterElectionStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runs := 0
+	runRecoveringLeaderElection(ctx, time.Millisecond, func() (leaderElectionRunner, error) {
+		return fakeLeaderElectionRunner{run: func(context.Context) {
+			runs++
+			if runs == 3 {
+				cancel()
+			}
+		}}, nil
+	})
+
+	if runs != 3 {
+		t.Fatalf("leader election runs = %d, want 3", runs)
+	}
+}
+
+func TestRunRecoveringLeaderElectionRetriesInitialization(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	attempts := 0
+	runs := 0
+	runRecoveringLeaderElection(ctx, time.Millisecond, func() (leaderElectionRunner, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("temporary initialization failure")
+		}
+		return fakeLeaderElectionRunner{run: func(context.Context) {
+			runs++
+			cancel()
+		}}, nil
+	})
+
+	if attempts != 2 || runs != 1 {
+		t.Fatalf("attempts = %d, runs = %d; want 2 and 1", attempts, runs)
+	}
+}
+
 type fakeSessionManagerStockPurger struct {
 	called bool
 	err    error
