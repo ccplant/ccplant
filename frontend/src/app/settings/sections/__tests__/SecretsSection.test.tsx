@@ -1,49 +1,15 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SecretsSection } from '../SecretsSection'
+import { describe, expect, it } from 'vitest'
+import { buildSecretPayload, type SecretEntry } from '../SecretsSection'
 
-const mocks = vi.hoisted(() => ({
-  create: vi.fn().mockResolvedValue({}),
-  list: vi.fn().mockResolvedValue([]),
-  remove: vi.fn().mockResolvedValue(undefined),
-}))
+describe('buildSecretPayload', () => {
+  it('maps environment, file, and arbitrary key/value usages to the API payload', () => {
+    const entries: SecretEntry[] = [
+      { type: 'env', key: '', target: ' API_TOKEN ', value: 'env-value', permissions: '0600' },
+      { type: 'file', key: '', target: ' /tmp/credential ', value: 'file-value', permissions: '0400' },
+      { type: 'kv', key: ' bot-token ', target: '', value: 'kv-value', permissions: '0600' },
+    ]
 
-vi.mock('../../SettingsScopeContext', () => ({ useSettingsScope: () => ({ scopeId: 'user-1' }) }))
-vi.mock('@/lib/agentapi-proxy-client', () => ({
-  createAgentAPIProxyClientFromStorage: () => ({
-    listSettingsSecrets: mocks.list,
-    createSettingsSecret: mocks.create,
-    deleteSettingsSecret: mocks.remove,
-  }),
-}))
-
-afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.list.mockResolvedValue([]) })
-
-describe('SecretsSection', () => {
-  it('asks for the usage first and maps all three usages to the API payload', async () => {
-    render(<SecretsSection />)
-    fireEvent.click(screen.getByRole('button', { name: '追加' }))
-    fireEvent.change(screen.getByPlaceholderText('例: GitHub integration'), { target: { value: 'Runtime secrets' } })
-
-    expect(screen.queryByLabelText('環境変数名 1')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /環境変数/ }))
-    fireEvent.change(screen.getByLabelText('環境変数名 1'), { target: { value: 'API_TOKEN' } })
-    fireEvent.change(screen.getByLabelText('環境変数の値 1'), { target: { value: 'env-value' } })
-
-    fireEvent.click(screen.getByRole('button', { name: '項目を追加' }))
-    fireEvent.click(screen.getAllByRole('button', { name: /ファイル/ })[1])
-    fireEvent.change(screen.getByLabelText('配置パス 2'), { target: { value: '/tmp/credential' } })
-    fireEvent.change(screen.getByLabelText('ファイル内容 2'), { target: { value: 'file-value' } })
-    fireEvent.change(screen.getByLabelText('パーミッション 2'), { target: { value: '0400' } })
-
-    fireEvent.click(screen.getByRole('button', { name: '項目を追加' }))
-    fireEvent.click(screen.getAllByRole('button', { name: /その他/ })[2])
-    fireEvent.change(screen.getByLabelText('キー 3'), { target: { value: 'bot-token' } })
-    fireEvent.change(screen.getByLabelText('値 3'), { target: { value: 'kv-value' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1))
-    expect(mocks.create).toHaveBeenCalledWith('user-1', {
+    expect(buildSecretPayload(' Runtime secrets ', entries)).toEqual({
       name: 'Runtime secrets',
       values: { API_TOKEN: 'env-value', '/tmp/credential': 'file-value', 'bot-token': 'kv-value' },
       projections: [

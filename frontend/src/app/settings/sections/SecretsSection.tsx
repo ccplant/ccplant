@@ -7,9 +7,23 @@ import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-clien
 import type { SecretProjection, SettingsSecret } from '@/types/settings'
 import { useSettingsScope } from '../SettingsScopeContext'
 
-type SecretEntry = { key: string; value: string; type: 'unset' | 'env' | 'file' | 'kv'; target: string; permissions: '0400' | '0600' }
+export type SecretEntry = { key: string; value: string; type: 'unset' | 'env' | 'file' | 'kv'; target: string; permissions: '0400' | '0600' }
 const emptyEntry = (): SecretEntry => ({ key: '', value: '', type: 'unset', target: '', permissions: '0600' })
 const entryKey = (entry: SecretEntry) => entry.type === 'kv' ? entry.key.trim() : entry.target.trim()
+
+export const buildSecretPayload = (name: string, entries: SecretEntry[]) => {
+  const projections: SecretProjection[] = []
+  for (const entry of entries) {
+    const key = entryKey(entry)
+    if (entry.type === 'env') projections.push({ key, type: 'env', env_name: entry.target.trim() })
+    if (entry.type === 'file') projections.push({ key, type: 'file', path: entry.target.trim(), permissions: entry.permissions })
+  }
+  return {
+    name: name.trim(),
+    values: Object.fromEntries(entries.map(entry => [entryKey(entry), entry.value])),
+    projections,
+  }
+}
 
 export function SecretsSection() {
   const { scopeId } = useSettingsScope()
@@ -41,15 +55,7 @@ export function SecretsSection() {
     if (new Set(valid.map(entryKey)).size !== valid.length) { setError('環境変数名、パス、またはキーが重複しています'); return }
     try {
       setIsSubmitting(true); setError('')
-      const projections: SecretProjection[] = []
-      for (const entry of valid) {
-        const key = entryKey(entry)
-        if (entry.type === 'env') projections.push({ key, type: 'env', env_name: entry.target.trim() })
-        if (entry.type === 'file') projections.push({ key, type: 'file', path: entry.target.trim(), permissions: entry.permissions })
-      }
-      await createAgentAPIProxyClientFromStorage().createSettingsSecret(scopeId, {
-        name: name.trim(), values: Object.fromEntries(valid.map(entry => [entryKey(entry), entry.value])), projections,
-      })
+      await createAgentAPIProxyClientFromStorage().createSettingsSecret(scopeId, buildSecretPayload(name, valid))
       resetCreate(); await reload()
     } catch { setError('シークレットを保存できませんでした') }
     finally { setIsSubmitting(false) }
