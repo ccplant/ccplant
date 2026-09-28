@@ -91,9 +91,6 @@ Without Helm, use `AGENTAPI_K8S_SESSION_IMAGE` and
 
 ## Usage
 
-Grafana Cloud Application Observability 向けの OpenTelemetry 設定は
-[Grafana Cloud APM setup](../docs/grafana-cloud-apm.md) を参照してください。
-
 ### Starting the Server
 
 ```bash

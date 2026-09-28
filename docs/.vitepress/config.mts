@@ -41,17 +41,6 @@ export default defineConfig({
           { text: 'デプロイ', link: '/guide/deployment' },
           { text: 'Session Manager', link: '/guide/session-manager' }
         ]
-      },
-      {
-        text: '運用ガイド',
-        collapsed: false,
-        items: [
-          { text: 'KVストア', link: '/kv-store' },
-          { text: 'セッション永続化', link: '/acp-session-persistence' },
-          { text: 'Grafana Cloud APM', link: '/grafana-cloud-apm' },
-          { text: 'Helm移行', link: '/helm-chart-migration' },
-          { text: 'モノレポ移行', link: '/migration' }
-        ]
       }
     ],
     socialLinks: [{ icon: 'github', link: 'https://github.com/ccplant/ccplant' }],

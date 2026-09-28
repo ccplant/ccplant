@@ -531,4 +531,3 @@ rollback は新規 attempt だけ `in_process` に戻す。進行中 attempt の
 
 - [OpenAI Codex developer commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli)
 - [Direct Session Runtime Control](https://github.com/ccplant/ccplant/blob/main/backend/docs/direct-session-runtime.md)
-- [ACP セッション永続化設計](./acp-session-persistence.md)
