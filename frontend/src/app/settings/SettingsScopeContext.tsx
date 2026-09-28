@@ -25,6 +25,8 @@ interface SettingsScopeValue {
   scopeKind: SettingsScopeKind
   /** 設定 API に渡す所有者ID。personal は principal ID、team はチーム名 */
   scopeId: string
+  /** ログイン中のユーザーの不変 principal ID */
+  principalId: string
   /** ログイン中のユーザー名。scopeKind に関わらず常に自分自身 */
   userName: string
   userTeams: string[]
@@ -321,6 +323,7 @@ export function SettingsScopeProvider({ scopeKind, teamId, children }: SettingsS
   const value: SettingsScopeValue = {
     scopeKind,
     scopeId,
+    principalId,
     userName,
     userTeams,
     userTeamNames,

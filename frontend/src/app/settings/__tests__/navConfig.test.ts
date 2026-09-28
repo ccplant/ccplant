@@ -7,6 +7,11 @@ import {
 } from '../navConfig'
 
 describe('navItemsForScope', () => {
+  it('shows user information first in personal settings', () => {
+    const personalItems = navItemsForScope('personal')
+    expect(personalItems[0]?.slug).toBe('user-profile')
+  })
+
   it('offers automatic session suspension in personal and team settings', () => {
     expect(navItemsForScope('personal').some((item) => item.slug === 'sessions')).toBe(true)
     expect(navItemsForScope('team').some((item) => item.slug === 'sessions')).toBe(true)

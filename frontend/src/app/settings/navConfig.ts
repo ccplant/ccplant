@@ -9,6 +9,7 @@ import {
   Layers3,
   LucideIcon,
   Plug,
+  UserRound,
   Sparkles,
   Store,
   Terminal,
@@ -41,6 +42,14 @@ export interface SettingsNavItem {
  * 並び順がそのままサイドバーの並び順になる。
  */
 export const settingsNavItems: SettingsNavItem[] = [
+  {
+    slug: 'user-profile',
+    label: 'ユーザー情報',
+    icon: UserRound,
+    group: '',
+    scopes: ['personal'],
+    fields: [],
+  },
   {
     slug: 'team-profile',
     label: 'チーム管理',
