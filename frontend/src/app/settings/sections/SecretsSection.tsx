@@ -7,8 +7,9 @@ import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-clien
 import type { SecretProjection, SettingsSecret } from '@/types/settings'
 import { useSettingsScope } from '../SettingsScopeContext'
 
-type SecretEntry = { key: string; value: string; type: 'none' | 'env' | 'file'; target: string }
-const emptyEntry = (): SecretEntry => ({ key: '', value: '', type: 'none', target: '' })
+type SecretEntry = { key: string; value: string; type: 'unset' | 'env' | 'file' | 'kv'; target: string; permissions: '0400' | '0600' }
+const emptyEntry = (): SecretEntry => ({ key: '', value: '', type: 'unset', target: '', permissions: '0600' })
+const entryKey = (entry: SecretEntry) => entry.type === 'kv' ? entry.key.trim() : entry.target.trim()
 
 export function SecretsSection() {
   const { scopeId } = useSettingsScope()
@@ -33,19 +34,21 @@ export function SecretsSection() {
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault()
-    const valid = entries.filter(entry => entry.key.trim() && entry.value)
-    if (!name.trim() || valid.length === 0) { setError('名前と1つ以上のキー・値を入力してください'); return }
-    if (new Set(valid.map(entry => entry.key.trim())).size !== valid.length) { setError('キー名が重複しています'); return }
-    if (valid.some(entry => entry.type !== 'none' && !entry.target.trim())) { setError('利用方法を指定したキーには出力先が必要です'); return }
+    if (!name.trim()) { setError('名前を入力してください'); return }
+    if (entries.some(entry => entry.type === 'unset')) { setError('各項目の用途を選択してください'); return }
+    const valid = entries.filter(entry => entryKey(entry) && entry.value)
+    if (valid.length !== entries.length) { setError('すべての項目に名前またはパスと値を入力してください'); return }
+    if (new Set(valid.map(entryKey)).size !== valid.length) { setError('環境変数名、パス、またはキーが重複しています'); return }
     try {
       setIsSubmitting(true); setError('')
       const projections: SecretProjection[] = []
       for (const entry of valid) {
-        if (entry.type === 'env') projections.push({ key: entry.key.trim(), type: 'env', env_name: entry.target.trim() })
-        if (entry.type === 'file') projections.push({ key: entry.key.trim(), type: 'file', path: entry.target.trim(), permissions: '0600' })
+        const key = entryKey(entry)
+        if (entry.type === 'env') projections.push({ key, type: 'env', env_name: entry.target.trim() })
+        if (entry.type === 'file') projections.push({ key, type: 'file', path: entry.target.trim(), permissions: entry.permissions })
       }
       await createAgentAPIProxyClientFromStorage().createSettingsSecret(scopeId, {
-        name: name.trim(), values: Object.fromEntries(valid.map(entry => [entry.key.trim(), entry.value])), projections,
+        name: name.trim(), values: Object.fromEntries(valid.map(entry => [entryKey(entry), entry.value])), projections,
       })
       resetCreate(); await reload()
     } catch { setError('シークレットを保存できませんでした') }
@@ -73,16 +76,22 @@ export function SecretsSection() {
           {error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">{error}</div>}
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">名前 <span className="text-red-500">*</span><input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="例: GitHub integration" className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white" /></label>
           <div>
-            <div className="mb-2"><div className="text-sm font-medium text-gray-700 dark:text-gray-300">キーと値 <span className="text-red-500">*</span></div><p className="mt-1 text-xs text-gray-500">値は保存後に再表示されません。必要なら環境変数またはファイルへの出力先を指定します。</p></div>
+            <div className="mb-2"><div className="text-sm font-medium text-gray-700 dark:text-gray-300">登録する項目 <span className="text-red-500">*</span></div><p className="mt-1 text-xs text-gray-500">最初に用途を選んでください。値や内容は保存後に再表示されません。</p></div>
             <div className="space-y-3">{entries.map((entry, index) => <div key={index} className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-600 dark:bg-gray-900/40">
-              <div className="mb-2 flex items-start gap-2">
-                <input aria-label={`キー ${index + 1}`} className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="キー" value={entry.key} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, key: e.target.value } : row))} />
-                <input aria-label={`値 ${index + 1}`} type="password" autoComplete="new-password" className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="値" value={entry.value} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, value: e.target.value } : row))} />
-                <button type="button" aria-label={`キー ${index + 1} を削除`} onClick={() => setEntries(rows => rows.length === 1 ? [emptyEntry()] : rows.filter((_, i) => i !== index))} className="mt-1 p-1 text-gray-400 hover:text-red-500"><X className="h-4 w-4" /></button>
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <fieldset className="min-w-0 flex-1"><legend className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">用途</legend><div className="grid grid-cols-3 gap-2">{([
+                  { type: 'env', label: '環境変数', description: 'Env' },
+                  { type: 'file', label: 'ファイル', description: 'File' },
+                  { type: 'kv', label: 'その他', description: 'Key / Value' },
+                ] as const).map(option => <button key={option.type} type="button" aria-pressed={entry.type === option.type} onClick={() => setEntries(rows => rows.map((row, i) => i === index ? { ...emptyEntry(), type: option.type } : row))} className={`rounded-md border px-2 py-2 text-left transition-colors ${entry.type === option.type ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500 dark:bg-blue-900/30 dark:text-blue-300' : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}><span className="block text-sm font-medium">{option.label}</span><span className="block text-[10px] text-gray-500 dark:text-gray-400">{option.description}</span></button>)}</div></fieldset>
+                <button type="button" aria-label={`項目 ${index + 1} を削除`} onClick={() => setEntries(rows => rows.length === 1 ? [emptyEntry()] : rows.filter((_, i) => i !== index))} className="mt-1 p-1 text-gray-400 hover:text-red-500"><X className="h-4 w-4" /></button>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2"><select aria-label={`利用方法 ${index + 1}`} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" value={entry.type} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, type: e.target.value as SecretEntry['type'], target: '' } : row))}><option value="none">保存のみ</option><option value="env">環境変数として使用</option><option value="file">ファイルとして使用</option></select>{entry.type !== 'none' && <input aria-label={`出力先 ${index + 1}`} className="rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder={entry.type === 'env' ? '環境変数名' : '/absolute/path'} value={entry.target} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, target: e.target.value } : row))} />}</div>
+              {entry.type === 'unset' && <p className="text-center text-xs text-gray-500">用途を選ぶと入力欄が表示されます</p>}
+              {entry.type === 'env' && <div className="grid gap-2 sm:grid-cols-2"><input aria-label={`環境変数名 ${index + 1}`} className="rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="API_TOKEN" value={entry.target} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, target: e.target.value } : row))} /><input aria-label={`環境変数の値 ${index + 1}`} type="password" autoComplete="new-password" className="rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="値" value={entry.value} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, value: e.target.value } : row))} /></div>}
+              {entry.type === 'file' && <div className="space-y-2"><input aria-label={`配置パス ${index + 1}`} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="/absolute/path" value={entry.target} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, target: e.target.value } : row))} /><textarea aria-label={`ファイル内容 ${index + 1}`} rows={3} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="ファイルの内容" value={entry.value} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, value: e.target.value } : row))} /><label className="block text-xs text-gray-500">パーミッション<select aria-label={`パーミッション ${index + 1}`} className="ml-2 w-24 rounded-md border border-gray-300 bg-white px-2 py-1 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" value={entry.permissions} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, permissions: e.target.value as SecretEntry['permissions'] } : row))}><option value="0600">0600</option><option value="0400">0400</option></select></label></div>}
+              {entry.type === 'kv' && <div className="grid gap-2 sm:grid-cols-2"><input aria-label={`キー ${index + 1}`} className="rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="キー" value={entry.key} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, key: e.target.value } : row))} /><input aria-label={`値 ${index + 1}`} type="password" autoComplete="new-password" className="rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-700" placeholder="値" value={entry.value} onChange={e => setEntries(rows => rows.map((row, i) => i === index ? { ...row, value: e.target.value } : row))} /></div>}
             </div>)}</div>
-            <button type="button" className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400" onClick={() => setEntries(rows => [...rows, emptyEntry()])}><Plus className="h-4 w-4" /> キーを追加</button>
+            <button type="button" className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400" onClick={() => setEntries(rows => [...rows, emptyEntry()])}><Plus className="h-4 w-4" /> 項目を追加</button>
           </div>
           <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-700"><button type="button" disabled={isSubmitting} onClick={closeCreate} className="rounded-md bg-gray-100 px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600">キャンセル</button><button type="submit" disabled={isSubmitting} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{isSubmitting ? '保存中…' : '保存'}</button></div>
         </form>
