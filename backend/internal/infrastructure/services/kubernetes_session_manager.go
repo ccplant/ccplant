@@ -7475,7 +7475,9 @@ func (m *KubernetesSessionManager) resolveProjectedSecrets(ctx context.Context, 
 		return env, nil
 	}
 	settingsName := req.UserID
-	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+	if req.SettingsTeamID != "" {
+		settingsName = req.SettingsTeamID
+	} else if req.Scope == entities.ScopeTeam && req.TeamID != "" {
 		settingsName = req.TeamID
 	}
 	if settingsName == "" {
@@ -7487,7 +7489,16 @@ func (m *KubernetesSessionManager) resolveProjectedSecrets(ctx context.Context, 
 	}
 	files := make([]sessionsettings.ManagedFile, 0)
 	seenPaths := make(map[string]bool)
+	selected := make(map[string]struct{}, len(req.ProfileSecretIDs))
+	for _, id := range req.ProfileSecretIDs {
+		selected[id] = struct{}{}
+	}
 	for _, secret := range settings.SecretSettings() {
+		if len(selected) > 0 {
+			if _, ok := selected[secret.ID]; !ok {
+				continue
+			}
+		}
 		for _, projection := range secret.Projections {
 			value, ok := secret.Values[projection.Key]
 			if !ok {

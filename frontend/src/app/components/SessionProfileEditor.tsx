@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft, PanelLeft, X, Settings, KeyRound, Bot, Server, Terminal, Tags, Shield, Container, Clock, Files } from 'lucide-react'
+import { ArrowLeft, PanelLeft, X, Settings, KeyRound, Bot, Server, Terminal, Tags, Shield, Container, Clock, Files, LockKeyhole } from 'lucide-react'
 import { SideNav } from '@/components/settings/ui/SideNav'
 import { SettingsPageHeader } from '@/components/settings/ui/SettingsPageHeader'
 import { usePathname, useSearchParams } from 'next/navigation'
@@ -18,7 +18,7 @@ import { LogicalSessionPool } from '../../types/session_pool'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import ProfileConnectionFields from './ProfileConnectionFields'
-import type { ModelConnection } from '../../types/settings'
+import type { ModelConnection, SettingsSecret } from '../../types/settings'
 import type { APIMCPServerConfig } from '../../types/settings'
 import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
 
@@ -38,6 +38,7 @@ const profileSections = [
   { slug: 'models', label: 'モデル', icon: Bot, group: 'AI とエージェント' },
   { slug: 'mcp', label: 'MCP サーバー', icon: Server, group: 'セッション環境' },
   { slug: 'environment', label: '環境変数', icon: Terminal, group: 'セッション環境' },
+  { slug: 'secrets', label: 'シークレット', icon: LockKeyhole, group: 'セッション環境' },
   { slug: 'files', label: 'セッションファイル', icon: Files, group: 'セッション環境' },
   { slug: 'tags', label: 'タグ', icon: Tags, group: 'セッション環境' },
   { slug: 'pool', label: 'プール', icon: Server, group: '実行基盤' },
@@ -99,6 +100,8 @@ export default function SessionProfileEditor({
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
   const [sourceProfileId, setSourceProfileId] = useState('')
   const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
+  const [availableSecrets, setAvailableSecrets] = useState<SettingsSecret[]>([])
+  const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -162,6 +165,17 @@ export default function SessionProfileEditor({
     fetchConfigOptions()
   }, [getScopeParams, scope, teamId])
 
+  useEffect(() => {
+    const loadSecrets = async () => {
+      try {
+        const client = createAgentAPIProxyClientFromStorage()
+        const owner = settingsTeamId || (scope === 'team' ? teamId : (await client.getUserInfo()).principal_id)
+        setAvailableSecrets(owner ? await client.listSettingsSecrets(owner) : [])
+      } catch { setAvailableSecrets([]) }
+    }
+    void loadSecrets()
+  }, [scope, teamId, settingsTeamId])
+
   // Initialize form when editing
   useEffect(() => {
     if (editingProfile) {
@@ -190,6 +204,7 @@ export default function SessionProfileEditor({
       setModelOptions((cfg?.params?.model_options ?? []).join('\n'))
       setMcpServers(cfg?.mcp_servers ?? {})
       setSourceProfileId(cfg?.source_session_profile_id ?? '')
+      setSelectedSecretIds(cfg?.secret_ids ?? [])
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -261,6 +276,7 @@ export default function SessionProfileEditor({
       setModelOptions('')
       setMcpServers({})
       setSourceProfileId('')
+      setSelectedSecretIds([])
       setAvailableProfiles([])
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -430,8 +446,7 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id'] as const) delete extraConfig[key]
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'files'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'files'] as const) delete extraConfig[key]
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -446,6 +461,7 @@ export default function SessionProfileEditor({
         ...(sessionTTL.trim() ? { session_ttl: sessionTTL.trim() } : {}),
         ...(parsedUnsyncedFilePaths.length > 0 ? { unsynced_file_paths: parsedUnsyncedFilePaths } : {}),
         ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
+        ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
         files: parsedProfileFiles,
       }
 
@@ -789,6 +805,33 @@ export default function SessionProfileEditor({
                   </div>
 
                   
+            </div>}
+            {active.slug === 'secrets' && <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">参照するシークレット</label>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  このプロファイルで開始するセッションへ投影するシークレットを選択します。値は表示されません。
+                </p>
+                {availableSecrets.length === 0 ? (
+                  <div className="rounded-lg bg-gray-50 py-8 text-center text-sm text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                    利用できるシークレットがありません。設定の「シークレット」から追加してください。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {availableSecrets.map(secret => {
+                      const checked = selectedSecretIds.includes(secret.id)
+                      return <label key={secret.id} className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-3 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600">
+                        <input type="checkbox" checked={checked} onChange={() => {
+                          setSelectedSecretIds(ids => checked ? ids.filter(id => id !== secret.id) : [...ids, secret.id])
+                          setDirty(true)
+                        }} className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                        <span className="min-w-0"><span className="block text-sm font-medium text-gray-900 dark:text-white">{secret.name}</span><span className="mt-0.5 block truncate text-xs text-gray-500">キー: {secret.keys.join(', ')}</span></span>
+                      </label>
+                    })}
+                  </div>
+                )}
+                {selectedSecretIds.length === 0 && availableSecrets.length > 0 && <p className="mt-3 text-xs text-gray-500">未選択の場合、既存プロファイルとの互換性のため、この設定スコープで投影が設定されたすべてのシークレットを使用します。</p>}
+              </div>
             </div>}
             {active.slug === 'files' && <div className="space-y-5">
                   <div>

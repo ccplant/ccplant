@@ -51,6 +51,8 @@ type LaunchRequest struct {
 	ClaudeAuthMode           string
 	CredentialSource         string
 	ProfileFiles             []sessionsettings.ManagedFile
+	ProfileSecretIDs         []string
+	SettingsTeamID           string
 	ProfileMCPServers        *entities.MCPServersSettings
 	ResolvedSessionProfileID string
 
@@ -221,6 +223,8 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		Environment:              req.Environment,
 		ProfileEnvironment:       req.ProfileEnvironment,
 		ProfileFiles:             req.ProfileFiles,
+		ProfileSecretIDs:         req.ProfileSecretIDs,
+		SettingsTeamID:           req.SettingsTeamID,
 		Tags:                     req.Tags,
 		Scope:                    req.Scope,
 		TeamID:                   req.TeamID,
@@ -445,6 +449,9 @@ func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]st
 // applyProfileToLaunchRequest merges a SessionProfileConfig into a LaunchRequest.
 // The profile provides the base; explicit request fields override.
 func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
+	if cfg.SettingsTeamID() != "" {
+		req.SettingsTeamID = cfg.SettingsTeamID()
+	}
 	if cfg.MCPServers() != nil {
 		req.ProfileMCPServers = cfg.MCPServers()
 	}
@@ -541,6 +548,9 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 				Permissions: file.Permissions,
 			}
 		}
+	}
+	if len(cfg.SecretIDs()) > 0 {
+		req.ProfileSecretIDs = cfg.SecretIDs()
 	}
 	applyProfileSandboxDefaults(cfg, req)
 }

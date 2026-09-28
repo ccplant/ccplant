@@ -263,7 +263,10 @@ type RunServerRequest struct {
 	CodexAuthMode    string
 	ClaudeAuthMode   string
 	// ProfileMCPServers is applied as a settings layer above user/team settings.
-	ProfileMCPServers        *MCPServersSettings
+	ProfileMCPServers *MCPServersSettings
+	// ProfileSecretIDs limits settings Secret projection to the references stored
+	// on the resolved session profile. Empty preserves legacy all-secret behavior.
+	ProfileSecretIDs         []string
 	ResolvedSessionProfileID string
 	// SettingsTeamID is authorized and resolved from the profile at launch.
 	SettingsTeamID string `json:"-"`

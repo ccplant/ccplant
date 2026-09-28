@@ -238,6 +238,29 @@ func TestLaunchPropagatesProfileMCPServers(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesProfileSecretReferences(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "secrets", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSecretIDs([]string{"secret-a", "secret-b"})
+	cfg.SetSettingsTeamID("org/team-a")
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	if _, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.ProfileSecretIDs; len(got) != 2 || got[0] != "secret-a" || got[1] != "secret-b" {
+		t.Fatalf("ProfileSecretIDs = %#v", got)
+	}
+	if got := sessionManager.req.SettingsTeamID; got != "org/team-a" {
+		t.Fatalf("SettingsTeamID = %q, want org/team-a", got)
+	}
+}
+
 func TestLaunchKeepsProfileEnvironmentSeparateFromExplicitEnvironment(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "environment", "user-1")

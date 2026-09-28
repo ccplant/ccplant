@@ -51,6 +51,7 @@ type SessionProfileConfigRequest struct {
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
+	SecretIDs              []string                     `json:"secret_ids,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
@@ -106,6 +107,7 @@ type SessionProfileConfigResponse struct {
 	SessionTTL             string                       `json:"session_ttl,omitempty"`
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
+	SecretIDs              []string                     `json:"secret_ids,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
@@ -161,6 +163,9 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 		return err
 	}
 	if err := validateProfileSettingsTeam(user, profile, config); err != nil {
+		return err
+	}
+	if err := c.validateProfileSecrets(ctx.Request().Context(), profile, config); err != nil {
 		return err
 	}
 	if err := applyProfileConnections(&config, entities.NewSessionProfileConfig(), req.Config); err != nil {
@@ -377,6 +382,9 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 		if err := validateProfileSettingsTeam(user, profile, config); err != nil {
 			return err
 		}
+		if err := c.validateProfileSecrets(ctx.Request().Context(), profile, config); err != nil {
+			return err
+		}
 		if err := applyProfileConnections(&config, profile.Config(), *req.Config); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
@@ -503,6 +511,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetSessionTTL(req.SessionTTL)
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
 	cfg.SetSourceSessionProfileID(req.SourceSessionProfileID)
+	cfg.SetSecretIDs(req.SecretIDs)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
 	}
@@ -557,6 +566,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			SessionTTL:             cfg.SessionTTL(),
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 			SourceSessionProfileID: cfg.SourceSessionProfileID(),
+			SecretIDs:              cfg.SecretIDs(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 		},
@@ -575,6 +585,43 @@ func validateProfileSettingsTeam(user *entities.User, profile *entities.SessionP
 	}
 	if !user.IsAdmin() && !user.IsMemberOfTeam(team) {
 		return echo.NewHTTPError(http.StatusForbidden, "team membership is required to inherit settings")
+	}
+	return nil
+}
+
+func (c *SessionProfileController) validateProfileSecrets(ctx context.Context, profile *entities.SessionProfile, cfg entities.SessionProfileConfig) error {
+	ids := cfg.SecretIDs()
+	if len(ids) == 0 {
+		return nil
+	}
+	settingsName := cfg.SettingsTeamID()
+	if settingsName == "" {
+		if profile.Scope() == entities.ScopeTeam {
+			settingsName = profile.TeamID()
+		} else {
+			settingsName = profile.UserID()
+		}
+	}
+	settings, err := c.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "referenced settings secrets were not found")
+	}
+	available := make(map[string]struct{})
+	for _, secret := range settings.SecretSettings() {
+		available[secret.ID] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "secret_ids must not contain empty values")
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return echo.NewHTTPError(http.StatusBadRequest, "secret_ids must not contain duplicates")
+		}
+		seen[id] = struct{}{}
+		if _, ok := available[id]; !ok {
+			return echo.NewHTTPError(http.StatusBadRequest, "referenced settings secret was not found")
+		}
 	}
 	return nil
 }

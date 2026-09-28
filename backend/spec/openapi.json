@@ -11200,6 +11200,12 @@
           "type": "string",
           "description": "Reference to another session profile used as a source for environment variables and MCP servers. The referenced profile must belong to the same tenant. Values in this profile override same-named entries."
         },
+        "secret_ids": {
+          "type": "array",
+          "description": "Settings Secret IDs whose env and file projections are exposed to sessions using this profile. Empty preserves the legacy behavior of using all projected secrets in the settings scope.",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
         "files": {
           "files": {
             "type": "array",
