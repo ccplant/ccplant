@@ -581,7 +581,7 @@ func registerSlackBotHandlers(configData *config.Config, proxyServer *app.Server
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), namespace)
 
 	// Create and register SlackBot management handlers (no event reception - handled by Socket Mode)
-	slackbotHandlers := slackbot.NewHandlers(slackbotRepo, newTriggerSessionManager(configData), proxyServer.GetSessionProfileRepository())
+	slackbotHandlers := slackbot.NewHandlers(slackbotRepo, newTriggerSessionManager(configData), proxyServer.GetSessionProfileRepository(), proxyServer.GetSettingsRepository())
 	proxyServer.AddCustomHandler(slackbotHandlers)
 
 	log.Printf("[SLACKBOT_HANDLERS] SlackBot management handlers registered successfully")
@@ -611,7 +611,7 @@ func startSlackSocketManager(configData *config.Config, proxyServer *app.Server)
 
 	// Create dependencies
 	slackbotRepo := repositories.NewKubernetesSlackBotRepository(proxyServer.GetPersistenceClient(), persistenceNamespace)
-	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), persistenceNamespace).WithSecretClient(client)
+	channelResolver := slackbot.NewSlackChannelResolver(proxyServer.GetPersistenceClient(), persistenceNamespace).WithSecretClient(client).WithSettingsRepository(proxyServer.GetSettingsRepository())
 
 	eventHandler := slackbot.NewSlackBotEventHandler(
 		slackbotRepo,

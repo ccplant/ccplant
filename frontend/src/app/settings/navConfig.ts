@@ -5,6 +5,7 @@ import {
   FolderKey,
   Github,
   KeyRound,
+	LockKeyhole,
   Layers3,
   LucideIcon,
   Plug,
@@ -111,6 +112,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     group: 'セッション環境',
     scopes: ['personal', 'team'],
     fields: ['env_vars'],
+  },
+  {
+    slug: 'secrets',
+    label: 'シークレット',
+    icon: LockKeyhole,
+    group: 'セッション環境',
+    scopes: ['personal', 'team'],
+    fields: [],
   },
   {
     slug: 'files',

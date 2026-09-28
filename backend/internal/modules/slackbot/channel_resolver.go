@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,7 +36,35 @@ type SlackChannelResolver struct {
 	namespace    string
 	slackAPIBase string // base URL for the Slack API, e.g. "https://slack.com/api"
 	// in-memory cache: channel ID → channel name (cleared on pod restart)
-	cache sync.Map
+	cache        sync.Map
+	settingsRepo repositories.SettingsRepository
+}
+
+// WithSettingsRepository enables token lookup from the Settings Secrets API.
+func (r *SlackChannelResolver) WithSettingsRepository(repo repositories.SettingsRepository) *SlackChannelResolver {
+	r.settingsRepo = repo
+	return r
+}
+
+// GetSettingsSecretValue returns one value without exposing it through an HTTP response.
+func (r *SlackChannelResolver) GetSettingsSecretValue(ctx context.Context, settingsName, secretID, key string) (string, error) {
+	if r.settingsRepo == nil {
+		return "", fmt.Errorf("settings repository is not configured")
+	}
+	settings, err := r.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil {
+		return "", fmt.Errorf("failed to load settings secret: %w", err)
+	}
+	for _, secret := range settings.SecretSettings() {
+		if secret.ID == secretID {
+			value, ok := secret.Values[key]
+			if !ok || value == "" {
+				return "", fmt.Errorf("key %q not found in settings secret", key)
+			}
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("settings secret %q not found", secretID)
 }
 
 // NewSlackChannelResolver creates a new SlackChannelResolver

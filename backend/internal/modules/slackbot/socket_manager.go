@@ -18,7 +18,8 @@ const (
 	// slackSocketLeasePrefix is the prefix for Socket Mode leader election Lease names
 	slackSocketLeasePrefix = "agentapi-slackbot-socket-"
 	// defaultBotKey is the key used for the default (no custom token) bot group
-	defaultBotKey = "default"
+	defaultBotKey              = "default"
+	settingsSecretBotKeyPrefix = "settings-secret-"
 	// defaultReconcileInterval is how often to reconcile the bot list
 	defaultReconcileInterval = 30 * time.Second
 )
@@ -163,17 +164,22 @@ func (m *SlackSocketManager) reconcile(ctx context.Context) {
 
 	// Custom bots: each SlackBot with a custom BotTokenSecretName gets its own worker
 	for _, bot := range bots {
-		if bot.BotTokenSecretName() != "" {
+		if bot.SettingsSecretID() != "" {
+			required[settingsSecretBotKeyPrefix+bot.SettingsSecretID()] = struct{}{}
+		} else if bot.BotTokenSecretName() != "" {
 			required[bot.ID()] = struct{}{}
 		}
 	}
 
 	// Restart workers whose updatedAt has changed (token updated)
 	for _, bot := range bots {
-		if bot.BotTokenSecretName() == "" {
+		if bot.BotTokenSecretName() == "" && bot.SettingsSecretID() == "" {
 			continue
 		}
 		key := bot.ID()
+		if bot.SettingsSecretID() != "" {
+			key = settingsSecretBotKeyPrefix + bot.SettingsSecretID()
+		}
 		m.mu.Lock()
 		entry, running := m.running[key]
 		m.mu.Unlock()
@@ -193,7 +199,11 @@ func (m *SlackSocketManager) reconcile(ctx context.Context) {
 			// Find updatedAt for this key (zero value for default bot)
 			var updatedAt time.Time
 			for _, bot := range bots {
-				if bot.ID() == key {
+				botKey := bot.ID()
+				if bot.SettingsSecretID() != "" {
+					botKey = settingsSecretBotKeyPrefix + bot.SettingsSecretID()
+				}
+				if botKey == key {
 					updatedAt = bot.UpdatedAt()
 					break
 				}
@@ -288,12 +298,58 @@ func (m *SlackSocketManager) newWorker(botKey string) *SlackSocketWorker {
 			m.eventHandler,
 		)
 	}
+	if strings.HasPrefix(botKey, settingsSecretBotKeyPrefix) {
+		secretID := strings.TrimPrefix(botKey, settingsSecretBotKeyPrefix)
+		bots, err := m.internalRepo.ListAll(context.Background())
+		if err != nil {
+			log.Printf("[SOCKET_MANAGER] Failed to find Settings Secret group %s: %v", secretID, err)
+			return nil
+		}
+		for _, candidate := range bots {
+			if candidate.SettingsSecretID() != secretID {
+				continue
+			}
+			settingsName := candidate.UserID()
+			if candidate.Scope() == "team" {
+				settingsName = candidate.TeamID()
+			}
+			appToken, err := m.channelResolver.GetSettingsSecretValue(context.Background(), settingsName, secretID, candidate.SettingsAppTokenKey())
+			if err != nil {
+				log.Printf("[SOCKET_MANAGER] Failed to load app token for group %s: %v", secretID, err)
+				return nil
+			}
+			botToken, err := m.channelResolver.GetSettingsSecretValue(context.Background(), settingsName, secretID, candidate.SettingsBotTokenKey())
+			if err != nil {
+				log.Printf("[SOCKET_MANAGER] Failed to load bot token for group %s: %v", secretID, err)
+				return nil
+			}
+			return NewSlackSocketWorkerWithTokens(botKey, appToken, botToken, m.channelResolver, m.eventHandler)
+		}
+		return nil
+	}
 
 	// Custom bot: load the SlackBot entity to get its token configuration
 	bot, err := m.repo.Get(context.Background(), botKey)
 	if err != nil {
 		log.Printf("[SOCKET_MANAGER] Failed to get SlackBot %s: %v", botKey, err)
 		return nil
+	}
+	if bot.SettingsSecretID() != "" {
+		settingsName := bot.UserID()
+		if bot.Scope() == "team" {
+			settingsName = bot.TeamID()
+		}
+		appToken, err := m.channelResolver.GetSettingsSecretValue(context.Background(), settingsName, bot.SettingsSecretID(), bot.SettingsAppTokenKey())
+		if err != nil {
+			log.Printf("[SOCKET_MANAGER] Failed to load app token for SlackBot %s: %v", botKey, err)
+			return nil
+		}
+		botToken, err := m.channelResolver.GetSettingsSecretValue(context.Background(), settingsName, bot.SettingsSecretID(), bot.SettingsBotTokenKey())
+		if err != nil {
+			log.Printf("[SOCKET_MANAGER] Failed to load bot token for SlackBot %s: %v", botKey, err)
+			return nil
+		}
+		return NewSlackSocketWorkerWithTokens(botKey, appToken, botToken, m.channelResolver, m.eventHandler)
 	}
 
 	// App token and bot token are stored in the same Secret (different keys)

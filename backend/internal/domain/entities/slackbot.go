@@ -30,6 +30,9 @@ type SlackBot struct {
 	botTokenSecretName     string                // K8s Secret name for xoxb-... token; empty = use global default
 	botTokenSecretKey      string                // Key within the Secret; default: "bot-token"
 	appTokenSecretKey      string                // Key within botTokenSecretName Secret for xapp-... token; default: "app-token"
+	settingsSecretID       string                // Settings Secret ID used by the SlackBot flow
+	settingsBotTokenKey    string                // Key containing xoxb token in settings secret
+	settingsAppTokenKey    string                // Key containing xapp token in settings secret
 	allowedEventTypes      []string              // Empty means all event types
 	allowedChannelNames    []string              // Empty means all channels; partial match on resolved channel name
 	allowedUserIDs         []string              // Empty means all users; exact match on Slack user ID
@@ -173,6 +176,33 @@ func (s *SlackBot) AppTokenSecretKey() string {
 // SetAppTokenSecretKey sets the key within the K8s Secret for the App-level token
 func (s *SlackBot) SetAppTokenSecretKey(key string) {
 	s.appTokenSecretKey = key
+	s.updatedAt = time.Now()
+}
+
+// SettingsSecretID returns the Settings Secret referenced by this bot.
+func (s *SlackBot) SettingsSecretID() string { return s.settingsSecretID }
+
+// SettingsBotTokenKey returns the referenced bot token key.
+func (s *SlackBot) SettingsBotTokenKey() string {
+	if s.settingsBotTokenKey == "" {
+		return "bot-token"
+	}
+	return s.settingsBotTokenKey
+}
+
+// SettingsAppTokenKey returns the referenced app token key.
+func (s *SlackBot) SettingsAppTokenKey() string {
+	if s.settingsAppTokenKey == "" {
+		return "app-token"
+	}
+	return s.settingsAppTokenKey
+}
+
+// SetSettingsSecret configures a Settings Secret reference.
+func (s *SlackBot) SetSettingsSecret(id, botTokenKey, appTokenKey string) {
+	s.settingsSecretID = id
+	s.settingsBotTokenKey = botTokenKey
+	s.settingsAppTokenKey = appTokenKey
 	s.updatedAt = time.Now()
 }
 

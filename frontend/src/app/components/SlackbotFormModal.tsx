@@ -9,6 +9,7 @@ import {
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import SessionProfileSelect from './SessionProfileSelect'
+import type { SettingsSecret } from '../../types/settings'
 
 interface SlackbotFormModalProps {
   isOpen: boolean
@@ -25,12 +26,15 @@ export default function SlackbotFormModal({
   onSuccess,
   editingSlackbot,
 }: SlackbotFormModalProps) {
-  const { getScopeParams } = useTeamScope()
+  const { getScopeParams, selectedTeam } = useTeamScope()
 
   // Basic fields
   const [name, setName] = useState('')
   const [botToken, setBotToken] = useState('')
   const [appToken, setAppToken] = useState('')
+  const [availableSecrets, setAvailableSecrets] = useState<SettingsSecret[]>([])
+  const [selectedSecretId, setSelectedSecretId] = useState('')
+  const [secretOwner, setSecretOwner] = useState('')
   const [maxSessions, setMaxSessions] = useState<number>(10)
   const [notifyOnSessionCreated, setNotifyOnSessionCreated] = useState<boolean>(true)
   const [allowBotMessages, setAllowBotMessages] = useState<boolean>(false)
@@ -128,6 +132,21 @@ export default function SlackbotFormModal({
     }
     setError(null)
   }, [editingSlackbot, isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const load = async () => {
+      try {
+        const client = createAgentAPIProxyClientFromStorage()
+        const owner = selectedTeam || (await client.getUserInfo()).principal_id
+        setSecretOwner(owner)
+        const secrets = await client.listSettingsSecrets(owner)
+        setAvailableSecrets(secrets.filter(s => s.keys.includes('bot-token') && s.keys.includes('app-token')))
+        setSelectedSecretId(editingSlackbot?.secret?.secret_id || '')
+      } catch { setAvailableSecrets([]) }
+    }
+    void load()
+  }, [isOpen, selectedTeam, editingSlackbot])
 
   // Keyboard handler
   const handleKeyDown = useCallback(
@@ -255,14 +274,24 @@ export default function SlackbotFormModal({
         ...(sessionProfileId.trim() ? { session_profile_id: sessionProfileId.trim() } : {}),
       }
 
+      let secret = selectedSecretId
+        ? { secret_id: selectedSecretId, bot_token_key: 'bot-token', app_token_key: 'app-token' }
+        : undefined
+      if (!secret && botToken.trim() && appToken.trim()) {
+        const created = await client.createSettingsSecret(secretOwner, {
+          name: `${name.trim()} Slack App`,
+          values: { 'bot-token': botToken.trim(), 'app-token': appToken.trim() },
+        })
+        secret = { secret_id: created.id, bot_token_key: 'bot-token', app_token_key: 'app-token' }
+      }
+
       if (isEditing && editingSlackbot) {
         // When showBotTokenSection is false, explicitly send empty string to clear the custom token.
         // When true, omit bot_token_secret_name — the backend auto-sets it from the bot ID
         // when bot_token/app_token are provided.
         const updateData: UpdateSlackBotRequest = {
           name: name.trim(),
-          ...(botToken.trim() ? { bot_token: botToken.trim() } : {}),
-          ...(appToken.trim() ? { app_token: appToken.trim() } : {}),
+          ...(secret ? { secret } : {}),
           ...(!showBotTokenSection ? { bot_token_secret_name: '', bot_token_secret_key: '' } : {}),
           allowed_channel_names: allowedChannelNames,
           allowed_user_ids: allowedUserIDs,
@@ -276,8 +305,7 @@ export default function SlackbotFormModal({
         const scopeParams = getScopeParams()
         const createData: CreateSlackBotRequest = {
           name: name.trim(),
-          ...(botToken.trim() ? { bot_token: botToken.trim() } : {}),
-          ...(appToken.trim() ? { app_token: appToken.trim() } : {}),
+          ...(secret ? { secret } : {}),
           allowed_channel_names: allowedChannelNames,
           ...(allowedUserIDs.length > 0 ? { allowed_user_ids: allowedUserIDs } : {}),
           max_sessions: maxSessions,
@@ -475,6 +503,15 @@ export default function SlackbotFormModal({
 
               {showBotTokenSection && (
                 <div className="mt-4 space-y-4 pl-4 border-l-2 border-blue-200 dark:border-blue-700">
+                  {availableSecrets.length > 0 && <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">保存済み Slack App</label>
+                    <select value={selectedSecretId} onChange={e => setSelectedSecretId(e.target.value)} className="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700">
+                      <option value="">新しい Slack App を設定</option>
+                      {availableSecrets.map(secret => <option key={secret.id} value={secret.id}>{secret.name}</option>)}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">別の Bot で設定した Slack App を再利用できます。</p>
+                  </div>}
+                  {!selectedSecretId && <>
                   {/* Bot Token */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -520,6 +557,7 @@ export default function SlackbotFormModal({
                       Slack App-Level Token（xapp- で始まるトークン）。レスポンスには返りません。
                     </p>
                   </div>
+                  </>}
                 </div>
               )}
             </div>

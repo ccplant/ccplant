@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -6831,6 +6832,14 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	for k, v := range materialized.EnvVars {
 		env[k] = v
 	}
+	secretEnv, secretFiles := m.resolveProjectedSecrets(ctx, req)
+	for k, v := range secretEnv {
+		if _, exists := env[k]; exists {
+			log.Printf("[K8S_SESSION] Skipping secret environment projection %s because the name is already configured", k)
+			continue
+		}
+		env[k] = v
+	}
 	m.setTeamGitHubInstallationToken(ctx, req, env)
 
 	// Session profile settings override all team/user settings, including
@@ -7192,6 +7201,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			}
 		}
 	}
+	if len(secretFiles) > 0 {
+		settings.Files = append(settings.Files, secretFiles...)
+		log.Printf("[K8S_SESSION] Embedded %d settings secret file(s) for session %s", len(secretFiles), session.id)
+	}
 
 	// Profile files are profile-owned and are included even for team sessions.
 	// They are embedded directly in the provision payload rather than stored in
@@ -7454,6 +7467,52 @@ func mergeNoProxy(existing, extra string) string {
 		}
 	}
 	return strings.Join(values, ",")
+}
+
+func (m *KubernetesSessionManager) resolveProjectedSecrets(ctx context.Context, req *entities.RunServerRequest) (map[string]string, []sessionsettings.ManagedFile) {
+	env := make(map[string]string)
+	if m.settingsRepo == nil || req == nil {
+		return env, nil
+	}
+	settingsName := req.UserID
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" {
+		settingsName = req.TeamID
+	}
+	if settingsName == "" {
+		return env, nil
+	}
+	settings, err := m.settingsRepo.FindByName(ctx, settingsName)
+	if err != nil {
+		return env, nil
+	}
+	files := make([]sessionsettings.ManagedFile, 0)
+	seenPaths := make(map[string]bool)
+	for _, secret := range settings.SecretSettings() {
+		for _, projection := range secret.Projections {
+			value, ok := secret.Values[projection.Key]
+			if !ok {
+				continue
+			}
+			switch projection.Type {
+			case "env":
+				if _, exists := env[projection.EnvName]; !exists {
+					env[projection.EnvName] = value
+				}
+			case "file":
+				clean := filepath.Clean(projection.Path)
+				if seenPaths[clean] {
+					continue
+				}
+				seenPaths[clean] = true
+				permissions := projection.Permissions
+				if permissions == "" {
+					permissions = "0600"
+				}
+				files = append(files, sessionsettings.ManagedFile{Path: clean, Content: value, Permissions: permissions})
+			}
+		}
+	}
+	return env, files
 }
 
 // createSessionSettingsSecretFromSettings creates the unified session settings Secret

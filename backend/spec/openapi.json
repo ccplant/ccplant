@@ -4776,6 +4776,17 @@
         }
       }
     },
+    "/settings/{name}/secrets": {
+      "get": {"summary":"List settings secrets","description":"Lists metadata and key names. Values are never returned.","operationId":"listSettingsSecrets","tags":["Settings"],"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"Secret metadata"},"403":{"description":"Forbidden"}}},
+      "post": {"summary":"Create a settings secret","description":"Stores arbitrary key/value data. Values are write-only.","operationId":"createSettingsSecret","tags":["Settings"],"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/CreateSettingsSecretRequest"}}}},"responses":{"201":{"description":"Created","content":{"application/json":{"schema":{"$ref":"#/components/schemas/SettingsSecret"}}}},"400":{"description":"Invalid request"}}}
+    },
+    "/settings/{name}/secrets/{secretId}": {
+      "patch":{"summary":"Update settings secret metadata","operationId":"updateSettingsSecret","tags":["Settings"],"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}},{"name":"secretId","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"Updated"},"409":{"description":"Version conflict"}}},
+      "delete":{"summary":"Delete a settings secret","operationId":"deleteSettingsSecret","tags":["Settings"],"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}},{"name":"secretId","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"204":{"description":"Deleted"},"404":{"description":"Not found"}}}
+    },
+    "/settings/{name}/secrets/{secretId}/values": {
+      "put":{"summary":"Replace settings secret values","description":"Values are never returned.","operationId":"updateSettingsSecretValues","tags":["Settings"],"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}},{"name":"secretId","in":"path","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"Updated metadata"},"409":{"description":"Version conflict"}}}
+    },
     "/credentials/{name}": {
       "get": {
         "summary": "Get credential metadata",
@@ -7285,6 +7296,15 @@
   },
   "components": {
     "schemas": {
+      "SecretProjection": {
+        "type":"object","required":["key","type"],"properties":{"key":{"type":"string"},"type":{"type":"string","enum":["env","file"]},"env_name":{"type":"string"},"path":{"type":"string"},"permissions":{"type":"string","enum":["0400","0600"]}}
+      },
+      "SettingsSecret": {
+        "type":"object","required":["id","name","keys","version"],"properties":{"id":{"type":"string"},"name":{"type":"string"},"keys":{"type":"array","items":{"type":"string"}},"projections":{"type":"array","items":{"$ref":"#/components/schemas/SecretProjection"}},"version":{"type":"integer","format":"int64"},"created_at":{"type":"string","format":"date-time"},"updated_at":{"type":"string","format":"date-time"}}
+      },
+      "CreateSettingsSecretRequest": {
+        "type":"object","required":["name","values"],"properties":{"name":{"type":"string"},"values":{"type":"object","additionalProperties":{"type":"string"},"writeOnly":true},"projections":{"type":"array","items":{"$ref":"#/components/schemas/SecretProjection"}}}
+      },
       "ExternalTeamBinding": {
         "type": "object",
         "required": [
@@ -10667,6 +10687,9 @@
         }
       }
     },
+    "SlackBotSecretRef": {
+      "type":"object","required":["secret_id"],"properties":{"secret_id":{"type":"string","description":"Settings Secret ID"},"bot_token_key":{"type":"string","default":"bot-token"},"app_token_key":{"type":"string","default":"app-token"}}
+    },
     "CreateSlackBotRequest": {
       "type": "object",
       "required": [
@@ -10690,6 +10713,7 @@
           "$ref": "#/components/schemas/SlackBotStatus",
           "description": "Initial status of the SlackBot (default: active)"
         },
+        "secret": {"$ref":"#/components/schemas/SlackBotSecretRef"},
         "bot_token_secret_name": {
           "type": "string",
           "description": "Kubernetes Secret name containing the Slack bot token (xoxb-...). If empty, falls back to server default.",
@@ -10774,6 +10798,7 @@
         "status": {
           "$ref": "#/components/schemas/SlackBotStatus"
         },
+        "secret": {"$ref":"#/components/schemas/SlackBotSecretRef"},
         "bot_token_secret_name": {
           "type": "string",
           "description": "Kubernetes Secret name containing the Slack bot token"
@@ -10978,6 +11003,7 @@
         "status": {
           "$ref": "#/components/schemas/SlackBotStatus"
         },
+        "secret": {"$ref":"#/components/schemas/SlackBotSecretRef"},
         "bot_token_secret_name": {
           "type": "string",
           "description": "Kubernetes Secret name for the bot token"

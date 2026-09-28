@@ -26,6 +26,8 @@ type SlackSocketWorker struct {
 	botTokenSecretName string
 	// botTokenSecretKey is the key within the Secret for the bot token (default: "bot-token")
 	botTokenSecretKey string
+	appToken          string
+	botToken          string
 
 	channelResolver *SlackChannelResolver
 	eventHandler    *SlackBotEventHandler
@@ -36,6 +38,10 @@ type SlackSocketWorker struct {
 	// are forwarded to the event handler.
 	// If empty (auth.test failed), mention filtering is disabled as a fallback.
 	botUserID string
+}
+
+func NewSlackSocketWorkerWithTokens(botID, appToken, botToken string, channelResolver *SlackChannelResolver, eventHandler *SlackBotEventHandler) *SlackSocketWorker {
+	return &SlackSocketWorker{botID: botID, appToken: appToken, botToken: botToken, channelResolver: channelResolver, eventHandler: eventHandler}
 }
 
 // NewSlackSocketWorker creates a new SlackSocketWorker
@@ -98,14 +104,21 @@ func (w *SlackSocketWorker) Run(ctx context.Context) {
 // It returns when the connection is lost or ctx is cancelled.
 func (w *SlackSocketWorker) runOnce(ctx context.Context) {
 	// Load App-level token (xapp-...)
-	appToken, err := w.channelResolver.GetBotToken(ctx, w.appTokenSecretName, w.appTokenSecretKey)
+	appToken := w.appToken
+	var err error
+	if appToken == "" {
+		appToken, err = w.channelResolver.GetBotToken(ctx, w.appTokenSecretName, w.appTokenSecretKey)
+	}
 	if err != nil {
 		log.Printf("[SOCKET_WORKER] Failed to load app token for botID=%s: %v", w.botID, err)
 		return
 	}
 
 	// Load bot token (xoxb-...)
-	botToken, err := w.channelResolver.GetBotToken(ctx, w.botTokenSecretName, w.botTokenSecretKey)
+	botToken := w.botToken
+	if botToken == "" {
+		botToken, err = w.channelResolver.GetBotToken(ctx, w.botTokenSecretName, w.botTokenSecretKey)
+	}
 	if err != nil {
 		log.Printf("[SOCKET_WORKER] Failed to load bot token for botID=%s: %v", w.botID, err)
 		return
@@ -131,7 +144,7 @@ func (w *SlackSocketWorker) runOnce(ctx context.Context) {
 	go w.handleEvents(ctx, client)
 
 	// RunContext blocks until ctx is cancelled or connection fails
-	if err := client.RunContext(ctx); err != nil && ctx.Err() == nil {
+	if err := client.RunContext(ctx); ctx.Err() == nil {
 		log.Printf("[SOCKET_WORKER] Socket Mode client exited for botID=%s: %v", w.botID, err)
 	}
 }

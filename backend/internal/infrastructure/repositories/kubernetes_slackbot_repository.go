@@ -48,6 +48,9 @@ type slackBotJSON struct {
 	BotTokenSecretName     string                    `json:"bot_token_secret_name,omitempty"`
 	BotTokenSecretKey      string                    `json:"bot_token_secret_key,omitempty"`
 	AppTokenSecretKey      string                    `json:"app_token_secret_key,omitempty"`
+	SettingsSecretID       string                    `json:"settings_secret_id,omitempty"`
+	SettingsBotTokenKey    string                    `json:"settings_bot_token_key,omitempty"`
+	SettingsAppTokenKey    string                    `json:"settings_app_token_key,omitempty"`
 	AllowedEventTypes      []string                  `json:"allowed_event_types,omitempty"`
 	AllowedChannelNames    []string                  `json:"allowed_channel_names,omitempty"`
 	AllowedUserIDs         []string                  `json:"allowed_user_ids,omitempty"`
@@ -394,6 +397,9 @@ func (r *KubernetesSlackBotRepository) jsonToEntity(sbj *slackBotJSON) *entities
 	if sbj.AppTokenSecretKey != "" {
 		slackBot.SetAppTokenSecretKey(sbj.AppTokenSecretKey)
 	}
+	if sbj.SettingsSecretID != "" {
+		slackBot.SetSettingsSecret(sbj.SettingsSecretID, sbj.SettingsBotTokenKey, sbj.SettingsAppTokenKey)
+	}
 	if len(sbj.AllowedEventTypes) > 0 {
 		slackBot.SetAllowedEventTypes(sbj.AllowedEventTypes)
 	}
@@ -429,6 +435,9 @@ func (r *KubernetesSlackBotRepository) entityToJSON(sb *entities.SlackBot) *slac
 		BotTokenSecretName:  sb.BotTokenSecretName(),
 		BotTokenSecretKey:   sb.BotTokenSecretKey(),
 		AppTokenSecretKey:   sb.AppTokenSecretKey(),
+		SettingsSecretID:    sb.SettingsSecretID(),
+		SettingsBotTokenKey: sb.SettingsBotTokenKey(),
+		SettingsAppTokenKey: sb.SettingsAppTokenKey(),
 		AllowedEventTypes:   sb.AllowedEventTypes(),
 		AllowedChannelNames: sb.AllowedChannelNames(),
 		AllowedUserIDs:      sb.AllowedUserIDs(),
