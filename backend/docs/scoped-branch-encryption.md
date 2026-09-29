@@ -44,3 +44,20 @@ Use an expand/contract rollout:
 Do not roll back to a binary that predates v3 support after enabling v3 writes.
 The cache TTL controls how long plaintext branch keys remain in process memory;
 it does not revoke a branch key that an attacker has already copied.
+
+For a cross-provider migration from local keys, pass the old keyring separately
+while configuring the destination with the regular rotation flags:
+
+```sh
+agentapi-proxy kv-store rotate-key \
+  --provider aws-kms-branch-scoped \
+  --active-key-id primary \
+  --keys-json '{"primary":"arn:aws:kms:REGION:ACCOUNT:key/KEY"}' \
+  --kms-region REGION \
+  --source-provider local \
+  --source-active-key-id legacy \
+  --source-keys-json '{"legacy":"BASE64_KEY"}'
+```
+
+Run the command with `--dry-run` first. Stop all writers for both the dry run
+and the actual migration.

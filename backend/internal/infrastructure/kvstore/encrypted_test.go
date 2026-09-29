@@ -267,6 +267,54 @@ func TestRewrapAllPreservesCiphertextAndRemovesOldKeyDependency(t *testing.T) {
 	}
 }
 
+func TestRewrapAllWithKeyringsMigratesProviders(t *testing.T) {
+	ctx := context.Background()
+	backend := newMemoryStore()
+	oldKey, newKey := randomEncodedKey(t), randomEncodedKey(t)
+	oldKeyring, err := NewLocalKeyring("old", map[string]string{"old": oldKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStore, err := NewEncryptedStore(backend, oldKeyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := secretDocument(t, "item", map[string]string{"scope": "user"}, "secret")
+	if _, err := oldStore.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "item", Value: value}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := parseEnvelope(backend.records[recordKey(KindSecret, "ns", "item")].Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newKeyring, err := NewLocalKeyring("new", map[string]string{"new": newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := RewrapAllWithKeyrings(ctx, backend, oldKeyring, newKeyring, "ns", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Selected != 1 || result.Rewrapped != 1 || result.Skipped != 0 {
+		t.Fatalf("rewrap result = %#v", result)
+	}
+	after, err := parseEnvelope(backend.records[recordKey(KindSecret, "ns", "item")].Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.KeyID != "new" || !bytes.Equal(before.Ciphertext, after.Ciphertext) || !bytes.Equal(before.Nonce, after.Nonce) {
+		t.Fatal("cross-provider rewrap changed encrypted document or did not select the destination key")
+	}
+	newStore, err := NewEncryptedStore(backend, newKeyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := newStore.Get(ctx, KindSecret, "ns", "item")
+	if err != nil || !bytes.Equal(got.Value, value) {
+		t.Fatalf("read after provider migration: value=%q err=%v", got.Value, err)
+	}
+}
+
 func TestParseEnvelopeRejectsDuplicateAndUnknownFields(t *testing.T) {
 	for _, input := range []string{
 		`{"format":"agentapi-kv-envelope/v1","format":"agentapi-kv-envelope/v1","key_id":"k","wrapped_dek":"AA==","nonce":"AA==","ciphertext":"AA=="}`,
