@@ -136,7 +136,13 @@ func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, name
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
-			if envelope.KeyID == keyring.ActiveKeyID() {
+			needsRewrap := envelope.KeyID != keyring.ActiveKeyID()
+			if checker, ok := keyring.(interface {
+				NeedsRewrap(string, []byte, Record) bool
+			}); ok {
+				needsRewrap = checker.NeedsRewrap(envelope.KeyID, envelope.WrappedDEK, record)
+			}
+			if !needsRewrap {
 				clear(dek)
 				result.Skipped++
 				continue
