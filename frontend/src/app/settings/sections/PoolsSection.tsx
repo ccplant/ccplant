@@ -5,6 +5,7 @@ import { Boxes, Plus, RefreshCw, Trash2, UserPlus, Users, X } from 'lucide-react
 import { ESMRegistrationToken, SettingsPageHeader, SettingsSubsection } from '@/components/settings'
 import { ExternalSessionManagerList } from '@/components/settings/ExternalSessionManagerList'
 import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
+import { BindingSettingsEditor, PoolSettingsEditor, SupplierSettingsEditor } from '@/components/settings/PoolResourceEditors'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import type { ExternalSessionManagerConfig } from '@/types/settings'
 import type { LogicalSessionPool, SessionPoolBinding, SessionPoolSupplier } from '@/types/session_pool'
@@ -67,13 +68,36 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
 
   useEffect(() => { void reload() }, [reload])
 
-  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean }) => {
+  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean; min_idle?: number; max_runners?: number }) => {
     setError(null)
     try {
       await client.patchManagedSessionPoolSupplier(supplier.pool, supplier.manager_id, patch)
       await reload()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Supplierの更新に失敗しました')
+      throw reason
+    }
+  }
+
+  const patchPool = async (pool: LogicalSessionPool, patch: { enabled?: boolean; labels?: Record<string, string> }) => {
+    setError(null)
+    try {
+      await client.patchManagedSessionPool(pool.name, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Poolの更新に失敗しました')
+      throw reason
+    }
+  }
+
+  const patchBinding = async (binding: SessionPoolBinding, patch: { roles?: Array<'use' | 'manage'>; enabled?: boolean; priority?: number; max_concurrent?: number }) => {
+    setError(null)
+    try {
+      await client.patchManagedSessionPoolBinding(binding.pool, binding.id, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Bindingの更新に失敗しました')
+      throw reason
     }
   }
 
@@ -256,44 +280,7 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
           const canUse = (scopeBinding.role === 'use' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled
           const idle = suppliers.reduce((sum, supplier) => sum + (supplier.idle_runners ?? 0), 0)
           const runners = suppliers.reduce((sum, supplier) => sum + (supplier.total_runners ?? 0), 0)
-          return (
-            <section key={pool.name} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <div className="border-b border-gray-200 p-4 sm:p-5 dark:border-gray-800">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <h2 className="break-all text-base font-semibold text-gray-950 sm:text-lg dark:text-white">{pool.name}</h2>
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${canUse && pool.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>{canUse && pool.enabled ? '使用する' : '使用しない'}</span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-                      {canManage && <><span>{suppliers.length} suppliers</span><span>{runners} runners</span><span>{idle} idle</span><span>{bindings.length} bindings</span></>}
-                      {!canManage && <span>use 権限</span>}
-                      {canManage && !canUse && <span>manage 権限（利用不可）</span>}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {scopeBinding.role === 'use' && <button
-                      type="button"
-                      onClick={() => void togglePoolUsage(runtime)}
-                      disabled={busyAction === `usage:${pool.name}` || !pool.enabled}
-                      className="ml-1 rounded-md border border-blue-300 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/30"
-                    >
-                      {scopeBinding.enabled ? '使用しない' : '使用する'}
-                    </button>}
-                    {canManage && <button
-                      type="button"
-                      onClick={() => void togglePool(pool)}
-                      className="ml-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
-                    >
-                      {pool.enabled ? 'Poolを停止' : 'Poolを有効化'}
-                    </button>}
-                    {canManage && <button type="button" onClick={() => void deletePool(pool)} disabled={busyAction === `delete:${pool.name}`} className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"><Trash2 className="h-3.5 w-3.5" /> 削除</button>}
-                  </div>
-                </div>
-              </div>
-
-            </section>
-          )
+          return <section key={pool.name} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-gray-950 dark:text-white">{pool.name}</h3><span className={`rounded-full px-2 py-1 text-xs font-medium ${canUse && pool.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>{canUse && pool.enabled ? '使用中' : '停止中'}</span><span className="text-xs text-gray-500">{scopeBinding.role}</span></div><div className="mt-2 flex flex-wrap gap-1">{Object.entries(pool.labels ?? {}).map(([key, value]) => <code key={key} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-gray-800">{key}={value}</code>)}{Object.keys(pool.labels ?? {}).length === 0 && <span className="text-xs text-gray-400">Labelsなし</span>}</div></div><div className="flex flex-wrap gap-1.5">{canManage && <PoolSettingsEditor pool={pool} onSave={(patch) => patchPool(pool, patch)} />}{scopeBinding.role === 'use' && <button type="button" onClick={() => void togglePoolUsage(runtime)} disabled={busyAction === `usage:${pool.name}` || !pool.enabled} className="rounded-md border border-blue-300 px-2.5 py-1.5 text-xs text-blue-700 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300">{scopeBinding.enabled ? '使用停止' : '使用'}</button>}{canManage && <button type="button" onClick={() => void togglePool(pool)} className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200">{pool.enabled ? '停止' : '有効化'}</button>}{canManage && <button type="button" aria-label={`${pool.name}を削除`} onClick={() => void deletePool(pool)} disabled={busyAction === `delete:${pool.name}`} className="rounded-md border border-red-200 p-1.5 text-red-600 disabled:opacity-50 dark:border-red-900 dark:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>}</div></div>{canManage && <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{[['Suppliers', suppliers.length], ['Runners', runners], ['Idle', idle], ['Bindings', bindings.length]].map(([label, value]) => <div key={label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-950"><dt className="text-xs text-gray-500">{label}</dt><dd className="mt-1 font-semibold tabular-nums text-gray-950 dark:text-white">{value}</dd></div>)}</dl>}</section>
         })}
 
       </div>}
@@ -301,11 +288,10 @@ export function PoolsSection({ showHeader = true }: { showHeader?: boolean }) {
       {activeTab === 'assignments' && <div className="space-y-4">
         <div><h2 className="text-base font-semibold text-gray-950 dark:text-white">割り当て設定</h2><p className="mt-1 text-sm text-gray-500">ManagerをPoolへ割り当て、供給の有効・無効を管理します。</p></div>
         {runtimes.length === 0 && <div className={`${card} py-8 text-center text-sm text-gray-500`}>先にPoolを作成してください。</div>}
-        {runtimes.filter(({ scopeBinding }) => (scopeBinding.role === 'manage' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled).map(({ pool, suppliers, bindings }) => <section key={pool.name} className={card}>
-          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="break-all font-semibold text-gray-950 dark:text-white">{pool.name}</h3><button type="button" onClick={() => { setAssigningPool(assigningPool === pool.name ? null : pool.name); setAssignManagerID('') }} className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:text-blue-300"><UserPlus className="h-3.5 w-3.5" /> Managerを割り当て</button></div>
-          {assigningPool === pool.name && <div className="mt-3 flex flex-col gap-2 sm:flex-row"><select value={assignManagerID} onChange={(event) => setAssignManagerID(event.target.value)} className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-950 dark:text-white"><option value="">Managerを選択</option>{managers.filter((manager) => manager.id && !suppliers.some((supplier) => supplier.manager_id === manager.id)).map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select><button type="button" onClick={() => void assignManager(pool.name)} disabled={!assignManagerID || busyAction === `assign:${pool.name}`} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">割り当て</button></div>}
-          {bindings.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{bindings.map((binding) => <span key={binding.id} className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-xs text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"><Users className="h-3 w-3" /> {binding.subject_type}: {binding.subject_id || 'everyone'} · {binding.role}</span>)}</div>}
-          <div className="mt-3 space-y-2">{suppliers.length === 0 && <p className="py-3 text-sm text-gray-500">Managerは割り当てられていません。</p>}{suppliers.map((supplier) => <div key={supplier.manager_id} className="flex flex-col gap-2 rounded-lg bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between dark:bg-gray-950"><div className="min-w-0"><p className="break-all text-sm font-medium text-gray-900 dark:text-white">{managerByID.get(supplier.manager_id)?.name ?? supplier.manager_id}</p><p className="mt-1 text-xs text-gray-500">idle {supplier.idle_runners ?? 0} / total {supplier.total_runners ?? 0} / max {supplier.max_runners || '∞'}</p></div><div className="flex flex-wrap items-center gap-3"><PoolSupplierControls supplier={supplier} onPatch={(patch) => void patchSupplier(supplier, patch)} /><button type="button" onClick={() => void unassignManager(supplier)} className="text-xs text-red-600 dark:text-red-400">割り当て解除</button></div></div>)}</div>
+        {runtimes.filter(({ scopeBinding }) => (scopeBinding.role === 'manage' || scopeBinding.role === 'manage_and_use') && scopeBinding.enabled).map(({ pool, suppliers, bindings }) => <section key={pool.name} className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800"><h3 className="break-all font-semibold text-gray-950 dark:text-white">{pool.name}</h3><button type="button" onClick={() => { setAssigningPool(assigningPool === pool.name ? null : pool.name); setAssignManagerID('') }} className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:border-blue-800 dark:text-blue-300"><UserPlus className="h-3.5 w-3.5" /> Managerを割り当て</button></div>
+          {assigningPool === pool.name && <div className="flex flex-col gap-2 border-b border-gray-200 bg-blue-50/50 p-3 sm:flex-row dark:border-gray-800 dark:bg-blue-950/20"><select value={assignManagerID} onChange={(event) => setAssignManagerID(event.target.value)} className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-950 dark:text-white"><option value="">Managerを選択</option>{managers.filter((manager) => manager.id && !suppliers.some((supplier) => supplier.manager_id === manager.id)).map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select><button type="button" onClick={() => void assignManager(pool.name)} disabled={!assignManagerID || busyAction === `assign:${pool.name}`} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">割り当て</button></div>}
+          <div className="grid gap-4 p-4 lg:grid-cols-2"><div><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Suppliers</h4><div className="space-y-2">{suppliers.length === 0 && <div className="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-500 dark:border-gray-700">Managerは割り当てられていません。</div>}{suppliers.map((supplier) => <div key={supplier.manager_id} className="rounded-lg border border-gray-200 p-3 dark:border-gray-800"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-gray-900 dark:text-white">{managerByID.get(supplier.manager_id)?.name ?? supplier.manager_id}</p><p className="mt-1 text-xs text-gray-500">min idle {supplier.min_idle ?? 0} · idle {supplier.idle_runners ?? 0}/{supplier.total_runners ?? 0} · max {supplier.max_runners || '∞'}</p></div><PoolSupplierControls supplier={supplier} onPatch={(patch) => { void patchSupplier(supplier, patch).catch(() => undefined) }} /></div><div className="mt-3 flex justify-end gap-2"><SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} /><button type="button" onClick={() => void unassignManager(supplier)} className="text-xs text-red-600 dark:text-red-400">解除</button></div></div>)}</div></div><div><h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Bindings</h4><div className="space-y-2">{bindings.length === 0 && <div className="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-500 dark:border-gray-700">Bindingはありません。</div>}{bindings.map((binding) => <div key={binding.id} className="rounded-lg border border-gray-200 p-3 dark:border-gray-800"><div className="flex items-start justify-between gap-3"><div><p className="inline-flex items-center gap-1 text-sm font-medium text-gray-900 dark:text-white"><Users className="h-3.5 w-3.5" />{binding.subject_type}: {binding.subject_id || 'everyone'}</p><p className="mt-1 text-xs text-gray-500">{binding.roles?.join(', ') || binding.role} · priority {binding.priority ?? 0} · max {binding.max_concurrent || '∞'} · {binding.enabled ? '有効' : '無効'}</p></div><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} /></div></div>)}</div></div></div>
         </section>)}
       </div>}
 

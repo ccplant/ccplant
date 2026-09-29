@@ -1,7 +1,7 @@
 'use client'
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Terminal } from 'lucide-react'
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { MoreHorizontal, RefreshCw, Terminal } from 'lucide-react'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import {
   ClusterSessionManager,
@@ -20,7 +20,28 @@ import {
   SettingsSubsection,
   StatusBadge,
 } from '@/components/settings'
-import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
+import { BindingSettingsEditor, PoolSettingsEditor, SupplierSettingsEditor } from '@/components/settings/PoolResourceEditors'
+
+const menuItemClass = 'block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800'
+
+function RowActionsMenu({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return <div ref={containerRef} className="relative inline-flex">
+    <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((current) => !current)} className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button>
+    {open && <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">{children}</div>}
+  </div>
+}
 
 function LogPanel({ target, result, onClose }: { target: string; result: SessionPoolLogs | null; onClose: () => void }) {
   return <div className="mt-3 rounded-lg border border-gray-700 bg-gray-950 p-3 text-gray-100">
@@ -206,12 +227,33 @@ export default function SessionPoolsAdminPage() {
     }
   }
 
-  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean }) => {
+  const patchPool = async (pool: LogicalSessionPool, patch: { enabled?: boolean; labels?: Record<string, string> }) => {
+    try {
+      await client.patchManagedSessionPool(pool.name, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Logical Pool更新に失敗しました')
+      throw reason
+    }
+  }
+
+  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean; min_idle?: number; max_runners?: number }) => {
     try {
       await client.patchManagedSessionPoolSupplier(supplier.pool, supplier.manager_id, patch)
       await reload()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Pool Supplier更新に失敗しました')
+      throw reason
+    }
+  }
+
+  const patchBinding = async (binding: SessionPoolBinding, patch: { roles?: Array<'use' | 'manage'>; enabled?: boolean; priority?: number; max_concurrent?: number }) => {
+    try {
+      await client.patchManagedSessionPoolBinding(binding.pool, binding.id, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Pool Binding更新に失敗しました')
+      throw reason
     }
   }
 
@@ -401,67 +443,48 @@ export default function SessionPoolsAdminPage() {
       </SettingsSubsection>
 
       <SettingsSubsection title="Logical Pools" description="Pool ごとの供給元と利用権限">
-        <ItemList>
-          {pools.length === 0 && <ItemListEmpty>Logical Pool はまだありません</ItemListEmpty>}
+        {pools.length === 0 && <ItemList><ItemListEmpty>Logical Pool はまだありません</ItemListEmpty></ItemList>}
+        {pools.length > 0 && <div className="space-y-4">
           {pools.map((pool) => {
             const poolSuppliers = suppliers.filter((supplier) => supplier.pool === pool.name)
             const poolBindings = bindings[pool.name] || []
             return (
-              <ItemListRow
-                key={pool.name}
-                name={pool.name}
-                actions={
-                  <>
-                    <RowAction onClick={() => void togglePool(pool)}>{pool.enabled ? '停止' : '有効化'}</RowAction>
-                    <RowAction tone="danger" onClick={() => void removePool(pool)} title={`${pool.name}を削除`}>削除</RowAction>
-                  </>
-                }
-                badges={<StatusBadge tone={pool.enabled ? 'green' : 'amber'}>{pool.enabled ? 'Enabled' : 'Disabled'}</StatusBadge>}
-              >
-                <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">Suppliers</p>
-                    {poolSuppliers.length === 0 && <p className="mt-1 text-xs text-gray-400">未設定</p>}
-                    {poolSuppliers.map((supplier) => (
-                      <div key={supplier.manager_id} className="mt-1 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
-                        <span>{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span>
-                        <span className="text-gray-500 dark:text-gray-400">idle {supplier.idle_runners || 0} / max {supplier.max_runners || '∞'}</span>
-                        <PoolSupplierControls supplier={supplier} onPatch={(patch) => void patchSupplier(supplier, patch)} />
-                        <button
-                          type="button"
-                          aria-label={`${supplier.pool}のSupplierを削除`}
-                          className="text-red-600 hover:underline dark:text-red-400"
-                          onClick={() => void removeSupplier(supplier)}
-                        >
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">Bindings</p>
-                    {poolBindings.length === 0 && <p className="mt-1 text-xs text-gray-400">未設定</p>}
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      {poolBindings.map((binding) => (
-                        <span key={binding.id} className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                          {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.roles?.join(', ') || binding.role || 'use'}, priority {binding.priority || 0}, max {binding.max_concurrent || '∞'})
-                          <button
-                            type="button"
-                            aria-label={`${binding.subject_id}のBindingを削除`}
-                            className="text-red-600 dark:text-red-400"
-                            onClick={() => void removeBinding(pool.name, binding.id)}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
+              <section key={pool.name} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex flex-col gap-4 border-b border-gray-100 pb-4 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-semibold text-gray-950 dark:text-white">{pool.name}</h3>
+                      <StatusBadge tone={pool.enabled ? 'green' : 'amber'}>{pool.enabled ? 'Enabled' : 'Disabled'}</StatusBadge>
                     </div>
+                    <div className="flex flex-wrap gap-1.5">{Object.entries(pool.labels ?? {}).map(([key, value]) => <code key={key} className="rounded-md bg-gray-100 px-2 py-1 text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300">{key}={value}</code>)}{Object.keys(pool.labels ?? {}).length === 0 && <span className="text-xs text-gray-400">Labelsなし</span>}</div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-3"><PoolSettingsEditor pool={pool} onSave={(patch) => patchPool(pool, patch)} /><button type="button" onClick={() => void togglePool(pool)} className="text-xs text-blue-700 dark:text-blue-300">{pool.enabled ? '停止' : '有効化'}</button><button type="button" onClick={() => void removePool(pool)} className="text-xs text-red-600 dark:text-red-400">削除</button></div>
+                </div>
+
+                <div className="mt-5 space-y-5">
+                  <div>
+                    <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Suppliers</h4><span className="text-xs text-gray-400">{poolSuppliers.length}件</span></div>
+                    {poolSuppliers.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
+                    {poolSuppliers.length > 0 && <div className="overflow-visible rounded-xl border border-gray-200 dark:border-gray-700"><table className="w-full table-fixed text-left text-sm"><thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-950/60"><tr><th className="px-3 py-2 font-medium">Manager</th><th className="w-20 px-3 py-2 font-medium">状態</th><th className="w-28 px-3 py-2 font-medium">Capacity</th><th className="w-10 px-2 py-2"><span className="sr-only">操作</span></th></tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {poolSuppliers.map((supplier) => (
+                      <tr key={supplier.manager_id}><td className="max-w-48 px-3 py-3 font-medium text-gray-900 dark:text-white"><span className="break-words">{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span></td><td className="px-3 py-3"><StatusBadge tone={supplier.enabled && !supplier.draining ? 'green' : 'amber'}>{supplier.enabled && !supplier.draining ? '有効' : '無効'}</StatusBadge></td><td className="whitespace-nowrap px-3 py-3 text-xs text-gray-500">{supplier.min_idle ?? 0} min / {supplier.max_runners || '∞'} max</td><td className="px-2 py-2 text-right"><RowActionsMenu label={`${supplier.pool}のSupplier操作`}><SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} triggerClassName={menuItemClass} /><button type="button" className={menuItemClass} onClick={() => void patchSupplier(supplier, { enabled: !(supplier.enabled && !supplier.draining), draining: false }).catch(() => undefined)}>{supplier.enabled && !supplier.draining ? '無効化' : '有効化'}</button><button type="button" className={`${menuItemClass} text-red-600 dark:text-red-400`} onClick={() => void removeSupplier(supplier)}>削除</button></RowActionsMenu></td></tr>
+                    ))}</tbody></table></div>}
+                  </div>
+
+                  <div>
+                    <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Bindings</h4><span className="text-xs text-gray-400">{poolBindings.length}件</span></div>
+                    {poolBindings.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
+                    {poolBindings.length > 0 && <div className="overflow-visible rounded-xl border border-gray-200 dark:border-gray-700"><table className="w-full table-fixed text-left text-sm"><thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-950/60"><tr><th className="px-3 py-2 font-medium">Subject</th><th className="w-24 px-3 py-2 font-medium">Roles</th><th className="w-20 px-3 py-2 font-medium">Limit</th><th className="w-10 px-2 py-2"><span className="sr-only">操作</span></th></tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                      {poolBindings.map((binding) => (
+                        <tr key={binding.id}><td className="max-w-48 px-3 py-3 font-medium text-gray-900 dark:text-white"><span className="break-words">{binding.subject_type}: {binding.subject_id || 'everyone'}</span></td><td className="px-3 py-3 text-xs text-gray-600 dark:text-gray-300">{binding.roles?.join(', ') || binding.role}</td><td className="whitespace-nowrap px-3 py-3 text-xs text-gray-500">{binding.max_concurrent ? `${binding.max_concurrent} max` : '無制限'}</td><td className="px-2 py-2 text-right"><RowActionsMenu label={`${binding.subject_id || 'everyone'}のBinding操作`}><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} triggerClassName={menuItemClass} /><button type="button" className={`${menuItemClass} text-red-600 dark:text-red-400`} onClick={() => void removeBinding(pool.name, binding.id)}>削除</button></RowActionsMenu></td></tr>
+                      ))}
+                    </tbody></table></div>}
                   </div>
                 </div>
-              </ItemListRow>
+              </section>
             )
           })}
-        </ItemList>
+        </div>}
       </SettingsSubsection>
     </>
   )
