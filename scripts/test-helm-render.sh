@@ -50,6 +50,16 @@ if [[ $(grep -c 'name: AGENTAPI_GITHUB_BROKER_BASE_URL' "$TMP_DIR/broker-in-clus
   echo "expected exactly one broker base URL environment entry" >&2
   exit 1
 fi
+
+# Remote Codex auth workers can use a dedicated callback origin instead of a
+# browser-derived URL that may sit behind an interactive authentication proxy.
+assert_not_contains 'AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/backend-default.yaml"
+"$HELM_BIN" template codex-auth-callback "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/deployment.yaml \
+  --set api.codexDeviceAuth.callbackBaseUrl=https://api.example.test \
+  >"$TMP_DIR/codex-auth-callback.yaml"
+assert_contains 'name: AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/codex-auth-callback.yaml"
+assert_contains 'value: "https://api.example.test"' "$TMP_DIR/codex-auth-callback.yaml"
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" \
   --namespace broker-test --set backend.api.githubBroker.inCluster=true \
   --set backend.fullnameOverride=broker-api --set backend.service.port=9090 \

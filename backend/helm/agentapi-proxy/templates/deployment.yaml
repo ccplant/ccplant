@@ -19,6 +19,7 @@
 {{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
 {{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 {{- $api := .Values.api | default dict }}
+{{- $codexDeviceAuth := $api.codexDeviceAuth | default dict }}
 {{- $githubBroker := $api.githubBroker | default dict }}
 {{- $apiImage := $api.image | default .Values.image }}
 {{- $apiPodAnnotations := $api.podAnnotations | default .Values.podAnnotations }}
@@ -217,6 +218,10 @@ spec:
             {{- if $githubBroker.inCluster }}
             - name: AGENTAPI_GITHUB_BROKER_BASE_URL
               value: {{ printf "http://%s.%s.svc.cluster.local:%v" (include "agentapi-proxy.fullname" .) .Release.Namespace .Values.service.port | quote }}
+            {{- end }}
+            {{- with (dig "callbackBaseUrl" "" $codexDeviceAuth) }}
+            - name: AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL
+              value: {{ . | quote }}
             {{- end }}
             {{- if (dig "enabled" false $openTelemetry) }}
             - name: POD_NAME
