@@ -21,6 +21,7 @@ import {
   StatusBadge,
 } from '@/components/settings'
 import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
+import { BindingSettingsEditor, PoolSettingsEditor, SupplierSettingsEditor } from '@/components/settings/PoolResourceEditors'
 
 function LogPanel({ target, result, onClose }: { target: string; result: SessionPoolLogs | null; onClose: () => void }) {
   return <div className="mt-3 rounded-lg border border-gray-700 bg-gray-950 p-3 text-gray-100">
@@ -206,12 +207,33 @@ export default function SessionPoolsAdminPage() {
     }
   }
 
-  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean }) => {
+  const patchPool = async (pool: LogicalSessionPool, patch: { enabled?: boolean; labels?: Record<string, string> }) => {
+    try {
+      await client.patchManagedSessionPool(pool.name, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Logical Pool更新に失敗しました')
+      throw reason
+    }
+  }
+
+  const patchSupplier = async (supplier: SessionPoolSupplier, patch: { enabled?: boolean; draining?: boolean; min_idle?: number; max_runners?: number }) => {
     try {
       await client.patchManagedSessionPoolSupplier(supplier.pool, supplier.manager_id, patch)
       await reload()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Pool Supplier更新に失敗しました')
+      throw reason
+    }
+  }
+
+  const patchBinding = async (binding: SessionPoolBinding, patch: { roles?: Array<'use' | 'manage'>; enabled?: boolean; priority?: number; max_concurrent?: number }) => {
+    try {
+      await client.patchManagedSessionPoolBinding(binding.pool, binding.id, patch)
+      await reload()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Pool Binding更新に失敗しました')
+      throw reason
     }
   }
 
@@ -412,6 +434,7 @@ export default function SessionPoolsAdminPage() {
                 name={pool.name}
                 actions={
                   <>
+                    <PoolSettingsEditor pool={pool} onSave={(patch) => patchPool(pool, patch)} />
                     <RowAction onClick={() => void togglePool(pool)}>{pool.enabled ? '停止' : '有効化'}</RowAction>
                     <RowAction tone="danger" onClick={() => void removePool(pool)} title={`${pool.name}を削除`}>削除</RowAction>
                   </>
@@ -426,7 +449,8 @@ export default function SessionPoolsAdminPage() {
                       <div key={supplier.manager_id} className="mt-1 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
                         <span>{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span>
                         <span className="text-gray-500 dark:text-gray-400">idle {supplier.idle_runners || 0} / max {supplier.max_runners || '∞'}</span>
-                        <PoolSupplierControls supplier={supplier} onPatch={(patch) => void patchSupplier(supplier, patch)} />
+                        <PoolSupplierControls supplier={supplier} onPatch={(patch) => { void patchSupplier(supplier, patch).catch(() => undefined) }} />
+                        <SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} />
                         <button
                           type="button"
                           aria-label={`${supplier.pool}のSupplierを削除`}
@@ -441,19 +465,11 @@ export default function SessionPoolsAdminPage() {
                   <div>
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">Bindings</p>
                     {poolBindings.length === 0 && <p className="mt-1 text-xs text-gray-400">未設定</p>}
-                    <div className="mt-1 flex flex-wrap gap-1.5">
+                    <div className="mt-1 space-y-2">
                       {poolBindings.map((binding) => (
-                        <span key={binding.id} className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                          {binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.roles?.join(', ') || binding.role || 'use'}, priority {binding.priority || 0}, max {binding.max_concurrent || '∞'})
-                          <button
-                            type="button"
-                            aria-label={`${binding.subject_id}のBindingを削除`}
-                            className="text-red-600 dark:text-red-400"
-                            onClick={() => void removeBinding(pool.name, binding.id)}
-                          >
-                            ×
-                          </button>
-                        </span>
+                        <div key={binding.id} className="rounded-md bg-gray-100 px-2 py-1.5 text-xs text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                          <div className="flex flex-wrap items-center gap-1.5"><span>{binding.subject_type}: {binding.subject_id || 'everyone'} ({binding.roles?.join(', ') || binding.role || 'use'}, priority {binding.priority || 0}, max {binding.max_concurrent || '∞'})</span><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} /><button type="button" aria-label={`${binding.subject_id || 'everyone'}のBindingを削除`} className="text-red-600 dark:text-red-400" onClick={() => void removeBinding(pool.name, binding.id)}>削除</button></div>
+                        </div>
                       ))}
                     </div>
                   </div>
