@@ -424,26 +424,51 @@ export default function SessionPoolsAdminPage() {
 
       <SettingsSubsection title="Logical Pools" description="Pool ごとの供給元と利用権限">
         {pools.length === 0 && <ItemList><ItemListEmpty>Logical Pool はまだありません</ItemListEmpty></ItemList>}
-        {pools.length > 0 && <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="min-w-[960px] w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-950"><tr><th className="px-4 py-3">Pool</th><th className="px-4 py-3">状態</th><th className="px-4 py-3">Labels</th><th className="px-4 py-3">Suppliers</th><th className="px-4 py-3">Bindings</th><th className="px-4 py-3 text-right">操作</th></tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+        {pools.length > 0 && <div className="space-y-4">
           {pools.map((pool) => {
             const poolSuppliers = suppliers.filter((supplier) => supplier.pool === pool.name)
             const poolBindings = bindings[pool.name] || []
             return (
-              <tr key={pool.name} className="align-top"><td className="px-4 py-3 font-semibold text-gray-950 dark:text-white">{pool.name}</td><td className="px-4 py-3"><StatusBadge tone={pool.enabled ? 'green' : 'amber'}>{pool.enabled ? 'Enabled' : 'Disabled'}</StatusBadge></td><td className="max-w-52 px-4 py-3"><div className="flex flex-wrap gap-1">{Object.entries(pool.labels ?? {}).map(([key, value]) => <code key={key} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-gray-800">{key}={value}</code>)}{Object.keys(pool.labels ?? {}).length === 0 && <span className="text-gray-400">—</span>}</div></td><td className="px-4 py-3"><div className="space-y-2">{poolSuppliers.length === 0 && <span className="text-gray-400">未設定</span>}
+              <section key={pool.name} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <div className="flex flex-col gap-4 border-b border-gray-100 pb-4 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-semibold text-gray-950 dark:text-white">{pool.name}</h3>
+                      <StatusBadge tone={pool.enabled ? 'green' : 'amber'}>{pool.enabled ? 'Enabled' : 'Disabled'}</StatusBadge>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">{Object.entries(pool.labels ?? {}).map(([key, value]) => <code key={key} className="rounded-md bg-gray-100 px-2 py-1 text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300">{key}={value}</code>)}{Object.keys(pool.labels ?? {}).length === 0 && <span className="text-xs text-gray-400">Labelsなし</span>}</div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-3"><PoolSettingsEditor pool={pool} onSave={(patch) => patchPool(pool, patch)} /><button type="button" onClick={() => void togglePool(pool)} className="text-xs text-blue-700 dark:text-blue-300">{pool.enabled ? '停止' : '有効化'}</button><button type="button" onClick={() => void removePool(pool)} className="text-xs text-red-600 dark:text-red-400">削除</button></div>
+                </div>
+
+                <div className="mt-5 grid gap-5 lg:grid-cols-2">
+                  <div>
+                    <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Suppliers</h4><span className="text-xs text-gray-400">{poolSuppliers.length}件</span></div>
+                    <div className="space-y-3">{poolSuppliers.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
                     {poolSuppliers.map((supplier) => (
-                      <div key={supplier.manager_id} className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300"><span className="font-medium">{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span><span className="text-gray-500">{supplier.min_idle ?? 0} min / {supplier.max_runners || '∞'} max</span>
-                        <PoolSupplierControls supplier={supplier} onPatch={(patch) => { void patchSupplier(supplier, patch).catch(() => undefined) }} />
-                        <SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} />
-                        <button type="button" aria-label={`${supplier.pool}のSupplierを削除`} className="text-red-600 dark:text-red-400" onClick={() => void removeSupplier(supplier)}>削除</button>
+                      <div key={supplier.manager_id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/60">
+                        <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="break-words text-sm font-semibold text-gray-900 dark:text-white">{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</p><p className="mt-1 text-xs text-gray-500">Idle {supplier.min_idle ?? 0} / Max {supplier.max_runners || '∞'}</p></div><PoolSupplierControls supplier={supplier} onPatch={(patch) => { void patchSupplier(supplier, patch).catch(() => undefined) }} /></div>
+                        <div className="mt-3 flex items-center gap-3 border-t border-gray-200 pt-3 dark:border-gray-800"><SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} /><button type="button" aria-label={`${supplier.pool}のSupplierを削除`} className="text-xs text-red-600 dark:text-red-400" onClick={() => void removeSupplier(supplier)}>削除</button></div>
                       </div>
-                    ))}</div></td><td className="px-4 py-3"><div className="space-y-2">{poolBindings.length === 0 && <span className="text-gray-400">未設定</span>}
+                    ))}</div>
+                  </div>
+
+                  <div>
+                    <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Bindings</h4><span className="text-xs text-gray-400">{poolBindings.length}件</span></div>
+                    <div className="space-y-3">{poolBindings.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
                       {poolBindings.map((binding) => (
-                        <div key={binding.id} className="flex items-center gap-2 text-xs"><span>{binding.subject_type}: {binding.subject_id || 'everyone'} · {binding.roles?.join(', ') || binding.role}</span><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} /><button type="button" aria-label={`${binding.subject_id || 'everyone'}のBindingを削除`} className="text-red-600 dark:text-red-400" onClick={() => void removeBinding(pool.name, binding.id)}>削除</button></div>
+                        <div key={binding.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/60">
+                          <p className="break-words text-sm font-semibold text-gray-900 dark:text-white">{binding.subject_type}: {binding.subject_id || 'everyone'}</p><p className="mt-1 text-xs text-gray-500">Roles: {binding.roles?.join(', ') || binding.role}</p>
+                          <div className="mt-3 flex items-center gap-3 border-t border-gray-200 pt-3 dark:border-gray-800"><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} /><button type="button" aria-label={`${binding.subject_id || 'everyone'}のBindingを削除`} className="text-xs text-red-600 dark:text-red-400" onClick={() => void removeBinding(pool.name, binding.id)}>削除</button></div>
+                        </div>
                       ))}
-                    </div></td><td className="px-4 py-3"><div className="flex justify-end gap-2"><PoolSettingsEditor pool={pool} onSave={(patch) => patchPool(pool, patch)} /><button type="button" onClick={() => void togglePool(pool)} className="text-xs text-blue-700 dark:text-blue-300">{pool.enabled ? '停止' : '有効化'}</button><button type="button" onClick={() => void removePool(pool)} className="text-xs text-red-600 dark:text-red-400">削除</button></div></td></tr>
+                    </div>
+                  </div>
+                </div>
+              </section>
             )
           })}
-        </tbody></table></div>}
+        </div>}
       </SettingsSubsection>
     </>
   )
