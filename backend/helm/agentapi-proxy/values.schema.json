@@ -49,6 +49,13 @@
       "required": ["replicaCount", "image", "serviceAccount", "kvStore", "redis", "encryption", "workerControl", "sessionManager"],
       "properties": {
         "replicaCount": { "type": "integer", "minimum": 1 },
+        "codexDeviceAuth": {
+          "type": "object",
+          "required": ["callbackBaseUrl"],
+          "properties": {
+            "callbackBaseUrl": { "type": "string" }
+          }
+        },
         "image": { "$ref": "#/definitions/image" },
         "imagePullSecrets": { "type": "array" },
         "envExclude": {
