@@ -955,6 +955,9 @@ func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncr
 	case "aws-kms-branch":
 		return kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, registry,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "aws-kms-branch-scoped":
+		return kvstore.NewScopedBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, registry,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	case "cloud-kms-branch":
 		return kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, registry,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)

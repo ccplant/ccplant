@@ -113,7 +113,7 @@ without writing anything.`,
 	flags.StringVar(&o.legacyAuthToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "deprecated: destination libSQL authentication token")
 	flags.StringVar(&o.encryptionActiveKeyID, "encryption-active-key-id", os.Getenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID"), "active key ID used to encrypt destination values")
 	flags.StringVar(&o.encryptionKeysJSON, "encryption-keys-json", os.Getenv("AGENTAPI_KV_ENCRYPTION_KEYS"), "JSON object mapping destination key IDs to base64-encoded 32-byte keys")
-	flags.StringVar(&o.encryptionProvider, "encryption-provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "destination encryption provider (local, aws-kms, aws-kms-branch, or cloud-kms-branch)")
+	flags.StringVar(&o.encryptionProvider, "encryption-provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "destination encryption provider (local, aws-kms, aws-kms-branch, aws-kms-branch-scoped, or cloud-kms-branch)")
 	flags.StringVar(&o.encryptionKMSRegion, "encryption-kms-region", os.Getenv("AGENTAPI_KV_ENCRYPTION_KMS_REGION"), "AWS region for a destination AWS KMS provider")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "inspect records and conflicts without writing to the secondary store")
 	flags.BoolVar(&o.overwrite, "overwrite", false, "replace different records that already exist in the secondary store")
@@ -139,13 +139,15 @@ func encryptedMigrationDestination(ctx context.Context, store kvstore.Store, pro
 		keyring, err = kvstore.NewLocalKeyring(activeKeyID, keys)
 	case "aws-kms":
 		keyring, err = kvstore.NewKMSKeyring(ctx, activeKeyID, kmsRegion, keys)
-	case "aws-kms-branch", "cloud-kms-branch":
+	case "aws-kms-branch", "aws-kms-branch-scoped", "cloud-kms-branch":
 		registry, ok := store.(kvstore.BranchKeyRegistry)
 		if !ok {
 			return nil, fmt.Errorf("encryption provider %q requires a branch key registry", provider)
 		}
 		if provider == "aws-kms-branch" {
 			keyring, err = kvstore.NewBranchKMSKeyring(ctx, activeKeyID, kmsRegion, keys, registry, 15*time.Minute, 128)
+		} else if provider == "aws-kms-branch-scoped" {
+			keyring, err = kvstore.NewScopedBranchKMSKeyring(ctx, activeKeyID, kmsRegion, keys, registry, 15*time.Minute, 128)
 		} else {
 			keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, activeKeyID, keys, registry, 15*time.Minute, 128)
 		}

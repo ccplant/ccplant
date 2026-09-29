@@ -12,6 +12,7 @@ var ErrBranchKeyNotFound = errors.New("active branch key not found")
 type BranchKeyRecord struct {
 	Provider   string
 	KeyID      string
+	Scope      string
 	Generation int64
 	KMSKeyRef  string
 	WrappedKey []byte
@@ -19,8 +20,8 @@ type BranchKeyRecord struct {
 }
 
 type BranchKeyRegistry interface {
-	GetActiveBranchKey(context.Context, string, string) (BranchKeyRecord, error)
-	NextBranchKeyGeneration(context.Context, string, string) (int64, error)
+	GetActiveBranchKey(context.Context, string, string, string) (BranchKeyRecord, error)
+	NextBranchKeyGeneration(context.Context, string, string, string) (int64, error)
 	CreateActiveBranchKey(context.Context, BranchKeyRecord) error
 }
 
@@ -34,12 +35,14 @@ func NewMemoryBranchKeyRegistry() *MemoryBranchKeyRegistry {
 	return &MemoryBranchKeyRegistry{active: make(map[string]BranchKeyRecord), maximum: make(map[string]int64)}
 }
 
-func branchRegistryKey(provider, keyID string) string { return provider + "\x00" + keyID }
+func branchRegistryKey(provider, keyID, scope string) string {
+	return provider + "\x00" + keyID + "\x00" + scope
+}
 
-func (r *MemoryBranchKeyRegistry) GetActiveBranchKey(_ context.Context, provider, keyID string) (BranchKeyRecord, error) {
+func (r *MemoryBranchKeyRegistry) GetActiveBranchKey(_ context.Context, provider, keyID, scope string) (BranchKeyRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	record, ok := r.active[branchRegistryKey(provider, keyID)]
+	record, ok := r.active[branchRegistryKey(provider, keyID, scope)]
 	if !ok {
 		return BranchKeyRecord{}, ErrBranchKeyNotFound
 	}
@@ -47,16 +50,16 @@ func (r *MemoryBranchKeyRegistry) GetActiveBranchKey(_ context.Context, provider
 	return record, nil
 }
 
-func (r *MemoryBranchKeyRegistry) NextBranchKeyGeneration(_ context.Context, provider, keyID string) (int64, error) {
+func (r *MemoryBranchKeyRegistry) NextBranchKeyGeneration(_ context.Context, provider, keyID, scope string) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.maximum[branchRegistryKey(provider, keyID)] + 1, nil
+	return r.maximum[branchRegistryKey(provider, keyID, scope)] + 1, nil
 }
 
 func (r *MemoryBranchKeyRegistry) CreateActiveBranchKey(_ context.Context, record BranchKeyRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := branchRegistryKey(record.Provider, record.KeyID)
+	key := branchRegistryKey(record.Provider, record.KeyID, record.Scope)
 	if _, exists := r.active[key]; exists {
 		return ErrConflict
 	}

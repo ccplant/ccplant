@@ -239,6 +239,9 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	case "aws-kms-branch":
 		keyring, err = kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, store,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "aws-kms-branch-scoped":
+		keyring, err = kvstore.NewScopedBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, store,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	case "cloud-kms-branch":
 		keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)

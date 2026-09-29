@@ -113,7 +113,20 @@ type RewrapResult struct {
 // RewrapAll changes only the wrapped DEK of every encrypted record in a
 // namespace to the active key. Callers must stop writers before invoking it.
 func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, namespace string, dryRun bool) (RewrapResult, error) {
+	return rewrapAll(ctx, backend, keyring, keyring, namespace, dryRun, false)
+}
+
+// RewrapAllWithKeyrings unwraps existing DEKs with source and wraps them with
+// destination. This permits provider migrations without re-encrypting values.
+func RewrapAllWithKeyrings(ctx context.Context, backend Store, source, destination EnvelopeKeyring, namespace string, dryRun bool) (RewrapResult, error) {
+	return rewrapAll(ctx, backend, source, destination, namespace, dryRun, true)
+}
+
+func rewrapAll(ctx context.Context, backend Store, source, destination EnvelopeKeyring, namespace string, dryRun, force bool) (RewrapResult, error) {
 	var result RewrapResult
+	if source == nil || destination == nil {
+		return result, errors.New("source and destination keyrings are required")
+	}
 	if mode, ok := backend.(interface{ expectEncryptedValues() }); ok {
 		mode.expectEncryptedValues()
 	}
@@ -132,23 +145,36 @@ func RewrapAll(ctx context.Context, backend Store, keyring EnvelopeKeyring, name
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
-			dek, err := keyring.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, record)
+			dek, err := source.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, record)
+			alreadyDestination := false
+			if err != nil && force {
+				dek, err = destination.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, record)
+				alreadyDestination = err == nil
+			}
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
-			if envelope.KeyID == keyring.ActiveKeyID() {
+			needsRewrap := !alreadyDestination && (force || envelope.KeyID != destination.ActiveKeyID())
+			if !force || alreadyDestination {
+				if checker, ok := destination.(interface {
+					NeedsRewrap(string, []byte, Record) bool
+				}); ok {
+					needsRewrap = checker.NeedsRewrap(envelope.KeyID, envelope.WrappedDEK, record)
+				}
+			}
+			if !needsRewrap {
 				clear(dek)
 				result.Skipped++
 				continue
 			}
-			wrapped, err := keyring.WrapDataKey(ctx, keyring.ActiveKeyID(), dek, record)
+			wrapped, err := destination.WrapDataKey(ctx, destination.ActiveKeyID(), dek, record)
 			clear(dek)
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, err)
 			}
 			if !dryRun {
 				record.Value, err = marshalEnvelope(valueEnvelope{
-					Format: envelopeFormat, KeyID: keyring.ActiveKeyID(), WrappedDEK: wrapped,
+					Format: envelopeFormat, KeyID: destination.ActiveKeyID(), WrappedDEK: wrapped,
 					Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
 				})
 				if err != nil {
