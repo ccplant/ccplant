@@ -461,7 +461,7 @@ export default function SessionPoolsAdminPage() {
                   <div className="flex shrink-0 flex-wrap items-center gap-3"><PoolSettingsEditor pool={pool} onSave={(patch) => patchPool(pool, patch)} /><button type="button" onClick={() => void togglePool(pool)} className="text-xs text-blue-700 dark:text-blue-300">{pool.enabled ? '停止' : '有効化'}</button><button type="button" onClick={() => void removePool(pool)} className="text-xs text-red-600 dark:text-red-400">削除</button></div>
                 </div>
 
-                <div className="mt-5 grid gap-5 lg:grid-cols-2">
+                <div className="mt-5 space-y-5">
                   <div>
                     <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Suppliers</h4><span className="text-xs text-gray-400">{poolSuppliers.length}件</span></div>
                     {poolSuppliers.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
