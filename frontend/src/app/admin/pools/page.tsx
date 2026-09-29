@@ -1,7 +1,7 @@
 'use client'
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Terminal } from 'lucide-react'
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { MoreHorizontal, RefreshCw, Terminal } from 'lucide-react'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import {
   ClusterSessionManager,
@@ -20,8 +20,28 @@ import {
   SettingsSubsection,
   StatusBadge,
 } from '@/components/settings'
-import { PoolSupplierControls } from '@/components/settings/PoolSupplierControls'
 import { BindingSettingsEditor, PoolSettingsEditor, SupplierSettingsEditor } from '@/components/settings/PoolResourceEditors'
+
+const menuItemClass = 'block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800'
+
+function RowActionsMenu({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return <div ref={containerRef} className="relative inline-flex">
+    <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((current) => !current)} className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-white"><MoreHorizontal className="h-4 w-4" /></button>
+    {open && <div role="menu" className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">{children}</div>}
+  </div>
+}
 
 function LogPanel({ target, result, onClose }: { target: string; result: SessionPoolLogs | null; onClose: () => void }) {
   return <div className="mt-3 rounded-lg border border-gray-700 bg-gray-950 p-3 text-gray-100">
@@ -444,25 +464,21 @@ export default function SessionPoolsAdminPage() {
                 <div className="mt-5 grid gap-5 lg:grid-cols-2">
                   <div>
                     <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Suppliers</h4><span className="text-xs text-gray-400">{poolSuppliers.length}件</span></div>
-                    <div className="space-y-3">{poolSuppliers.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
+                    {poolSuppliers.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
+                    {poolSuppliers.length > 0 && <div className="overflow-visible rounded-xl border border-gray-200 dark:border-gray-700"><table className="w-full table-fixed text-left text-sm"><thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-950/60"><tr><th className="px-3 py-2 font-medium">Manager</th><th className="w-20 px-3 py-2 font-medium">状態</th><th className="w-28 px-3 py-2 font-medium">Capacity</th><th className="w-10 px-2 py-2"><span className="sr-only">操作</span></th></tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                     {poolSuppliers.map((supplier) => (
-                      <div key={supplier.manager_id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/60">
-                        <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="break-words text-sm font-semibold text-gray-900 dark:text-white">{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</p><p className="mt-1 text-xs text-gray-500">Idle {supplier.min_idle ?? 0} / Max {supplier.max_runners || '∞'}</p></div><PoolSupplierControls supplier={supplier} onPatch={(patch) => { void patchSupplier(supplier, patch).catch(() => undefined) }} /></div>
-                        <div className="mt-3 flex items-center gap-3 border-t border-gray-200 pt-3 dark:border-gray-800"><SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} /><button type="button" aria-label={`${supplier.pool}のSupplierを削除`} className="text-xs text-red-600 dark:text-red-400" onClick={() => void removeSupplier(supplier)}>削除</button></div>
-                      </div>
-                    ))}</div>
+                      <tr key={supplier.manager_id}><td className="max-w-48 px-3 py-3 font-medium text-gray-900 dark:text-white"><span className="break-words">{managers.find((manager) => manager.id === supplier.manager_id)?.name || supplier.manager_id}</span></td><td className="px-3 py-3"><StatusBadge tone={supplier.enabled && !supplier.draining ? 'green' : 'amber'}>{supplier.enabled && !supplier.draining ? '有効' : '無効'}</StatusBadge></td><td className="whitespace-nowrap px-3 py-3 text-xs text-gray-500">{supplier.min_idle ?? 0} min / {supplier.max_runners || '∞'} max</td><td className="px-2 py-2 text-right"><RowActionsMenu label={`${supplier.pool}のSupplier操作`}><SupplierSettingsEditor supplier={supplier} onSave={(patch) => patchSupplier(supplier, patch)} triggerClassName={menuItemClass} /><button type="button" className={menuItemClass} onClick={() => void patchSupplier(supplier, { enabled: !(supplier.enabled && !supplier.draining), draining: false }).catch(() => undefined)}>{supplier.enabled && !supplier.draining ? '無効化' : '有効化'}</button><button type="button" className={`${menuItemClass} text-red-600 dark:text-red-400`} onClick={() => void removeSupplier(supplier)}>削除</button></RowActionsMenu></td></tr>
+                    ))}</tbody></table></div>}
                   </div>
 
                   <div>
                     <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Bindings</h4><span className="text-xs text-gray-400">{poolBindings.length}件</span></div>
-                    <div className="space-y-3">{poolBindings.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
+                    {poolBindings.length === 0 && <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400 dark:border-gray-700">未設定</div>}
+                    {poolBindings.length > 0 && <div className="overflow-visible rounded-xl border border-gray-200 dark:border-gray-700"><table className="w-full table-fixed text-left text-sm"><thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-950/60"><tr><th className="px-3 py-2 font-medium">Subject</th><th className="w-24 px-3 py-2 font-medium">Roles</th><th className="w-20 px-3 py-2 font-medium">Limit</th><th className="w-10 px-2 py-2"><span className="sr-only">操作</span></th></tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                       {poolBindings.map((binding) => (
-                        <div key={binding.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/60">
-                          <p className="break-words text-sm font-semibold text-gray-900 dark:text-white">{binding.subject_type}: {binding.subject_id || 'everyone'}</p><p className="mt-1 text-xs text-gray-500">Roles: {binding.roles?.join(', ') || binding.role}</p>
-                          <div className="mt-3 flex items-center gap-3 border-t border-gray-200 pt-3 dark:border-gray-800"><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} /><button type="button" aria-label={`${binding.subject_id || 'everyone'}のBindingを削除`} className="text-xs text-red-600 dark:text-red-400" onClick={() => void removeBinding(pool.name, binding.id)}>削除</button></div>
-                        </div>
+                        <tr key={binding.id}><td className="max-w-48 px-3 py-3 font-medium text-gray-900 dark:text-white"><span className="break-words">{binding.subject_type}: {binding.subject_id || 'everyone'}</span></td><td className="px-3 py-3 text-xs text-gray-600 dark:text-gray-300">{binding.roles?.join(', ') || binding.role}</td><td className="whitespace-nowrap px-3 py-3 text-xs text-gray-500">{binding.max_concurrent ? `${binding.max_concurrent} max` : '無制限'}</td><td className="px-2 py-2 text-right"><RowActionsMenu label={`${binding.subject_id || 'everyone'}のBinding操作`}><BindingSettingsEditor binding={binding} onSave={(patch) => patchBinding(binding, patch)} triggerClassName={menuItemClass} /><button type="button" className={`${menuItemClass} text-red-600 dark:text-red-400`} onClick={() => void removeBinding(pool.name, binding.id)}>削除</button></RowActionsMenu></td></tr>
                       ))}
-                    </div>
+                    </tbody></table></div>}
                   </div>
                 </div>
               </section>

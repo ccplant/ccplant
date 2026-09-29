@@ -59,9 +59,10 @@ export function PoolSettingsEditor({ pool, onSave }: {
   </form></EditorModal>}</>
 }
 
-export function SupplierSettingsEditor({ supplier, onSave }: {
+export function SupplierSettingsEditor({ supplier, onSave, triggerClassName = button }: {
   supplier: SessionPoolSupplier
   onSave: (patch: { min_idle?: number; max_runners?: number; enabled?: boolean; draining?: boolean }) => Promise<void>
+  triggerClassName?: string
 }) {
   const [editing, setEditing] = useState(false)
   const [minIdle, setMinIdle] = useState(supplier.min_idle ?? 0)
@@ -76,7 +77,7 @@ export function SupplierSettingsEditor({ supplier, onSave }: {
     try { await onSave({ min_idle: minIdle, max_runners: maxRunners }); setEditing(false) } catch (reason) { setError(reason instanceof Error ? reason.message : 'Supplierの更新に失敗しました') } finally { setSaving(false) }
   }
 
-  return <><button type="button" className={button} onClick={() => { setMinIdle(supplier.min_idle ?? 0); setMaxRunners(supplier.max_runners ?? 0); setEditing(true) }}>編集</button>{editing && <EditorModal title={`${supplier.manager_id} のSupplier設定`} onClose={() => setEditing(false)}><form onSubmit={submit} className="grid w-full gap-3 sm:grid-cols-2">
+  return <><button type="button" className={triggerClassName} onClick={() => { setMinIdle(supplier.min_idle ?? 0); setMaxRunners(supplier.max_runners ?? 0); setEditing(true) }}>編集</button>{editing && <EditorModal title={`${supplier.manager_id} のSupplier設定`} onClose={() => setEditing(false)}><form onSubmit={submit} className="grid w-full gap-3 sm:grid-cols-2">
     <label className="text-xs text-gray-500">Min idle<input aria-label="Min idle" required min={0} type="number" className={`${input} mt-1`} value={minIdle} onChange={(event) => setMinIdle(Number(event.target.value))} /></label>
     <label className="text-xs text-gray-500">Max runners（0は無制限）<input aria-label="Max runners" required min={0} type="number" className={`${input} mt-1`} value={maxRunners} onChange={(event) => setMaxRunners(Number(event.target.value))} /></label>
     {error && <p role="alert" className="text-xs text-red-600 sm:col-span-2 dark:text-red-400">{error}</p>}
@@ -84,9 +85,10 @@ export function SupplierSettingsEditor({ supplier, onSave }: {
   </form></EditorModal>}</>
 }
 
-export function BindingSettingsEditor({ binding, onSave }: {
+export function BindingSettingsEditor({ binding, onSave, triggerClassName = button }: {
   binding: SessionPoolBinding
   onSave: (patch: { roles?: Array<'use' | 'manage'>; enabled?: boolean; priority?: number; max_concurrent?: number }) => Promise<void>
+  triggerClassName?: string
 }) {
   const initialRoles = binding.roles ?? (binding.role === 'manage_and_use' ? ['use', 'manage'] : [binding.role])
   const [editing, setEditing] = useState(false)
@@ -105,7 +107,7 @@ export function BindingSettingsEditor({ binding, onSave }: {
     try { await onSave({ roles, priority, max_concurrent: maxConcurrent, enabled }); setEditing(false) } catch (reason) { setError(reason instanceof Error ? reason.message : 'Bindingの更新に失敗しました') } finally { setSaving(false) }
   }
 
-  return <><button type="button" className={button} onClick={() => { setRoles(initialRoles); setPriority(binding.priority ?? 0); setMaxConcurrent(binding.max_concurrent ?? 0); setEnabled(binding.enabled); setEditing(true) }}>編集</button>{editing && <EditorModal title={`${binding.subject_id || 'everyone'} のBinding設定`} onClose={() => setEditing(false)}><form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
+  return <><button type="button" className={triggerClassName} onClick={() => { setRoles(initialRoles); setPriority(binding.priority ?? 0); setMaxConcurrent(binding.max_concurrent ?? 0); setEnabled(binding.enabled); setEditing(true) }}>編集</button>{editing && <EditorModal title={`${binding.subject_id || 'everyone'} のBinding設定`} onClose={() => setEditing(false)}><form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
     <fieldset className="flex gap-4 sm:col-span-2"><legend className="text-xs text-gray-500">Roles</legend>{(['use', 'manage'] as const).map((role) => <label key={role} className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={roles.includes(role)} disabled={binding.subject_type === 'all' && role === 'manage'} onChange={(event) => setRoles((current) => event.target.checked ? [...current, role] : current.filter((value) => value !== role))} />{role}</label>)}</fieldset>
     <label className="text-xs text-gray-500">Priority<input aria-label="Priority" type="number" className={`${input} mt-1`} value={priority} onChange={(event) => setPriority(Number(event.target.value))} /></label>
     <label className="text-xs text-gray-500">Max concurrent（0は無制限）<input aria-label="Max concurrent" min={0} type="number" className={`${input} mt-1`} value={maxConcurrent} onChange={(event) => setMaxConcurrent(Number(event.target.value))} /></label>
