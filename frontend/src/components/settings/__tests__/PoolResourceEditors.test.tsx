@@ -8,7 +8,7 @@ describe('pool resource editors', () => {
   it('updates pool labels', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     render(<PoolSettingsEditor pool={{ name: 'builders', enabled: true, labels: { arch: 'amd64' } }} onSave={onSave} />)
-    fireEvent.click(screen.getByRole('button', { name: '設定を編集' }))
+    fireEvent.click(screen.getByRole('button', { name: '編集' }))
     fireEvent.change(screen.getByLabelText('buildersのLabels'), { target: { value: 'arch=arm64\nregion=tokyo' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({ labels: { arch: 'arm64', region: 'tokyo' } }))
