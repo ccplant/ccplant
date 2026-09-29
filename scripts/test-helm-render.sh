@@ -57,16 +57,9 @@ assert_not_contains 'AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/bac
 "$HELM_BIN" template codex-auth-callback "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --show-only templates/deployment.yaml \
   --set api.codexDeviceAuth.callbackBaseUrl=https://api.example.test \
-  --set 'api.env[0].name=AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' \
-  --set 'api.env[0].value=https://legacy.example.test' \
   >"$TMP_DIR/codex-auth-callback.yaml"
 assert_contains 'name: AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/codex-auth-callback.yaml"
 assert_contains 'value: "https://api.example.test"' "$TMP_DIR/codex-auth-callback.yaml"
-assert_not_contains 'https://legacy.example.test' "$TMP_DIR/codex-auth-callback.yaml"
-if [[ $(grep -c 'name: AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL' "$TMP_DIR/codex-auth-callback.yaml") -ne 1 ]]; then
-  echo "expected exactly one Codex device auth callback URL environment entry" >&2
-  exit 1
-fi
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" \
   --namespace broker-test --set backend.api.githubBroker.inCluster=true \
   --set backend.fullnameOverride=broker-api --set backend.service.port=9090 \

@@ -53,7 +53,6 @@
 {{- /* Prefer canonical structured values over their legacy env entries. */}}
 {{- $canonicalApiEnv := dict }}
 {{- if $githubBroker.inCluster }}{{- $_ := set $canonicalApiEnv "AGENTAPI_GITHUB_BROKER_BASE_URL" true }}{{- end }}
-{{- with (dig "callbackBaseUrl" "" $codexDeviceAuth) }}{{- $_ := set $canonicalApiEnv "AGENTAPI_CODEX_DEVICE_AUTH_CALLBACK_BASE_URL" true }}{{- end }}
 {{- with .Values.config.claude.args }}{{- $_ := set $canonicalApiEnv "CLAUDE_ARGS" true }}{{- end }}
 {{- with .Values.config.auth.github.oauth.allowedRedirectUris }}{{- $_ := set $canonicalApiEnv "OAUTH_ALLOWED_REDIRECT_URIS" true }}{{- end }}
 {{- with .Values.config.vapid.publicKey }}{{- $_ := set $canonicalApiEnv "VAPID_PUBLIC_KEY" true }}{{- end }}
