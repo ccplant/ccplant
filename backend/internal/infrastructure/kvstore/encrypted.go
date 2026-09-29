@@ -146,11 +146,16 @@ func rewrapAll(ctx context.Context, backend Store, source, destination EnvelopeK
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
 			dek, err := source.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, record)
+			alreadyDestination := false
+			if err != nil && force {
+				dek, err = destination.UnwrapDataKey(ctx, envelope.KeyID, envelope.WrappedDEK, record)
+				alreadyDestination = err == nil
+			}
 			if err != nil {
 				return result, fmt.Errorf("rewrap %s/%s: %w", kind, record.Key, ErrDecrypt)
 			}
-			needsRewrap := force || envelope.KeyID != destination.ActiveKeyID()
-			if !force {
+			needsRewrap := !alreadyDestination && (force || envelope.KeyID != destination.ActiveKeyID())
+			if !force || alreadyDestination {
 				if checker, ok := destination.(interface {
 					NeedsRewrap(string, []byte, Record) bool
 				}); ok {

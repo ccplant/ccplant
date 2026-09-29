@@ -313,6 +313,13 @@ func TestRewrapAllWithKeyringsMigratesProviders(t *testing.T) {
 	if err != nil || !bytes.Equal(got.Value, value) {
 		t.Fatalf("read after provider migration: value=%q err=%v", got.Value, err)
 	}
+	result, err = RewrapAllWithKeyrings(ctx, backend, oldKeyring, newKeyring, "ns", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Selected != 1 || result.Rewrapped != 0 || result.Skipped != 1 {
+		t.Fatalf("resumed rewrap result = %#v", result)
+	}
 }
 
 func TestParseEnvelopeRejectsDuplicateAndUnknownFields(t *testing.T) {
