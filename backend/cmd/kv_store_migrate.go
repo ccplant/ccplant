@@ -329,6 +329,18 @@ func isApplicationKVSecret(secret *corev1.Secret) bool {
 	if hasAgentAPILabel(secret.Labels) {
 		return true
 	}
+	// GitHub connection and identity data predates the agentapi.proxy label
+	// namespace. Keep these persistent records in the migration allowlist
+	// without also copying short-lived OAuth states or broker leases.
+	for _, label := range []string{
+		"agentapi.ccplant.io/github-connection",
+		"agentapi.ccplant.io/github-identity",
+		"agentapi.ccplant.io/github-principal",
+	} {
+		if secret.Labels[label] == "true" {
+			return true
+		}
+	}
 	// The pre-v2 schedule store was a fixed-name Secret without labels.
 	return secret.Name == "agentapi-schedules"
 }
