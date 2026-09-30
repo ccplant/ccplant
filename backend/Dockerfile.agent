@@ -30,7 +30,7 @@ RUN apk add --no-cache ca-certificates curl && \
 FROM ubuntu:24.04
 
 # Bump to intentionally refresh installers whose upstream version is unpinned.
-ARG ASSET_REVISION=1
+ARG ASSET_REVISION=2
 
 # Install essential packages: ca-certificates, curl, bash, git, make, sudo, jq, procps, and GitHub CLI
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
