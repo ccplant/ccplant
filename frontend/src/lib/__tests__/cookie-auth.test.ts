@@ -6,11 +6,18 @@ import {
   decryptAuthCookie,
   encryptApiKey,
   encryptOAuthSession,
+  renewApiKeyCookie,
 } from '../cookie-auth'
 
 describe('versioned authentication cookie', () => {
+  const cookieGet = vi.fn()
+  const cookieSet = vi.fn()
+  const cookieStore = { get: cookieGet, set: cookieSet }
+
   beforeEach(() => {
     vi.stubEnv('COOKIE_ENCRYPTION_SECRET', '11'.repeat(32))
+    cookieGet.mockReset()
+    cookieSet.mockReset()
   })
 
   afterEach(() => {
@@ -52,5 +59,37 @@ describe('versioned authentication cookie', () => {
     vi.stubEnv('COOKIE_ENCRYPTION_SECRET', 'z'.repeat(64))
 
     expect(() => encryptApiKey('token')).toThrow('64 hex characters')
+  })
+
+  it('renews an existing authentication cookie when the renewal marker has expired', async () => {
+    cookieGet.mockImplementation((name: string) => (
+      name === 'agentapi_token' ? { value: 'encrypted-cookie' } : undefined
+    ))
+
+    await renewApiKeyCookie(cookieStore as never)
+
+    expect(cookieSet).toHaveBeenCalledTimes(2)
+    expect(cookieSet).toHaveBeenNthCalledWith(
+      1,
+      'agentapi_token',
+      'encrypted-cookie',
+      expect.objectContaining({ maxAge: 30 * 24 * 60 * 60 }),
+    )
+    expect(cookieSet).toHaveBeenNthCalledWith(
+      2,
+      'agentapi_token_renewed',
+      '1',
+      expect.objectContaining({ maxAge: 24 * 60 * 60 }),
+    )
+  })
+
+  it('does not emit cookies again while the renewal marker is present', async () => {
+    cookieGet.mockImplementation((name: string) => (
+      name === 'agentapi_token' ? { value: 'encrypted-cookie' } : { value: '1' }
+    ))
+
+    await renewApiKeyCookie(cookieStore as never)
+
+    expect(cookieSet).not.toHaveBeenCalled()
   })
 })
