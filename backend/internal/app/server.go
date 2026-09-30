@@ -961,6 +961,9 @@ func buildKVEncryptionKeyring(ctx context.Context, encryption config.KVStoreEncr
 	case "cloud-kms-branch":
 		return kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, registry,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "cloud-kms-branch-scoped":
+		return kvstore.NewScopedCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, registry,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	default:
 		return nil, fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
 	}

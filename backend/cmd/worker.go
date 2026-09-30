@@ -245,6 +245,9 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	case "cloud-kms-branch":
 		keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
 			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
+	case "cloud-kms-branch-scoped":
+		keyring, err = kvstore.NewScopedCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
+			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
 	default:
 		err = fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
 	}

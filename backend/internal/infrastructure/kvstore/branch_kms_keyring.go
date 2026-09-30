@@ -89,6 +89,14 @@ func newBranchKMSKeyring(ctx context.Context, activeID, region string, keys map[
 }
 
 func NewCloudBranchKMSKeyring(ctx context.Context, activeID string, keys map[string]string, registry BranchKeyRegistry, cacheTTL time.Duration, cacheMax int) (*BranchKMSKeyring, error) {
+	return newCloudBranchKMSKeyring(ctx, activeID, keys, registry, cacheTTL, cacheMax, false)
+}
+
+func NewScopedCloudBranchKMSKeyring(ctx context.Context, activeID string, keys map[string]string, registry BranchKeyRegistry, cacheTTL time.Duration, cacheMax int) (*BranchKMSKeyring, error) {
+	return newCloudBranchKMSKeyring(ctx, activeID, keys, registry, cacheTTL, cacheMax, true)
+}
+
+func newCloudBranchKMSKeyring(ctx context.Context, activeID string, keys map[string]string, registry BranchKeyRegistry, cacheTTL time.Duration, cacheMax int, scoped bool) (*BranchKMSKeyring, error) {
 	if registry == nil {
 		return nil, errors.New("branch key registry is required")
 	}
@@ -96,7 +104,7 @@ func NewCloudBranchKMSKeyring(ctx context.Context, activeID string, keys map[str
 	if err != nil {
 		return nil, err
 	}
-	return newPersistentBranchKMSKeyring(activeID, keys, provider, registry, nil, cacheTTL, cacheMax, false)
+	return newPersistentBranchKMSKeyring(activeID, keys, provider, registry, nil, cacheTTL, cacheMax, scoped)
 }
 
 func newPersistentBranchKMSKeyring(activeID string, keys map[string]string, provider branchKMSProvider, registry BranchKeyRegistry, direct *KMSKeyring, cacheTTL time.Duration, cacheMax int, scoped bool) (*BranchKMSKeyring, error) {
