@@ -19,6 +19,11 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "logical-pool", Namespace: "test", Labels: map[string]string{"agentapi.proxy/session-runner-resource": "logical-pool"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "subscriptions", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/component": "notification-subscription", "agentapi.proxy/user-id": "user"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "future-secret", Namespace: "test", Labels: map[string]string{"agentapi.proxy/future-resource": "v1"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-connection", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-connection": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-identity", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-identity": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-principal", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-principal": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-oauth-state", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-oauth-state": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-broker-lease", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-broker-lease": "true"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "helm-release", Namespace: "test", Labels: map[string]string{"owner": "helm"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-shares", Namespace: "test"}},
@@ -30,8 +35,8 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 7 {
-		t.Fatalf("got %d records, want 7: %#v", len(records), records)
+	if len(records) != 10 {
+		t.Fatalf("got %d records, want 10: %#v", len(records), records)
 	}
 	got := make(map[string]bool, len(records))
 	for _, record := range records {
@@ -39,13 +44,16 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 	}
 	for _, identity := range []string{
 		"configmap/agentapi-session-shares", "configmap/future-config", "configmap/memory",
-		"secret/future-secret", "secret/logical-pool", "secret/settings", "secret/subscriptions",
+		"secret/future-secret", "secret/github-connection", "secret/github-identity", "secret/github-principal",
+		"secret/logical-pool", "secret/settings", "secret/subscriptions",
 	} {
 		if !got[identity] {
 			t.Errorf("missing application record %s: %#v", identity, records)
 		}
 	}
-	for _, identity := range []string{"secret/helm-release", "configmap/server-config"} {
+	for _, identity := range []string{
+		"secret/github-broker-lease", "secret/github-oauth-state", "secret/helm-release", "configmap/server-config",
+	} {
 		if got[identity] {
 			t.Errorf("included non-application record %s", identity)
 		}
