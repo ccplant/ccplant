@@ -288,9 +288,12 @@ async function handleProxyRequest(
         )
       }
 
-      if (path === 'start' && method === 'POST') {
-        await renewApiKeyCookie()
-      }
+      // Keep the browser session alive while it is actively being used.  The
+      // cookie has a sliding lifetime, but historically we only renewed it
+      // when a new agent session was started. Users who kept working in an
+      // existing chat were therefore logged out once the original max-age was
+      // reached even though authenticated requests were still succeeding.
+      await renewApiKeyCookie()
     }
 
     const body = requestCanHaveBody(method) ? await request.arrayBuffer() : undefined
