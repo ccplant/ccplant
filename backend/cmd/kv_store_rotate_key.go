@@ -55,6 +55,8 @@ provided keyring until the command completes successfully.`,
 				keyring, err = kvstore.NewLocalKeyring(o.activeKeyID, keys)
 			case "aws-kms-branch-scoped":
 				keyring, err = kvstore.NewScopedBranchKMSKeyring(cmd.Context(), o.activeKeyID, o.kmsRegion, keys, store, 0, 0)
+			case "cloud-kms-branch-scoped":
+				keyring, err = kvstore.NewScopedCloudBranchKMSKeyring(cmd.Context(), o.activeKeyID, keys, store, 0, 0)
 			default:
 				return fmt.Errorf("unsupported rotation provider %q", o.provider)
 			}
@@ -70,6 +72,8 @@ provided keyring until the command completes successfully.`,
 				switch o.sourceProvider {
 				case "", "local":
 					sourceKeyring, err = kvstore.NewLocalKeyring(o.sourceActiveKeyID, sourceKeys)
+				case "cloud-kms-branch":
+					sourceKeyring, err = kvstore.NewCloudBranchKMSKeyring(cmd.Context(), o.sourceActiveKeyID, sourceKeys, store, 0, 0)
 				default:
 					return fmt.Errorf("unsupported source rotation provider %q", o.sourceProvider)
 				}
@@ -91,10 +95,10 @@ provided keyring until the command completes successfully.`,
 	flags.StringVar(&o.authToken, "auth-token", os.Getenv("AGENTAPI_KV_STORE_AUTH_TOKEN"), "libSQL authentication token")
 	flags.StringVar(&o.activeKeyID, "active-key-id", os.Getenv("AGENTAPI_KV_ENCRYPTION_ACTIVE_KEY_ID"), "new active key ID")
 	flags.StringVar(&o.keysJSON, "keys-json", os.Getenv("AGENTAPI_KV_ENCRYPTION_KEYS"), "JSON object mapping key IDs to local keys or KMS key references")
-	flags.StringVar(&o.provider, "provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "key provider: local or aws-kms-branch-scoped")
+	flags.StringVar(&o.provider, "provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "key provider: local, aws-kms-branch-scoped, or cloud-kms-branch-scoped")
 	flags.StringVar(&o.kmsRegion, "kms-region", os.Getenv("AGENTAPI_KV_ENCRYPTION_KMS_REGION"), "AWS KMS region")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "verify every wrapped data key without writing")
-	flags.StringVar(&o.sourceProvider, "source-provider", "", "existing key provider for a cross-provider migration")
+	flags.StringVar(&o.sourceProvider, "source-provider", "", "existing key provider for a cross-provider migration (local or cloud-kms-branch)")
 	flags.StringVar(&o.sourceActiveKeyID, "source-active-key-id", "", "existing local active key ID")
 	flags.StringVar(&o.sourceKeysJSON, "source-keys-json", "", "JSON object containing existing local keys")
 	return command
