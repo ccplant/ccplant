@@ -2,11 +2,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 
 import { GET, POST } from './route'
+import * as cookieAuth from '@/lib/cookie-auth'
 
 describe('API proxy route transport', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
+  })
+
+  it('renews the authentication cookie for activity outside session creation', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
+    vi.spyOn(cookieAuth, 'getApiKeyFromCookie').mockResolvedValue('cookie-token')
+    const renewCookie = vi.spyOn(cookieAuth, 'renewApiKeyCookie').mockResolvedValue()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({ sessions: [] }),
+    )
+    const request = new NextRequest('https://ui.example.test/api/proxy/search')
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ['search'] }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(renewCookie).toHaveBeenCalledOnce()
   })
 
   it('preserves the method, body, and critical headers for an SSE response', async () => {
