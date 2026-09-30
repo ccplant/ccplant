@@ -61,3 +61,7 @@ agentapi-proxy kv-store rotate-key \
 
 Run the command with `--dry-run` first. Stop all writers for both the dry run
 and the actual migration.
+
+When migrating from `cloud-kms-branch`, use that value for
+`--source-provider`, pass its active key ID and key map through the source
+flags, and keep valid Google application credentials available to the command.

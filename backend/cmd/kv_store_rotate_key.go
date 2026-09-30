@@ -70,6 +70,8 @@ provided keyring until the command completes successfully.`,
 				switch o.sourceProvider {
 				case "", "local":
 					sourceKeyring, err = kvstore.NewLocalKeyring(o.sourceActiveKeyID, sourceKeys)
+				case "cloud-kms-branch":
+					sourceKeyring, err = kvstore.NewCloudBranchKMSKeyring(cmd.Context(), o.sourceActiveKeyID, sourceKeys, store, 0, 0)
 				default:
 					return fmt.Errorf("unsupported source rotation provider %q", o.sourceProvider)
 				}
@@ -94,7 +96,7 @@ provided keyring until the command completes successfully.`,
 	flags.StringVar(&o.provider, "provider", os.Getenv("AGENTAPI_KV_ENCRYPTION_PROVIDER"), "key provider: local or aws-kms-branch-scoped")
 	flags.StringVar(&o.kmsRegion, "kms-region", os.Getenv("AGENTAPI_KV_ENCRYPTION_KMS_REGION"), "AWS KMS region")
 	flags.BoolVar(&o.dryRun, "dry-run", false, "verify every wrapped data key without writing")
-	flags.StringVar(&o.sourceProvider, "source-provider", "", "existing key provider for a cross-provider migration")
+	flags.StringVar(&o.sourceProvider, "source-provider", "", "existing key provider for a cross-provider migration (local or cloud-kms-branch)")
 	flags.StringVar(&o.sourceActiveKeyID, "source-active-key-id", "", "existing local active key ID")
 	flags.StringVar(&o.sourceKeysJSON, "source-keys-json", "", "JSON object containing existing local keys")
 	return command
