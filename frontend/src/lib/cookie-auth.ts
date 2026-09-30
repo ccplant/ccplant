@@ -10,12 +10,16 @@ const debugLog = (...args: unknown[]) => {
 };
 
 const COOKIE_NAME = 'agentapi_token';
+const COOKIE_RENEWAL_NAME = 'agentapi_token_renewed';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 
 export const AUTH_COOKIE_NAME = COOKIE_NAME;
+export const AUTH_COOKIE_RENEWAL_NAME = COOKIE_RENEWAL_NAME;
 export const AUTH_COOKIE_VERSION = 1 as const;
+
+const AUTH_COOKIE_RENEWAL_INTERVAL_SECONDS = 24 * 60 * 60;
 
 export type AuthCookiePayload =
   | {
@@ -36,6 +40,11 @@ export const AUTH_COOKIE_OPTIONS = {
   sameSite: 'strict' as const,
   maxAge: 30 * 24 * 60 * 60,
   path: '/',
+};
+
+const AUTH_COOKIE_RENEWAL_OPTIONS = {
+  ...AUTH_COOKIE_OPTIONS,
+  maxAge: AUTH_COOKIE_RENEWAL_INTERVAL_SECONDS,
 };
 
 function getEncryptionKey(): Buffer {
@@ -160,6 +169,7 @@ export async function setApiKeyCookie(apiKey: string): Promise<void> {
   const cookieStore = await cookies();
   
   cookieStore.set(COOKIE_NAME, encryptedApiKey, AUTH_COOKIE_OPTIONS);
+  cookieStore.set(COOKIE_RENEWAL_NAME, '1', AUTH_COOKIE_RENEWAL_OPTIONS);
 }
 
 export async function getAuthSessionFromCookie(): Promise<AuthCookiePayload | null> {
@@ -184,18 +194,28 @@ export async function getApiKeyFromCookie(): Promise<string | null> {
   return authSession?.access_token ?? null;
 }
 
-export async function renewApiKeyCookie(): Promise<void> {
+export async function renewApiKeyCookie(
+  providedCookieStore?: Awaited<ReturnType<typeof cookies>>,
+): Promise<void> {
   try {
-    const cookieStore = await cookies();
+    const cookieStore = providedCookieStore ?? await cookies();
     const encryptedApiKey = cookieStore.get(COOKIE_NAME)?.value;
     
     if (!encryptedApiKey) {
       debugLog('No agentapi_token cookie found to renew');
       return;
     }
+
+    // Proxy traffic can be very frequent (polling, message streams, etc.). A
+    // short-lived marker keeps the session sliding without emitting a
+    // Set-Cookie header for every authenticated request.
+    if (cookieStore.get(COOKIE_RENEWAL_NAME)) {
+      return;
+    }
     
     // Re-set the cookie to renew its expiration
     cookieStore.set(COOKIE_NAME, encryptedApiKey, AUTH_COOKIE_OPTIONS);
+    cookieStore.set(COOKIE_RENEWAL_NAME, '1', AUTH_COOKIE_RENEWAL_OPTIONS);
     
     debugLog('Renewed agentapi_token cookie expiration');
   } catch (error) {
@@ -207,4 +227,5 @@ export async function deleteApiKeyCookie(): Promise<void> {
   const cookieStore = await cookies();
   // Set the cookie with maxAge=0 to ensure it's deleted
   cookieStore.set(COOKIE_NAME, '', { ...AUTH_COOKIE_OPTIONS, maxAge: 0 });
+  cookieStore.set(COOKIE_RENEWAL_NAME, '', { ...AUTH_COOKIE_OPTIONS, maxAge: 0 });
 }

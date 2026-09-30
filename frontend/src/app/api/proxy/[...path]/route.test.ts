@@ -10,7 +10,7 @@ describe('API proxy route transport', () => {
     vi.unstubAllEnvs()
   })
 
-  it('renews the authentication cookie for activity outside session creation', async () => {
+  it('checks whether the authentication cookie needs renewal outside session creation', async () => {
     vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
     vi.spyOn(cookieAuth, 'getApiKeyFromCookie').mockResolvedValue('cookie-token')
     const renewCookie = vi.spyOn(cookieAuth, 'renewApiKeyCookie').mockResolvedValue()

@@ -288,11 +288,9 @@ async function handleProxyRequest(
         )
       }
 
-      // Keep the browser session alive while it is actively being used.  The
-      // cookie has a sliding lifetime, but historically we only renewed it
-      // when a new agent session was started. Users who kept working in an
-      // existing chat were therefore logged out once the original max-age was
-      // reached even though authenticated requests were still succeeding.
+      // Keep the browser session alive while it is actively being used. The
+      // renewal helper uses a short-lived marker to avoid emitting Set-Cookie
+      // on every proxy request.
       await renewApiKeyCookie()
     }
 
