@@ -88,6 +88,29 @@ func TestManagerAndRunnerLogsUseSeparateEndpoints(t *testing.T) {
 	}
 }
 
+func TestAdminManagerAndSessionLogs(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	requestCtx := context.Background()
+	requireNoError(t, store.CreateManager(requestCtx, &core.Manager{ID: "manager-a", Enabled: true}))
+	tunnel := &statusTestTunnel{connected: map[string]bool{"manager-a": true}}
+	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
+
+	managerLogs := callSessionPoolHandler(t, controller.GetAdminManagerLogs, http.MethodGet, "/admin/session-managers/manager-a/logs?tail=11", nil, map[string]string{"id": "manager-a"}, nil)
+	if managerLogs.Code != http.StatusOK {
+		t.Fatalf("manager logs status=%d body=%s", managerLogs.Code, managerLogs.Body.String())
+	}
+	sessionLogs := callSessionPoolHandler(t, controller.GetAdminRunnerLogs, http.MethodGet, "/admin/session-runners/runner-a/logs?manager_id=manager-a&session_id=session-a&tail=12", nil, map[string]string{"id": "runner-a"}, nil)
+	if sessionLogs.Code != http.StatusOK {
+		t.Fatalf("session logs status=%d body=%s", sessionLogs.Code, sessionLogs.Body.String())
+	}
+
+	tunnel.mu.Lock()
+	defer tunnel.mu.Unlock()
+	if len(tunnel.requests) != 2 || tunnel.requests[0] != "http://manager/internal/esm-management/logs?tail=11" || tunnel.requests[1] != "http://manager/internal/esm-management/logs?runner_id=runner-a&session_id=session-a&tail=12" {
+		t.Fatalf("requests=%v", tunnel.requests)
+	}
+}
+
 func TestListManageablePoolStatusFiltersPoolsAndFetchesLiveManagerStatus(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	ctx := context.Background()
@@ -158,6 +181,36 @@ func TestAdminRunnerInventoryIncludesPooledAndDirectRunners(t *testing.T) {
 	logs := callSessionPoolHandler(t, controller.GetAdminRunnerLogs, http.MethodGet, "/admin/session-runners/direct-session/logs?manager_id=manager-a", nil, map[string]string{"id": "direct-session"}, nil)
 	if logs.Code != http.StatusOK || !strings.Contains(logs.Body.String(), "hello") {
 		t.Fatalf("logs status=%d body=%s", logs.Code, logs.Body.String())
+	}
+}
+
+func TestAdminRunnerInventorySystemScopeExcludesUserAndTeamManagers(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	ctx := context.Background()
+	for _, manager := range []*core.Manager{
+		{ID: "system-manager", Scope: core.ManagerScopeSystem, Enabled: true},
+		{ID: "user-manager", Scope: core.ManagerScopeUser, OwnerID: "alice", Enabled: true},
+		{ID: "team-manager", Scope: core.ManagerScopeTeam, OwnerID: "team-a", Enabled: true},
+	} {
+		requireNoError(t, store.CreateManager(ctx, manager))
+		requireNoError(t, store.CreateRunner(ctx, &core.Runner{ID: manager.ID + "-runner", ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle}))
+	}
+	controller := NewSessionPoolController(store, nil)
+	rec := callSessionPoolHandler(t, controller.ListAdminRunners, http.MethodGet, "/admin/session-runners?scope=system", nil, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Runners []adminRunnerInventoryItem `json:"session_runners"`
+	}
+	decodeRecorder(t, rec, &result)
+	if len(result.Runners) != 1 || result.Runners[0].ManagerID != "system-manager" {
+		t.Fatalf("runners=%+v", result.Runners)
+	}
+
+	logs := callSessionPoolHandler(t, controller.GetAdminManagerLogs, http.MethodGet, "/admin/session-managers/user-manager/logs", nil, map[string]string{"id": "user-manager"}, nil)
+	if logs.Code != http.StatusNotFound {
+		t.Fatalf("user manager logs status=%d body=%s", logs.Code, logs.Body.String())
 	}
 }
 

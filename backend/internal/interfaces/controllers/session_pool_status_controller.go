@@ -171,15 +171,29 @@ func (c *SessionPoolController) ListAdminRunners(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	if ctx.QueryParam("scope") == string(core.ManagerScopeSystem) {
+		systemManagers := managers[:0]
+		for _, manager := range managers {
+			if isSystemManager(manager) {
+				systemManagers = append(systemManagers, manager)
+			}
+		}
+		managers = systemManagers
+	}
 
 	managerNames := make(map[string]string, len(managers))
+	visibleManagers := make(map[string]bool, len(managers))
 	items := make(map[string]*adminRunnerInventoryItem, len(runners))
 	sessionItems := make(map[string]*adminRunnerInventoryItem, len(allocations))
 	draining := make(map[string]bool)
 	for _, manager := range managers {
 		managerNames[manager.ID] = manager.Name
+		visibleManagers[manager.ID] = true
 	}
 	for _, runner := range runners {
+		if !visibleManagers[runner.ManagerID] {
+			continue
+		}
 		// Draining runners are deletion tombstones, not usable inventory. They
 		// remain persisted briefly for fencing but should not appear as runners
 		// that an administrator can inspect or operate.
@@ -287,10 +301,36 @@ func (c *SessionPoolController) GetAdminRunnerLogs(ctx echo.Context) error {
 	if managerID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "manager_id is required")
 	}
-	if _, err := c.store.GetManager(ctx.Request().Context(), managerID); err != nil {
+	manager, err := c.store.GetManager(ctx.Request().Context(), managerID)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
 	}
-	return c.proxyManagerLogs(ctx, managerID, ctx.Param("id"), ctx.Param("id"))
+	if ctx.QueryParam("scope") == string(core.ManagerScopeSystem) && !isSystemManager(manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	sessionID := strings.TrimSpace(ctx.QueryParam("session_id"))
+	if sessionID == "" {
+		sessionID = ctx.Param("id")
+	}
+	return c.proxyManagerLogs(ctx, managerID, ctx.Param("id"), sessionID)
+}
+
+// GetAdminManagerLogs returns operational logs for any registered session
+// manager. Unlike the pool-scoped endpoint, this is restricted to admins and
+// does not require the caller to have a manage binding for one of its pools.
+func (c *SessionPoolController) GetAdminManagerLogs(ctx echo.Context) error {
+	managerID := strings.TrimSpace(ctx.Param("id"))
+	manager, err := c.store.GetManager(ctx.Request().Context(), managerID)
+	if err != nil || !isSystemManager(manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
+	return c.proxyManagerLogs(ctx, managerID, "", "")
+}
+
+func isSystemManager(manager *core.Manager) bool {
+	// Managers created before scope was introduced have an empty scope and were
+	// control-plane (system) managers.
+	return manager.Scope == "" || manager.Scope == core.ManagerScopeSystem
 }
 
 // DeleteAdminRunner asks the owning manager to delete the complete workload,
