@@ -103,14 +103,14 @@ func (s *Server) handleGoogleConnectionOAuthCallback(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Google login session authentication is unavailable")
 	}
-	user := entities.NewUser(entities.UserID(result.PrincipalID), entities.UserTypeRegular, result.Email)
+	user := entities.NewUser(entities.UserID(result.UserID), entities.UserTypeRegular, result.Email)
 	user.SetPermissions([]entities.Permission{entities.PermissionSessionCreate, entities.PermissionSessionRead, entities.PermissionSessionUpdate, entities.PermissionSessionDelete})
 	simpleAuth.AddUser(user)
 	apiKey, err := simpleAuth.GenerateAPIKey(c.Request().Context(), user.ID(), user.Permissions())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create application session").SetInternal(err)
 	}
-	userContext := &auth.UserContext{UserID: result.PrincipalID, AuthType: "google_oidc", AccessToken: apiKey.Key}
+	userContext := &auth.UserContext{UserID: result.UserID, AuthType: "google_oidc", AccessToken: apiKey.Key}
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
 	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
