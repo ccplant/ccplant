@@ -168,7 +168,9 @@ func secretRecord(object *corev1.Secret, err error) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{Kind: KindSecret, Namespace: object.Namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version}, nil
+	record := Record{Kind: KindSecret, Namespace: object.Namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version}
+	record.OwnerScope = ownerScopeForRecord(record)
+	return record, nil
 }
 
 func configMapRecord(object *corev1.ConfigMap, err error) (Record, error) {
@@ -183,7 +185,9 @@ func configMapRecord(object *corev1.ConfigMap, err error) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{Kind: KindConfigMap, Namespace: object.Namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version}, nil
+	record := Record{Kind: KindConfigMap, Namespace: object.Namespace, Key: object.Name, Labels: object.Labels, Value: value, Version: version}
+	record.OwnerScope = ownerScopeForRecord(record)
+	return record, nil
 }
 
 func parseResourceVersion(value string) (int64, error) {

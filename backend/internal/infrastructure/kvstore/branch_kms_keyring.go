@@ -417,17 +417,20 @@ func (k *BranchKMSKeyring) scopeForRecord(record Record) string {
 }
 
 func scopedBranchScope(record Record) string {
+	if record.OwnerScope != "" {
+		return record.OwnerScope
+	}
 	// Ownership labels differ between resource types. Prefer team boundaries,
 	// then user/owner boundaries. Hash the selected value so identifiers are not
 	// exposed in the branch-key table or KMS audit metadata.
 	preferred := []string{
 		"agentapi.proxy/team-id", "agentapi.proxy/session-profile-team-id-hash",
 		"agentapi.proxy/session-route-team-id-hash", "agentapi.proxy/slackbot-team-id-hash",
-		"agentapi.proxy/webhook-team-id-hash", "agentapi.proxy/team-hash",
+		"agentapi.proxy/webhook-team-id-hash", "agentapi.proxy/team-hash", "agentapi.proxy/schedule-team-id",
 		"agentapi.proxy/api-token-owner", "agentapi.proxy/user-id",
 		"agentapi.proxy/session-profile-user-id", "agentapi.proxy/session-route-user-id",
 		"agentapi.proxy/slackbot-user-id", "agentapi.proxy/webhook-user-id",
-		"agentapi.proxy/owner-hash", "agentapi.proxy/settings-name", "agentapi.proxy/credentials-name",
+		"agentapi.proxy/owner-hash", "agentapi.proxy/settings-name", "agentapi.proxy/credentials-name", "agentapi.proxy/schedule-user-id",
 	}
 	for _, label := range preferred {
 		if value := record.Labels[label]; value != "" {

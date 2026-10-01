@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/authzscope"
 )
 
 const (
@@ -223,6 +225,27 @@ func (s *encryptedStore) Create(ctx context.Context, record Record) (Record, err
 }
 
 func (s *encryptedStore) Update(ctx context.Context, record Record) (Record, error) {
+	if _, restricted := authzscope.FromContext(ctx); restricted {
+		actualLabels, err := documentLabels(record.Kind, record.Value)
+		if err != nil {
+			return Record{}, fmt.Errorf("extract KV document labels: %w", err)
+		}
+		if record.Labels != nil && !equalLabels(actualLabels, record.Labels) {
+			return Record{}, errors.New("KV record labels do not match document labels")
+		}
+		record.Labels = actualLabels
+		existing, err := s.backend.Get(ctx, record.Kind, record.Namespace, record.Key)
+		if err != nil {
+			return Record{}, err
+		}
+		if !authorizeRecord(ctx, existing, "update") {
+			return Record{}, ErrNotFound
+		}
+		record.OwnerScope = ownerScopeForRecord(record)
+		if existingScope := ownerScopeForRecord(existing); existingScope != record.OwnerScope {
+			return Record{}, ErrAccessDenied
+		}
+	}
 	plaintext := append([]byte(nil), record.Value...)
 	sealed, err := s.seal(ctx, &record)
 	if err != nil {
@@ -243,12 +266,22 @@ func (s *encryptedStore) Get(ctx context.Context, kind Kind, namespace, key stri
 		return Record{}, err
 	}
 	if err := s.open(ctx, &record); err != nil {
+		if errors.Is(err, ErrAccessDenied) {
+			return Record{}, ErrNotFound
+		}
 		return Record{}, err
 	}
 	return record, nil
 }
 
 func (s *encryptedStore) Delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
+	record, err := s.backend.Get(ctx, kind, namespace, key)
+	if err != nil {
+		return err
+	}
+	if !authorizeRecord(ctx, record, "delete") {
+		return ErrNotFound
+	}
 	return s.backend.Delete(ctx, kind, namespace, key, version)
 }
 
@@ -257,12 +290,18 @@ func (s *encryptedStore) List(ctx context.Context, query Query) ([]Record, error
 	if err != nil {
 		return nil, err
 	}
+	n := 0
 	for i := range records {
 		if err := s.open(ctx, &records[i]); err != nil {
+			if errors.Is(err, ErrAccessDenied) {
+				continue
+			}
 			return nil, err
 		}
+		records[n] = records[i]
+		n++
 	}
-	return records, nil
+	return records[:n], nil
 }
 
 func (s *encryptedStore) Scan(ctx context.Context, query ScanQuery) ([]Record, error) {
@@ -274,12 +313,18 @@ func (s *encryptedStore) Scan(ctx context.Context, query ScanQuery) ([]Record, e
 	if err != nil {
 		return nil, err
 	}
+	n := 0
 	for i := range records {
 		if err := s.open(ctx, &records[i]); err != nil {
+			if errors.Is(err, ErrAccessDenied) {
+				continue
+			}
 			return nil, err
 		}
+		records[n] = records[i]
+		n++
 	}
-	return records, nil
+	return records[:n], nil
 }
 
 type valueEnvelope struct {
@@ -307,6 +352,10 @@ func (s *encryptedStore) seal(ctx context.Context, record *Record) ([]byte, erro
 		return nil, errors.New("KV record labels do not match document labels")
 	}
 	record.Labels = actualLabels
+	record.OwnerScope = ownerScopeForRecord(*record)
+	if !authorizeRecord(ctx, *record, "write") {
+		return nil, ErrAccessDenied
+	}
 	dek, wrappedDEK, err := s.keyring.GenerateDataKey(ctx, *record)
 	if err != nil {
 		return nil, err
@@ -357,6 +406,14 @@ func marshalEnvelope(envelope valueEnvelope) ([]byte, error) {
 }
 
 func (s *encryptedStore) open(ctx context.Context, record *Record) error {
+	expectedScope := ownerScopeForRecord(*record)
+	if record.OwnerScope != "" && record.OwnerScope != expectedScope {
+		return ErrDecrypt
+	}
+	record.OwnerScope = expectedScope
+	if !authorizeRecord(ctx, *record, "decrypt") {
+		return ErrAccessDenied
+	}
 	if !isEnvelopeCandidate(record.Value) {
 		return ErrPlaintextInEncryptedStore
 	}

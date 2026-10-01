@@ -48,12 +48,17 @@ func NewLibSQLStore(ctx context.Context, databaseURL, authToken string) (*LibSQL
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS agentapi_kv (
 kind TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL,
 version INTEGER NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL,
+	owner_scope TEXT NOT NULL DEFAULT '',
 	metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
 PRIMARY KEY (kind, namespace, key))`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize libSQL schema: %w", err)
 	}
 	if err := ensureLibSQLMetadataColumn(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureLibSQLOwnerScope(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -73,6 +78,7 @@ func ensureLibSQLLookupIndexes(ctx context.Context, db *sql.DB) error {
 	// their latency independent of unrelated KV records and, for route reuse,
 	// independent of the total number of active sessions.
 	statements := []string{
+		`CREATE INDEX IF NOT EXISTS agentapi_kv_owner_scope_lookup ON agentapi_kv (owner_scope, kind, namespace)`,
 		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_profile_lookup ON agentapi_kv (
 kind, namespace,
 json_extract(metadata, '$.labels."agentapi.proxy/session-profile"'),
@@ -98,6 +104,66 @@ json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("initialize libSQL lookup index: %w", err)
+		}
+	}
+	return nil
+}
+
+func ensureLibSQLOwnerScope(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(agentapi_kv)`)
+	if err != nil {
+		return fmt.Errorf("inspect libSQL owner scope schema: %w", err)
+	}
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan libSQL owner scope schema: %w", err)
+		}
+		hasColumn = hasColumn || name == "owner_scope"
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !hasColumn {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE agentapi_kv ADD COLUMN owner_scope TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add libSQL owner scope: %w", err)
+		}
+	}
+	backfill, err := db.QueryContext(ctx, `SELECT kind, namespace, key, metadata FROM agentapi_kv WHERE owner_scope = ''`)
+	if err != nil {
+		return fmt.Errorf("list libSQL owner scope backfill: %w", err)
+	}
+	type pendingScope struct {
+		kind                  Kind
+		namespace, key, scope string
+	}
+	var pending []pendingScope
+	for backfill.Next() {
+		var item pendingScope
+		var metadata []byte
+		if err := backfill.Scan(&item.kind, &item.namespace, &item.key, &metadata); err != nil {
+			_ = backfill.Close()
+			return err
+		}
+		labels, err := unmarshalRecordMetadata(metadata)
+		if err != nil {
+			_ = backfill.Close()
+			return fmt.Errorf("decode owner scope metadata for %s: %w", item.key, err)
+		}
+		item.scope = ownerScopeForRecord(Record{Kind: item.kind, Namespace: item.namespace, Key: item.key, Labels: labels})
+		pending = append(pending, item)
+	}
+	if err := backfill.Close(); err != nil {
+		return err
+	}
+	for _, item := range pending {
+		if _, err := db.ExecContext(ctx, `UPDATE agentapi_kv SET owner_scope = ? WHERE kind = ? AND namespace = ? AND key = ? AND owner_scope = ''`, item.scope, item.kind, item.namespace, item.key); err != nil {
+			return fmt.Errorf("backfill owner scope for %s: %w", item.key, err)
 		}
 	}
 	return nil
@@ -300,9 +366,10 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
+	record.OwnerScope = ownerScopeForRecord(record)
 	_, err = s.db.ExecContext(ctx, `INSERT INTO agentapi_kv
-(kind, namespace, key, version, metadata, value, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)`,
-		record.Kind, record.Namespace, record.Key, metadata, record.Value, time.Now().UTC().Format(time.RFC3339Nano))
+(kind, namespace, key, version, metadata, owner_scope, value, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+		record.Kind, record.Namespace, record.Key, metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		if _, getErr := s.Get(ctx, record.Kind, record.Namespace, record.Key); getErr == nil {
 			return Record{}, ErrConflict
@@ -320,9 +387,10 @@ func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
+	record.OwnerScope = ownerScopeForRecord(record)
 	result, err := s.db.ExecContext(ctx, `UPDATE agentapi_kv SET version = version + 1,
-metadata = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`,
-		metadata, record.Value, time.Now().UTC().Format(time.RFC3339Nano), record.Kind, record.Namespace, record.Key, record.Version)
+metadata = ?, owner_scope = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`,
+		metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano), record.Kind, record.Namespace, record.Key, record.Version)
 	if err != nil {
 		return Record{}, fmt.Errorf("update libSQL record: %w", err)
 	}
@@ -340,8 +408,8 @@ metadata = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key
 func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string) (Record, error) {
 	record := Record{Kind: kind, Namespace: namespace, Key: key}
 	var metadata []byte
-	err := s.db.QueryRowContext(ctx, `SELECT version, metadata, value FROM agentapi_kv
-WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&record.Version, &metadata, &record.Value)
+	err := s.db.QueryRowContext(ctx, `SELECT version, metadata, owner_scope, value FROM agentapi_kv
+WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&record.Version, &metadata, &record.OwnerScope, &record.Value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -402,7 +470,7 @@ func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
 	for rows.Next() {
 		record := Record{Kind: query.Kind, Namespace: query.Namespace}
 		var metadata []byte
-		if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.Value); err != nil {
+		if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
 			return nil, fmt.Errorf("scan libSQL record: %w", err)
 		}
 		record.Labels, err = unmarshalRecordMetadata(metadata)
@@ -426,7 +494,7 @@ func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
 // net and to preserve Kubernetes selector semantics.
 func libSQLListQuery(query Query, selector labels.Selector) (string, []any) {
 	statement := strings.Builder{}
-	statement.WriteString(`SELECT key, version, metadata, value FROM agentapi_kv
+	statement.WriteString(`SELECT key, version, metadata, owner_scope, value FROM agentapi_kv
 WHERE kind = ? AND namespace = ?`)
 	args := []any{query.Kind, query.Namespace}
 	if query.KeyPrefix != "" {

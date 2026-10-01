@@ -13,6 +13,7 @@ var ErrNotFound = errors.New("kv record not found")
 var ErrConflict = errors.New("kv record version conflict")
 var ErrInDoubt = errors.New("kv replication state is in doubt")
 var ErrUnboundedQuery = errors.New("kv list query requires a label selector")
+var ErrAccessDenied = errors.New("kv record access denied")
 
 type Kind string
 
@@ -24,12 +25,13 @@ const (
 // Record is the storage-neutral representation of a Kubernetes object used as
 // a KV document. Value contains the complete JSON object to preserve metadata.
 type Record struct {
-	Kind      Kind
-	Namespace string
-	Key       string
-	Labels    map[string]string
-	Value     []byte
-	Version   int64
+	Kind       Kind
+	Namespace  string
+	Key        string
+	Labels     map[string]string
+	OwnerScope string
+	Value      []byte
+	Version    int64
 }
 
 type Query struct {
