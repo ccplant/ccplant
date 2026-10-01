@@ -103,18 +103,61 @@ func (s *Server) handleGoogleConnectionOAuthCallback(c echo.Context) error {
 	if !ok {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "Google login session authentication is unavailable")
 	}
-	user := entities.NewUser(entities.UserID(result.PrincipalID), entities.UserTypeRegular, result.Email)
+	user := entities.NewUser(entities.UserID(result.UserID), entities.UserTypeRegular, result.Email)
 	user.SetPermissions([]entities.Permission{entities.PermissionSessionCreate, entities.PermissionSessionRead, entities.PermissionSessionUpdate, entities.PermissionSessionDelete})
+	memberships, _, membershipErr := s.router.handlers.githubConnectionsController.ResolveTeamMemberships(c.Request().Context(), result.PrincipalID)
+	if membershipErr != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "linked GitHub team memberships could not be resolved").SetInternal(membershipErr)
+	}
+	if s.oauthProvider != nil {
+		cached, found, cacheErr := s.oauthProvider.CachedTeamMemberships(c.Request().Context(), result.UserID)
+		if cacheErr != nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "cached GitHub team memberships could not be resolved").SetInternal(cacheErr)
+		}
+		if found {
+			memberships = mergeGitHubMemberships(memberships, cached)
+		}
+	}
+	entityMemberships := make([]entities.GitHubTeamMembership, 0, len(memberships))
+	for _, membership := range memberships {
+		entityMemberships = append(entityMemberships, entities.GitHubTeamMembership{
+			ConnectionID: membership.ConnectionID,
+			Organization: membership.Organization,
+			TeamSlug:     membership.TeamSlug,
+			TeamName:     membership.TeamName,
+			Role:         membership.Role,
+		})
+	}
+	user.SetGitHubInfo(entities.NewGitHubUserInfo(0, result.UserID, result.Name, result.Email, result.AvatarURL, "", ""), entityMemberships)
+	if err := simpleAuth.ResolveTeamMemberships(user, entityMemberships); err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "ccplant team memberships could not be resolved").SetInternal(err)
+	}
 	simpleAuth.AddUser(user)
 	apiKey, err := simpleAuth.GenerateAPIKey(c.Request().Context(), user.ID(), user.Permissions())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create application session").SetInternal(err)
 	}
-	userContext := &auth.UserContext{UserID: result.PrincipalID, AuthType: "google_oidc", AccessToken: apiKey.Key}
+	userContext := &auth.UserContext{UserID: result.UserID, AuthType: "google_oidc", AccessToken: apiKey.Key}
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
 	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
 	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: apiKey.Key, TokenType: "Bearer", ExpiresAt: expiresAt, User: userContext})
+}
+
+func mergeGitHubMemberships(groups ...[]auth.GitHubTeamMembership) []auth.GitHubTeamMembership {
+	merged := make([]auth.GitHubTeamMembership, 0)
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, membership := range group {
+			key := strings.ToLower(strings.TrimSpace(membership.Organization)) + "\x00" + strings.ToLower(strings.TrimSpace(membership.TeamSlug))
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, membership)
+		}
+	}
+	return merged
 }
 
 func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {

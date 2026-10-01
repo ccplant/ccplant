@@ -222,6 +222,12 @@ func (s *SimpleAuthService) resolveTeamMemberships(user *entities.User, membersh
 	return nil
 }
 
+// ResolveTeamMemberships maps provider memberships to canonical ccplant team
+// principals before the user is registered with the authentication service.
+func (s *SimpleAuthService) ResolveTeamMemberships(user *entities.User, memberships []entities.GitHubTeamMembership) error {
+	return s.resolveTeamMemberships(user, memberships)
+}
+
 // AuthenticateUser authenticates a user with the given credentials
 func (s *SimpleAuthService) AuthenticateUser(ctx context.Context, credentials *services.Credentials) (*entities.User, error) {
 	if credentials == nil {

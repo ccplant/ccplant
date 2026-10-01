@@ -122,9 +122,10 @@ type githubCachedToken struct {
 }
 
 type githubPrincipal struct {
-	ID             string    `json:"id"`
-	InternalUserID string    `json:"internal_user_id"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	InternalUserID    string    `json:"internal_user_id"`
+	ApplicationUserID string    `json:"application_user_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type githubIdentity struct {
@@ -666,8 +667,7 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 	if err != nil || !connection.Enabled {
 		return echo.NewHTTPError(http.StatusBadRequest, "GitHub connection is unavailable")
 	}
-	internalSubject := principalSubject(user)
-	principal, err := c.getOrCreatePrincipal(ctx.Request().Context(), internalSubject)
+	principal, err := c.getOrCreatePrincipalForUser(ctx.Request().Context(), user)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve principal").SetInternal(err)
 	}
@@ -676,7 +676,7 @@ func (c *GitHubConnectionsController) StartLink(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid callback_url")
 	}
-	state := githubOAuthState{ID: uuid.NewString(), ConnectionID: connection.ID, PrincipalID: principal.ID, InternalUserID: internalSubject, ReturnTo: returnTo, CallbackURL: callbackURL, ExpiresAt: time.Now().UTC().Add(githubOAuthStateTTL)}
+	state := githubOAuthState{ID: uuid.NewString(), ConnectionID: connection.ID, PrincipalID: principal.ID, InternalUserID: principal.InternalUserID, ReturnTo: returnTo, CallbackURL: callbackURL, ExpiresAt: time.Now().UTC().Add(githubOAuthStateTTL)}
 	if err := c.createObject(ctx.Request().Context(), stateSecretName(state.ID), githubOAuthStateLabel, state, nil); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create OAuth state").SetInternal(err)
 	}
@@ -981,6 +981,47 @@ func (c *GitHubConnectionsController) getOrCreatePrincipal(ctx context.Context, 
 	return principal, err
 }
 
+func (c *GitHubConnectionsController) bindPrincipalToApplicationUser(ctx context.Context, internalSubject string, principal githubPrincipal, userID string) (githubPrincipal, error) {
+	if userID == "" || principal.ApplicationUserID == userID {
+		return principal, nil
+	}
+	secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, principalSecretName(internalSubject), metav1.GetOptions{})
+	if err != nil {
+		return githubPrincipal{}, err
+	}
+	principal.ApplicationUserID = userID
+	record, err := json.Marshal(principal)
+	if err != nil {
+		return githubPrincipal{}, err
+	}
+	secret.Data["record.json"] = record
+	if _, err := c.client.CoreV1().Secrets(c.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return githubPrincipal{}, err
+	}
+	return principal, nil
+}
+
+func (c *GitHubConnectionsController) getOrCreatePrincipalForUser(ctx context.Context, user *entities.User) (githubPrincipal, error) {
+	principal, err := c.loadPrincipalForUser(ctx, user)
+	if apierrors.IsNotFound(err) {
+		principal, err = c.getOrCreatePrincipal(ctx, principalSubject(user))
+	}
+	if err != nil {
+		return githubPrincipal{}, err
+	}
+	return c.bindPrincipalToApplicationUser(ctx, principal.InternalUserID, principal, string(user.ID()))
+}
+
+func applicationUserID(principal githubPrincipal) string {
+	if principal.ApplicationUserID != "" {
+		return principal.ApplicationUserID
+	}
+	if strings.HasPrefix(principal.InternalUserID, "internal:") {
+		return strings.TrimPrefix(principal.InternalUserID, "internal:")
+	}
+	return principal.ID
+}
+
 func (c *GitHubConnectionsController) listPrincipals(ctx context.Context) ([]githubPrincipal, error) {
 	secrets, err := c.client.CoreV1().Secrets(c.namespace).List(ctx, metav1.ListOptions{LabelSelector: githubPrincipalLabel + "=true"})
 	if err != nil {
@@ -997,16 +1038,23 @@ func (c *GitHubConnectionsController) listPrincipals(ctx context.Context) ([]git
 }
 
 func (c *GitHubConnectionsController) loadPrincipalForUser(ctx context.Context, user *entities.User) (githubPrincipal, error) {
-	principal, err := c.loadPrincipal(ctx, principalSubject(user))
-	if err == nil || !apierrors.IsNotFound(err) {
-		return principal, err
+	internalSubject := principalSubject(user)
+	principal, err := c.loadPrincipal(ctx, internalSubject)
+	if err == nil {
+		// Principals created before application_user_id was introduced are
+		// repaired the next time the user authenticates with their original
+		// login method. This restores access without requiring an unlink/relink.
+		return c.bindPrincipalToApplicationUser(ctx, internalSubject, principal, string(user.ID()))
+	}
+	if !apierrors.IsNotFound(err) {
+		return githubPrincipal{}, err
 	}
 	principals, err := c.listPrincipals(ctx)
 	if err != nil {
 		return githubPrincipal{}, err
 	}
 	for _, candidate := range principals {
-		if candidate.ID == string(user.ID()) {
+		if candidate.ID == string(user.ID()) || candidate.ApplicationUserID == string(user.ID()) {
 			return candidate, nil
 		}
 	}

@@ -116,6 +116,7 @@ type googleOAuthState struct {
 
 type GoogleConnectionLoginResult struct {
 	PrincipalID  string
+	UserID       string
 	Email        string
 	Name         string
 	AvatarURL    string
@@ -386,7 +387,7 @@ func (c *GoogleConnectionsController) CompleteLogin(ctx context.Context, stateID
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Google identity could not be resolved").SetInternal(err)
 	}
-	return &GoogleConnectionLoginResult{PrincipalID: principal.ID, Email: claims.Email, Name: claims.Name, AvatarURL: claims.Picture, ConnectionID: state.ConnectionID}, nil
+	return &GoogleConnectionLoginResult{PrincipalID: principal.ID, UserID: applicationUserID(principal), Email: claims.Email, Name: claims.Name, AvatarURL: claims.Picture, ConnectionID: state.ConnectionID}, nil
 }
 
 func (c *GoogleConnectionsController) ListIdentities(ctx echo.Context) error {
@@ -436,7 +437,7 @@ func (c *GoogleConnectionsController) StartLink(ctx echo.Context) error {
 	if err != nil || !connection.Enabled {
 		return echo.NewHTTPError(http.StatusBadRequest, "Google connection is unavailable")
 	}
-	principal, err := c.principals.getOrCreatePrincipal(ctx.Request().Context(), principalSubject(user))
+	principal, err := c.principals.getOrCreatePrincipalForUser(ctx.Request().Context(), user)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to resolve principal").SetInternal(err)
 	}

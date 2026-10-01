@@ -154,6 +154,22 @@ func TestGitHubAuthProvider_Authenticate(t *testing.T) {
 	}
 }
 
+func TestGitHubAuthProviderCachedTeamMemberships(t *testing.T) {
+	provider := NewGitHubAuthProvider(&config.GitHubAuthConfig{})
+	provider.teamCache.Set("alice", []GitHubTeamMembership{{Organization: "ccplant", TeamSlug: "developers"}})
+
+	teams, found, err := provider.CachedTeamMemberships(context.Background(), "alice")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, []GitHubTeamMembership{{Organization: "ccplant", TeamSlug: "developers"}}, teams)
+
+	teams[0].TeamSlug = "changed"
+	again, found, err := provider.CachedTeamMemberships(context.Background(), "alice")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "developers", again[0].TeamSlug)
+}
+
 func TestGitHubAuthProvider_AuthenticateCoalescesConcurrentRequests(t *testing.T) {
 	var userRequests atomic.Int32
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
