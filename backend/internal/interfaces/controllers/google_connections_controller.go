@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
-	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	"golang.org/x/oauth2"
@@ -582,7 +580,7 @@ func (c *GoogleConnectionsController) resolveLoginPrincipal(ctx context.Context,
 	return githubPrincipal{}, errors.New("principal for Google identity not found")
 }
 
-var errGoogleIdentityConflict = errors.New("Google identity belongs to another principal")
+var errGoogleIdentityConflict = errors.New("google identity belongs to another principal")
 
 func (c *GoogleConnectionsController) linkIdentity(ctx context.Context, identity googleIdentity) (bool, error) {
 	name := googleIdentitySecretName(identity.ConnectionID, identity.Subject)
@@ -647,7 +645,7 @@ func (c *GoogleConnectionsController) resolveCallbackURL(ctx echo.Context, reque
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "/api/v1/auth/google-connections/callback" && parsed.Path != "/api/proxy/auth/google-connections/callback") {
 		return "", errors.New("invalid callback URL")
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1")) {
+	if parsed.Scheme != "https" && (parsed.Scheme != "http" || (parsed.Hostname() != "localhost" && parsed.Hostname() != "127.0.0.1")) {
 		return "", errors.New("callback URL must use HTTPS")
 	}
 	requestOrigin := ctx.Request().Header.Get("Origin")
@@ -786,14 +784,14 @@ func validateGoogleSecret(source, value, environment string) error {
 }
 func validateGoogleClaims(connection googleConnection, claims *googleClaims) error {
 	if claims.Subject == "" || claims.Email == "" || !claims.EmailVerified {
-		return errors.New("Google account must have a verified email")
+		return errors.New("google account must have a verified email")
 	}
-	if len(connection.HostedDomains) > 0 && !containsString(connection.HostedDomains, claims.HostedDomain) {
-		return errors.New("Google hosted domain is not allowed")
+	if len(connection.HostedDomains) > 0 && !containsStringFold(connection.HostedDomains, claims.HostedDomain) {
+		return errors.New("google hosted domain is not allowed")
 	}
 	parts := strings.Split(strings.ToLower(claims.Email), "@")
-	if len(connection.EmailDomains) > 0 && (len(parts) != 2 || !containsString(connection.EmailDomains, parts[1])) {
-		return errors.New("Google email domain is not allowed")
+	if len(connection.EmailDomains) > 0 && (len(parts) != 2 || !containsStringFold(connection.EmailDomains, parts[1])) {
+		return errors.New("google email domain is not allowed")
 	}
 	return nil
 }
@@ -812,7 +810,7 @@ func normalizeDomains(values []string) []string {
 	sort.Strings(result)
 	return result
 }
-func containsString(values []string, target string) bool {
+func containsStringFold(values []string, target string) bool {
 	for _, value := range values {
 		if strings.EqualFold(value, target) {
 			return true
