@@ -79,32 +79,13 @@ PRIMARY KEY (kind, namespace, key))`); err != nil {
 }
 
 func ensureLibSQLLookupIndexes(ctx context.Context, db *sql.DB) error {
-	// These selectors are on synchronous trigger paths. Expression indexes keep
-	// their latency independent of unrelated KV records and, for route reuse,
-	// independent of the total number of active sessions.
+	// Dedicated columns supersede the legacy JSON expression indexes. Dropping
+	// them also avoids maintaining two indexes for the same lookup on fallback
+	// rows left behind by older or third-party resources.
 	statements := []string{
-		`CREATE INDEX IF NOT EXISTS agentapi_kv_owner_scope_lookup ON agentapi_kv (owner_scope, kind, namespace)`,
-		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_profile_lookup ON agentapi_kv (
-kind, namespace,
-json_extract(metadata, '$.labels."agentapi.proxy/session-profile"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-profile-user-id"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-profile-scope"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-profile-team-id-hash"'))`,
-		`CREATE INDEX IF NOT EXISTS agentapi_kv_session_route_reuse_lookup ON agentapi_kv (
-kind, namespace,
-json_extract(metadata, '$.labels."agentapi.proxy/session-route"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-user-id"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-scope"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-team-id-hash"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_channel"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_ts"'))`,
-		`CREATE INDEX IF NOT EXISTS agentapi_kv_user_session_route_reuse_lookup ON agentapi_kv (
-kind, namespace,
-json_extract(metadata, '$.labels."agentapi.proxy/session-route"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-user-id"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-scope"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_channel"'),
-json_extract(metadata, '$.labels."agentapi.proxy/session-route-tag-slack_thread_ts"'))`,
+		`DROP INDEX IF EXISTS agentapi_kv_session_profile_lookup`,
+		`DROP INDEX IF EXISTS agentapi_kv_session_route_reuse_lookup`,
+		`DROP INDEX IF EXISTS agentapi_kv_user_session_route_reuse_lookup`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
@@ -378,10 +359,20 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 	}
 	record.OwnerScope = ownerScopeForRecord(record)
 	table := libSQLTableForRecord(record)
+	queryValues, err := libSQLQueryColumnValues(metadata)
+	if err != nil {
+		return Record{}, err
+	}
+	columns := strings.Join(libSQLQueryColumns, ", ")
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(libSQLQueryColumns)), ", ")
 	statement := fmt.Sprintf(`INSERT INTO %s
-(kind, namespace, key, version, metadata, owner_scope, value, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, table)
-	_, err = s.db.ExecContext(ctx, statement,
-		record.Kind, record.Namespace, record.Key, metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano))
+	(kind, namespace, key, version, metadata, owner_scope, value, updated_at, %s)
+	VALUES (?, ?, ?, 1, ?, ?, ?, ?, %s)`, table, columns, placeholders)
+	args := []any{record.Kind, record.Namespace, record.Key, metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano)}
+	for _, value := range queryValues {
+		args = append(args, value)
+	}
+	_, err = s.db.ExecContext(ctx, statement, args...)
 	if err != nil {
 		if _, getErr := s.Get(ctx, record.Kind, record.Namespace, record.Key); getErr == nil {
 			return Record{}, ErrConflict
@@ -400,14 +391,24 @@ func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error)
 		return Record{}, err
 	}
 	record.OwnerScope = ownerScopeForRecord(record)
+	queryValues, err := libSQLQueryColumnValues(metadata)
+	if err != nil {
+		return Record{}, err
+	}
 	table, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key)
 	if err != nil {
 		return Record{}, ErrConflict
 	}
+	assignments := strings.Join(libSQLQueryColumns, " = ?, ") + " = ?"
 	statement := fmt.Sprintf(`UPDATE %s SET version = version + 1,
-metadata = ?, owner_scope = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, table)
-	result, err := s.db.ExecContext(ctx, statement,
-		metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano), record.Kind, record.Namespace, record.Key, record.Version)
+metadata = ?, owner_scope = ?, value = ?, updated_at = ?, %s
+WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, table, assignments)
+	args := []any{metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano)}
+	for _, value := range queryValues {
+		args = append(args, value)
+	}
+	args = append(args, record.Kind, record.Namespace, record.Key, record.Version)
+	result, err := s.db.ExecContext(ctx, statement, args...)
 	if err != nil {
 		return Record{}, fmt.Errorf("update libSQL record: %w", err)
 	}
@@ -545,6 +546,10 @@ func libSQLListQuery(table string, query Query, selector labels.Selector) (strin
 		alias := fmt.Sprintf("label_%d", i)
 		key := requirement.Key()
 		values := requirement.Values().List()
+		if column, ok := libSQLLabelColumns[key]; ok {
+			writeLibSQLColumnMatch(&statement, &args, column, values, requirement.Operator())
+			continue
+		}
 		switch requirement.Operator() {
 		case selection.Equals, selection.DoubleEquals, selection.In:
 			writeLibSQLLabelMatch(&statement, &args, table, key, values, false)
@@ -565,6 +570,32 @@ func libSQLListQuery(table string, query Query, selector labels.Selector) (strin
 	}
 	statement.WriteString(" ORDER BY key")
 	return statement.String(), args
+}
+
+func writeLibSQLColumnMatch(statement *strings.Builder, args *[]any, column string, values []string, operator selection.Operator) {
+	switch operator {
+	case selection.Equals, selection.DoubleEquals, selection.In:
+		fmt.Fprintf(statement, " AND %s IN (%s)", column, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+		for _, value := range values {
+			*args = append(*args, value)
+		}
+	case selection.NotEquals, selection.NotIn:
+		fmt.Fprintf(statement, " AND %s NOT IN (%s)", column, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+		for _, value := range values {
+			*args = append(*args, value)
+		}
+	case selection.Exists:
+		fmt.Fprintf(statement, " AND %s <> ''", column)
+	case selection.DoesNotExist:
+		fmt.Fprintf(statement, " AND %s = ''", column)
+	case selection.GreaterThan, selection.LessThan:
+		comparison := ">"
+		if operator == selection.LessThan {
+			comparison = "<"
+		}
+		fmt.Fprintf(statement, " AND CAST(%s AS INTEGER) %s ?", column, comparison)
+		*args = append(*args, values[0])
+	}
 }
 
 func writeLibSQLLabelMatch(statement *strings.Builder, args *[]any, table, key string, values []string, negate bool) {

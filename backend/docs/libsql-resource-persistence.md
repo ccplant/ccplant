@@ -22,6 +22,21 @@ kept in the Kubernetes-compatible representation so the repository behavior,
 envelope encryption, and Kubernetes/libSQL replication remain identical.
 Version columns retain optimistic concurrency semantics.
 
+Frequently queried ownership and routing labels are also materialized into SQL
+columns instead of relying on `json_extract(metadata, ...)` expression indexes:
+
+- `user_principal_id` and `team_principal_id` keep creator/user and team
+  identities separate because a team-scoped resource can contain both.
+- `owner_principal_id` stores resources whose owner can be either a user or a
+  team; `resource_scope` disambiguates the owner type.
+- `slack_channel` and `slack_thread_ts` support session-route reuse lookups.
+
+The libSQL query builder maps the corresponding Kubernetes label selectors to
+these columns. Resource tables only create indexes for columns used by that
+resource, while the fallback table indexes every materialized query column.
+Existing rows are backfilled once during startup, and subsequent writes update
+the document metadata and materialized columns together.
+
 ## Compatibility and migration
 
 On startup, classified rows from the legacy `agentapi_kv` table are moved to
