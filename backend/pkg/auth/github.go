@@ -173,6 +173,25 @@ func (p *GitHubAuthProvider) Authenticate(ctx context.Context, token string) (*U
 	return result.(*UserContext), nil
 }
 
+// CachedTeamMemberships returns memberships previously resolved for a GitHub
+// login without requiring a provider token. This allows another linked login
+// method to retain the same team scope.
+func (p *GitHubAuthProvider) CachedTeamMemberships(ctx context.Context, username string) ([]GitHubTeamMembership, bool, error) {
+	if cached, ok := p.teamCache.Get(username); ok {
+		teams := cached.([]GitHubTeamMembership)
+		return append([]GitHubTeamMembership(nil), teams...), true, nil
+	}
+	if p.teamMappingRepo == nil {
+		return nil, false, nil
+	}
+	teams, found, err := p.teamMappingRepo.Get(ctx, username)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	p.teamCache.Set(username, teams)
+	return append([]GitHubTeamMembership(nil), teams...), true, nil
+}
+
 func (p *GitHubAuthProvider) authenticateUncached(ctx context.Context, token string) (*UserContext, error) {
 	// Another request may have populated the cache while this request waited to
 	// enter the singleflight function.

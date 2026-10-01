@@ -69,6 +69,15 @@ func NewGitHubOAuthProvider(cfg *config.GitHubOAuthConfig, provider *GitHubAuthP
 	}
 }
 
+// CachedTeamMemberships exposes the shared GitHub membership cache to other
+// login methods linked to the same application user.
+func (p *GitHubOAuthProvider) CachedTeamMemberships(ctx context.Context, username string) ([]GitHubTeamMembership, bool, error) {
+	if p == nil || p.githubProvider == nil {
+		return nil, false, nil
+	}
+	return p.githubProvider.CachedTeamMemberships(ctx, username)
+}
+
 // GenerateAuthURL generates the GitHub OAuth authorization URL
 func (p *GitHubOAuthProvider) GenerateAuthURL(redirectURI string) (string, string, error) {
 	state, err := p.generateState(redirectURI, time.Now())

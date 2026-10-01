@@ -303,3 +303,16 @@ func TestValidateOAuthSession(t *testing.T) {
 	assert.Error(t, err3)
 	assert.Contains(t, err3.Error(), "session expired")
 }
+
+func TestMergeGitHubMembershipsDeduplicatesAcrossLoginSources(t *testing.T) {
+	linked := []auth.GitHubTeamMembership{{ConnectionID: "github", Organization: "CCPlant", TeamSlug: "developers"}}
+	cached := []auth.GitHubTeamMembership{
+		{Organization: "ccplant", TeamSlug: "Developers"},
+		{Organization: "ccplant", TeamSlug: "operators"},
+	}
+
+	merged := mergeGitHubMemberships(linked, cached)
+	assert.Len(t, merged, 2)
+	assert.Equal(t, "developers", merged[0].TeamSlug)
+	assert.Equal(t, "operators", merged[1].TeamSlug)
+}
