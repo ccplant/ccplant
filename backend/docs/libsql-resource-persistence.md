@@ -22,6 +22,13 @@ kept in the Kubernetes-compatible representation so the repository behavior,
 envelope encryption, and Kubernetes/libSQL replication remain identical.
 Version columns retain optimistic concurrency semantics.
 
+Dedicated resource tables have a fixed Kubernetes object kind, so they do not
+store a redundant `kind` column and use `(namespace, key)` as their primary
+key. The `agentapi_kv` fallback can contain both Secrets and ConfigMaps and
+therefore retains `kind` and the `(kind, namespace, key)` primary key. Startup
+migration rebuilds older dedicated tables without `kind` while preserving all
+rows and versions.
+
 Frequently queried ownership and routing labels are also materialized into SQL
 columns instead of relying on `json_extract(metadata, ...)` expression indexes:
 

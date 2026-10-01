@@ -3,6 +3,7 @@ package kvstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,6 +36,13 @@ func TestLibSQLStoreRoutesResourcesToDedicatedTables(t *testing.T) {
 	if dedicated != 1 || fallback != 0 {
 		t.Fatalf("dedicated rows = %d, fallback rows = %d", dedicated, fallback)
 	}
+	columns, err := libSQLTableColumns(ctx, store.db, "agentapi_settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if columns["kind"] {
+		t.Fatal("dedicated resource table still contains redundant kind column")
+	}
 	got, err := store.Get(ctx, KindSecret, "ns", "settings-alice")
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +56,65 @@ func TestLibSQLStoreRoutesResourcesToDedicatedTables(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Key != "settings-alice" {
 		t.Fatalf("List() = %#v", listed)
+	}
+}
+
+func TestLibSQLStoreRemovesKindFromExistingDedicatedTable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy-kind.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDDL := `(
+kind TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL,
+version INTEGER NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL,
+owner_scope TEXT NOT NULL DEFAULT '',
+metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
+PRIMARY KEY (kind, namespace, key))`
+	if _, err := db.Exec("CREATE TABLE agentapi_kv " + legacyDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE agentapi_webhooks " + legacyDDL); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := marshalRecordMetadata(map[string]string{
+		"agentapi.proxy/webhook":         "true",
+		"agentapi.proxy/webhook-user-id": "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO agentapi_webhooks
+(kind, namespace, key, version, value, updated_at, metadata)
+VALUES ('secret', 'ns', 'webhook', 4, '{}', '', ?)`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewLibSQLStore(ctx, "file://"+path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	columns, err := libSQLTableColumns(ctx, store.db, "agentapi_webhooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if columns["kind"] {
+		t.Fatal("kind column was not removed")
+	}
+	got, err := store.Get(ctx, KindSecret, "ns", "webhook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != 4 || got.Labels["agentapi.proxy/webhook-user-id"] != "alice" {
+		t.Fatalf("migrated record = %#v", got)
+	}
+	if _, err := store.Get(ctx, KindConfigMap, "ns", "webhook"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get with wrong kind error = %v, want ErrNotFound", err)
 	}
 }
 

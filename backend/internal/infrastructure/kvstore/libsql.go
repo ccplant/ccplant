@@ -365,10 +365,18 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 	}
 	columns := strings.Join(libSQLQueryColumns, ", ")
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(libSQLQueryColumns)), ", ")
-	statement := fmt.Sprintf(`INSERT INTO %s
+	var statement string
+	args := []any{record.Namespace, record.Key, metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano)}
+	if table == libSQLFallbackTable {
+		statement = fmt.Sprintf(`INSERT INTO %s
 	(kind, namespace, key, version, metadata, owner_scope, value, updated_at, %s)
 	VALUES (?, ?, ?, 1, ?, ?, ?, ?, %s)`, table, columns, placeholders)
-	args := []any{record.Kind, record.Namespace, record.Key, metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano)}
+		args = append([]any{record.Kind}, args...)
+	} else {
+		statement = fmt.Sprintf(`INSERT INTO %s
+	(namespace, key, version, metadata, owner_scope, value, updated_at, %s)
+	VALUES (?, ?, 1, ?, ?, ?, ?, %s)`, table, columns, placeholders)
+	}
 	for _, value := range queryValues {
 		args = append(args, value)
 	}
@@ -400,14 +408,22 @@ func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error)
 		return Record{}, ErrConflict
 	}
 	assignments := strings.Join(libSQLQueryColumns, " = ?, ") + " = ?"
+	where := "namespace = ? AND key = ? AND version = ?"
 	statement := fmt.Sprintf(`UPDATE %s SET version = version + 1,
 metadata = ?, owner_scope = ?, value = ?, updated_at = ?, %s
-WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, table, assignments)
+WHERE %s`, table, assignments, where)
 	args := []any{metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano)}
 	for _, value := range queryValues {
 		args = append(args, value)
 	}
-	args = append(args, record.Kind, record.Namespace, record.Key, record.Version)
+	if table == libSQLFallbackTable {
+		where = "kind = ? AND " + where
+		statement = fmt.Sprintf(`UPDATE %s SET version = version + 1,
+metadata = ?, owner_scope = ?, value = ?, updated_at = ?, %s
+WHERE %s`, table, assignments, where)
+		args = append(args, record.Kind)
+	}
+	args = append(args, record.Namespace, record.Key, record.Version)
 	result, err := s.db.ExecContext(ctx, statement, args...)
 	if err != nil {
 		return Record{}, fmt.Errorf("update libSQL record: %w", err)
@@ -430,8 +446,14 @@ func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string)
 	if err != nil {
 		return Record{}, err
 	}
-	statement := fmt.Sprintf(`SELECT version, metadata, owner_scope, value FROM %s WHERE kind = ? AND namespace = ? AND key = ?`, table)
-	err = s.db.QueryRowContext(ctx, statement, kind, namespace, key).Scan(&record.Version, &metadata, &record.OwnerScope, &record.Value)
+	where := "namespace = ? AND key = ?"
+	args := []any{namespace, key}
+	if table == libSQLFallbackTable {
+		where = "kind = ? AND " + where
+		args = append([]any{kind}, args...)
+	}
+	statement := fmt.Sprintf(`SELECT version, metadata, owner_scope, value FROM %s WHERE %s`, table, where)
+	err = s.db.QueryRowContext(ctx, statement, args...).Scan(&record.Version, &metadata, &record.OwnerScope, &record.Value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -453,8 +475,14 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 	if err != nil {
 		return err
 	}
-	statement := fmt.Sprintf(`DELETE FROM %s WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, table)
-	result, err := s.db.ExecContext(ctx, statement, kind, namespace, key, version)
+	where := "namespace = ? AND key = ? AND version = ?"
+	args := []any{namespace, key, version}
+	if table == libSQLFallbackTable {
+		where = "kind = ? AND " + where
+		args = append([]any{kind}, args...)
+	}
+	statement := fmt.Sprintf(`DELETE FROM %s WHERE %s`, table, where)
+	result, err := s.db.ExecContext(ctx, statement, args...)
 	if err != nil {
 		return fmt.Errorf("delete libSQL record: %w", err)
 	}
@@ -489,6 +517,9 @@ func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
 	}
 	var records []Record
 	for _, table := range libSQLTablesForSelector(selector) {
+		if resource, dedicated := libSQLResourceTableNamed(table); dedicated && resource.kind != query.Kind {
+			continue
+		}
 		statement, args := libSQLListQuery(table, query, selector)
 		rows, err := s.db.QueryContext(ctx, statement, args...)
 		if err != nil {
@@ -532,8 +563,14 @@ func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
 // net and to preserve Kubernetes selector semantics.
 func libSQLListQuery(table string, query Query, selector labels.Selector) (string, []any) {
 	statement := strings.Builder{}
-	fmt.Fprintf(&statement, "SELECT key, version, metadata, owner_scope, value FROM %s WHERE kind = ? AND namespace = ?", table)
-	args := []any{query.Kind, query.Namespace}
+	fmt.Fprintf(&statement, "SELECT key, version, metadata, owner_scope, value FROM %s WHERE ", table)
+	args := make([]any, 0, 2)
+	if table == libSQLFallbackTable {
+		statement.WriteString("kind = ? AND ")
+		args = append(args, query.Kind)
+	}
+	statement.WriteString("namespace = ?")
+	args = append(args, query.Namespace)
 	if query.KeyPrefix != "" {
 		statement.WriteString(" AND substr(key, 1, length(?)) = ?")
 		args = append(args, query.KeyPrefix, query.KeyPrefix)

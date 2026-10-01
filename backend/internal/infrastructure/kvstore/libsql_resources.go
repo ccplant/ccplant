@@ -16,6 +16,7 @@ import (
 // resource independently instead of mixing every document in agentapi_kv.
 type libSQLResourceTable struct {
 	name, labelKey, labelValue, keyPrefix string
+	kind                                  Kind
 	indexColumns                          []string
 }
 
@@ -52,28 +53,37 @@ var libSQLLabelColumns = map[string]string{
 }
 
 var libSQLResourceTables = []libSQLResourceTable{
-	{name: "agentapi_settings", labelKey: "agentapi.proxy/settings", labelValue: "true"},
-	{name: "agentapi_credentials", labelKey: "agentapi.proxy/credentials", labelValue: "true"},
-	{name: "agentapi_shares", labelKey: "agentapi.proxy/shares", labelValue: "true"},
-	{name: "agentapi_team_configs", labelKey: "agentapi.proxy/team-config", labelValue: "true", indexColumns: []string{"team_principal_id"}},
-	{name: "agentapi_personal_api_keys", labelKey: "agentapi.proxy/personal-api-key", labelValue: "true", indexColumns: []string{"user_principal_id"}},
-	{name: "agentapi_api_tokens", labelKey: "agentapi.proxy/api-token", labelValue: "true", indexColumns: []string{"owner_principal_id", "resource_scope"}},
-	{name: "agentapi_local_users", labelKey: "agentapi.proxy/local-user", labelValue: "true"},
-	{name: "agentapi_sandbox_policies", labelKey: "agentapi.proxy/type", labelValue: "sandbox-policy", indexColumns: []string{"owner_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_sandbox_domains", labelKey: "agentapi.proxy/type", labelValue: "sandbox-domains"},
-	{name: "agentapi_session_routes", labelKey: "agentapi.proxy/session-route", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope", "slack_channel", "slack_thread_ts"}},
-	{name: "agentapi_user_files", labelKey: "agentapi.proxy/user-files", labelValue: "true"},
-	{name: "agentapi_session_profiles", labelKey: "agentapi.proxy/session-profile", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_slackbots", labelKey: "agentapi.proxy/slackbot", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_webhooks", labelKey: "agentapi.proxy/webhook", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_user_team_mappings", labelKey: "agentapi.proxy/type", labelValue: "user-team-mapping"},
-	{name: "agentapi_codex_auth_attempts", labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "true"},
-	{name: "agentapi_codex_auth_locks", labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "lock"},
-	{name: "agentapi_schedules", labelKey: "agentapi.proxy/schedule", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_system_settings", keyPrefix: "agentapi-admin-system-settings-"},
+	{name: "agentapi_settings", kind: KindSecret, labelKey: "agentapi.proxy/settings", labelValue: "true"},
+	{name: "agentapi_credentials", kind: KindSecret, labelKey: "agentapi.proxy/credentials", labelValue: "true"},
+	{name: "agentapi_shares", kind: KindConfigMap, labelKey: "agentapi.proxy/shares", labelValue: "true"},
+	{name: "agentapi_team_configs", kind: KindSecret, labelKey: "agentapi.proxy/team-config", labelValue: "true", indexColumns: []string{"team_principal_id"}},
+	{name: "agentapi_personal_api_keys", kind: KindSecret, labelKey: "agentapi.proxy/personal-api-key", labelValue: "true", indexColumns: []string{"user_principal_id"}},
+	{name: "agentapi_api_tokens", kind: KindSecret, labelKey: "agentapi.proxy/api-token", labelValue: "true", indexColumns: []string{"owner_principal_id", "resource_scope"}},
+	{name: "agentapi_local_users", kind: KindSecret, labelKey: "agentapi.proxy/local-user", labelValue: "true"},
+	{name: "agentapi_sandbox_policies", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "sandbox-policy", indexColumns: []string{"owner_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_sandbox_domains", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "sandbox-domains"},
+	{name: "agentapi_session_routes", kind: KindSecret, labelKey: "agentapi.proxy/session-route", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope", "slack_channel", "slack_thread_ts"}},
+	{name: "agentapi_user_files", kind: KindSecret, labelKey: "agentapi.proxy/user-files", labelValue: "true"},
+	{name: "agentapi_session_profiles", kind: KindSecret, labelKey: "agentapi.proxy/session-profile", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_slackbots", kind: KindSecret, labelKey: "agentapi.proxy/slackbot", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_webhooks", kind: KindSecret, labelKey: "agentapi.proxy/webhook", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_user_team_mappings", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "user-team-mapping"},
+	{name: "agentapi_codex_auth_attempts", kind: KindSecret, labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "true"},
+	{name: "agentapi_codex_auth_locks", kind: KindSecret, labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "lock"},
+	{name: "agentapi_schedules", kind: KindSecret, labelKey: "agentapi.proxy/schedule", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_system_settings", kind: KindSecret, keyPrefix: "agentapi-admin-system-settings-"},
 }
 
 const libSQLFallbackTable = "agentapi_kv"
+
+func libSQLResourceTableNamed(name string) (libSQLResourceTable, bool) {
+	for _, resource := range libSQLResourceTables {
+		if resource.name == name {
+			return resource, true
+		}
+	}
+	return libSQLResourceTable{}, false
+}
 
 func allLibSQLDataTables() []string {
 	tables := make([]string, 0, len(libSQLResourceTables)+1)
@@ -116,17 +126,14 @@ func libSQLTableForRecord(record Record) string {
 
 func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 	for _, table := range allLibSQLDataTables() {
-		statement := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-kind TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL,
-version INTEGER NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL,
-owner_scope TEXT NOT NULL DEFAULT '',
-user_principal_id TEXT NOT NULL DEFAULT '', team_principal_id TEXT NOT NULL DEFAULT '',
-owner_principal_id TEXT NOT NULL DEFAULT '', resource_scope TEXT NOT NULL DEFAULT '',
-slack_channel TEXT NOT NULL DEFAULT '', slack_thread_ts TEXT NOT NULL DEFAULT '',
-metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
-PRIMARY KEY (kind, namespace, key))`, table)
+		statement := libSQLDataTableDDL(table, true)
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("initialize libSQL resource table %s: %w", table, err)
+		}
+		if table != libSQLFallbackTable {
+			if err := migrateLibSQLDedicatedTableKind(ctx, db, table); err != nil {
+				return err
+			}
 		}
 		if err := ensureLibSQLQueryColumns(ctx, db, table); err != nil {
 			return err
@@ -143,7 +150,11 @@ PRIMARY KEY (kind, namespace, key))`, table)
 		}
 		for _, column := range columns {
 			index := table + "_" + column + "_lookup"
-			if _, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (%s, kind, namespace)`, index, table, column)); err != nil {
+			trailingColumns := "namespace"
+			if table == libSQLFallbackTable {
+				trailingColumns = "kind, namespace"
+			}
+			if _, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (%s, %s)`, index, table, column, trailingColumns)); err != nil {
 				return fmt.Errorf("initialize libSQL resource index %s: %w", index, err)
 			}
 		}
@@ -154,23 +165,91 @@ PRIMARY KEY (kind, namespace, key))`, table)
 	return backfillLibSQLQueryColumns(ctx, db)
 }
 
-func ensureLibSQLQueryColumns(ctx context.Context, db *sql.DB, table string) error {
+func libSQLDataTableDDL(table string, ifNotExists bool) string {
+	prefix := "CREATE TABLE "
+	if ifNotExists {
+		prefix += "IF NOT EXISTS "
+	}
+	kindColumn := ""
+	primaryKey := "namespace, key"
+	if table == libSQLFallbackTable {
+		kindColumn = "kind TEXT NOT NULL, "
+		primaryKey = "kind, namespace, key"
+	}
+	return fmt.Sprintf(`%s%s (
+%snamespace TEXT NOT NULL, key TEXT NOT NULL,
+version INTEGER NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL,
+owner_scope TEXT NOT NULL DEFAULT '',
+user_principal_id TEXT NOT NULL DEFAULT '', team_principal_id TEXT NOT NULL DEFAULT '',
+owner_principal_id TEXT NOT NULL DEFAULT '', resource_scope TEXT NOT NULL DEFAULT '',
+slack_channel TEXT NOT NULL DEFAULT '', slack_thread_ts TEXT NOT NULL DEFAULT '',
+metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
+PRIMARY KEY (%s))`, prefix, table, kindColumn, primaryKey)
+}
+
+func migrateLibSQLDedicatedTableKind(ctx context.Context, db *sql.DB, table string) error {
+	columns, err := libSQLTableColumns(ctx, db, table)
+	if err != nil || !columns["kind"] {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin libSQL kind migration for %s: %w", table, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	legacy := table + "_kind_legacy"
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s RENAME TO %s", table, legacy)); err != nil {
+		return fmt.Errorf("rename libSQL table %s for kind migration: %w", table, err)
+	}
+	if _, err := tx.ExecContext(ctx, libSQLDataTableDDL(table, false)); err != nil {
+		return fmt.Errorf("recreate libSQL table %s without kind: %w", table, err)
+	}
+	querySelects := make([]string, len(libSQLQueryColumns))
+	for i, column := range libSQLQueryColumns {
+		if columns[column] {
+			querySelects[i] = column
+		} else {
+			querySelects[i] = "''"
+		}
+	}
+	statement := fmt.Sprintf(`INSERT INTO %s
+(namespace, key, version, value, updated_at, owner_scope, metadata, %s)
+SELECT namespace, key, version, value, updated_at, owner_scope, metadata, %s FROM %s`,
+		table, strings.Join(libSQLQueryColumns, ", "), strings.Join(querySelects, ", "), legacy)
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("copy libSQL table %s without kind: %w", table, err)
+	}
+	if _, err := tx.ExecContext(ctx, "DROP TABLE "+legacy); err != nil {
+		return fmt.Errorf("drop legacy libSQL table %s: %w", legacy, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit libSQL kind migration for %s: %w", table, err)
+	}
+	return nil
+}
+
+func libSQLTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
 	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
 	if err != nil {
-		return fmt.Errorf("inspect libSQL resource table %s: %w", table, err)
+		return nil, fmt.Errorf("inspect libSQL resource table %s: %w", table, err)
 	}
+	defer func() { _ = rows.Close() }()
 	existing := make(map[string]bool)
 	for rows.Next() {
 		var cid, notNull, primaryKey int
 		var name, columnType string
 		var defaultValue any
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			_ = rows.Close()
-			return err
+			return nil, err
 		}
 		existing[name] = true
 	}
-	if err := rows.Close(); err != nil {
+	return existing, rows.Err()
+}
+
+func ensureLibSQLQueryColumns(ctx context.Context, db *sql.DB, table string) error {
+	existing, err := libSQLTableColumns(ctx, db, table)
+	if err != nil {
 		return err
 	}
 	for _, column := range libSQLQueryColumns {
@@ -219,7 +298,12 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 		return nil
 	}
 	for _, table := range allLibSQLDataTables() {
-		rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT kind, namespace, key, metadata FROM %s", table))
+		hasKind := table == libSQLFallbackTable
+		selectColumns := "namespace, key, metadata"
+		if hasKind {
+			selectColumns = "kind, " + selectColumns
+		}
+		rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM %s", selectColumns, table))
 		if err != nil {
 			return err
 		}
@@ -231,7 +315,11 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 		for rows.Next() {
 			var item pending
 			var metadata []byte
-			if err := rows.Scan(&item.kind, &item.namespace, &item.key, &metadata); err != nil {
+			destinations := []any{&item.namespace, &item.key, &metadata}
+			if hasKind {
+				destinations = append([]any{&item.kind}, destinations...)
+			}
+			if err := rows.Scan(destinations...); err != nil {
 				_ = rows.Close()
 				return err
 			}
@@ -251,8 +339,13 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 			for _, value := range item.values {
 				args = append(args, value)
 			}
-			args = append(args, item.kind, item.namespace, item.key)
-			if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s WHERE kind = ? AND namespace = ? AND key = ?", table, set), args...); err != nil {
+			where := "namespace = ? AND key = ?"
+			if hasKind {
+				where = "kind = ? AND " + where
+				args = append(args, item.kind)
+			}
+			args = append(args, item.namespace, item.key)
+			if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s WHERE %s", table, set, where), args...); err != nil {
 				return fmt.Errorf("backfill libSQL query columns in %s: %w", table, err)
 			}
 		}
@@ -282,14 +375,15 @@ func migrateLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("begin libSQL resource migration: %w", err)
 		}
 		insert := fmt.Sprintf(`INSERT OR IGNORE INTO %s
-(kind, namespace, key, version, value, updated_at, owner_scope, metadata)
-SELECT kind, namespace, key, version, value, updated_at, owner_scope, metadata
-FROM agentapi_kv WHERE %s`, resource.name, predicate)
-		if _, err = tx.ExecContext(ctx, insert, args...); err == nil {
-			remove := fmt.Sprintf(`DELETE FROM agentapi_kv WHERE %s AND EXISTS (
-SELECT 1 FROM %s target WHERE target.kind = agentapi_kv.kind
-AND target.namespace = agentapi_kv.namespace AND target.key = agentapi_kv.key)`, predicate, resource.name)
-			_, err = tx.ExecContext(ctx, remove, args...)
+(namespace, key, version, value, updated_at, owner_scope, metadata)
+SELECT namespace, key, version, value, updated_at, owner_scope, metadata
+FROM agentapi_kv WHERE kind = ? AND %s`, resource.name, predicate)
+		migrationArgs := append([]any{resource.kind}, args...)
+		if _, err = tx.ExecContext(ctx, insert, migrationArgs...); err == nil {
+			remove := fmt.Sprintf(`DELETE FROM agentapi_kv WHERE kind = ? AND %s AND EXISTS (
+SELECT 1 FROM %s target WHERE target.namespace = agentapi_kv.namespace
+AND target.key = agentapi_kv.key)`, predicate, resource.name)
+			_, err = tx.ExecContext(ctx, remove, migrationArgs...)
 		}
 		if err != nil {
 			_ = tx.Rollback()
@@ -305,13 +399,24 @@ AND target.namespace = agentapi_kv.namespace AND target.key = agentapi_kv.key)`,
 func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace, key string) (string, error) {
 	var statement strings.Builder
 	var args []any
+	wroteTable := false
 	statement.WriteString("SELECT table_name FROM (")
-	for i, table := range allLibSQLDataTables() {
-		if i > 0 {
+	for _, table := range allLibSQLDataTables() {
+		resource, dedicated := libSQLResourceTableNamed(table)
+		if dedicated && resource.kind != kind {
+			continue
+		}
+		if wroteTable {
 			statement.WriteString(" UNION ALL ")
 		}
-		fmt.Fprintf(&statement, "SELECT '%s' AS table_name FROM %s WHERE kind = ? AND namespace = ? AND key = ?", table, table)
-		args = append(args, kind, namespace, key)
+		if dedicated {
+			fmt.Fprintf(&statement, "SELECT '%s' AS table_name FROM %s WHERE namespace = ? AND key = ?", table, table)
+			args = append(args, namespace, key)
+		} else {
+			fmt.Fprintf(&statement, "SELECT '%s' AS table_name FROM %s WHERE kind = ? AND namespace = ? AND key = ?", table, table)
+			args = append(args, kind, namespace, key)
+		}
+		wroteTable = true
 	}
 	statement.WriteString(") LIMIT 1")
 	var table string

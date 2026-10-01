@@ -170,38 +170,39 @@ func TestMigrateKubernetesKVEncryptsEveryDedicatedResourceTable(t *testing.T) {
 	ctx := context.Background()
 	resources := []struct {
 		table, name, labelKey, labelValue string
+		kind                              kvstore.Kind
 	}{
-		{"agentapi_settings", "settings", "agentapi.proxy/settings", "true"},
-		{"agentapi_credentials", "credentials", "agentapi.proxy/credentials", "true"},
-		{"agentapi_shares", "shares", "agentapi.proxy/shares", "true"},
-		{"agentapi_team_configs", "team-config", "agentapi.proxy/team-config", "true"},
-		{"agentapi_personal_api_keys", "personal-api-key", "agentapi.proxy/personal-api-key", "true"},
-		{"agentapi_api_tokens", "api-token", "agentapi.proxy/api-token", "true"},
-		{"agentapi_local_users", "local-user", "agentapi.proxy/local-user", "true"},
-		{"agentapi_sandbox_policies", "sandbox-policy", "agentapi.proxy/type", "sandbox-policy"},
-		{"agentapi_sandbox_domains", "sandbox-domains", "agentapi.proxy/type", "sandbox-domains"},
-		{"agentapi_session_routes", "session-route", "agentapi.proxy/session-route", "true"},
-		{"agentapi_user_files", "user-files", "agentapi.proxy/user-files", "true"},
-		{"agentapi_session_profiles", "session-profile", "agentapi.proxy/session-profile", "true"},
-		{"agentapi_slackbots", "slackbot", "agentapi.proxy/slackbot", "true"},
-		{"agentapi_webhooks", "webhook", "agentapi.proxy/webhook", "true"},
-		{"agentapi_user_team_mappings", "user-team-mapping", "agentapi.proxy/type", "user-team-mapping"},
-		{"agentapi_codex_auth_attempts", "codex-auth", "agentapi.proxy/codex-device-auth-attempt", "true"},
-		{"agentapi_codex_auth_locks", "codex-auth-lock", "agentapi.proxy/codex-device-auth-attempt", "lock"},
-		{"agentapi_schedules", "schedule", "agentapi.proxy/schedule", "true"},
-		{"agentapi_system_settings", "agentapi-admin-system-settings-test", "agentapi.proxy/system-settings", "true"},
-	}
-	objects := make([]*corev1.Secret, 0, len(resources))
-	for _, resource := range resources {
-		objects = append(objects, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: resource.name, Namespace: "source", Labels: map[string]string{resource.labelKey: resource.labelValue}},
-			Data:       map[string][]byte{"payload": []byte("plaintext-" + resource.table)},
-		})
+		{"agentapi_settings", "settings", "agentapi.proxy/settings", "true", kvstore.KindSecret},
+		{"agentapi_credentials", "credentials", "agentapi.proxy/credentials", "true", kvstore.KindSecret},
+		{"agentapi_shares", "shares", "agentapi.proxy/shares", "true", kvstore.KindConfigMap},
+		{"agentapi_team_configs", "team-config", "agentapi.proxy/team-config", "true", kvstore.KindSecret},
+		{"agentapi_personal_api_keys", "personal-api-key", "agentapi.proxy/personal-api-key", "true", kvstore.KindSecret},
+		{"agentapi_api_tokens", "api-token", "agentapi.proxy/api-token", "true", kvstore.KindSecret},
+		{"agentapi_local_users", "local-user", "agentapi.proxy/local-user", "true", kvstore.KindSecret},
+		{"agentapi_sandbox_policies", "sandbox-policy", "agentapi.proxy/type", "sandbox-policy", kvstore.KindConfigMap},
+		{"agentapi_sandbox_domains", "sandbox-domains", "agentapi.proxy/type", "sandbox-domains", kvstore.KindConfigMap},
+		{"agentapi_session_routes", "session-route", "agentapi.proxy/session-route", "true", kvstore.KindSecret},
+		{"agentapi_user_files", "user-files", "agentapi.proxy/user-files", "true", kvstore.KindSecret},
+		{"agentapi_session_profiles", "session-profile", "agentapi.proxy/session-profile", "true", kvstore.KindSecret},
+		{"agentapi_slackbots", "slackbot", "agentapi.proxy/slackbot", "true", kvstore.KindSecret},
+		{"agentapi_webhooks", "webhook", "agentapi.proxy/webhook", "true", kvstore.KindSecret},
+		{"agentapi_user_team_mappings", "user-team-mapping", "agentapi.proxy/type", "user-team-mapping", kvstore.KindConfigMap},
+		{"agentapi_codex_auth_attempts", "codex-auth", "agentapi.proxy/codex-device-auth-attempt", "true", kvstore.KindSecret},
+		{"agentapi_codex_auth_locks", "codex-auth-lock", "agentapi.proxy/codex-device-auth-attempt", "lock", kvstore.KindSecret},
+		{"agentapi_schedules", "schedule", "agentapi.proxy/schedule", "true", kvstore.KindSecret},
+		{"agentapi_system_settings", "agentapi-admin-system-settings-test", "agentapi.proxy/system-settings", "true", kvstore.KindSecret},
 	}
 	client := fake.NewSimpleClientset()
-	for _, object := range objects {
-		if _, err := client.CoreV1().Secrets("source").Create(ctx, object, metav1.CreateOptions{}); err != nil {
-			t.Fatal(err)
+	for _, resource := range resources {
+		metadata := metav1.ObjectMeta{Name: resource.name, Namespace: "source", Labels: map[string]string{resource.labelKey: resource.labelValue}}
+		var createErr error
+		if resource.kind == kvstore.KindConfigMap {
+			_, createErr = client.CoreV1().ConfigMaps("source").Create(ctx, &corev1.ConfigMap{ObjectMeta: metadata, Data: map[string]string{"payload": "plaintext-" + resource.table}}, metav1.CreateOptions{})
+		} else {
+			_, createErr = client.CoreV1().Secrets("source").Create(ctx, &corev1.Secret{ObjectMeta: metadata, Data: map[string][]byte{"payload": []byte("plaintext-" + resource.table)}}, metav1.CreateOptions{})
+		}
+		if createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 
@@ -223,16 +224,26 @@ func TestMigrateKubernetesKVEncryptsEveryDedicatedResourceTable(t *testing.T) {
 	}
 
 	for _, resource := range resources {
-		got, err := destination.Get(ctx, kvstore.KindSecret, "destination", resource.name)
+		got, err := destination.Get(ctx, resource.kind, "destination", resource.name)
 		if err != nil {
 			t.Fatalf("decrypt migrated %s: %v", resource.table, err)
 		}
-		var secret corev1.Secret
-		if err := json.Unmarshal(got.Value, &secret); err != nil {
-			t.Fatal(err)
+		var payload string
+		if resource.kind == kvstore.KindConfigMap {
+			var configMap corev1.ConfigMap
+			if err := json.Unmarshal(got.Value, &configMap); err != nil {
+				t.Fatal(err)
+			}
+			payload = configMap.Data["payload"]
+		} else {
+			var secret corev1.Secret
+			if err := json.Unmarshal(got.Value, &secret); err != nil {
+				t.Fatal(err)
+			}
+			payload = string(secret.Data["payload"])
 		}
-		if string(secret.Data["payload"]) != "plaintext-"+resource.table {
-			t.Fatalf("%s decrypted payload = %q", resource.table, secret.Data["payload"])
+		if payload != "plaintext-"+resource.table {
+			t.Fatalf("%s decrypted payload = %q", resource.table, payload)
 		}
 	}
 	if err := destination.Close(); err != nil {
