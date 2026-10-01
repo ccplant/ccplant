@@ -185,6 +185,71 @@ func TestScopedBranchKMSKeyringRewrapsLegacyWithoutChangingCiphertext(t *testing
 	}
 }
 
+func TestScopedBranchKMSKeyringReadsScheduleFromPreOwnerScopeBranch(t *testing.T) {
+	ctx := context.Background()
+	provider := newCountingBranchProvider("aws-kms")
+	registry := NewMemoryBranchKeyRegistry()
+	keys := map[string]string{"current": "arn:aws:kms:region:account:key/current"}
+	keyring, err := newPersistentBranchKMSKeyring("current", keys, provider, registry, nil, time.Hour, 8, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	labels := map[string]string{
+		"agentapi.proxy/schedule":         "true",
+		"agentapi.proxy/schedule-user-id": "user-hash",
+	}
+	value := secretDocument(t, "schedule", labels, "schedule-secret")
+	record := Record{Kind: KindSecret, Namespace: "ns", Key: "schedule", Labels: labels}
+	legacyRecord := record
+	legacyRecord.OwnerScope = scopedBranchScope(Record{Kind: record.Kind, Namespace: record.Namespace})
+	dek, wrapped, err := keyring.GenerateDataKey(ctx, legacyRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(dek)
+	aead, err := newGCM(dek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := bytes.Repeat([]byte{7}, aead.NonceSize())
+	aad, err := recordAAD(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Value, err = marshalEnvelope(valueEnvelope{
+		Format: envelopeFormat, KeyID: "current", WrappedDEK: wrapped,
+		Nonce: nonce, Ciphertext: aead.Seal(nil, nonce, value, aad),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.OwnerScope = ownerScopeForRecord(record)
+	backend := newMemoryStore()
+	backend.records[recordKey(record.Kind, record.Namespace, record.Key)] = record
+
+	store, err := NewEncryptedStore(backend, keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, record.Kind, record.Namespace, record.Key)
+	if err != nil {
+		t.Fatalf("read schedule encrypted before owner scope rollout: %v", err)
+	}
+	if !bytes.Equal(got.Value, value) {
+		t.Fatalf("value = %q, want %q", got.Value, value)
+	}
+	if !keyring.NeedsRewrap("current", wrapped, record) {
+		t.Fatal("legacy namespace-scoped schedule must be marked for rewrap")
+	}
+
+	nonSchedule := record
+	nonSchedule.Labels = map[string]string{"agentapi.proxy/settings-name": "user-hash"}
+	if acceptedBranchScope(legacyRecord.OwnerScope, nonSchedule) {
+		t.Fatal("non-schedule cross-scope envelope was accepted")
+	}
+}
+
 func TestCloudProviderUsesSamePersistentBranchArchitecture(t *testing.T) {
 	provider := newCountingBranchProvider("cloud-kms")
 	registry := NewMemoryBranchKeyRegistry()
