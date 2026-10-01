@@ -32,10 +32,11 @@ rows and versions.
 Frequently queried ownership and routing labels are also materialized into SQL
 columns instead of relying on `json_extract(metadata, ...)` expression indexes:
 
-- `user_principal_id` and `team_principal_id` keep creator/user and team
-  identities separate because a team-scoped resource can contain both.
-- `owner_principal_id` stores resources whose owner can be either a user or a
-  team; `resource_scope` disambiguates the owner type.
+- `principal_id` stores the owning principal. User and team IDs share this
+  column because IDs are globally unique; `resource_scope` records behavior,
+  not an identity namespace.
+- `creator_id` is only used where a team-owned resource also needs to be found
+  by the user who created it.
 - `slack_channel` and `slack_thread_ts` support session-route reuse lookups.
 
 The libSQL query builder maps the corresponding Kubernetes label selectors to

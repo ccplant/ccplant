@@ -21,26 +21,26 @@ type libSQLResourceTable struct {
 }
 
 var libSQLQueryColumns = []string{
-	"user_principal_id", "team_principal_id", "owner_principal_id", "resource_scope",
+	"principal_id", "creator_id", "resource_scope",
 	"slack_channel", "slack_thread_ts",
 }
 
 var libSQLLabelColumns = map[string]string{
-	"agentapi.proxy/user-id":                           "user_principal_id",
-	"agentapi.proxy/session-profile-user-id":           "user_principal_id",
-	"agentapi.proxy/session-route-user-id":             "user_principal_id",
-	"agentapi.proxy/slackbot-user-id":                  "user_principal_id",
-	"agentapi.proxy/webhook-user-id":                   "user_principal_id",
-	"agentapi.proxy/schedule-user-id":                  "user_principal_id",
-	"agentapi.proxy/team-id":                           "team_principal_id",
-	"agentapi.proxy/session-profile-team-id-hash":      "team_principal_id",
-	"agentapi.proxy/session-route-team-id-hash":        "team_principal_id",
-	"agentapi.proxy/slackbot-team-id-hash":             "team_principal_id",
-	"agentapi.proxy/webhook-team-id-hash":              "team_principal_id",
-	"agentapi.proxy/team-hash":                         "team_principal_id",
-	"agentapi.proxy/schedule-team-id":                  "team_principal_id",
-	"agentapi.proxy/api-token-owner":                   "owner_principal_id",
-	"agentapi.proxy/owner-hash":                        "owner_principal_id",
+	"agentapi.proxy/user-id":                           "creator_id",
+	"agentapi.proxy/session-profile-user-id":           "creator_id",
+	"agentapi.proxy/session-route-user-id":             "creator_id",
+	"agentapi.proxy/slackbot-user-id":                  "creator_id",
+	"agentapi.proxy/webhook-user-id":                   "creator_id",
+	"agentapi.proxy/schedule-user-id":                  "creator_id",
+	"agentapi.proxy/team-id":                           "principal_id",
+	"agentapi.proxy/session-profile-team-id-hash":      "principal_id",
+	"agentapi.proxy/session-route-team-id-hash":        "principal_id",
+	"agentapi.proxy/slackbot-team-id-hash":             "principal_id",
+	"agentapi.proxy/webhook-team-id-hash":              "principal_id",
+	"agentapi.proxy/team-hash":                         "principal_id",
+	"agentapi.proxy/schedule-team-id":                  "principal_id",
+	"agentapi.proxy/api-token-owner":                   "principal_id",
+	"agentapi.proxy/owner-hash":                        "creator_id",
 	"agentapi.proxy/api-token-scope":                   "resource_scope",
 	"agentapi.proxy/scope":                             "resource_scope",
 	"agentapi.proxy/session-profile-scope":             "resource_scope",
@@ -56,21 +56,21 @@ var libSQLResourceTables = []libSQLResourceTable{
 	{name: "agentapi_settings", kind: KindSecret, labelKey: "agentapi.proxy/settings", labelValue: "true"},
 	{name: "agentapi_credentials", kind: KindSecret, labelKey: "agentapi.proxy/credentials", labelValue: "true"},
 	{name: "agentapi_shares", kind: KindConfigMap, labelKey: "agentapi.proxy/shares", labelValue: "true"},
-	{name: "agentapi_team_configs", kind: KindSecret, labelKey: "agentapi.proxy/team-config", labelValue: "true", indexColumns: []string{"team_principal_id"}},
-	{name: "agentapi_personal_api_keys", kind: KindSecret, labelKey: "agentapi.proxy/personal-api-key", labelValue: "true", indexColumns: []string{"user_principal_id"}},
-	{name: "agentapi_api_tokens", kind: KindSecret, labelKey: "agentapi.proxy/api-token", labelValue: "true", indexColumns: []string{"owner_principal_id", "resource_scope"}},
+	{name: "agentapi_team_configs", kind: KindSecret, labelKey: "agentapi.proxy/team-config", labelValue: "true", indexColumns: []string{"principal_id"}},
+	{name: "agentapi_personal_api_keys", kind: KindSecret, labelKey: "agentapi.proxy/personal-api-key", labelValue: "true", indexColumns: []string{"principal_id"}},
+	{name: "agentapi_api_tokens", kind: KindSecret, labelKey: "agentapi.proxy/api-token", labelValue: "true", indexColumns: []string{"principal_id", "resource_scope"}},
 	{name: "agentapi_local_users", kind: KindSecret, labelKey: "agentapi.proxy/local-user", labelValue: "true"},
-	{name: "agentapi_sandbox_policies", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "sandbox-policy", indexColumns: []string{"owner_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_sandbox_policies", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "sandbox-policy", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
 	{name: "agentapi_sandbox_domains", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "sandbox-domains"},
-	{name: "agentapi_session_routes", kind: KindSecret, labelKey: "agentapi.proxy/session-route", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope", "slack_channel", "slack_thread_ts"}},
+	{name: "agentapi_session_routes", kind: KindSecret, labelKey: "agentapi.proxy/session-route", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope", "slack_channel", "slack_thread_ts"}},
 	{name: "agentapi_user_files", kind: KindSecret, labelKey: "agentapi.proxy/user-files", labelValue: "true"},
-	{name: "agentapi_session_profiles", kind: KindSecret, labelKey: "agentapi.proxy/session-profile", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_slackbots", kind: KindSecret, labelKey: "agentapi.proxy/slackbot", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
-	{name: "agentapi_webhooks", kind: KindSecret, labelKey: "agentapi.proxy/webhook", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_session_profiles", kind: KindSecret, labelKey: "agentapi.proxy/session-profile", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
+	{name: "agentapi_slackbots", kind: KindSecret, labelKey: "agentapi.proxy/slackbot", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
+	{name: "agentapi_webhooks", kind: KindSecret, labelKey: "agentapi.proxy/webhook", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
 	{name: "agentapi_user_team_mappings", kind: KindConfigMap, labelKey: "agentapi.proxy/type", labelValue: "user-team-mapping"},
 	{name: "agentapi_codex_auth_attempts", kind: KindSecret, labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "true"},
 	{name: "agentapi_codex_auth_locks", kind: KindSecret, labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "lock"},
-	{name: "agentapi_schedules", kind: KindSecret, labelKey: "agentapi.proxy/schedule", labelValue: "true", indexColumns: []string{"user_principal_id", "team_principal_id", "resource_scope"}},
+	{name: "agentapi_schedules", kind: KindSecret, labelKey: "agentapi.proxy/schedule", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
 	{name: "agentapi_system_settings", kind: KindSecret, keyPrefix: "agentapi-admin-system-settings-"},
 }
 
@@ -180,8 +180,8 @@ func libSQLDataTableDDL(table string, ifNotExists bool) string {
 %snamespace TEXT NOT NULL, key TEXT NOT NULL,
 version INTEGER NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL,
 owner_scope TEXT NOT NULL DEFAULT '',
-user_principal_id TEXT NOT NULL DEFAULT '', team_principal_id TEXT NOT NULL DEFAULT '',
-owner_principal_id TEXT NOT NULL DEFAULT '', resource_scope TEXT NOT NULL DEFAULT '',
+principal_id TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL DEFAULT '',
+resource_scope TEXT NOT NULL DEFAULT '',
 slack_channel TEXT NOT NULL DEFAULT '', slack_thread_ts TEXT NOT NULL DEFAULT '',
 metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
 PRIMARY KEY (%s))`, prefix, table, kindColumn, primaryKey)
@@ -277,6 +277,11 @@ func libSQLQueryColumnValues(metadata []byte) ([]string, error) {
 			values[column] = value
 		}
 	}
+	// A user-scoped resource is owned by its creator. Team-scoped resources
+	// already receive their globally unique team ID through principal_id.
+	if values["principal_id"] == "" {
+		values["principal_id"] = values["creator_id"]
+	}
 	result := make([]string, len(libSQLQueryColumns))
 	for i, column := range libSQLQueryColumns {
 		result[i] = values[column]
@@ -289,7 +294,7 @@ func backfillLibSQLQueryColumns(ctx context.Context, db *sql.DB) error {
 name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
 		return fmt.Errorf("initialize libSQL schema migration table: %w", err)
 	}
-	const migration = "materialized-query-columns-v1"
+	const migration = "materialized-principal-columns-v2"
 	var applied int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
 		return fmt.Errorf("inspect libSQL query column migration: %w", err)
