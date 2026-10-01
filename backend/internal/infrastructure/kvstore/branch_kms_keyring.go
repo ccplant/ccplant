@@ -196,7 +196,7 @@ func (k *BranchKMSKeyring) UnwrapDataKey(ctx context.Context, keyID string, wrap
 		}
 		return k.direct.UnwrapDataKey(ctx, keyID, wrapped, record)
 	}
-	if value.Scope != legacyBranchScope && value.Scope != scopedBranchScope(record) {
+	if !acceptedBranchScope(value.Scope, record) {
 		return nil, ErrDecrypt
 	}
 	if expected, ok := k.keys[keyID]; !ok || (!value.LegacyV1 && (value.Provider != k.provider.Name() || value.KMSKeyRef != expected)) {
@@ -208,6 +208,24 @@ func (k *BranchKMSKeyring) UnwrapDataKey(ctx context.Context, keyID string, wrap
 	}
 	defer clear(branch)
 	return unwrapDEK(branch, value.WrappedDEK, record)
+}
+
+// acceptedBranchScope preserves the one scope transition that shipped before
+// schedule ownership labels were included in scopedBranchScope. Those records
+// were encrypted with a namespace-scoped v3 branch, then had owner_scope
+// backfilled without rewrapping their DEKs. Authorization has already checked
+// the current owner labels before this function is called. Keeping this
+// compatibility narrow prevents arbitrary cross-scope envelopes from being
+// accepted while allowing rotate-key to move affected schedules to owner scope.
+func acceptedBranchScope(stored string, record Record) bool {
+	if stored == legacyBranchScope || stored == scopedBranchScope(record) {
+		return true
+	}
+	if record.Labels["agentapi.proxy/schedule"] != "true" {
+		return false
+	}
+	legacyRecord := Record{Kind: record.Kind, Namespace: record.Namespace}
+	return stored == scopedBranchScope(legacyRecord)
 }
 
 func (k *BranchKMSKeyring) activeBranch(ctx context.Context, scope string) ([]byte, BranchKeyRecord, error) {

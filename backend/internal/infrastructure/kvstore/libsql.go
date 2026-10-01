@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -59,6 +60,10 @@ PRIMARY KEY (kind, namespace, key))`); err != nil {
 		return nil, err
 	}
 	if err := ensureLibSQLOwnerScope(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureLibSQLResourceTables(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -361,14 +366,21 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 	if err := s.validateValueMode(record.Value); err != nil {
 		return Record{}, err
 	}
+	if _, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key); err == nil {
+		return Record{}, ErrConflict
+	} else if !errors.Is(err, ErrNotFound) {
+		return Record{}, err
+	}
 	record.Version = 1
 	metadata, err := marshalRecordMetadata(record.Labels)
 	if err != nil {
 		return Record{}, err
 	}
 	record.OwnerScope = ownerScopeForRecord(record)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO agentapi_kv
-(kind, namespace, key, version, metadata, owner_scope, value, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+	table := libSQLTableForRecord(record)
+	statement := fmt.Sprintf(`INSERT INTO %s
+(kind, namespace, key, version, metadata, owner_scope, value, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`, table)
+	_, err = s.db.ExecContext(ctx, statement,
 		record.Kind, record.Namespace, record.Key, metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		if _, getErr := s.Get(ctx, record.Kind, record.Namespace, record.Key); getErr == nil {
@@ -388,8 +400,13 @@ func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error)
 		return Record{}, err
 	}
 	record.OwnerScope = ownerScopeForRecord(record)
-	result, err := s.db.ExecContext(ctx, `UPDATE agentapi_kv SET version = version + 1,
-metadata = ?, owner_scope = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`,
+	table, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key)
+	if err != nil {
+		return Record{}, ErrConflict
+	}
+	statement := fmt.Sprintf(`UPDATE %s SET version = version + 1,
+metadata = ?, owner_scope = ?, value = ?, updated_at = ? WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, table)
+	result, err := s.db.ExecContext(ctx, statement,
 		metadata, record.OwnerScope, record.Value, time.Now().UTC().Format(time.RFC3339Nano), record.Kind, record.Namespace, record.Key, record.Version)
 	if err != nil {
 		return Record{}, fmt.Errorf("update libSQL record: %w", err)
@@ -408,8 +425,12 @@ metadata = ?, owner_scope = ?, value = ?, updated_at = ? WHERE kind = ? AND name
 func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string) (Record, error) {
 	record := Record{Kind: kind, Namespace: namespace, Key: key}
 	var metadata []byte
-	err := s.db.QueryRowContext(ctx, `SELECT version, metadata, owner_scope, value FROM agentapi_kv
-WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&record.Version, &metadata, &record.OwnerScope, &record.Value)
+	table, err := s.tableContaining(ctx, kind, namespace, key)
+	if err != nil {
+		return Record{}, err
+	}
+	statement := fmt.Sprintf(`SELECT version, metadata, owner_scope, value FROM %s WHERE kind = ? AND namespace = ? AND key = ?`, table)
+	err = s.db.QueryRowContext(ctx, statement, kind, namespace, key).Scan(&record.Version, &metadata, &record.OwnerScope, &record.Value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
@@ -427,7 +448,12 @@ WHERE kind = ? AND namespace = ? AND key = ?`, kind, namespace, key).Scan(&recor
 }
 
 func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM agentapi_kv WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, kind, namespace, key, version)
+	table, err := s.tableContaining(ctx, kind, namespace, key)
+	if err != nil {
+		return err
+	}
+	statement := fmt.Sprintf(`DELETE FROM %s WHERE kind = ? AND namespace = ? AND key = ? AND version = ?`, table)
+	result, err := s.db.ExecContext(ctx, statement, kind, namespace, key, version)
 	if err != nil {
 		return fmt.Errorf("delete libSQL record: %w", err)
 	}
@@ -460,42 +486,52 @@ func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse label selector: %w", err)
 	}
-	statement, args := libSQLListQuery(query, selector)
-	rows, err := s.db.QueryContext(ctx, statement, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list libSQL records: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
 	var records []Record
-	for rows.Next() {
-		record := Record{Kind: query.Kind, Namespace: query.Namespace}
-		var metadata []byte
-		if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
-			return nil, fmt.Errorf("scan libSQL record: %w", err)
-		}
-		record.Labels, err = unmarshalRecordMetadata(metadata)
+	for _, table := range libSQLTablesForSelector(selector) {
+		statement, args := libSQLListQuery(table, query, selector)
+		rows, err := s.db.QueryContext(ctx, statement, args...)
 		if err != nil {
-			return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
+			return nil, fmt.Errorf("list libSQL records from %s: %w", table, err)
 		}
-		if err := s.validateValueMode(record.Value); err != nil {
-			return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
+		for rows.Next() {
+			record := Record{Kind: query.Kind, Namespace: query.Namespace}
+			var metadata []byte
+			if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan libSQL record: %w", err)
+			}
+			record.Labels, err = unmarshalRecordMetadata(metadata)
+			if err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
+			}
+			if err := s.validateValueMode(record.Value); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
+			}
+			if selector.Matches(labels.Set(record.Labels)) {
+				records = append(records, record)
+			}
 		}
-		if !selector.Matches(labels.Set(record.Labels)) {
-			continue
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
 		}
-		records = append(records, record)
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
 	}
-	return records, rows.Err()
+	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
+	return records, nil
 }
 
 // libSQLListQuery pushes label requirements into SQLite so remote libSQL does
 // not return every value in a namespace before the caller-side label filter is
 // applied. The caller still checks selector.Matches after scanning as a safety
 // net and to preserve Kubernetes selector semantics.
-func libSQLListQuery(query Query, selector labels.Selector) (string, []any) {
+func libSQLListQuery(table string, query Query, selector labels.Selector) (string, []any) {
 	statement := strings.Builder{}
-	statement.WriteString(`SELECT key, version, metadata, owner_scope, value FROM agentapi_kv
-WHERE kind = ? AND namespace = ?`)
+	fmt.Fprintf(&statement, "SELECT key, version, metadata, owner_scope, value FROM %s WHERE kind = ? AND namespace = ?", table)
 	args := []any{query.Kind, query.Namespace}
 	if query.KeyPrefix != "" {
 		statement.WriteString(" AND substr(key, 1, length(?)) = ?")
@@ -511,19 +547,19 @@ WHERE kind = ? AND namespace = ?`)
 		values := requirement.Values().List()
 		switch requirement.Operator() {
 		case selection.Equals, selection.DoubleEquals, selection.In:
-			writeLibSQLLabelMatch(&statement, &args, key, values, false)
+			writeLibSQLLabelMatch(&statement, &args, table, key, values, false)
 		case selection.NotEquals, selection.NotIn:
-			writeLibSQLLabelExists(&statement, &args, alias, key, values, true)
+			writeLibSQLLabelExists(&statement, &args, table, alias, key, values, true)
 		case selection.Exists:
-			writeLibSQLLabelExists(&statement, &args, alias, key, nil, false)
+			writeLibSQLLabelExists(&statement, &args, table, alias, key, nil, false)
 		case selection.DoesNotExist:
-			writeLibSQLLabelExists(&statement, &args, alias, key, nil, true)
+			writeLibSQLLabelExists(&statement, &args, table, alias, key, nil, true)
 		case selection.GreaterThan, selection.LessThan:
 			comparison := ">"
 			if requirement.Operator() == selection.LessThan {
 				comparison = "<"
 			}
-			fmt.Fprintf(&statement, " AND EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ? AND CAST(%s.value AS INTEGER) %s ?)", alias, alias, alias, comparison)
+			fmt.Fprintf(&statement, " AND EXISTS (SELECT 1 FROM json_each(%s.metadata, '$.labels') AS %s WHERE %s.key = ? AND CAST(%s.value AS INTEGER) %s ?)", table, alias, alias, alias, comparison)
 			args = append(args, key, values[0])
 		}
 	}
@@ -531,7 +567,7 @@ WHERE kind = ? AND namespace = ?`)
 	return statement.String(), args
 }
 
-func writeLibSQLLabelMatch(statement *strings.Builder, args *[]any, key string, values []string, negate bool) {
+func writeLibSQLLabelMatch(statement *strings.Builder, args *[]any, table, key string, values []string, negate bool) {
 	// Kubernetes label keys cannot contain quotes. Keeping the JSON expression
 	// literal (rather than binding the path) lets SQLite match expression indexes.
 	escapedKey := strings.ReplaceAll(key, `"`, `\"`)
@@ -540,19 +576,19 @@ func writeLibSQLLabelMatch(statement *strings.Builder, args *[]any, key string, 
 	} else {
 		statement.WriteString(" AND")
 	}
-	fmt.Fprintf(statement, ` json_extract(agentapi_kv.metadata, '$.labels."%s"') IN (%s)`, escapedKey, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
+	fmt.Fprintf(statement, ` json_extract(%s.metadata, '$.labels."%s"') IN (%s)`, table, escapedKey, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
 	for _, value := range values {
 		*args = append(*args, value)
 	}
 }
 
-func writeLibSQLLabelExists(statement *strings.Builder, args *[]any, alias, key string, values []string, negate bool) {
+func writeLibSQLLabelExists(statement *strings.Builder, args *[]any, table, alias, key string, values []string, negate bool) {
 	if negate {
 		statement.WriteString(" AND NOT")
 	} else {
 		statement.WriteString(" AND")
 	}
-	fmt.Fprintf(statement, " EXISTS (SELECT 1 FROM json_each(agentapi_kv.metadata, '$.labels') AS %s WHERE %s.key = ?", alias, alias)
+	fmt.Fprintf(statement, " EXISTS (SELECT 1 FROM json_each(%s.metadata, '$.labels') AS %s WHERE %s.key = ?", table, alias, alias)
 	*args = append(*args, key)
 	if len(values) > 0 {
 		fmt.Fprintf(statement, " AND %s.value IN (%s)", alias, strings.TrimSuffix(strings.Repeat("?,", len(values)), ","))
