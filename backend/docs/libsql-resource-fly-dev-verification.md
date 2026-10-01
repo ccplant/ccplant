@@ -10,25 +10,16 @@ Date: 2026-10-01
 - Image: `ghcr.io/ccplant/ccplant-api@sha256:acc8281a9d5fd896889b42268c3cb055097e7cad4c8112ffdb760418c3c48206`
 - Runtime version: `dev.ccplant.ece0a46497e5eb6a60db269ee8d0ef35244a1d5f`
 
-## Snapshot
-
-The successful run exported every Turso table to JSONL before inserting the
-verification fixtures and before the API rollout. It compressed and encrypted
-the export with the dev SOPS age recipient, deleted the plaintext export, and
-stored the encrypted result as a private GitHub Actions artifact for 30 days.
-
-- Artifact: `turso-before-libsql-resource-migration-36849747131`
-- Artifact ID: `11155675151`
-- Size: `1,253,171` bytes
-- Artifact digest: `sha256:2ca03dfeb792e2daadbd56b5e0c4bc646468c673611a1b5238a89261900955ac`
+## Rollout ordering
 
 An initial cancelled run exposed that Fly worker and API jobs could start in
-parallel. The worker reached the new version before that run's snapshot upload.
+parallel. The worker reached the new version before the API-owned verification.
 No fixture remained because the always-run cleanup completed. The workflow was
-then corrected so the API-owned snapshot and migration verification complete
-before the worker rollout. Consequently, the retained artifact is a backup
-immediately before the controlled 19-resource fixture migration and API
-rollout; it is not a snapshot from before the cancelled worker rollout.
+then corrected so migration verification completes before the worker rollout.
+
+The temporary GitHub Actions snapshot artifact used during this development
+verification was deleted, and the deployment workflow does not export database
+contents or upload database snapshots as workflow artifacts.
 
 ## Migration verification
 
