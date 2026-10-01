@@ -888,6 +888,58 @@
         }
       }
     },
+    "/admin/google-connections": {
+      "get": {
+        "summary": "List Google OIDC connections",
+        "operationId": "listGoogleConnections",
+        "tags": ["Google Connections"],
+        "responses": {"200": {"description": "Google connections with masked secret status"}}
+      },
+      "post": {
+        "summary": "Create a Google OIDC connection",
+        "operationId": "createGoogleConnection",
+        "tags": ["Google Connections"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GoogleConnectionInput"}}}},
+        "responses": {"201": {"description": "Google connection created"}}
+      }
+    },
+    "/admin/google-connections/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "get": {"summary": "Get a Google OIDC connection", "operationId": "getGoogleConnection", "tags": ["Google Connections"], "responses": {"200": {"description": "Google connection"}}},
+      "patch": {"summary": "Update a Google OIDC connection", "operationId": "updateGoogleConnection", "tags": ["Google Connections"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GoogleConnectionInput"}}}}, "responses": {"200": {"description": "Google connection updated"}}},
+      "delete": {"summary": "Delete a Google OIDC connection", "operationId": "deleteGoogleConnection", "tags": ["Google Connections"], "responses": {"204": {"description": "Google connection deleted"}, "409": {"description": "Connection still has linked identities"}}}
+    },
+    "/admin/google-connections/{id}/secret": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "put": {"summary": "Replace a Google connection secret", "operationId": "updateGoogleConnectionSecret", "tags": ["Google Connections"], "responses": {"200": {"description": "Secret replaced"}}},
+      "delete": {"summary": "Delete a Google connection secret", "operationId": "deleteGoogleConnectionSecret", "tags": ["Google Connections"], "responses": {"204": {"description": "Secret deleted"}}}
+    },
+    "/admin/google-connections/{id}/test": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "post": {"summary": "Test Google discovery and secret resolution", "operationId": "testGoogleConnection", "tags": ["Google Connections"], "responses": {"200": {"description": "Connection test result"}}}
+    },
+    "/google-connections/login-options": {
+      "get": {"summary": "List Google connections available for login", "operationId": "listGoogleLoginOptions", "tags": ["Google Connections"], "responses": {"200": {"description": "Available login connections"}}}
+    },
+    "/google-connections/login": {
+      "post": {"summary": "Start Google OIDC login", "operationId": "startGoogleConnectionLogin", "tags": ["Google Connections"], "responses": {"200": {"description": "Google authorization URL and state"}}}
+    },
+    "/auth/google-connections/callback": {
+      "get": {"summary": "Complete Google OIDC login or account linking", "operationId": "completeGoogleConnectionOAuth", "tags": ["Google Connections"], "parameters": [{"name": "code", "in": "query", "required": true, "schema": {"type": "string"}}, {"name": "state", "in": "query", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Application session created"}, "302": {"description": "Account linking completed"}}}
+    },
+    "/google-connections": {
+      "get": {"summary": "List enabled Google connections", "operationId": "listAvailableGoogleConnections", "tags": ["Google Connections"], "responses": {"200": {"description": "Enabled connections"}}}
+    },
+    "/users/me/google-identities": {
+      "get": {"summary": "List linked Google identities", "operationId": "listGoogleIdentities", "tags": ["Google Connections"], "responses": {"200": {"description": "Linked identities"}}}
+    },
+    "/users/me/google-identities/link": {
+      "post": {"summary": "Start linking a Google identity", "operationId": "startGoogleIdentityLink", "tags": ["Google Connections"], "responses": {"200": {"description": "Google authorization URL"}}}
+    },
+    "/users/me/google-identities/{identity_id}": {
+      "parameters": [{"name": "identity_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "delete": {"summary": "Unlink a Google identity", "operationId": "unlinkGoogleIdentity", "tags": ["Google Connections"], "responses": {"204": {"description": "Identity unlinked"}}}
+    },
     "/admin/github-connections": {
       "get": {
         "summary": "List GitHub OAuth connections",
@@ -7354,6 +7406,28 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ExternalTeamBinding"
+            }
+          }
+        }
+      },
+      "GoogleConnectionInput": {
+        "type": "object",
+        "required": ["name", "oauth_client_id"],
+        "properties": {
+          "name": {"type": "string"},
+          "oauth_client_id": {"type": "string"},
+          "enabled": {"type": "boolean", "default": true},
+          "allow_login": {"type": "boolean", "default": true},
+          "show_on_login": {"type": "boolean", "default": true},
+          "allow_user_creation": {"type": "boolean", "default": false},
+          "hosted_domains": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "email_domains": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "oauth_client_secret": {
+            "type": "object",
+            "properties": {
+              "source": {"type": "string", "enum": ["encrypted", "environment"]},
+              "value": {"type": "string", "format": "password", "writeOnly": true},
+              "environment": {"type": "string"}
             }
           }
         }

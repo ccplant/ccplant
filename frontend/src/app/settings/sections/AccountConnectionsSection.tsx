@@ -1,15 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle, Github, Link2, Unlink } from 'lucide-react'
+import { CheckCircle, Github, Link2, Search, Unlink } from 'lucide-react'
 import { ImmediateSaveNotice, SettingsPageHeader } from '@/components/settings'
 import { createCurrentDeploymentAgentAPIProxyClient } from '@/lib/agentapi-proxy-client'
 import { GitHubConnection, GitHubIdentity } from '@/types/github-connection'
+import { GoogleConnection, GoogleIdentity } from '@/types/google-connection'
 import { useToast } from '@/contexts/ToastContext'
 
 export function AccountConnectionsSection() {
   const [connections, setConnections] = useState<GitHubConnection[]>([])
   const [identities, setIdentities] = useState<GitHubIdentity[]>([])
+  const [googleConnections, setGoogleConnections] = useState<GoogleConnection[]>([])
+  const [googleIdentities, setGoogleIdentities] = useState<GoogleIdentity[]>([])
   const [principalId, setPrincipalId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -19,8 +22,9 @@ export function AccountConnectionsSection() {
     setLoading(true)
     try {
       const client = createCurrentDeploymentAgentAPIProxyClient()
-      const [available, linked] = await Promise.all([client.listGitHubConnections(), client.listGitHubIdentities()])
+      const [available, linked, googleAvailable, googleLinked] = await Promise.all([client.listGitHubConnections(), client.listGitHubIdentities(), client.listGoogleConnections(), client.listGoogleIdentities()])
       setConnections(available); setIdentities(linked.identities); setPrincipalId(linked.principal_id)
+      setGoogleConnections(googleAvailable); setGoogleIdentities(googleLinked.identities); setPrincipalId(current => current || googleLinked.principal_id)
     } catch { showToast('アカウント連携を読み込めませんでした', 'error') }
     finally { setLoading(false) }
   }, [showToast])
@@ -33,9 +37,15 @@ export function AccountConnectionsSection() {
       showToast(status === 'success' ? 'GitHubアカウントを連携しました' : 'GitHubアカウントを連携できませんでした', status === 'success' ? 'success' : 'error')
       window.history.replaceState(null, '', window.location.pathname)
     }
+    const googleStatus = params.get('google_link')
+    if (googleStatus) {
+      showToast(googleStatus === 'success' ? 'Googleアカウントを連携しました' : 'Googleアカウントを連携できませんでした', googleStatus === 'success' ? 'success' : 'error')
+      window.history.replaceState(null, '', window.location.pathname)
+    }
   }, [showToast])
 
   const byConnection = useMemo(() => new Map(identities.map(identity => [identity.connection_id, identity])), [identities])
+  const googleByConnection = useMemo(() => new Map(googleIdentities.map(identity => [identity.connection_id, identity])), [googleIdentities])
   const link = async (connection: GitHubConnection) => {
     setBusy(connection.id)
     try {
@@ -54,6 +64,20 @@ export function AccountConnectionsSection() {
     catch { showToast('連携を解除できませんでした', 'error') }
     finally { setBusy(null) }
   }
+  const linkGoogle = async (connection: GoogleConnection) => {
+    setBusy(connection.id)
+    try {
+      const response = await createCurrentDeploymentAgentAPIProxyClient().startGoogleIdentityLink(connection.id, window.location.pathname, `${window.location.origin}/api/v1/auth/google-connections/callback`)
+      window.location.assign(response.authorization_url)
+    } catch { showToast('Google連携を開始できませんでした', 'error'); setBusy(null) }
+  }
+  const unlinkGoogle = async (identity: GoogleIdentity) => {
+    if (!confirm(`${identity.email}の連携を解除しますか？`)) return
+    setBusy(identity.connection_id)
+    try { await createCurrentDeploymentAgentAPIProxyClient().unlinkGoogleIdentity(identity.id); showToast('Google連携を解除しました', 'success'); await load() }
+    catch { showToast('Google連携を解除できませんでした', 'error') }
+    finally { setBusy(null) }
+  }
 
   return <>
     <SettingsPageHeader title="アカウント連携" description="GitHub.comや社内GHESのアカウントを、同じユーザーとして連携します。" />
@@ -67,7 +91,14 @@ export function AccountConnectionsSection() {
           {identity ? <button disabled={busy === connection.id} onClick={() => void unlink(identity)} className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 disabled:opacity-50 dark:border-red-800"><Unlink className="h-4 w-4" />連携解除</button> : <button disabled={busy === connection.id} onClick={() => void link(connection)} className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"><Link2 className="h-4 w-4" />GitHubと連携</button>}
         </div>
       })}
-      {!connections.length && <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">利用できるGitHub Connectionがありません。管理者にお問い合わせください。</div>}
+      {googleConnections.map(connection => {
+        const identity = googleByConnection.get(connection.id)
+        return <div key={`google-${connection.id}`} className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 gap-3"><Search className="mt-0.5 h-5 w-5 shrink-0 dark:text-white" /><div className="min-w-0"><h2 className="font-semibold dark:text-white">{connection.name}</h2><p className="text-sm text-gray-500">Google</p>{identity && <p className="mt-2 flex items-center gap-1 text-sm text-green-700 dark:text-green-400"><CheckCircle className="h-4 w-4" />{identity.email}</p>}</div></div>
+          {identity ? <button disabled={busy === connection.id} onClick={() => void unlinkGoogle(identity)} className="inline-flex items-center justify-center gap-2 rounded-md border border-red-200 px-3 py-2 text-sm text-red-600 disabled:opacity-50 dark:border-red-800"><Unlink className="h-4 w-4" />連携解除</button> : <button disabled={busy === connection.id} onClick={() => void linkGoogle(connection)} className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"><Link2 className="h-4 w-4" />Googleと連携</button>}
+        </div>
+      })}
+      {!connections.length && !googleConnections.length && <div className="rounded-lg border border-dashed p-8 text-center text-sm text-gray-500">利用できるAccount Connectionがありません。管理者にお問い合わせください。</div>}
     </div>}
   </>
 }
