@@ -67,6 +67,7 @@ type GoogleConnection struct {
     SecretSource      string // encrypted | environment
     SecretEnvironment string
     Enabled           bool
+    AllowLogin        bool
     ShowOnLogin       bool
     AllowUserCreation bool
     HostedDomains     []string
@@ -86,6 +87,22 @@ cannot use a connection with `HostedDomains` configured.
 Google's published OIDC metadata in version one. They are not administrator
 input. The callback URL is derived from the deployment public URL and returned
 as read-only data.
+
+`Enabled`, `AllowLogin`, `ShowOnLogin`, and `AllowUserCreation` have separate
+meanings:
+
+| Setting | Effect |
+|---|---|
+| `enabled=false` | Disables login and account linking for the connection. |
+| `allow_login=false` | Allows account linking but rejects login, including login through a manually constructed URL. |
+| `show_on_login=false` | Hides the login button; it is not an authorization control. |
+| `allow_user_creation=false` | Allows known linked identities to log in but rejects first-time identities. |
+
+`show_on_login=true` requires `enabled=true` and `allow_login=true`. Disabling
+login automatically makes the connection absent from login options, but does
+not delete identities or prevent an already authenticated user from linking the
+connection. This supports a connection used only to associate a Google identity
+with an existing ccplant principal.
 
 The client secret has an independent lifecycle:
 
@@ -169,10 +186,12 @@ POST   /google-identities/link
 DELETE /google-identities/{identity_id}
 ```
 
-`login-options` returns only enabled, configured connections with
-`show_on_login=true`, and only `id` and `name`. Identity list/link/unlink routes
-require an authenticated user. The callback authenticates through its
-server-side attempt record and is the only unauthenticated callback route.
+`login-options` returns only configured connections with `enabled=true`,
+`allow_login=true`, and `show_on_login=true`, and only `id` and `name`.
+`POST /google-connections/login` independently checks `allow_login`, so hiding
+the button cannot bypass policy. Identity list/link/unlink routes require an
+authenticated user. The callback authenticates through its server-side attempt
+record and is the only unauthenticated callback route.
 
 All endpoints and DTOs are added to `backend/spec/openapi.json`. API errors use
 stable machine-readable codes in addition to a safe message, including
@@ -212,6 +231,8 @@ error code, never an upstream response or token.
 
 For login:
 
+- `enabled=true` and `allow_login=true` are required both when starting and
+  completing the flow;
 - an existing `(connection_id, sub)` always resolves to its current principal;
 - a new identity is created only when `allow_user_creation=true`;
 - a matching email on another principal does not link or merge automatically;
@@ -331,8 +352,9 @@ without logging response bodies or tokens.
 3. Add application-session issuance that supports Google while retaining the
    existing GitHub session path.
 4. Add admin, login, and account-linking UI and OpenAPI/client definitions.
-5. Enable one test connection with `show_on_login=false`, validate linking and
-   login, then expose it on the login page.
+5. Enable one test connection with `allow_login=true` and
+   `show_on_login=false`, validate linking and login through direct login
+   initiation, then expose it on the login page.
 6. Backfill the new principal label and remove the legacy dual-read only after
    all supported versions understand the new record.
 7. Separately migrate GitHub Connection login away from provider access tokens
@@ -359,9 +381,9 @@ bounded; never label metrics with subject, email, state, or domain.
 ## Tests and acceptance criteria
 
 Unit tests cover normalization and validation, domain policy, claim validation,
-state expiry and one-time use, PKCE/nonce generation, identity conflicts, and
-`allow_user_creation`. Repository contract tests cover concurrent first login,
-concurrent linking, CAS updates, and cleanup.
+state expiry and one-time use, PKCE/nonce generation, identity conflicts,
+`allow_login`, and `allow_user_creation`. Repository contract tests cover
+concurrent first login, concurrent linking, CAS updates, and cleanup.
 
 Integration and browser tests cover:
 
