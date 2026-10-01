@@ -14,6 +14,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/ratelimit"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/services"
+	"github.com/takutakahashi/agentapi-proxy/pkg/authzscope"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
@@ -147,6 +148,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 					c.Set("internal_user", proxyUser)
 					authzCtx := buildAuthorizationContext(proxyUser)
 					c.Set("authz_context", authzCtx)
+					attachStoragePrincipal(c, authzCtx)
 					return next(c)
 				}
 			}
@@ -164,6 +166,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 				// Build and store authorization context
 				authzCtx := buildAuthorizationContext(user)
 				c.Set("authz_context", authzCtx)
+				attachStoragePrincipal(c, authzCtx)
 				return next(c)
 			}
 			// Only log when an API key was actually supplied (to avoid noise for missing API keys)
@@ -180,6 +183,7 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 					// Build and store authorization context
 					authzCtx := buildAuthorizationContext(user)
 					c.Set("authz_context", authzCtx)
+					attachStoragePrincipal(c, authzCtx)
 					return next(c)
 				}
 				log.Printf("GitHub authentication failed: %v from %s", err, c.RealIP())
@@ -209,8 +213,20 @@ func authenticateTriggerExecution(c echo.Context, secret string, now time.Time) 
 	}
 	c.Set("internal_user", user)
 	c.Set("authz_context", authzCtx)
+	attachStoragePrincipal(c, authzCtx)
 	c.Set("trigger_execution_claims", claims)
 	return true
+}
+
+func attachStoragePrincipal(c echo.Context, authzCtx *AuthorizationContext) {
+	if authzCtx == nil || authzCtx.User == nil {
+		return
+	}
+	principal := authzscope.Principal{
+		ActorID: string(authzCtx.User.ID()), UserID: authzCtx.PersonalScope.UserID,
+		TeamIDs: authzCtx.TeamScope.Teams, Admin: authzCtx.TeamScope.IsAdmin,
+	}
+	c.SetRequest(c.Request().WithContext(authzscope.WithPrincipal(c.Request().Context(), principal)))
 }
 
 func isInternalTokenEndpoint(path string) bool {

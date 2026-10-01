@@ -99,6 +99,9 @@ PRIMARY KEY (kind, namespace, key))`); err != nil {
 	if len(records) != 1 || records[0].Key != "legacy" {
 		t.Fatalf("backfilled records = %#v", records)
 	}
+	if records[0].OwnerScope == "" {
+		t.Fatal("legacy record owner_scope was not backfilled")
+	}
 }
 
 func TestEncryptedStoreDetectsIdentityAndMetadataTampering(t *testing.T) {
