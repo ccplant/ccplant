@@ -267,6 +267,7 @@ export class ACPServerClient {
   private baseURL: string;
   private apiKey?: string;
   private requestId = 1;
+  private readonly pendingPromptIds = new Map<string, Set<string>>();
 
   constructor(baseURL: string, apiKey?: string) {
     // baseURL is the proxy base, e.g. "http://localhost:3000/api/proxy"
@@ -360,6 +361,9 @@ export class ACPServerClient {
   /** Send a prompt to the session. Response arrives via the SSE stream. */
   async sendPrompt(sessionId: string, prompt: ACPPromptContentBlock[], promptId?: number): Promise<void> {
     const id = promptId ?? this.requestId++;
+    const promptIds = this.pendingPromptIds.get(sessionId) ?? new Set<string>();
+    promptIds.add(String(id));
+    this.pendingPromptIds.set(sessionId, promptIds);
     const body: JSONRPCRequest = {
       jsonrpc: '2.0',
       id,
@@ -369,17 +373,23 @@ export class ACPServerClient {
         prompt,
       },
     };
-    const response = await fetch(this.acpUrl, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      throw new Error(`ACP sendPrompt failed: ${response.status} ${response.statusText}`);
-    }
-    const data: JSONRPCResponse = await response.json();
-    if (data.error) {
-      throw new Error(`ACP sendPrompt error: ${data.error.message}`);
+    try {
+      const response = await fetch(this.acpUrl, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new Error(`ACP sendPrompt failed: ${response.status} ${response.statusText}`);
+      }
+      const data: JSONRPCResponse = await response.json();
+      if (data.error) {
+        throw new Error(`ACP sendPrompt error: ${data.error.message}`);
+      }
+    } catch (error) {
+      promptIds.delete(String(id));
+      if (promptIds.size === 0) this.pendingPromptIds.delete(sessionId);
+      throw error;
     }
   }
 
@@ -593,6 +603,7 @@ export class ACPServerClient {
             case 'agent_turn_end': {
               streamingMsgId = null;
               streamingThoughtId = null;
+              this.pendingPromptIds.delete(sessionId);
               callbacks.onStatus?.({ status: 'stable' });
               break;
             }
@@ -634,6 +645,9 @@ export class ACPServerClient {
         if (msg.result != null && msg.id != null) {
           const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
           if (typeof stopReason === 'string' && stopReason.length > 0) {
+            const promptIds = this.pendingPromptIds.get(sessionId);
+            promptIds?.delete(String(msg.id));
+            if (promptIds?.size === 0) this.pendingPromptIds.delete(sessionId);
             streamingMsgId = null;
             streamingThoughtId = null;
             callbacks.onStatus?.({ status: 'stable' });
@@ -643,9 +657,14 @@ export class ACPServerClient {
 
         // ── Error on session/prompt ────────────────────────────────────────
         if (msg.error && msg.id != null) {
-          streamingMsgId = null;
-          streamingThoughtId = null;
-          callbacks.onStatus?.({ status: 'stable' });
+          const promptIds = this.pendingPromptIds.get(sessionId);
+          const isPromptError = promptIds?.delete(String(msg.id)) === true;
+          if (promptIds?.size === 0) this.pendingPromptIds.delete(sessionId);
+          if (isPromptError) {
+            streamingMsgId = null;
+            streamingThoughtId = null;
+            callbacks.onStatus?.({ status: 'stable' });
+          }
           callbacks.onError?.(new Error(msg.error.message));
           return;
         }

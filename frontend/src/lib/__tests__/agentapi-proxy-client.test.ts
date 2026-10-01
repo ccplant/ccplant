@@ -333,6 +333,51 @@ describe('AgentAPIProxyClient ACP message history', () => {
     expect(history.isTurnRunning).toBe(true);
   });
 
+  it('does not treat an unrelated ACP RPC error in history as the end of a turn', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        messages: [
+          {
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } } },
+          },
+          { jsonrpc: '2.0', id: 99, error: { code: -32602, message: 'config update failed' } },
+        ],
+        userPromptCount: 1,
+        userPrompts: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    const history = await client.getACPMessageHistory('session-1', 'acp-session-1');
+
+    expect(history.isTurnRunning).toBe(true);
+  });
+
+  it('recognizes a matching session/prompt error in history as the end of a turn', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        messages: [
+          { jsonrpc: '2.0', id: 'prompt-1', method: 'session/prompt', params: {} },
+          {
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } } },
+          },
+          { jsonrpc: '2.0', id: 'prompt-1', error: { code: -32603, message: 'prompt failed' } },
+        ],
+        userPromptCount: 1,
+        userPrompts: [],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    const history = await client.getACPMessageHistory('session-1', 'acp-session-1');
+
+    expect(history.isTurnRunning).toBe(false);
+  });
+
   it('does not ask the BFF to inject the login token into a session body', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(JSON.stringify({ session_id: 'session-1' }), {
@@ -580,6 +625,9 @@ describe('AgentAPIProxyClient ACP SSE cursor', () => {
     source.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
       jsonrpc: '2.0', id: 10, result: {},
     }) }));
+    source.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+      jsonrpc: '2.0', id: 12, error: { code: -32602, message: 'unrelated RPC failed' },
+    }) }));
 
     expect(onStatus).toHaveBeenLastCalledWith({ status: 'running' });
     expect(onStatus).toHaveBeenCalledTimes(1);
@@ -590,6 +638,40 @@ describe('AgentAPIProxyClient ACP SSE cursor', () => {
 
     expect(onStatus).toHaveBeenLastCalledWith({ status: 'stable' });
     expect(onStatus).toHaveBeenCalledTimes(2);
+    subscription.close();
+  });
+
+  it('becomes stable for an error matching a prompt sent by this client', async () => {
+    class FakeEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      static instance: FakeEventSource;
+      readyState = FakeEventSource.OPEN;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      constructor() { FakeEventSource.instance = this; }
+      close() {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+
+    const onStatus = vi.fn();
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+    const subscription = client.subscribeToACPSessionEvents('session-1', 'acp-1', {
+      onMessage: vi.fn(), onChunk: vi.fn(), onThoughtChunk: vi.fn(), onStatus,
+      onPermission: vi.fn(), onError: vi.fn(),
+    });
+    await client.sendACPPrompt('session-1', 'acp-1', [{ type: 'text', text: 'hello' }], 42);
+
+    FakeEventSource.instance.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+      jsonrpc: '2.0', id: 42, error: { code: -32603, message: 'prompt failed' },
+    }) }));
+
+    expect(onStatus).toHaveBeenCalledWith({ status: 'stable' });
     subscription.close();
   });
 });

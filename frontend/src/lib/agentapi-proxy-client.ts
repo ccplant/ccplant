@@ -377,12 +377,26 @@ export interface ACPMessageHistoryResult {
   userPrompts: ACPUserPromptInfo[];
 }
 
+function isACPResponseToPrompt(messages: ACPJSONRPCMessage[], responseIndex: number): boolean {
+  const responseId = messages[responseIndex]?.id;
+  if (responseId == null) return false;
+  for (let index = responseIndex - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate.id != null && String(candidate.id) === String(responseId) && candidate.method) {
+      return candidate.method === 'session/prompt';
+    }
+  }
+  return false;
+}
+
 function isACPTurnRunning(messages: ACPJSONRPCMessage[]): boolean {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     const result = message.result as { stopReason?: unknown } | undefined;
     if (typeof result?.stopReason === 'string' && result.stopReason.length > 0) return false;
-    if (message.error && message.id != null) return false;
+    if (message.error && message.id != null) {
+      if (isACPResponseToPrompt(messages, index)) return false;
+    }
     if (message.method !== 'session/update') continue;
 
     const update = (message.params as { update?: { sessionUpdate?: string } } | undefined)?.update;
@@ -716,6 +730,7 @@ export class AgentAPIProxyClient {
   private maxSessions: number;
   private sessionTimeout: number;
   private debug: boolean;
+  private readonly pendingACPPromptIds = new Map<string, Set<string>>();
 
   constructor(config: AgentAPIProxyClientConfig) {
     this.baseURL = config.baseURL.replace(/\/$/, ''); // Remove trailing slash
@@ -3002,6 +3017,7 @@ export class AgentAPIProxyClient {
             case 'agent_turn_end': {
               streamingMsgId = null;
               streamingUserMsgId = null;
+              this.pendingACPPromptIds.delete(sessionId);
               callbacks.onStatus({ status: 'stable' });
               break;
             }
@@ -3039,6 +3055,9 @@ export class AgentAPIProxyClient {
         if (msg.result != null && msg.id != null) {
           const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
           if (typeof stopReason === 'string' && stopReason.length > 0) {
+            const promptIds = this.pendingACPPromptIds.get(sessionId);
+            promptIds?.delete(String(msg.id));
+            if (promptIds?.size === 0) this.pendingACPPromptIds.delete(sessionId);
             streamingMsgId = null;
             streamingUserMsgId = null;
             callbacks.onStatus({ status: 'stable' });
@@ -3048,8 +3067,14 @@ export class AgentAPIProxyClient {
 
         // ── Error on session/prompt ───────────────────────────────────────
         if (msg.error && msg.id != null) {
-          streamingMsgId = null;
-          callbacks.onStatus({ status: 'stable' });
+          const promptIds = this.pendingACPPromptIds.get(sessionId);
+          const isPromptError = promptIds?.delete(String(msg.id)) === true;
+          if (promptIds?.size === 0) this.pendingACPPromptIds.delete(sessionId);
+          if (isPromptError) {
+            streamingMsgId = null;
+            streamingUserMsgId = null;
+            callbacks.onStatus({ status: 'stable' });
+          }
           callbacks.onError(new Error(msg.error.message));
           return;
         }
@@ -3110,18 +3135,27 @@ export class AgentAPIProxyClient {
     prompt: ACPPromptContentBlock[],
     promptId: number
   ): Promise<void> {
-    await this.makeRequest<unknown>(`/${sessionId}/rpc`, {
-      method: 'POST',
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: promptId,
-        method: 'session/prompt',
-        params: {
-          sessionId: acpSessionId,
-          prompt,
-        },
-      }),
-    });
+    const promptIds = this.pendingACPPromptIds.get(sessionId) ?? new Set<string>();
+    promptIds.add(String(promptId));
+    this.pendingACPPromptIds.set(sessionId, promptIds);
+    try {
+      await this.makeRequest<unknown>(`/${sessionId}/rpc`, {
+        method: 'POST',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: promptId,
+          method: 'session/prompt',
+          params: {
+            sessionId: acpSessionId,
+            prompt,
+          },
+        }),
+      });
+    } catch (error) {
+      promptIds.delete(String(promptId));
+      if (promptIds.size === 0) this.pendingACPPromptIds.delete(sessionId);
+      throw error;
+    }
   }
 
   /**
