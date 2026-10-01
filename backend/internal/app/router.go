@@ -35,6 +35,7 @@ type HandlerRegistry struct {
 	settingsController             *controllers.SettingsController
 	adminSettingsController        *controllers.AdminSettingsController
 	githubConnectionsController    *controllers.GitHubConnectionsController
+	googleConnectionsController    *controllers.GoogleConnectionsController
 	teamConfigController           *controllers.TeamConfigController
 	googleOAuthController          *controllers.GoogleOAuthController
 	credentialsController          *controllers.CredentialsController
@@ -95,6 +96,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
 	var githubConnectionsController *controllers.GitHubConnectionsController
+	var googleConnectionsController *controllers.GoogleConnectionsController
 	if server.persistenceClient != nil {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
 			server.GetPersistenceClient(),
@@ -108,6 +110,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
+		googleConnectionsController = controllers.NewGoogleConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage, githubConnectionsController)
 		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
 			simpleAuth.SetGitHubMembershipResolver(githubConnectionsController)
 		}
@@ -330,6 +333,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			settingsController:             settingsController,
 			adminSettingsController:        adminSettingsController,
 			githubConnectionsController:    githubConnectionsController,
+			googleConnectionsController:    googleConnectionsController,
 			teamConfigController:           controllers.NewTeamConfigController(server.teamConfigRepo),
 			googleOAuthController:          googleOAuthController,
 			credentialsController:          credentialsController,
@@ -674,6 +678,26 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.GET("/users/me/github-identities", controller.ListIdentities, read)
 		r.echo.POST("/users/me/github-identities/link", controller.StartLink, write)
 		r.echo.DELETE("/users/me/github-identities/:identity_id", controller.Unlink, write)
+	}
+	if r.handlers.googleConnectionsController != nil {
+		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)
+		read := auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService)
+		write := auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService)
+		controller := r.handlers.googleConnectionsController
+		r.echo.GET("/google-connections/login-options", controller.ListLoginOptions)
+		r.echo.POST("/google-connections/login", controller.StartLogin)
+		r.echo.GET("/admin/google-connections", controller.List, admin)
+		r.echo.POST("/admin/google-connections", controller.Create, admin)
+		r.echo.GET("/admin/google-connections/:id", controller.Get, admin)
+		r.echo.PATCH("/admin/google-connections/:id", controller.Update, admin)
+		r.echo.DELETE("/admin/google-connections/:id", controller.Delete, admin)
+		r.echo.PUT("/admin/google-connections/:id/secret", controller.UpdateSecret, admin)
+		r.echo.DELETE("/admin/google-connections/:id/secret", controller.DeleteSecret, admin)
+		r.echo.POST("/admin/google-connections/:id/test", controller.Test, admin)
+		r.echo.GET("/google-connections", controller.ListAvailable, read)
+		r.echo.GET("/users/me/google-identities", controller.ListIdentities, read)
+		r.echo.POST("/users/me/google-identities/link", controller.StartLink, write)
+		r.echo.DELETE("/users/me/google-identities/:identity_id", controller.Unlink, write)
 	}
 	if r.handlers.sessionPoolController != nil {
 		admin := auth.RequirePermission(entities.PermissionAdmin, r.server.container.AuthService)

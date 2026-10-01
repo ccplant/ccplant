@@ -75,6 +75,7 @@ import { TeamConfig, ExternalTeamBinding } from '../types/team-config';
 import { AdminSettingsDocument, AdminSettingsVersionsResponse, UpdateAdminSettingsRequest } from '../types/admin-settings';
 import { AdminSessionRunner, ClusterSessionManager, LogicalSessionPool, SessionPoolBinding, SessionPoolLogs, SessionPoolStatusResponse, SessionPoolSupplier } from '../types/session_pool';
 import { GitHubConnection, GitHubConnectionInput, GitHubIdentitiesResponse } from '../types/github-connection';
+import { GoogleConnection, GoogleConnectionInput, GoogleIdentitiesResponse } from '../types/google-connection';
 import { handleAuthenticationRequired, isAuthenticationRequiredError } from './auth-error-handler';
 
 // React trees can mount multiple consumers of the same read endpoint at once
@@ -3250,6 +3251,45 @@ export class AgentAPIProxyClient {
 
   async unlinkGitHubIdentity(identityId: string): Promise<void> {
     await this.makeRequest(`/users/me/github-identities/${encodeURIComponent(identityId)}`, { method: 'DELETE' });
+  }
+
+  async listGoogleConnections(admin = false): Promise<GoogleConnection[]> {
+    const response = await this.makeRequest<{ connections: GoogleConnection[] }>(admin ? '/admin/google-connections' : '/google-connections');
+    return response.connections;
+  }
+
+  async createGoogleConnection(request: GoogleConnectionInput): Promise<GoogleConnection> {
+    return this.makeRequest<GoogleConnection>('/admin/google-connections', { method: 'POST', body: JSON.stringify(request) });
+  }
+
+  async updateGoogleConnection(id: string, request: Partial<GoogleConnectionInput>): Promise<GoogleConnection> {
+    return this.makeRequest<GoogleConnection>(`/admin/google-connections/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(request) });
+  }
+
+  async updateGoogleConnectionSecret(id: string, secret: NonNullable<GoogleConnectionInput['oauth_client_secret']>): Promise<GoogleConnection> {
+    return this.makeRequest<GoogleConnection>(`/admin/google-connections/${encodeURIComponent(id)}/secret`, { method: 'PUT', body: JSON.stringify(secret) });
+  }
+
+  async deleteGoogleConnection(id: string): Promise<void> {
+    await this.makeRequest(`/admin/google-connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async testGoogleConnection(id: string): Promise<{ discovery_reachable: boolean; secret_resolvable: boolean }> {
+    return this.makeRequest(`/admin/google-connections/${encodeURIComponent(id)}/test`, { method: 'POST' });
+  }
+
+  async listGoogleIdentities(): Promise<GoogleIdentitiesResponse> {
+    return this.makeRequest<GoogleIdentitiesResponse>('/users/me/google-identities');
+  }
+
+  async startGoogleIdentityLink(connectionId: string, returnTo: string, callbackUrl?: string): Promise<{ authorization_url: string }> {
+    return this.makeRequest<{ authorization_url: string }>('/users/me/google-identities/link', {
+      method: 'POST', body: JSON.stringify({ connection_id: connectionId, return_to: returnTo, callback_url: callbackUrl }),
+    });
+  }
+
+  async unlinkGoogleIdentity(identityId: string): Promise<void> {
+    await this.makeRequest(`/users/me/google-identities/${encodeURIComponent(identityId)}`, { method: 'DELETE' });
   }
 
   async listClusterSessionManagers(): Promise<ClusterSessionManager[]> {

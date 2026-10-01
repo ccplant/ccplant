@@ -482,6 +482,9 @@ func isOAuthEndpoint(path string) bool {
 		"/auth/github-connections/callback",
 		"/github-connections/login-options",
 		"/github-connections/login",
+		"/auth/google-connections/callback",
+		"/google-connections/login-options",
+		"/google-connections/login",
 	}
 
 	for _, oauthPath := range oauthPaths {

@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { Github } from 'lucide-react'
+import { Github, Search } from 'lucide-react'
 import { getRedirectUri } from '@/lib/oauth-utils'
 import { useConfig } from '@/hooks/useConfig'
 import type { GitHubConnection } from '@/types/github-connection'
+import type { GoogleConnection } from '@/types/google-connection'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,6 +18,7 @@ export default function LoginPage() {
   const [isGitHubLoading, setIsGitHubLoading] = useState(false)
   const [loadingConnectionId, setLoadingConnectionId] = useState<string | null>(null)
   const [loginConnections, setLoginConnections] = useState<GitHubConnection[]>([])
+  const [googleConnections, setGoogleConnections] = useState<GoogleConnection[]>([])
   const [checkingAuth, setCheckingAuth] = useState(true)
 
   // 設定から値を取得
@@ -52,6 +54,13 @@ export default function LoginPage() {
       .then(response => response.ok ? response.json() : Promise.reject())
       .then(data => setLoginConnections(Array.isArray(data.connections) ? data.connections : []))
       .catch(() => setLoginConnections([]))
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/auth/google/connections', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : Promise.reject())
+      .then(data => setGoogleConnections(Array.isArray(data.connections) ? data.connections : []))
+      .catch(() => setGoogleConnections([]))
   }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -115,6 +124,18 @@ export default function LoginPage() {
     }
   }
 
+  const handleGoogleLogin = async (connectionId: string) => {
+    setLoadingConnectionId(connectionId); setError('')
+    try {
+      const response = await fetch('/api/auth/google/authorize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ connection_id: connectionId }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Google認証の開始に失敗しました')
+      window.location.href = data.auth_url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '予期しないエラーが発生しました'); setLoadingConnectionId(null)
+    }
+  }
+
   // 認証状態チェック中または設定読み込み中はローディングを表示
   if (checkingAuth || isConfigLoading) {
     return (
@@ -170,6 +191,15 @@ export default function LoginPage() {
             className="mt-3 w-full flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Github className="w-5 h-5 mr-2" />
+            {loadingConnectionId === connection.id ? 'Redirecting...' : `Continue with ${connection.name}`}
+          </button>)}
+          {googleConnections.map(connection => <button
+            key={`google-${connection.id}`}
+            onClick={() => void handleGoogleLogin(connection.id)}
+            disabled={loadingConnectionId !== null || isGitHubLoading}
+            className="mt-3 w-full flex justify-center items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Search className="w-5 h-5 mr-2" />
             {loadingConnectionId === connection.id ? 'Redirecting...' : `Continue with ${connection.name}`}
           </button>)}
         </div>

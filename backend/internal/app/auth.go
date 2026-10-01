@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 )
@@ -79,6 +81,40 @@ func (s *Server) setupAuthRoutes() {
 	if s.router != nil && s.router.handlers.githubConnectionsController != nil {
 		s.echo.GET("/auth/github-connections/callback", s.handleGitHubConnectionOAuthCallback)
 	}
+	if s.router != nil && s.router.handlers.googleConnectionsController != nil {
+		s.echo.GET("/auth/google-connections/callback", s.handleGoogleConnectionOAuthCallback)
+	}
+}
+
+func (s *Server) handleGoogleConnectionOAuthCallback(c echo.Context) error {
+	controller := s.router.handlers.googleConnectionsController
+	mode, err := controller.OAuthStateMode(c.Request().Context(), c.QueryParam("state"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if mode != "login" {
+		return controller.Callback(c)
+	}
+	result, err := controller.CompleteLogin(c.Request().Context(), c.QueryParam("state"), c.QueryParam("code"))
+	if err != nil {
+		return err
+	}
+	simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService)
+	if !ok {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "Google login session authentication is unavailable")
+	}
+	user := entities.NewUser(entities.UserID(result.PrincipalID), entities.UserTypeRegular, result.Email)
+	user.SetPermissions([]entities.Permission{entities.PermissionSessionCreate, entities.PermissionSessionRead, entities.PermissionSessionUpdate, entities.PermissionSessionDelete})
+	simpleAuth.AddUser(user)
+	apiKey, err := simpleAuth.GenerateAPIKey(c.Request().Context(), user.ID(), user.Permissions())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create application session").SetInternal(err)
+	}
+	userContext := &auth.UserContext{UserID: result.PrincipalID, AuthType: "google_oidc", AccessToken: apiKey.Key}
+	sessionID := uuid.NewString()
+	expiresAt := time.Now().Add(24 * time.Hour)
+	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
+	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: apiKey.Key, TokenType: "Bearer", ExpiresAt: expiresAt, User: userContext})
 }
 
 func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
@@ -229,10 +265,15 @@ func (s *Server) handleOAuthLogout(c echo.Context) error {
 
 	session := sessionValue.(*OAuthSession)
 
-	// Revoke the GitHub token
-	if err := s.oauthProvider.RevokeToken(c.Request().Context(), session.UserContext.AccessToken); err != nil {
-		log.Printf("Failed to revoke GitHub token: %v", err)
-		// Continue with logout even if revocation fails
+	if session.UserContext.AuthType == "google_oidc" {
+		if err := s.container.AuthService.RevokeAPIKey(c.Request().Context(), session.UserContext.AccessToken); err != nil {
+			log.Printf("Failed to revoke Google application session: %v", err)
+		}
+	} else if s.oauthProvider != nil {
+		// Revoke the GitHub token.
+		if err := s.oauthProvider.RevokeToken(c.Request().Context(), session.UserContext.AccessToken); err != nil {
+			log.Printf("Failed to revoke GitHub token: %v", err)
+		}
 	}
 
 	// Remove session from store

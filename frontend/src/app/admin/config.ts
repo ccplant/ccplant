@@ -4,6 +4,7 @@ import {
   Cpu,
   Database,
   Github,
+  Globe,
   Layers,
   Lock,
   type LucideIcon,
@@ -187,6 +188,7 @@ export interface AdminNavExtra {
 
 export const adminNavExtras: AdminNavExtra[] = [
   { href: '/admin/github-connections', title: 'GitHub Connections', group: '連携', icon: Github },
+  { href: '/admin/google-connections', title: 'Google Connections', group: '連携', icon: Globe },
   { href: '/admin/runners', title: 'Runners', group: '実行基盤', icon: ServerCog },
   { href: '/admin/pools', title: 'Session Pools', group: '実行基盤', icon: Layers },
   { href: '/admin/history', title: '変更履歴', group: '運用', icon: History },
