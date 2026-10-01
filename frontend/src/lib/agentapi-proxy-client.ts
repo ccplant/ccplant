@@ -369,48 +369,10 @@ export interface ACPUserPromptInfo {
 
 export interface ACPMessageHistoryResult {
   messages: SessionMessage[];
-  /** Whether the latest prompt has activity after the most recent terminal event. */
-  isTurnRunning: boolean;
   lastEventId?: number;
   userPromptCount: number;
   userPromptIndex?: number;
   userPrompts: ACPUserPromptInfo[];
-}
-
-function isACPResponseToPrompt(messages: ACPJSONRPCMessage[], responseIndex: number): boolean {
-  const responseId = messages[responseIndex]?.id;
-  if (responseId == null) return false;
-  for (let index = responseIndex - 1; index >= 0; index -= 1) {
-    const candidate = messages[index];
-    if (candidate.id != null && String(candidate.id) === String(responseId) && candidate.method) {
-      return candidate.method === 'session/prompt';
-    }
-  }
-  return false;
-}
-
-function isACPTurnRunning(messages: ACPJSONRPCMessage[]): boolean {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    const result = message.result as { stopReason?: unknown } | undefined;
-    if (typeof result?.stopReason === 'string' && result.stopReason.length > 0) return false;
-    if (message.error && message.id != null) {
-      if (isACPResponseToPrompt(messages, index)) return false;
-    }
-    if (message.method !== 'session/update') continue;
-
-    const update = (message.params as { update?: { sessionUpdate?: string } } | undefined)?.update;
-    if (update?.sessionUpdate === 'agent_turn_end') return false;
-    if (
-      update?.sessionUpdate === 'user_message_chunk' ||
-      update?.sessionUpdate === 'agent_message_chunk' ||
-      update?.sessionUpdate === 'agent_thought_chunk' ||
-      update?.sessionUpdate === 'tool_call' ||
-      update?.sessionUpdate === 'tool_call_update' ||
-      update?.sessionUpdate === 'plan'
-    ) return true;
-  }
-  return false;
 }
 
 export interface EventSubscription {
@@ -464,8 +426,6 @@ export interface ACPSessionCallbacks {
    * Called when the agent reports updated session configuration options.
    */
   onConfigOptionsUpdate?: (configOptions: ACPConfigOption[]) => void;
-  /** Called when agent status changes (e.g. prompt turn finished). */
-  onStatus: (status: AgentStatus) => void;
   /** Called when a permission request arrives from the agent. */
   onPermission: (action: PendingAction, rpcId: number) => void;
   /** Called when the message SSE stream opens. */
@@ -730,7 +690,6 @@ export class AgentAPIProxyClient {
   private maxSessions: number;
   private sessionTimeout: number;
   private debug: boolean;
-  private readonly pendingACPPromptIds = new Map<string, Set<string>>();
 
   constructor(config: AgentAPIProxyClientConfig) {
     this.baseURL = config.baseURL.replace(/\/$/, ''); // Remove trailing slash
@@ -1444,6 +1403,39 @@ export class AgentAPIProxyClient {
       },
       options
     );
+  }
+
+  /**
+   * Subscribe to the ACP bridge's authoritative turn status.
+   * The bridge emits the current value immediately and every running/stable
+   * transition as a named `status_change` SSE event.
+   */
+  subscribeToACPStatus(
+    sessionId: string,
+    onStatus: (status: AgentStatus) => void,
+    onError?: (error: Error) => void,
+  ): EventSubscription {
+    const isUsingProxy = this.baseURL.includes('/api/proxy');
+    const url = isUsingProxy
+      ? `/api/proxy/${sessionId}/events`
+      : `${this.baseURL}/${sessionId}/events`;
+    const source = new EventSource(url);
+
+    source.addEventListener('status_change', (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data) as { status?: unknown };
+        if (data.status === 'running' || data.status === 'stable' || data.status === 'error') {
+          onStatus({ status: data.status });
+        }
+      } catch (error) {
+        onError?.(error instanceof Error ? error : new Error('Failed to parse ACP status event'));
+      }
+    });
+    source.onerror = () => {
+      onError?.(new Error('ACP status event stream disconnected'));
+    };
+
+    return { close: () => source.close() };
   }
 
   /**
@@ -2760,7 +2752,6 @@ export class AgentAPIProxyClient {
 
     return {
       messages,
-      isTurnRunning: isACPTurnRunning(rawMessages),
       lastEventId: resp?.lastEventId,
       userPromptCount: resp?.userPromptCount ?? 0,
       userPromptIndex: resp?.userPromptIndex,
@@ -2774,7 +2765,8 @@ export class AgentAPIProxyClient {
    * The SSE stream emits raw JSON-RPC 2.0 messages from the ACP agent:
    *   - session/update notifications  → converted to SessionMessage via callbacks.onMessage
    *   - session/request_permission    → converted to PendingAction via callbacks.onPermission
-   *   - session/prompt result         → signals turn end via callbacks.onStatus({status:'stable'})
+   * Turn status is intentionally consumed from the bridge's /events endpoint,
+   * not inferred from these raw protocol messages.
    *
    * Returns a subscription handle; call .close() to unsubscribe.
    */
@@ -2834,11 +2826,8 @@ export class AgentAPIProxyClient {
               const image = acpExtractImage(update.content);
               if (!text && !image) return;
 
-              // Agent is actively streaming — mark as running so the UI
-              // suppresses input and shows the stop button even when the
-              // prompt was sent by the provisioner (stock session pickup).
-              callbacks.onStatus({ status: 'running' });
-
+              // Turn status is delivered independently by the bridge's
+              // authoritative /events stream.
               if (streamingMsgId !== null) {
                 // Append to existing streaming message.
                 if (text) callbacks.onChunk(streamingMsgId, text);
@@ -2863,8 +2852,6 @@ export class AgentAPIProxyClient {
               const thought = acpExtractText(update.content);
               if (!thought) return;
 
-              callbacks.onStatus({ status: 'running' });
-
               // Thought chunks always belong to the current streaming message.
               // If there is none yet, start one (content can be filled later).
               if (streamingMsgId === null) {
@@ -2887,8 +2874,6 @@ export class AgentAPIProxyClient {
             case 'tool_call': {
               // Finalize any streaming text before the tool call.
               streamingMsgId = null;
-              // Tool is executing — keep the running state.
-              callbacks.onStatus({ status: 'running' });
               const toolObj = {
                 type: 'tool_use',
                 // Use kind→name mapping for a proper tool name (e.g. "Bash" for "execute").
@@ -3017,8 +3002,6 @@ export class AgentAPIProxyClient {
             case 'agent_turn_end': {
               streamingMsgId = null;
               streamingUserMsgId = null;
-              this.pendingACPPromptIds.delete(sessionId);
-              callbacks.onStatus({ status: 'stable' });
               break;
             }
           }
@@ -3055,26 +3038,16 @@ export class AgentAPIProxyClient {
         if (msg.result != null && msg.id != null) {
           const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
           if (typeof stopReason === 'string' && stopReason.length > 0) {
-            const promptIds = this.pendingACPPromptIds.get(sessionId);
-            promptIds?.delete(String(msg.id));
-            if (promptIds?.size === 0) this.pendingACPPromptIds.delete(sessionId);
             streamingMsgId = null;
             streamingUserMsgId = null;
-            callbacks.onStatus({ status: 'stable' });
           }
           return;
         }
 
         // ── Error on session/prompt ───────────────────────────────────────
         if (msg.error && msg.id != null) {
-          const promptIds = this.pendingACPPromptIds.get(sessionId);
-          const isPromptError = promptIds?.delete(String(msg.id)) === true;
-          if (promptIds?.size === 0) this.pendingACPPromptIds.delete(sessionId);
-          if (isPromptError) {
-            streamingMsgId = null;
-            streamingUserMsgId = null;
-            callbacks.onStatus({ status: 'stable' });
-          }
+          streamingMsgId = null;
+          streamingUserMsgId = null;
           callbacks.onError(new Error(msg.error.message));
           return;
         }
@@ -3135,27 +3108,18 @@ export class AgentAPIProxyClient {
     prompt: ACPPromptContentBlock[],
     promptId: number
   ): Promise<void> {
-    const promptIds = this.pendingACPPromptIds.get(sessionId) ?? new Set<string>();
-    promptIds.add(String(promptId));
-    this.pendingACPPromptIds.set(sessionId, promptIds);
-    try {
-      await this.makeRequest<unknown>(`/${sessionId}/rpc`, {
-        method: 'POST',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: promptId,
-          method: 'session/prompt',
-          params: {
-            sessionId: acpSessionId,
-            prompt,
-          },
-        }),
-      });
-    } catch (error) {
-      promptIds.delete(String(promptId));
-      if (promptIds.size === 0) this.pendingACPPromptIds.delete(sessionId);
-      throw error;
-    }
+    await this.makeRequest<unknown>(`/${sessionId}/rpc`, {
+      method: 'POST',
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: promptId,
+        method: 'session/prompt',
+        params: {
+          sessionId: acpSessionId,
+          prompt,
+        },
+      }),
+    });
   }
 
   /**

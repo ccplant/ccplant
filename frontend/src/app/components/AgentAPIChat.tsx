@@ -421,7 +421,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       setACPInfo(null);
       setACPUserPrompts([]);
       setLoadedACPStartPromptIndex(null);
-      acpTurnRunningRef.current = false;
       setMessageSSEConnectionStatus('connecting');
       // Clear any pending retry timer
       if (retryTimerRef.current) {
@@ -487,16 +486,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   onConfigOptionsUpdate: (configOptions: ACPConfigOption[]) => {
                     applyACPConfigOptions(configOptions);
                   },
-                  onStatus: (status: { status: 'stable' | 'running' | 'error'; agent_type?: string }) => {
-                    acpTurnRunningRef.current = status.status === 'running';
-                    setAgentStatus(status);
-                    if (status.status === 'stable') {
-                      void agentAPIRef.current?.getACPMessageHistory(sessionId, '').then(result => {
-                        setACPUserPrompts(result.userPrompts);
-                        setLoadedACPStartPromptIndex(prev => prev ?? result.userPromptIndex ?? getLatestACPUserPromptIndex(result.userPrompts));
-                      });
-                    }
-                  },
                   onPermission: (action: PendingAction, rpcId: number) => {
                     setACPPendingPermission({ action, rpcId });
                     setPendingAction(action);
@@ -514,6 +503,23 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   onError: (err: Event | Error) => {
                     console.error('[ACP] SSE error callback (from AgentAPIChat):', err);
                   },
+              };
+
+              const subscribeToACPStatus = () => {
+                acpStatusEventSourceRef.current?.close();
+                acpStatusEventSourceRef.current = agentAPIRef.current!.subscribeToACPStatus(
+                  sessionId,
+                  status => {
+                    setAgentStatus(status);
+                    if (status.status === 'stable') {
+                      void agentAPIRef.current?.getACPMessageHistory(sessionId, '').then(result => {
+                        setACPUserPrompts(result.userPrompts);
+                        setLoadedACPStartPromptIndex(prev => prev ?? result.userPromptIndex ?? getLatestACPUserPromptIndex(result.userPrompts));
+                      });
+                    }
+                  },
+                  err => console.warn('[ACP] Status SSE error:', err),
+                );
               };
 
               // Every request to an outbound-only session crosses the direct-runtime
@@ -565,6 +571,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 console.log(`[ACP] initializeChat: ACP session detected (acpSessionId=${info.sessionId}), previous acpInfo=${JSON.stringify(acpInfo)}`);
                 setACPInfo(info);
                 setAgentType('acp');
+                subscribeToACPStatus();
                 if (acpAvailable) {
                   // The probe already established that this is an ACP session.
                   // Fetch metadata only after history has finished so it cannot
@@ -585,10 +592,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                   throw historyError ?? new Error('Failed to restore ACP message history');
                 }
                 setMessages(historyResult.messages);
-                acpTurnRunningRef.current = historyResult.isTurnRunning;
-                if (historyResult.isTurnRunning) {
-                  setAgentStatus({ status: 'running' });
-                }
                 setACPUserPrompts(historyResult.userPrompts);
                 setLoadedACPStartPromptIndex(historyResult.userPromptIndex ?? getLatestACPUserPromptIndex(historyResult.userPrompts));
                 console.log(`[ACP] initializeChat: restored ${historyResult.messages.length} messages from bridge history`);
@@ -630,6 +633,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
                 console.log(`[ACP] initializeChat: bridge not ready, entering early ACP mode (sessionId=${sessionId})`);
                 setACPInfo({ sessionId: '', status: 'running' });
                 setAgentType('acp');
+                subscribeToACPStatus();
                 setIsInitialLoadComplete(true);
                 setIsStarting(false);
 
@@ -941,7 +945,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
   const [acpPullDistance, setACPPullDistance] = useState(0);
   const acpNextPromptId = useRef(1);
   const acpEventSourceRef = useRef<{ close: () => void } | null>(null);
-  const acpTurnRunningRef = useRef(false);
+  const acpStatusEventSourceRef = useRef<{ close: () => void } | null>(null);
   const loadedACPStartPromptIndexRef = useRef<number | null>(null);
   const acpPullStartYRef = useRef<number | null>(null);
   const acpPullTrackingRef = useRef(false);
@@ -1585,6 +1589,10 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         acpEventSourceRef.current.close();
         acpEventSourceRef.current = null;
       }
+      if (acpStatusEventSourceRef.current) {
+        acpStatusEventSourceRef.current.close();
+        acpStatusEventSourceRef.current = null;
+      }
     };
   }, [sessionId]);
 
@@ -1640,9 +1648,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
       // 2. Fetch current agent status
       try {
         const currentStatus = await agentAPIRef.current!.getSessionStatus(sessionId);
-        if (normalizeAgentStatus(currentStatus.status) !== 'stable' || !acpTurnRunningRef.current) {
-          setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
-        }
+        setAgentStatus({ ...currentStatus, status: normalizeAgentStatus(currentStatus.status) });
       } catch {
         // Non-fatal — status will be updated via SSE events
       }
@@ -1699,16 +1705,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           },
           onConfigOptionsUpdate: (configOptions: ACPConfigOption[]) => {
             applyACPConfigOptions(configOptions);
-          },
-          onStatus: (status: { status: 'stable' | 'running' | 'error'; agent_type?: string }) => {
-            acpTurnRunningRef.current = status.status === 'running';
-            setAgentStatus(status);
-            if (status.status === 'stable') {
-              void agentAPIRef.current?.getACPMessageHistory(sessionId, '').then(result => {
-                setACPUserPrompts(result.userPrompts);
-                setLoadedACPStartPromptIndex(prev => prev ?? result.userPromptIndex ?? getLatestACPUserPromptIndex(result.userPrompts));
-              });
-            }
           },
           onPermission: (action: PendingAction, rpcId: number) => {
             setACPPendingPermission({ action, rpcId });
@@ -1799,7 +1795,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           // Do NOT add the user message locally here.
           // The bridge broadcasts a synthetic user_message_chunk via SSE,
           // which will arrive via onMessage and be added to the message list.
-          setAgentStatus({ status: 'running' });
           const prompt = [
             ...(messageContent ? [{ type: 'text' as const, text: messageContent }] : []),
             ...attachedImages.map(image => ({
@@ -1819,7 +1814,6 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         } else if (acpServerEnabled && acpServerClientRef.current) {
           // ── Global ACP server only (no per-session bridge) ────────────
           const promptId = acpNextPromptId.current++;
-          setAgentStatus({ status: 'running' });
           const prompt = [
             ...(messageContent ? [{ type: 'text' as const, text: messageContent }] : []),
             ...attachedImages.map(image => ({
@@ -1894,11 +1888,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
           await agentAPIRef.current.cancelACPSession(sessionId, acpInfo.sessionId);
           console.log('Stop signal sent via ACP session/cancel (per-session bridge)');
         }
-        setAgentStatus({ status: 'stable' });
       } else if (acpServerEnabled && acpServerClientRef.current) {
         // グローバル ACP サーバーモード (per-session bridge なし): ACP cancel を使用
         await acpServerClientRef.current.cancelSession(sessionId);
-        setAgentStatus({ status: 'stable' });
         console.log('Stop signal sent via ACP session/cancel (global ACP server)');
       } else if (agentType === 'claude' || agentType === 'codex') {
         // agentapi ベースのエージェント（claude, codex）: /action エンドポイントを使用

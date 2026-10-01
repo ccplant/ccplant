@@ -132,7 +132,6 @@ export interface ACPServerEventCallbacks {
   onThoughtChunk?: (msgId: number, thought: string) => void;
   onToolUpdate?: (toolCallId: string, status: string) => void;
   onToolInputUpdate?: (toolCallId: string, input: unknown, title?: string, locations?: Array<{ path: string; line?: number }>) => void;
-  onStatus?: (status: { status: 'stable' | 'running' | 'error'; agent_type?: string }) => void;
   onPermission?: (action: PendingAction, rpcId: number) => void;
   onTitleUpdate?: (title: string) => void;
   onModeUpdate?: (mode: string) => void;
@@ -267,7 +266,6 @@ export class ACPServerClient {
   private baseURL: string;
   private apiKey?: string;
   private requestId = 1;
-  private readonly pendingPromptIds = new Map<string, Set<string>>();
 
   constructor(baseURL: string, apiKey?: string) {
     // baseURL is the proxy base, e.g. "http://localhost:3000/api/proxy"
@@ -361,9 +359,6 @@ export class ACPServerClient {
   /** Send a prompt to the session. Response arrives via the SSE stream. */
   async sendPrompt(sessionId: string, prompt: ACPPromptContentBlock[], promptId?: number): Promise<void> {
     const id = promptId ?? this.requestId++;
-    const promptIds = this.pendingPromptIds.get(sessionId) ?? new Set<string>();
-    promptIds.add(String(id));
-    this.pendingPromptIds.set(sessionId, promptIds);
     const body: JSONRPCRequest = {
       jsonrpc: '2.0',
       id,
@@ -373,23 +368,17 @@ export class ACPServerClient {
         prompt,
       },
     };
-    try {
-      const response = await fetch(this.acpUrl, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        throw new Error(`ACP sendPrompt failed: ${response.status} ${response.statusText}`);
-      }
-      const data: JSONRPCResponse = await response.json();
-      if (data.error) {
-        throw new Error(`ACP sendPrompt error: ${data.error.message}`);
-      }
-    } catch (error) {
-      promptIds.delete(String(id));
-      if (promptIds.size === 0) this.pendingPromptIds.delete(sessionId);
-      throw error;
+    const response = await fetch(this.acpUrl, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(`ACP sendPrompt failed: ${response.status} ${response.statusText}`);
+    }
+    const data: JSONRPCResponse = await response.json();
+    if (data.error) {
+      throw new Error(`ACP sendPrompt error: ${data.error.message}`);
     }
   }
 
@@ -479,14 +468,12 @@ export class ACPServerClient {
                 if (text) callbacks.onChunk?.(streamingMsgId, text);
                 if (image) callbacks.onImageChunk?.(streamingMsgId, image);
               }
-              callbacks.onStatus?.({ status: 'running' });
               break;
             }
 
             case 'agent_thought_chunk': {
               const thought = acpExtractText(update.content);
               if (!thought) return;
-              callbacks.onStatus?.({ status: 'running' });
               if (streamingThoughtId === null) {
                 streamingThoughtId = nextId();
                 callbacks.onMessage({ id: streamingThoughtId, role: 'agent', content: '', thought, time: now, type: 'normal' });
@@ -499,7 +486,6 @@ export class ACPServerClient {
             case 'tool_call': {
               streamingMsgId = null;
               streamingThoughtId = null;
-              callbacks.onStatus?.({ status: 'running' });
               const toolObj = {
                 type: 'tool_use',
                 name: acpToolNameFromRawInput(update.rawInput) || acpToolDisplayName(update.kind, update.title),
@@ -603,8 +589,6 @@ export class ACPServerClient {
             case 'agent_turn_end': {
               streamingMsgId = null;
               streamingThoughtId = null;
-              this.pendingPromptIds.delete(sessionId);
-              callbacks.onStatus?.({ status: 'stable' });
               break;
             }
 
@@ -645,26 +629,16 @@ export class ACPServerClient {
         if (msg.result != null && msg.id != null) {
           const stopReason = (msg.result as { stopReason?: unknown })?.stopReason;
           if (typeof stopReason === 'string' && stopReason.length > 0) {
-            const promptIds = this.pendingPromptIds.get(sessionId);
-            promptIds?.delete(String(msg.id));
-            if (promptIds?.size === 0) this.pendingPromptIds.delete(sessionId);
             streamingMsgId = null;
             streamingThoughtId = null;
-            callbacks.onStatus?.({ status: 'stable' });
           }
           return;
         }
 
         // ── Error on session/prompt ────────────────────────────────────────
         if (msg.error && msg.id != null) {
-          const promptIds = this.pendingPromptIds.get(sessionId);
-          const isPromptError = promptIds?.delete(String(msg.id)) === true;
-          if (promptIds?.size === 0) this.pendingPromptIds.delete(sessionId);
-          if (isPromptError) {
-            streamingMsgId = null;
-            streamingThoughtId = null;
-            callbacks.onStatus?.({ status: 'stable' });
-          }
+          streamingMsgId = null;
+          streamingThoughtId = null;
           callbacks.onError?.(new Error(msg.error.message));
           return;
         }
