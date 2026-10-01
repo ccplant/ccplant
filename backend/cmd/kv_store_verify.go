@@ -70,13 +70,13 @@ func newKVStoreVerifyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			wrappedPrimary, err := encryptedMigrationDestination(cmd.Context(), primary, o.primaryEncryptionProvider, o.primaryEncryptionActiveKeyID, o.primaryEncryptionKMSRegion, o.primaryEncryptionKeysJSON)
+			wrappedPrimary, err := encryptedMigrationDestination(cmd.Context(), primary, primaryConfig.backend == "libsql-encrypted", o.primaryEncryptionProvider, o.primaryEncryptionActiveKeyID, o.primaryEncryptionKMSRegion, o.primaryEncryptionKeysJSON)
 			if err != nil {
 				_ = errors.Join(primary.Close(), secondary.Close())
 				return fmt.Errorf("configure primary encryption: %w", err)
 			}
 			primary = wrappedPrimary
-			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, o.secondaryEncryptionProvider, o.secondaryEncryptionActiveKeyID, o.secondaryEncryptionKMSRegion, o.secondaryEncryptionKeysJSON)
+			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, secondaryConfig.backend == "libsql-encrypted", o.secondaryEncryptionProvider, o.secondaryEncryptionActiveKeyID, o.secondaryEncryptionKMSRegion, o.secondaryEncryptionKeysJSON)
 			if err != nil {
 				_ = errors.Join(primary.Close(), secondary.Close())
 				return fmt.Errorf("configure secondary encryption: %w", err)

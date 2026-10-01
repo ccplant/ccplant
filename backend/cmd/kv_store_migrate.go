@@ -85,7 +85,7 @@ without writing anything.`,
 			if err != nil {
 				return err
 			}
-			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, o.encryptionProvider, o.encryptionActiveKeyID, o.encryptionKMSRegion, o.encryptionKeysJSON)
+			wrappedSecondary, err := encryptedMigrationDestination(cmd.Context(), secondary, o.secondaryBackend == "libsql-encrypted", o.encryptionProvider, o.encryptionActiveKeyID, o.encryptionKMSRegion, o.encryptionKeysJSON)
 			if err != nil {
 				_ = errors.Join(primary.Close(), secondary.Close())
 				return fmt.Errorf("configure secondary encryption: %w", err)
@@ -121,8 +121,11 @@ without writing anything.`,
 	return command
 }
 
-func encryptedMigrationDestination(ctx context.Context, store kvstore.Store, provider, activeKeyID, kmsRegion, keysJSON string) (kvstore.Store, error) {
+func encryptedMigrationDestination(ctx context.Context, store kvstore.Store, encryptionRequired bool, provider, activeKeyID, kmsRegion, keysJSON string) (kvstore.Store, error) {
 	if activeKeyID == "" && strings.TrimSpace(keysJSON) == "" {
+		if encryptionRequired {
+			return nil, errors.New("libsql-encrypted destination requires an encryption active key ID and encryption keys JSON")
+		}
 		return store, nil
 	}
 	if activeKeyID == "" || strings.TrimSpace(keysJSON) == "" {

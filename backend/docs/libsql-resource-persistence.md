@@ -35,3 +35,36 @@ Reads and bounded list operations cover both the resource tables and the
 fallback table. Deploy the database-writing processes from the same release
 during this schema transition; an older process only knows `agentapi_kv` and
 must not write concurrently with the resource-table migration.
+
+## Migrating from Kubernetes
+
+`kv-store migrate` reads application-owned Secrets and ConfigMaps from the
+Kubernetes backend, reconstructs their canonical labels, and writes them
+through the destination store. For a `libsql-encrypted` destination, the
+command requires an active encryption key ID and key configuration. It fails
+before copying records when either is missing; it never silently falls back to
+plaintext libSQL.
+
+```sh
+agentapi-proxy kv-store migrate \
+  --primary-backend kubernetes \
+  --secondary-backend libsql-encrypted \
+  --secondary-database-url "$DESTINATION_DATABASE_URL" \
+  --secondary-auth-token "$DESTINATION_AUTH_TOKEN" \
+  --destination-namespace agentapi-ui \
+  --encryption-provider cloud-kms-branch-scoped \
+  --encryption-active-key-id production \
+  --encryption-keys-json "$DESTINATION_KMS_KEYS"
+```
+
+Run with `--dry-run` first and stop writers for the actual copy. Afterward,
+run `kv-store verify` with the corresponding primary and secondary encryption
+configuration. The migration is restart-safe: identical destination values
+are skipped, while different existing values fail as conflicts unless an
+operator explicitly selects `--overwrite`.
+
+The integration test covers every dedicated resource mapping from a
+Kubernetes source through an encrypted libSQL destination. It asserts that
+each raw SQL value is an `agentapi-kv-envelope/v1` envelope, decrypts to the
+original Kubernetes document, lands in its dedicated table, and leaves no
+classified row in the fallback table.

@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -164,11 +166,127 @@ func TestMigrateKubernetesKVToLocalLibSQLFile(t *testing.T) {
 	}
 }
 
+func TestMigrateKubernetesKVEncryptsEveryDedicatedResourceTable(t *testing.T) {
+	ctx := context.Background()
+	resources := []struct {
+		table, name, labelKey, labelValue string
+	}{
+		{"agentapi_settings", "settings", "agentapi.proxy/settings", "true"},
+		{"agentapi_credentials", "credentials", "agentapi.proxy/credentials", "true"},
+		{"agentapi_shares", "shares", "agentapi.proxy/shares", "true"},
+		{"agentapi_team_configs", "team-config", "agentapi.proxy/team-config", "true"},
+		{"agentapi_personal_api_keys", "personal-api-key", "agentapi.proxy/personal-api-key", "true"},
+		{"agentapi_api_tokens", "api-token", "agentapi.proxy/api-token", "true"},
+		{"agentapi_local_users", "local-user", "agentapi.proxy/local-user", "true"},
+		{"agentapi_sandbox_policies", "sandbox-policy", "agentapi.proxy/type", "sandbox-policy"},
+		{"agentapi_sandbox_domains", "sandbox-domains", "agentapi.proxy/type", "sandbox-domains"},
+		{"agentapi_session_routes", "session-route", "agentapi.proxy/session-route", "true"},
+		{"agentapi_user_files", "user-files", "agentapi.proxy/user-files", "true"},
+		{"agentapi_session_profiles", "session-profile", "agentapi.proxy/session-profile", "true"},
+		{"agentapi_slackbots", "slackbot", "agentapi.proxy/slackbot", "true"},
+		{"agentapi_webhooks", "webhook", "agentapi.proxy/webhook", "true"},
+		{"agentapi_user_team_mappings", "user-team-mapping", "agentapi.proxy/type", "user-team-mapping"},
+		{"agentapi_codex_auth_attempts", "codex-auth", "agentapi.proxy/codex-device-auth-attempt", "true"},
+		{"agentapi_codex_auth_locks", "codex-auth-lock", "agentapi.proxy/codex-device-auth-attempt", "lock"},
+		{"agentapi_schedules", "schedule", "agentapi.proxy/schedule", "true"},
+		{"agentapi_system_settings", "agentapi-admin-system-settings-test", "agentapi.proxy/system-settings", "true"},
+	}
+	objects := make([]*corev1.Secret, 0, len(resources))
+	for _, resource := range resources {
+		objects = append(objects, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: resource.name, Namespace: "source", Labels: map[string]string{resource.labelKey: resource.labelValue}},
+			Data:       map[string][]byte{"payload": []byte("plaintext-" + resource.table)},
+		})
+	}
+	client := fake.NewSimpleClientset()
+	for _, object := range objects {
+		if _, err := client.CoreV1().Secrets("source").Create(ctx, object, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	databasePath := filepath.Join(t.TempDir(), "encrypted-migration.db")
+	backend, err := kvstore.NewLibSQLStore(ctx, "file://"+databasePath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := encryptedMigrationDestination(ctx, backend, true, "local", "migration-key", "", `{"migration-key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := migrateKubernetesKV(ctx, client, destination, kvStoreMigrateOptions{namespace: "source", destinationNamespace: "destination"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Selected != len(resources) || result.Copied != len(resources) {
+		t.Fatalf("migration result = %#v, want %d encrypted copies", result, len(resources))
+	}
+
+	for _, resource := range resources {
+		got, err := destination.Get(ctx, kvstore.KindSecret, "destination", resource.name)
+		if err != nil {
+			t.Fatalf("decrypt migrated %s: %v", resource.table, err)
+		}
+		var secret corev1.Secret
+		if err := json.Unmarshal(got.Value, &secret); err != nil {
+			t.Fatal(err)
+		}
+		if string(secret.Data["payload"]) != "plaintext-"+resource.table {
+			t.Fatalf("%s decrypted payload = %q", resource.table, secret.Data["payload"])
+		}
+	}
+	if err := destination.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	for _, resource := range resources {
+		var raw []byte
+		query := "SELECT value FROM " + resource.table + " WHERE namespace = ? AND key = ?"
+		if err := db.QueryRowContext(ctx, query, "destination", resource.name).Scan(&raw); err != nil {
+			t.Fatalf("read raw %s value: %v", resource.table, err)
+		}
+		var envelope struct {
+			Format string `json:"format"`
+			KeyID  string `json:"key_id"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			t.Fatalf("%s stored plaintext/non-envelope value: %v", resource.table, err)
+		}
+		if envelope.Format != "agentapi-kv-envelope/v1" || envelope.KeyID != "migration-key" {
+			t.Fatalf("%s envelope = %#v", resource.table, envelope)
+		}
+	}
+	var fallbackCount int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM agentapi_kv WHERE namespace = ?", "destination").Scan(&fallbackCount); err != nil {
+		t.Fatal(err)
+	}
+	if fallbackCount != 0 {
+		t.Fatalf("fallback contains %d migrated dedicated resources", fallbackCount)
+	}
+}
+
 func TestEncryptedMigrationDestinationRejectsUnsupportedProvider(t *testing.T) {
 	store := newMemoryKVStore()
-	_, err := encryptedMigrationDestination(context.Background(), store, "unknown-kms", "active", "", `{"active":"key-ref"}`)
+	_, err := encryptedMigrationDestination(context.Background(), store, true, "unknown-kms", "active", "", `{"active":"key-ref"}`)
 	if err == nil || !strings.Contains(err.Error(), "unsupported KV encryption provider") {
 		t.Fatalf("expected unsupported provider error, got %v", err)
+	}
+}
+
+func TestEncryptedMigrationDestinationRequiresKeysForEncryptedBackend(t *testing.T) {
+	store := newMemoryKVStore()
+	_, err := encryptedMigrationDestination(context.Background(), store, true, "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "libsql-encrypted destination requires") {
+		t.Fatalf("expected missing encryption configuration error, got %v", err)
+	}
+	plain, err := encryptedMigrationDestination(context.Background(), store, false, "", "", "", "")
+	if err != nil || plain != store {
+		t.Fatalf("plain destination = %#v, err=%v", plain, err)
 	}
 }
 
