@@ -16,6 +16,15 @@ interface NavigationTabsProps {
 
 const allTabs: Tab[] = [
   {
+    label: 'Agents',
+    href: '/agents',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 3a2.25 2.25 0 104.5 0m-6 9a3.75 3.75 0 117.5 0v1.5a3.75 3.75 0 01-7.5 0V12zM5 20.25a7 7 0 0114 0" />
+      </svg>
+    ),
+  },
+  {
     label: 'Sessions',
     href: '/chats',
     icon: (
