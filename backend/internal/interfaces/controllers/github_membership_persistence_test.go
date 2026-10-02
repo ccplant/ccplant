@@ -58,3 +58,22 @@ func TestResolveTeamMembershipsUsesPersistedSnapshotAndLinkedIdentity(t *testing
 	require.NoError(t, err)
 	require.Empty(t, memberships, "unlinking the identity must revoke persisted membership")
 }
+
+func TestPrincipalForExternalIdentityUsesExistingBuiltInOAuthPrincipal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	principal, err := controller.getOrCreatePrincipal(ctx, "github:42")
+	require.NoError(t, err)
+
+	got, found, err := controller.PrincipalForExternalIdentity(ctx, "", 42)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, principal.ID, got)
+
+	_, found, err = controller.PrincipalForExternalIdentity(ctx, "", 99)
+	require.NoError(t, err)
+	require.False(t, found)
+	_, err = controller.loadPrincipal(ctx, "github:99")
+	require.Error(t, err, "sync must not create principals for unknown GitHub members")
+}

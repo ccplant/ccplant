@@ -878,6 +878,16 @@ func (c *GitHubConnectionsController) PrincipalForExternalIdentity(ctx context.C
 				return identity.PrincipalID, true, nil
 			}
 		}
+		// Built-in GitHub OAuth principals predate connection identities. Link
+		// only an already-existing github:<id> principal; team synchronization
+		// must never create application users for arbitrary GitHub members.
+		principal, err := c.loadPrincipal(ctx, fmt.Sprintf("github:%d", githubUserID))
+		if err == nil {
+			return principal.ID, true, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return "", false, err
+		}
 		return "", false, nil
 	}
 	var identity githubIdentity
