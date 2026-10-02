@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, Users } from 'lucide-react'
 import { createAgentAPIProxyClientFromStorage } from '@/lib/agentapi-proxy-client'
-import type { ExternalTeamBinding, TeamConfig } from '@/types/team-config'
+import type { ExternalTeamBinding, TeamConfig, TeamMembershipState, TeamMembershipSyncResult } from '@/types/team-config'
 import { useSettingsScope } from '../../../SettingsScopeContext'
 
 const emptyBinding = (): ExternalTeamBinding => ({ organization: '', team_slug: '' })
@@ -15,13 +15,19 @@ export default function GitHubTeamsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [members, setMembers] = useState<TeamMembershipState | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<TeamMembershipSyncResult | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(async () => {
     if (!scopeId) return
     setLoading(true)
     try {
-      const value = await createAgentAPIProxyClientFromStorage().getTeamConfig(scopeId)
+      const client = createAgentAPIProxyClientFromStorage()
+      const [value, membership] = await Promise.all([client.getTeamConfig(scopeId), client.getTeamMembers(scopeId)])
       setConfig(value)
+      setMembers(membership)
       setEditable(value.external_teams.filter((item) => item.managed_by !== 'discovery'))
       setError(null)
     } catch {
@@ -32,6 +38,11 @@ export default function GitHubTeamsPage() {
   }, [scopeId])
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const save = async () => {
     setSaving(true)
@@ -47,9 +58,28 @@ export default function GitHubTeamsPage() {
     }
   }
 
+  const syncMembers = async () => {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const client = createAgentAPIProxyClientFromStorage()
+      const result = await client.syncTeamMembers(scopeId)
+      setSyncResult(result)
+      setMembers(await client.getTeamMembers(scopeId))
+      setError(null)
+    } catch {
+      setError('GitHub チームメンバーを同期できませんでした。1分以内の再実行、連携アカウントの権限、チーム設定を確認してください。')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   if (loading) return <p className="text-sm text-gray-500">読み込み中...</p>
 
   const discovered = config?.external_teams.filter((item) => item.managed_by === 'discovery') ?? []
+  const nextSyncAt = members?.sync.next_sync_at ? new Date(members.sync.next_sync_at).getTime() : 0
+  const retrySeconds = Math.max(0, Math.ceil((nextSyncAt - now) / 1000))
+  const syncDisabled = syncing || retrySeconds > 0 || !config?.external_teams.length
   return (
     <div className="max-w-3xl space-y-6">
       <div>
@@ -76,6 +106,29 @@ export default function GitHubTeamsPage() {
         <button type="button" onClick={() => setEditable((current) => [...current, emptyBinding()])} className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-sm"><Plus className="h-4 w-4" />追加</button>
         <button type="button" disabled={saving} onClick={save} className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">{saving ? '保存中...' : '保存'}</button>
       </div>
+      <section className="rounded-lg border p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-medium"><Users className="h-4 w-4" />メンバー</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              {members?.sync.status === 'never'
+                ? 'まだ同期されていません。'
+                : `同期済み ${members?.members.length ?? 0}人・未連携 ${members?.unlinked_external_member_count ?? 0}人`}
+            </p>
+            {members?.sync.synced_at && <p className="mt-1 text-xs text-gray-500">最終同期: {new Date(members.sync.synced_at).toLocaleString()}</p>}
+          </div>
+          <button type="button" disabled={syncDisabled} onClick={syncMembers} className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">
+            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? '同期中...' : retrySeconds > 0 ? `${retrySeconds}秒後に同期可能` : 'GitHub からメンバーを同期'}
+          </button>
+        </div>
+        {syncResult && <p className="mt-3 rounded-md bg-green-50 p-3 text-sm text-green-700">同期しました（追加 {syncResult.added_count}人・削除 {syncResult.removed_count}人）</p>}
+        {members && members.members.length > 0 && (
+          <ul className="mt-4 divide-y">
+            {members.members.map((member) => <li key={member.principal_id} className="flex justify-between py-2 text-sm"><span>{member.login || member.principal_id}</span><span className="font-mono text-xs text-gray-500">{member.principal_id}</span></li>)}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

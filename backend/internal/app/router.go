@@ -37,6 +37,7 @@ type HandlerRegistry struct {
 	githubConnectionsController    *controllers.GitHubConnectionsController
 	googleConnectionsController    *controllers.GoogleConnectionsController
 	teamConfigController           *controllers.TeamConfigController
+	teamMembershipController       *controllers.TeamMembershipController
 	googleOAuthController          *controllers.GoogleOAuthController
 	credentialsController          *controllers.CredentialsController
 	codexDeviceAuthController      *controllers.CodexDeviceAuthController
@@ -96,6 +97,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
 	var adminSettingsController *controllers.AdminSettingsController
 	var githubConnectionsController *controllers.GitHubConnectionsController
+	var teamMembershipController *controllers.TeamMembershipController
+	var membershipRepo *repositories.KubernetesTeamMembershipRepository
 	var googleConnectionsController *controllers.GoogleConnectionsController
 	if server.persistenceClient != nil {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
@@ -110,10 +113,18 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
+		membershipRepo = repositories.NewKubernetesTeamMembershipRepository(server.GetPersistenceClient(), server.namespace)
+		teamMembershipController = controllers.NewTeamMembershipController(server.teamConfigRepo, membershipRepo, githubConnectionsController)
+		githubConnectionsController.SetMembershipRepository(membershipRepo)
+		githubConnectionsController.SetMembershipSyncer(teamMembershipController)
 		googleConnectionsController = controllers.NewGoogleConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage, githubConnectionsController)
 		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
 			simpleAuth.SetGitHubMembershipResolver(githubConnectionsController)
 		}
+	}
+	teamConfigController := controllers.NewTeamConfigController(server.teamConfigRepo)
+	if membershipRepo != nil {
+		teamConfigController.WithMembershipRepository(membershipRepo)
 	}
 
 	var googleOAuthController *controllers.GoogleOAuthController
@@ -334,7 +345,8 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			adminSettingsController:        adminSettingsController,
 			githubConnectionsController:    githubConnectionsController,
 			googleConnectionsController:    googleConnectionsController,
-			teamConfigController:           controllers.NewTeamConfigController(server.teamConfigRepo),
+			teamConfigController:           teamConfigController,
+			teamMembershipController:       teamMembershipController,
 			googleOAuthController:          googleOAuthController,
 			credentialsController:          credentialsController,
 			codexDeviceAuthController:      codexDeviceAuthController,
@@ -604,6 +616,10 @@ func (r *Router) registerConditionalRoutes() error {
 	r.echo.DELETE("/teams/:team", r.handlers.teamConfigController.Delete, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
 	r.echo.GET("/teams/:team/config", r.handlers.teamConfigController.Get, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	r.echo.PUT("/teams/:team/config", r.handlers.teamConfigController.Update, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+	if r.handlers.teamMembershipController != nil {
+		r.echo.GET("/teams/:team/members", r.handlers.teamMembershipController.Get, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.POST("/teams/:team/members/sync", r.handlers.teamMembershipController.Sync, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+	}
 	log.Printf("[ROUTES] User info endpoint registered")
 
 	// Add notification routes if service is available

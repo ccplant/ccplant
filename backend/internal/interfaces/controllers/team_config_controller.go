@@ -12,7 +12,13 @@ import (
 )
 
 type TeamConfigController struct {
-	repo repositories.TeamConfigRepository
+	repo           repositories.TeamConfigRepository
+	membershipRepo repositories.TeamMembershipRepository
+}
+
+func (c *TeamConfigController) WithMembershipRepository(repo repositories.TeamMembershipRepository) *TeamConfigController {
+	c.membershipRepo = repo
+	return c
 }
 
 type TeamConfigResponse struct {
@@ -144,6 +150,9 @@ func (c *TeamConfigController) Delete(ctx echo.Context) error {
 	}
 	if err := c.repo.Delete(ctx.Request().Context(), teamID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete team").SetInternal(err)
+	}
+	if c.membershipRepo != nil {
+		_ = c.membershipRepo.Delete(ctx.Request().Context(), team.PrincipalID())
 	}
 	return ctx.NoContent(http.StatusNoContent)
 }

@@ -27,6 +27,22 @@ describe('AgentAPIProxyClient team settings', () => {
       expect.any(Object),
     );
   });
+
+  it('synchronizes members through the encoded team endpoint', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ operation_id: 'op-1', member_count: 2 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new AgentAPIProxyClient({ baseURL: 'http://proxy.example.test' });
+
+    await expect(client.syncTeamMembers('acme/platform')).resolves.toMatchObject({ operation_id: 'op-1', member_count: 2 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://proxy.example.test/teams/acme%2Fplatform/members/sync',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
 });
 
 describe('AgentAPIProxyClient Session Runner Pools', () => {
