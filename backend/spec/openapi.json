@@ -209,13 +209,14 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "external_teams"
+                  "github_teams"
                 ],
                 "properties": {
-                  "external_teams": {
+                  "github_teams": {
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/ExternalTeamBinding"
+                      "type": "string",
+                      "pattern": "^[^/]+/[^/]+$"
                     }
                   }
                 }
@@ -7451,7 +7452,7 @@
           "team_id",
           "principal_id",
           "name",
-          "external_teams"
+          "github_teams"
         ],
         "properties": {
           "team_id": {
@@ -7464,10 +7465,11 @@
           "name": {
             "type": "string"
           },
-          "external_teams": {
+          "github_teams": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ExternalTeamBinding"
+              "type": "string",
+              "pattern": "^[^/]+/[^/]+$"
             }
           }
         }
@@ -7482,9 +7484,8 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["connection_id", "github_user_id"],
+              "required": ["github_user_id"],
               "properties": {
-                "connection_id": { "type": "string" },
                 "github_user_id": { "type": "integer", "format": "int64" }
               }
             }

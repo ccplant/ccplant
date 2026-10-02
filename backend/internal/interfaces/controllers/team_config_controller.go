@@ -22,14 +22,14 @@ func (c *TeamConfigController) WithMembershipRepository(repo repositories.TeamMe
 }
 
 type TeamConfigResponse struct {
-	TeamID        string                         `json:"team_id"`
-	PrincipalID   string                         `json:"principal_id"`
-	Name          string                         `json:"name"`
-	ExternalTeams []entities.ExternalTeamBinding `json:"external_teams"`
+	TeamID      string   `json:"team_id"`
+	PrincipalID string   `json:"principal_id"`
+	Name        string   `json:"name"`
+	GitHubTeams []string `json:"github_teams"`
 }
 
 type updateTeamConfigRequest struct {
-	ExternalTeams []entities.ExternalTeamBinding `json:"external_teams"`
+	GitHubTeams []string `json:"github_teams"`
 }
 
 type createTeamConfigRequest struct {
@@ -171,24 +171,22 @@ func (c *TeamConfigController) Update(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "team access denied")
 	}
 
-	bindings := make([]entities.ExternalTeamBinding, 0, len(team.ExternalTeams())+len(request.ExternalTeams))
+	bindings := make([]entities.ExternalTeamBinding, 0, len(team.ExternalTeams())+len(request.GitHubTeams))
 	for _, binding := range team.ExternalTeams() {
 		if binding.ManagedBy == "discovery" {
 			bindings = append(bindings, binding)
 		}
 	}
-	seen := make(map[string]struct{}, len(bindings)+len(request.ExternalTeams))
+	seen := make(map[string]struct{}, len(bindings)+len(request.GitHubTeams))
 	for _, binding := range bindings {
 		seen[bindingKey(binding)] = struct{}{}
 	}
-	for _, binding := range request.ExternalTeams {
-		binding.ConnectionID = strings.TrimSpace(binding.ConnectionID)
-		binding.Organization = strings.ToLower(strings.TrimSpace(binding.Organization))
-		binding.TeamSlug = strings.ToLower(strings.TrimSpace(binding.TeamSlug))
-		binding.ManagedBy = "api"
-		if binding.Organization == "" || binding.TeamSlug == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "organization and team_slug are required")
+	for _, githubTeam := range request.GitHubTeams {
+		parts := strings.Split(strings.ToLower(strings.TrimSpace(githubTeam)), "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "github team must use org/slug format")
 		}
+		binding := entities.ExternalTeamBinding{Organization: parts[0], TeamSlug: parts[1], ManagedBy: "api"}
 		key := bindingKey(binding)
 		if _, exists := seen[key]; exists {
 			return echo.NewHTTPError(http.StatusConflict, "external GitHub team is already mapped")
@@ -229,8 +227,9 @@ func bindingKey(binding entities.ExternalTeamBinding) string {
 
 func teamConfigResponse(team *entities.TeamConfig) TeamConfigResponse {
 	bindings := team.ExternalTeams()
-	if bindings == nil {
-		bindings = []entities.ExternalTeamBinding{}
+	githubTeams := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		githubTeams = append(githubTeams, binding.GitHubTeam())
 	}
-	return TeamConfigResponse{TeamID: team.TeamID(), PrincipalID: team.PrincipalID(), Name: team.Name(), ExternalTeams: bindings}
+	return TeamConfigResponse{TeamID: team.TeamID(), PrincipalID: team.PrincipalID(), Name: team.Name(), GitHubTeams: githubTeams}
 }

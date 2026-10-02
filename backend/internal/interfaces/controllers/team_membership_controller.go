@@ -80,7 +80,8 @@ func (c *TeamMembershipController) Sync(ctx echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "a linked GitHub account is required").SetInternal(err)
 	}
-	result, err := c.syncTeam(ctx.Request().Context(), team, principalID, "manual")
+	builtInToken := strings.TrimSpace(strings.TrimPrefix(ctx.Request().Header.Get("Authorization"), "Bearer "))
+	result, err := c.syncTeam(ctx.Request().Context(), team, principalID, "manual", builtInToken)
 	if errors.Is(err, ports.ErrTeamSyncRateLimited) {
 		snapshot, _, _ := c.memberships.Get(ctx.Request().Context(), team.PrincipalID())
 		retryAfter := 60
@@ -113,7 +114,7 @@ func (c *TeamMembershipController) loadManageableTeam(ctx echo.Context) (*entiti
 	return team, nil
 }
 
-func (c *TeamMembershipController) syncTeam(ctx context.Context, team *entities.TeamConfig, actorPrincipalID, reason string) (_ *teamSyncResponse, resultErr error) {
+func (c *TeamMembershipController) syncTeam(ctx context.Context, team *entities.TeamConfig, actorPrincipalID, reason, builtInToken string) (_ *teamSyncResponse, resultErr error) {
 	bindings := team.ExternalTeams()
 	if len(bindings) == 0 {
 		return nil, errors.New("team has no GitHub team bindings")
@@ -138,7 +139,7 @@ func (c *TeamMembershipController) syncTeam(ctx context.Context, team *entities.
 
 	externalByKey := make(map[string]*entities.ExternalTeamMember)
 	for _, binding := range bindings {
-		members, err := c.github.FetchExternalTeamMembers(ctx, actorPrincipalID, binding)
+		members, err := c.github.FetchExternalTeamMembers(ctx, actorPrincipalID, binding, builtInToken)
 		if err != nil {
 			return nil, err
 		}
@@ -223,9 +224,20 @@ func (c *TeamMembershipController) syncTeam(ctx context.Context, team *entities.
 // created or linked GitHub identity. Failures are returned for logging and do
 // not roll back identity creation.
 func (c *TeamMembershipController) AutoSyncForPrincipal(ctx context.Context, principalID, reason string) error {
+	return c.AutoSyncForPrincipalWithToken(ctx, principalID, reason, "")
+}
+
+// AutoSyncForPrincipalWithToken also considers the built-in GitHub OAuth
+// credential in addition to every linked connection credential.
+func (c *TeamMembershipController) AutoSyncForPrincipalWithToken(ctx context.Context, principalID, reason, builtInToken string) error {
 	live, _, err := c.github.ResolveLiveTeamMemberships(ctx, principalID)
 	if err != nil {
 		return err
+	}
+	if builtInToken != "" {
+		if providerTeams, fetchErr := c.github.FetchBuiltInTeams(ctx, builtInToken); fetchErr == nil {
+			live = append(live, providerTeams...)
+		}
 	}
 	teams, err := c.teams.List(ctx)
 	if err != nil {
@@ -243,7 +255,7 @@ func (c *TeamMembershipController) AutoSyncForPrincipal(ctx context.Context, pri
 	}
 	var failures []error
 	for _, team := range matched {
-		if _, err := c.syncTeam(ctx, team, principalID, reason); err != nil && !errors.Is(err, ports.ErrTeamSyncRateLimited) && !errors.Is(err, ports.ErrTeamSyncInProgress) {
+		if _, err := c.syncTeam(ctx, team, principalID, reason, builtInToken); err != nil && !errors.Is(err, ports.ErrTeamSyncRateLimited) && !errors.Is(err, ports.ErrTeamSyncInProgress) {
 			failures = append(failures, fmt.Errorf("sync team %s: %w", team.TeamID(), err))
 		}
 	}

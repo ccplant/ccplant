@@ -52,10 +52,6 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 		}
 	}
 	for _, membership := range memberships {
-		connectionID := membership.ConnectionID
-		if connectionID == "" {
-			connectionID = "github"
-		}
 		organization := strings.ToLower(strings.TrimSpace(membership.Organization))
 		teamSlug := strings.ToLower(strings.TrimSpace(membership.TeamSlug))
 		fullName := organization + "/" + teamSlug
@@ -64,9 +60,9 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 		resolved[fullName] = struct{}{}
 		matchedTeamID := ""
 		for _, team := range configs {
-			if matchesBinding(team.ExternalTeams(), connectionID, organization, teamSlug) {
+			if matchesBinding(team.ExternalTeams(), "", organization, teamSlug) {
 				if matchedTeamID != "" && matchedTeamID != team.TeamID() {
-					return nil, true, fmt.Errorf("external GitHub team %s:%s/%s maps to multiple ccplant teams", connectionID, organization, teamSlug)
+					return nil, true, fmt.Errorf("external GitHub team %s/%s maps to multiple ccplant teams", organization, teamSlug)
 				}
 				matchedTeamID = team.TeamID()
 			}
@@ -84,7 +80,6 @@ func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, member
 				continue
 			}
 			team, ensureErr := r.ensureDiscoveredTeam(ctx, fullName, entities.ExternalTeamBinding{
-				ConnectionID: connectionID,
 				Organization: organization,
 				TeamSlug:     teamSlug,
 				ManagedBy:    "discovery",

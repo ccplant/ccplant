@@ -5,7 +5,7 @@ import "time"
 // ExternalTeamMember is a GitHub user observed while synchronizing a bound
 // GitHub team. GitHubUserID is only unique within ConnectionID.
 type ExternalTeamMember struct {
-	ConnectionID string            `json:"connection_id"`
+	ConnectionID string            `json:"-"`
 	GitHubUserID int64             `json:"github_user_id"`
 	Login        string            `json:"login"`
 	Sources      []ExternalTeamRef `json:"sources"`
@@ -13,7 +13,7 @@ type ExternalTeamMember struct {
 
 // ExternalTeamRef records which external team granted membership.
 type ExternalTeamRef struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"-"`
 	Organization string `json:"organization"`
 	TeamSlug     string `json:"team_slug"`
 }
@@ -27,7 +27,7 @@ type TeamMember struct {
 
 // ExternalIdentityRef identifies a linked GitHub identity.
 type ExternalIdentityRef struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"-"`
 	GitHubUserID int64  `json:"github_user_id"`
 }
 

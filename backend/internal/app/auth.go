@@ -264,6 +264,11 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to resolve principal").SetInternal(err)
 		}
 		userContext.UserID = principalID
+		if s.router.handlers.teamMembershipController != nil {
+			if syncErr := s.router.handlers.teamMembershipController.AutoSyncForPrincipalWithToken(c.Request().Context(), principalID, "identity_created", userContext.AccessToken); syncErr != nil {
+				log.Printf("[GITHUB_MEMBERSHIP] Initial built-in OAuth sync failed for principal %q: %v", principalID, syncErr)
+			}
+		}
 	}
 
 	// Create a new session for the authenticated user

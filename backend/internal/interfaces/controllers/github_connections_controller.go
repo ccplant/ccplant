@@ -868,6 +868,18 @@ func (c *GitHubConnectionsController) PrincipalIDForUser(ctx context.Context, us
 
 // PrincipalForExternalIdentity resolves a GitHub identity into its linked user principal.
 func (c *GitHubConnectionsController) PrincipalForExternalIdentity(ctx context.Context, connectionID string, githubUserID int64) (string, bool, error) {
+	if connectionID == "" {
+		identities, err := c.listIdentities(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		for _, identity := range identities {
+			if identity.GitHubUserID == githubUserID {
+				return identity.PrincipalID, true, nil
+			}
+		}
+		return "", false, nil
+	}
 	var identity githubIdentity
 	_, err := c.loadObject(ctx, identitySecretName(connectionID, githubUserID), &identity)
 	if apierrors.IsNotFound(err) {
@@ -881,13 +893,28 @@ func (c *GitHubConnectionsController) PrincipalForExternalIdentity(ctx context.C
 
 // FetchExternalTeamMembers loads the complete member list for one exact binding
 // using a credential linked to actorPrincipalID.
-func (c *GitHubConnectionsController) FetchExternalTeamMembers(ctx context.Context, actorPrincipalID string, binding entities.ExternalTeamBinding) ([]entities.ExternalTeamMember, error) {
+func (c *GitHubConnectionsController) FetchExternalTeamMembers(ctx context.Context, actorPrincipalID string, binding entities.ExternalTeamBinding, builtInToken ...string) ([]entities.ExternalTeamMember, error) {
 	identities, err := c.listIdentities(ctx)
 	if err != nil {
 		return nil, err
 	}
+	merged := make(map[int64]entities.ExternalTeamMember)
+	merge := func(members []entities.ExternalTeamMember) {
+		for _, member := range members {
+			if current, ok := merged[member.GitHubUserID]; ok {
+				current.Sources = append(current.Sources, member.Sources...)
+				merged[member.GitHubUserID] = current
+			} else {
+				member.ConnectionID = ""
+				for i := range member.Sources {
+					member.Sources[i].ConnectionID = ""
+				}
+				merged[member.GitHubUserID] = member
+			}
+		}
+	}
 	for _, identity := range identities {
-		if identity.PrincipalID != actorPrincipalID || (binding.ConnectionID != "" && identity.ConnectionID != binding.ConnectionID) {
+		if identity.PrincipalID != actorPrincipalID {
 			continue
 		}
 		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
@@ -910,11 +937,21 @@ func (c *GitHubConnectionsController) FetchExternalTeamMembers(ctx context.Conte
 		}
 		members, err := c.fetchGitHubTeamMembers(ctx, connection, token, binding)
 		if err == nil {
-			return members, nil
+			merge(members)
 		}
-		if binding.ConnectionID != "" {
-			return nil, err
+	}
+	if len(builtInToken) > 0 && builtInToken[0] != "" {
+		connection := githubConnection{ID: "github", APIURL: "https://api.github.com", Enabled: true}
+		if members, err := c.fetchGitHubTeamMembers(ctx, connection, builtInToken[0], binding); err == nil {
+			merge(members)
 		}
+	}
+	if len(merged) > 0 {
+		result := make([]entities.ExternalTeamMember, 0, len(merged))
+		for _, member := range merged {
+			result = append(result, member)
+		}
+		return result, nil
 	}
 	return nil, fmt.Errorf("no linked GitHub credential can read %s/%s", binding.Organization, binding.TeamSlug)
 }
@@ -1054,6 +1091,11 @@ func (c *GitHubConnectionsController) ResolveLiveTeamMemberships(ctx context.Con
 		}
 	}
 	return memberships, linked, nil
+}
+
+func (c *GitHubConnectionsController) FetchBuiltInTeams(ctx context.Context, token string) ([]auth.GitHubTeamMembership, error) {
+	connection := githubConnection{ID: "github", APIURL: "https://api.github.com", Enabled: true}
+	return c.fetchGitHubTeams(ctx, connection, token)
 }
 
 func (c *GitHubConnectionsController) fetchGitHubTeams(ctx context.Context, connection githubConnection, token string) ([]auth.GitHubTeamMembership, error) {
