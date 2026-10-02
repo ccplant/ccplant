@@ -1,4 +1,4 @@
-# Team membership の永続化と手動同期
+# Team membership の永続化と GitHub 同期
 
 ## 背景
 
@@ -15,8 +15,9 @@ GitHub API を呼び出し、取得した GitHub Team membership を `TeamConfig
 - どの同期で誰が追加・削除されたかを監査しにくい。
 
 本設計では、ccplant Team ごとに membership を永続化し、チーム設定画面の「GitHub
-からメンバーを同期」ボタンを押したときだけ GitHub Team から更新する。同期 API は
-Team ごとに 1 分に 1 回までとし、認証経路では GitHub API を呼ばない。
+からメンバーを同期」ボタン、または GitHub identity を伴う初回ユーザー作成・アカウント連携を
+契機に GitHub Team から更新する。同期 API は Team ごとに 1 分に 1 回までとする。通常のログインや
+認証済み API request では GitHub API を呼ばない。
 
 ## 要件
 
@@ -27,6 +28,8 @@ Team ごとに 1 分に 1 回までとし、認証経路では GitHub API を呼
 - 同期に失敗した場合は、直前の正常な membership を維持する。
 - 同じ ccplant Team の同期は、利用者や replica が異なっても 60 秒に 1 回までにする。
 - 同期の実行者、時刻、結果、追加・削除件数を記録する。
+- GitHub identity を伴う初回ユーザー作成・アカウント連携時は、その identity が参加している
+  GitHub Team に対応する ccplant Team の同期を自動で開始する。
 
 初期リリースでは定期同期、GitHub webhook による自動同期、UI での手動メンバー追加は
 対象外とする。
@@ -42,7 +45,7 @@ GitHub identity を user principal に解決した認可用 membership を同時
 ```text
 GitHub Team bindings
         |
-        | 手動 sync
+        | 手動 sync / identity lifecycle sync
         v
 external member snapshot (GitHub user ID)
         |
@@ -162,6 +165,45 @@ GitHub レスポンス本文はログへ出さない。
 GitHub App の organization installation token へ将来切り替える場合も service の credential
 provider を差し替え、snapshot と API 契約は維持する。
 
+### 初回ユーザー作成・アカウント連携時の自動同期
+
+次のイベントでは、保存済み membership の参照だけでなく自動同期を開始する。
+
+- GitHub identity と同時に user principal を初めて作成したとき。
+- 既存 user principal に新しい GitHub identity をリンクしたとき。
+
+通常ログイン、token refresh、同じ identity での再認証では開始しない。GitHub identity を伴わない
+Google 等からの初回ユーザー作成も対象 Team を判定できないため何もしない。
+
+処理フローは次のとおりとする。
+
+1. identity と token の保存を完了し、user principal との link を確定する。
+2. その identity の token で GitHub REST API `GET /user/teams?per_page=100` を pagination する。
+3. `(connection_id, organization, team_slug)` を正規化し、設定済み external binding と照合する。
+4. 一致した ccplant Team principal ID を重複排除する。
+5. Team ごとに `reason=identity_created` または `reason=identity_linked` の同期 operation を durable
+   queue へ enqueue する。
+6. worker は手動同期と同じ `TeamMembershipSyncService`、credential 検証、全 binding の atomic
+   replace、rate limit、lease を使う。
+
+自動同期の対象は「連携したユーザーが現在参加している GitHub Team」に対応する ccplant Team
+だけである。設定済み Team 全件や、その connection 上の無関係な Team は同期しない。1つの GitHub
+Team が同じ ccplant Team の複数 binding に一致しても operation は1件にまとめる。
+
+identity の作成・link 自体は GitHub の一時障害や同期失敗を理由に rollback しない。callback の
+レスポンスは identity 保存後に成功させ、自動同期はバックグラウンドで行う。process crash で
+同期要求が消えないよう、単なる goroutine ではなく永続 operation/outbox を使う。UI では
+`pending` / `running` / `succeeded` / `failed` を表示でき、失敗後も手動ボタンから再実行できる。
+
+`/user/teams` の取得に失敗した場合は対象 Team を推測せず、自動同期 operation 全体を failed と
+して監査する。既存 snapshot と identity link は維持する。GitHub Team への参加確認だけから本人を
+部分的に snapshot へ追加することはせず、必ず対象 Team の全 binding を取得して snapshot 全体を
+置換する。
+
+連携直後のレスポンスには `membership_sync.status` と enqueue した operation ID 一覧を含める。
+自動同期は非同期なので、新規 membership が必要な画面は `pending` 中であることを表示し、完了後に
+`/user` と Team 一覧を再取得する。
+
 ### binding の扱い
 
 初期実装の同期対象は organization/team slug が完全一致する binding に限定する。wildcard
@@ -193,6 +235,9 @@ binding は 1 binding が複数 GitHub Team に展開されるため、GitHub Te
   ccplant 側の 60 秒制限とは別に扱う。
 
 失敗を rate limit に含めることで、権限不足や GitHub 障害時の連打も GitHub API へ波及しない。
+手動・自動は同じ制限枠を使う。自動同期が 60 秒枠や実行中 lease に当たった場合は失敗にせず、
+同一 Team の pending operation へ coalesce し、`next_sync_at` 以降に1回だけ実行する。手動 API は
+利用者へ即時フィードバックするため従来どおり `409` / `429` を返す。
 
 ## API
 
@@ -280,17 +325,18 @@ Idempotency-Key: <uuid>
 
 ## 認証・認可フローの変更
 
-`GitHubConnectionsController.ResolveTeamMemberships` と `GitHubAuthProvider` の認証時 GitHub Team
-取得を、保存済み membership の参照へ置き換える。
+`GitHubConnectionsController.ResolveTeamMemberships` と `GitHubAuthProvider` の通常認証時 GitHub
+Team 取得を、保存済み membership の参照へ置き換える。例外は前述の identity を伴う初回ユーザー
+作成・アカウント連携イベントだけとする。
 
 1. 認証した identity を `(connection_id, github_user_id)` として確定する。
 2. membership index から該当する Team principal ID を取得する。
 3. linked identity が複数ある場合は Team principal ID の和集合を作る。
 4. `AuthorizationContext.TeamScope.Teams` へ設定する。
 
-snapshot が未作成でも GitHub API へフォールバックしない。未同期 Team の GitHub binding からは
-membership を付与しない。一方、Team owner と platform admin の管理アクセスは既存どおり保持し、
-初回同期を実行可能にする。
+snapshot が未作成でも通常認証から GitHub API へフォールバックしない。未同期 Team の GitHub
+binding からは membership を付与せず、自動同期完了後の再取得で付与する。一方、Team owner と
+platform admin の管理アクセスは既存どおり保持し、初回同期を実行可能にする。
 
 同期による削除は次のリクエストから有効にする。既存の API key/session が TeamScope を token 内へ
 固定している場合は、各リクエストで保存済み membership と再照合するか、同期時に関連 session を
@@ -301,6 +347,7 @@ membership を付与しない。一方、Team owner と platform admin の管理
 - snapshot は全 binding の取得成功後に 1 回だけ置換する。
 - 同期中に binding が変わった場合は保存せず、再同期を促す。
 - identity link/unlink は snapshot を変更せず、認可用 `Members` と index のみ再構築する。
+- identity 作成・link 後の自動同期失敗は identity transaction を rollback せず、snapshot も変更しない。
 - Team 削除時は membership snapshot と index を同時に削除対象にする。
 - snapshot repository が読めない場合は fail closed とし、owner/admin の復旧操作だけ許可する。
 - 保存済み snapshot に有効期限は設けない。membership の鮮度は `synced_at` として UI・監査へ
@@ -315,6 +362,7 @@ membership を付与しない。一方、Team owner と platform admin の管理
 監査イベント `team_membership.sync_started` / `succeeded` / `failed` を追加し、次を記録する。
 
 - operation ID、Team principal ID、actor principal ID
+- 起動理由 (`manual`, `identity_created`, `identity_linked`)
 - binding revision と対象 binding 数（token は記録しない）
 - 開始・終了時刻、追加・削除・未リンク・総メンバー数
 - 失敗分類 (`credential_missing`, `github_rate_limited`, `github_unavailable`,
@@ -326,10 +374,11 @@ metrics には同期回数、失敗数、所要時間、GitHub API request 数�
 ## 移行手順
 
 1. membership repository、同期 service、状態取得 API を追加する。この段階では認可は旧経路のまま。
-2. UI に同期ボタンを追加し、各 Team で初回 snapshot を作れるようにする。
-3. shadow mode で旧 resolver の結果と snapshot の差分を記録する。
-4. snapshot が存在する Team から保存済み membership を認可の正本へ切り替える。
-5. 全 Team の移行後、認証時の GitHub Team API 呼び出しと TTL 付き
+2. 永続 operation/outbox と identity lifecycle の自動同期 trigger を追加する。
+3. UI に同期ボタンを追加し、各 Team で初回 snapshot を作れるようにする。
+4. shadow mode で旧 resolver の結果と snapshot の差分を記録する。
+5. snapshot が存在する Team から保存済み membership を認可の正本へ切り替える。
+6. 全 Team の移行後、通常認証時の GitHub Team API 呼び出しと TTL 付き
    `agentapi-user-team-mapping` ConfigMap を廃止する。
 
 切り替え期間中に snapshot がない Team は旧 resolver を使える feature flag を用意する。ただし
@@ -342,6 +391,8 @@ Team ごとに snapshot が一度作成された後は旧 resolver へ戻さな�
 - repository: atomic replace、generation conflict、Pod 再起動相当の再生成、index reconciliation。
 - service: 複数 binding の全成功、部分失敗時の非更新、binding revision conflict。
 - rate limit: 同一 Team の並行実行、複数 replica 相当、60 秒境界、lease timeout。
+- lifecycle trigger: 初回作成、identity link、通常ログインでは非発火、対象 Team の絞り込み、
+  operation の永続化・coalesce。
 - authorization: 保存済み追加・削除の即時反映、未同期時 fail closed、owner/admin の初回同期。
 - API: `403/409/422/429/502`、`Retry-After`、token/レスポンス本文を漏らさないこと。
 - frontend: loading、countdown、別 client による `429`、成功差分、各 disable 理由。
@@ -349,7 +400,11 @@ Team ごとに snapshot が一度作成された後は旧 resolver へ戻さな�
 ## 受け入れ条件
 
 - 同期成功後に Pod を再起動しても Team membership が維持される。
-- 通常のログイン・認証済み API request では GitHub Team API が呼ばれない。
+- GitHub identity を伴う初回ユーザー作成・アカウント連携では、本人が参加する GitHub Team に
+  対応する ccplant Team だけが自動同期される。
+- 通常のログイン・token refresh・認証済み API request では GitHub Team API が呼ばれない。
+- 自動同期が失敗してもユーザー作成・identity link は成功し、既存 snapshot は維持される。
+- 手動同期と自動同期が競合しても、Team 単位の60秒制限を共有して1回に coalesce される。
 - ボタン押下で設定済み GitHub Team の現在のメンバーが保存され、追加・削除が次の request から
   認可へ反映される。
 - いずれかの binding 取得に失敗しても、直前の正常な名簿が変化しない。
@@ -362,7 +417,8 @@ Team ごとに snapshot が一度作成された後は旧 resolver へ戻さな�
 
 1. `TeamMembershipSnapshot` と repository、identity index。
 2. 分散 rate limiter/lease と `TeamMembershipSyncService`。
-3. members/status/sync API と監査イベント。
-4. GitHub チーム設定画面の状態表示・同期ボタン・countdown。
-5. 保存済み membership resolver と request ごとの認可再照合。
-6. shadow mode、段階的切り替え、旧 user-team cache の削除。
+3. 永続 operation/outbox と identity lifecycle trigger。
+4. members/status/sync API と監査イベント。
+5. GitHub チーム設定画面の状態表示・同期ボタン・countdown。
+6. 保存済み membership resolver と request ごとの認可再照合。
+7. shadow mode、段階的切り替え、旧 user-team cache の削除。
