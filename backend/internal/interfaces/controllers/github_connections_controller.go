@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1019,6 +1020,17 @@ func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context
 			linkedIdentities[externalIdentityKey(identity.ConnectionID, identity.GitHubUserID)] = struct{}{}
 		}
 	}
+	principals, err := c.listPrincipals(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, principal := range principals {
+		if principal.ID == principalID && strings.HasPrefix(principal.InternalUserID, "github:") {
+			if githubID, parseErr := strconv.ParseInt(strings.TrimPrefix(principal.InternalUserID, "github:"), 10, 64); parseErr == nil {
+				linkedIdentities[externalIdentityKey("", githubID)] = struct{}{}
+			}
+		}
+	}
 	result := make([]auth.GitHubTeamMembership, 0)
 	seen := make(map[string]struct{})
 	for _, snapshot := range snapshots {
@@ -1046,6 +1058,19 @@ func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context
 		}
 	}
 	return result, true, nil
+}
+
+// ResolveTeamMembershipsForGitHubUser maps a built-in OAuth identity to its
+// existing stable principal before reading the durable snapshot.
+func (c *GitHubConnectionsController) ResolveTeamMembershipsForGitHubUser(ctx context.Context, githubUserID int64) ([]auth.GitHubTeamMembership, bool, error) {
+	principal, err := c.loadPrincipal(ctx, fmt.Sprintf("github:%d", githubUserID))
+	if apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return c.ResolveTeamMemberships(ctx, principal.ID)
 }
 
 // ResolveLiveTeamMemberships queries GitHub and is reserved for identity

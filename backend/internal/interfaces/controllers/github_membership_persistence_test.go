@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -76,4 +77,21 @@ func TestPrincipalForExternalIdentityUsesExistingBuiltInOAuthPrincipal(t *testin
 	require.False(t, found)
 	_, err = controller.loadPrincipal(ctx, "github:99")
 	require.Error(t, err, "sync must not create principals for unknown GitHub members")
+}
+
+func TestResolveTeamMembershipsForBuiltInOAuthUser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	principal, err := controller.getOrCreatePrincipal(ctx, "github:42")
+	require.NoError(t, err)
+	controller.SetMembershipRepository(&membershipSnapshotRepo{snapshots: []*entities.TeamMembershipSnapshot{{
+		ExternalMembers: []entities.ExternalTeamMember{{GitHubUserID: 42, Sources: []entities.ExternalTeamRef{{Organization: "acme", TeamSlug: "platform"}}}},
+		Members:         []entities.TeamMember{{PrincipalID: principal.ID, Sources: []entities.ExternalIdentityRef{{GitHubUserID: 42}}}},
+	}}})
+
+	memberships, linked, err := controller.ResolveTeamMembershipsForGitHubUser(ctx, 42)
+	require.NoError(t, err)
+	require.True(t, linked)
+	require.Equal(t, []auth.GitHubTeamMembership{{Organization: "acme", TeamSlug: "platform"}}, memberships)
 }
