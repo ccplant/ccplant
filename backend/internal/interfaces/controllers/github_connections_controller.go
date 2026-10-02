@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
@@ -182,6 +184,10 @@ type GitHubConnectionsController struct {
 	encryptedStorage bool
 	brokerMu         sync.Mutex
 	tokenCache       map[string]githubCachedToken
+	membershipRepo   ports.TeamMembershipRepository
+	membershipSyncer interface {
+		AutoSyncForPrincipal(context.Context, string, string) error
+	}
 }
 
 func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publicBaseURL string, encryptedStorage ...bool) *GitHubConnectionsController {
@@ -198,6 +204,16 @@ func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publ
 		controller.encryptedStorage = encryptedStorage[0]
 	}
 	return controller
+}
+
+func (c *GitHubConnectionsController) SetMembershipRepository(repo ports.TeamMembershipRepository) {
+	c.membershipRepo = repo
+}
+
+func (c *GitHubConnectionsController) SetMembershipSyncer(syncer interface {
+	AutoSyncForPrincipal(context.Context, string, string) error
+}) {
+	c.membershipSyncer = syncer
 }
 
 func (c *GitHubConnectionsController) Create(ctx echo.Context) error {
@@ -576,9 +592,14 @@ func (c *GitHubConnectionsController) CompleteLogin(ctx context.Context, stateID
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub user lookup failed").SetInternal(err)
 	}
-	principal, err := c.resolveLoginPrincipal(ctx, connection, githubUser, token, expiresAt)
+	principal, created, err := c.resolveLoginPrincipalWithCreated(ctx, connection, githubUser, token, expiresAt)
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "GitHub identity could not be resolved").SetInternal(err)
+	}
+	if created && c.membershipSyncer != nil {
+		if syncErr := c.membershipSyncer.AutoSyncForPrincipal(ctx, principal.ID, "identity_created"); syncErr != nil {
+			log.Printf("[GITHUB_MEMBERSHIP] Initial membership sync failed for principal %q: %v", principal.ID, syncErr)
+		}
 	}
 	return &GitHubConnectionLoginResult{AccessToken: token, APIURL: connection.APIURL, UserID: principal.ID, ConnectionID: connection.ID}, nil
 }
@@ -734,6 +755,11 @@ func (c *GitHubConnectionsController) Callback(ctx echo.Context) error {
 	if !created {
 		return c.redirectOAuthResult(ctx, state.ReturnTo, "success", "already_linked")
 	}
+	if c.membershipSyncer != nil {
+		if syncErr := c.membershipSyncer.AutoSyncForPrincipal(ctx.Request().Context(), identity.PrincipalID, "identity_linked"); syncErr != nil {
+			log.Printf("[GITHUB_MEMBERSHIP] Linked identity sync failed for principal %q: %v", identity.PrincipalID, syncErr)
+		}
+	}
 	return c.redirectOAuthResult(ctx, state.ReturnTo, "success", "linked")
 }
 
@@ -832,10 +858,225 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
+// PrincipalIDForUser resolves the stable principal used by linked identities.
+func (c *GitHubConnectionsController) PrincipalIDForUser(ctx context.Context, user *entities.User) (string, error) {
+	principal, err := c.loadPrincipalForUser(ctx, user)
+	if err != nil {
+		return "", err
+	}
+	return principal.ID, nil
+}
+
+// PrincipalForExternalIdentity resolves a GitHub identity into its linked user principal.
+func (c *GitHubConnectionsController) PrincipalForExternalIdentity(ctx context.Context, connectionID string, githubUserID int64) (string, bool, error) {
+	if connectionID == "" {
+		identities, err := c.listIdentities(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		for _, identity := range identities {
+			if identity.GitHubUserID == githubUserID {
+				return identity.PrincipalID, true, nil
+			}
+		}
+		// Built-in GitHub OAuth principals predate connection identities. Link
+		// only an already-existing github:<id> principal; team synchronization
+		// must never create application users for arbitrary GitHub members.
+		principal, err := c.loadPrincipal(ctx, fmt.Sprintf("github:%d", githubUserID))
+		if err == nil {
+			return principal.ID, true, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return "", false, err
+		}
+		return "", false, nil
+	}
+	var identity githubIdentity
+	_, err := c.loadObject(ctx, identitySecretName(connectionID, githubUserID), &identity)
+	if apierrors.IsNotFound(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return identity.PrincipalID, true, nil
+}
+
+// FetchExternalTeamMembers loads the complete member list for one exact binding
+// using a credential linked to actorPrincipalID.
+func (c *GitHubConnectionsController) FetchExternalTeamMembers(ctx context.Context, actorPrincipalID string, binding entities.ExternalTeamBinding, builtInToken ...string) ([]entities.ExternalTeamMember, error) {
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[int64]entities.ExternalTeamMember)
+	merge := func(members []entities.ExternalTeamMember) {
+		for _, member := range members {
+			if current, ok := merged[member.GitHubUserID]; ok {
+				current.Sources = append(current.Sources, member.Sources...)
+				merged[member.GitHubUserID] = current
+			} else {
+				member.ConnectionID = ""
+				for i := range member.Sources {
+					member.Sources[i].ConnectionID = ""
+				}
+				merged[member.GitHubUserID] = member
+			}
+		}
+	}
+	for _, identity := range identities {
+		if identity.PrincipalID != actorPrincipalID {
+			continue
+		}
+		connection, _, _, err := c.loadConnection(ctx, identity.ConnectionID)
+		if err != nil || !connection.Enabled {
+			continue
+		}
+		secret, err := c.client.CoreV1().Secrets(c.namespace).Get(ctx, identitySecretName(identity.ConnectionID, identity.GitHubUserID), metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		if raw := string(secret.Data[githubExpiresAtKey]); raw != "" {
+			expiresAt, parseErr := time.Parse(time.RFC3339, raw)
+			if parseErr != nil || !expiresAt.After(time.Now().UTC()) {
+				continue
+			}
+		}
+		token := string(secret.Data[githubAccessTokenKey])
+		if token == "" {
+			continue
+		}
+		members, err := c.fetchGitHubTeamMembers(ctx, connection, token, binding)
+		if err == nil {
+			merge(members)
+		}
+	}
+	if len(builtInToken) > 0 && builtInToken[0] != "" {
+		connection := githubConnection{ID: "github", APIURL: "https://api.github.com", Enabled: true}
+		if members, err := c.fetchGitHubTeamMembers(ctx, connection, builtInToken[0], binding); err == nil {
+			merge(members)
+		}
+	}
+	if len(merged) > 0 {
+		result := make([]entities.ExternalTeamMember, 0, len(merged))
+		for _, member := range merged {
+			result = append(result, member)
+		}
+		return result, nil
+	}
+	return nil, fmt.Errorf("no linked GitHub credential can read %s/%s", binding.Organization, binding.TeamSlug)
+}
+
+func (c *GitHubConnectionsController) fetchGitHubTeamMembers(ctx context.Context, connection githubConnection, token string, binding entities.ExternalTeamBinding) ([]entities.ExternalTeamMember, error) {
+	result := make([]entities.ExternalTeamMember, 0)
+	for page := 1; ; page++ {
+		endpoint := fmt.Sprintf("%s/orgs/%s/teams/%s/members?role=all&per_page=100&page=%d", strings.TrimSuffix(connection.APIURL, "/"), url.PathEscape(binding.Organization), url.PathEscape(binding.TeamSlug), page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var users []githubOAuthUser
+		decodeErr := json.NewDecoder(resp.Body).Decode(&users)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GitHub team member lookup returned status %d", resp.StatusCode)
+		}
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		for _, user := range users {
+			result = append(result, entities.ExternalTeamMember{ConnectionID: connection.ID, GitHubUserID: user.ID, Login: user.Login, Sources: []entities.ExternalTeamRef{{ConnectionID: connection.ID, Organization: strings.ToLower(binding.Organization), TeamSlug: strings.ToLower(binding.TeamSlug)}}})
+		}
+		if len(users) < 100 {
+			return result, nil
+		}
+	}
+}
+
 // ResolveTeamMemberships loads and merges memberships for every GitHub identity
 // linked to a principal. Connection IDs are retained as provenance, but are not
 // part of the logical team identity used by ccplant.
 func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context, principalID string) ([]auth.GitHubTeamMembership, bool, error) {
+	if c.membershipRepo == nil {
+		return c.ResolveLiveTeamMemberships(ctx, principalID)
+	}
+	snapshots, err := c.membershipRepo.List(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	linkedIdentities := make(map[string]struct{})
+	for _, identity := range identities {
+		if identity.PrincipalID == principalID {
+			linkedIdentities[externalIdentityKey(identity.ConnectionID, identity.GitHubUserID)] = struct{}{}
+		}
+	}
+	principals, err := c.listPrincipals(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, principal := range principals {
+		if principal.ID == principalID && strings.HasPrefix(principal.InternalUserID, "github:") {
+			if githubID, parseErr := strconv.ParseInt(strings.TrimPrefix(principal.InternalUserID, "github:"), 10, 64); parseErr == nil {
+				linkedIdentities[externalIdentityKey("", githubID)] = struct{}{}
+			}
+		}
+	}
+	result := make([]auth.GitHubTeamMembership, 0)
+	seen := make(map[string]struct{})
+	for _, snapshot := range snapshots {
+		for _, member := range snapshot.Members {
+			if member.PrincipalID != principalID {
+				continue
+			}
+			for _, external := range snapshot.ExternalMembers {
+				if _, linked := linkedIdentities[externalIdentityKey(external.ConnectionID, external.GitHubUserID)]; !linked {
+					continue
+				}
+				for _, source := range external.Sources {
+					key := strings.ToLower(source.Organization) + "\x00" + strings.ToLower(source.TeamSlug)
+					if _, exists := seen[key]; exists {
+						continue
+					}
+					for _, identity := range member.Sources {
+						if identity.ConnectionID == external.ConnectionID && identity.GitHubUserID == external.GitHubUserID {
+							seen[key] = struct{}{}
+							result = append(result, auth.GitHubTeamMembership{ConnectionID: source.ConnectionID, Organization: source.Organization, TeamSlug: source.TeamSlug})
+						}
+					}
+				}
+			}
+		}
+	}
+	return result, true, nil
+}
+
+// ResolveTeamMembershipsForGitHubUser maps a built-in OAuth identity to its
+// existing stable principal before reading the durable snapshot.
+func (c *GitHubConnectionsController) ResolveTeamMembershipsForGitHubUser(ctx context.Context, githubUserID int64) ([]auth.GitHubTeamMembership, bool, error) {
+	principal, err := c.loadPrincipal(ctx, fmt.Sprintf("github:%d", githubUserID))
+	if apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return c.ResolveTeamMemberships(ctx, principal.ID)
+}
+
+// ResolveLiveTeamMemberships queries GitHub and is reserved for identity
+// creation/link lifecycle synchronization. Normal authentication uses the
+// durable snapshots in ResolveTeamMemberships.
+func (c *GitHubConnectionsController) ResolveLiveTeamMemberships(ctx context.Context, principalID string) ([]auth.GitHubTeamMembership, bool, error) {
 	identities, err := c.listIdentities(ctx)
 	if err != nil {
 		return nil, false, err
@@ -885,6 +1126,11 @@ func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context
 		}
 	}
 	return memberships, linked, nil
+}
+
+func (c *GitHubConnectionsController) FetchBuiltInTeams(ctx context.Context, token string) ([]auth.GitHubTeamMembership, error) {
+	connection := githubConnection{ID: "github", APIURL: "https://api.github.com", Enabled: true}
+	return c.fetchGitHubTeams(ctx, connection, token)
 }
 
 func (c *GitHubConnectionsController) fetchGitHubTeams(ctx context.Context, connection githubConnection, token string) ([]auth.GitHubTeamMembership, error) {
@@ -1062,37 +1308,42 @@ func (c *GitHubConnectionsController) loadPrincipalForUser(ctx context.Context, 
 }
 
 func (c *GitHubConnectionsController) resolveLoginPrincipal(ctx context.Context, connection githubConnection, user githubOAuthUser, token string, expiresAt *time.Time) (githubPrincipal, error) {
+	principal, _, err := c.resolveLoginPrincipalWithCreated(ctx, connection, user, token, expiresAt)
+	return principal, err
+}
+
+func (c *GitHubConnectionsController) resolveLoginPrincipalWithCreated(ctx context.Context, connection githubConnection, user githubOAuthUser, token string, expiresAt *time.Time) (githubPrincipal, bool, error) {
 	var identity githubIdentity
 	_, err := c.loadObject(ctx, identitySecretName(connection.ID, user.ID), &identity)
 	if apierrors.IsNotFound(err) {
 		if !connection.AllowUserCreation {
-			return githubPrincipal{}, errors.New("user creation is disabled for this GitHub connection")
+			return githubPrincipal{}, false, errors.New("user creation is disabled for this GitHub connection")
 		}
 		principal, createErr := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github-connection:%s:%d", connection.ID, user.ID))
 		if createErr != nil {
-			return githubPrincipal{}, createErr
+			return githubPrincipal{}, false, createErr
 		}
 		identity = githubIdentity{ID: uuid.NewString(), PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: user.ID, Login: user.Login, AvatarURL: user.AvatarURL, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		_, linkErr := c.linkIdentity(ctx, identity, token, expiresAt)
-		return principal, linkErr
+		return principal, linkErr == nil, linkErr
 	}
 	if err != nil {
-		return githubPrincipal{}, err
+		return githubPrincipal{}, false, err
 	}
 	if _, err := c.linkIdentity(ctx, identity, token, expiresAt); err != nil {
-		return githubPrincipal{}, err
+		return githubPrincipal{}, false, err
 	}
 	principals, err := c.listPrincipals(ctx)
 	if err != nil {
-		return githubPrincipal{}, err
+		return githubPrincipal{}, false, err
 	}
 	for _, principal := range principals {
 		if principal.ID != identity.PrincipalID {
 			continue
 		}
-		return principal, nil
+		return principal, false, nil
 	}
-	return githubPrincipal{}, errors.New("principal for GitHub identity not found")
+	return githubPrincipal{}, false, errors.New("principal for GitHub identity not found")
 }
 
 func (c *GitHubConnectionsController) loadPrincipal(ctx context.Context, internalUserID string) (githubPrincipal, error) {

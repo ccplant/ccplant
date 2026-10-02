@@ -209,13 +209,14 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "external_teams"
+                  "github_teams"
                 ],
                 "properties": {
-                  "external_teams": {
+                  "github_teams": {
                     "type": "array",
                     "items": {
-                      "$ref": "#/components/schemas/ExternalTeamBinding"
+                      "type": "string",
+                      "pattern": "^[^/]+/[^/]+$"
                     }
                   }
                 }
@@ -234,6 +235,68 @@
               }
             }
           }
+        }
+      }
+    },
+    "/teams/{team}/members": {
+      "parameters": [
+        {
+          "name": "team",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "summary": "Get persisted team membership",
+        "operationId": "getTeamMembers",
+        "tags": ["Settings"],
+        "responses": {
+          "200": {
+            "description": "Persisted members and synchronization status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamMembershipState" }
+              }
+            }
+          },
+          "403": { "description": "Team access denied" },
+          "404": { "description": "Team not found" }
+        }
+      }
+    },
+    "/teams/{team}/members/sync": {
+      "parameters": [
+        {
+          "name": "team",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "post": {
+        "summary": "Synchronize persisted members from bound GitHub teams",
+        "operationId": "syncTeamMembers",
+        "tags": ["Settings"],
+        "responses": {
+          "200": {
+            "description": "Synchronization result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TeamMembershipSyncResult" }
+              }
+            }
+          },
+          "403": { "description": "Team access denied" },
+          "409": { "description": "Synchronization is already running" },
+          "422": { "description": "A readable linked GitHub credential or exact binding is required" },
+          "429": {
+            "description": "Synchronization is limited to once per minute",
+            "headers": {
+              "Retry-After": { "schema": { "type": "integer" } }
+            }
+          },
+          "502": { "description": "GitHub synchronization failed" }
         }
       }
     },
@@ -7389,7 +7452,7 @@
           "team_id",
           "principal_id",
           "name",
-          "external_teams"
+          "github_teams"
         ],
         "properties": {
           "team_id": {
@@ -7402,12 +7465,64 @@
           "name": {
             "type": "string"
           },
-          "external_teams": {
+          "github_teams": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ExternalTeamBinding"
+              "type": "string",
+              "pattern": "^[^/]+/[^/]+$"
             }
           }
+        }
+      },
+      "TeamMember": {
+        "type": "object",
+        "required": ["principal_id", "login", "sources"],
+        "properties": {
+          "principal_id": { "type": "string" },
+          "login": { "type": "string" },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["github_user_id"],
+              "properties": {
+                "github_user_id": { "type": "integer", "format": "int64" }
+              }
+            }
+          }
+        }
+      },
+      "TeamMembershipState": {
+        "type": "object",
+        "required": ["members", "unlinked_external_member_count", "sync"],
+        "properties": {
+          "members": { "type": "array", "items": { "$ref": "#/components/schemas/TeamMember" } },
+          "unlinked_external_member_count": { "type": "integer" },
+          "sync": {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": { "type": "string", "enum": ["never", "running", "succeeded", "failed"] },
+              "synced_at": { "type": "string", "format": "date-time" },
+              "synced_by": { "type": "string" },
+              "reason": { "type": "string", "enum": ["manual", "identity_created", "identity_linked"] },
+              "next_sync_at": { "type": "string", "format": "date-time" },
+              "operation_id": { "type": "string" }
+            }
+          }
+        }
+      },
+      "TeamMembershipSyncResult": {
+        "type": "object",
+        "required": ["operation_id", "synced_at", "next_sync_at", "member_count", "unlinked_external_member_count", "added_count", "removed_count"],
+        "properties": {
+          "operation_id": { "type": "string" },
+          "synced_at": { "type": "string", "format": "date-time" },
+          "next_sync_at": { "type": "string", "format": "date-time" },
+          "member_count": { "type": "integer" },
+          "unlinked_external_member_count": { "type": "integer" },
+          "added_count": { "type": "integer" },
+          "removed_count": { "type": "integer" }
         }
       },
       "GoogleConnectionInput": {

@@ -1136,6 +1136,16 @@ func (s *Server) GetPersistenceClient() kubernetes.Interface {
 	return s.persistenceClient
 }
 
+// GetApplicationKVStore returns the storage-neutral application persistence
+// boundary. Kubernetes-only deployments are exposed through the Store adapter
+// just like libSQL and replicated deployments.
+func (s *Server) GetApplicationKVStore() kvstore.Store {
+	if s.kvStore != nil {
+		return s.kvStore
+	}
+	return kvstore.NewKubernetesStore(s.persistenceClient)
+}
+
 // SetSessionManager allows configuration of a custom session manager (for testing)
 func (s *Server) SetSessionManager(manager portrepos.SessionManager) {
 	s.sessionManager = manager

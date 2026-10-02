@@ -12,13 +12,17 @@ import (
 
 const teamPrincipalPrefix = "team-"
 
-// ExternalTeamBinding maps a team from one GitHub connection into this
-// ccplant team. ManagedBy is either "discovery" or "api".
+// ExternalTeamBinding is the legacy persisted representation. ConnectionID is
+// intentionally ignored: GitHub teams are identified only by org/slug.
 type ExternalTeamBinding struct {
-	ConnectionID string `json:"connection_id"`
+	ConnectionID string `json:"-"`
 	Organization string `json:"organization"`
 	TeamSlug     string `json:"team_slug"`
 	ManagedBy    string `json:"managed_by"`
+}
+
+func (b ExternalTeamBinding) GitHubTeam() string {
+	return strings.ToLower(strings.TrimSpace(b.Organization)) + "/" + strings.ToLower(strings.TrimSpace(b.TeamSlug))
 }
 
 // TeamConfig represents a team configuration domain entity
