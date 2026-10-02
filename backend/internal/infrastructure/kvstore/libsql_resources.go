@@ -57,6 +57,7 @@ var libSQLResourceTables = []libSQLResourceTable{
 	{name: "agentapi_credentials", kind: KindSecret, labelKey: "agentapi.proxy/credentials", labelValue: "true"},
 	{name: "agentapi_shares", kind: KindConfigMap, labelKey: "agentapi.proxy/shares", labelValue: "true"},
 	{name: "agentapi_team_configs", kind: KindSecret, labelKey: "agentapi.proxy/team-config", labelValue: "true", indexColumns: []string{"principal_id"}},
+	{name: "agentapi_team_memberships", kind: KindSecret, labelKey: "agentapi.proxy/team-membership", labelValue: "true", indexColumns: []string{"principal_id"}},
 	{name: "agentapi_personal_api_keys", kind: KindSecret, labelKey: "agentapi.proxy/personal-api-key", labelValue: "true", indexColumns: []string{"principal_id"}},
 	{name: "agentapi_api_tokens", kind: KindSecret, labelKey: "agentapi.proxy/api-token", labelValue: "true", indexColumns: []string{"principal_id", "resource_scope"}},
 	{name: "agentapi_local_users", kind: KindSecret, labelKey: "agentapi.proxy/local-user", labelValue: "true"},

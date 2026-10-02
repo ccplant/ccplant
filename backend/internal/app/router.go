@@ -98,7 +98,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var adminSettingsController *controllers.AdminSettingsController
 	var githubConnectionsController *controllers.GitHubConnectionsController
 	var teamMembershipController *controllers.TeamMembershipController
-	var membershipRepo *repositories.KubernetesTeamMembershipRepository
+	var membershipRepo *repositories.KVStoreTeamMembershipRepository
 	var googleConnectionsController *controllers.GoogleConnectionsController
 	if server.persistenceClient != nil {
 		apiKeyRepo = repositories.NewKubernetesPersonalAPIKeyRepository(
@@ -113,7 +113,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
-		membershipRepo = repositories.NewKubernetesTeamMembershipRepository(server.GetPersistenceClient(), server.namespace)
+		membershipRepo = repositories.NewKVStoreTeamMembershipRepository(server.GetApplicationKVStore(), server.namespace)
 		teamMembershipController = controllers.NewTeamMembershipController(server.teamConfigRepo, membershipRepo, githubConnectionsController)
 		githubConnectionsController.SetMembershipRepository(membershipRepo)
 		githubConnectionsController.SetMembershipSyncer(teamMembershipController)

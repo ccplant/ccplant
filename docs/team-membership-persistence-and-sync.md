@@ -71,9 +71,10 @@ user ID は GitHub.com と GHES の間で一意ではない。外部メンバー
 
 ## データモデル
 
-TeamConfig の Secret に名簿を同居させると、メンバー数に比例して設定更新時の競合と Secret
-サイズが増える。このため membership 専用 repository を追加する。Kubernetes backend では
-Team ごとに 1 Secret、KV backend では Team principal ID を partition key とする。
+TeamConfig のレコードに名簿を同居させると、メンバー数に比例して設定更新時の競合とレコード
+サイズが増える。このため membership 専用 repository を追加する。repository は
+`kvstore.Store` を直接利用し、Team principal ID ごとに1レコードを保存する。Kubernetes、libSQL、
+暗号化・replicated backend の違いは `kvstore.Store` 実装側で吸収する。
 
 ```go
 type TeamMembershipSnapshot struct {
@@ -123,18 +124,18 @@ type TeamMembershipRepository interface {
 }
 ```
 
-`Replace` は generation による compare-and-swap とする。Kubernetes 実装では Secret の
-`resourceVersion` も利用する。`FindTeamsByExternalIdentity` 用の index は再構築可能な派生データ
+`Replace` は generation と `kvstore.Record.Version` による compare-and-swap とする。
+`FindTeamsByExternalIdentity` 用の index は再構築可能な派生データ
 とし、snapshot 更新と同一トランザクションにできない backend では、新 snapshot を正として
 index を冪等に reconciliation する。
 
-Kubernetes Secret 名には可変な team name ではなく principal ID を用いる。
+レコードkeyには可変な team name ではなく principal ID を用いる。
 例: `agentapi-team-membership-team-01...`。GitHub user ID や login は機密 token ではないが、
-チーム所属情報はアクセス制限すべきデータなので ConfigMap ではなく Secret に保存する。
+チーム所属情報はアクセス制限すべきデータなので `kvstore.KindSecret` として保存する。
 
 ## 同期処理
 
-同期は `TeamMembershipSyncService` に実装し、controller から GitHub/Kubernetes の詳細を
+同期は `TeamMembershipSyncService` に実装し、controller から GitHub/KV backend の詳細を
 分離する。
 
 1. actor が Team の管理権限を持つことを検証する。

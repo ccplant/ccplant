@@ -3,19 +3,22 @@ package repositories
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestKubernetesTeamMembershipRepositoryPersistsAndRateLimitsSync(t *testing.T) {
+func TestKVStoreTeamMembershipRepositoryPersistsAndRateLimitsSync(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	repo := NewKubernetesTeamMembershipRepository(fake.NewSimpleClientset(), "test")
+	store := kvstore.NewKubernetesStore(fake.NewSimpleClientset())
+	repo := NewKVStoreTeamMembershipRepository(store, "test")
 	now := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
 
 	leased, err := repo.AcquireSync(ctx, "team-01ARZ3NDEKTSV4RRFFQ69G5FAV", "operation-1", now)
@@ -49,14 +52,31 @@ func TestKubernetesTeamMembershipRepositoryPersistsAndRateLimitsSync(t *testing.
 	require.NoError(t, err)
 }
 
-func TestKubernetesTeamMembershipRepositoryRejectsStaleOperation(t *testing.T) {
+func TestKVStoreTeamMembershipRepositoryRejectsStaleOperation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	repo := NewKubernetesTeamMembershipRepository(fake.NewSimpleClientset(), "test")
+	repo := NewKVStoreTeamMembershipRepository(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	now := time.Now().UTC()
 	leased, err := repo.AcquireSync(ctx, "team-01ARZ3NDEKTSV4RRFFQ69G5FAV", "current", now)
 	require.NoError(t, err)
 
 	err = repo.Replace(ctx, &entities.TeamMembershipSnapshot{TeamPrincipalID: leased.TeamPrincipalID}, "stale")
 	require.True(t, errors.Is(err, ports.ErrTeamSyncConflict))
+}
+
+func TestKVStoreTeamMembershipRepositoryUsesLibSQLDirectly(t *testing.T) {
+	ctx := context.Background()
+	store, err := kvstore.NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "memberships.db"), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	repo := NewKVStoreTeamMembershipRepository(store, "test")
+
+	leased, err := repo.AcquireSync(ctx, "team-01ARZ3NDEKTSV4RRFFQ69G5FAV", "operation-1", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, "operation-1", leased.OperationID)
+
+	listed, err := repo.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, leased.TeamPrincipalID, listed[0].TeamPrincipalID)
 }
