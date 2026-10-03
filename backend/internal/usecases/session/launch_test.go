@@ -238,6 +238,27 @@ func TestLaunchPropagatesProfileMCPServers(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesProfileSkills(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "skills", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSkills([]string{"org/profile-skills"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	if _, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID: "user-1", Scope: entities.ScopeUser,
+	}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.ProfileSkills; len(got) != 1 || got[0] != "org/profile-skills" {
+		t.Fatalf("ProfileSkills = %#v", got)
+	}
+}
+
 func TestLaunchPropagatesProfileSecretReferences(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	profile := entities.NewSessionProfile("profile-1", "secrets", "user-1")
@@ -350,6 +371,7 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 		"SHARED":      "source",
 		"SOURCE_ONLY": "source-value",
 	})
+	sourceCfg.SetSkills([]string{"org/source-skills", "org/shared"})
 	github := entities.NewMCPServer("github", "http")
 	github.SetURL("https://source.example/github")
 	servers := entities.NewMCPServersSettings()
@@ -364,6 +386,7 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 		"SHARED":       "profile",
 		"PROFILE_ONLY": "profile-value",
 	})
+	profileCfg.SetSkills([]string{"org/shared", "org/profile-skills"})
 	githubOverride := entities.NewMCPServer("github", "http")
 	githubOverride.SetURL("https://profile.example/github")
 	githubOverride.SetHeaders(map[string]string{"Authorization": "Bearer profile"})
@@ -395,6 +418,10 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	got := sessionManager.req.ProfileMCPServers.GetServer("github")
 	if got == nil || got.URL() != "https://profile.example/github" || got.Headers()["Authorization"] != "Bearer profile" {
 		t.Fatalf("profile MCP override was not applied: %#v", got)
+	}
+	wantSkills := []string{"org/source-skills", "org/shared", "org/profile-skills"}
+	if !reflect.DeepEqual(sessionManager.req.ProfileSkills, wantSkills) {
+		t.Fatalf("ProfileSkills = %#v, want %#v", sessionManager.req.ProfileSkills, wantSkills)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -352,6 +353,37 @@ func TestBuildSessionSettings_ProfileEnvironmentOverridesTeamBedrockAndRequestOv
 		if got := settings.Env[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
+	}
+}
+
+func TestBuildSessionSettings_MergesSettingsAndProfileSkills(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}})
+	cfg := &config.Config{KubernetesSession: config.KubernetesSessionConfig{
+		Namespace: "test-ns", Image: "test-image:latest", BasePort: 9000, PVCEnabled: boolPtrForTest(false),
+	}}
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), k8sClient)
+	if err != nil {
+		t.Fatalf("NewKubernetesSessionManagerWithClient() error = %v", err)
+	}
+	manager.namespace = "test-ns"
+	userSettings := entities.NewSettings("test-user")
+	userSettings.SetSkills([]string{"org/settings-skills", "org/shared"})
+	manager.SetSettingsRepository(&fakeSettingsRepository{settings: map[string]*entities.Settings{"test-user": userSettings}})
+
+	req := &entities.RunServerRequest{
+		UserID: "test-user", Scope: entities.ScopeUser,
+		ProfileSkills: []string{"org/shared", "org/profile-skills"},
+	}
+	session := NewKubernetesSession("test-session", req, "test-deploy", "test-service", "test-pvc", "test-ns", 9000, nil, nil)
+	settings := manager.buildSessionSettings(context.Background(), session, req, nil)
+
+	got, ok := settings.Claude.SettingsJSON["skills"].([]string)
+	if !ok {
+		t.Fatalf("skills type = %T", settings.Claude.SettingsJSON["skills"])
+	}
+	want := []string{"org/profile-skills", "org/settings-skills", "org/shared"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("skills = %#v, want %#v", got, want)
 	}
 }
 

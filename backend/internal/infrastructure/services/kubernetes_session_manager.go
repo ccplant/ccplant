@@ -7772,6 +7772,9 @@ func (m *KubernetesSessionManager) resolveSettings(
 	if req.ProfileMCPServers != nil && !req.ProfileMCPServers.IsEmpty() {
 		layers = append(layers, settingsToMCPProfilePatch(req.ProfileMCPServers))
 	}
+	if len(req.ProfileSkills) > 0 {
+		layers = append(layers, settingspatch.SettingsPatch{Skills: append([]string(nil), req.ProfileSkills...)})
+	}
 
 	resolved := settingspatch.Resolve(layers...)
 	// Materialize credentials for the selected session method, including when

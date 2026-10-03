@@ -54,6 +54,7 @@ type LaunchRequest struct {
 	ProfileSecretIDs         []string
 	SettingsTeamID           string
 	ProfileMCPServers        *entities.MCPServersSettings
+	ProfileSkills            []string
 	ResolvedSessionProfileID string
 
 	// Webhook payload to mount in the session filesystem (optional)
@@ -255,6 +256,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		CodexAuthMode:            req.CodexAuthMode,
 		ClaudeAuthMode:           req.ClaudeAuthMode,
 		ProfileMCPServers:        req.ProfileMCPServers,
+		ProfileSkills:            append([]string(nil), req.ProfileSkills...),
 		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
 	}
 
@@ -418,7 +420,26 @@ func mergeProfileConfigSources(base, override entities.SessionProfileConfig) ent
 		}
 		local.SetMCPServers(servers)
 	}
+	local.SetSkills(unionProfileStrings(base.Skills(), local.Skills()))
 	return local
+}
+
+func unionProfileStrings(base, override []string) []string {
+	seen := make(map[string]struct{}, len(base)+len(override))
+	result := make([]string, 0, len(base)+len(override))
+	for _, values := range [][]string{base, override} {
+		for _, value := range values {
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]string) *entities.SessionProfile {
@@ -455,6 +476,7 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	if cfg.MCPServers() != nil {
 		req.ProfileMCPServers = cfg.MCPServers()
 	}
+	req.ProfileSkills = cfg.Skills()
 	// Keep profile environment separate so settings resolution can apply it above
 	// team/user settings while still allowing explicit request values to win.
 	if len(cfg.Environment()) > 0 {

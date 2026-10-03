@@ -11294,6 +11294,14 @@
           "items": { "type": "string" },
           "uniqueItems": true
         },
+        "skills": {
+          "type": "array",
+          "description": "Additional skills.sh package sources installed for sessions using this profile. These are merged with Personal and Team Settings skills, then installed only for the resolved agent type.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
         "files": {
           "files": {
             "type": "array",

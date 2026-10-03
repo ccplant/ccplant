@@ -5,6 +5,8 @@ Status: phase 1 implemented
 > 現在の phase 1 は Settings に skills.sh package source を保存し、session 起動時に bundled CLI で
 > resolved agent 一種類へ導入する実装である。以下に記載する commit 固定 artifact store、preview / review API、
 > update 差分 UI は hardening phase の設計であり、まだ実装していない。
+> package source は Personal / Team Settings と Session Profile の両方で指定できる。選択された profile
+> （source profile を含む）の source を Settings の source に union し、重複を除いて session へ materialize する。
 
 ## 1. 結論
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft, PanelLeft, X, Settings, KeyRound, Bot, Server, Terminal, Tags, Shield, Container, Clock, Files, LockKeyhole } from 'lucide-react'
+import { ArrowLeft, PanelLeft, X, Settings, KeyRound, Bot, Server, Terminal, Tags, Shield, Container, Clock, Files, LockKeyhole, Sparkles } from 'lucide-react'
 import { SideNav } from '@/components/settings/ui/SideNav'
 import { SettingsPageHeader } from '@/components/settings/ui/SettingsPageHeader'
 import { usePathname, useSearchParams } from 'next/navigation'
@@ -21,6 +21,7 @@ import ProfileConnectionFields from './ProfileConnectionFields'
 import type { ModelConnection, SettingsSecret } from '../../types/settings'
 import type { APIMCPServerConfig } from '../../types/settings'
 import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
+import { SkillSettings } from '../../components/settings/SkillSettings'
 
 interface SessionProfileEditorProps {
   onClose: () => void
@@ -37,6 +38,7 @@ const profileSections = [
   { slug: 'agent', label: 'エージェント', icon: Bot, group: 'AI とエージェント' },
   { slug: 'models', label: 'モデル', icon: Bot, group: 'AI とエージェント' },
   { slug: 'mcp', label: 'MCP サーバー', icon: Server, group: 'セッション環境' },
+  { slug: 'skills', label: 'Skills', icon: Sparkles, group: 'セッション環境' },
   { slug: 'environment', label: '環境変数', icon: Terminal, group: 'セッション環境' },
   { slug: 'secrets', label: 'シークレット', icon: LockKeyhole, group: 'セッション環境' },
   { slug: 'files', label: 'セッションファイル', icon: Files, group: 'セッション環境' },
@@ -102,6 +104,7 @@ export default function SessionProfileEditor({
   const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
   const [availableSecrets, setAvailableSecrets] = useState<SettingsSecret[]>([])
   const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
+  const [skills, setSkills] = useState<string[]>([])
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -205,6 +208,7 @@ export default function SessionProfileEditor({
       setMcpServers(cfg?.mcp_servers ?? {})
       setSourceProfileId(cfg?.source_session_profile_id ?? '')
       setSelectedSecretIds(cfg?.secret_ids ?? [])
+      setSkills(cfg?.skills ?? [])
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -277,6 +281,7 @@ export default function SessionProfileEditor({
       setMcpServers({})
       setSourceProfileId('')
       setSelectedSecretIds([])
+      setSkills([])
       setAvailableProfiles([])
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -446,7 +451,7 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'files'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'skills', 'files'] as const) delete extraConfig[key]
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -462,6 +467,7 @@ export default function SessionProfileEditor({
         ...(parsedUnsyncedFilePaths.length > 0 ? { unsynced_file_paths: parsedUnsyncedFilePaths } : {}),
         ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
         ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
+        ...(skills.length > 0 ? { skills } : {}),
         files: parsedProfileFiles,
       }
 
@@ -754,6 +760,14 @@ export default function SessionProfileEditor({
                   </div>
 
                   
+            </div>}
+            {active.slug === 'skills' && <div className="space-y-5">
+              <div>
+                <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                  個人・チーム設定の Skills に、このプロファイルの package source を追加します。実際の導入先はセッションの agent type から Claude Code または Codex の一方だけが選ばれます。
+                </p>
+                <SkillSettings skills={skills} onChange={value => { setSkills(value); setDirty(true) }} />
+              </div>
             </div>}
             {active.slug === 'environment' && <div className="space-y-5">
 {/* Environment Variables */}

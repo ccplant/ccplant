@@ -49,6 +49,7 @@ export interface SessionProfileConfig {
   unsynced_file_paths?: string[];
   source_session_profile_id?: string;
   secret_ids?: string[];
+  skills?: string[];
   files?: ProfileFile[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
 }
