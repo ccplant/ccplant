@@ -46,11 +46,18 @@ type SessionInfo struct {
 
 // CreateSessionInput represents input for creating a session
 type CreateSessionInput struct {
-	UserID      string            `json:"user_id"`
-	Environment map[string]string `json:"environment,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	GithubToken string            `json:"github_token,omitempty"`
-	Teams       []string          `json:"teams,omitempty"` // GitHub team slugs (e.g., ["org/team-a"])
+	UserID           string                 `json:"user_id"`
+	Environment      map[string]string      `json:"environment,omitempty"`
+	Tags             map[string]string      `json:"tags,omitempty"`
+	GithubToken      string                 `json:"github_token,omitempty"`
+	Teams            []string               `json:"teams,omitempty"` // GitHub team slugs (e.g., ["org/team-a"])
+	Message          string                 `json:"message,omitempty"`
+	ProfileID        string                 `json:"session_profile_id,omitempty"`
+	ParentSessionID  string                 `json:"parent_session_id,omitempty"`
+	ParentAgentID    string                 `json:"parent_agent_id,omitempty"`
+	MaxChildSessions int                    `json:"max_child_sessions,omitempty"`
+	Scope            entities.ResourceScope `json:"scope,omitempty"`
+	TeamID           string                 `json:"team_id,omitempty"`
 }
 
 // Message represents a message in the conversation
@@ -132,12 +139,34 @@ func (uc *MCPSessionToolsUseCase) CreateSession(ctx context.Context, req *Create
 	if req.UserID != "" {
 		tags["user_id"] = req.UserID
 	}
+	if req.ParentAgentID != "" {
+		tags["parent_agent_id"] = req.ParentAgentID
+		tags["session_role"] = "worker"
+	}
+	if req.ParentSessionID != "" {
+		tags["parent_session_id"] = req.ParentSessionID
+	}
+	if req.MaxChildSessions > 0 && req.ParentAgentID != "" {
+		children := uc.sessionManager.ListSessions(entities.SessionFilter{Tags: map[string]string{
+			"parent_agent_id": req.ParentAgentID,
+			"session_role":    "worker",
+		}})
+		if len(children) >= req.MaxChildSessions {
+			return "", fmt.Errorf("child session limit reached: maximum %d sessions", req.MaxChildSessions)
+		}
+	}
+	scope := req.Scope
+	if scope == "" {
+		scope = entities.ScopeUser
+	}
 
 	startReq := entities.StartRequest{
-		Environment: req.Environment,
-		Tags:        tags,
-		Scope:       entities.ScopeUser,
-		Params:      &entities.SessionParams{GithubToken: req.GithubToken},
+		Environment:      req.Environment,
+		Tags:             tags,
+		Scope:            scope,
+		TeamID:           req.TeamID,
+		SessionProfileID: req.ProfileID,
+		Params:           &entities.SessionParams{GithubToken: req.GithubToken, Message: req.Message},
 	}
 
 	session, err := uc.sessionCreator.CreateSession(ctx, sessionID, startReq, req.UserID, "", req.Teams)

@@ -350,6 +350,38 @@ func TestCompile_MCPServersInClaudeJSON(t *testing.T) {
 	assert.Equal(t, true, claudeJSON["bypassPermissionsModeAccepted"])
 }
 
+func TestCompile_ExpandsSessionEnvInClaudeMCPServers(t *testing.T) {
+	tmpDir := t.TempDir()
+	settings := &SessionSettings{
+		Session: SessionMeta{ID: "controller", UserID: "user", Scope: "user"},
+		Env: map[string]string{
+			"PROVISIONER_PROXY_URL": "https://proxy.example.com",
+			"AGENTAPI_KEY":          "session-key",
+			"AGENTAPI_SESSION_ID":   "parent-session",
+		},
+		Claude: ClaudeConfig{MCPServers: map[string]interface{}{
+			"ccplant_sessions": map[string]interface{}{
+				"type": "http",
+				"url":  "${PROVISIONER_PROXY_URL}/mcp",
+				"headers": map[string]interface{}{
+					"Authorization": "Bearer ${AGENTAPI_KEY}",
+					"X-Session-ID":  "${AGENTAPI_SESSION_ID}",
+				},
+			},
+		}},
+	}
+
+	err := CompileSettings(settings, CompileOptions{OutputDir: tmpDir, StartupPath: filepath.Join(tmpDir, "startup.sh")})
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".claude.json"))
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "https://proxy.example.com/mcp")
+	assert.Contains(t, content, "Bearer session-key")
+	assert.Contains(t, content, "parent-session")
+	assert.NotContains(t, content, "${AGENTAPI_KEY}")
+}
+
 func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
 	t.Run("default settings has autoUpdatesChannel stable", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "compile-autoupdates-*")

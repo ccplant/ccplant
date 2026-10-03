@@ -13,7 +13,9 @@ export function loadControllerAgents(): ControllerAgent[] {
     const raw = window.localStorage.getItem(CONTROLLER_AGENTS_STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed)
+      ? parsed.map((agent) => ({ max_child_sessions: 4, ...agent }))
+      : []
   } catch {
     return []
   }
@@ -29,6 +31,7 @@ export function createControllerAgent(input: CreateControllerAgentInput): Contro
     ...input,
     id: createId(),
     status: 'idle',
+    max_child_sessions: input.max_child_sessions || 4,
     runs: [],
     created_at: now,
     updated_at: now,
@@ -46,5 +49,17 @@ export function buildControllerMessage(agent: ControllerAgent, command: string, 
     agent.description ? `役割: ${agent.description}` : '',
     `常設指示:\n${agent.instructions.trim()}`,
     `今回の指令:\n${command.trim()}`,
+  ].filter(Boolean).join('\n\n')
+}
+
+export function buildControllerBootstrapMessage(agent: ControllerAgent): string {
+  return [
+    `あなたは「${agent.name}」という常駐の司令塔Agentです。`,
+    agent.description ? `役割: ${agent.description}` : '',
+    `常設指示:\n${agent.instructions.trim()}`,
+    'ccplant_sessions MCPのcreate_session、send_message、get_session_status、get_messages、delete_sessionを使えます。',
+    `必要に応じて最大${agent.max_child_sessions}個までWorker Sessionを作り、仕事を並列化してください。`,
+    'Workerを作るときはcreate_sessionのmessageに具体的な担当作業を渡してください。完了を監視し、成果を回収して統合してください。',
+    'いまは初期化だけを行い、ユーザーから指令が来るまで待機してください。',
   ].filter(Boolean).join('\n\n')
 }

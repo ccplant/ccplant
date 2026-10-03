@@ -6697,6 +6697,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		"HOME":                "/home/agentapi",
 		"GITHUB_APP_PEM_PATH": "/tmp/github-app/app.pem",
 	}
+	proxyURL := m.k8sConfig.ProvisionerProxyURL
+	if proxyURL == "" {
+		proxyURL = fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
+	}
+	env["PROVISIONER_PROXY_URL"] = proxyURL
+	env["SESSION_STATE_PROXY_URL"] = proxyURL
 	// The parent API resolves Helm-provided GitHub configuration into the
 	// SessionSettings sent to dedicated/external session managers. Those
 	// managers must not need access to the parent's Kubernetes Secrets.

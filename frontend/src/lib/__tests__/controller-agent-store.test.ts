@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildControllerMessage,
+  buildControllerBootstrapMessage,
   CONTROLLER_AGENTS_STORAGE_KEY,
   createControllerAgent,
   loadControllerAgents,
@@ -34,5 +35,7 @@ describe('controller agent PoC store', () => {
 
     expect(buildControllerMessage(agent, 'Fix issue 42', true)).toContain('常設指示:\nReport progress.')
     expect(buildControllerMessage(agent, 'Continue', false)).toBe('Continue')
+    expect(buildControllerBootstrapMessage(agent)).toContain('create_session')
+    expect(buildControllerBootstrapMessage(agent)).toContain('最大4個')
   })
 })

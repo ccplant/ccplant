@@ -77,6 +77,10 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 
 		// Extract session ID from X-Session-ID header
 		authenticatedSessionID := req.Header.Get("X-Session-ID")
+		controllerAgentID := req.Header.Get("X-Agent-ID")
+		controllerScope := req.Header.Get("X-Agent-Scope")
+		controllerTeamID := req.Header.Get("X-Agent-Team-ID")
+		maxChildSessions := req.Header.Get("X-Max-Child-Sessions")
 
 		// Create MCP server with options
 		opts := &mcp.ServerOptions{
@@ -87,7 +91,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 		}
 
 		// Create new MCP server instance with authenticated user and repositories
-		mcpServer := NewMCPServer(sessionManager, handler.sessionCreator, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
+		mcpServer := NewMCPServer(sessionManager, handler.sessionCreator, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, controllerAgentID, controllerScope, controllerTeamID, maxChildSessions, opts)
 
 		// Register all tools
 		mcpServer.RegisterTools()

@@ -64,7 +64,7 @@ func Compile(opts CompileOptions) error {
 // never serialized to a standalone file.
 func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 	// 2. Generate ~/.claude.json (includes mcpServers if present)
-	if err := generateClaudeJSON(opts.OutputDir, settings.Claude.ClaudeJSON, settings.Claude.MCPServers); err != nil {
+	if err := generateClaudeJSON(opts.OutputDir, settings.Claude.ClaudeJSON, settings.Claude.MCPServers, settings.Env); err != nil {
 		return fmt.Errorf("failed to generate .claude.json: %w", err)
 	}
 
@@ -134,7 +134,7 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 // generateClaudeJSON creates ~/.claude.json with onboarding settings and MCP server configuration.
 // Mirrors the pattern from pkg/startup/sync.go generateClaudeJSON (lines 157-188).
 // mcpServers, if non-empty, is written to the "mcpServers" key so Claude Code can read it natively.
-func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcpServers map[string]interface{}) error {
+func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcpServers map[string]interface{}, sessionEnv map[string]string) error {
 	// Create output directory if needed
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -164,7 +164,7 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 
 	// Write MCP servers directly into claude.json so Claude Code reads them natively
 	if len(mcpServers) > 0 {
-		existing["mcpServers"] = mcpServers
+		existing["mcpServers"] = expandMCPPlaceholders(mcpServers, sessionEnv)
 	}
 
 	// Write file
@@ -187,7 +187,28 @@ func generateClaudeJSON(outputDir string, claudeJSON map[string]interface{}, mcp
 // marketplace/plugin setup cannot leave the file in a state that triggers
 // the "Welcome to Claude Code" screen.
 func patchClaudeJSON(outputDir string, extra map[string]interface{}) error {
-	return generateClaudeJSON(outputDir, extra, nil)
+	return generateClaudeJSON(outputDir, extra, nil, nil)
+}
+
+func expandMCPPlaceholders(value interface{}, env map[string]string) interface{} {
+	switch typed := value.(type) {
+	case string:
+		return mcputil.ExpandEnvVarsWithMap(typed, env)
+	case map[string]interface{}:
+		expanded := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			expanded[key] = expandMCPPlaceholders(item, env)
+		}
+		return expanded
+	case []interface{}:
+		expanded := make([]interface{}, len(typed))
+		for index, item := range typed {
+			expanded[index] = expandMCPPlaceholders(item, env)
+		}
+		return expanded
+	default:
+		return value
+	}
 }
 
 // generatePiMCPConfig creates ~/.config/mcp/mcp.json for pi-mcp-adapter.

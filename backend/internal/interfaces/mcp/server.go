@@ -16,10 +16,14 @@ type MCPServer struct {
 	authenticatedTeams       []string // GitHub team slugs (e.g., ["org/team-a"])
 	authenticatedGithubToken string   // GitHub token from Authorization header
 	sessionID                string   // Session ID from X-Session-ID header
+	controllerAgentID        string
+	controllerScope          string
+	controllerTeamID         string
+	maxChildSessions         string
 }
 
 // NewMCPServer creates a new MCP server instance
-func NewMCPServer(sessionManager repositories.SessionManager, sessionCreator mcpusecases.SessionCreator, shareRepo repositories.ShareRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID string, opts *mcp.ServerOptions) *MCPServer {
+func NewMCPServer(sessionManager repositories.SessionManager, sessionCreator mcpusecases.SessionCreator, shareRepo repositories.ShareRepository, authenticatedUserID string, authenticatedTeams []string, authenticatedGithubToken string, sessionID, controllerAgentID, controllerScope, controllerTeamID, maxChildSessions string, opts *mcp.ServerOptions) *MCPServer {
 	// Create session use case with actual dependencies
 	useCase := mcpusecases.NewMCPSessionToolsUseCase(sessionManager, sessionCreator, shareRepo)
 
@@ -38,6 +42,10 @@ func NewMCPServer(sessionManager repositories.SessionManager, sessionCreator mcp
 		authenticatedTeams:       authenticatedTeams,
 		authenticatedGithubToken: authenticatedGithubToken,
 		sessionID:                sessionID,
+		controllerAgentID:        controllerAgentID,
+		controllerScope:          controllerScope,
+		controllerTeamID:         controllerTeamID,
+		maxChildSessions:         maxChildSessions,
 	}
 }
 

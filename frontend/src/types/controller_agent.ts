@@ -15,8 +15,12 @@ export interface ControllerAgent {
   name: string
   description: string
   instructions: string
+  /** Generated profile that equips the controller session with orchestration tools. */
   session_profile_id?: string
+  /** Optional user-selected profile inherited by the generated controller profile. */
+  source_session_profile_id?: string
   controller_session_id?: string
+  max_child_sessions: number
   scope: ResourceScope
   team_id?: string
   status: ControllerAgentStatus
@@ -29,7 +33,8 @@ export interface CreateControllerAgentInput {
   name: string
   description: string
   instructions: string
-  session_profile_id?: string
+  source_session_profile_id?: string
+  max_child_sessions?: number
   scope: ResourceScope
   team_id?: string
 }

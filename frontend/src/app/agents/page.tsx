@@ -8,6 +8,7 @@ import SessionProfileSelect from '../components/SessionProfileSelect'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
 import {
+  buildControllerBootstrapMessage,
   buildControllerMessage,
   createControllerAgent,
   loadControllerAgents,
@@ -15,6 +16,7 @@ import {
   saveControllerAgents,
 } from '../../lib/controller-agent-store'
 import type { ControllerAgent, ControllerAgentRun } from '../../types/controller_agent'
+import type { Session } from '../../types/agentapi'
 
 const statusStyle: Record<ControllerAgent['status'], string> = {
   idle: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
@@ -31,33 +33,107 @@ export default function AgentsPage() {
   const [description, setDescription] = useState('')
   const [instructions, setInstructions] = useState('依頼を分解し、必要なら作業セッションを作成して、結果を統合してください。')
   const [profileId, setProfileId] = useState('')
+  const [maxChildSessions, setMaxChildSessions] = useState(4)
   const [commands, setCommands] = useState<Record<string, string>>({})
+  const [workers, setWorkers] = useState<Record<string, Session[]>>({})
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   useEffect(() => setAgents(loadControllerAgents()), [])
+
+  useEffect(() => {
+    const refreshWorkers = async () => {
+      const currentAgents = loadControllerAgents()
+      if (currentAgents.length === 0) return
+      try {
+        const sessions = (await createAgentAPIProxyClientFromStorage().search({ limit: 100 })).sessions || []
+        setWorkers(Object.fromEntries(currentAgents.map((agent) => [
+          agent.id,
+          sessions.filter((session) => session.tags?.parent_agent_id === agent.id && session.tags?.session_role === 'worker'),
+        ])))
+      } catch {
+        // Agent commands remain available while the session list is temporarily unavailable.
+      }
+    }
+    void refreshWorkers()
+    const interval = window.setInterval(refreshWorkers, 5000)
+    return () => window.clearInterval(interval)
+  }, [agents.length])
 
   const persist = (next: ControllerAgent[]) => {
     setAgents(next)
     saveControllerAgents(next)
   }
 
-  const createAgent = () => {
+  const createAgent = async () => {
     if (!name.trim() || !instructions.trim()) return
-    const agent = createControllerAgent({
+    setCreating(true)
+    setCreateError(null)
+    const scope = getScopeParams()
+    let controllerProfileId = ''
+    let agent = createControllerAgent({
       name: name.trim(),
       description: description.trim(),
       instructions: instructions.trim(),
-      session_profile_id: profileId || undefined,
-      ...getScopeParams(),
+      source_session_profile_id: profileId || undefined,
+      max_child_sessions: maxChildSessions,
+      ...scope,
     })
-    persist([agent, ...agents])
-    setName('')
-    setDescription('')
-    setProfileId('')
-    setShowCreate(false)
+    try {
+      const client = createAgentAPIProxyClientFromStorage()
+      const headers: Record<string, string> = {
+        Authorization: 'Bearer ${AGENTAPI_KEY}',
+        'X-Session-ID': '${AGENTAPI_SESSION_ID}',
+        'X-Agent-ID': agent.id,
+        'X-Agent-Scope': scope.scope,
+        'X-Max-Child-Sessions': String(maxChildSessions),
+      }
+      if (scope.team_id) headers['X-Agent-Team-ID'] = scope.team_id
+      const profile = await client.createSessionProfile({
+        name: `[Agent] ${agent.name}`,
+        description: `Controller runtime profile for ${agent.name}`,
+        ...scope,
+        config: {
+          source_session_profile_id: profileId || undefined,
+          mcp_servers: {
+            ccplant_sessions: {
+              type: 'http',
+              url: '${PROVISIONER_PROXY_URL}/mcp',
+              headers,
+            },
+          },
+        },
+      })
+      controllerProfileId = profile.id
+      agent = { ...agent, session_profile_id: profile.id, status: 'starting' }
+      const session = await client.start({
+        params: { message: buildControllerBootstrapMessage(agent) },
+        tags: { controller_agent_id: agent.id, controller_agent_name: agent.name, session_role: 'controller' },
+        session_profile_id: profile.id,
+        ...scope,
+      })
+      agent = { ...agent, controller_session_id: session.session_id, status: 'idle', updated_at: new Date().toISOString() }
+      persist([agent, ...agents])
+      setName('')
+      setDescription('')
+      setProfileId('')
+      setMaxChildSessions(4)
+      setShowCreate(false)
+    } catch (error) {
+      if (controllerProfileId) {
+        await createAgentAPIProxyClientFromStorage().deleteSessionProfile(controllerProfileId).catch(() => undefined)
+      }
+      setCreateError(error instanceof Error ? error.message : 'Agentの作成に失敗しました')
+    } finally {
+      setCreating(false)
+    }
   }
 
-  const removeAgent = (agent: ControllerAgent) => {
-    if (!window.confirm(`「${agent.name}」を削除しますか？ セッション自体は削除されません。`)) return
+  const removeAgent = async (agent: ControllerAgent) => {
+    if (!window.confirm(`「${agent.name}」とController Sessionを削除しますか？`)) return
+    const client = createAgentAPIProxyClientFromStorage()
+    if (agent.controller_session_id) await client.delete(agent.controller_session_id).catch(() => undefined)
+    if (agent.session_profile_id) await client.deleteSessionProfile(agent.session_profile_id).catch(() => undefined)
     persist(agents.filter((item) => item.id !== agent.id))
   }
 
@@ -72,20 +148,9 @@ export default function AgentsPage() {
 
     try {
       const client = createAgentAPIProxyClientFromStorage()
-      const firstRun = !current.controller_session_id
-      const message = buildControllerMessage(current, command, firstRun)
-      if (firstRun) {
-        const session = await client.start({
-          params: { message },
-          tags: { controller_agent_id: current.id, controller_agent_name: current.name },
-          session_profile_id: current.session_profile_id,
-          scope: current.scope,
-          team_id: current.team_id,
-        })
-        current = { ...current, controller_session_id: session.session_id }
-      } else {
-        await client.sendSessionMessage(current.controller_session_id!, { content: message, type: 'user' })
-      }
+      if (!current.controller_session_id) throw new Error('Controller Sessionがありません。Agentを作り直してください。')
+      const message = buildControllerMessage(current, command, false)
+      await client.sendSessionMessage(current.controller_session_id, { content: message, type: 'user' })
       current = { ...current, status: 'working', runs: current.runs.map((item) => item.id === run.id ? { ...item, status: 'submitted' } : item), updated_at: new Date().toISOString() }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '指令の送信に失敗しました'
@@ -105,7 +170,7 @@ export default function AgentsPage() {
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">司令塔Agents</h1>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">論理Agentを固定の窓口にして、背後のSessionへ継続的に指令します。</p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">常駐するController Sessionが、必要に応じてWorker Sessionを自律的に起動します。</p>
           </div>
           <button onClick={() => setShowCreate((value) => !value)} className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700">
             {showCreate ? '閉じる' : 'Agentを作成'}
@@ -113,7 +178,7 @@ export default function AgentsPage() {
         </div>
 
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-          PoC: Agent定義はこのブラウザに保存されます。実行時には本物のSessionを作成・再利用します。
+          PoC: Agent定義はこのブラウザに保存されます。ControllerとWorkerは実際のSessionとして動作します。
         </div>
 
         {showCreate && (
@@ -130,12 +195,16 @@ export default function AgentsPage() {
                 <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-900" />
               </label>
               <div className="md:col-span-2">
-                <span className="mb-1 block text-sm text-gray-700 dark:text-gray-200">Session Profile</span>
+                <span className="mb-1 block text-sm text-gray-700 dark:text-gray-200">ControllerのベースProfile</span>
                 <SessionProfileSelect value={profileId} onChange={setProfileId} />
               </div>
+              <label className="text-sm text-gray-700 dark:text-gray-200">Worker Session上限
+                <input type="number" min={1} max={16} value={maxChildSessions} onChange={(e) => setMaxChildSessions(Math.max(1, Math.min(16, Number(e.target.value) || 1)))} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 dark:border-gray-600 dark:bg-gray-900" />
+              </label>
             </div>
+            {createError && <p role="alert" className="mt-4 text-sm text-red-600 dark:text-red-400">{createError}</p>}
             <div className="mt-5 flex justify-end">
-              <button disabled={!name.trim() || !instructions.trim()} onClick={createAgent} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">作成</button>
+              <button disabled={creating || !name.trim() || !instructions.trim()} onClick={createAgent} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">{creating ? 'Controllerを起動中…' : '作成して起動'}</button>
             </div>
           </section>
         )}
@@ -164,7 +233,8 @@ export default function AgentsPage() {
                   <p className="line-clamp-3 whitespace-pre-wrap">{agent.instructions}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-400">
                     <span>{agent.scope === 'team' ? agent.team_id : 'Personal'}</span>
-                    <span>·</span><span>{agent.session_profile_id ? 'Profile指定' : 'Profile自動選択'}</span>
+                    <span>·</span><span>Worker上限 {agent.max_child_sessions}</span>
+                    <span>·</span><span>{agent.source_session_profile_id ? 'ベースProfile指定' : '標準構成'}</span>
                   </div>
                 </div>
 
@@ -179,6 +249,21 @@ export default function AgentsPage() {
                     <Link href={`/sessions/${agent.controller_session_id}`} className="ml-3 shrink-0 font-medium text-blue-600 hover:text-blue-700">会話を開く →</Link>
                   </div>
                 )}
+
+                <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-700">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Worker Sessions</p>
+                    <span className="text-xs text-gray-400">{workers[agent.id]?.length || 0} / {agent.max_child_sessions}</span>
+                  </div>
+                  {(workers[agent.id]?.length || 0) === 0 ? (
+                    <p className="text-sm text-gray-400">ControllerがWorkerを作成すると、ここに表示されます。</p>
+                  ) : (workers[agent.id] || []).map((worker) => (
+                    <Link key={worker.session_id} href={`/sessions/${worker.session_id}`} className="mb-2 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm hover:bg-gray-100 dark:bg-gray-900/60 dark:hover:bg-gray-900">
+                      <span className="truncate text-gray-600 dark:text-gray-300">{worker.annotations?.running_task || worker.description || worker.session_id}</span>
+                      <span className="ml-3 shrink-0 text-xs text-gray-400">{worker.status}</span>
+                    </Link>
+                  ))}
+                </div>
 
                 {agent.runs.length > 0 && (
                   <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-700">

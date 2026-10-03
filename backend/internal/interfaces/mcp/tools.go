@@ -3,9 +3,11 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	mcpusecases "github.com/takutakahashi/agentapi-proxy/internal/usecases/mcp"
 )
 
@@ -37,6 +39,8 @@ type CreateSessionInput struct {
 	Environment map[string]string `json:"environment,omitempty" jsonschema:"Environment variables for the session"`
 	Tags        map[string]string `json:"tags,omitempty" jsonschema:"Tags for the session"`
 	Repository  string            `json:"repository,omitempty" jsonschema:"Repository to clone (e.g., 'owner/repo' or 'https://github.com/owner/repo')"`
+	Message     string            `json:"message,omitempty" jsonschema:"Initial instruction for the worker session"`
+	ProfileID   string            `json:"session_profile_id,omitempty" jsonschema:"Session profile to use for the worker session"`
 }
 
 // CreateSessionOutput represents output for create_session tool
@@ -135,8 +139,12 @@ func (s *MCPServer) handleCreateSession(ctx context.Context, req *mcp.CallToolRe
 		return nil, CreateSessionOutput{}, fmt.Errorf("authentication required")
 	}
 
-	// Always use github_token from Authorization header
+	// Preserve the legacy external MCP behavior. Controller agents authenticate
+	// with an AgentAPI key, which must never be forwarded as a GitHub token.
 	githubToken := s.authenticatedGithubToken
+	if s.controllerAgentID != "" {
+		githubToken = ""
+	}
 
 	// Merge repository into tags if provided
 	tags := input.Tags
@@ -148,11 +156,24 @@ func (s *MCPServer) handleCreateSession(ctx context.Context, req *mcp.CallToolRe
 	}
 
 	createReq := &mcpusecases.CreateSessionInput{
-		UserID:      s.authenticatedUserID,
-		Environment: input.Environment,
-		Tags:        tags,
-		GithubToken: githubToken,
-		Teams:       s.authenticatedTeams,
+		UserID:          s.authenticatedUserID,
+		Environment:     input.Environment,
+		Tags:            tags,
+		GithubToken:     githubToken,
+		Teams:           s.authenticatedTeams,
+		Message:         input.Message,
+		ProfileID:       input.ProfileID,
+		ParentSessionID: s.sessionID,
+		ParentAgentID:   s.controllerAgentID,
+		Scope:           entities.ResourceScope(s.controllerScope),
+		TeamID:          s.controllerTeamID,
+	}
+	if s.maxChildSessions != "" {
+		limit, err := strconv.Atoi(s.maxChildSessions)
+		if err != nil || limit < 1 {
+			return nil, CreateSessionOutput{}, fmt.Errorf("invalid max child sessions policy")
+		}
+		createReq.MaxChildSessions = limit
 	}
 
 	sessionID, err := s.useCase.CreateSession(ctx, createReq)
