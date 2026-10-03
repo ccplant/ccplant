@@ -35,6 +35,16 @@
       "required": ["tokenSecretRef"],
       "properties": {"tokenSecretRef": {"$ref": "#/$defs/namedSecretRef"}}
     },
+    "leaderElection": {
+      "type": "object",
+      "required": ["leaseDuration", "renewDeadline", "retryPeriod", "migrateLegacyLease"],
+      "properties": {
+        "leaseDuration": {"type": "string", "minLength": 1},
+        "renewDeadline": {"type": "string", "minLength": 1},
+        "retryPeriod": {"type": "string", "minLength": 1},
+        "migrateLegacyLease": {"type": "boolean"}
+      }
+    },
     "sessionPersistence": {
       "type": "object",
       "required": ["backend", "suspendAfter", "s3"],

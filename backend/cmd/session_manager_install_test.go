@@ -10,10 +10,47 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestRequiresLegacySessionManagerLeaseMigration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("new install", func(t *testing.T) {
+		migration, err := requiresLegacySessionManagerLeaseMigration(ctx, fake.NewSimpleClientset(), "sessions", "manager")
+		require.NoError(t, err)
+		require.False(t, migration)
+	})
+
+	t.Run("legacy deployment", func(t *testing.T) {
+		client := fake.NewSimpleClientset(sessionManagerDeploymentForLeaseMigrationTest(nil))
+		migration, err := requiresLegacySessionManagerLeaseMigration(ctx, client, "sessions", "manager")
+		require.NoError(t, err)
+		require.True(t, migration)
+	})
+
+	t.Run("already migrated", func(t *testing.T) {
+		client := fake.NewSimpleClientset(sessionManagerDeploymentForLeaseMigrationTest([]corev1.EnvVar{{
+			Name: "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME", Value: "manager",
+		}}))
+		migration, err := requiresLegacySessionManagerLeaseMigration(ctx, client, "sessions", "manager")
+		require.NoError(t, err)
+		require.False(t, migration)
+	})
+}
+
+func sessionManagerDeploymentForLeaseMigrationTest(env []corev1.EnvVar) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "manager", Namespace: "sessions"},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "session-manager", Env: env,
+		}}}}},
+	}
+}
 
 func TestEnsureManagerCredentialsEnrollsAndPersistsSecret(t *testing.T) {
 	t.Parallel()

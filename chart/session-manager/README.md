@@ -63,3 +63,10 @@ Older chart versions and binaries remain operable before they are upgraded: the
 application retains the legacy allocator Lease default when the new environment
 variable is absent, and manager-less local configurations retain namespace-wide
 session discovery.
+
+For installer-managed upgrades, the installer detects whether the existing
+Deployment still lacks the dedicated Lease setting. That one upgrade uses the
+Deployment `Recreate` strategy so no old Pod using the shared Lease overlaps a
+new Pod using the release-specific Lease. Helm `--atomic` rollback is enabled for
+the migration; later upgrades detect the new setting and return to the normal
+rolling strategy.
