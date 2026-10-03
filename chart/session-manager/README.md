@@ -55,9 +55,11 @@ the shared namespace.
 
 Upgrades are backward compatible with both supported installation paths. The
 `ccplant session-manager install` command has always supplied
-`fullnameOverride=<release>`, which remains authoritative. For direct Helm users,
-an upgrade detects a legacy `session-manager` Deployment owned by the same Helm
-release and retains that name for all chart-managed resources. Fresh releases use
-release-qualified names. Client-side `helm template` cannot perform this cluster
-lookup, so it always displays the fresh-install naming unless `fullnameOverride`
-is supplied explicitly.
+`fullnameOverride=<release>`, so those resources are already release-qualified
+and retain their names. A direct Helm installation that used the old chart's
+fixed `session-manager` name is migrated to release-qualified resources on
+upgrade; Helm creates the new resources and removes the old release objects.
+Older chart versions and binaries remain operable before they are upgraded: the
+application retains the legacy allocator Lease default when the new environment
+variable is absent, and manager-less local configurations retain namespace-wide
+session discovery.

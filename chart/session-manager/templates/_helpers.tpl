@@ -6,11 +6,7 @@
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
 {{- $name := include "session-manager.name" . -}}
-{{- $legacyDeployment := lookup "apps/v1" "Deployment" .Release.Namespace $name -}}
-{{- $legacyAnnotations := dig "metadata" "annotations" (dict) $legacyDeployment -}}
-{{- if and $legacyDeployment (eq (get $legacyAnnotations "meta.helm.sh/release-name") .Release.Name) -}}
-{{- $name -}}
-{{- else if contains $name .Release.Name -}}
+{{- if contains $name .Release.Name -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
 {{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
