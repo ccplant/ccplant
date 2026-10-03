@@ -20,6 +20,14 @@ Deployment image and the CLI source for newly created session Pods. The
 `autoUpgrade=false` to pin the manager to the installed chart version. Existing
 session Pods are never restarted or mutated.
 
+Auto-upgrade does not apply Helm chart structure or configuration migrations.
+An old chart that auto-upgrades its application image therefore keeps using the
+legacy shared Lease; the updated binary retains that default when the dedicated
+Lease environment variable is absent. A later `ccplant session-manager install`
+detects the missing variable and performs the one-time safe Lease migration
+described below. Managers already installed with the new chart keep their
+release-specific Lease across auto-upgrades.
+
 Session checkpoint persistence is configured with `sessionPersistence`. Set
 `backend` to `s3` and provide the bucket and credential Secret references, or
 set it to `volume` to keep each checkpoint on that session's workdir PVC.
