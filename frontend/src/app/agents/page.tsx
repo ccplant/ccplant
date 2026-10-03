@@ -7,6 +7,7 @@ import NavigationTabs from '../components/NavigationTabs'
 import SessionProfileSelect from '../components/SessionProfileSelect'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
+import { waitForControllerReady } from '../../lib/controller-agent-runtime'
 import {
   buildControllerBootstrapMessage,
   buildControllerMessage,
@@ -149,6 +150,7 @@ export default function AgentsPage() {
     try {
       const client = createAgentAPIProxyClientFromStorage()
       if (!current.controller_session_id) throw new Error('Controller Sessionがありません。Agentを作り直してください。')
+      await waitForControllerReady(() => client.getSessionStatus(current.controller_session_id!))
       const message = buildControllerMessage(current, command, false)
       await client.sendSessionMessage(current.controller_session_id, { content: message, type: 'user' })
       current = { ...current, status: 'working', runs: current.runs.map((item) => item.id === run.id ? { ...item, status: 'submitted' } : item), updated_at: new Date().toISOString() }
@@ -269,9 +271,12 @@ export default function AgentsPage() {
                   <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-700">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Recent runs</p>
                     {agent.runs.slice(0, 3).map((run) => (
-                      <div key={run.id} className="mb-2 flex items-start justify-between gap-3 text-sm">
-                        <span className="line-clamp-1 text-gray-600 dark:text-gray-300">{run.command}</span>
-                        <span className={run.status === 'failed' ? 'shrink-0 text-red-500' : 'shrink-0 text-gray-400'}>{run.status}</span>
+                      <div key={run.id} className="mb-2">
+                        <div className="flex items-start justify-between gap-3 text-sm">
+                          <span className="line-clamp-1 text-gray-600 dark:text-gray-300">{run.command}</span>
+                          <span className={run.status === 'failed' ? 'shrink-0 text-red-500' : 'shrink-0 text-gray-400'} title={run.error}>{run.status}</span>
+                        </div>
+                        {run.error && <p className="mt-1 break-words text-xs text-red-500">{run.error}</p>}
                       </div>
                     ))}
                   </div>
