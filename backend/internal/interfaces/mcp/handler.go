@@ -88,6 +88,7 @@ func NewMCPHandler(server *app.Server) *MCPHandler {
 
 		// Create new MCP server instance with authenticated user and repositories
 		mcpServer := NewMCPServer(sessionManager, handler.sessionCreator, shareRepo, authenticatedUserID, authenticatedTeams, authenticatedGithubToken, authenticatedSessionID, opts)
+		mcpServer.resourceRequester = newEchoResourceRequester(server.GetEcho(), req.Header, getUserFromContext(req.Context()))
 
 		// Register all tools
 		mcpServer.RegisterTools()

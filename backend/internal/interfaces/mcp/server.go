@@ -16,6 +16,7 @@ type MCPServer struct {
 	authenticatedTeams       []string // GitHub team slugs (e.g., ["org/team-a"])
 	authenticatedGithubToken string   // GitHub token from Authorization header
 	sessionID                string   // Session ID from X-Session-ID header
+	resourceRequester        resourceRequester
 }
 
 // NewMCPServer creates a new MCP server instance
@@ -45,6 +46,7 @@ func NewMCPServer(sessionManager repositories.SessionManager, sessionCreator mcp
 func (s *MCPServer) RegisterTools() {
 	// Register session tools
 	s.registerSessionTools()
+	s.registerResourceTools()
 }
 
 // registerSessionTools registers session management MCP tools
