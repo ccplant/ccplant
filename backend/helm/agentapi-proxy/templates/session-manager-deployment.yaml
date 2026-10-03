@@ -187,6 +187,7 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ dig "allocation" "leaseDuration" "15s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ dig "allocation" "renewDeadline" "10s" $manager | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ dig "allocation" "retryPeriod" "2s" $manager | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: {{ printf "%s-session-manager" (include "agentapi-proxy.fullname" .) | trunc 63 | trimSuffix "-" | quote }}}
             {{- if (dig "name" "" $encryptionToken) }}
             - name: AGENTAPI_ENCRYPTION_KEY
               valueFrom:

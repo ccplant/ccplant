@@ -43,3 +43,9 @@ denying access to the `kube-apiserver` entity. Setting `egressMode` to
 entity, while default-denying all other cluster-internal egress (including the
 session-manager service and kube-apiserver). Isolation defaults remain disabled
 for compatibility.
+
+Resource names and the leader-election Lease are derived from the Helm release
+name by default. This allows multiple session-manager releases to run in one
+namespace without sharing Kubernetes objects or electing a leader across managers.
+Use a distinct release name for each manager. `fullnameOverride` remains available
+when a fixed resource name is required and must also be unique within the namespace.

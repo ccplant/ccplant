@@ -66,6 +66,7 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ .Values.leaderElection.leaseDuration | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ .Values.leaderElection.renewDeadline | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ .Values.leaderElection.retryPeriod | quote }}}
+            - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: {{ include "session-manager.fullname" . | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_BACKEND, value: {{ $sessionPersistenceBackend | quote }}}
             - {name: AGENTAPI_SESSION_PERSISTENCE_SUSPEND_AFTER, value: {{ $sessionPersistence.suspendAfter | default "1h" | quote }}}
             {{- if $sessionPersistenceS3.bucket }}

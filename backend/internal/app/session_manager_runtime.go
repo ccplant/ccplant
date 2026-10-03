@@ -264,6 +264,10 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	lease := durationOr(cfg.SessionManager.Allocation.LeaseDuration, 15*time.Second)
 	renew := durationOr(cfg.SessionManager.Allocation.RenewDeadline, 10*time.Second)
 	retry := durationOr(cfg.SessionManager.Allocation.RetryPeriod, 2*time.Second)
+	leaseName := cfg.SessionManager.Allocation.LeaseName
+	if leaseName == "" {
+		leaseName = schedule.SessionAllocatorLeaseName
+	}
 	if !remoteMode {
 		localClient := newLocalAllocationClient(manager, sessionRouteRepo)
 		allocator = allocationworker.NewWorker(manager, localClient)
@@ -272,7 +276,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		}
 		elector := schedule.NewRedisLeaderElector(redisClient, schedule.LeaderElectionConfig{
 			LeaseDuration: lease, RenewDeadline: renew, RetryPeriod: retry,
-			LeaseName: schedule.SessionAllocatorLeaseName, Namespace: manager.GetNamespace(),
+			LeaseName: leaseName, Namespace: manager.GetNamespace(),
 		})
 		go elector.Run(runtimeCtx, func(leaderCtx context.Context) {
 			log.Printf("[SESSION_MANAGER] Became local allocation leader")
@@ -288,7 +292,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		lock, lockErr := resourcelock.New(
 			resourcelock.LeasesResourceLock,
 			manager.GetNamespace(),
-			schedule.SessionAllocatorLeaseName,
+			leaseName,
 			manager.GetClient().CoreV1(),
 			manager.GetClient().CoordinationV1(),
 			resourcelock.ResourceLockConfig{Identity: instanceID},
