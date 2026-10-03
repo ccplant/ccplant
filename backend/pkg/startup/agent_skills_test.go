@@ -56,6 +56,40 @@ func TestInstallSkillsPackagesSelectsOneAgent(t *testing.T) {
 	}
 }
 
+func TestInstallSkillsPackagesSelectsConfiguredSkill(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args")
+	binPath := filepath.Join(dir, "skills")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SKILLS_ARGS_PATH\"\n"
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	original := skillsBinPath
+	skillsBinPath = binPath
+	t.Cleanup(func() { skillsBinPath = original })
+	t.Setenv("SKILLS_ARGS_PATH", argsPath)
+
+	configured := "https://github.com/mattpocock/skills --skill grill-me"
+	if err := installSkillsPackages(dir, "codex", []string{configured}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	want := []string{"add", "https://github.com/mattpocock/skills", "--agent", "codex", "--skill", "grill-me", "--global", "--copy", "--yes"}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestParseSkillsPackageRejectsExtraArguments(t *testing.T) {
+	if _, _, err := parseSkillsPackage("owner/repo --skill demo --yes"); err == nil {
+		t.Fatal("expected invalid package error")
+	}
+}
+
 func TestCopySkillDirRecursivelyCopiesResources(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "source")
 	destination := filepath.Join(t.TempDir(), "destination")

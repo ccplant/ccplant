@@ -327,23 +327,44 @@ type claudeSettingsJSON struct {
 }
 
 func installSkillsPackages(outputDir, agent string, packages []string) error {
-	for _, source := range packages {
-		source = strings.TrimSpace(source)
+	for _, configured := range packages {
+		source, skill, err := parseSkillsPackage(configured)
+		if err != nil {
+			return err
+		}
 		if source == "" {
 			continue
 		}
-		if strings.HasPrefix(source, "-") || strings.ContainsAny(source, "\x00\r\n") {
-			return fmt.Errorf("invalid skills source %q", source)
-		}
-		cmd := exec.Command(skillsBinPath, "add", source, "--agent", agent, "--skill", "*", "--global", "--copy", "--yes")
+		cmd := exec.Command(skillsBinPath, "add", source, "--agent", agent, "--skill", skill, "--global", "--copy", "--yes")
 		cmd.Env = append(os.Environ(), "HOME="+outputDir, "DISABLE_TELEMETRY=1")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("install skills package %s for %s: %w: %s", source, agent, err, strings.TrimSpace(string(output)))
 		}
-		log.Printf("[SYNC] Installed skills package %s for %s", source, agent)
+		log.Printf("[SYNC] Installed skill %s from package %s for %s", skill, source, agent)
 	}
 	return nil
+}
+
+// parseSkillsPackage accepts either a legacy package source (which installs all
+// skills) or "<source> --skill <name>". It deliberately does not invoke a shell.
+func parseSkillsPackage(configured string) (source, skill string, err error) {
+	fields := strings.Fields(configured)
+	if len(fields) == 0 {
+		return "", "", nil
+	}
+	if len(fields) == 1 {
+		source, skill = fields[0], "*"
+	} else if len(fields) == 3 && fields[1] == "--skill" {
+		source, skill = fields[0], fields[2]
+	} else {
+		return "", "", fmt.Errorf("invalid skills package %q: expected <source> [--skill <name>]", configured)
+	}
+	if strings.HasPrefix(source, "-") || strings.HasPrefix(skill, "-") ||
+		strings.ContainsAny(source, "\x00\r\n") || strings.ContainsAny(skill, "\x00\r\n") {
+		return "", "", fmt.Errorf("invalid skills package %q", configured)
+	}
+	return source, skill, nil
 }
 
 // readClaudeSettingsJSON reads enabled_plugins and marketplaces from the
