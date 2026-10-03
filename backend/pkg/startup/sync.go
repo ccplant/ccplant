@@ -21,6 +21,7 @@ type SyncOptions struct {
 	NotificationSubscriptions string // Path to notification subscriptions directory (optional)
 	NotificationsDir          string // Path to notifications output directory (optional)
 	RegisterMarketplaces      bool   // Register cloned marketplaces using claude CLI
+	AgentType                 string // Resolved runtime agent type (claude-acp, codex-acp, ...)
 }
 
 // settingsJSON represents the structure of settings.json from Settings Secret
@@ -30,6 +31,7 @@ type settingsJSON struct {
 	MCPServers     map[string]*mcpServerJSON   `json:"mcp_servers,omitempty"`
 	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
 	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"` // plugin@marketplace format
+	Skills         []string                    `json:"skills,omitempty"`          // skills.sh package sources
 	Hooks          map[string]interface{}      `json:"hooks,omitempty"`
 	CreatedAt      string                      `json:"created_at"`
 	UpdatedAt      string                      `json:"updated_at"`
@@ -79,6 +81,23 @@ func Sync(opts SyncOptions) error {
 
 	if err := syncMarketplaces(opts, settings); err != nil {
 		return fmt.Errorf("failed to sync marketplaces: %w", err)
+	}
+
+	claudeSettings, err := readClaudeSettingsJSON(filepath.Join(opts.OutputDir, ".claude", "settings.json"))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read skills settings: %w", err)
+	}
+	if claudeSettings != nil && len(claudeSettings.Skills) > 0 {
+		agent, err := resolveSkillsAgent(opts.AgentType)
+		if err != nil {
+			return err
+		}
+		if agent == "" {
+			return fmt.Errorf("skills are not supported for agent type %s", opts.AgentType)
+		}
+		if err := installSkillsPackages(opts.OutputDir, agent, claudeSettings.Skills); err != nil {
+			return err
+		}
 	}
 
 	if opts.CredentialsFile != "" {
@@ -217,6 +236,33 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		return nil
 	}
 
+	agent, err := resolveSkillsAgent(opts.AgentType)
+	if err != nil {
+		return err
+	}
+	if agent == "codex" {
+		// Codex consumes portable SKILL.md bundles directly. Do not register or
+		// activate Claude plugins in a Codex session.
+		resolvedPlugins := make([]string, 0, len(compileSettings.EnabledPlugins))
+		for _, plugin := range compileSettings.EnabledPlugins {
+			resolvedPlugins = append(resolvedPlugins, resolvePluginName(plugin, nameMapping))
+		}
+		if hasMarketplacePlugin(resolvedPlugins, "claude-plugins-official") {
+			if err := ensureOfficialMarketplaceClone(marketplacesDir); err != nil {
+				return fmt.Errorf("clone official marketplace for Codex: %w", err)
+			}
+		}
+		if err := syncCodexSkills(opts.OutputDir, marketplacesDir, resolvedPlugins); err != nil {
+			return fmt.Errorf("sync Codex skills: %w", err)
+		}
+		return nil
+	}
+	if agent == "" {
+		// The selected agent has no defined skills integration. In particular,
+		// Pi must not inherit Codex skills implicitly.
+		return nil
+	}
+
 	if err := registerOfficialMarketplace(opts.OutputDir); err != nil {
 		log.Printf("[SYNC] Warning: failed to register official marketplace: %v", err)
 	}
@@ -233,12 +279,37 @@ func syncMarketplaces(opts SyncOptions, settings *settingsJSON) error {
 		}
 	}
 
-	// Copy installed marketplace skills into ~/.codex/skills so Codex can discover them.
-	if err := syncCodexSkills(opts.OutputDir, marketplacesDir); err != nil {
-		log.Printf("[SYNC] Warning: failed to sync Codex skills: %v", err)
-	}
-
 	return nil
+}
+
+func hasMarketplacePlugin(plugins []string, marketplace string) bool {
+	for _, plugin := range plugins {
+		if strings.HasSuffix(plugin, "@"+marketplace) {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureOfficialMarketplaceClone(marketplacesDir string) error {
+	targetDir := filepath.Join(marketplacesDir, "claude-plugins-official")
+	return cloneMarketplace("https://github.com/anthropics/claude-plugins-official.git", targetDir)
+}
+
+// resolveSkillsAgent maps the already-resolved runtime agent type to the
+// canonical skills.sh agent identifier. Empty is accepted for the standalone
+// sync CLI and preserves its historical Claude behavior.
+func resolveSkillsAgent(agentType string) (string, error) {
+	switch strings.TrimSpace(agentType) {
+	case "", "claude", "claude-acp", "claude-legacy":
+		return "claude-code", nil
+	case "codex", "codex-acp":
+		return "codex", nil
+	case "pi", "pi-ollama", "cursor":
+		return "", nil
+	default:
+		return "", fmt.Errorf("unsupported agent type for skills: %s", agentType)
+	}
 }
 
 // removeTempDir removes a temporary directory, logging a warning on failure.
@@ -252,6 +323,48 @@ func removeTempDir(dir string) {
 type claudeSettingsJSON struct {
 	EnabledPlugins []string                    `json:"enabled_plugins"`
 	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
+	Skills         []string                    `json:"skills,omitempty"`
+}
+
+func installSkillsPackages(outputDir, agent string, packages []string) error {
+	for _, configured := range packages {
+		source, skill, err := parseSkillsPackage(configured)
+		if err != nil {
+			return err
+		}
+		if source == "" {
+			continue
+		}
+		cmd := exec.Command(skillsBinPath, "add", source, "--agent", agent, "--skill", skill, "--global", "--copy", "--yes")
+		cmd.Env = append(os.Environ(), "HOME="+outputDir, "DISABLE_TELEMETRY=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("install skills package %s for %s: %w: %s", source, agent, err, strings.TrimSpace(string(output)))
+		}
+		log.Printf("[SYNC] Installed skill %s from package %s for %s", skill, source, agent)
+	}
+	return nil
+}
+
+// parseSkillsPackage accepts either a legacy package source (which installs all
+// skills) or "<source> --skill <name>". It deliberately does not invoke a shell.
+func parseSkillsPackage(configured string) (source, skill string, err error) {
+	fields := strings.Fields(configured)
+	if len(fields) == 0 {
+		return "", "", nil
+	}
+	if len(fields) == 1 {
+		source, skill = fields[0], "*"
+	} else if len(fields) == 3 && fields[1] == "--skill" {
+		source, skill = fields[0], fields[2]
+	} else {
+		return "", "", fmt.Errorf("invalid skills package %q: expected <source> [--skill <name>]", configured)
+	}
+	if strings.HasPrefix(source, "-") || strings.HasPrefix(skill, "-") ||
+		strings.ContainsAny(source, "\x00\r\n") || strings.ContainsAny(skill, "\x00\r\n") {
+		return "", "", fmt.Errorf("invalid skills package %q", configured)
+	}
+	return source, skill, nil
 }
 
 // readClaudeSettingsJSON reads enabled_plugins and marketplaces from the
@@ -448,6 +561,8 @@ const officialMarketplace = "anthropics/claude-plugins-official"
 // claudeBinPath is the path to the claude CLI binary
 const claudeBinPath = "/opt/claude/bin/claude"
 
+var skillsBinPath = "/home/agentapi/.bun/bin/skills"
+
 // runClaudeCLI executes a claude CLI command with HOME set to outputDir.
 func runClaudeCLI(outputDir string, args ...string) error {
 	startedAt := time.Now()
@@ -617,8 +732,12 @@ func syncNotificationSubscriptions(subscriptionsDir, notificationsDir string) er
 // Directory layout expected:
 //
 //	<marketplacesDir>/<marketplace>/plugins/<plugin>/skills/<skill-name>/SKILL.md
-func syncCodexSkills(outputDir, marketplacesDir string) error {
+func syncCodexSkills(outputDir, marketplacesDir string, enabledPlugins []string) error {
 	codexSkillsDir := filepath.Join(outputDir, ".codex", "skills")
+	enabled := make(map[string]struct{}, len(enabledPlugins))
+	for _, plugin := range enabledPlugins {
+		enabled[plugin] = struct{}{}
+	}
 
 	marketplaceEntries, err := os.ReadDir(marketplacesDir)
 	if err != nil {
@@ -640,6 +759,10 @@ func syncCodexSkills(outputDir, marketplacesDir string) error {
 
 		for _, pEntry := range pluginEntries {
 			if !pEntry.IsDir() {
+				continue
+			}
+			pluginID := pEntry.Name() + "@" + mEntry.Name()
+			if _, ok := enabled[pluginID]; !ok {
 				continue
 			}
 
@@ -676,29 +799,39 @@ func syncCodexSkills(outputDir, marketplacesDir string) error {
 	return nil
 }
 
-// copySkillDir copies all files from srcDir into destDir, creating destDir if needed.
-// Existing files are overwritten to keep skill definitions up to date on each run.
+// copySkillDir recursively copies a complete skill bundle. Symlinks and other
+// non-regular entries are rejected so a marketplace cannot escape its bundle.
 func copySkillDir(srcDir, destDir string) error {
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create skill dir %s: %w", destDir, err)
-	}
-
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		return fmt.Errorf("failed to read skill source dir %s: %w", srcDir, err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		data, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
+		rel, err := filepath.Rel(srcDir, path)
 		if err != nil {
-			return fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+			return err
 		}
-		if err := os.WriteFile(filepath.Join(destDir, entry.Name()), data, 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", entry.Name(), err)
+		target := filepath.Join(destDir, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
 		}
-	}
-	return nil
+		if info.Mode()&os.ModeSymlink != 0 || (!info.Mode().IsRegular() && !info.IsDir()) {
+			return fmt.Errorf("unsupported skill bundle entry: %s", rel)
+		}
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", rel, err)
+		}
+		mode := info.Mode().Perm()
+		if mode&0111 == 0 {
+			mode = 0644
+		}
+		if err := os.WriteFile(target, data, mode); err != nil {
+			return fmt.Errorf("failed to write %s: %w", rel, err)
+		}
+		return nil
+	})
 }

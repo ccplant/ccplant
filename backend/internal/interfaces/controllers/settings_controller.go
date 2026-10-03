@@ -90,6 +90,7 @@ type UpdateSettingsRequest struct {
 	ClaudeCodeOAuthToken    *string                          `json:"claude_code_oauth_token,omitempty"`
 	AuthMode                *string                          `json:"auth_mode,omitempty"`                  // "oauth" or "bedrock"
 	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`            // plugin@marketplace format
+	Skills                  []string                         `json:"skills,omitempty"`                     // skills.sh package sources
 	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                   // Custom environment variables
 	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`          // "org/team-slug" format; "" to clear
 	GitHubAppInstallationID *string                          `json:"github_app_installation_id,omitempty"` // Team GitHub App installation ID; "" to clear
@@ -147,6 +148,7 @@ type SettingsResponse struct {
 	HasClaudeCodeOAuthToken bool                             `json:"has_claude_code_oauth_token"`
 	AuthMode                string                           `json:"auth_mode,omitempty"`
 	EnabledPlugins          []string                         `json:"enabled_plugins,omitempty"`   // plugin@marketplace format
+	Skills                  []string                         `json:"skills,omitempty"`            // skills.sh package sources
 	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`      // only keys, not values
 	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"` // "org/team-slug" format
 	GitHubAppInstallationID string                           `json:"github_app_installation_id,omitempty"`
@@ -390,6 +392,9 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	// Update enabled plugins
 	if req.EnabledPlugins != nil {
 		settings.SetEnabledPlugins(req.EnabledPlugins)
+	}
+	if req.Skills != nil {
+		settings.SetSkills(req.Skills)
 	}
 
 	// Update environment variables
@@ -785,6 +790,9 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 
 	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
 		resp.EnabledPlugins = plugins
+	}
+	if skills := settings.Skills(); len(skills) > 0 {
+		resp.Skills = skills
 	}
 
 	if envVarKeys := settings.EnvVarKeys(); len(envVarKeys) > 0 {

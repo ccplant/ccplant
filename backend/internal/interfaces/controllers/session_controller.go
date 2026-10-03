@@ -2564,6 +2564,7 @@ func applySessionProfile(
 		startReq.Tags["session_profile_id"] = profile.ID()
 		startReq.ResolvedSessionProfileID = profile.ID()
 		startReq.ProfileMCPServers = cfg.MCPServers()
+		startReq.ProfileSkills = cfg.Skills()
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
 			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
 			for i, file := range profileFiles {

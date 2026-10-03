@@ -13,6 +13,7 @@ import (
 type SettingsConfig struct {
 	Marketplaces   map[string]MarketplaceConfig `json:"marketplaces,omitempty"`
 	EnabledPlugins []string                     `json:"enabled_plugins,omitempty"`
+	Skills         []string                     `json:"skills,omitempty"`
 	Hooks          map[string]interface{}       `json:"hooks,omitempty"`
 }
 
@@ -35,6 +36,7 @@ func MergeConfigs(inputDirs []string, opts MergeOptions) (*SettingsConfig, error
 	result := &SettingsConfig{
 		Marketplaces:   make(map[string]MarketplaceConfig),
 		EnabledPlugins: []string{},
+		Skills:         []string{},
 		Hooks:          make(map[string]interface{}),
 	}
 
@@ -104,6 +106,7 @@ type settingsJSON struct {
 	Name           string                      `json:"name,omitempty"`
 	Marketplaces   map[string]*marketplaceJSON `json:"marketplaces,omitempty"`
 	EnabledPlugins []string                    `json:"enabled_plugins,omitempty"`
+	Skills         []string                    `json:"skills,omitempty"`
 	Hooks          map[string]interface{}      `json:"hooks,omitempty"`
 }
 
@@ -147,6 +150,11 @@ func mergeFile(result *SettingsConfig, filePath string, enabledPluginsSet map[st
 			enabledPluginsSet[plugin] = true
 		}
 	}
+	for _, skill := range settings.Skills {
+		if skill != "" && !containsString(result.Skills, skill) {
+			result.Skills = append(result.Skills, skill)
+		}
+	}
 
 	// Merge hooks (later files override earlier ones)
 	if settings.Hooks != nil {
@@ -188,6 +196,9 @@ func WriteConfig(config *SettingsConfig, outputPath string) error {
 	if len(config.EnabledPlugins) > 0 {
 		output.EnabledPlugins = config.EnabledPlugins
 	}
+	if len(config.Skills) > 0 {
+		output.Skills = config.Skills
+	}
 
 	if len(config.Hooks) > 0 {
 		output.Hooks = config.Hooks
@@ -225,6 +236,7 @@ func MergeInMemory(cfgs []SettingsConfig) *SettingsConfig {
 	result := &SettingsConfig{
 		Marketplaces:   make(map[string]MarketplaceConfig),
 		EnabledPlugins: []string{},
+		Skills:         []string{},
 		Hooks:          make(map[string]interface{}),
 	}
 	enabledPluginsSet := make(map[string]bool)
@@ -238,6 +250,11 @@ func MergeInMemory(cfgs []SettingsConfig) *SettingsConfig {
 				enabledPluginsSet[plugin] = true
 			}
 		}
+		for _, skill := range cfg.Skills {
+			if skill != "" {
+				result.Skills = append(result.Skills, skill)
+			}
+		}
 		for event, hook := range cfg.Hooks {
 			result.Hooks[event] = hook
 		}
@@ -247,6 +264,30 @@ func MergeInMemory(cfgs []SettingsConfig) *SettingsConfig {
 		result.EnabledPlugins = append(result.EnabledPlugins, plugin)
 	}
 	sort.Strings(result.EnabledPlugins)
+	result.Skills = uniqueSortedStrings(result.Skills)
 
+	return result
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueSortedStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
 	return result
 }

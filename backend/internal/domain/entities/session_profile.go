@@ -48,6 +48,7 @@ type SessionProfileConfig struct {
 	// sessions created with this profile. An empty list preserves the legacy
 	// behavior of exposing every projected secret in the settings scope.
 	secretIDs  []string
+	skills     []string
 	files      []ProfileFile
 	mcpServers *MCPServersSettings
 }
@@ -307,6 +308,12 @@ func (c *SessionProfileConfig) SecretIDs() []string { return copyStringSlice(c.s
 
 // SetSecretIDs sets the settings Secret references selected by this profile.
 func (c *SessionProfileConfig) SetSecretIDs(ids []string) { c.secretIDs = copyStringSlice(ids) }
+
+// Skills returns skills.sh package sources contributed by this profile.
+func (c *SessionProfileConfig) Skills() []string { return copyStringSlice(c.skills) }
+
+// SetSkills sets skills.sh package sources contributed by this profile.
+func (c *SessionProfileConfig) SetSkills(skills []string) { c.skills = copyStringSlice(skills) }
 
 // ProfileFiles returns files managed by this profile.
 func (c *SessionProfileConfig) ProfileFiles() []ProfileFile {

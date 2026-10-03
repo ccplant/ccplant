@@ -32,6 +32,7 @@ func Apply(base, higher SettingsPatch) SettingsPatch {
 
 	// Plugins: accumulated union
 	result.EnabledPlugins = unionStrings(base.EnabledPlugins, higher.EnabledPlugins)
+	result.Skills = unionStrings(base.Skills, higher.Skills)
 
 	// PreferredTeamID: higher wins if non-empty
 	if higher.PreferredTeamID != "" {

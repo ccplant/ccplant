@@ -116,6 +116,9 @@ func Materialize(resolved SettingsPatch) (MaterializedSettings, error) {
 	if len(result.ActivePlugins) > 0 {
 		settingsMap["enabled_plugins"] = result.ActivePlugins
 	}
+	if len(resolved.Skills) > 0 {
+		settingsMap["skills"] = resolved.Skills
+	}
 	if len(resolved.Hooks) > 0 {
 		settingsMap["hooks"] = resolved.Hooks
 	}

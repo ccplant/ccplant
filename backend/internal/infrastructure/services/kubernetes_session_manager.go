@@ -7661,6 +7661,7 @@ func settingsToPatch(settings *entities.Settings) settingspatch.SettingsPatch {
 		OAuthToken:      settings.ClaudeCodeOAuthToken(),
 		EnvVars:         cloneStringMap(settings.EnvVars()),
 		EnabledPlugins:  append([]string(nil), settings.EnabledPlugins()...),
+		Skills:          append([]string(nil), settings.Skills()...),
 		PreferredTeamID: settings.PreferredTeamID(),
 	}
 
@@ -7783,6 +7784,9 @@ func (m *KubernetesSessionManager) resolveSettings(
 	// 4. session profile
 	if req.ProfileMCPServers != nil && !req.ProfileMCPServers.IsEmpty() {
 		layers = append(layers, settingsToMCPProfilePatch(req.ProfileMCPServers))
+	}
+	if len(req.ProfileSkills) > 0 {
+		layers = append(layers, settingspatch.SettingsPatch{Skills: append([]string(nil), req.ProfileSkills...)})
 	}
 
 	resolved := settingspatch.Resolve(layers...)

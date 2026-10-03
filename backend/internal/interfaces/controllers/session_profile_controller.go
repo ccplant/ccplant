@@ -52,6 +52,7 @@ type SessionProfileConfigRequest struct {
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
+	Skills                 []string                     `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
@@ -108,6 +109,7 @@ type SessionProfileConfigResponse struct {
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
+	Skills                 []string                     `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 }
@@ -512,6 +514,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
 	cfg.SetSourceSessionProfileID(req.SourceSessionProfileID)
 	cfg.SetSecretIDs(req.SecretIDs)
+	cfg.SetSkills(req.Skills)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
 	}
@@ -567,6 +570,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 			SourceSessionProfileID: cfg.SourceSessionProfileID(),
 			SecretIDs:              cfg.SecretIDs(),
+			Skills:                 cfg.Skills(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 		},

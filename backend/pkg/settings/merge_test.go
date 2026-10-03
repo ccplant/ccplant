@@ -115,6 +115,20 @@ func TestMergeConfigsPluginsUnion(t *testing.T) {
 	assert.Contains(t, result.EnabledPlugins, "plugin-c@marketplace")
 }
 
+func TestMergeConfigsSkillsUnion(t *testing.T) {
+	tmpDir := t.TempDir()
+	dir1 := filepath.Join(tmpDir, "dir1")
+	dir2 := filepath.Join(tmpDir, "dir2")
+	require.NoError(t, os.MkdirAll(dir1, 0755))
+	require.NoError(t, os.MkdirAll(dir2, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir1, "settings.json"), []byte(`{"skills":["org/base","org/shared"]}`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir2, "settings.json"), []byte(`{"skills":["org/shared","org/personal"]}`), 0644))
+
+	result, err := MergeConfigs([]string{dir1, dir2}, MergeOptions{})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"org/base", "org/shared", "org/personal"}, result.Skills)
+}
+
 func TestMergeConfigsMissingDir(t *testing.T) {
 	// Missing directories should be skipped
 	result, err := MergeConfigs([]string{"/nonexistent/dir"}, MergeOptions{})

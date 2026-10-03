@@ -184,6 +184,7 @@ type StartRequest struct {
 	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
 	ProfileFiles             []sessionsettings.ManagedFile `json:"-"`
 	ProfileMCPServers        *MCPServersSettings           `json:"-"`
+	ProfileSkills            []string                      `json:"-"`
 	ResolvedSessionProfileID string                        `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
 	// ReuseMessage is queued to that session instead of creating a new one.
@@ -264,6 +265,8 @@ type RunServerRequest struct {
 	ClaudeAuthMode   string
 	// ProfileMCPServers is applied as a settings layer above user/team settings.
 	ProfileMCPServers *MCPServersSettings
+	// ProfileSkills is applied as a settings layer above user/team settings.
+	ProfileSkills []string
 	// ProfileSecretIDs limits settings Secret projection to the references stored
 	// on the resolved session profile. Empty preserves legacy all-secret behavior.
 	ProfileSecretIDs         []string

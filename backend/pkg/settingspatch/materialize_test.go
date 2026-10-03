@@ -103,6 +103,17 @@ func TestMaterialize_Plugins(t *testing.T) {
 	})
 }
 
+func TestMaterialize_Skills(t *testing.T) {
+	resolved := Resolve(
+		SettingsPatch{Skills: []string{"org/team", "org/shared"}},
+		SettingsPatch{Skills: []string{"org/shared", "org/personal"}},
+	)
+
+	m, err := Materialize(resolved)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"org/team", "org/shared", "org/personal"}, m.SettingsJSON["skills"])
+}
+
 func TestMaterialize_Marketplaces(t *testing.T) {
 	t.Run("marketplaces appear in SettingsJSON", func(t *testing.T) {
 		resolved := SettingsPatch{

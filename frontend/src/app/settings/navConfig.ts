@@ -155,6 +155,14 @@ export const settingsNavItems: SettingsNavItem[] = [
     fields: ['enabled_plugins'],
   },
   {
+    slug: 'skills',
+    label: 'Skills',
+    icon: Sparkles,
+    group: '拡張機能',
+    scopes: ['personal', 'team'],
+    fields: ['skills'],
+  },
+  {
     slug: 'account-connections',
     label: 'アカウント連携',
     icon: Github,

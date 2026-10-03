@@ -362,6 +362,7 @@ func syncExtra(settings *SessionSettings, opts SetupOptions) error {
 		NotificationSubscriptions: opts.NotificationSubscriptions,
 		NotificationsDir:          opts.NotificationsDir,
 		RegisterMarketplaces:      opts.RegisterMarketplaces,
+		AgentType:                 settings.Session.AgentType,
 	}
 
 	return startup.Sync(syncOpts)
