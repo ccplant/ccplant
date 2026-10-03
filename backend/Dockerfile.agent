@@ -162,10 +162,12 @@ ENV PATH="/opt/ccplant/bin:/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo
 ARG CODEX_VERSION=latest
 ARG CLAUDE_AGENT_ACP_VERSION=latest
 ARG CODEX_ACP_VERSION=latest
+ARG SKILLS_CLI_VERSION=latest
 RUN bun install -g \
       "@openai/codex@${CODEX_VERSION}" \
       "@agentclientprotocol/claude-agent-acp@${CLAUDE_AGENT_ACP_VERSION}" \
-      "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"
+      "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
+      "skills@${SKILLS_CLI_VERSION}"
 
 # Place a codex wrapper in /opt/claude/bin (first in PATH).
 # The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a

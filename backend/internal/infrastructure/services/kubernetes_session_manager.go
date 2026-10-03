@@ -7648,6 +7648,7 @@ func settingsToPatch(settings *entities.Settings) settingspatch.SettingsPatch {
 		OAuthToken:      settings.ClaudeCodeOAuthToken(),
 		EnvVars:         cloneStringMap(settings.EnvVars()),
 		EnabledPlugins:  append([]string(nil), settings.EnabledPlugins()...),
+		Skills:          append([]string(nil), settings.Skills()...),
 		PreferredTeamID: settings.PreferredTeamID(),
 	}
 

@@ -9624,6 +9624,13 @@
             },
             "description": "List of enabled plugins in 'plugin@marketplace' format (e.g., 'commit@claude-plugins-official')"
           },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "skills.sh package sources installed for the resolved session agent type"
+          },
           "env_vars": {
             "type": "object",
             "additionalProperties": {
@@ -9825,6 +9832,13 @@
               "type": "string"
             },
             "description": "List of enabled plugins in 'plugin@marketplace' format"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "skills.sh package sources installed for the resolved session agent type"
           },
           "env_var_keys": {
             "type": "array",

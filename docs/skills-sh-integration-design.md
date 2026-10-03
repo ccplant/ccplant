@@ -1,6 +1,10 @@
 # skills.sh スキル統合設計
 
-Status: proposed（設計のみ）
+Status: phase 1 implemented
+
+> 現在の phase 1 は Settings に skills.sh package source を保存し、session 起動時に bundled CLI で
+> resolved agent 一種類へ導入する実装である。以下に記載する commit 固定 artifact store、preview / review API、
+> update 差分 UI は hardening phase の設計であり、まだ実装していない。
 
 ## 1. 結論
 
@@ -13,10 +17,9 @@ skills.sh で配布される Agent Skill を Personal / Team Settings に取り�
 同じ bundle を利用できる。ただし一つの session で両方へ無条件にコピーせず、Claude session なら
 Claude Code、Codex session なら Codex の探索先だけへ公開する。
 
-初期版では、skills.sh の URL または `owner/repository` 形式で公開 GitHub repository を指定し、
-repository 内の一つ以上のスキルを選んでインストールする。インストール時に commit SHA と bundle の
-digest を固定する。セッション起動のたびに `npx skills add` を実行したり、既定 branch の最新版を
-取得したりしない。
+phase 1 では、skills.sh の URL または `owner/repository` 形式で package source を指定し、session 起動時に
+package 内のスキルを導入する。次の hardening phase では repository 内のスキル選択、commit SHA と bundle
+digest の固定を行い、session 起動のたびに既定 branch の最新版を取得しない方式へ移行する。
 
 ## 2. 背景と既存実装
 

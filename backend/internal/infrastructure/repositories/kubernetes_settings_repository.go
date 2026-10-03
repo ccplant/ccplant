@@ -61,6 +61,7 @@ type settingsJSON struct {
 	ClaudeCodeOAuthToken    string                                 `json:"claude_code_oauth_token,omitempty"`
 	AuthMode                string                                 `json:"auth_mode,omitempty"`
 	EnabledPlugins          []string                               `json:"enabled_plugins,omitempty"`    // plugin@marketplace format
+	Skills                  []string                               `json:"skills,omitempty"`             // skills.sh package sources
 	EnvVars                 map[string]string                      `json:"env_vars,omitempty"`           // plain env vars (legacy / noop)
 	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"` // encrypted env vars
 	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`  // "org/team-slug" format
@@ -333,6 +334,9 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if plugins := settings.EnabledPlugins(); len(plugins) > 0 {
 		sj.EnabledPlugins = plugins
 	}
+	if skills := settings.Skills(); len(skills) > 0 {
+		sj.Skills = skills
+	}
 
 	if envVars := settings.EnvVars(); len(envVars) > 0 {
 		if enc := r.encryptionSvc(); enc != nil && enc.Algorithm() != "noop" {
@@ -510,6 +514,10 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 	if len(sj.EnabledPlugins) > 0 {
 		settings.SetEnabledPlugins(sj.EnabledPlugins)
 		// Reset updatedAt since SetEnabledPlugins updates it
+		settings.SetUpdatedAt(sj.UpdatedAt)
+	}
+	if len(sj.Skills) > 0 {
+		settings.SetSkills(sj.Skills)
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
 

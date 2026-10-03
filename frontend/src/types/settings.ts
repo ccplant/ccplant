@@ -125,6 +125,7 @@ export interface SettingsData {
   mcp_servers?: Record<string, APIMCPServerConfig>;
   marketplaces?: Record<string, MarketplaceConfig>;
   enabled_plugins?: string[];  // "plugin@marketplace" 形式のプラグインリスト (例: "commit@claude-plugins-official")
+  skills?: string[];  // skills.sh package source (例: "vercel-labs/agent-skills")
   claude_code_oauth_token?: string;  // Claude Code OAuth トークン（保存時のみ使用）
   has_claude_code_oauth_token?: boolean;  // OAuth トークンが設定されているか（読み取り時のみ）
   auth_mode?: AuthMode;  // 認証モード（oauth または bedrock）
@@ -365,6 +366,10 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
       .filter(p => p)
     // 空の配列でも送信（サーバー側で削除を反映するため）
     prepared.enabled_plugins = filteredPlugins
+  }
+
+  if (data.skills !== undefined) {
+    prepared.skills = [...new Set(data.skills.map(skill => skill.trim()).filter(Boolean))]
   }
 
   // Claude Code OAuth Token の処理

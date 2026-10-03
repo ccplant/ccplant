@@ -166,6 +166,7 @@ type Settings struct {
 	claudeCodeOAuthToken    string            // Claude Code OAuth token
 	authMode                AuthMode          // Authentication mode (oauth or bedrock)
 	enabledPlugins          []string          // plugin@marketplace format (e.g., "commit@claude-plugins-official")
+	skills                  []string          // skills.sh package sources (e.g., "owner/repository")
 	envVars                 map[string]string // Custom environment variables
 	preferredTeamID         string            // "org/team-slug" format; if set, only this team's settings are used
 	githubAppInstallationID string            // GitHub App installation ID used for team sessions
@@ -302,7 +303,16 @@ func (s *Settings) EnabledPlugins() []string {
 
 // SetEnabledPlugins sets the list of enabled plugins in "plugin@marketplace" format
 func (s *Settings) SetEnabledPlugins(plugins []string) {
-	s.enabledPlugins = plugins
+	s.enabledPlugins = append([]string(nil), plugins...)
+	s.updatedAt = time.Now()
+}
+
+// Skills returns the configured skills.sh package sources.
+func (s *Settings) Skills() []string { return append([]string(nil), s.skills...) }
+
+// SetSkills replaces the configured skills.sh package sources.
+func (s *Settings) SetSkills(skills []string) {
+	s.skills = append([]string(nil), skills...)
 	s.updatedAt = time.Now()
 }
 
