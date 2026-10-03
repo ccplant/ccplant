@@ -378,6 +378,9 @@ assert_contains 'verbs: \["get", "list", "create", "update", "patch", "delete"\]
 
 # A shadow API release can reuse the stable control-plane Service without
 # creating it. Role-local values remain nil-safe for legacy --reuse-values.
+jq -e '.properties.leaderElection.required | index("migrateLegacyLease") | not' \
+  chart/session-manager/values.schema.json >/dev/null
+
 "$HELM_BIN" template ccplant-shadow "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --namespace default \
   --set controlPlaneService.create=false >"$TMP_DIR/backend-shadow.yaml"
