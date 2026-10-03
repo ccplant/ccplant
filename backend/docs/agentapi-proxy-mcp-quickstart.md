@@ -82,7 +82,24 @@ notepad $env:APPDATA\Claude\claude_desktop_config.json
 
 ## 利用可能なツール
 
-AgentAPI Proxy MCP Server は以下のツールを提供します：
+AgentAPI Proxy MCP Server はセッション操作に加えて、CLI のリソース操作を提供します。
+リソースツールは同じ REST API へ内部ディスパッチされるため、CLI と同じ認証・認可、
+入力検証、所有スコープ（user / team）が適用されます。
+
+| リソース | MCP tools |
+|---|---|
+| Asset | `create_asset` |
+| Schedule | `list_schedules`, `get_schedule`, `create_schedule`, `update_schedule`, `delete_schedule` |
+| Webhook | `list_webhooks`, `get_webhook`, `create_webhook`, `update_webhook`, `delete_webhook`, `regenerate_webhook_secret` |
+| SlackBot | `list_slackbots`, `get_slackbot`, `create_slackbot`, `update_slackbot`, `delete_slackbot`, `simulate_slackbot` |
+| User | `create_user`, `get_user` |
+| User token | `create_user_token`, `list_user_tokens`, `revoke_user_token` |
+
+作成・更新ツールの `body` は対応する REST API / CLI JSON と同じ形式です。削除、
+Webhook secret の再生成、token の作成・失効は不可逆または秘密値を伴うため、実行前に
+対象を確認してください。user / user token ツールには admin 権限が必要です。
+
+セッション操作は以下のツールを提供します：
 
 ### 1. start_session
 新しいエージェントセッションを開始します。
