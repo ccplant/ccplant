@@ -37,7 +37,7 @@
     },
     "leaderElection": {
       "type": "object",
-      "required": ["leaseDuration", "renewDeadline", "retryPeriod", "migrateLegacyLease"],
+      "required": ["leaseDuration", "renewDeadline", "retryPeriod"],
       "properties": {
         "leaseDuration": {"type": "string", "minLength": 1},
         "renewDeadline": {"type": "string", "minLength": 1},
