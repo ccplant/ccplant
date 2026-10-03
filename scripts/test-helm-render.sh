@@ -326,6 +326,7 @@ assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-m
 assert_contains 'args: \["session-manager", "--port", "8080"\]' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "backend-agentapi-proxy-session-manager"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: "shared-encryption"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET, value: "manager-sessions"' "$TMP_DIR/backend-session-manager-deployment.yaml"
@@ -490,6 +491,28 @@ agent_image="ghcr.io/ccplant/ccplant-agent:$("$REPO_ROOT/scripts/agent-image-tag
 assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-agent-assets.yaml"
+
+# Independent standalone managers in one namespace must not share names or the
+# Kubernetes Lease that elects the allocation worker.
+"$HELM_BIN" template manager-a "$REPO_ROOT/chart/session-manager" \
+  --namespace shared-managers >"$TMP_DIR/manager-a.yaml"
+"$HELM_BIN" template manager-b "$REPO_ROOT/chart/session-manager" \
+  --namespace shared-managers >"$TMP_DIR/manager-b.yaml"
+assert_contains '^  name: manager-a-session-manager$' "$TMP_DIR/manager-a.yaml"
+assert_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-b.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-a-session-manager"' "$TMP_DIR/manager-a.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-b-session-manager"' "$TMP_DIR/manager-b.yaml"
+assert_not_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-a.yaml"
+"$HELM_BIN" template legacy-manager "$REPO_ROOT/chart/session-manager" \
+  --namespace shared-managers --set fullnameOverride=session-manager \
+  >"$TMP_DIR/manager-legacy-name.yaml"
+assert_contains '^  name: session-manager$' "$TMP_DIR/manager-legacy-name.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "session-manager"' "$TMP_DIR/manager-legacy-name.yaml"
+assert_not_contains '^  name: legacy-manager-session-manager$' "$TMP_DIR/manager-legacy-name.yaml"
+"$HELM_BIN" template migrating-manager "$REPO_ROOT/chart/session-manager" \
+  --set leaderElection.migrateLegacyLease=true >"$TMP_DIR/manager-lease-migration.yaml"
+assert_contains '^  strategy:$' "$TMP_DIR/manager-lease-migration.yaml"
+assert_contains '^    type: Recreate$' "$TMP_DIR/manager-lease-migration.yaml"
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set session.cliImage=registry.example/cli:fixed >"$TMP_DIR/manager-custom-cli.yaml"
 assert_contains 'value: "registry.example/cli:fixed"' "$TMP_DIR/manager-custom-cli.yaml"

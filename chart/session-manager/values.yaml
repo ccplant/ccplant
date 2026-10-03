@@ -62,6 +62,8 @@ leaderElection:
   leaseDuration: 15s
   renewDeadline: 10s
   retryPeriod: 2s
+  # Set automatically for one installer-driven upgrade from the legacy shared Lease.
+  migrateLegacyLease: false
 
 sessionPersistence:
   backend: ""

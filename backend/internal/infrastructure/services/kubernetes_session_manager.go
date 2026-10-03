@@ -603,7 +603,7 @@ func (m *KubernetesSessionManager) runSessionSuspendReconciler(ctx context.Conte
 }
 
 func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context) {
-	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "agentapi.proxy/session-id"})
+	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: m.managerScopedSelector("agentapi.proxy/session-id")})
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list session suspend timers: %v", err)
 		return
@@ -1188,7 +1188,7 @@ func (m *KubernetesSessionManager) stockPodTemplateHash(ctx context.Context, din
 func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	m.refreshConfig()
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy",
+		LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy"),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list stock services for template reconciliation: %w", err)
@@ -1277,6 +1277,7 @@ func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context
 	} else {
 		selector += ",!agentapi.proxy/session-pool"
 	}
+	selector = m.managerScopedSelector(selector)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -1310,7 +1311,7 @@ func (m *KubernetesSessionManager) CountStockSessionsForPool(ctx context.Context
 // CountRunnerSessionsForPool counts all live runner Services, including claimed
 // sessions. It is used to enforce a pool's total concurrency limit.
 func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Context, pool string) (int, error) {
-	selector := "app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/session-pool=" + pool
+	selector := m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/session-pool=" + pool)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return 0, fmt.Errorf("failed to list runner services: %w", err)
@@ -1327,7 +1328,7 @@ func (m *KubernetesSessionManager) CountRunnerSessionsForPool(ctx context.Contex
 // ListRunnerSessionIDs returns the IDs of all runner workloads currently backed
 // by a live Service in this manager's namespace.
 func (m *KubernetesSessionManager) ListRunnerSessionIDs(ctx context.Context) ([]string, error) {
-	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"
+	selector := m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool")
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runner services: %w", err)
@@ -1350,7 +1351,7 @@ func (m *KubernetesSessionManager) ListRunnerSessionIDs(ctx context.Context) ([]
 // before its Service is created, so a newly-created workload cannot be removed
 // by this reconciliation window.
 func (m *KubernetesSessionManager) DeleteRunnerSessionsNotRegistered(ctx context.Context, registered map[string]struct{}) error {
-	selector := "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool"
+	selector := m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool")
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return fmt.Errorf("failed to list runner services for orphan cleanup: %w", err)
@@ -1413,6 +1414,7 @@ func (m *KubernetesSessionManager) purgeStockSessions(ctx context.Context, pool 
 	if pool != "" {
 		selector += ",agentapi.proxy/session-pool=" + pool
 	}
+	selector = m.managerScopedSelector(selector)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -1420,7 +1422,7 @@ func (m *KubernetesSessionManager) purgeStockSessions(ctx context.Context, pool 
 		return fmt.Errorf("failed to list stock services for purge: %w", err)
 	}
 	allSessionSvcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session",
+		LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list session services for purge protection: %w", err)
@@ -1623,6 +1625,7 @@ func (m *KubernetesSessionManager) findStockSession(ctx context.Context, require
 		"agentapi.proxy/stock=true,app.kubernetes.io/managed-by=agentapi-proxy,agentapi.proxy/capability-sandbox=true,agentapi.proxy/capability-dind=%t,!agentapi.proxy/session-pool",
 		requirements.DinD,
 	)
+	selector = m.managerScopedSelector(selector)
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list stock services: %w", err)
@@ -5079,7 +5082,7 @@ func (m *KubernetesSessionManager) buildLabelSelector(filter entities.SessionFil
 		selector += ",agentapi.proxy/tag-" + sanitizeLabelKey(key) + "=" + sanitizeLabelValue(value)
 	}
 
-	return selector
+	return m.managerScopedSelector(selector)
 }
 
 // buildLabels creates standard labels for Kubernetes resources
@@ -5126,6 +5129,16 @@ func (m *KubernetesSessionManager) buildLabels(session *KubernetesSession) map[s
 	}
 
 	return labels
+}
+
+// managerScopedSelector confines inventory and cleanup operations to the
+// session manager that created the resources. Managers without an ID retain
+// the legacy namespace-wide behavior used by local, non-runner deployments.
+func (m *KubernetesSessionManager) managerScopedSelector(selector string) string {
+	if m.config == nil || m.config.SessionManager.ID == "" {
+		return selector
+	}
+	return selector + ",agentapi.proxy/session-manager-id=" + sanitizeLabelValue(m.config.SessionManager.ID)
 }
 
 // buildEnvVars creates environment variables for the session pod
@@ -5427,14 +5440,14 @@ func (m *KubernetesSessionManager) OperationalStatus(ctx context.Context, pools 
 	// Fetch every managed session service. Pool-scoped callers are filtered
 	// below, while an unfiltered administrative inventory must also see direct
 	// sessions which deliberately have no session-pool label.
-	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"})
+	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session")})
 	if err != nil {
 		return nil, err
 	}
 	// The pool label is assigned to the runner Service when stock is created;
 	// older and adopted Pod templates do not necessarily carry it. Join Pods to
 	// Services by session ID instead of filtering Pods by pool.
-	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session"})
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session")})
 	if err != nil {
 		return nil, err
 	}

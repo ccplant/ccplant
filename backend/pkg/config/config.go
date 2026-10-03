@@ -471,6 +471,7 @@ type SessionManagerAllocationConfig struct {
 	LeaseDuration string `json:"lease_duration" mapstructure:"lease_duration"`
 	RenewDeadline string `json:"renew_deadline" mapstructure:"renew_deadline"`
 	RetryPeriod   string `json:"retry_period" mapstructure:"retry_period"`
+	LeaseName     string `json:"lease_name" mapstructure:"lease_name"`
 }
 
 type SessionManagerBuiltinBindingConfig struct {
@@ -1303,6 +1304,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.allocation.lease_duration", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION")
 	_ = v.BindEnv("session_manager.allocation.renew_deadline", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE")
 	_ = v.BindEnv("session_manager.allocation.retry_period", "AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD")
+	_ = v.BindEnv("session_manager.allocation.lease_name", "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME")
 	_ = v.BindEnv("session_manager.builtin.enabled", "AGENTAPI_SESSION_MANAGER_BUILTIN_ENABLED")
 	_ = v.BindEnv("session_manager.builtin.manager_id", "AGENTAPI_SESSION_MANAGER_BUILTIN_MANAGER_ID")
 	_ = v.BindEnv("session_manager.builtin.name", "AGENTAPI_SESSION_MANAGER_BUILTIN_NAME")
@@ -1428,6 +1430,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("session_manager.allocation.lease_duration", "15s")
 	v.SetDefault("session_manager.allocation.renew_deadline", "10s")
 	v.SetDefault("session_manager.allocation.retry_period", "2s")
+	v.SetDefault("session_manager.allocation.lease_name", "agentapi-session-allocator")
 	v.SetDefault("session_manager.builtin.enabled", false)
 	v.SetDefault("session_manager.builtin.manager_id", "")
 	v.SetDefault("session_manager.builtin.name", "Built-in session manager")

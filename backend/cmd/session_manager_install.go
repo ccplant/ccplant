@@ -136,6 +136,10 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	if err = ensureOpaqueSecret(ctx, client, opts.namespace, opts.provisionerSecret, "provisioner-token"); err != nil {
 		return err
 	}
+	legacyLeaseMigration, err := requiresLegacySessionManagerLeaseMigration(ctx, client, opts.namespace, opts.release)
+	if err != nil {
+		return err
+	}
 
 	values := map[string]any{
 		"fullnameOverride": opts.release,
@@ -145,6 +149,9 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		"runner":      map[string]any{"managerId": credentials.ManagerID, "pool": opts.pool},
 		"internalApi": map[string]any{"tokenSecretRef": map[string]any{"name": opts.internalSecret, "key": "token"}},
 		"session":     map[string]any{"provisioner": map[string]any{"tokenSecretRef": map[string]any{"name": opts.provisionerSecret, "key": "provisioner-token"}}},
+		"leaderElection": map[string]any{
+			"migrateLegacyLease": legacyLeaseMigration,
+		},
 	}
 	data, err := yaml.Marshal(values)
 	if err != nil {
@@ -170,6 +177,13 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	if opts.wait {
 		args = append(args, "--wait")
 	}
+	if legacyLeaseMigration {
+		// Recreate prevents old and new Pods from leading concurrently with
+		// different Lease names. Atomic rollback restores the old ReplicaSet if
+		// the first migration upgrade cannot become ready.
+		args = append(args, "--atomic")
+		_, _ = fmt.Fprintf(stdout, "Migrating session manager %s from the legacy shared Lease\n", opts.release)
+	}
 	if opts.version != "" {
 		args = append(args, "--version", opts.version)
 	}
@@ -183,6 +197,27 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return err
 	}
 	return nil
+}
+
+func requiresLegacySessionManagerLeaseMigration(ctx context.Context, client kubernetes.Interface, namespace, deploymentName string) (bool, error) {
+	deployment, err := client.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect session manager Deployment %s/%s: %w", namespace, deploymentName, err)
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name != "session-manager" {
+			continue
+		}
+		for _, env := range container.Env {
+			if env.Name == "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME" {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 func ensureManagerCredentials(ctx context.Context, client kubernetes.Interface, opts sessionManagerInstallOptions) (*installedManagerCredentials, error) {

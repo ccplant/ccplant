@@ -20,6 +20,14 @@ Deployment image and the CLI source for newly created session Pods. The
 `autoUpgrade=false` to pin the manager to the installed chart version. Existing
 session Pods are never restarted or mutated.
 
+Auto-upgrade does not apply Helm chart structure or configuration migrations.
+An old chart that auto-upgrades its application image therefore keeps using the
+legacy shared Lease; the updated binary retains that default when the dedicated
+Lease environment variable is absent. A later `ccplant session-manager install`
+detects the missing variable and performs the one-time safe Lease migration
+described below. Managers already installed with the new chart keep their
+release-specific Lease across auto-upgrades.
+
 Session checkpoint persistence is configured with `sessionPersistence`. Set
 `backend` to `s3` and provide the bucket and credential Secret references, or
 set it to `volume` to keep each checkpoint on that session's workdir PVC.
@@ -43,3 +51,30 @@ denying access to the `kube-apiserver` entity. Setting `egressMode` to
 entity, while default-denying all other cluster-internal egress (including the
 session-manager service and kube-apiserver). Isolation defaults remain disabled
 for compatibility.
+
+Resource names and the leader-election Lease are derived from the Helm release
+name by default. This allows multiple session-manager releases to run in one
+namespace without sharing Kubernetes objects or electing a leader across managers.
+Use a distinct release name for each manager. `fullnameOverride` remains available
+when a fixed resource name is required and must also be unique within the namespace.
+Session and stock inventory discovery is also scoped by `runner.managerId`, so a
+manager cannot adopt, count, reconcile, or purge another manager's workloads in
+the shared namespace.
+
+Upgrades are backward compatible with both supported installation paths. The
+`ccplant session-manager install` command has always supplied
+`fullnameOverride=<release>`, so those resources are already release-qualified
+and retain their names. A direct Helm installation that used the old chart's
+fixed `session-manager` name is migrated to release-qualified resources on
+upgrade; Helm creates the new resources and removes the old release objects.
+Older chart versions and binaries remain operable before they are upgraded: the
+application retains the legacy allocator Lease default when the new environment
+variable is absent, and manager-less local configurations retain namespace-wide
+session discovery.
+
+For installer-managed upgrades, the installer detects whether the existing
+Deployment still lacks the dedicated Lease setting. That one upgrade uses the
+Deployment `Recreate` strategy so no old Pod using the shared Lease overlaps a
+new Pod using the release-specific Lease. Helm `--atomic` rollback is enabled for
+the migration; later upgrades detect the new setting and return to the normal
+rolling strategy.

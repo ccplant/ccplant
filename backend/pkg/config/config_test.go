@@ -56,6 +56,19 @@ func TestLoadConfigDefaultsEmptyKubernetesSessionBasePort(t *testing.T) {
 	assert.Equal(t, 9000, loadedConfig.KubernetesSession.BasePort)
 }
 
+func TestLoadConfigSessionManagerLeaseNameCompatibility(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "agentapi-session-allocator", loadedConfig.SessionManager.Allocation.LeaseName)
+
+	t.Setenv("AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME", "release-a-session-manager")
+	loadedConfig, err = LoadConfig("")
+	assert.NoError(t, err)
+	assert.Equal(t, "release-a-session-manager", loadedConfig.SessionManager.Allocation.LeaseName)
+}
+
 func TestLoadConfigKubernetesSessionIsolationFromEnv(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 	t.Setenv("AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS", "true")

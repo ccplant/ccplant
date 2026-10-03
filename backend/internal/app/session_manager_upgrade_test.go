@@ -77,6 +77,35 @@ func TestReconcileSessionManagerVersionUpgradesDeploymentAndFutureSessions(t *te
 	}
 }
 
+func TestReconcileSessionManagerVersionLeavesLegacyLeaseForInstallerMigration(t *testing.T) {
+	client := fake.NewSimpleClientset(&appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "manager", Namespace: "sessions"},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "session-manager", Image: "example/manager:v1.2.3", Env: []corev1.EnvVar{
+				{Name: "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION", Value: "v1.2.3"},
+			},
+		}}}}},
+	})
+	cfg := &config.Config{SessionManager: config.SessionManagerConfig{
+		AutoUpgrade: true, DeploymentName: "manager", ImageRepository: "example/manager", CurrentVersion: "v1.2.3",
+	}}
+	if err := reconcileSessionManagerVersion(context.Background(), cfg, client, "sessions", "v1.3.0"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.AppsV1().Deployments("sessions").Get(context.Background(), "manager", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range got.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME" {
+			t.Fatalf("auto-upgrade unexpectedly injected chart-owned Lease setting: %+v", env)
+		}
+	}
+	if got.Spec.Strategy.Type != "" {
+		t.Fatalf("auto-upgrade unexpectedly changed Deployment strategy: %q", got.Spec.Strategy.Type)
+	}
+}
+
 func TestReconcileSessionManagerVersionDoesNotDowngrade(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	cfg := &config.Config{SessionManager: config.SessionManagerConfig{
