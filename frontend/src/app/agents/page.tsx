@@ -7,7 +7,9 @@ import NavigationTabs from '../components/NavigationTabs'
 import SessionProfileSelect from '../components/SessionProfileSelect'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
 import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-client'
-import { waitForControllerReady } from '../../lib/controller-agent-runtime'
+import { createACPServerClientFromStorage } from '../../lib/acp-server-client'
+import { sendControllerCommand, waitForControllerReady } from '../../lib/controller-agent-runtime'
+import { getACPServerEnabled } from '../../types/settings'
 import {
   buildControllerBootstrapMessage,
   buildControllerMessage,
@@ -152,7 +154,14 @@ export default function AgentsPage() {
       if (!current.controller_session_id) throw new Error('Controller Sessionがありません。Agentを作り直してください。')
       await waitForControllerReady(() => client.getSessionStatus(current.controller_session_id!))
       const message = buildControllerMessage(current, command, false)
-      await client.sendSessionMessage(current.controller_session_id, { content: message, type: 'user' })
+      const globalACPEnabled = getACPServerEnabled()
+      await sendControllerCommand({
+        sessionId: current.controller_session_id,
+        message,
+        globalACPEnabled,
+        restClient: client,
+        acpServerClient: globalACPEnabled ? createACPServerClientFromStorage() : undefined,
+      })
       current = { ...current, status: 'working', runs: current.runs.map((item) => item.id === run.id ? { ...item, status: 'submitted' } : item), updated_at: new Date().toISOString() }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '指令の送信に失敗しました'
