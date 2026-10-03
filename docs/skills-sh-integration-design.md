@@ -19,8 +19,9 @@ skills.sh で配布される Agent Skill を Personal / Team Settings に取り�
 同じ bundle を利用できる。ただし一つの session で両方へ無条件にコピーせず、Claude session なら
 Claude Code、Codex session なら Codex の探索先だけへ公開する。
 
-phase 1 では、skills.sh の URL または `owner/repository` 形式で package source を指定し、任意で
-`<source> --skill <name>` として package 内の単一 skill を選択できる。session 起動時に
+phase 1 では、skills.sh の URL または `owner/repository` 形式で package source と skill 名を指定し、
+`<source> --skill <name>` として package 内の単一 skill を選択する。全件導入は UI で明示的に選択し、
+`<source> --skill *` として保存する。既存データとの互換性のため source だけの設定も読み取れる。session 起動時に
 package 内のスキルを導入する。次の hardening phase では repository 内のスキル選択、commit SHA と bundle
 digest の固定を行い、session 起動のたびに既定 branch の最新版を取得しない方式へ移行する。
 

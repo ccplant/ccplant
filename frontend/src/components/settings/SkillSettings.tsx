@@ -10,14 +10,19 @@ interface SkillSettingsProps {
 export function SkillSettings({ skills = [], onChange }: SkillSettingsProps) {
   const [source, setSource] = useState('')
   const [skillName, setSkillName] = useState('')
+  const [allSkills, setAllSkills] = useState(false)
   const normalized = source.trim()
+  const normalizedSkillName = skillName.trim()
+  const canAdd = Boolean(normalized && (allSkills || normalizedSkillName))
 
   const add = () => {
-    const configured = skillName.trim() ? `${normalized} --skill ${skillName.trim()}` : normalized
-    if (!normalized || skills.includes(configured)) return
+    if (!canAdd) return
+    const configured = `${normalized} --skill ${allSkills ? '*' : normalizedSkillName}`
+    if (skills.includes(configured)) return
     onChange([...skills, configured])
     setSource('')
     setSkillName('')
+    setAllSkills(false)
   }
 
   return (
@@ -44,15 +49,21 @@ export function SkillSettings({ skills = [], onChange }: SkillSettingsProps) {
           className="flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
         <input value={skillName} onChange={(event) => setSkillName(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add() } }}
-          placeholder="Skill name (optional)"
+          disabled={allSkills}
+          placeholder={allSkills ? "All skills selected" : "Skill name (required)"}
           className="rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
-        <button type="button" onClick={add} disabled={!normalized}
+        <button type="button" onClick={add} disabled={!canAdd}
           className="rounded-md bg-blue-600 px-4 py-2 text-white disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-600">
           + Add
         </button>
+        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 sm:col-start-2">
+          <input type="checkbox" checked={allSkills}
+            onChange={(event) => setAllSkills(event.target.checked)} />
+          Install all skills from this package
+        </label>
       </div>
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Optionally select one skill from the package. Leaving the skill name empty installs all skills. The resolved agent type selects either Claude Code or Codex.
+        A skill name is required. Select “Install all skills” explicitly to use <code>--skill &apos;*&apos;</code>. The resolved agent type selects either Claude Code or Codex.
       </p>
     </div>
   )
