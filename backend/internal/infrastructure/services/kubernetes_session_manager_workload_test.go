@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
@@ -510,6 +511,64 @@ func TestPurgeStockSessionsDeletesMixedWorkloadKindsAndPVC(t *testing.T) {
 	}
 	if _, err := manager.client.CoreV1().PersistentVolumeClaims("test-ns").Get(ctx, orphanName+"-pvc", metav1.GetOptions{}); !errors.IsNotFound(err) {
 		t.Fatalf("Expected orphaned PVC to be deleted, got err=%v", err)
+	}
+}
+
+func TestStockInventoryIsScopedToSessionManager(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.config.SessionManager.ID = "manager-a"
+	ctx := context.Background()
+
+	for _, managerID := range []string{"manager-a", "manager-b"} {
+		sessionID := "stock-" + managerID
+		name := "agentapi-session-" + sessionID
+		resourceLabels := map[string]string{
+			"app.kubernetes.io/name":            "agentapi-session",
+			"app.kubernetes.io/managed-by":      "agentapi-proxy",
+			"agentapi.proxy/session-id":         sessionID,
+			"agentapi.proxy/session-manager-id": managerID,
+			"agentapi.proxy/stock":              "true",
+			"agentapi.proxy/capability-sandbox": "true",
+			"agentapi.proxy/capability-dind":    "false",
+		}
+		if _, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: resourceLabels},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create stock Service for %s: %v", managerID, err)
+		}
+		if _, err := manager.client.AppsV1().Deployments("test-ns").Create(ctx, &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: resourceLabels},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create stock Deployment for %s: %v", managerID, err)
+		}
+	}
+
+	count, err := manager.CountStockSessions(ctx, false)
+	if err != nil {
+		t.Fatalf("CountStockSessions() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("CountStockSessions() = %d, want 1", count)
+	}
+	stock, err := manager.findStockSession(ctx, coreallocation.Requirements{})
+	if err != nil {
+		t.Fatalf("findStockSession() error = %v", err)
+	}
+	if stock == nil || stock.Labels["agentapi.proxy/session-manager-id"] != "manager-a" {
+		t.Fatalf("findStockSession() = %#v, want manager-a stock", stock)
+	}
+
+	if err := manager.PurgeStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStockSessions() error = %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-stock-manager-a-svc", metav1.GetOptions{}); !errors.IsNotFound(err) {
+		t.Fatalf("manager-a stock Service should be deleted, got %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, "agentapi-session-stock-manager-b-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("manager-b stock Service should remain, got %v", err)
+	}
+	if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, "agentapi-session-stock-manager-b", metav1.GetOptions{}); err != nil {
+		t.Fatalf("manager-b stock Deployment should remain, got %v", err)
 	}
 }
 

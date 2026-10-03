@@ -49,3 +49,6 @@ name by default. This allows multiple session-manager releases to run in one
 namespace without sharing Kubernetes objects or electing a leader across managers.
 Use a distinct release name for each manager. `fullnameOverride` remains available
 when a fixed resource name is required and must also be unique within the namespace.
+Session and stock inventory discovery is also scoped by `runner.managerId`, so a
+manager cannot adopt, count, reconcile, or purge another manager's workloads in
+the shared namespace.
