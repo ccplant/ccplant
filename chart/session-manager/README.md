@@ -52,3 +52,12 @@ when a fixed resource name is required and must also be unique within the namesp
 Session and stock inventory discovery is also scoped by `runner.managerId`, so a
 manager cannot adopt, count, reconcile, or purge another manager's workloads in
 the shared namespace.
+
+Upgrades are backward compatible with both supported installation paths. The
+`ccplant session-manager install` command has always supplied
+`fullnameOverride=<release>`, which remains authoritative. For direct Helm users,
+an upgrade detects a legacy `session-manager` Deployment owned by the same Helm
+release and retains that name for all chart-managed resources. Fresh releases use
+release-qualified names. Client-side `helm template` cannot perform this cluster
+lookup, so it always displays the fresh-install naming unless `fullnameOverride`
+is supplied explicitly.

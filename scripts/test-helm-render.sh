@@ -503,6 +503,12 @@ assert_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-b.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-a-session-manager"' "$TMP_DIR/manager-a.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-b-session-manager"' "$TMP_DIR/manager-b.yaml"
 assert_not_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-a.yaml"
+"$HELM_BIN" template legacy-manager "$REPO_ROOT/chart/session-manager" \
+  --namespace shared-managers --set fullnameOverride=session-manager \
+  >"$TMP_DIR/manager-legacy-name.yaml"
+assert_contains '^  name: session-manager$' "$TMP_DIR/manager-legacy-name.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "session-manager"' "$TMP_DIR/manager-legacy-name.yaml"
+assert_not_contains '^  name: legacy-manager-session-manager$' "$TMP_DIR/manager-legacy-name.yaml"
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set session.cliImage=registry.example/cli:fixed >"$TMP_DIR/manager-custom-cli.yaml"
 assert_contains 'value: "registry.example/cli:fixed"' "$TMP_DIR/manager-custom-cli.yaml"
