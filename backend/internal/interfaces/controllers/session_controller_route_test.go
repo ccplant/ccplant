@@ -103,10 +103,14 @@ func (s *resumeConfigurationStore) UpdateProvisionSettings(context.Context, stri
 
 type resumeSettingsCreator struct{ controllers.SessionCreator }
 
-func (resumeSettingsCreator) ResolveRestartSettings(_ context.Context, id string, _ entities.StartRequest, _ string, _ []string) (*sessionsettings.SessionSettings, error) {
+func (resumeSettingsCreator) ResolveRestartSettings(_ context.Context, id string, start entities.StartRequest, _ string, _ []string) (*sessionsettings.SessionSettings, error) {
+	token := ""
+	if start.Params != nil {
+		token = start.Params.GithubToken
+	}
 	return &sessionsettings.SessionSettings{
 		Session: sessionsettings.SessionMeta{ID: id, UserID: "user-1", Scope: string(entities.ScopeUser)},
-		Env:     map[string]string{"GITHUB_TOKEN": "fresh-token"},
+		Env:     map[string]string{"GITHUB_TOKEN": token},
 	}, nil
 }
 
@@ -738,6 +742,7 @@ func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
 		controllers.WithSessionRunnerStore(store),
 	)
 	ctx, _ := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "fresh-token"})
 	if err := controller.ResumeSession(ctx); err != nil {
 		t.Fatal(err)
 	}

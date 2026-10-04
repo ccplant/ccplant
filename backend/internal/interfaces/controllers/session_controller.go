@@ -1989,7 +1989,24 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 			if az == nil {
 				return nil, echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
 			}
-			resolved, resolveErr := c.reloadSessionSettings(ctx.Request().Context(), cfg, cfg.ProfileID, az)
+			// A GitHub OAuth token is deliberately omitted from the saved startup
+			// input. Re-attach the caller's authenticated token only to an in-memory
+			// copy used for this resume, so public/private repository setup can be
+			// rebuilt without persisting the credential.
+			resumeCfg := *cfg
+			if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
+				var start entities.StartRequest
+				if json.Unmarshal(resumeCfg.Input, &start) == nil {
+					if start.Params == nil {
+						start.Params = &entities.SessionParams{}
+					}
+					start.Params.GithubToken = token
+					if input, marshalErr := json.Marshal(start); marshalErr == nil {
+						resumeCfg.Input = input
+					}
+				}
+			}
+			resolved, resolveErr := c.reloadSessionSettings(ctx.Request().Context(), &resumeCfg, resumeCfg.ProfileID, az)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
