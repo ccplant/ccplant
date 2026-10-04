@@ -644,7 +644,6 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 					return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to resume reusable session")
 				}
-				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
 			}
 			commandID, err := telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.EnqueueReusePrompt", func(operationCtx context.Context) (string, error) {
 				return enqueuer.Enqueue(operationCtx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
@@ -1804,7 +1803,6 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
 		}
-		_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
 		ctx.Response().Header().Set("Retry-After", "2")
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
 			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
@@ -1922,7 +1920,10 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
-	body := c.remoteResumeSettings(ctx, route)
+	body, settingsErr := c.remoteResumeSettings(ctx, route)
+	if settingsErr != nil {
+		return nil, settingsErr
+	}
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
@@ -1944,9 +1945,22 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 	if route.TeamID != "" {
 		req.Header.Set("X-Forwarded-Team", route.TeamID)
 	}
+	previousStatus := route.Status
+	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming"); err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist resuming session status")
+	}
+	rollback := func() {
+		if err := c.recordRemoteLifecycleStatus(context.Background(), route, previousStatus); err != nil {
+			log.Printf("[ROUTE] Failed to roll back resume status for %s: %v", route.SessionID, err)
+		}
+	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
+		rollback()
 		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rollback()
 	}
 	return resp, nil
 }
@@ -1954,17 +1968,50 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 // remoteResumeSettings refreshes mutable policy values before an existing pool
 // allocation is restored. This prevents a session created under an older idle
 // timeout from reverting to that timeout after every resume.
-func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) []byte {
+func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) ([]byte, error) {
 	if c.sessionRunnerStore == nil {
-		return nil
+		return nil, nil
 	}
 	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
 	if err != nil || allocation == nil || len(allocation.ProvisionSettings) == 0 {
-		return nil
+		return nil, nil
 	}
 	var settings sessionsettings.SessionSettings
 	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
-		return nil
+		return nil, nil
+	}
+	// Re-resolve the original startup input on every resume so credentials stay
+	// out of durable allocation data while short-lived tokens and profile secrets
+	// are refreshed before the replacement workload starts.
+	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
+		if cfg, cfgErr := store.GetConfiguration(ctx.Request().Context(), route.SessionID); cfgErr == nil && cfg != nil {
+			az := auth.GetAuthorizationContext(ctx)
+			if az == nil {
+				return nil, echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+			}
+			// A GitHub OAuth token is deliberately omitted from the saved startup
+			// input. Re-attach the caller's authenticated token only to an in-memory
+			// copy used for this resume, so public/private repository setup can be
+			// rebuilt without persisting the credential.
+			resumeCfg := *cfg
+			if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
+				var start entities.StartRequest
+				if json.Unmarshal(resumeCfg.Input, &start) == nil {
+					if start.Params == nil {
+						start.Params = &entities.SessionParams{}
+					}
+					start.Params.GithubToken = token
+					if input, marshalErr := json.Marshal(start); marshalErr == nil {
+						resumeCfg.Input = input
+					}
+				}
+			}
+			resolved, resolveErr := c.reloadSessionSettings(ctx.Request().Context(), &resumeCfg, resumeCfg.ProfileID, az)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			settings = *resolved
+		}
 	}
 	if c.settingsRepo != nil {
 		settingsName := route.UserID
@@ -1992,9 +2039,9 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 	}
 	body, err := json.Marshal(&settings)
 	if err != nil {
-		return nil
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode refreshed resume settings")
 	}
-	return body
+	return body, nil
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.

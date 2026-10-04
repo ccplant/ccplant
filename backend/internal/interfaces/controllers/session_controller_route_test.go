@@ -55,6 +55,7 @@ type lifecycleTunnel struct {
 	enqueued bool
 	done     bool
 	status   int
+	onDo     func()
 }
 
 func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool {
@@ -62,6 +63,9 @@ func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool 
 }
 
 func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+	if t.onDo != nil {
+		t.onDo()
+	}
 	t.path = req.URL.Path
 	if req.Body != nil {
 		t.body, _ = io.ReadAll(req.Body)
@@ -77,6 +81,37 @@ type allocationReader struct {
 	allocation           *sessionrunnercore.Allocation
 	err                  error
 	deletedConfiguration string
+}
+
+type resumeConfigurationStore struct {
+	*allocationReader
+	configuration *sessionrunnercore.Configuration
+}
+
+func (s *resumeConfigurationStore) CreateConfiguration(context.Context, *sessionrunnercore.Configuration) error {
+	return nil
+}
+func (s *resumeConfigurationStore) GetConfiguration(context.Context, string) (*sessionrunnercore.Configuration, error) {
+	return s.configuration, nil
+}
+func (s *resumeConfigurationStore) SaveConfiguration(context.Context, *sessionrunnercore.Configuration) error {
+	return nil
+}
+func (s *resumeConfigurationStore) UpdateProvisionSettings(context.Context, string, []byte) error {
+	return nil
+}
+
+type resumeSettingsCreator struct{ controllers.SessionCreator }
+
+func (resumeSettingsCreator) ResolveRestartSettings(_ context.Context, id string, start entities.StartRequest, _ string, _ []string) (*sessionsettings.SessionSettings, error) {
+	token := ""
+	if start.Params != nil {
+		token = start.Params.GithubToken
+	}
+	return &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: id, UserID: "user-1", Scope: string(entities.ScopeUser)},
+		Env:     map[string]string{"GITHUB_TOKEN": token},
+	}, nil
 }
 
 type resumeSettingsRepo struct{ settings *entities.Settings }
@@ -676,6 +711,50 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 	}
 }
 
+func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	oldProvisionSettings, err := json.Marshal(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(entities.StartRequest{Scope: entities.ScopeUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &resumeConfigurationStore{
+		allocationReader: &allocationReader{allocation: &sessionrunnercore.Allocation{
+			ProvisionSettings: oldProvisionSettings, RuntimeToken: "runtime-token", Generation: 2,
+		}},
+		configuration: &sessionrunnercore.Configuration{
+			SessionID: "public-id", UserID: "user-1", Scope: string(entities.ScopeUser), Input: input,
+		},
+	}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, resumeSettingsCreator{},
+		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+			UserID: "user-1", Scope: string(entities.ScopeUser), Status: "suspended",
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(store),
+	)
+	ctx, _ := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
+	auth.SetCredentialContext(ctx, &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "fresh-token"})
+	if err := controller.ResumeSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var got sessionsettings.SessionSettings
+	if err := json.Unmarshal(tunnel.body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Env["GITHUB_TOKEN"] != "fresh-token" {
+		t.Fatalf("GITHUB_TOKEN = %q, want refreshed credential", got.Env["GITHUB_TOKEN"])
+	}
+}
+
 func TestRouteToSessionRequiresOutboundManagerConnection(t *testing.T) {
 	manager := &ensuringSessionManager{fakeSessionManager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}
 	controller := controllers.NewSessionController(
@@ -731,6 +810,8 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
 		UserID: "user-1", Scope: string(entities.ScopeUser), Status: "suspended",
 	}}
+	var statusWhenResumeSent string
+	tunnel.onDo = func() { statusWhenResumeSent = routeRepo.route.Status }
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager}, nil,
 		controllers.WithSessionRouteRepository(routeRepo),
@@ -749,6 +830,9 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 	}
 	if routeRepo.route.Status != "resuming" {
 		t.Fatalf("route status=%q, want resuming", routeRepo.route.Status)
+	}
+	if statusWhenResumeSent != "resuming" {
+		t.Fatalf("route status when resume was sent=%q, want resuming", statusWhenResumeSent)
 	}
 }
 
