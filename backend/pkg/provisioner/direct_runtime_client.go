@@ -25,12 +25,19 @@ import (
 )
 
 type directRuntimeWorker struct {
-	cfg        *sessionsettings.ParentRuntimeConfig
-	client     *http.Client
-	localURL   string
-	instanceID string
-	active     sync.Map
+	cfg                     *sessionsettings.ParentRuntimeConfig
+	client                  *http.Client
+	localURL                string
+	instanceID              string
+	statusPollInterval      time.Duration
+	statusHeartbeatInterval time.Duration
+	active                  sync.Map
 }
+
+const (
+	defaultStatusPollInterval      = time.Second
+	defaultStatusHeartbeatInterval = 15 * time.Second
+)
 
 var (
 	errDirectRuntimeFenced       = errors.New("direct runtime generation fenced")
@@ -58,15 +65,28 @@ func runDirectRuntimeClient(ctx context.Context, transport http.RoundTripper, cf
 
 func (w *directRuntimeWorker) reportStatus(ctx context.Context) {
 	var previous string
-	ticker := time.NewTicker(time.Second)
+	var lastReported time.Time
+	pollInterval := w.statusPollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultStatusPollInterval
+	}
+	heartbeatInterval := w.statusHeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = defaultStatusHeartbeatInterval
+	}
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
 		status := w.localStatus(ctx)
-		if status != "" && status != previous {
+		// Repeat an unchanged status as a heartbeat. A resume request can persist
+		// "resuming" immediately after the runtime's first ready status wins the
+		// race; without another push, that lifecycle marker never converges.
+		if status != "" && (status != previous || lastReported.IsZero() || time.Since(lastReported) >= heartbeatInterval) {
 			if err := w.postStatus(ctx, status); err != nil {
 				log.Printf("[DIRECT_RUNTIME] status push failed: %v", err)
 			} else {
 				previous = status
+				lastReported = time.Now()
 			}
 		}
 		select {
