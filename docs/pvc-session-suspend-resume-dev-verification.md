@@ -27,36 +27,42 @@ Volume persistence enables a per-session workdir PVC even though the explicit
 
 ## Procedure and result
 
-1. Created a dedicated non-ACP session through the canary manager's signed
-   private API.
-2. Waited for its Deployment to become available and its 10 Gi PVC to become
+1. Added a temporary explicit-use binding for the canary pool and created a
+   parent-allocated `codex-acp` session. This is important: direct manager API
+   creation does not provide the parent runtime channel required for an ACP
+   checkpoint.
+2. Waited for the ACP runtime to report `stable` and its 10 Gi PVC to become
    Bound.
-3. Wrote a unique marker to
-   `/home/agentapi/workdir/pvc-suspend-resume-marker`.
-4. Called the signed `POST /api/v1/sessions/{id}/suspend` endpoint.
-5. Confirmed HTTP 204, removal of the Deployment and Pod, retention of the
-   Service and Bound PVC, and the `agentapi.proxy/suspended-at` annotation.
-6. Called the signed `POST /api/v1/sessions/{id}/resume` endpoint.
-7. Confirmed HTTP 202 with status `resuming`, then waited for the recreated
-   Deployment to become available.
-8. Confirmed that the PVC UID and PV name were unchanged and that the marker
-   content was intact after resume.
-9. Deleted the dedicated verification session and confirmed that its
-   Deployment, Pod, Service, PVC, and session-labelled Secrets were removed.
+3. Wrote the marker `ACP_PVC_20261004T040458Z` to
+   `/home/agentapi/workdir/acp-pvc-marker`.
+4. Sent an ACP `session/prompt` containing the marker and confirmed the exact
+   `ACK-ACP_PVC_20261004T040458Z` response in conversation history.
+5. Called `POST /sessions/{publicSessionId}/suspend`. It returned HTTP 200 with
+   status `suspended`; the ACP checkpoint completed before the Deployment and
+   Pod were removed.
+6. Confirmed that the canonical Service, Bound PVC, runner Secret, saved
+   settings Secret, and `agentapi.proxy/suspended-at` annotation remained.
+7. Called `POST /sessions/{publicSessionId}/resume`. It returned HTTP 202 with
+   status `resuming`; the recreated Deployment subsequently became available
+   and the ACP runtime returned to `stable`.
+8. Confirmed that the PVC UID remained
+   `4a26f312-8b53-4e1e-8b64-32e34e5c1466`, the file marker was unchanged, and
+   the restored ACP history still contained one user prompt and the exact ACK
+   response.
+9. Deleted the verification session, temporary session profile, and temporary
+   pool binding, and restored the user settings changed for the test.
 
-The tested session ID was `1af0af9e-7974-480f-a7e2-af852e17135d`. Its PVC UID
-and PV name were both based on
-`56f93363-1eba-44c1-ac2e-77ac1e0526fa`. The marker before and after resume was
-`pvc-suspend-resume-ok-20261004T030258Z`.
+The public session ID was `e21d29fc-8e3f-4fe9-976e-281c6b624de8`; its manager
+runner ID was `17a078dc-af72-4294-89cf-003b62a82a5d`.
 
-## Checkpoint boundary observed
+## Additional findings
 
-An initial suspend request with no explicit agent type was resolved to the
-default ACP agent type. It correctly refused to remove the workload with HTTP
-503 because that directly-created test session had no connected session-control
-channel for an ACP checkpoint. Repeating the test with an explicit non-ACP
-agent type isolated the PVC workload lifecycle and completed successfully.
-
-This verifies PVC retention and workload reconstruction. It does not by itself
-verify ACP conversation checkpointing; that path requires a parent-allocated,
-connected ACP session.
+- A stock runner created before volume persistence was enabled still had an
+  `emptyDir` workdir. When it was selected and resumed, the reconstructed Pod
+  referenced a per-session PVC that did not exist and remained Pending. The
+  legacy runner was deleted before the successful test used a newly created
+  PVC-backed runner.
+- The user's configured external skill could not be installed because the
+  session image did not contain `/home/agentapi/.bun/bin/skills`. The skill list
+  was backed up, temporarily cleared for the isolated verification profile,
+  and restored exactly after the test.
