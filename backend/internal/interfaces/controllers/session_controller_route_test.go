@@ -83,6 +83,33 @@ type allocationReader struct {
 	deletedConfiguration string
 }
 
+type resumeConfigurationStore struct {
+	*allocationReader
+	configuration *sessionrunnercore.Configuration
+}
+
+func (s *resumeConfigurationStore) CreateConfiguration(context.Context, *sessionrunnercore.Configuration) error {
+	return nil
+}
+func (s *resumeConfigurationStore) GetConfiguration(context.Context, string) (*sessionrunnercore.Configuration, error) {
+	return s.configuration, nil
+}
+func (s *resumeConfigurationStore) SaveConfiguration(context.Context, *sessionrunnercore.Configuration) error {
+	return nil
+}
+func (s *resumeConfigurationStore) UpdateProvisionSettings(context.Context, string, []byte) error {
+	return nil
+}
+
+type resumeSettingsCreator struct{ controllers.SessionCreator }
+
+func (resumeSettingsCreator) ResolveRestartSettings(_ context.Context, id string, _ entities.StartRequest, _ string, _ []string) (*sessionsettings.SessionSettings, error) {
+	return &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: id, UserID: "user-1", Scope: string(entities.ScopeUser)},
+		Env:     map[string]string{"GITHUB_TOKEN": "fresh-token"},
+	}, nil
+}
+
 type resumeSettingsRepo struct{ settings *entities.Settings }
 
 func (r *resumeSettingsRepo) Save(context.Context, *entities.Settings) error { return nil }
@@ -677,6 +704,49 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 	}
 	if got.ParentRuntime == nil || !got.ParentRuntime.Enabled || got.ParentRuntime.SessionID != "public-id" || got.ParentRuntime.ManagerID != "manager-a" || got.ParentRuntime.Token != "runtime-token" || got.ParentRuntime.Generation != 2 {
 		t.Fatalf("resume parent runtime = %#v, want restored allocation credentials", got.ParentRuntime)
+	}
+}
+
+func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	oldProvisionSettings, err := json.Marshal(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(entities.StartRequest{Scope: entities.ScopeUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &resumeConfigurationStore{
+		allocationReader: &allocationReader{allocation: &sessionrunnercore.Allocation{
+			ProvisionSettings: oldProvisionSettings, RuntimeToken: "runtime-token", Generation: 2,
+		}},
+		configuration: &sessionrunnercore.Configuration{
+			SessionID: "public-id", UserID: "user-1", Scope: string(entities.ScopeUser), Input: input,
+		},
+	}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, resumeSettingsCreator{},
+		controllers.WithSessionRouteRepository(&deletionRouteRepo{route: &repositories.SessionRoute{
+			SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
+			UserID: "user-1", Scope: string(entities.ScopeUser), Status: "suspended",
+		}}),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(store),
+	)
+	ctx, _ := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/resume", "public-id")
+	if err := controller.ResumeSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var got sessionsettings.SessionSettings
+	if err := json.Unmarshal(tunnel.body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Env["GITHUB_TOKEN"] != "fresh-token" {
+		t.Fatalf("GITHUB_TOKEN = %q, want refreshed credential", got.Env["GITHUB_TOKEN"])
 	}
 }
 

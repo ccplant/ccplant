@@ -351,7 +351,10 @@ func (c *SessionController) restartCurrentSettings(ctx echo.Context, id string) 
 	if err != nil || route == nil {
 		return nil, nil, echo.NewHTTPError(404, "session not found")
 	}
-	raw := c.remoteResumeSettings(ctx, route)
+	raw, resumeErr := c.remoteResumeSettings(ctx, route)
+	if resumeErr != nil {
+		return nil, nil, resumeErr
+	}
 	var settings sessionsettings.SessionSettings
 	if len(raw) == 0 || json.Unmarshal(raw, &settings) != nil {
 		return nil, nil, echo.NewHTTPError(409, "session settings unavailable")

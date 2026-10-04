@@ -1920,7 +1920,10 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	targetURL := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/resume"
-	body := c.remoteResumeSettings(ctx, route)
+	body, settingsErr := c.remoteResumeSettings(ctx, route)
+	if settingsErr != nil {
+		return nil, settingsErr
+	}
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to build resume request")
@@ -1965,17 +1968,33 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 // remoteResumeSettings refreshes mutable policy values before an existing pool
 // allocation is restored. This prevents a session created under an older idle
 // timeout from reverting to that timeout after every resume.
-func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) []byte {
+func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *repositories.SessionRoute) ([]byte, error) {
 	if c.sessionRunnerStore == nil {
-		return nil
+		return nil, nil
 	}
 	allocation, err := c.sessionRunnerStore.GetAllocation(ctx.Request().Context(), route.SessionID)
 	if err != nil || allocation == nil || len(allocation.ProvisionSettings) == 0 {
-		return nil
+		return nil, nil
 	}
 	var settings sessionsettings.SessionSettings
 	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
-		return nil
+		return nil, nil
+	}
+	// Re-resolve the original startup input on every resume so credentials stay
+	// out of durable allocation data while short-lived tokens and profile secrets
+	// are refreshed before the replacement workload starts.
+	if store, ok := c.sessionRunnerStore.(sessionConfigurationStore); ok {
+		if cfg, cfgErr := store.GetConfiguration(ctx.Request().Context(), route.SessionID); cfgErr == nil && cfg != nil {
+			az := auth.GetAuthorizationContext(ctx)
+			if az == nil {
+				return nil, echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+			}
+			resolved, resolveErr := c.reloadSessionSettings(ctx.Request().Context(), cfg, cfg.ProfileID, az)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			settings = *resolved
+		}
 	}
 	if c.settingsRepo != nil {
 		settingsName := route.UserID
@@ -2003,9 +2022,9 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 	}
 	body, err := json.Marshal(&settings)
 	if err != nil {
-		return nil
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode refreshed resume settings")
 	}
-	return body
+	return body, nil
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
