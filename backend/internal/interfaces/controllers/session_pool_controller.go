@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,6 +54,9 @@ const (
 	// polls refresh LastSeen, so records older than this no longer represent a
 	// live workload and must not suppress stock-runner reconciliation.
 	sessionRunnerHeartbeatTTL = 3 * time.Minute
+	// A resume normally recreates its workload within the startup window. After
+	// this grace period, a missing workload can safely become resumable again.
+	missingResumingRunnerRecoveryDelay = 2 * time.Minute
 	// Draining records fence workloads while the manager removes them. Keep the
 	// tombstone long enough for delayed registrations to be rejected, then
 	// collect it once manager inventory and allocations both confirm it is gone.
@@ -1284,6 +1288,26 @@ func (c *SessionPoolController) reconcileMissingManagerRunners(ctx context.Conte
 	}
 	for _, allocation := range allocations {
 		if allocation.ManagerID != managerID || allocation.RunnerID == "" || local[allocation.RunnerID] {
+			continue
+		}
+		// Do not requeue a running allocation: its runtime may already have
+		// performed work. If resume was interrupted after changing the route to
+		// resuming, roll back only that stale lifecycle marker. The next runtime
+		// access will retry resume with the same allocation and durable workspace.
+		if allocation.Status == core.AllocationRunning && c.routes != nil {
+			route, e := c.routes.Get(ctx, allocation.SessionID)
+			if e != nil {
+				return e
+			}
+			if route != nil && route.Status == "resuming" && !route.StatusUpdatedAt.IsZero() &&
+				c.now().Sub(route.StatusUpdatedAt) >= missingResumingRunnerRecoveryDelay {
+				log.Printf("[SESSION_RUNNER] Recovering stale resuming session %s after runner %s disappeared from manager %s inventory", allocation.SessionID, allocation.RunnerID, managerID)
+				route.Status = "suspended"
+				route.StatusUpdatedAt = c.now()
+				if e = c.routes.Save(ctx, route); e != nil {
+					return e
+				}
+			}
 			continue
 		}
 		// A heartbeat is only a snapshot. Preserve in-flight leases and wait

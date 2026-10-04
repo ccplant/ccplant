@@ -64,6 +64,56 @@ func TestMissingRunnerRequeuesUnstartedButPreservesStarted(t *testing.T) {
 		})
 	}
 }
+
+func TestMissingRunningRunnerMakesStaleResumeRetryable(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     string
+		statusAge  time.Duration
+		wantStatus string
+	}{
+		{name: "stale resuming", status: "resuming", statusAge: 3 * time.Minute, wantStatus: "suspended"},
+		{name: "fresh resuming", status: "resuming", statusAge: time.Minute, wantStatus: "resuming"},
+		{name: "active", status: "active", statusAge: 3 * time.Minute, wantStatus: "active"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Now().UTC()
+			client := fake.NewSimpleClientset()
+			s := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+			routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+			require.NoError(t, s.CreateRunner(ctx, &core.Runner{ID: "missing", ManagerID: "manager", Pool: "pool"}))
+			require.NoError(t, s.Enqueue(ctx, &core.Allocation{SessionID: "session", Pool: "pool"}))
+			a, ok, err := s.ClaimNext(ctx, "pool", "missing", time.Minute)
+			require.NoError(t, err)
+			require.True(t, ok)
+			_, err = s.Acknowledge(ctx, a.SessionID, "missing", a.LeaseID)
+			require.NoError(t, err)
+			require.NoError(t, s.MarkStarted(ctx, a.SessionID, a.Generation))
+			require.NoError(t, routes.Save(ctx, &ports.SessionRoute{
+				SessionID: a.SessionID, ManagerID: "manager", RemoteSessionID: "missing",
+				Status: tc.status, StatusUpdatedAt: now.Add(-tc.statusAge),
+			}))
+			require.NoError(t, s.DeleteRunner(ctx, "missing"))
+
+			c := NewSessionPoolController(s, routes)
+			c.now = func() time.Time { return now }
+			require.NoError(t, c.reconcileMissingManagerRunners(ctx, "manager", []string{}))
+
+			route, err := routes.Get(ctx, a.SessionID)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStatus, route.Status)
+			if tc.wantStatus == "suspended" {
+				require.Equal(t, now, route.StatusUpdatedAt)
+			}
+			allocation, err := s.GetAllocation(ctx, a.SessionID)
+			require.NoError(t, err)
+			require.Equal(t, core.AllocationRunning, allocation.Status)
+			require.Equal(t, "missing", allocation.RunnerID)
+		})
+	}
+}
+
 func TestRetireEndpointRefusesClaimingRunner(t *testing.T) {
 	ctx := context.Background()
 	s := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
