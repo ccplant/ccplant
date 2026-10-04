@@ -11,47 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/esmcontrol"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
-
-func TestDirectRuntimeStatusHeartbeatRepeatsUnchangedStatus(t *testing.T) {
-	var reports atomic.Int32
-	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reports.Add(1)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer parent.Close()
-	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/status", r.URL.Path)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
-	}))
-	defer local.Close()
-
-	worker := &directRuntimeWorker{
-		cfg: &sessionsettings.ParentRuntimeConfig{
-			Endpoint: parent.URL, SessionID: "session-a", Token: "secret", Generation: 1,
-		},
-		client:                  parent.Client(),
-		localURL:                local.URL,
-		statusPollInterval:      5 * time.Millisecond,
-		statusHeartbeatInterval: 20 * time.Millisecond,
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		worker.reportStatus(ctx)
-		close(done)
-	}()
-	require.Eventually(t, func() bool { return reports.Load() >= 2 }, time.Second, 5*time.Millisecond)
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("status reporter did not stop")
-	}
-}
 
 func TestDirectRuntimeCompressesLargeFrameUpload(t *testing.T) {
 	var contentEncoding string

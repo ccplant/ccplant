@@ -55,6 +55,7 @@ type lifecycleTunnel struct {
 	enqueued bool
 	done     bool
 	status   int
+	onDo     func()
 }
 
 func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool {
@@ -62,6 +63,9 @@ func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool 
 }
 
 func (t *lifecycleTunnel) Do(_ context.Context, _, _, _ string, req *http.Request) (*http.Response, error) {
+	if t.onDo != nil {
+		t.onDo()
+	}
 	t.path = req.URL.Path
 	if req.Body != nil {
 		t.body, _ = io.ReadAll(req.Body)
@@ -731,6 +735,8 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 		SessionID: "public-id", RemoteSessionID: "remote-id", ManagerID: "manager-a",
 		UserID: "user-1", Scope: string(entities.ScopeUser), Status: "suspended",
 	}}
+	var statusWhenResumeSent string
+	tunnel.onDo = func() { statusWhenResumeSent = routeRepo.route.Status }
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager}, nil,
 		controllers.WithSessionRouteRepository(routeRepo),
@@ -749,6 +755,9 @@ func TestRouteToSuspendedRemoteSessionTransparentlyStartsResume(t *testing.T) {
 	}
 	if routeRepo.route.Status != "resuming" {
 		t.Fatalf("route status=%q, want resuming", routeRepo.route.Status)
+	}
+	if statusWhenResumeSent != "resuming" {
+		t.Fatalf("route status when resume was sent=%q, want resuming", statusWhenResumeSent)
 	}
 }
 

@@ -644,7 +644,6 @@ func (c *SessionController) reuseStartSession(ctx echo.Context, startReq entitie
 				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 					return "", false, echo.NewHTTPError(http.StatusServiceUnavailable, "failed to resume reusable session")
 				}
-				_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
 			}
 			commandID, err := telemetry.LoggedOperation(ctx.Request().Context(), "controllers.SessionController.EnqueueReusePrompt", func(operationCtx context.Context) (string, error) {
 				return enqueuer.Enqueue(operationCtx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
@@ -1804,7 +1803,6 @@ func (c *SessionController) routeToRemoteSessionRequest(ctx echo.Context, route 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "Failed to resume external session workload")
 		}
-		_ = c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming")
 		ctx.Response().Header().Set("Retry-After", "2")
 		return ctx.JSON(http.StatusServiceUnavailable, map[string]interface{}{
 			"error": map[string]string{"code": "session_resuming", "message": "Session workload is resuming", "session_id": route.SessionID, "status": "resuming"},
@@ -1944,9 +1942,22 @@ func (c *SessionController) requestRemoteResume(ctx echo.Context, route *reposit
 	if route.TeamID != "" {
 		req.Header.Set("X-Forwarded-Team", route.TeamID)
 	}
+	previousStatus := route.Status
+	if err := c.recordRemoteLifecycleStatus(ctx.Request().Context(), route, "resuming"); err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist resuming session status")
+	}
+	rollback := func() {
+		if err := c.recordRemoteLifecycleStatus(context.Background(), route, previousStatus); err != nil {
+			log.Printf("[ROUTE] Failed to roll back resume status for %s: %v", route.SessionID, err)
+		}
+	}
 	resp, err := c.esmControlTunnel.Do(ctx.Request().Context(), route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
+		rollback()
 		return nil, echo.NewHTTPError(http.StatusBadGateway, "Failed to reach external session manager")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rollback()
 	}
 	return resp, nil
 }
