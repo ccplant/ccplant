@@ -40,7 +40,7 @@ func NewLibSQLSessionCountRepository(ctx context.Context, databaseURL, authToken
 func (r *LibSQLSessionCountRepository) initialize(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS agentapi_session_count_dimensions (
-pool TEXT NOT NULL, scope TEXT NOT NULL, principal_id TEXT NOT NULL,
+pool TEXT NOT NULL, principal_id TEXT NOT NULL,
 PRIMARY KEY (pool, principal_id))`,
 		`CREATE TABLE IF NOT EXISTS agentapi_session_status_events (
 event_id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -67,7 +67,7 @@ func (r *LibSQLSessionCountRepository) SaveEvent(ctx context.Context, event enti
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_count_dimensions
-(pool,scope,principal_id) VALUES (?,?,?)`, event.Pool, event.Scope, event.PrincipalID); err != nil {
+(pool,principal_id) VALUES (?,?)`, event.Pool, event.PrincipalID); err != nil {
 		return fmt.Errorf("save session count dimension: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_session_status_events
