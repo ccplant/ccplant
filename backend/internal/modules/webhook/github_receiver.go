@@ -177,6 +177,17 @@ func (c *WebhookGitHubController) HandleGitHubWebhook(ctx echo.Context) error {
 
 	log.Printf("[WEBHOOK] Signature verified for webhook %s (%s)", matchedWebhook.ID(), matchedWebhook.Name())
 
+	// A paused webhook must acknowledge valid deliveries without evaluating
+	// triggers or creating sessions. Returning 200 prevents providers from
+	// retrying an event that was intentionally ignored.
+	if matchedWebhook.Status() != entities.WebhookStatusActive {
+		log.Printf("[WEBHOOK] Webhook is not active, ignoring delivery: id=%s, status=%s", matchedWebhook.ID(), matchedWebhook.Status())
+		return ctx.JSON(http.StatusOK, map[string]string{
+			"message":    "Webhook is paused",
+			"webhook_id": matchedWebhook.ID(),
+		})
+	}
+
 	// Handle ping event
 	if event == "ping" {
 		log.Printf("[WEBHOOK] Received ping event, responding with pong")

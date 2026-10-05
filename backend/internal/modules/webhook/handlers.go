@@ -90,6 +90,10 @@ func (h *Handlers) TriggerWebhook(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to trigger this webhook")
 	}
 
+	if webhook.Status() != entities.WebhookStatusActive {
+		return echo.NewHTTPError(http.StatusConflict, "Webhook is paused")
+	}
+
 	// Parse request body
 	var req TriggerWebhookRequest
 	if err := ctx.Bind(&req); err != nil {

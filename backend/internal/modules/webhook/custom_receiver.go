@@ -84,6 +84,17 @@ func (c *WebhookCustomController) HandleCustomWebhook(ctx echo.Context) error {
 		return err
 	}
 
+	// A paused webhook must acknowledge valid deliveries without parsing the
+	// payload, evaluating triggers, or creating sessions. Returning 200 avoids
+	// retries from the sender for an intentionally ignored event.
+	if matchedWebhook.Status() != entities.WebhookStatusActive {
+		log.Printf("[WEBHOOK_CUSTOM] Webhook is not active, ignoring delivery: id=%s, status=%s", matchedWebhook.ID(), matchedWebhook.Status())
+		return ctx.JSON(http.StatusOK, map[string]string{
+			"message":    "Webhook is paused",
+			"webhook_id": matchedWebhook.ID(),
+		})
+	}
+
 	// Parse payload as JSON
 	var payload map[string]interface{}
 	if err := json.Unmarshal(body, &payload); err != nil {
