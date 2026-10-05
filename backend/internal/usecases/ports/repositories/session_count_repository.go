@@ -2,15 +2,12 @@ package repositories
 
 import (
 	"context"
-	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
-// SessionCountRepository persists point-in-time session counts independently
-// of the database used by the rest of the application.
+// SessionCountRepository persists append-only session status events.
 type SessionCountRepository interface {
-	ListDimensions(context.Context) ([]entities.SessionCountDimension, error)
-	SaveSnapshot(context.Context, time.Time, []entities.SessionCountSample) error
+	SaveEvent(context.Context, entities.SessionStatusUsageEvent) error
 	Close() error
 }

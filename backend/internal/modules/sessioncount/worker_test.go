@@ -11,110 +11,64 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
-type fakeAllocationStore struct {
-	allocations []*sessionrunner.Allocation
-	bindings    []*sessionrunner.Binding
+type fakeSource struct {
+	session entities.Session
+	events  chan portrepos.SessionStatusEvent
 }
 
-func (f *fakeAllocationStore) ListAllocations(context.Context, string) ([]*sessionrunner.Allocation, error) {
-	return f.allocations, nil
-}
-func (f *fakeAllocationStore) ListBindings(context.Context, string) ([]*sessionrunner.Binding, error) {
-	return f.bindings, nil
+func (s *fakeSource) GetSession(string) entities.Session                     { return s.session }
+func (s *fakeSource) ListSessions(entities.SessionFilter) []entities.Session { return nil }
+func (s *fakeSource) SubscribeStatusEvents() (<-chan portrepos.SessionStatusEvent, func()) {
+	return s.events, func() {}
 }
 
-type fakeRouteRepository struct{ routes []*portrepos.SessionRoute }
+type fakeAllocations struct{ allocation *sessionrunner.Allocation }
 
-func (f *fakeRouteRepository) Save(context.Context, *portrepos.SessionRoute) error { return nil }
-func (f *fakeRouteRepository) Get(context.Context, string) (*portrepos.SessionRoute, error) {
+func (s *fakeAllocations) GetAllocation(context.Context, string) (*sessionrunner.Allocation, error) {
+	return s.allocation, nil
+}
+
+type fakeRoutes struct{ route *portrepos.SessionRoute }
+
+func (r *fakeRoutes) Save(context.Context, *portrepos.SessionRoute) error { return nil }
+func (r *fakeRoutes) Get(context.Context, string) (*portrepos.SessionRoute, error) {
+	return r.route, nil
+}
+func (r *fakeRoutes) List(context.Context, string) ([]*portrepos.SessionRoute, error) {
 	return nil, nil
 }
-func (f *fakeRouteRepository) List(context.Context, string) ([]*portrepos.SessionRoute, error) {
-	return f.routes, nil
-}
-func (f *fakeRouteRepository) Delete(context.Context, string) error { return nil }
+func (r *fakeRoutes) Delete(context.Context, string) error { return nil }
 
-type fakeTeamRepository struct {
-	teams map[string]*entities.TeamConfig
-}
+type fakeTeams struct{ team *entities.TeamConfig }
 
-func (f *fakeTeamRepository) Save(context.Context, *entities.TeamConfig) error { return nil }
-func (f *fakeTeamRepository) FindByTeamID(_ context.Context, id string) (*entities.TeamConfig, error) {
-	return f.teams[id], nil
+func (r *fakeTeams) Save(context.Context, *entities.TeamConfig) error { return nil }
+func (r *fakeTeams) FindByTeamID(context.Context, string) (*entities.TeamConfig, error) {
+	return r.team, nil
 }
-func (f *fakeTeamRepository) Delete(context.Context, string) error                 { return nil }
-func (f *fakeTeamRepository) Exists(context.Context, string) (bool, error)         { return false, nil }
-func (f *fakeTeamRepository) List(context.Context) ([]*entities.TeamConfig, error) { return nil, nil }
+func (r *fakeTeams) Delete(context.Context, string) error                 { return nil }
+func (r *fakeTeams) Exists(context.Context, string) (bool, error)         { return false, nil }
+func (r *fakeTeams) List(context.Context) ([]*entities.TeamConfig, error) { return nil, nil }
 
-type memoryCountRepository struct {
-	dimensions []entities.SessionCountDimension
-	snapshots  [][]entities.SessionCountSample
+type memoryRepository struct {
+	events []entities.SessionStatusUsageEvent
 }
 
-func (r *memoryCountRepository) ListDimensions(context.Context) ([]entities.SessionCountDimension, error) {
-	return append([]entities.SessionCountDimension(nil), r.dimensions...), nil
-}
-func (r *memoryCountRepository) SaveSnapshot(_ context.Context, _ time.Time, samples []entities.SessionCountSample) error {
-	copyOfSamples := append([]entities.SessionCountSample(nil), samples...)
-	r.snapshots = append(r.snapshots, copyOfSamples)
-	for _, sample := range samples {
-		found := false
-		for _, dimension := range r.dimensions {
-			if dimension == sample.SessionCountDimension {
-				found = true
-			}
-		}
-		if !found {
-			r.dimensions = append(r.dimensions, sample.SessionCountDimension)
-		}
-	}
+func (r *memoryRepository) SaveEvent(_ context.Context, event entities.SessionStatusUsageEvent) error {
+	r.events = append(r.events, event)
 	return nil
 }
-func (r *memoryCountRepository) Close() error { return nil }
+func (r *memoryRepository) Close() error { return nil }
 
-func TestWorkerCollectsByPrincipalAndWritesZeroAfterStop(t *testing.T) {
+func TestRecordStatusResolvesTeamPrincipalAndPool(t *testing.T) {
 	team := entities.NewTeamConfig("org/platform", nil, nil)
 	team.SetPrincipalID("team-01ABC")
-	store := &fakeAllocationStore{
-		allocations: []*sessionrunner.Allocation{
-			{SessionID: "user-running", Pool: "linux", Status: sessionrunner.AllocationRunning},
-			{SessionID: "user-stable", Pool: "linux", Status: sessionrunner.AllocationRunning},
-			{SessionID: "team-pending", Pool: "linux", Status: sessionrunner.AllocationPending},
-			{SessionID: "completed", Pool: "linux", Status: sessionrunner.AllocationCompleted},
-		},
-		bindings: []*sessionrunner.Binding{
-			{Pool: "linux", SubjectType: sessionrunner.SubjectUser, SubjectID: "user-principal"},
-			{Pool: "linux", SubjectType: sessionrunner.SubjectTeam, SubjectID: "org/platform"},
-		},
-	}
-	routes := &fakeRouteRepository{routes: []*portrepos.SessionRoute{
-		{SessionID: "user-running", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "running"},
-		{SessionID: "user-stable", Scope: string(entities.ScopeUser), UserID: "user-principal", Status: "stable"},
-		{SessionID: "user-suspended", Scope: string(entities.ScopeUser), UserID: "user-principal", Pool: "linux", Status: "suspended"},
-		{SessionID: "team-pending", Scope: string(entities.ScopeTeam), TeamID: "org/platform", UserID: "creator-principal", Status: "active"},
-		{SessionID: "completed", Scope: string(entities.ScopeUser), UserID: "user-principal"},
-	}}
-	repository := &memoryCountRepository{}
-	worker := NewWorker(store, routes, &fakeTeamRepository{teams: map[string]*entities.TeamConfig{"org/platform": team}}, repository, time.Minute)
-	worker.now = func() time.Time { return time.Date(2026, 9, 27, 12, 0, 42, 0, time.UTC) }
-
-	require.NoError(t, worker.Collect(context.Background()))
-	require.Equal(t, []entities.SessionCountSample{
-		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "team-01ABC"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 1, ActiveCount: 1},
-		{SessionCountDimension: entities.SessionCountDimension{Pool: "linux", PrincipalID: "user-principal"}, SampledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), AllCount: 3, ActiveCount: 1, RunningCount: 1, SuspendedCount: 1},
-	}, repository.snapshots[0])
-
-	store.allocations = nil
-	for _, route := range routes.routes {
-		route.Status = "terminating"
-	}
-	worker.now = func() time.Time { return time.Date(2026, 9, 27, 12, 1, 5, 0, time.UTC) }
-	require.NoError(t, worker.Collect(context.Background()))
-	require.Len(t, repository.snapshots[1], 2)
-	for _, sample := range repository.snapshots[1] {
-		require.Zero(t, sample.AllCount)
-		require.Zero(t, sample.ActiveCount)
-		require.Zero(t, sample.RunningCount)
-		require.Zero(t, sample.SuspendedCount)
-	}
+	repo := &memoryRepository{}
+	worker := NewWorker(&fakeSource{}, &fakeAllocations{allocation: &sessionrunner.Allocation{Pool: "linux"}}, &fakeRoutes{route: &portrepos.SessionRoute{SessionID: "session-1", Scope: "team", TeamID: "org/platform"}}, &fakeTeams{team: team}, repo)
+	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, worker.RecordStatus(context.Background(), portrepos.SessionStatusEvent{SessionID: "session-1", Status: "running", Timestamp: at}))
+	require.Len(t, repo.events, 1)
+	require.Equal(t, "team-01ABC", repo.events[0].PrincipalID)
+	require.Equal(t, "linux", repo.events[0].Pool)
+	require.Equal(t, "running", repo.events[0].Status)
+	require.Equal(t, at, repo.events[0].OccurredAt)
 }

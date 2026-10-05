@@ -76,6 +76,7 @@ type Server struct {
 	kvStore                     kvstore.Store        // non-nil when persistenceClient is backed by libSQL
 	usageRepo                   portrepos.UsageRepository
 	sessionCountRepo            portrepos.SessionCountRepository
+	sessionCountWorker          *sessioncount.Worker
 	sessionCountWorkers         sync.WaitGroup
 	sessionCountCancel          context.CancelFunc
 	settingsRepo                portrepos.SettingsRepository                    // Settings repository
@@ -990,17 +991,26 @@ func (s *Server) StartMonitoring() {
 	// Session monitoring disabled - notifications handled by Claude Code hooks
 }
 
-// StartSessionCountWorker starts periodic pool/principal snapshots when enabled.
+// StartSessionCountWorker records the initial state once and then consumes
+// session status notifications. It performs no periodic polling.
 func (s *Server) StartSessionCountWorker(ctx context.Context) {
 	if s.sessionCountRepo == nil {
 		return
 	}
-	interval, err := time.ParseDuration(s.config.SessionCount.CheckInterval)
-	if err != nil || interval <= 0 {
-		log.Printf("[SESSION_COUNT_WORKER] Invalid check_interval %q; using 1m", s.config.SessionCount.CheckInterval)
-		interval = time.Minute
+	source, ok := s.sessionManager.(interface {
+		GetSession(string) entities.Session
+		ListSessions(entities.SessionFilter) []entities.Session
+		SubscribeStatusEvents() (<-chan portrepos.SessionStatusEvent, func())
+	})
+	if !ok {
+		log.Printf("[SESSION_COUNT_EVENTS] Session manager does not expose status notifications")
+		return
 	}
-	worker := sessioncount.NewWorker(s.sessionRunnerStore, s.sessionRouteRepo, s.teamConfigRepo, s.sessionCountRepo, interval)
+	worker := sessioncount.NewWorker(source, s.sessionRunnerStore, s.sessionRouteRepo, s.teamConfigRepo, s.sessionCountRepo)
+	s.sessionCountWorker = worker
+	if s.router != nil && s.router.handlers != nil && s.router.handlers.sessionController != nil {
+		s.router.handlers.sessionController.SetSessionStatusUsageRecorder(worker)
+	}
 	workerCtx, cancel := context.WithCancel(ctx)
 	s.sessionCountCancel = cancel
 	s.sessionCountWorkers.Add(1)
@@ -1008,7 +1018,7 @@ func (s *Server) StartSessionCountWorker(ctx context.Context) {
 		defer s.sessionCountWorkers.Done()
 		worker.Run(workerCtx)
 	}()
-	log.Printf("[SESSION_COUNT_WORKER] Started with interval %s", interval)
+	log.Printf("[SESSION_COUNT_EVENTS] Started status event recorder")
 }
 
 // loggingMiddleware returns Echo middleware for request logging
