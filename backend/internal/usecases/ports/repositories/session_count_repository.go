@@ -22,3 +22,11 @@ type SessionCountRepository interface {
 	SaveEvent(context.Context, entities.SessionStatusUsageEvent) error
 	Close() error
 }
+
+// SessionRuntimeRepository exposes authorized status history for runtime
+// aggregation. Implementations include the last event before From for every
+// matching session so callers can carry state across the range boundary.
+type SessionRuntimeRepository interface {
+	ListRuntimeEvents(context.Context, entities.SessionRuntimeQuery) ([]entities.SessionStatusUsageEvent, error)
+	RuntimeCoverageStart(context.Context, string) (*time.Time, error)
+}

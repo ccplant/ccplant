@@ -12,6 +12,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	apitokenuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/api_token"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
+	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/resource_transfer"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -61,6 +62,7 @@ type HandlerRegistry struct {
 	sessionSecretController        *controllers.SessionSecretController
 	sessionPoolController          *controllers.SessionPoolController
 	usageController                *controllers.UsageController
+	sessionUsageController         *controllers.SessionUsageController
 	customHandlers                 []CustomHandler
 }
 
@@ -335,6 +337,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	if server.usageRepo != nil {
 		usageController = controllers.NewUsageController(server.usageRepo, server.sessionManager)
 	}
+	var sessionUsageController *controllers.SessionUsageController
+	if repository, ok := server.sessionCountRepo.(portrepos.SessionRuntimeRepository); ok {
+		sessionUsageController = controllers.NewSessionUsageController(repository, server.teamConfigRepo)
+	}
 
 	return &Router{
 		echo:   e,
@@ -373,6 +379,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			sessionSecretController:        sessionSecretController,
 			sessionPoolController:          sessionPoolController,
 			usageController:                usageController,
+			sessionUsageController:         sessionUsageController,
 			customHandlers:                 make([]CustomHandler, 0),
 		},
 	}
@@ -446,6 +453,10 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.GET("/usage/export.parquet", r.handlers.usageController.ExportParquet,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/sessions/:sessionId/usage", r.handlers.usageController.GetSession,
+			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+	}
+	if r.handlers.sessionUsageController != nil {
+		r.echo.GET("/session-usage/dashboard", r.handlers.sessionUsageController.GetDashboard,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	}
 	r.echo.PATCH("/sessions/:sessionId/annotations", r.handlers.sessionController.UpdateSessionAnnotations)

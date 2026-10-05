@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
@@ -84,3 +85,61 @@ func (r *LibSQLSessionCountRepository) SaveEvent(ctx context.Context, event enti
 }
 
 func (r *LibSQLSessionCountRepository) Close() error { return r.db.Close() }
+
+func (r *LibSQLSessionCountRepository) ListRuntimeEvents(ctx context.Context, query entities.SessionRuntimeQuery) ([]entities.SessionStatusUsageEvent, error) {
+	filters := []string{"principal_id = ?"}
+	args := []interface{}{query.PrincipalID}
+	if query.Pool != "" {
+		filters = append(filters, "pool = ?")
+		args = append(args, query.Pool)
+	}
+	where := strings.Join(filters, " AND ")
+	statement := `WITH ranked AS (
+SELECT event_id,occurred_at,session_id,pool,scope,principal_id,status,
+ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY occurred_at DESC,event_id DESC) AS position
+FROM agentapi_session_status_events WHERE ` + where + ` AND occurred_at < ?),
+selected AS (
+SELECT event_id,occurred_at,session_id,pool,scope,principal_id,status FROM ranked WHERE position = 1
+UNION ALL
+SELECT event_id,occurred_at,session_id,pool,scope,principal_id,status
+FROM agentapi_session_status_events WHERE ` + where + ` AND occurred_at >= ? AND occurred_at < ?)
+SELECT event_id,occurred_at,session_id,pool,scope,principal_id,status
+FROM selected ORDER BY session_id,occurred_at,event_id`
+	queryArgs := append(append([]interface{}{}, args...), query.From.UTC().Format(time.RFC3339Nano))
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, query.From.UTC().Format(time.RFC3339Nano), query.To.UTC().Format(time.RFC3339Nano))
+	rows, err := r.db.QueryContext(ctx, statement, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("list session runtime events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	events := []entities.SessionStatusUsageEvent{}
+	for rows.Next() {
+		var event entities.SessionStatusUsageEvent
+		var occurredAt string
+		if err := rows.Scan(&event.EventID, &occurredAt, &event.SessionID, &event.Pool, &event.Scope, &event.PrincipalID, &event.Status); err != nil {
+			return nil, fmt.Errorf("scan session runtime event: %w", err)
+		}
+		event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurredAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse session runtime event time: %w", err)
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (r *LibSQLSessionCountRepository) RuntimeCoverageStart(ctx context.Context, principalID string) (*time.Time, error) {
+	var value sql.NullString
+	if err := r.db.QueryRowContext(ctx, `SELECT MIN(occurred_at) FROM agentapi_session_status_events WHERE principal_id = ?`, principalID).Scan(&value); err != nil {
+		return nil, fmt.Errorf("read session runtime coverage: %w", err)
+	}
+	if !value.Valid {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value.String)
+	if err != nil {
+		return nil, fmt.Errorf("parse session runtime coverage: %w", err)
+	}
+	return &parsed, nil
+}

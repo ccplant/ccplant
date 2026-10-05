@@ -91,6 +91,22 @@ FROM latest
 GROUP BY pool, principal_id;
 ```
 
+Authenticated clients can also request interval-based runtime statistics for a
+personal scope or accessible team:
+
+```text
+GET /session-usage/dashboard?from=2026-09-30T15:00:00Z&to=2026-10-31T15:00:00Z&timezone=Asia%2FTokyo
+GET /session-usage/dashboard?team_id=example/team&pool=linux&from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z
+```
+
+The response includes total runtime and running seconds, suspended time, peak
+concurrency, daily buckets, and the highest-usage sessions. Runtime includes
+`creating`, `starting`, `active`, `stable`, `running`, `resuming`, `restoring`,
+and `suspending`. It excludes suspended, stopped, error, timeout, unhealthy,
+and terminated intervals. The repository carries the last status before
+`from` into the requested range. A range may not exceed 90 days; an ongoing
+range is clipped to the response's `as_of` timestamp.
+
 Generating one row per minute is now a SQL concern: join the same latest-event
 logic against a recursive minute series. Status-event writes are idempotent by
 `event_id`, and a recorder failure never blocks session status propagation.
