@@ -74,6 +74,21 @@ RUN ARCH=$(dpkg --print-architecture) && \
       -o /usr/local/bin/acp-posts && \
     chmod +x /usr/local/bin/acp-posts
 
+# Install a pinned Herdr release for persistent terminal-based agent sessions.
+ARG HERDR_VERSION=v0.9.3
+ARG HERDR_SHA256_AMD64=18a8dc65f1c2fa485884344356dea1cfd911c6f06cf46fa78e193f4087f4dba7
+ARG HERDR_SHA256_ARM64=4de7aa3e25678812e92960de64f7c2aaa1bca1f0f80a3c5e559837e231e1f5c0
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) HERDR_ARCH="x86_64"; HERDR_SHA256="$HERDR_SHA256_AMD64" ;; \
+      arm64) HERDR_ARCH="aarch64"; HERDR_SHA256="$HERDR_SHA256_ARM64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/herdrdev/herdr/releases/download/${HERDR_VERSION}/herdr-linux-${HERDR_ARCH}" \
+      -o /usr/local/bin/herdr && \
+    echo "${HERDR_SHA256}  /usr/local/bin/herdr" | sha256sum --check - && \
+    chmod +x /usr/local/bin/herdr
+
 # Download otelcol-contrib binary for in-process OpenTelemetry Collector support.
 # Used when OtelCollectorInProcess=true (e.g. when stock inventory is enabled) so
 # that otelcol starts after user context is known instead of at Pod creation time.

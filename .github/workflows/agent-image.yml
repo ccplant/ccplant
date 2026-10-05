@@ -69,4 +69,4 @@ jobs:
               -ec 'cp -f /usr/local/bin/ccplant /opt/ccplant/bin/ccplant && chmod 0555 /opt/ccplant/bin/ccplant'
           done
           docker run --rm --user 999:999 -v "$volume:/opt/ccplant/bin:ro" --entrypoint /bin/sh "$IMAGE" \
-            -ec 'ccplant --help; agentapi --help; claude --version; codex --version; command -v claude-agent-acp codex-acp pi pi-acp cursor-agent otelcol github-mcp-server'
+            -ec 'ccplant --help; agentapi --help; claude --version; codex --version; herdr --version; command -v claude-agent-acp codex-acp pi pi-acp cursor-agent otelcol github-mcp-server herdr'
