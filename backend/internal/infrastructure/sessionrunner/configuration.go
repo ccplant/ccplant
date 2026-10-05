@@ -12,7 +12,9 @@ func configurationName(id string) string { return "agentapi-session-configuratio
 func (s *Store) CreateConfiguration(ctx context.Context, c *core.Configuration) error {
 	c.Revision = 1
 	c.UpdatedAt = s.now()
-	return s.create(ctx, configurationName(c.SessionID), "configuration", "", c)
+	return s.createWithLabels(ctx, configurationName(c.SessionID), "configuration", "", map[string]string{
+		"agentapi.proxy/session-id": c.SessionID,
+	}, c)
 }
 func (s *Store) GetConfiguration(ctx context.Context, id string) (*core.Configuration, error) {
 	var c core.Configuration

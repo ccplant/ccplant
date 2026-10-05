@@ -559,7 +559,11 @@ func TestResumeSessionLocalAliasRestoringReturnsPublicSessionID(t *testing.T) {
 
 func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
-	controller := controllers.NewSessionController(&routeSessionManagerProvider{manager: manager}, nil)
+	store := &allocationReader{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRunnerStore(store),
+	)
 	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/missing-id", "missing-id")
 
 	if err := controller.DeleteSession(ctx); err != nil {
@@ -574,6 +578,9 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	}
 	if response["session_id"] != "missing-id" || response["status"] != "terminated" {
 		t.Fatalf("response = %#v, want missing-id terminated", response)
+	}
+	if store.deletedConfiguration != "missing-id" {
+		t.Fatalf("deleted configuration = %q, want missing-id", store.deletedConfiguration)
 	}
 }
 

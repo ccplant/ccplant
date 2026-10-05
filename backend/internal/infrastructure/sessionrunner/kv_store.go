@@ -88,6 +88,10 @@ func resourcePrefix(resource string) string {
 }
 
 func (s *Store) create(ctx context.Context, name, resource, pool string, value any) error {
+	return s.createWithLabels(ctx, name, resource, pool, nil, value)
+}
+
+func (s *Store) createWithLabels(ctx context.Context, name, resource, pool string, additionalLabels map[string]string, value any) error {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -95,6 +99,9 @@ func (s *Store) create(ctx context.Context, name, resource, pool string, value a
 	labels := map[string]string{labelResource: resource}
 	if pool != "" {
 		labels[labelPoolHash] = hashName(pool)
+	}
+	for key, value := range additionalLabels {
+		labels[key] = value
 	}
 	document, err := json.Marshal(secretDocument{APIVersion: "v1", Kind: "Secret",
 		Metadata: documentMetadata{Name: name, Namespace: s.namespace, Labels: labels},

@@ -1385,6 +1385,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			// that state as success lets the client remove the stale entry without
 			// exposing whether an unknown session ID ever existed.
 			log.Printf("Delete session: session %s is already absent (requested by %s)", sessionID, clientIP)
+			c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
 			return ctx.JSON(http.StatusOK, map[string]interface{}{
 				"message":    "Session already absent",
 				"session_id": sessionID,
