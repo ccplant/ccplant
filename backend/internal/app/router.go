@@ -113,6 +113,9 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			encryptedStorage = supportsGitHubSecretStorage(cfg.KVStore)
 		}
 		githubConnectionsController = controllers.NewGitHubConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage)
+		if cfg := server.GetConfig(); cfg != nil && cfg.Auth.GitHub != nil {
+			githubConnectionsController.SetBuiltInAPIURL(cfg.Auth.GitHub.BaseURL)
+		}
 		membershipRepo = repositories.NewKVStoreTeamMembershipRepository(server.GetApplicationKVStore(), server.namespace)
 		teamMembershipController = controllers.NewTeamMembershipController(server.teamConfigRepo, membershipRepo, githubConnectionsController)
 		githubConnectionsController.SetMembershipRepository(membershipRepo)

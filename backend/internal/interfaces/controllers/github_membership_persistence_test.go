@@ -95,3 +95,34 @@ func TestResolveTeamMembershipsForBuiltInOAuthUser(t *testing.T) {
 	require.True(t, linked)
 	require.Equal(t, []auth.GitHubTeamMembership{{Organization: "acme", TeamSlug: "platform"}}, memberships)
 }
+
+func TestResolveTeamMembershipsForBuiltInOAuthUserFallsBackWithoutSnapshotMembership(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	_, err := controller.getOrCreatePrincipal(ctx, "github:42")
+	require.NoError(t, err)
+	controller.SetMembershipRepository(&membershipSnapshotRepo{})
+
+	memberships, resolved, err := controller.ResolveTeamMembershipsForGitHubUser(ctx, 42)
+	require.NoError(t, err)
+	require.False(t, resolved, "live teams fetched by the built-in provider must be preserved until a snapshot contains memberships")
+	require.Empty(t, memberships)
+}
+
+func TestResolveTeamMembershipsFallsBackForLinkedConnectionWithoutSnapshotMembership(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	created, err := controller.linkIdentity(ctx, githubIdentity{
+		ID: "identity-1", PrincipalID: "principal-1", ConnectionID: "ghes", GitHubUserID: 42, Login: "alice",
+	}, "enterprise-token", nil)
+	require.NoError(t, err)
+	require.True(t, created)
+	controller.SetMembershipRepository(&membershipSnapshotRepo{})
+
+	memberships, resolved, err := controller.ResolveTeamMemberships(ctx, "principal-1")
+	require.NoError(t, err)
+	require.False(t, resolved, "live GHES teams must be preserved until a durable snapshot contains memberships")
+	require.Empty(t, memberships)
+}

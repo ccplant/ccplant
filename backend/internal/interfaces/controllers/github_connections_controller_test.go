@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -179,6 +180,44 @@ func TestLegacyGitHubLoginResolvesStablePrincipalID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, second)
 	require.NotEqual(t, "alice", first)
+}
+
+func TestBuiltInTeamRequestsUseConfiguredEnterpriseAPIURL(t *testing.T) {
+	t.Parallel()
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.RequestURI())
+		require.Equal(t, "Bearer enterprise-token", r.Header.Get("Authorization"))
+		switch r.URL.Path {
+		case "/api/v3/user/teams":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"slug":         "platform",
+				"name":         "Platform",
+				"organization": map[string]any{"login": "acme"},
+			}})
+		case "/api/v3/orgs/acme/teams/platform/members":
+			_ = json.NewEncoder(w).Encode([]githubOAuthUser{{ID: 42, Login: "alice"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	controller.SetBuiltInAPIURL(server.URL + "/api/v3/")
+
+	teams, err := controller.FetchBuiltInTeams(context.Background(), "enterprise-token")
+	require.NoError(t, err)
+	require.Equal(t, []auth.GitHubTeamMembership{{Organization: "acme", TeamSlug: "platform", TeamName: "Platform"}}, teams)
+
+	members, err := controller.FetchExternalTeamMembers(context.Background(), "principal-1", entities.ExternalTeamBinding{Organization: "acme", TeamSlug: "platform"}, "enterprise-token")
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	require.Equal(t, int64(42), members[0].GitHubUserID)
+	require.Equal(t, []string{
+		"/api/v3/user/teams?per_page=100&page=1",
+		"/api/v3/orgs/acme/teams/platform/members?role=all&per_page=100&page=1",
+	}, requested)
 }
 
 func TestResolveLoginPrincipalUsesLinkedPrincipalID(t *testing.T) {
