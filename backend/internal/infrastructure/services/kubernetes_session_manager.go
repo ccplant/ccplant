@@ -50,6 +50,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/yaml"
 )
@@ -1187,18 +1188,10 @@ func (m *KubernetesSessionManager) stockPodTemplateHash(ctx context.Context, din
 // stale so it is upgraded once after this behavior is deployed.
 func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	m.refreshConfig()
-	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to resolve allocated runners for stale stock purge protection: %w", err)
-	}
-	allocated := make(map[string]struct{}, len(allocatedRunnerIDs))
-	for _, id := range allocatedRunnerIDs {
-		if id != "" {
-			allocated[id] = struct{}{}
-		}
-	}
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy"),
+		// Pool inventory has its own lifecycle. The local stock reconciler must
+		// never refresh pool runners, even when their pod template is stale.
+		LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,!agentapi.proxy/session-pool"),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list stock services for template reconciliation: %w", err)
@@ -1243,25 +1236,6 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s has no session-id", svc.Name))
 			continue
 		}
-		// Pool runners retain their stock label after accepting an allocation, so
-		// the label and template hash alone do not prove that they are idle. The
-		// parent allocation registry is the durable authority during manager
-		// upgrades, when a changed image makes every old template look stale.
-		if _, active := allocated[sessionID]; active {
-			log.Printf("[STOCK_INVENTORY] Skipping allocated session %s during stale stock purge", sessionID)
-			continue
-		}
-		if svc.Labels["agentapi.proxy/session-pool"] != "" {
-			retired, retireErr := m.retireStockRunner(ctx, sessionID)
-			if retireErr != nil {
-				purgeErrs = append(purgeErrs, fmt.Sprintf("retire runner %s: %v", sessionID, retireErr))
-				continue
-			}
-			if !retired {
-				log.Printf("[STOCK_INVENTORY] Skipping active session %s during stale stock purge", sessionID)
-				continue
-			}
-		}
 		if stockState == "creating" {
 			log.Printf("[STOCK_INVENTORY] Purging stale creating stock session %s (age=%s)", sessionID, time.Since(svc.CreationTimestamp.Time).Round(time.Second))
 		}
@@ -1284,6 +1258,29 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 		return fmt.Errorf("purge stale stock errors: %s", strings.Join(purgeErrs, "; "))
 	}
 	return nil
+}
+
+// ClaimPoolStockSession removes the stock marker from a pool runner's Service
+// after the runner accepts an allocation. The Service is the durable local
+// source of truth because every session workload owns one, and removing the
+// marker keeps active runners out of all stock selectors across manager restarts.
+func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, sessionID string) error {
+	name := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if svc.Labels["agentapi.proxy/session-pool"] == "" {
+			return fmt.Errorf("session %s is not a pool runner", sessionID)
+		}
+		if _, ok := svc.Labels["agentapi.proxy/stock"]; !ok {
+			return nil
+		}
+		delete(svc.Labels, "agentapi.proxy/stock")
+		_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 // CountStockSessions returns the number of available or currently creating
@@ -5204,8 +5201,13 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	if proxyURL == "" {
 		proxyURL = fmt.Sprintf("http://control.%s.svc.cluster.local:8080", m.namespace)
 	}
+	localProxyURL := strings.TrimRight(m.config.SessionManager.LocalURL, "/")
+	if localProxyURL == "" {
+		localProxyURL = proxyURL
+	}
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
+		corev1.EnvVar{Name: "PROVISIONER_LOCAL_PROXY_URL", Value: localProxyURL},
 		corev1.EnvVar{Name: "SESSION_STATE_PROXY_URL", Value: proxyURL},
 		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
 		corev1.EnvVar{

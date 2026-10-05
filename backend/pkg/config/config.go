@@ -450,6 +450,9 @@ type SessionManagerConfig struct {
 	// It is intentionally distinct from UpstreamURL, which identifies the parent
 	// control plane.
 	APIURL string `json:"api_url" mapstructure:"api_url"`
+	// LocalURL is the in-cluster URL of this session-manager process. Session
+	// Pods use it even when APIURL or the runner upstream targets another plane.
+	LocalURL string `json:"local_url" mapstructure:"local_url"`
 	// APIToken authenticates outbound API -> session-manager requests.
 	APIToken string `json:"api_token" mapstructure:"api_token"`
 	// InternalAPIToken authenticates inbound requests to the private manager API.
@@ -1291,6 +1294,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_manager.id", "AGENTAPI_SESSION_MANAGER_ID", "SESSION_MANAGER_ID")
 	_ = v.BindEnv("session_manager.runner_pool", "AGENTAPI_SESSION_MANAGER_RUNNER_POOL", "SESSION_MANAGER_RUNNER_POOL")
 	_ = v.BindEnv("session_manager.api_url", "AGENTAPI_SESSION_MANAGER_API_URL")
+	_ = v.BindEnv("session_manager.local_url", "AGENTAPI_SESSION_MANAGER_LOCAL_URL")
 	_ = v.BindEnv("session_manager.api_token", "AGENTAPI_SESSION_MANAGER_API_TOKEN")
 	_ = v.BindEnv("session_manager.internal_api_token", "AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN")
 	_ = v.BindEnv("session_manager.auto_upgrade", "AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE")
@@ -1421,6 +1425,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("worker.control_api_token", "")
 	v.SetDefault("worker.session_api_url", "")
 	v.SetDefault("session_manager.api_url", "")
+	v.SetDefault("session_manager.local_url", "")
 	v.SetDefault("session_manager.api_token", "")
 	v.SetDefault("session_manager.internal_api_token", "")
 	v.SetDefault("session_manager.allocation.lease_duration", "15s")
