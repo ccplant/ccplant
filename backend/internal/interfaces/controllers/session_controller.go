@@ -90,6 +90,10 @@ type sessionModelOptionsProvider interface {
 	ModelOptions() []string
 }
 
+type sessionStatusUsageRecorder interface {
+	RecordStatus(context.Context, repositories.SessionStatusEvent) error
+}
+
 type sessionConfigurationOwnerProvider interface {
 	ConfigurationOwnerReference() (apiVersion, kind, name, uid string)
 }
@@ -103,6 +107,7 @@ type SessionController struct {
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
 	sessionRunnerStore     sessionRunnerAllocationStore
+	sessionStatusRecorder  sessionStatusUsageRecorder
 	esmControlTunnel       ESMControlTunnel
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
@@ -190,6 +195,14 @@ type sessionRunnerAllocationStore interface {
 
 func WithSessionRunnerStore(store sessionRunnerAllocationStore) SessionControllerOption {
 	return func(c *SessionController) { c.sessionRunnerStore = store }
+}
+
+func WithSessionStatusUsageRecorder(recorder sessionStatusUsageRecorder) SessionControllerOption {
+	return func(c *SessionController) { c.sessionStatusRecorder = recorder }
+}
+
+func (c *SessionController) SetSessionStatusUsageRecorder(recorder sessionStatusUsageRecorder) {
+	c.sessionStatusRecorder = recorder
 }
 
 // getSessionManager returns the current session manager
@@ -1147,9 +1160,20 @@ func (c *SessionController) RecordRemoteSessionStatus(ctx context.Context, route
 		return err
 	}
 	if previous != status {
-		c.publishRemoteStatusEvent(repositories.SessionStatusEvent{SessionID: route.SessionID, Status: status, Timestamp: route.StatusUpdatedAt})
+		event := repositories.SessionStatusEvent{SessionID: route.SessionID, Status: status, Timestamp: route.StatusUpdatedAt}
+		c.recordSessionStatusUsage(ctx, event)
+		c.publishRemoteStatusEvent(event)
 	}
 	return nil
+}
+
+func (c *SessionController) recordSessionStatusUsage(ctx context.Context, event repositories.SessionStatusEvent) {
+	if c.sessionStatusRecorder == nil {
+		return
+	}
+	if err := c.sessionStatusRecorder.RecordStatus(ctx, event); err != nil {
+		log.Printf("[SESSION_COUNT_EVENTS] Failed to record status for %s: %v", event.SessionID, err)
+	}
 }
 
 func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, resp *http.Response) {
@@ -2048,6 +2072,7 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
 	if route.ManagerID == "" || route.RemoteSessionID == "" {
+		c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: "terminating", Timestamp: time.Now()})
 		if c.sessionRouteRepo != nil {
 			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 				log.Printf("[REMOTE_DELETE] Warning: failed to delete pending route entry for session %s: %v", sessionID, err)
@@ -2117,6 +2142,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 		if err := c.sessionRouteRepo.Save(ctx.Request().Context(), route); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to persist session deletion state")
 		}
+		c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: route.Status, Timestamp: route.StatusUpdatedAt})
 		return ctx.JSON(http.StatusAccepted, map[string]interface{}{
 			"message": "Session deletion queued", "session_id": sessionID, "status": "terminating",
 		})
@@ -2143,6 +2169,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	}
 
 	// Clean up local route entry regardless of whether External Session Manager had the session.
+	c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: "terminating", Timestamp: time.Now()})
 	if c.sessionRouteRepo != nil {
 		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)

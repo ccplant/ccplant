@@ -371,8 +371,6 @@ spec:
             {{- if (dig "sessionCount" "enabled" false .Values.config) }}
             - name: AGENTAPI_SESSION_COUNT_BACKEND
               value: {{ dig "sessionCount" "backend" "libsql" .Values.config | quote }}
-            - name: AGENTAPI_SESSION_COUNT_CHECK_INTERVAL
-              value: {{ dig "sessionCount" "checkInterval" "1m" .Values.config | quote }}
             - name: AGENTAPI_SESSION_COUNT_DATABASE_URL
               valueFrom:
                 secretKeyRef:

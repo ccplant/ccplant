@@ -73,10 +73,9 @@ usage:
   database_url: ""
   auth_token: ""
 
-# Periodic active session counts grouped by logical pool and stable principal.
+# Session state transitions used to reconstruct usage by pool and principal.
 session_count:
   enabled: false
   backend: libsql
   database_url: ""
   auth_token: ""
-  check_interval: 1m

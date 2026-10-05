@@ -49,11 +49,12 @@ token counts, but excludes user IDs, team IDs, event IDs, and message content.
 The frontend helper in `src/lib/usage-parquet.ts` loads this file into a local
 DuckDB-Wasm `usage_events` view so visualization SQL remains browser-local.
 
-## Active session count snapshots
+## Session usage snapshots from status events
 
-The proxy can also periodically persist active session counts by logical pool
-and stable user or team principal. This collector has an independent backend
-selection and repository interface; `libsql` is currently implemented.
+The proxy persists an append-only event whenever a session changes state. Each
+event contains the session, logical pool, scope, stable user or team principal,
+status, and transition time. The current state is seeded once at proxy startup;
+there is no periodic polling.
 
 ```yaml
 session_count:
@@ -61,20 +62,35 @@ session_count:
   backend: libsql
   database_url: libsql://statistics.example
   auth_token: "..."
-  check_interval: 1m
 ```
 
-Snapshots use the table `agentapi_session_count_samples`. Counts are derived
-from durable, user-visible session routes; allocations only backfill the pool
-for legacy routes. `all_count` includes routes in a recognized UI status but
-excludes `terminating`, deletion-pending, incomplete, and orphaned records.
-`active_count` includes sessions whose public
-status is `active` or `stable` (the green/available UI state), while
-`running_count` includes sessions whose public status is `running` (the yellow
-UI state), and `suspended_count` includes sessions whose public status is
-`suspended`. Suspended sessions are excluded from active and running counts.
-Samples are change points: the worker
-writes the initial value and subsequent changes, but does not repeat an
-unchanged count every minute. Previously observed and explicitly bound
-pool/principal pairs receive a row containing zero after their last session
-stops. Consumers reconstruct a time series by carrying the last value forward.
+Events use the table `agentapi_session_status_events`. The following query
+reconstructs the former snapshot at any timestamp (`:snapshot_at`). It selects
+the last transition for every session and applies the same status categories as
+the previous one-minute worker:
+
+```sql
+WITH ranked AS (
+  SELECT *, ROW_NUMBER() OVER (
+    PARTITION BY session_id ORDER BY occurred_at DESC, event_id DESC
+  ) AS position
+  FROM agentapi_session_status_events
+  WHERE occurred_at <= :snapshot_at
+), latest AS (
+  SELECT * FROM ranked WHERE position = 1
+)
+SELECT pool, principal_id,
+  SUM(CASE WHEN status IN (
+    'active','stable','running','suspended','creating','starting','resuming',
+    'restoring','suspending','stopped','error','timeout','unhealthy'
+  ) THEN 1 ELSE 0 END) AS all_count,
+  SUM(CASE WHEN status IN ('active','stable') THEN 1 ELSE 0 END) AS active_count,
+  SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count,
+  SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) AS suspended_count
+FROM latest
+GROUP BY pool, principal_id;
+```
+
+Generating one row per minute is now a SQL concern: join the same latest-event
+logic against a recursive minute series. Status-event writes are idempotent by
+`event_id`, and a recorder failure never blocks session status propagation.

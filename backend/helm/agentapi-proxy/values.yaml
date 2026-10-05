@@ -867,12 +867,11 @@ config:
       name: ""
       key: "auth-token"
 
-  # Active session count snapshots grouped by logical pool and stable principal.
+  # Session state transitions used to reconstruct usage by pool and principal.
   # The storage backend is selected independently from the application KV store.
   sessionCount:
     enabled: false
     backend: libsql
-    checkInterval: 1m
     databaseUrlSecretRef:
       name: ""
       key: "database-url"

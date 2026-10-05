@@ -566,14 +566,12 @@ type UsageConfig struct {
 	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
 }
 
-// SessionCountConfig configures periodic pool/principal session count snapshots.
-// Backend is explicit so persistence can be replaced without changing the worker.
+// SessionCountConfig configures append-only session status usage events.
 type SessionCountConfig struct {
-	Enabled       bool   `json:"enabled" mapstructure:"enabled"`
-	Backend       string `json:"backend" mapstructure:"backend"`
-	DatabaseURL   string `json:"database_url" mapstructure:"database_url"`
-	AuthToken     string `json:"auth_token" mapstructure:"auth_token"`
-	CheckInterval string `json:"check_interval" mapstructure:"check_interval"`
+	Enabled     bool   `json:"enabled" mapstructure:"enabled"`
+	Backend     string `json:"backend" mapstructure:"backend"`
+	DatabaseURL string `json:"database_url" mapstructure:"database_url"`
+	AuthToken   string `json:"auth_token" mapstructure:"auth_token"`
 }
 
 // Config represents the proxy configuration
@@ -1173,7 +1171,6 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_count.backend", "AGENTAPI_SESSION_COUNT_BACKEND")
 	_ = v.BindEnv("session_count.database_url", "AGENTAPI_SESSION_COUNT_DATABASE_URL")
 	_ = v.BindEnv("session_count.auth_token", "AGENTAPI_SESSION_COUNT_AUTH_TOKEN")
-	_ = v.BindEnv("session_count.check_interval", "AGENTAPI_SESSION_COUNT_CHECK_INTERVAL")
 
 	// scia OAuth broker/proxy configuration
 	_ = v.BindEnv("scia.enabled", "AGENTAPI_SCIA_ENABLED")
@@ -1387,7 +1384,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("usage.enabled", false)
 	v.SetDefault("session_count.enabled", false)
 	v.SetDefault("session_count.backend", "libsql")
-	v.SetDefault("session_count.check_interval", "1m")
 
 	// Role-based environment files defaults
 	v.SetDefault("role_env_files.enabled", false)

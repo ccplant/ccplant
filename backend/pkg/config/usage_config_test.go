@@ -20,12 +20,11 @@ func TestLoadSessionCountConfigFromEnvironment(t *testing.T) {
 	t.Setenv("AGENTAPI_SESSION_COUNT_BACKEND", "libsql")
 	t.Setenv("AGENTAPI_SESSION_COUNT_DATABASE_URL", "libsql://counts.example")
 	t.Setenv("AGENTAPI_SESSION_COUNT_AUTH_TOKEN", "count-token")
-	t.Setenv("AGENTAPI_SESSION_COUNT_CHECK_INTERVAL", "30s")
 	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.SessionCount.Enabled || cfg.SessionCount.Backend != "libsql" || cfg.SessionCount.DatabaseURL != "libsql://counts.example" || cfg.SessionCount.AuthToken != "count-token" || cfg.SessionCount.CheckInterval != "30s" {
+	if !cfg.SessionCount.Enabled || cfg.SessionCount.Backend != "libsql" || cfg.SessionCount.DatabaseURL != "libsql://counts.example" || cfg.SessionCount.AuthToken != "count-token" {
 		t.Fatalf("session count config = %#v", cfg.SessionCount)
 	}
 }

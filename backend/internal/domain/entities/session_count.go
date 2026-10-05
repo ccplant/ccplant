@@ -2,18 +2,15 @@ package entities
 
 import "time"
 
-// SessionCountDimension identifies one principal's use of a session pool.
-type SessionCountDimension struct {
-	Pool        string `json:"pool"`
-	PrincipalID string `json:"principal_id"`
-}
-
-// SessionCountSample is a point-in-time count of active pool allocations.
-type SessionCountSample struct {
-	SessionCountDimension
-	SampledAt      time.Time `json:"sampled_at"`
-	AllCount       int       `json:"all_count"`
-	ActiveCount    int       `json:"active_count"`
-	RunningCount   int       `json:"running_count"`
-	SuspendedCount int       `json:"suspended_count"`
+// SessionStatusUsageEvent is an append-only session state transition. A usage
+// snapshot can be reconstructed by selecting each session's latest event at a
+// point in time and aggregating it by pool and principal.
+type SessionStatusUsageEvent struct {
+	EventID     string    `json:"event_id"`
+	OccurredAt  time.Time `json:"occurred_at"`
+	SessionID   string    `json:"session_id"`
+	Pool        string    `json:"pool"`
+	Scope       string    `json:"scope"`
+	PrincipalID string    `json:"principal_id"`
+	Status      string    `json:"status"`
 }
