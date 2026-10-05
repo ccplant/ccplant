@@ -181,6 +181,7 @@ type GitHubConnectionsController struct {
 	namespace        string
 	httpClient       *http.Client
 	callbackURL      string
+	builtInAPIURL    string
 	encryptedStorage bool
 	brokerMu         sync.Mutex
 	tokenCache       map[string]githubCachedToken
@@ -192,10 +193,11 @@ type GitHubConnectionsController struct {
 
 func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publicBaseURL string, encryptedStorage ...bool) *GitHubConnectionsController {
 	controller := &GitHubConnectionsController{
-		client:     client,
-		namespace:  namespace,
-		httpClient: utils.NewDefaultHTTPClient(),
-		tokenCache: make(map[string]githubCachedToken),
+		client:        client,
+		namespace:     namespace,
+		httpClient:    utils.NewDefaultHTTPClient(),
+		builtInAPIURL: "https://api.github.com",
+		tokenCache:    make(map[string]githubCachedToken),
 	}
 	if publicBaseURL != "" {
 		controller.callbackURL = strings.TrimSuffix(publicBaseURL, "/") + "/auth/github-connections/callback"
@@ -204,6 +206,19 @@ func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publ
 		controller.encryptedStorage = encryptedStorage[0]
 	}
 	return controller
+}
+
+// SetBuiltInAPIURL configures the API endpoint used with credentials issued by
+// the deployment-wide GitHub OAuth provider. It differs from administrator-
+// defined GitHub connections, whose API endpoints are stored per connection.
+func (c *GitHubConnectionsController) SetBuiltInAPIURL(apiURL string) {
+	if normalized := strings.TrimSpace(apiURL); normalized != "" {
+		c.builtInAPIURL = strings.TrimSuffix(normalized, "/")
+	}
+}
+
+func (c *GitHubConnectionsController) builtInConnection() githubConnection {
+	return githubConnection{ID: "github", APIURL: c.builtInAPIURL, Enabled: true}
 }
 
 func (c *GitHubConnectionsController) SetMembershipRepository(repo ports.TeamMembershipRepository) {
@@ -952,8 +967,7 @@ func (c *GitHubConnectionsController) FetchExternalTeamMembers(ctx context.Conte
 		}
 	}
 	if len(builtInToken) > 0 && builtInToken[0] != "" {
-		connection := githubConnection{ID: "github", APIURL: "https://api.github.com", Enabled: true}
-		if members, err := c.fetchGitHubTeamMembers(ctx, connection, builtInToken[0], binding); err == nil {
+		if members, err := c.fetchGitHubTeamMembers(ctx, c.builtInConnection(), builtInToken[0], binding); err == nil {
 			merge(members)
 		}
 	}
@@ -1057,7 +1071,10 @@ func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context
 			}
 		}
 	}
-	return result, true, nil
+	// An empty result cannot distinguish a synchronized user with no teams from
+	// a principal that predates durable snapshots. Report it as unresolved so
+	// authentication paths preserve the live memberships they just fetched.
+	return result, len(result) > 0, nil
 }
 
 // ResolveTeamMembershipsForGitHubUser maps a built-in OAuth identity to its
@@ -1070,7 +1087,18 @@ func (c *GitHubConnectionsController) ResolveTeamMembershipsForGitHubUser(ctx co
 	if err != nil {
 		return nil, false, err
 	}
-	return c.ResolveTeamMemberships(ctx, principal.ID)
+	memberships, resolved, err := c.ResolveTeamMemberships(ctx, principal.ID)
+	if err != nil || !resolved {
+		return memberships, resolved, err
+	}
+	// Existing built-in OAuth principals can predate durable membership
+	// snapshots. Treat an empty persisted result as unresolved so the teams
+	// already fetched by GitHubAuthProvider are preserved during migration.
+	// Once synchronization records memberships, the durable result takes over.
+	if len(memberships) == 0 {
+		return nil, false, nil
+	}
+	return memberships, true, nil
 }
 
 // ResolveLiveTeamMemberships queries GitHub and is reserved for identity
@@ -1129,8 +1157,7 @@ func (c *GitHubConnectionsController) ResolveLiveTeamMemberships(ctx context.Con
 }
 
 func (c *GitHubConnectionsController) FetchBuiltInTeams(ctx context.Context, token string) ([]auth.GitHubTeamMembership, error) {
-	connection := githubConnection{ID: "github", APIURL: "https://api.github.com", Enabled: true}
-	return c.fetchGitHubTeams(ctx, connection, token)
+	return c.fetchGitHubTeams(ctx, c.builtInConnection(), token)
 }
 
 func (c *GitHubConnectionsController) fetchGitHubTeams(ctx context.Context, connection githubConnection, token string) ([]auth.GitHubTeamMembership, error) {
