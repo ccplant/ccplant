@@ -92,6 +92,8 @@ type sessionModelOptionsProvider interface {
 
 type sessionStatusUsageRecorder interface {
 	RecordStatus(context.Context, repositories.SessionStatusEvent) error
+	ResolveDimensions(context.Context, string) (repositories.SessionUsageDimensions, error)
+	RecordResolvedStatus(context.Context, repositories.SessionUsageDimensions, repositories.SessionStatusEvent) error
 }
 
 type sessionConfigurationOwnerProvider interface {
@@ -1176,6 +1178,33 @@ func (c *SessionController) recordSessionStatusUsage(ctx context.Context, event 
 	}
 }
 
+func (c *SessionController) resolveSessionUsageDimensions(ctx context.Context, sessionID, deletePath string) *repositories.SessionUsageDimensions {
+	if c.sessionStatusRecorder == nil {
+		return nil
+	}
+	dimensions, err := c.sessionStatusRecorder.ResolveDimensions(ctx, sessionID)
+	if err != nil {
+		log.Printf("[SESSION_COUNT_EVENTS] session_usage_dimensions_resolve_failed session=%s delete_path=%s: %v", sessionID, deletePath, err)
+		return nil
+	}
+	return &dimensions
+}
+
+func (c *SessionController) recordSessionTerminated(ctx context.Context, dimensions *repositories.SessionUsageDimensions, deletePath string, timestamp time.Time) {
+	if c.sessionStatusRecorder == nil || dimensions == nil {
+		return
+	}
+	if !dimensions.LastStatusAt.IsZero() && !timestamp.After(dimensions.LastStatusAt) {
+		timestamp = dimensions.LastStatusAt.Add(time.Nanosecond)
+	}
+	event := repositories.SessionStatusEvent{SessionID: dimensions.SessionID, Status: "terminated", Timestamp: timestamp}
+	if err := c.sessionStatusRecorder.RecordResolvedStatus(ctx, *dimensions, event); err != nil {
+		log.Printf("[SESSION_COUNT_EVENTS] session_usage_terminal_event_failed session=%s delete_path=%s: %v", dimensions.SessionID, deletePath, err)
+		return
+	}
+	log.Printf("[SESSION_COUNT_EVENTS] session_usage_terminal_event_recorded session=%s pool=%s scope=%s delete_path=%s", dimensions.SessionID, dimensions.Pool, dimensions.Scope, deletePath)
+}
+
 func (c *SessionController) rememberRemoteSessionStatus(ctx context.Context, route *repositories.SessionRoute, resp *http.Response) {
 	if c.sessionRouteRepo == nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return
@@ -1374,6 +1403,11 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 
 	log.Printf("Deleting session %s (status: %s, user: %s) requested by %s",
 		sessionID, session.Status(), session.UserID(), clientIP)
+	deletePath := "managed_session"
+	if uncreatedAllocation {
+		deletePath = "pending_allocation"
+	}
+	usageDimensions := c.resolveSessionUsageDimensions(ctx.Request().Context(), sessionID, deletePath)
 
 	if uncreatedAllocation {
 		deleter, ok := c.sessionCreator.(pendingSessionAllocationDeleter)
@@ -1390,6 +1424,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			log.Printf("Pending session allocation %s was claimed before deletion", sessionID)
 			return echo.NewHTTPError(http.StatusConflict, "Session allocation is no longer pending")
 		}
+		c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "pending_allocation", time.Now())
 		log.Printf("Pending session allocation %s deletion completed successfully", sessionID)
 		c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
 		c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
@@ -1404,6 +1439,7 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 		log.Printf("Failed to delete session %s: %v", sessionID, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session")
 	}
+	c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "managed_session", time.Now())
 
 	log.Printf("Session %s deletion completed successfully", sessionID)
 	c.revokeGitHubBrokerLeases(ctx.Request().Context(), sessionID)
@@ -1767,6 +1803,7 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 }
 
 func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *repositories.SessionRoute) error {
+	usageDimensions := c.resolveSessionUsageDimensions(ctx.Request().Context(), route.SessionID, "local_alias")
 	session := c.getSessionManager().GetSession(route.RemoteSessionID)
 	if session == nil {
 		// The runtime may already have removed itself (for example via a oneshot
@@ -1780,6 +1817,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 			log.Printf("Failed to delete stale session alias %s: %v", route.SessionID, err)
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session alias")
 		}
+		c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "stale_local_alias", time.Now())
 		c.cleanupSessionConfiguration(ctx.Request().Context(), route.SessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message": "Stale session alias removed", "session_id": route.SessionID, "status": "terminated",
@@ -1795,6 +1833,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 	if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), route.SessionID); err != nil {
 		log.Printf("Failed to delete session alias %s: %v", route.SessionID, err)
 	}
+	c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "local_alias", time.Now())
 	c.cleanupSessionConfiguration(ctx.Request().Context(), route.SessionID)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message": "Session terminated successfully", "session_id": route.SessionID, "status": "terminated",
@@ -2071,12 +2110,19 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
+	usageDimensions := c.resolveSessionUsageDimensions(ctx.Request().Context(), route.SessionID, "remote_session")
 	if route.ManagerID == "" || route.RemoteSessionID == "" {
 		c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: "terminating", Timestamp: time.Now()})
+		routeDeleted := c.sessionRouteRepo == nil
 		if c.sessionRouteRepo != nil {
 			if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
 				log.Printf("[REMOTE_DELETE] Warning: failed to delete pending route entry for session %s: %v", sessionID, err)
+			} else {
+				routeDeleted = true
 			}
+		}
+		if routeDeleted {
+			c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "pending_remote_route", time.Now())
 		}
 		c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
 		c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
@@ -2175,6 +2221,7 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 			log.Printf("[REMOTE_DELETE] Warning: failed to delete route entry for session %s: %v", sessionID, err)
 		}
 	}
+	c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "esm_sync", time.Now())
 	c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
 	c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
 
@@ -2209,6 +2256,16 @@ func (c *SessionController) reconcileQueuedDeletion(ctx context.Context, route *
 		_ = c.sessionRouteRepo.Save(ctx, route)
 		return false
 	}
+	usageDimensions := c.resolveSessionUsageDimensions(ctx, route.SessionID, "direct_runtime_queued")
+	if route.Status != "terminated" {
+		route.Status = "terminated"
+		route.StatusUpdatedAt = time.Now()
+		if err := c.sessionRouteRepo.Save(ctx, route); err != nil {
+			log.Printf("[REMOTE_DELETE] Failed to persist terminal route state %s: %v", route.SessionID, err)
+			return false
+		}
+	}
+	c.recordSessionTerminated(ctx, usageDimensions, "direct_runtime_queued", route.StatusUpdatedAt)
 	if err := c.sessionRouteRepo.Delete(ctx, route.SessionID); err != nil {
 		log.Printf("[REMOTE_DELETE] Failed to finalize route %s: %v", route.SessionID, err)
 		return false

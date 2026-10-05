@@ -83,30 +83,36 @@ func (w *Worker) RecordStatus(ctx context.Context, event repositories.SessionSta
 	if event.SessionID == "" || event.Status == "" {
 		return nil
 	}
-	route, err := w.routes.Get(ctx, event.SessionID)
-	if err != nil {
-		return fmt.Errorf("get session route: %w", err)
-	}
-	if route != nil {
-		return w.recordRoute(ctx, route, event)
-	}
-	session := w.source.GetSession(event.SessionID)
-	if session == nil {
-		return fmt.Errorf("session metadata not found")
-	}
-	pool, err := w.pool(ctx, event.SessionID, "")
+	dimensions, err := w.ResolveDimensions(ctx, event.SessionID)
 	if err != nil {
 		return err
 	}
-	return w.save(ctx, event, pool, string(session.Scope()), session.UserID(), session.TeamID())
+	return w.RecordResolvedStatus(ctx, dimensions, event)
+}
+
+// ResolveDimensions captures the metadata required to record future events for
+// a session, including after destructive cleanup removes its route/allocation.
+func (w *Worker) ResolveDimensions(ctx context.Context, sessionID string) (repositories.SessionUsageDimensions, error) {
+	route, err := w.routes.Get(ctx, sessionID)
+	if err != nil {
+		return repositories.SessionUsageDimensions{}, fmt.Errorf("get session route: %w", err)
+	}
+	if route != nil {
+		return w.resolve(ctx, route.SessionID, route.Pool, route.Scope, route.UserID, route.TeamID, route.StatusUpdatedAt)
+	}
+	session := w.source.GetSession(sessionID)
+	if session == nil {
+		return repositories.SessionUsageDimensions{}, fmt.Errorf("session metadata not found")
+	}
+	return w.resolve(ctx, sessionID, "", string(session.Scope()), session.UserID(), session.TeamID(), session.UpdatedAt())
 }
 
 func (w *Worker) recordRoute(ctx context.Context, route *repositories.SessionRoute, event repositories.SessionStatusEvent) error {
-	pool, err := w.pool(ctx, route.SessionID, route.Pool)
+	dimensions, err := w.resolve(ctx, route.SessionID, route.Pool, route.Scope, route.UserID, route.TeamID, route.StatusUpdatedAt)
 	if err != nil {
 		return err
 	}
-	return w.save(ctx, event, pool, route.Scope, route.UserID, route.TeamID)
+	return w.RecordResolvedStatus(ctx, dimensions, event)
 }
 
 func (w *Worker) pool(ctx context.Context, sessionID, pool string) (string, error) {
@@ -123,24 +129,43 @@ func (w *Worker) pool(ctx context.Context, sessionID, pool string) (string, erro
 	return allocation.Pool, nil
 }
 
-func (w *Worker) save(ctx context.Context, event repositories.SessionStatusEvent, pool, scope, userID, teamID string) error {
+func (w *Worker) resolve(ctx context.Context, sessionID, pool, scope, userID, teamID string, lastStatusAt time.Time) (repositories.SessionUsageDimensions, error) {
+	resolvedPool, err := w.pool(ctx, sessionID, pool)
+	if err != nil {
+		return repositories.SessionUsageDimensions{}, err
+	}
 	principalID := userID
 	if scope == string(entities.ScopeTeam) {
 		team, err := w.teams.FindByTeamID(ctx, teamID)
 		if err != nil {
-			return fmt.Errorf("resolve team principal: %w", err)
+			return repositories.SessionUsageDimensions{}, fmt.Errorf("resolve team principal: %w", err)
 		}
 		if team == nil || team.PrincipalID() == "" {
-			return fmt.Errorf("team %q has no principal ID", teamID)
+			return repositories.SessionUsageDimensions{}, fmt.Errorf("team %q has no principal ID", teamID)
 		}
 		principalID = team.PrincipalID()
 	}
 	if principalID == "" {
-		return fmt.Errorf("principal not found")
+		return repositories.SessionUsageDimensions{}, fmt.Errorf("principal not found")
+	}
+	return repositories.SessionUsageDimensions{SessionID: sessionID, Pool: resolvedPool, Scope: scope, PrincipalID: principalID, LastStatusAt: lastStatusAt}, nil
+}
+
+// RecordResolvedStatus records an event without consulting live session
+// metadata. This is used for terminal events after deletion succeeds.
+func (w *Worker) RecordResolvedStatus(ctx context.Context, dimensions repositories.SessionUsageDimensions, event repositories.SessionStatusEvent) error {
+	if event.SessionID == "" {
+		event.SessionID = dimensions.SessionID
+	}
+	if event.SessionID == "" || event.Status == "" {
+		return nil
+	}
+	if dimensions.SessionID != event.SessionID {
+		return fmt.Errorf("session usage dimensions mismatch: %s != %s", dimensions.SessionID, event.SessionID)
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
 	id := fmt.Sprintf("%x", sha256.Sum256([]byte(event.SessionID+"\x00"+event.Status+"\x00"+event.Timestamp.UTC().Format(time.RFC3339Nano))))
-	return w.repository.SaveEvent(ctx, entities.SessionStatusUsageEvent{EventID: id, OccurredAt: event.Timestamp.UTC(), SessionID: event.SessionID, Pool: pool, Scope: scope, PrincipalID: principalID, Status: event.Status})
+	return w.repository.SaveEvent(ctx, entities.SessionStatusUsageEvent{EventID: id, OccurredAt: event.Timestamp.UTC(), SessionID: event.SessionID, Pool: dimensions.Pool, Scope: dimensions.Scope, PrincipalID: dimensions.PrincipalID, Status: event.Status})
 }

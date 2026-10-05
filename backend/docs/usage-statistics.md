@@ -94,3 +94,10 @@ GROUP BY pool, principal_id;
 Generating one row per minute is now a SQL concern: join the same latest-event
 logic against a recursive minute series. Status-event writes are idempotent by
 `event_id`, and a recorder failure never blocks session status propagation.
+
+Successful session deletion is recorded as the terminal `terminated` status so
+the latest-event query no longer counts the deleted session. The recorder
+captures pool and principal dimensions before destructive cleanup and writes
+the terminal event after deletion succeeds. See
+[Session deletion usage-event design](session-delete-usage-event-design.md) for
+the deletion-path, retry, and failure semantics.

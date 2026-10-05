@@ -58,6 +58,27 @@ type lifecycleTunnel struct {
 	onDo     func()
 }
 
+type statusUsageRecorder struct {
+	dimensions repositories.SessionUsageDimensions
+	events     []repositories.SessionStatusEvent
+}
+
+func (r *statusUsageRecorder) RecordStatus(_ context.Context, event repositories.SessionStatusEvent) error {
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *statusUsageRecorder) ResolveDimensions(_ context.Context, sessionID string) (repositories.SessionUsageDimensions, error) {
+	dimensions := r.dimensions
+	dimensions.SessionID = sessionID
+	return dimensions, nil
+}
+
+func (r *statusUsageRecorder) RecordResolvedStatus(_ context.Context, _ repositories.SessionUsageDimensions, event repositories.SessionStatusEvent) error {
+	r.events = append(r.events, event)
+	return nil
+}
+
 func (t *lifecycleTunnel) IsConnected(_ context.Context, managerID string) bool {
 	return managerID == "manager-a"
 }
@@ -556,6 +577,38 @@ func TestDeleteSessionAlreadyAbsentIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDeleteManagedSessionRecordsTerminatedStatus(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"session-1": {id: "session-1", userID: "user-1", scope: entities.ScopeUser, status: "active"},
+	}}
+	creator := &fakeSessionCreator{}
+	lastStatusAt := time.Now().Add(time.Hour)
+	usageRecorder := &statusUsageRecorder{dimensions: repositories.SessionUsageDimensions{
+		Pool: "linux", Scope: string(entities.ScopeUser), PrincipalID: "user-1", LastStatusAt: lastStatusAt,
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, creator,
+		controllers.WithSessionStatusUsageRecorder(usageRecorder),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/session-1", "session-1")
+
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !reflect.DeepEqual(creator.deleted, []string{"session-1"}) {
+		t.Fatalf("deleted sessions = %v, want [session-1]", creator.deleted)
+	}
+	if len(usageRecorder.events) != 1 || usageRecorder.events[0].Status != "terminated" {
+		t.Fatalf("usage events = %#v, want one terminated event", usageRecorder.events)
+	}
+	if want := lastStatusAt.Add(time.Nanosecond); !usageRecorder.events[0].Timestamp.Equal(want) {
+		t.Fatalf("terminal timestamp = %s, want %s", usageRecorder.events[0].Timestamp, want)
+	}
+}
+
 func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}
@@ -564,11 +617,15 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 		Transport: repositories.SessionRouteTransportDirectRuntime,
 	}}
 	store := &allocationReader{}
+	usageRecorder := &statusUsageRecorder{dimensions: repositories.SessionUsageDimensions{
+		Pool: "linux", Scope: string(entities.ScopeUser), PrincipalID: "user-1",
+	}}
 	controller := controllers.NewSessionController(
 		&routeSessionManagerProvider{manager: manager}, nil,
 		controllers.WithSessionRouteRepository(routeRepo),
 		controllers.WithESMControlTunnel(tunnel),
 		controllers.WithSessionRunnerStore(store),
+		controllers.WithSessionStatusUsageRecorder(usageRecorder),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
 
@@ -599,6 +656,9 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	}
 	if store.deletedConfiguration != "public-id" {
 		t.Fatalf("deleted configuration = %q, want public-id", store.deletedConfiguration)
+	}
+	if got := []string{usageRecorder.events[0].Status, usageRecorder.events[1].Status}; !reflect.DeepEqual(got, []string{"terminating", "terminated"}) {
+		t.Fatalf("usage statuses = %v, want [terminating terminated]", got)
 	}
 }
 
