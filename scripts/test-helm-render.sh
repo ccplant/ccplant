@@ -312,8 +312,6 @@ assert_not_contains 'name: "manager-internal"' "$TMP_DIR/backend-worker-deployme
 assert_not_contains 'name: "provisioner"' "$TMP_DIR/backend-worker-deployment.yaml"
 
 assert_contains 'image: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains '^  strategy:$' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains '^    type: Recreate$' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: "true"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL, value: "https://app.example/api/v1/health"' "$TMP_DIR/backend-manager-version-poller.yaml"
@@ -505,8 +503,6 @@ assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-
   --namespace shared-managers >"$TMP_DIR/manager-b.yaml"
 assert_contains '^  name: manager-a-session-manager$' "$TMP_DIR/manager-a.yaml"
 assert_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-b.yaml"
-assert_contains '^  strategy:$' "$TMP_DIR/manager-a.yaml"
-assert_contains '^    type: Recreate$' "$TMP_DIR/manager-a.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-a-session-manager"' "$TMP_DIR/manager-a.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-b-session-manager"' "$TMP_DIR/manager-b.yaml"
 assert_not_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-a.yaml"

@@ -9,11 +9,12 @@ metadata:
     {{- include "session-manager.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  # Startup reconciliation purges stock created by an older manager revision.
-  # Do not overlap old and new managers during a rollout: the old manager can
-  # otherwise claim stock after the new manager has classified it for purge.
+  {{- if .Values.leaderElection.migrateLegacyLease }}
+  # One-time installer migration: stop Pods using the legacy shared Lease
+  # before starting Pods that use this release's dedicated Lease.
   strategy:
     type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "session-manager.selectorLabels" . | nindent 6 }}
