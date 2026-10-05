@@ -46,6 +46,24 @@ type externalRuntimeProfileProvider interface {
 	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
 }
 
+type poolStockClaimer interface {
+	ClaimPoolStockSession(context.Context, string) error
+}
+
+func (pc *ProvisionerController) ClaimPoolStock(c echo.Context) error {
+	if !pc.authorized(c) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	claimer, ok := pc.manager.(poolStockClaimer)
+	if !ok {
+		return c.NoContent(http.StatusNotImplemented)
+	}
+	if err := claimer.ClaimPoolStockSession(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 func (pc *ProvisionerController) externalRuntimeProfileSnapshot() (*sessionallocation.RuntimeProfileSnapshot, error) {
 	provider, ok := pc.allocationQueue.(externalRuntimeProfileProvider)
 	if !ok {

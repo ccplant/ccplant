@@ -325,6 +325,7 @@ assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$T
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'args: \["session-manager", "--port", "8080"\]' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_LOCAL_URL, value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "backend-agentapi-proxy-session-manager"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
@@ -504,6 +505,7 @@ assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-
 assert_contains '^  name: manager-a-session-manager$' "$TMP_DIR/manager-a.yaml"
 assert_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-b.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-a-session-manager"' "$TMP_DIR/manager-a.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_LOCAL_URL, value: "http://manager-a-session-manager.shared-managers.svc.cluster.local:8080"' "$TMP_DIR/manager-a.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "manager-b-session-manager"' "$TMP_DIR/manager-b.yaml"
 assert_not_contains '^  name: manager-b-session-manager$' "$TMP_DIR/manager-a.yaml"
 "$HELM_BIN" template legacy-manager "$REPO_ROOT/chart/session-manager" \

@@ -81,6 +81,7 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	go func() {
 		pullErrCh <- provisioner.RunPullClient(ctx, srv, provisioner.PullClientConfig{
 			ProxyURL:            os.Getenv("PROVISIONER_PROXY_URL"),
+			LocalProxyURL:       os.Getenv("PROVISIONER_LOCAL_PROXY_URL"),
 			Token:               os.Getenv("PROVISIONER_TOKEN"),
 			SessionControlToken: os.Getenv("SESSION_CONTROL_TOKEN"),
 			UpstreamAuthToken:   os.Getenv("PROVISIONER_UPSTREAM_AUTH_TOKEN"),

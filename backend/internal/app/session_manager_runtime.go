@@ -225,6 +225,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	// Session Pods authenticate with the narrower provisioner/session token.
 	provisioner := controllers.NewProvisionerController(manager, manager, settingsRepo, nil, stateStore)
 	e.POST("/internal/session-provisioners/connect", provisioner.Connect)
+	e.POST("/internal/session-provisioners/:sessionId/claim-pool-stock", provisioner.ClaimPoolStock)
 	e.GET("/internal/session-provisioners/:sessionId/provision-requests", provisioner.GetProvisionRequest)
 	e.POST("/internal/session-provisioners/:sessionId/provision-requests/:requestId/status", provisioner.UpdateProvisionRequestStatus)
 	if stateStore != nil {

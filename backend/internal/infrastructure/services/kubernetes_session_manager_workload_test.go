@@ -806,6 +806,75 @@ func TestPurgeStaleStockSessionsUsesEffectiveSessionPodTemplateHash(t *testing.T
 	}
 }
 
+func TestPurgeStaleStockSessionsDoesNotReconcilePoolStock(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "pool-runner"
+
+	name := "agentapi-session-" + sessionID
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": "agentapi-proxy",
+		"agentapi.proxy/stock":         "true",
+		"agentapi.proxy/session-id":    sessionID,
+		"agentapi.proxy/session-pool":  "test-pool",
+		stockPodTemplateHashLabel:      "old-hash",
+	}
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: labels},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: labels},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.PurgeStaleStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStaleStockSessions failed: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("allocated pool service was deleted: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("pool pod was deleted by local stock reconciliation: %v", err)
+	}
+}
+
+func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "claimed-runner"
+	name := "agentapi-session-" + sessionID + "-svc"
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy",
+			"agentapi.proxy/session-id":    sessionID,
+			"agentapi.proxy/session-pool":  "test-pool",
+			"agentapi.proxy/stock":         "true",
+		}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.ClaimPoolStockSession(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := svc.Labels["agentapi.proxy/stock"]; ok {
+		t.Fatalf("stock label remains after pool claim: %v", svc.Labels)
+	}
+	if svc.Labels["agentapi.proxy/session-pool"] != "test-pool" {
+		t.Fatalf("pool label changed after claim: %v", svc.Labels)
+	}
+}
+
 func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	manager.k8sConfig.PodStartTimeout = 120
@@ -983,6 +1052,11 @@ func TestBuildEnvVarsDeduplicatesControlPlaneURL(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("PROVISIONER_PROXY_URL count = %d, want 1", count)
+	}
+	for _, item := range env {
+		if item.Name == "PROVISIONER_LOCAL_PROXY_URL" && item.Value == "https://parent.example.com" {
+			t.Fatal("local provisioner URL was overridden by the pool parent URL")
+		}
 	}
 }
 

@@ -39,6 +39,28 @@ func TestAuthorizePullRequestWithParentAuthentication(t *testing.T) {
 	require.Equal(t, "manager-token", req.Header.Get("X-Session-Manager-Token"))
 }
 
+func TestMarkPoolStockClaimedUsesLocalManagerAndProvisionerToken(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		require.Equal(t, "/internal/session-provisioners/runner-1/claim-pool-stock", r.URL.Path)
+		require.Equal(t, "Bearer provisioner-token", r.Header.Get("Authorization"))
+		require.Empty(t, r.Header.Get("X-Session-Manager-Token"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	err := markPoolStockClaimedWithRetry(context.Background(), server.Client(), PullClientConfig{
+		ProxyURL:          "https://parent.example.com",
+		LocalProxyURL:     server.URL,
+		Token:             "provisioner-token",
+		UpstreamAuthToken: "parent-token",
+		RunnerID:          "runner-1",
+	})
+	require.NoError(t, err)
+	require.True(t, called)
+}
+
 func TestLocalPullProxyAddress(t *testing.T) {
 	tests := []struct {
 		name      string
