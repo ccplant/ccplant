@@ -14,6 +14,8 @@ export type ProxyRouteContext = { params: Promise<{ path?: string[] }> }
 export interface ProxyRouteOptions {
   publicPrefix: string
   passThroughAuthorization: boolean
+  upstreamPath?: string
+  eagerSSE?: boolean
 }
 
 export function createProxyRouteHandler(method: string, options: ProxyRouteOptions) {
@@ -305,7 +307,8 @@ async function handleProxyRequest(
     // cannot choose an arbitrary callback prefix.
     headers.set('X-Forwarded-Prefix', options.publicPrefix)
     const backendBaseUrl = await getRequestBackendBaseUrl(request.nextUrl.hostname)
-    const targetUrl = `${backendBaseUrl}/${path}${request.nextUrl.search}`
+    const upstreamPath = options.upstreamPath ?? path
+    const targetUrl = `${backendBaseUrl}/${upstreamPath}${request.nextUrl.search}`
     const isSSE = isServerSentEventsRequest(headers)
     const isMessageEndpoint = pathParts.includes('message')
       || (pathParts.includes('messages') && pathParts.includes('wait'))
@@ -327,7 +330,7 @@ async function handleProxyRequest(
       redirect: 'manual',
     }
 
-    if (isSSE) {
+    if (isSSE && options.eagerSSE !== false) {
       const result = proxyServerSentEvents(targetUrl, requestInit, linkedAbort)
       linkedAbort = undefined
       return result
@@ -342,7 +345,7 @@ async function handleProxyRequest(
       contentType: response.headers.get('content-type'),
     })
 
-    const result = proxyUpstreamResponse(response, linkedAbort, isSSE)
+    const result = proxyUpstreamResponse(response, linkedAbort, isSSE && options.eagerSSE !== false)
     linkedAbort = undefined
     return result
   } catch (error) {

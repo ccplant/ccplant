@@ -4,6 +4,12 @@ import { NextRequest } from 'next/server'
 import { middleware } from '../middleware'
 
 describe('frontend middleware', () => {
+  it('allows the MCP endpoint without a browser cookie', async () => {
+    const response = await middleware(new NextRequest('https://ui.example.test/mcp'))
+
+    expect(response.headers.get('x-middleware-next')).toBe('1')
+  })
+
   it.each(['/s/share-token', '/s/share-token/messages', '/s'])('allows public share page %s without a cookie', async (path) => {
     const response = await middleware(new NextRequest(`https://ui.example.test${path}`))
 
