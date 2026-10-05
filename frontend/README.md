@@ -112,6 +112,12 @@ ALTER TABLE api_route_events ADD COLUMN app_icon_content_type TEXT;
 場合はその値をそのままバックエンドへ転送します。指定されていない場合は暗号化Cookieを
 復号し、Bearer認証ヘッダーを生成します。レスポンスはSSEを含めてストリーミングされます。
 
+### MCP endpoint
+
+MCPクライアントは公開URLの `/mcp` に接続できます。このルートは `Authorization`
+ヘッダーとMCPプロトコルヘッダーを保持したまま、backendの `/mcp` へ転送します。
+Streamable HTTPがJSONまたはSSEのどちらを選択しても、backendのレスポンス形式を変更しません。
+
 ### 認証
 
 ユーザーは `/login` ページで認証を行います：

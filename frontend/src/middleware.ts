@@ -9,6 +9,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/login') ||
     pathname === '/s' ||
     pathname.startsWith('/s/') ||
+    pathname === '/mcp' ||
     pathname.startsWith('/api/') ||
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/static/') ||
@@ -50,6 +51,6 @@ export const config = {
      *
      * Shared session pages (/s/*) are public and are allowed above.
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|manifest.json|manifest.webmanifest|brand/|icon-.*\\.png|icons/).*)',
+    '/((?!api|mcp$|_next/static|_next/image|favicon.ico|manifest.json|manifest.webmanifest|brand/|icon-.*\\.png|icons/).*)',
   ],
 }
