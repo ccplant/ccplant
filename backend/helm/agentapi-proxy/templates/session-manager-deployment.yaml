@@ -44,6 +44,11 @@ metadata:
     app.kubernetes.io/component: session-manager
 spec:
   replicas: {{ ternary $manager.replicaCount 1 (hasKey $manager "replicaCount") }}
+  # Startup reconciliation purges stock created by an older manager revision.
+  # Do not overlap old and new managers during a rollout: the old manager can
+  # otherwise claim stock after the new manager has classified it for purge.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "agentapi-proxy.selectorLabels" . | nindent 6 }}
