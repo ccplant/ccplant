@@ -359,7 +359,7 @@ func TestDeleteSessionResourcesDeletesAllSessionLabeledSecrets(t *testing.T) {
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "future-session-secret",
+				Name:      "agentapi-session-configuration-deadbeef",
 				Namespace: "test-ns",
 				Labels:    map[string]string{"agentapi.proxy/session-id": session.ID()},
 			},
@@ -381,7 +381,7 @@ func TestDeleteSessionResourcesDeletesAllSessionLabeledSecrets(t *testing.T) {
 		t.Fatalf("deleteSessionResources() error = %v", err)
 	}
 
-	for _, name := range []string{"agentapi-provision-request-" + session.ID(), "future-session-secret"} {
+	for _, name := range []string{"agentapi-provision-request-" + session.ID(), "agentapi-session-configuration-deadbeef"} {
 		if _, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
 			t.Errorf("expected session Secret %s to be deleted, got %v", name, err)
 		}

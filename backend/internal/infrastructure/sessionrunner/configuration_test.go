@@ -79,3 +79,18 @@ func TestDeleteConfiguration(t *testing.T) {
 		t.Fatalf("GetConfiguration() error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestConfigurationHasSessionIdentityLabel(t *testing.T) {
+	ctx := context.Background()
+	store := newVersionedTestStore(t)
+	if err := store.CreateConfiguration(ctx, &core.Configuration{SessionID: "one", Input: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.kv.Get(ctx, kvstore.KindSecret, "test", configurationName("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := record.Labels["agentapi.proxy/session-id"]; got != "one" {
+		t.Fatalf("session identity label = %q, want one", got)
+	}
+}
