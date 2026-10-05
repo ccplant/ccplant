@@ -55,7 +55,11 @@ export default function UsagePage() {
 
   const usageTotal = usage ? totalTokens(usage) : 0
   return <main className="min-h-dvh bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
-    <TopBar title="Usage" subtitle={selectedTeam ? `Team: ${selectedTeam}` : 'Personal usage'} showSettingsButton><NavigationTabs className="w-44" /></TopBar>
+    <TopBar title="Usage" showSettingsButton>
+      <div className="md:hidden">
+        <NavigationTabs />
+      </div>
+    </TopBar>
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-9">
       <div className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-gray-800 md:flex-row md:items-end md:justify-between">
         <div className="inline-flex w-fit rounded-lg bg-gray-200 p-1 dark:bg-gray-800" aria-label="利用統計の種類">
