@@ -54,9 +54,8 @@ type SessionUsageDimensions struct {
     SessionID   string
     Pool        string
     Scope       string
-    UserID      string
-    TeamID      string
     PrincipalID string
+    LastStatusAt time.Time
 }
 ```
 

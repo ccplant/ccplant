@@ -72,3 +72,25 @@ func TestRecordStatusResolvesTeamPrincipalAndPool(t *testing.T) {
 	require.Equal(t, "running", repo.events[0].Status)
 	require.Equal(t, at, repo.events[0].OccurredAt)
 }
+
+func TestRecordResolvedStatusAfterMetadataDeletion(t *testing.T) {
+	repo := &memoryRepository{}
+	routes := &fakeRoutes{route: &portrepos.SessionRoute{
+		SessionID: "session-1", Pool: "linux", Scope: "user", UserID: "user-1",
+	}}
+	worker := NewWorker(&fakeSource{}, &fakeAllocations{}, routes, &fakeTeams{}, repo)
+	dimensions, err := worker.ResolveDimensions(context.Background(), "session-1")
+	require.NoError(t, err)
+
+	routes.route = nil
+	at := time.Date(2026, 10, 5, 13, 0, 0, 0, time.UTC)
+	require.NoError(t, worker.RecordResolvedStatus(context.Background(), dimensions, portrepos.SessionStatusEvent{
+		SessionID: "session-1", Status: "terminated", Timestamp: at,
+	}))
+
+	require.Len(t, repo.events, 1)
+	require.Equal(t, "terminated", repo.events[0].Status)
+	require.Equal(t, "linux", repo.events[0].Pool)
+	require.Equal(t, "user-1", repo.events[0].PrincipalID)
+	require.Equal(t, at, repo.events[0].OccurredAt)
+}
