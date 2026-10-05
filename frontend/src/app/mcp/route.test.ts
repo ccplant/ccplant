@@ -25,7 +25,7 @@ describe('/mcp proxy', () => {
       body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 }),
     })
 
-    const response = await POST(request, { params: Promise.resolve({}) })
+    const response = await POST(request)
 
     const [url, options] = fetchMock.mock.calls[0]
     const headers = new Headers(options?.headers)
