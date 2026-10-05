@@ -1,4 +1,5 @@
 import { createProxyRouteHandler } from '@/lib/server-proxy-route'
+import type { NextRequest } from 'next/server'
 
 const options = {
   publicPrefix: '/mcp',
@@ -9,6 +10,14 @@ const options = {
   eagerSSE: false,
 }
 
-export const GET = createProxyRouteHandler('GET', options)
-export const POST = createProxyRouteHandler('POST', options)
-export const DELETE = createProxyRouteHandler('DELETE', options)
+function createMCPRouteHandler(method: string) {
+  const proxy = createProxyRouteHandler(method, options)
+
+  // OpenNext does not provide dynamic params context for a static route.
+  // Supply the empty path explicitly instead of depending on adapter context.
+  return (request: NextRequest) => proxy(request, { params: Promise.resolve({}) })
+}
+
+export const GET = createMCPRouteHandler('GET')
+export const POST = createMCPRouteHandler('POST')
+export const DELETE = createMCPRouteHandler('DELETE')
