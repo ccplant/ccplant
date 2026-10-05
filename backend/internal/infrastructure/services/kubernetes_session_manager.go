@@ -1187,6 +1187,16 @@ func (m *KubernetesSessionManager) stockPodTemplateHash(ctx context.Context, din
 // stale so it is upgraded once after this behavior is deployed.
 func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) error {
 	m.refreshConfig()
+	allocatedRunnerIDs, err := m.fetchAllocatedRunnerIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to resolve allocated runners for stale stock purge protection: %w", err)
+	}
+	allocated := make(map[string]struct{}, len(allocatedRunnerIDs))
+	for _, id := range allocatedRunnerIDs {
+		if id != "" {
+			allocated[id] = struct{}{}
+		}
+	}
 	svcs, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy"),
 	})
@@ -1232,6 +1242,25 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 		if sessionID == "" {
 			purgeErrs = append(purgeErrs, fmt.Sprintf("service %s has no session-id", svc.Name))
 			continue
+		}
+		// Pool runners retain their stock label after accepting an allocation, so
+		// the label and template hash alone do not prove that they are idle. The
+		// parent allocation registry is the durable authority during manager
+		// upgrades, when a changed image makes every old template look stale.
+		if _, active := allocated[sessionID]; active {
+			log.Printf("[STOCK_INVENTORY] Skipping allocated session %s during stale stock purge", sessionID)
+			continue
+		}
+		if svc.Labels["agentapi.proxy/session-pool"] != "" {
+			retired, retireErr := m.retireStockRunner(ctx, sessionID)
+			if retireErr != nil {
+				purgeErrs = append(purgeErrs, fmt.Sprintf("retire runner %s: %v", sessionID, retireErr))
+				continue
+			}
+			if !retired {
+				log.Printf("[STOCK_INVENTORY] Skipping active session %s during stale stock purge", sessionID)
+				continue
+			}
 		}
 		if stockState == "creating" {
 			log.Printf("[STOCK_INVENTORY] Purging stale creating stock session %s (age=%s)", sessionID, time.Since(svc.CreationTimestamp.Time).Round(time.Second))

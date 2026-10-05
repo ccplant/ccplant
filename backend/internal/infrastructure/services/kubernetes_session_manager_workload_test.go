@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -803,6 +804,53 @@ func TestPurgeStaleStockSessionsUsesEffectiveSessionPodTemplateHash(t *testing.T
 		if _, err := manager.client.AppsV1().Deployments("test-ns").Get(ctx, name, metav1.GetOptions{}); !errors.IsNotFound(err) {
 			t.Fatalf("Expected stale deployment %s to be deleted, got err=%v", id, err)
 		}
+	}
+}
+
+func TestPurgeStaleStockSessionsPreservesAllocatedPoolRunner(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "active-pool-runner"
+	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/heartbeat") {
+			t.Errorf("unexpected parent request %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`{"allocated_runner_ids":["` + sessionID + `"]}`))
+	}))
+	t.Cleanup(parent.Close)
+	manager.ConfigureSessionRunnerPool(parent.URL, "manager-a", "manager-token", "test-pool")
+
+	name := "agentapi-session-" + sessionID
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": "agentapi-proxy",
+		"agentapi.proxy/stock":         "true",
+		"agentapi.proxy/session-id":    sessionID,
+		"agentapi.proxy/session-pool":  "test-pool",
+		stockPodTemplateHashLabel:      "old-hash",
+	}
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-svc", Namespace: "test-ns", Labels: labels},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: labels},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.PurgeStaleStockSessions(ctx); err != nil {
+		t.Fatalf("PurgeStaleStockSessions failed: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name+"-svc", metav1.GetOptions{}); err != nil {
+		t.Fatalf("allocated pool service was deleted: %v", err)
+	}
+	if _, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("allocated pool pod was deleted: %v", err)
 	}
 }
 
