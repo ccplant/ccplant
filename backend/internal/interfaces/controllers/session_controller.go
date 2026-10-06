@@ -108,6 +108,8 @@ type SessionController struct {
 	sessionRouteRepo       repositories.SessionRouteRepository
 	settingsRepo           repositories.SettingsRepository
 	sessionProfileRepo     repositories.SessionProfileRepository
+	contextTemplateRepo    repositories.SessionContextTemplateRepository
+	sessionStateStore      services.SessionStateStore
 	sessionRunnerStore     sessionRunnerAllocationStore
 	sessionStatusRecorder  sessionStatusUsageRecorder
 	esmControlTunnel       ESMControlTunnel
@@ -187,6 +189,10 @@ func WithSessionProfileRepository(repo repositories.SessionProfileRepository) Se
 	}
 }
 
+func WithSessionContextTemplates(repo repositories.SessionContextTemplateRepository, store services.SessionStateStore) SessionControllerOption {
+	return func(c *SessionController) { c.contextTemplateRepo, c.sessionStateStore = repo, store }
+}
+
 func WithESMControlTunnel(tunnel ESMControlTunnel) SessionControllerOption {
 	return func(c *SessionController) { c.esmControlTunnel = tunnel }
 }
@@ -227,6 +233,11 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.POST("/sessions/:sessionId/restart", c.RestartSession)
 	e.GET("/sessions/:sessionId/restart", c.RestartStatus)
 	e.POST("/sessions/:sessionId/pause", c.PauseSession)
+	e.POST("/sessions/:sessionId/templateize", c.TemplateizeSession)
+	e.GET("/session-context-templates", c.ListSessionContextTemplates)
+	e.GET("/session-context-templates/:templateId", c.GetSessionContextTemplate)
+	e.PATCH("/session-context-templates/:templateId", c.UpdateSessionContextTemplate)
+	e.DELETE("/session-context-templates/:templateId", c.DeleteSessionContextTemplate)
 	e.DELETE("/sessions/:sessionId", c.DeleteSession)
 
 	// Session proxy route
@@ -412,6 +423,11 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
+	contextTemplate, err := c.resolveContextTemplate(ctx, &startReq)
+	if err != nil {
+		return err
+	}
+
 	reuseResolution := map[string]interface{}{"reason": "reuse_not_requested", "requested": false}
 	if dryRun {
 		if existingID, reused, status, err := c.previewReuseStartSession(ctx, startReq, userID); err != nil {
@@ -555,6 +571,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		log.Printf("Failed to create session: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
 	}
+	c.recordContextTemplateUse(ctx.Request().Context(), contextTemplate)
 	if owner, ok := session.(sessionConfigurationOwnerProvider); ok {
 		if store, ok := c.sessionRunnerStore.(sessionConfigurationOwnerStore); ok {
 			apiVersion, kind, name, uid := owner.ConfigurationOwnerReference()
@@ -564,9 +581,11 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		}
 	}
 
-	return ctx.JSON(http.StatusOK, map[string]interface{}{
-		"session_id": session.ID(),
-	})
+	response := map[string]interface{}{"session_id": session.ID()}
+	if contextTemplate != nil {
+		response["context_template_id"] = contextTemplate.ID
+	}
+	return ctx.JSON(http.StatusOK, response)
 }
 
 func (c *SessionController) previewReuseStartSession(ctx echo.Context, startReq entities.StartRequest, ownerUserID string) (string, bool, string, error) {
@@ -1372,6 +1391,13 @@ func (c *SessionController) DeleteSession(ctx echo.Context) error {
 			if err != nil {
 				log.Printf("Delete session: failed to look up route for %s: %v", sessionID, err)
 			} else if route != nil {
+				if route.Status == "templated" {
+					authzCtx := auth.GetAuthorizationContext(ctx)
+					if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+						return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+					}
+					return ctx.JSON(http.StatusGone, map[string]string{"error": "session_templated", "template_id": route.ContextTemplateID})
+				}
 				if route.ManagerID == "" && route.RemoteSessionID != "" {
 					return c.deleteLocalSessionAlias(ctx, route)
 				}
@@ -1654,6 +1680,13 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 			if err != nil {
 				log.Printf("[ROUTE] Failed to look up session route for %s: %v", sessionID, err)
 			} else if route != nil {
+				if route.Status == "templated" {
+					authzCtx := auth.GetAuthorizationContext(ctx)
+					if authzCtx == nil || !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+						return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to access this session")
+					}
+					return ctx.JSON(http.StatusGone, map[string]string{"error": "session_templated", "template_id": route.ContextTemplateID})
+				}
 				if route.ManagerID == "" && route.RemoteSessionID != "" {
 					session = c.getSessionManager().GetSession(route.RemoteSessionID)
 					if session == nil {
@@ -1665,6 +1698,19 @@ func (c *SessionController) routeToSession(ctx echo.Context) error {
 			}
 		}
 		if session == nil {
+			if c.contextTemplateRepo != nil {
+				authzCtx := auth.GetAuthorizationContext(ctx)
+				if authzCtx != nil {
+					templates, listErr := c.contextTemplateRepo.List(ctx.Request().Context(), repositories.SessionContextTemplateFilter{UserID: authzCtx.PersonalScope.UserID, TeamIDs: authzCtx.TeamScope.Teams})
+					if listErr == nil {
+						for _, template := range templates {
+							if template.SourceSessionID == sessionID {
+								return ctx.JSON(http.StatusGone, map[string]string{"error": "session_templated", "template_id": template.ID})
+							}
+						}
+					}
+				}
+			}
 			return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 		}
 	}

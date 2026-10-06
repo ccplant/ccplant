@@ -174,6 +174,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSessionRouteRepository(server.GetSessionRouteRepository()),
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
+		controllers.WithSessionContextTemplates(server.contextTemplateRepo, server.sessionStateStore),
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
 		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),

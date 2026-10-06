@@ -82,6 +82,11 @@ type SessionSuspender interface {
 	SuspendSession(ctx context.Context, id string) error
 }
 
+// SessionCheckpointer persists the current ACP conversation and workspace state.
+type SessionCheckpointer interface {
+	CheckpointSessionState(ctx context.Context, id string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`

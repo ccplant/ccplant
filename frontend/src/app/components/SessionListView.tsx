@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause } from 'lucide-react'
-import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
+import { Session, AgentStatus, SessionListParams, SessionContextTemplate } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
 import { getACPServerEnabled } from '../../types/settings'
@@ -107,6 +107,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [acpMode] = useState(() => getACPServerEnabled())
   
   const [sessions, setSessions] = useState<Session[]>([])
+  const [contextTemplates, setContextTemplates] = useState<SessionContextTemplate[]>([])
   const sessionsRef = useRef<Session[]>([])
   const requestedScopeRef = useRef<string | null>(null)
   requestedScopeRef.current = isTeamScopeLoading
@@ -125,6 +126,18 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [showHiddenSessions, setShowHiddenSessions] = useState(false)
   const [openAnnotationMenuId, setOpenAnnotationMenuId] = useState<string | null>(null)
   const [expandedErrorSessionId, setExpandedErrorSessionId] = useState<string | null>(null)
+
+  const fetchContextTemplates = useCallback(async () => {
+    if (acpMode || isTeamScopeLoading) return
+    try {
+      const result = await agentAPI.listSessionContextTemplates()
+      setContextTemplates(result.templates.filter(template => selectedTeam ? template.scope === 'team' && template.team_id === selectedTeam : template.scope !== 'team'))
+    } catch (err) {
+      console.error('Failed to fetch context templates:', err)
+    }
+  }, [acpMode, agentAPI, isTeamScopeLoading, selectedTeam])
+
+  useEffect(() => { void fetchContextTemplates() }, [fetchContextTemplates])
 
   const [sortBy, setSortBy] = useState<'started_at' | 'updated_at'>(() => {
     if (typeof window !== 'undefined') {
@@ -375,6 +388,38 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
       setError(err instanceof Error ? err.message : 'セッション操作に失敗しました')
     } finally {
       setSuspendingSession(null)
+    }
+  }
+
+  const templateizeSession = async (session: Session) => {
+    const suggested = getSessionAnnotations(session).description || session.tags?.repository || `Session ${session.session_id.slice(0, 8)}`
+    const name = prompt('テンプレート名を入力してください。変換後、このセッションでは作業を続けられません。', suggested)
+    if (!name?.trim()) return
+    if (!confirm('このセッションをテンプレートへ変換しますか？この操作後、元のセッションは再開できません。')) return
+    try {
+      setSuspendingSession(session.session_id)
+      setOpenAnnotationMenuId(null)
+      setError(null)
+      await agentAPI.templateizeSession(session.session_id, name.trim())
+      setSessions(current => current.filter(item => item.session_id !== session.session_id))
+      void fetchContextTemplates()
+      setSuccess('セッションをテンプレートとして保存しました')
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'テンプレート化に失敗しました')
+    } finally {
+      setSuspendingSession(null)
+    }
+  }
+
+  const startFromTemplate = async (template: SessionContextTemplate) => {
+    const message = prompt('新しいセッションへの最初の指示を入力してください。', '') ?? ''
+    try {
+      setError(null)
+      const session = await agentAPI.start({ context_template_id: template.id, params: message ? { message } : undefined, scope: template.scope, team_id: template.team_id })
+      router.push(`/agentapi/${session.session_id}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'テンプレートからのセッション作成に失敗しました')
     }
   }
 
@@ -691,6 +736,28 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
           </button>
         </div>
       </div>
+
+      {!acpMode && contextTemplates.length > 0 && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/20">
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="font-medium text-amber-900 dark:text-amber-100">コンテキストテンプレート</h4>
+            <span className="text-xs text-amber-700 dark:text-amber-300">{contextTemplates.length}件</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {contextTemplates.map(template => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => void startFromTemplate(template)}
+                className="rounded-md border border-amber-200 bg-white px-3 py-3 text-left transition hover:border-amber-400 hover:shadow-sm dark:border-amber-800 dark:bg-gray-900"
+              >
+                <span className="block truncate text-sm font-medium text-gray-900 dark:text-white">{template.name}</span>
+                <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">使用 {template.use_count}回 · クリックして新規セッションを作成</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* 作成中セッション */}
       {creatingSessions.length > 0 && (
@@ -1176,6 +1243,16 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                       ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                                       : <Pause className="h-3.5 w-3.5" aria-hidden="true" />}
                                     {suspendingSession === session.session_id ? 'サスペンド中...' : 'サスペンド'}
+                                  </button>
+                                )}
+                                {!acpMode && ['active', 'running', 'suspended'].includes(session.status) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void templateizeSession(session)}
+                                    disabled={suspendingSession === session.session_id}
+                                    className="block w-full px-3 py-2 text-left text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-900/30"
+                                  >
+                                    テンプレートとして保存
                                   </button>
                                 )}
                               </div>

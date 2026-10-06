@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
@@ -33,6 +35,23 @@ func TestVolumeSessionStateStore(t *testing.T) {
 	}
 	if err := store.Save(ctx, "../escape", bytes.NewReader(want)); err == nil {
 		t.Fatal("expected invalid id error")
+	}
+}
+
+func TestVolumeSessionStateStoreDelete(t *testing.T) {
+	store, err := newVolumeSessionStateStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), "tpl_one", strings.NewReader("snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	deleter := store.(SessionStateDeleter)
+	if err := deleter.Delete(context.Background(), "tpl_one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(context.Background(), "tpl_one"); !os.IsNotExist(err) {
+		t.Fatalf("Load error = %v, want not exist", err)
 	}
 }
 

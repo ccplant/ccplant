@@ -571,6 +571,18 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 	}
 }
 
+// CheckpointSessionState exposes checkpointing without suspending the workload.
+func (m *KubernetesSessionManager) CheckpointSessionState(ctx context.Context, sessionID string) error {
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if !m.requiresSessionCheckpoint(session) {
+		return fmt.Errorf("session context templates require a persistent ACP session")
+	}
+	return m.checkpointSessionState(ctx, sessionID)
+}
+
 func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig) error {
 	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(runtime.SessionID) + "/checkpoint?generation=" + strconv.FormatInt(runtime.Generation, 10)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)

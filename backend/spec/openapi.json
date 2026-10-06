@@ -8246,6 +8246,10 @@
           "params": {
             "$ref": "#/components/schemas/SessionParams"
           },
+          "context_template_id": {
+            "type": "string",
+            "description": "Immutable context template to restore into the new session"
+          },
           "scope": {
             "$ref": "#/components/schemas/ResourceScope",
             "description": "Ownership scope of the session (default: user)"

@@ -164,6 +164,8 @@ type UpdateSessionAnnotationsRequest struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
+	// ContextTemplateID restores an immutable context template into the new session.
+	ContextTemplateID string `json:"context_template_id,omitempty"`
 	// WebhookPayload contains the original webhook body to mount in the session.
 	WebhookPayload []byte `json:"webhook_payload,omitempty"`
 	// TriggeredUserID is restored from a signed execution token, never from request JSON.
