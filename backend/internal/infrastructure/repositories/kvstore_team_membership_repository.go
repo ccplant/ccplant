@@ -6,15 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 const (
 	LabelTeamMembership         = "agentapi.proxy/team-membership"
+	LabelTeamMembershipMember   = "agentapi.proxy/team-membership-member-"
 	TeamMembershipRecordPrefix  = "agentapi-team-membership-"
 	teamMembershipDataKey       = "snapshot.json"
 	teamMembershipRateLimit     = time.Minute
@@ -57,7 +60,19 @@ func (r *KVStoreTeamMembershipRepository) Get(ctx context.Context, teamPrincipal
 }
 
 func (r *KVStoreTeamMembershipRepository) List(ctx context.Context) ([]*entities.TeamMembershipSnapshot, error) {
-	records, err := r.store.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: r.namespace, LabelSelector: LabelTeamMembership + "=true", KeyPrefix: TeamMembershipRecordPrefix})
+	return r.list(ctx, LabelTeamMembership+"=true")
+}
+
+// ListForPrincipal returns only snapshots containing the requested principal.
+// Membership labels are hashed because principal IDs are not guaranteed to be
+// valid Kubernetes label names and should not be exposed in metadata.
+func (r *KVStoreTeamMembershipRepository) ListForPrincipal(ctx context.Context, principalID string) ([]*entities.TeamMembershipSnapshot, error) {
+	selector := LabelTeamMembership + "=true," + membershipMemberLabel(principalID) + "=true"
+	return r.list(ctx, selector)
+}
+
+func (r *KVStoreTeamMembershipRepository) list(ctx context.Context, selector string) ([]*entities.TeamMembershipSnapshot, error) {
+	records, err := r.store.List(ctx, kvstore.Query{Kind: kvstore.KindSecret, Namespace: r.namespace, LabelSelector: selector, KeyPrefix: TeamMembershipRecordPrefix})
 	if err != nil {
 		return nil, fmt.Errorf("list team membership snapshots: %w", err)
 	}
@@ -171,14 +186,29 @@ func (r *KVStoreTeamMembershipRepository) recordName(teamPrincipalID string) str
 }
 
 func (r *KVStoreTeamMembershipRepository) newRecord(snapshot *entities.TeamMembershipSnapshot) kvstore.Record {
-	labels := map[string]string{LabelTeamMembership: "true", LabelTeamID: snapshot.TeamPrincipalID}
+	labels := membershipLabels(snapshot)
 	return kvstore.Record{Kind: kvstore.KindSecret, Namespace: r.namespace, Key: r.recordName(snapshot.TeamPrincipalID), Labels: labels, Value: encodeTeamMembershipDocument(r.namespace, r.recordName(snapshot.TeamPrincipalID), labels, snapshot)}
 }
 
 func (r *KVStoreTeamMembershipRepository) update(ctx context.Context, record kvstore.Record, snapshot *entities.TeamMembershipSnapshot) error {
+	record.Labels = membershipLabels(snapshot)
 	record.Value = encodeTeamMembershipDocument(record.Namespace, record.Key, record.Labels, snapshot)
 	_, err := r.store.Update(ctx, record)
 	return err
+}
+
+func membershipLabels(snapshot *entities.TeamMembershipSnapshot) map[string]string {
+	labels := map[string]string{LabelTeamMembership: "true", LabelTeamID: snapshot.TeamPrincipalID}
+	for _, member := range snapshot.Members {
+		if principalID := strings.TrimSpace(member.PrincipalID); principalID != "" {
+			labels[membershipMemberLabel(principalID)] = "true"
+		}
+	}
+	return labels
+}
+
+func membershipMemberLabel(principalID string) string {
+	return LabelTeamMembershipMember + services.HashLabelValue(principalID)
 }
 
 func encodeTeamMembershipDocument(namespace, name string, labels map[string]string, snapshot *entities.TeamMembershipSnapshot) []byte {

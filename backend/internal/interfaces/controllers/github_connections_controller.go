@@ -16,7 +16,6 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1020,30 +1019,9 @@ func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context
 	if c.membershipRepo == nil {
 		return c.ResolveLiveTeamMemberships(ctx, principalID)
 	}
-	snapshots, err := c.membershipRepo.List(ctx)
+	snapshots, err := c.membershipRepo.ListForPrincipal(ctx, principalID)
 	if err != nil {
 		return nil, false, err
-	}
-	identities, err := c.listIdentities(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	linkedIdentities := make(map[string]struct{})
-	for _, identity := range identities {
-		if identity.PrincipalID == principalID {
-			linkedIdentities[externalIdentityKey(identity.ConnectionID, identity.GitHubUserID)] = struct{}{}
-		}
-	}
-	principals, err := c.listPrincipals(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, principal := range principals {
-		if principal.ID == principalID && strings.HasPrefix(principal.InternalUserID, "github:") {
-			if githubID, parseErr := strconv.ParseInt(strings.TrimPrefix(principal.InternalUserID, "github:"), 10, 64); parseErr == nil {
-				linkedIdentities[externalIdentityKey("", githubID)] = struct{}{}
-			}
-		}
 	}
 	result := make([]auth.GitHubTeamMembership, 0)
 	seen := make(map[string]struct{})
@@ -1052,20 +1030,24 @@ func (c *GitHubConnectionsController) ResolveTeamMemberships(ctx context.Context
 			if member.PrincipalID != principalID {
 				continue
 			}
-			for _, external := range snapshot.ExternalMembers {
-				if _, linked := linkedIdentities[externalIdentityKey(external.ConnectionID, external.GitHubUserID)]; !linked {
-					continue
-				}
-				for _, source := range external.Sources {
-					key := strings.ToLower(source.Organization) + "\x00" + strings.ToLower(source.TeamSlug)
-					if _, exists := seen[key]; exists {
+			for _, identity := range member.Sources {
+				if identity.ConnectionID != "" {
+					var linked githubIdentity
+					if _, err := c.loadObject(ctx, identitySecretName(identity.ConnectionID, identity.GitHubUserID), &linked); err != nil || linked.PrincipalID != principalID {
 						continue
 					}
-					for _, identity := range member.Sources {
-						if identity.ConnectionID == external.ConnectionID && identity.GitHubUserID == external.GitHubUserID {
-							seen[key] = struct{}{}
-							result = append(result, auth.GitHubTeamMembership{ConnectionID: source.ConnectionID, Organization: source.Organization, TeamSlug: source.TeamSlug})
+				}
+				for _, external := range snapshot.ExternalMembers {
+					if identity.ConnectionID != external.ConnectionID || identity.GitHubUserID != external.GitHubUserID {
+						continue
+					}
+					for _, source := range external.Sources {
+						key := strings.ToLower(source.Organization) + "\x00" + strings.ToLower(source.TeamSlug)
+						if _, exists := seen[key]; exists {
+							continue
 						}
+						seen[key] = struct{}{}
+						result = append(result, auth.GitHubTeamMembership{ConnectionID: source.ConnectionID, Organization: source.Organization, TeamSlug: source.TeamSlug})
 					}
 				}
 			}

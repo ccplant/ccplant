@@ -539,11 +539,15 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			membershipResolver := s.githubMembershipResolver
 			s.mu.RUnlock()
 			if membershipResolver != nil && userContext.GitHubUser != nil {
-				linkedTeams, linked, resolveErr := membershipResolver.ResolveTeamMemberships(context.Background(), userContext.UserID)
+				var linkedTeams []auth.GitHubTeamMembership
+				var linked bool
+				var resolveErr error
 				if builtIn, ok := membershipResolver.(interface {
 					ResolveTeamMembershipsForGitHubUser(context.Context, int64) ([]auth.GitHubTeamMembership, bool, error)
 				}); ok {
 					linkedTeams, linked, resolveErr = builtIn.ResolveTeamMembershipsForGitHubUser(context.Background(), userContext.GitHubUser.ID)
+				} else {
+					linkedTeams, linked, resolveErr = membershipResolver.ResolveTeamMemberships(context.Background(), userContext.UserID)
 				}
 				if resolveErr != nil {
 					return nil, fmt.Errorf("resolve linked GitHub memberships: %w", resolveErr)

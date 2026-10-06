@@ -19,6 +19,7 @@ var (
 type TeamMembershipRepository interface {
 	Get(ctx context.Context, teamPrincipalID string) (*entities.TeamMembershipSnapshot, bool, error)
 	List(ctx context.Context) ([]*entities.TeamMembershipSnapshot, error)
+	ListForPrincipal(ctx context.Context, principalID string) ([]*entities.TeamMembershipSnapshot, error)
 	AcquireSync(ctx context.Context, teamPrincipalID, operationID string, now time.Time) (*entities.TeamMembershipSnapshot, error)
 	Replace(ctx context.Context, snapshot *entities.TeamMembershipSnapshot, operationID string) error
 	ReleaseSync(ctx context.Context, teamPrincipalID, operationID string) error
