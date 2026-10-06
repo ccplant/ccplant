@@ -24,7 +24,7 @@ type templateizeSessionRequest struct {
 }
 
 func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
-	if c.contextTemplateRepo == nil || c.sessionStateStore == nil {
+	if c.contextTemplateRepo == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "session context templates are unavailable")
 	}
 	sessionID := ctx.Param("sessionId")
@@ -60,8 +60,9 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusConflict, "session is busy")
 		}
 	}
-	checkpointer, ok := c.getSessionManager().(repositories.SessionCheckpointer)
-	if !ok {
+	snapshotManager, remoteSnapshot := c.getSessionManager().(repositories.SessionContextSnapshotManager)
+	checkpointer, localSnapshot := c.getSessionManager().(repositories.SessionCheckpointer)
+	if !remoteSnapshot && (!localSnapshot || c.sessionStateStore == nil) {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_unsupported")
 	}
 	templateID := "tpl_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -75,19 +76,25 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 			_ = c.contextTemplateRepo.Delete(context.Background(), templateID)
 		}
 	}()
-	if err := checkpointer.CheckpointSessionState(ctx.Request().Context(), sessionID); err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to checkpoint session").SetInternal(err)
-	}
-	snapshot, err := c.sessionStateStore.Load(ctx.Request().Context(), sessionID)
-	if errors.Is(err, os.ErrNotExist) {
-		return echo.NewHTTPError(http.StatusConflict, "snapshot_unavailable")
-	}
-	if err != nil {
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_not_portable").SetInternal(err)
-	}
-	defer func() { _ = snapshot.Close() }()
-	if err := c.sessionStateStore.Save(ctx.Request().Context(), templateID, snapshot); err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
+	if remoteSnapshot {
+		if err := snapshotManager.CreateSessionContextSnapshot(ctx.Request().Context(), sessionID, templateID); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
+		}
+	} else {
+		if err := checkpointer.CheckpointSessionState(ctx.Request().Context(), sessionID); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to checkpoint session").SetInternal(err)
+		}
+		snapshot, err := c.sessionStateStore.Load(ctx.Request().Context(), sessionID)
+		if errors.Is(err, os.ErrNotExist) {
+			return echo.NewHTTPError(http.StatusConflict, "snapshot_unavailable")
+		}
+		if err != nil {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_not_portable").SetInternal(err)
+		}
+		defer func() { _ = snapshot.Close() }()
+		if err := c.sessionStateStore.Save(ctx.Request().Context(), templateID, snapshot); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
+		}
 	}
 	if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retire source session").SetInternal(err)
@@ -188,15 +195,22 @@ func (c *SessionController) DeleteSessionContextTemplate(ctx echo.Context) error
 	if err != nil {
 		return err
 	}
-	deleter, ok := c.sessionStateStore.(services.SessionStateDeleter)
-	if !ok {
+	snapshotManager, remoteSnapshot := c.getSessionManager().(repositories.SessionContextSnapshotManager)
+	deleter, localSnapshot := c.sessionStateStore.(services.SessionStateDeleter)
+	if !remoteSnapshot && !localSnapshot {
 		return echo.NewHTTPError(http.StatusNotImplemented, "template snapshot deletion is unavailable")
 	}
 	if err := c.contextTemplateRepo.Delete(ctx.Request().Context(), template.ID); err != nil {
 		return err
 	}
-	if err := deleter.Delete(ctx.Request().Context(), template.SnapshotID); err != nil {
-		log.Printf("failed to delete orphaned template snapshot %s: %v", template.SnapshotID, err)
+	var deleteErr error
+	if remoteSnapshot {
+		deleteErr = snapshotManager.DeleteSessionContextSnapshot(ctx.Request().Context(), template.SnapshotID)
+	} else {
+		deleteErr = deleter.Delete(ctx.Request().Context(), template.SnapshotID)
+	}
+	if deleteErr != nil {
+		log.Printf("failed to delete orphaned template snapshot %s: %v", template.SnapshotID, deleteErr)
 	}
 	return ctx.NoContent(http.StatusNoContent)
 }

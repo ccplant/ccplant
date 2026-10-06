@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 	coreallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
@@ -55,18 +56,29 @@ type ProvisionRequestDeleter interface {
 // HTTP surface. Every route, including health, requires the process-specific
 // bearer token.
 type Handler struct {
-	manager   portrepos.SessionManager
-	tokenHash [sha256.Size]byte
+	manager    portrepos.SessionManager
+	stateStore services.SessionStateStore
+	tokenHash  [sha256.Size]byte
 }
 
-func NewHandler(manager portrepos.SessionManager, bearerToken string) (*Handler, error) {
+type HandlerOption func(*Handler)
+
+func WithSessionStateStore(store services.SessionStateStore) HandlerOption {
+	return func(h *Handler) { h.stateStore = store }
+}
+
+func NewHandler(manager portrepos.SessionManager, bearerToken string, options ...HandlerOption) (*Handler, error) {
 	if manager == nil {
 		return nil, errors.New("session manager is required")
 	}
 	if bearerToken == "" {
 		return nil, errors.New("session-manager API bearer token is required")
 	}
-	return &Handler{manager: manager, tokenHash: sha256.Sum256([]byte(bearerToken))}, nil
+	h := &Handler{manager: manager, tokenHash: sha256.Sum256([]byte(bearerToken))}
+	for _, option := range options {
+		option(h)
+	}
+	return h, nil
 }
 
 // RegisterRoutes registers only the private session-manager API. The caller is
@@ -89,6 +101,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.GET("/sessions/:sessionId/settings", h.currentSettings)
 	g.POST("/sessions/:sessionId/ensure", h.ensureWorkload)
 	g.POST("/sessions/:sessionId/suspend", h.suspendSession)
+	g.POST("/sessions/:sessionId/context-snapshots/:snapshotId", h.createContextSnapshot)
+	g.DELETE("/context-snapshots/:snapshotId", h.deleteContextSnapshot)
 	g.POST("/sessions/:sessionId/provision-settings", h.provisionSettings)
 	g.POST("/sessions/:sessionId/touch", h.touchSession)
 	g.GET("/sessions/:sessionId/sandbox-domains", h.sandboxDomains)
@@ -107,6 +121,36 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	g.GET("/allocations/external/next", h.nextExternalAllocation)
 	g.POST("/allocations/external/:sessionId/result", h.completeExternalAllocation)
 	g.POST("/allocations/external/:sessionId", h.submitExternalAllocation)
+}
+
+func (h *Handler) createContextSnapshot(c echo.Context) error {
+	checkpointer, ok := h.manager.(portrepos.SessionCheckpointer)
+	if !ok || h.stateStore == nil {
+		return unsupported(c, "session context snapshots are not supported")
+	}
+	if err := checkpointer.CheckpointSessionState(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return internalError(c, err)
+	}
+	snapshot, err := h.stateStore.Load(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return internalError(c, err)
+	}
+	defer snapshot.Close()
+	if err := h.stateStore.Save(c.Request().Context(), c.Param("snapshotId"), snapshot); err != nil {
+		return internalError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *Handler) deleteContextSnapshot(c echo.Context) error {
+	deleter, ok := h.stateStore.(services.SessionStateDeleter)
+	if !ok {
+		return unsupported(c, "session context snapshot deletion is not supported")
+	}
+	if err := deleter.Delete(c.Request().Context(), c.Param("snapshotId")); err != nil {
+		return internalError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (h *Handler) suspendSession(c echo.Context) error {

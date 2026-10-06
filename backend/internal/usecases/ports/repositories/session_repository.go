@@ -87,6 +87,14 @@ type SessionCheckpointer interface {
 	CheckpointSessionState(ctx context.Context, id string) error
 }
 
+// SessionContextSnapshotManager owns reusable snapshots in the execution
+// plane's persistence backend. Remote managers implement this capability so
+// the parent API never needs the execution plane's S3 credentials.
+type SessionContextSnapshotManager interface {
+	CreateSessionContextSnapshot(ctx context.Context, sessionID, snapshotID string) error
+	DeleteSessionContextSnapshot(ctx context.Context, snapshotID string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`
