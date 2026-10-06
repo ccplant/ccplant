@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -53,6 +54,22 @@ func (r *memoryTeamConfigRepository) List(_ context.Context) ([]*entities.TeamCo
 	result := make([]*entities.TeamConfig, 0, len(r.teams))
 	for _, team := range r.teams {
 		result = append(result, team)
+	}
+	return result, nil
+}
+func (r *memoryTeamConfigRepository) ListRelevant(_ context.Context, memberships []entities.GitHubTeamMembership, principalID string) ([]*entities.TeamConfig, error) {
+	result := make([]*entities.TeamConfig, 0)
+	for _, team := range r.teams {
+		if principalID != "" && team.IsOwner(principalID) {
+			result = append(result, team)
+			continue
+		}
+		for _, membership := range memberships {
+			if team.TeamID() == strings.ToLower(membership.Organization+"/"+membership.TeamSlug) || matchesBinding(team.ExternalTeams(), "", membership.Organization, membership.TeamSlug) {
+				result = append(result, team)
+				break
+			}
+		}
 	}
 	return result, nil
 }

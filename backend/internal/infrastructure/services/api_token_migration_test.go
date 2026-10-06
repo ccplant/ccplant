@@ -75,6 +75,9 @@ func (r *fakeTeamConfigRepo) List(_ context.Context) ([]*entities.TeamConfig, er
 	}
 	return out, nil
 }
+func (r *fakeTeamConfigRepo) ListRelevant(context.Context, []entities.GitHubTeamMembership, string) ([]*entities.TeamConfig, error) {
+	return r.List(context.Background())
+}
 
 // tokenRepoForMigrationTest reuses the in-memory fake from the usecase test
 // package? No—different package. Define a minimal one here.

@@ -55,6 +55,9 @@ func (r *teamConfigControllerRepo) List(_ context.Context) ([]*entities.TeamConf
 	}
 	return teams, nil
 }
+func (r *teamConfigControllerRepo) ListRelevant(context.Context, []entities.GitHubTeamMembership, string) ([]*entities.TeamConfig, error) {
+	return r.List(context.Background())
+}
 
 func TestTeamConfigControllerCreateRequiresAuthentication(t *testing.T) {
 	controller := NewTeamConfigController(&teamConfigControllerRepo{teams: map[string]*entities.TeamConfig{}})
