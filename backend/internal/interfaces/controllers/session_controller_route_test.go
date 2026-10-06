@@ -277,6 +277,45 @@ type listRouteRepo struct {
 	routes []*repositories.SessionRoute
 }
 
+type filteringListRouteRepo struct {
+	routes     []*repositories.SessionRoute
+	lastUserID string
+	lastFilter repositories.SessionRouteFilter
+}
+
+func (r *filteringListRouteRepo) Save(context.Context, *repositories.SessionRoute) error { return nil }
+func (r *filteringListRouteRepo) Get(context.Context, string) (*repositories.SessionRoute, error) {
+	return nil, nil
+}
+func (r *filteringListRouteRepo) List(_ context.Context, userID string) ([]*repositories.SessionRoute, error) {
+	r.lastUserID = userID
+	if userID == "" {
+		return r.routes, nil
+	}
+	var filtered []*repositories.SessionRoute
+	for _, route := range r.routes {
+		if route.UserID == userID {
+			filtered = append(filtered, route)
+		}
+	}
+	return filtered, nil
+}
+func (r *filteringListRouteRepo) ListFiltered(_ context.Context, filter repositories.SessionRouteFilter) ([]*repositories.SessionRoute, error) {
+	r.lastFilter = filter
+	var filtered []*repositories.SessionRoute
+	for _, route := range r.routes {
+		if filter.Scope != "" && route.Scope != filter.Scope {
+			continue
+		}
+		if filter.TeamID != "" && route.TeamID != filter.TeamID {
+			continue
+		}
+		filtered = append(filtered, route)
+	}
+	return filtered, nil
+}
+func (r *filteringListRouteRepo) Delete(context.Context, string) error { return nil }
+
 // stubSessionProfileRepo resolves profiles by ID for session list rendering.
 type stubSessionProfileRepo struct {
 	repositories.SessionProfileRepository
@@ -391,6 +430,43 @@ func TestSearchSessionsIsolatesRequestedTeamAcrossLocalAndRoutedSessions(t *test
 	}
 	if len(got) != 2 || !got["local-a"] || !got["routed-a"] {
 		t.Fatalf("session IDs = %v, want only local-a and routed-a", got)
+	}
+}
+
+func TestSearchSessionsIncludesTeamRouteOwnedByAnotherMember(t *testing.T) {
+	routeRepo := &filteringListRouteRepo{routes: []*repositories.SessionRoute{
+		{SessionID: "webhook-pool-session", UserID: "webhook-owner", Scope: string(entities.ScopeTeam), TeamID: "acme/a"},
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+	)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/search?scope=team&team_id=acme%2Fa", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		PersonalScope: auth.PersonalScopeAuth{UserID: "team-member", CanRead: true},
+		TeamScope:     auth.TeamScopeAuth{Teams: []string{"acme/a"}},
+	})
+
+	if err := controller.SearchSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Sessions) != 1 || response.Sessions[0].SessionID != "webhook-pool-session" {
+		t.Fatalf("sessions = %#v, want webhook-pool-session", response.Sessions)
+	}
+	if routeRepo.lastFilter.UserID != "" || routeRepo.lastFilter.Scope != "team" || routeRepo.lastFilter.TeamID != "acme/a" {
+		t.Fatalf("route filter = %#v, want team acme/a without user filter", routeRepo.lastFilter)
 	}
 }
 
