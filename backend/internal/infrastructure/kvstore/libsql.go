@@ -45,6 +45,13 @@ func NewLibSQLStore(ctx context.Context, databaseURL, authToken string) (*LibSQL
 	}
 	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(8)
+	// Remote libSQL may close an autocommit stream without returning a baton.
+	// The current Go driver only reports that state when the pooled connection
+	// is reused, which can exhaust database/sql's bad-connection retries during
+	// bursts. Do not retain those one-shot remote connections in the idle pool.
+	if strings.HasPrefix(databaseURL, "libsql://") || strings.HasPrefix(databaseURL, "https://") || strings.HasPrefix(databaseURL, "http://") {
+		db.SetMaxIdleConns(0)
+	}
 	s := &LibSQLStore{db: db}
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS agentapi_kv (
 kind TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL,
