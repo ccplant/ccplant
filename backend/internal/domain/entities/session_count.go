@@ -32,6 +32,7 @@ type SessionRuntimeSummary struct {
 
 type SessionRuntimeBucket struct {
 	Start            time.Time `json:"start"`
+	Sessions         int       `json:"sessions"`
 	RuntimeSeconds   int64     `json:"runtime_seconds"`
 	RunningSeconds   int64     `json:"running_seconds"`
 	SuspendedSeconds int64     `json:"suspended_seconds"`

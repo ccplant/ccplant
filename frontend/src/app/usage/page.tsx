@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, Download, Timer, Zap } from 'lucide-react'
-import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Download, Timer, Zap } from 'lucide-react'
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import NavigationTabs from '../components/NavigationTabs'
 import TopBar from '../components/TopBar'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
@@ -12,12 +12,11 @@ type View = 'model' | 'runtime'
 type Range = '7d' | '30d' | '90d'
 interface UsageBreakdown { key: string; events: number; input_tokens: number; output_tokens: number; cached_input_tokens: number; cache_creation_tokens: number; reasoning_tokens: number }
 interface UsageSummary extends Omit<UsageBreakdown, 'key'> { by_model: UsageBreakdown[]; by_session: UsageBreakdown[] }
-interface RuntimeBucket { start: string; runtime_seconds: number; running_seconds: number; suspended_seconds: number; peak_concurrent: number }
-interface RuntimeSession { session_id: string; runtime_seconds: number; running_seconds: number; suspended_seconds: number; current_status: string }
+interface RuntimeBucket { start: string; sessions: number; runtime_seconds: number; running_seconds: number; suspended_seconds: number; peak_concurrent: number }
 interface RuntimeDashboard {
   from: string; to: string; as_of: string; is_partial: boolean; timezone: string; coverage_started_at?: string
   summary: { runtime_seconds: number; running_seconds: number; suspended_seconds: number; sessions: number; peak_concurrent: number }
-  trend: RuntimeBucket[]; by_session: RuntimeSession[]; available_pools: string[]
+  trend: RuntimeBucket[]; available_pools: string[]
 }
 
 const ranges: Array<{ value: Range; label: string; days: number }> = [
@@ -71,7 +70,7 @@ export default function UsagePage() {
       {loading && <div aria-live="polite" className="mt-8 h-72 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />}
       {!loading && error && <div className="mt-8"><StatusMessage error>{error}</StatusMessage></div>}
       {!loading && !error && view === 'model' && usage && (usage.events === 0 ? <div className="mt-8"><StatusMessage>この期間のモデル利用データはありません。期間を広げて確認してください。</StatusMessage></div> : <div className="mt-8 space-y-8"><section className="border-b border-gray-200 pb-8 dark:border-gray-800"><div className="flex flex-wrap items-baseline gap-x-8 gap-y-3"><Metric label="Total tokens" value={formatCompactNumber(usageTotal)} primary /><Metric label="Responses" value={usage.events.toLocaleString()} /></div><div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm tabular-nums text-gray-600 dark:text-gray-300"><span>Input {formatCompactNumber(usage.input_tokens)}</span><span>Output {formatCompactNumber(usage.output_tokens)}</span><span>Cached {formatCompactNumber(usage.cached_input_tokens)}</span></div></section><div className="grid gap-8 lg:grid-cols-2"><Breakdown title="Sessions" items={usage.by_session} /><Breakdown title="Models" items={usage.by_model} /></div></div>)}
-      {!loading && !error && view === 'runtime' && runtime && (runtime.summary.sessions === 0 ? <div className="mt-8"><StatusMessage>この月のセッション稼働データはありません。</StatusMessage></div> : <RuntimeView runtime={runtime} />)}
+      {!loading && !error && view === 'runtime' && runtime && (runtime.summary.sessions === 0 && runtime.summary.runtime_seconds === 0 && runtime.summary.running_seconds === 0 ? <div className="mt-8"><StatusMessage>この月のセッション稼働データはありません。</StatusMessage></div> : <RuntimeView runtime={runtime} />)}
     </div>
   </main>
 }
@@ -80,10 +79,18 @@ function ViewButton({ active, onClick, children }: { active: boolean; onClick: (
 function Metric({ label, value, primary = false }: { label: React.ReactNode; value: string; primary?: boolean }) { return <div><div className="text-sm text-gray-500">{label}</div><div className={`mt-1 font-semibold tabular-nums text-gray-950 dark:text-white ${primary ? 'text-4xl' : 'text-xl'}`}>{value}</div></div> }
 
 function RuntimeView({ runtime }: { runtime: RuntimeDashboard }) {
-  return <div className="mt-8 space-y-8"><section className="border-b border-gray-200 pb-8 dark:border-gray-800"><div className="flex flex-wrap items-end justify-between gap-5"><div className="flex flex-wrap items-baseline gap-x-8 gap-y-3"><Metric label={<span className="flex items-center gap-2"><Timer className="h-4 w-4" />Runtime</span>} value={formatDuration(runtime.summary.runtime_seconds)} primary /><Metric label={<span className="flex items-center gap-2"><Zap className="h-4 w-4" />Running</span>} value={formatDuration(runtime.summary.running_seconds)} /><Metric label="Sessions" value={runtime.summary.sessions.toLocaleString()} /><Metric label={<span className="flex items-center gap-2"><Activity className="h-4 w-4" />Peak concurrent</span>} value={String(runtime.summary.peak_concurrent)} /></div>{runtime.is_partial && <div className="text-xs text-gray-500">{new Date(runtime.as_of).toLocaleString()} 時点</div>}</div>
-    <div className="mt-7 h-72" aria-label="日ごとのセッション稼働時間"><ResponsiveContainer width="100%" height="100%"><AreaChart data={runtime.trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.12} /><XAxis dataKey="start" tickFormatter={value => new Date(value).toLocaleDateString(undefined, { day: 'numeric' })} fontSize={12} /><YAxis tickFormatter={value => `${Math.round(Number(value) / 3600)}h`} fontSize={12} width={44} /><Tooltip labelFormatter={value => new Date(value).toLocaleDateString()} formatter={(value, name) => [formatDuration(Number(value)), name === 'runtime_seconds' ? 'Runtime' : 'Running']} /><Legend formatter={value => value === 'runtime_seconds' ? 'Runtime' : 'Running'} /><Area type="monotone" dataKey="runtime_seconds" stroke="#2563eb" fill="#2563eb" fillOpacity={0.16} isAnimationActive={false} /><Area type="monotone" dataKey="running_seconds" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.22} isAnimationActive={false} /></AreaChart></ResponsiveContainer></div></section>
-    {runtime.coverage_started_at && new Date(runtime.coverage_started_at) > new Date(runtime.from) && <StatusMessage>記録開始以前の時間は含まれていません。</StatusMessage>}<RuntimeTable sessions={runtime.by_session} total={runtime.summary.runtime_seconds} /></div>
+  return <div className="mt-8 space-y-8">
+    <section className="border-b border-gray-200 pb-8 dark:border-gray-800">
+      <div className="flex flex-wrap items-end justify-between gap-5"><div className="flex flex-wrap items-baseline gap-x-10 gap-y-4"><Metric label="起動個数" value={runtime.summary.sessions.toLocaleString()} primary /><Metric label={<span className="flex items-center gap-2"><Timer className="h-4 w-4" />総起動時間</span>} value={formatDuration(runtime.summary.runtime_seconds)} /><Metric label={<span className="flex items-center gap-2"><Zap className="h-4 w-4" />総動作時間</span>} value={formatDuration(runtime.summary.running_seconds)} /></div>{runtime.is_partial && <div className="text-xs text-gray-500">{new Date(runtime.as_of).toLocaleString()} 時点</div>}</div>
+    </section>
+    <section>
+      <h2 className="text-lg font-semibold">日別のセッション起動数</h2>
+      <div className="mt-4 h-72" aria-label="日別のセッション起動数"><ResponsiveContainer width="100%" height="100%"><BarChart data={runtime.trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.12} /><XAxis dataKey="start" tickFormatter={value => new Date(value).toLocaleDateString(undefined, { day: 'numeric' })} fontSize={12} /><YAxis allowDecimals={false} fontSize={12} width={36} /><Tooltip labelFormatter={value => new Date(value).toLocaleDateString('ja-JP')} formatter={value => [`${Number(value).toLocaleString()}件`, '起動個数']} /><Bar dataKey="sessions" fill="#2563eb" radius={[3, 3, 0, 0]} isAnimationActive={false} /></BarChart></ResponsiveContainer></div>
+    </section>
+    {runtime.coverage_started_at && new Date(runtime.coverage_started_at) > new Date(runtime.from) && <StatusMessage>記録開始以前の時間は含まれていません。</StatusMessage>}
+    <DailyRuntimeTable buckets={runtime.trend} />
+  </div>
 }
 
 function Breakdown({ title, items }: { title: string; items: UsageBreakdown[] }) { return <section><h2 className="text-lg font-semibold">{title}</h2><div className="mt-3 divide-y divide-gray-200 border-y border-gray-200 dark:divide-gray-800 dark:border-gray-800">{items.slice(0, 10).map(item => <div key={item.key || 'unknown'} className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 py-3 text-sm"><div className="truncate font-medium" title={item.key}>{item.key || 'Unknown'}</div><div className="text-right tabular-nums"><div>{formatCompactNumber(totalTokens(item))} tokens</div><div className="text-xs text-gray-500">{item.events.toLocaleString()} responses</div></div></div>)}</div></section> }
-function RuntimeTable({ sessions, total }: { sessions: RuntimeSession[]; total: number }) { return <section><h2 className="text-lg font-semibold">Sessions</h2><div className="mt-3 divide-y divide-gray-200 border-y border-gray-200 dark:divide-gray-800 dark:border-gray-800">{sessions.map(session => <div key={session.session_id} className="grid gap-2 py-4 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_8rem] sm:items-center"><div className="truncate font-medium" title={session.session_id}>{session.session_id.slice(0, 12)}</div><div className="tabular-nums"><span className="text-gray-500 sm:hidden">Runtime </span>{formatDuration(session.runtime_seconds)}</div><div className="tabular-nums"><span className="text-gray-500 sm:hidden">Running </span>{formatDuration(session.running_seconds)}</div><div className="flex items-center justify-between gap-3 sm:justify-end"><span className="text-xs text-gray-500">{total ? `${(session.runtime_seconds / total * 100).toFixed(1)}%` : '0%'}</span><span className="rounded-full bg-gray-100 px-2 py-1 text-xs dark:bg-gray-800">{session.current_status}</span></div></div>)}</div></section> }
+function DailyRuntimeTable({ buckets }: { buckets: RuntimeBucket[] }) { return <section><h2 className="text-lg font-semibold">日別集計</h2><div className="mt-3 overflow-x-auto border-y border-gray-200 dark:border-gray-800"><table className="w-full min-w-[36rem] text-sm"><thead className="bg-gray-100/80 text-left text-gray-600 dark:bg-gray-900 dark:text-gray-300"><tr><th className="px-4 py-3 font-medium">日付</th><th className="px-4 py-3 text-right font-medium">起動個数</th><th className="px-4 py-3 text-right font-medium">総起動時間</th><th className="px-4 py-3 text-right font-medium">総動作時間</th></tr></thead><tbody className="divide-y divide-gray-200 dark:divide-gray-800">{buckets.map(bucket => <tr key={bucket.start}><td className="px-4 py-3 font-medium">{new Date(bucket.start).toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' })}</td><td className="px-4 py-3 text-right tabular-nums">{bucket.sessions.toLocaleString()}</td><td className="px-4 py-3 text-right tabular-nums">{formatDuration(bucket.runtime_seconds)}</td><td className="px-4 py-3 text-right tabular-nums">{formatDuration(bucket.running_seconds)}</td></tr>)}</tbody></table></div></section> }

@@ -123,9 +123,13 @@ func aggregateSessionRuntime(events []entities.SessionStatusUsageEvent, from, to
 		}
 	}
 	intervals := []runtimeInterval{}
+	sessionStarts := []time.Time{}
 	breakdowns := map[string]*entities.SessionRuntimeBreakdown{}
 	for sessionID, sessionEvents := range byID {
 		sort.SliceStable(sessionEvents, func(i, j int) bool { return sessionEvents[i].OccurredAt.Before(sessionEvents[j].OccurredAt) })
+		if len(sessionEvents) > 0 && !sessionEvents[0].OccurredAt.Before(from) && sessionEvents[0].OccurredAt.Before(effectiveTo) {
+			sessionStarts = append(sessionStarts, sessionEvents[0].OccurredAt)
+		}
 		for index, event := range sessionEvents {
 			start := event.OccurredAt
 			if start.Before(from) {
@@ -161,11 +165,9 @@ func aggregateSessionRuntime(events []entities.SessionStatusUsageEvent, from, to
 		dashboard.Summary.RuntimeSeconds += item.RuntimeSeconds
 		dashboard.Summary.RunningSeconds += item.RunningSeconds
 		dashboard.Summary.SuspendedSeconds += item.SuspendedSeconds
-		if item.RuntimeSeconds > 0 {
-			dashboard.Summary.Sessions++
-		}
 		dashboard.BySession = append(dashboard.BySession, *item)
 	}
+	dashboard.Summary.Sessions = len(sessionStarts)
 	sort.Slice(dashboard.BySession, func(i, j int) bool {
 		if dashboard.BySession[i].RuntimeSeconds == dashboard.BySession[j].RuntimeSeconds {
 			return dashboard.BySession[i].SessionID < dashboard.BySession[j].SessionID
@@ -176,7 +178,7 @@ func aggregateSessionRuntime(events []entities.SessionStatusUsageEvent, from, to
 		dashboard.BySession = dashboard.BySession[:limit]
 	}
 	dashboard.Summary.PeakConcurrent = peakConcurrent(intervals, from, effectiveTo)
-	dashboard.Trend = runtimeTrend(intervals, from, effectiveTo, location)
+	dashboard.Trend = runtimeTrend(intervals, sessionStarts, from, effectiveTo, location)
 	for pool := range pools {
 		dashboard.AvailablePools = append(dashboard.AvailablePools, pool)
 	}
@@ -243,7 +245,7 @@ func peakConcurrent(intervals []runtimeInterval, from, to time.Time) int {
 	return peak
 }
 
-func runtimeTrend(intervals []runtimeInterval, from, to time.Time, location *time.Location) []entities.SessionRuntimeBucket {
+func runtimeTrend(intervals []runtimeInterval, sessionStarts []time.Time, from, to time.Time, location *time.Location) []entities.SessionRuntimeBucket {
 	result := []entities.SessionRuntimeBucket{}
 	cursor := from.In(location)
 	for cursor.Before(to.In(location)) {
@@ -253,6 +255,11 @@ func runtimeTrend(intervals []runtimeInterval, from, to time.Time, location *tim
 			bucketEnd = to
 		}
 		bucket := entities.SessionRuntimeBucket{Start: bucketStart}
+		for _, startedAt := range sessionStarts {
+			if !startedAt.Before(bucketStart) && startedAt.Before(bucketEnd) {
+				bucket.Sessions++
+			}
+		}
 		for _, interval := range intervals {
 			start, end := interval.start, interval.end
 			if start.Before(bucketStart) {

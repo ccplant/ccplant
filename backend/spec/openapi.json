@@ -8037,9 +8037,10 @@
       },
       "SessionRuntimeBucket": {
         "type": "object",
-        "required": ["start", "runtime_seconds", "running_seconds", "suspended_seconds", "peak_concurrent"],
+        "required": ["start", "sessions", "runtime_seconds", "running_seconds", "suspended_seconds", "peak_concurrent"],
         "properties": {
           "start": {"type": "string", "format": "date-time"},
+          "sessions": {"type": "integer"},
           "runtime_seconds": {"type": "integer", "format": "int64"},
           "running_seconds": {"type": "integer", "format": "int64"},
           "suspended_seconds": {"type": "integer", "format": "int64"},

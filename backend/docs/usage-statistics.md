@@ -100,7 +100,10 @@ GET /session-usage/dashboard?team_id=example/team&pool=linux&from=2026-10-01T00:
 ```
 
 The response includes total runtime and running seconds, suspended time, peak
-concurrency, daily buckets, and the highest-usage sessions. Runtime includes
+concurrency, daily buckets, and the highest-usage sessions. The `sessions`
+value in the summary and each daily bucket counts sessions whose first recorded
+event occurred in that period; sessions carried into the range only contribute
+runtime. Runtime includes
 `creating`, `starting`, `active`, `stable`, `running`, `resuming`, `restoring`,
 and `suspending`. It excludes suspended, stopped, error, timeout, unhealthy,
 and terminated intervals. The repository carries the last status before
