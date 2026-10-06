@@ -249,7 +249,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	// provisioner routes. The forwarding pattern is intentionally limited to
 	// one endpoint segment so it cannot overlap /internal/* callbacks.
 	if remoteMode {
-		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
+		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret, externalmanager.WithSessionStateStore(stateStore)).RegisterRoutes(e); err != nil {
 			runtimeCancel()
 			if redisClient != nil {
 				_ = redisClient.Close()

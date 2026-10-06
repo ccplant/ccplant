@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -61,8 +62,13 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 		}
 	}
 	snapshotManager, remoteSnapshot := c.getSessionManager().(repositories.SessionContextSnapshotManager)
+	var remoteRoute *repositories.SessionRoute
+	if c.sessionRouteRepo != nil {
+		remoteRoute, _ = c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+	}
+	tunneledSnapshot := remoteRoute != nil && remoteRoute.ManagerID != "" && remoteRoute.RemoteSessionID != "" && c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), remoteRoute.ManagerID)
 	checkpointer, localSnapshot := c.getSessionManager().(repositories.SessionCheckpointer)
-	if !remoteSnapshot && (!localSnapshot || c.sessionStateStore == nil) {
+	if !tunneledSnapshot && !remoteSnapshot && (!localSnapshot || c.sessionStateStore == nil) {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_unsupported")
 	}
 	templateID := "tpl_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -76,7 +82,11 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 			_ = c.contextTemplateRepo.Delete(context.Background(), templateID)
 		}
 	}()
-	if remoteSnapshot {
+	if tunneledSnapshot {
+		if err := c.manageTunneledContextSnapshot(ctx.Request().Context(), remoteRoute, templateID, http.MethodPost); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
+		}
+	} else if remoteSnapshot {
 		if err := snapshotManager.CreateSessionContextSnapshot(ctx.Request().Context(), sessionID, templateID); err != nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
 		}
@@ -197,14 +207,21 @@ func (c *SessionController) DeleteSessionContextTemplate(ctx echo.Context) error
 	}
 	snapshotManager, remoteSnapshot := c.getSessionManager().(repositories.SessionContextSnapshotManager)
 	deleter, localSnapshot := c.sessionStateStore.(services.SessionStateDeleter)
-	if !remoteSnapshot && !localSnapshot {
+	var remoteRoute *repositories.SessionRoute
+	if c.sessionRouteRepo != nil {
+		remoteRoute, _ = c.sessionRouteRepo.Get(ctx.Request().Context(), template.SourceSessionID)
+	}
+	tunneledSnapshot := remoteRoute != nil && remoteRoute.ManagerID != "" && remoteRoute.RemoteSessionID != "" && c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), remoteRoute.ManagerID)
+	if !tunneledSnapshot && !remoteSnapshot && !localSnapshot {
 		return echo.NewHTTPError(http.StatusNotImplemented, "template snapshot deletion is unavailable")
 	}
 	if err := c.contextTemplateRepo.Delete(ctx.Request().Context(), template.ID); err != nil {
 		return err
 	}
 	var deleteErr error
-	if remoteSnapshot {
+	if tunneledSnapshot {
+		deleteErr = c.manageTunneledContextSnapshot(ctx.Request().Context(), remoteRoute, template.SnapshotID, http.MethodDelete)
+	} else if remoteSnapshot {
 		deleteErr = snapshotManager.DeleteSessionContextSnapshot(ctx.Request().Context(), template.SnapshotID)
 	} else {
 		deleteErr = deleter.Delete(ctx.Request().Context(), template.SnapshotID)
@@ -213,6 +230,23 @@ func (c *SessionController) DeleteSessionContextTemplate(ctx echo.Context) error
 		log.Printf("failed to delete orphaned template snapshot %s: %v", template.SnapshotID, deleteErr)
 	}
 	return ctx.NoContent(http.StatusNoContent)
+}
+
+func (c *SessionController) manageTunneledContextSnapshot(ctx context.Context, route *repositories.SessionRoute, snapshotID, method string) error {
+	target := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID) + "/context-snapshots/" + url.PathEscape(snapshotID)
+	req, err := http.NewRequestWithContext(ctx, method, target, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.esmControlTunnel.Do(ctx, route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New(resp.Status)
+	}
+	return nil
 }
 
 func (c *SessionController) resolveContextTemplate(ctx echo.Context, req *entities.StartRequest) (*entities.SessionContextTemplate, error) {
