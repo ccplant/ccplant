@@ -6,231 +6,238 @@ Proposed design. This concerns the deployment-wide GitHub App configured by
 Helm (`github.app.id` and `github.app.privateKey`). It does **not** use GitHub
 Connections or the Connection-backed token broker.
 
-The required case is a team session whose private plugin marketplace is in
-another organization. The built-in App is installed for that repository,
-possibly as a different installation, and the administrator is willing to give
-all team sessions on the server read access to that exact repository.
+The built-in App's repository access is treated as server-wide authority. A
+team may configure any marketplace repository that the App can read. Therefore
+this design does not add a separate marketplace allowlist.
 
 ## Root cause
 
 `KubernetesSessionManager.setTeamGitHubInstallationToken` loads the team's
 `github_app_installation_id` and calls
 `startup.GenerateGitHubAppTokenFromPEM`. The request is restricted to the
-working repository and the token is assigned to `GITHUB_TOKEN`.
+working repository and the resulting token becomes `GITHUB_TOKEN`.
 
 Marketplace startup later calls `startup.cloneMarketplace`, which uses
-`SetupGitHubAuth` and `gh repo clone`. It reuses the working repository's token.
-That cannot work for the other marketplace because:
+`SetupGitHubAuth` and `gh repo clone`. It reuses that working-repository token.
+This fails when the marketplace is in another organization because:
 
 1. the token was requested with `repositories=[working repository]`; and
 2. another organization normally has a different installation ID.
 
-The App PEM currently reaches session settings for legacy startup behavior.
-Letting the workload discover marketplace installations with that PEM is not an
-acceptable fix: a user-controlled URL would select the target and the workload
-would retain authority over every App installation.
+The existing App already supports repository-based installation discovery.
+Marketplace clone does not currently invoke that flow because
+`GITHUB_TOKEN` and `GITHUB_INSTALLATION_ID` take precedence.
 
-## Security boundary
+## Proposed behavior
 
-Server-wide marketplace access is an administrative grant. A marketplace URL
-in base, team, or user settings is configuration, not authorization.
-
-If the proxy minted a token merely because a URL appeared in merged settings, a
-team member could replace it with any private repository visible to the App.
-The App may therefore be used only for repositories in a separate,
-administrator-controlled exact-repository allowlist.
-
-Granting a repository server-wide means every team session can read it. A token
-cannot be restricted to "plugin installation" after delivery to a workload.
-The UI and documentation must state this explicitly.
-
-## Proposed configuration
-
-Extend the existing built-in App configuration:
-
-```yaml
-github:
-  app:
-    id: "123456"
-    privateKey:
-      secretName: github-app-private-key
-      key: private-key
-    marketplaceRepositories:
-      - github.com/shared-tools/private-marketplace
-```
-
-For a session-manager-specific GitHub block, use the same precedence as the
-existing App ID and private key.
-
-Rules:
-
-- normalize entries to `(host, owner, repository)`;
-- require exact repositories; reject wildcards and organization-wide grants;
-- reject duplicates, URL credentials, query strings, fragments, and non-HTTPS
-  remote URLs;
-- support GitHub.com and the configured GHES host;
-- keep the list in administrator-owned Helm/runtime configuration, not the
-  Settings API;
-- do not configure a marketplace installation ID. Discover it from the exact
-  repository using the built-in App JWT;
-- retain team `github_app_installation_id` for the working repository in this
-  implementation.
-
-Expose the allowlist, without secrets, in admin runtime configuration and check
-it in `doctor`. An admin CRUD API can be added later.
-
-## Built-in App resolver
-
-Add a resolver owned by the API/session-manager process:
+For each GitHub marketplace URL, independently resolve credentials from the
+built-in App:
 
 ```text
-ResolveMarketplaceToken(host, owner/repo)
-  -> require exact marketplaceRepositories match
-  -> create App JWT from deployment App ID + PEM
-  -> GET /repos/{owner}/{repo}/installation
+marketplace URL
+  -> normalize host and owner/repository
+  -> create App JWT from built-in App ID + PEM
+  -> GET /repos/{owner}/{repository}/installation
   -> POST /app/installations/{id}/access_tokens
-       repositories: [repo]
+       repositories: [repository]
        permissions: { contents: read }
-  -> return token + expiry
+  -> clone marketplace with that token
 ```
 
-The installation ID is transient. Do not persist it in team settings, session
-metadata, logs, or responses. The working repository and marketplace may use
-different installations of the same App.
+Marketplace resolution must deliberately ignore:
 
-Cache discovery by `(App identity, host, owner/repo)` for a short bounded time.
-Cache tokens by `(installation ID, owner/repo, contents:read)` until five
-minutes before expiry, with single-flight refresh. Invalidate caches when the
-App configuration changes. Never fall back to a personal OAuth token,
-Connection credential, PAT, or the working repository token.
+- the team `github_app_installation_id`, because it identifies the working
+  repository's installation;
+- the existing `GITHUB_TOKEN`, because it is restricted to the working
+  repository;
+- personal OAuth tokens, PATs, and GitHub Connection credentials.
 
-## Startup-only credentials
+The resolved installation ID is transient. Do not write it back to team
+settings or include it in session metadata, logs, or API responses.
 
-Credentials are needed once, before the agent starts. Add a provisioning-only
-field to `SessionSettings`, separate from `Env` and generated agent settings:
+## Authorization model
 
-```yaml
-setup_credentials:
-  git_repositories:
-    github.com/shared-tools/private-marketplace:
-      username: x-access-token
-      token: ghs_...
-      expires_at: 2026-10-06T07:00:00Z
+No extra marketplace allowlist is introduced. The effective authorization is:
+
+```text
+team may configure marketplace URL
+AND
+built-in GitHub App installation can access that exact repository
 ```
 
-Requirements:
+Consequently, every team session can read any repository visible to the
+built-in App by configuring it as a marketplace. This is intentional because
+the App's installation access is considered server-wide. Deployments that do
+not want this behavior must restrict the repositories selected when installing
+the GitHub App.
 
-- populate it only for allowlisted marketplace URLs present in materialized
-  settings of a team session, preferably only when referenced by an enabled
-  plugin;
-- never merge it into process-wide `GITHUB_TOKEN`, `GH_TOKEN`, settings JSON,
-  managed files, archives, logs, or the agent runtime environment;
-- redact it anywhere `SessionSettings` is logged or returned;
-- clear it and remove temporary helper files immediately after marketplace
-  synchronization;
-- never send App ID, PEM, JWT, or installation ID in this field.
+Tokens must still be minted for exactly one repository with `contents:read`.
+Do not request an unrestricted installation token.
 
-The provisioning payload already transports session secrets. Keeping this
-field explicitly setup-only avoids creating a general runtime credential API.
-If runtime marketplace updates are later required, put the same exact-repo
-policy behind a renewable session broker instead of extending token lifetime.
+## Implementation design
 
-## Marketplace clone
+### Repository-specific resolver
 
-Change marketplace clone to accept per-repository credentials instead of
-reading global authentication implicitly.
+Extract a function that does not consult ambient working-repository auth:
 
-For an allowlisted private marketplace:
+```go
+type MarketplaceCredential struct {
+    Username  string
+    Token     string
+    ExpiresAt time.Time
+}
 
-1. normalize its URL to the allowlist key;
-2. obtain the setup credential;
-3. clone over HTTPS Git using a temporary credential helper or askpass file with
-   mode `0600`;
-4. keep the token out of argv, remotes, and global Git config;
-5. remove the helper and credential on both success and failure;
-6. verify the stored `origin` URL contains no credentials.
+func ResolveMarketplaceCredential(
+    ctx context.Context,
+    appID string,
+    pem []byte,
+    repositoryURL string,
+) (MarketplaceCredential, error)
+```
 
-Do not use process-wide `gh` authentication for this path: `gh repo clone`
-would prefer the working repository's `GITHUB_TOKEN`. Public, non-allowlisted
-marketplaces continue with anonymous HTTPS clone.
+The resolver must:
 
-If an allowlisted token cannot be resolved, fail closed. Do not try the working
-token or personal credentials. If a plugin is enabled from that marketplace,
-clone failure must fail setup instead of only logging a warning.
+1. accept only a supported GitHub.com or configured GHES HTTPS URL;
+2. normalize it to `(host, owner, repository)` and remove an optional `.git`;
+3. create an App JWT from the built-in App ID and PEM;
+4. discover the installation with `GET /repos/{owner}/{repo}/installation`;
+5. mint a token with `repositories=[repo]` and `contents:read`;
+6. return a sanitized error without GitHub authorization headers or bodies.
 
-## Placement in the current flow
+Do not reuse `GetGitHubToken` unchanged: it intentionally prioritizes
+`GITHUB_TOKEN` and the configured installation ID. The marketplace resolver
+needs explicit repository-discovery semantics.
 
-After settings materialization and before provisioning:
+### Cache
 
-1. collect and normalize repositories from materialized marketplaces;
-2. intersect them with the administrator allowlist;
-3. for team scope, mint setup credentials with the built-in App;
-4. attach them to the provisioning-only field;
-5. let `sessionsettings.SetupSettings` consume them in `syncExtra`;
-6. discard them before the agent starts.
+Cache installation discovery by `(App identity, host, owner/repository)` for a
+short bounded period. Cache tokens by
+`(installation ID, owner/repository, contents:read)` until five minutes before
+expiry, with single-flight refresh. Do not persist either cache.
 
-This belongs in a shared service invoked before runtime-specific launch so
-Kubernetes, native, and External Session Manager behave identically. The
-existing Kubernetes manager is only a practical first integration point; the
-shared path is a release requirement. A repository-less team session can use
-the flow because it does not depend on `settings.Repository` or the working
-installation ID.
+If the App ID or private key changes, invalidate both caches. Cache entries for
+one repository must never satisfy another repository.
+
+### Clone command
+
+Change `cloneMarketplace` to accept an optional repository-specific credential.
+For a private GitHub marketplace:
+
+1. resolve a marketplace credential;
+2. clone over HTTPS Git using a temporary credential helper or askpass file;
+3. keep the token out of argv, the remote URL, and global Git config;
+4. remove the temporary credential on success and failure;
+5. verify that the stored `origin` URL contains no credentials.
+
+Do not use process-wide `gh` authentication for this path. `gh repo clone`
+would prefer the working repository's `GITHUB_TOKEN`.
+
+Public marketplaces should remain usable when App discovery reports that the
+App is not installed. In that case, retry once with anonymous HTTPS clone. Do
+not fall back to the working token or a personal credential.
+
+For an enabled plugin, failure of both App-authenticated and anonymous clone
+must fail setup rather than only logging a warning. Otherwise the session starts
+without the requested plugin and obscures the authentication error.
+
+## Credential lifetime and placement
+
+Marketplace clone happens during session setup, so it does not require a
+renewable runtime broker. Resolve the token immediately before clone and retain
+it only for that command.
+
+The current startup path already receives the built-in App ID and PEM. The
+initial implementation can perform discovery inside the setup process using
+those values. It must not copy the resulting token into:
+
+- process-wide `GITHUB_TOKEN` or `GH_TOKEN`;
+- Claude/Codex settings;
+- managed files or session archives;
+- the agent runtime environment;
+- logs or diagnostic responses.
+
+After all marketplace clones complete, remove temporary credentials. The agent
+continues to receive only its existing working-repository token.
+
+Longer term, moving App JWT/token minting into the API process would allow the
+PEM to be removed from workloads. That hardening is valuable but is not required
+to fix cross-installation marketplace clone behavior.
+
+## GHES and host handling
+
+Use the marketplace URL's host to select the API endpoint:
+
+- `github.com` uses `https://api.github.com`;
+- the configured GHES host uses its configured API URL;
+- any other host is rejected by the App resolver and follows the existing
+  unauthenticated non-GitHub clone path.
+
+Do not inherit `GH_HOST` from the working repository when cloning a marketplace
+on another supported host.
 
 ## Failure handling and observability
 
-Distinguish invalid allowlist configuration, App-not-installed, missing
-`contents:read`, rate limits/timeouts, invalid App credentials, expired setup
-credentials, and clone rejection. Audit use with session ID, team ID, host,
-normalized repository, and result.
+Distinguish these results without exposing secrets:
 
-Never log PEM, JWT, installation ID, access token, authorization headers,
-GitHub response bodies, or credential-helper output. Avoid repository names and
-installation IDs as unbounded metric labels.
+- marketplace URL is invalid;
+- built-in App ID/PEM is missing or invalid;
+- App is not installed for the marketplace repository;
+- installation lacks repository access or `contents:read`;
+- GitHub rate limit, timeout, or outage;
+- authenticated clone rejected;
+- anonymous fallback rejected.
+
+Log the normalized host/repository and result. Never log the PEM, App JWT,
+installation ID, access token, authorization headers, GitHub response body, or
+credential-helper output. Avoid repository and installation IDs as metric
+labels.
 
 ## Rejected alternatives
 
-- **Reuse or broaden the working token:** it is repository-restricted, may be
-  from another installation, and a token cannot span installations.
-- **Add another installation ID to team settings:** the grant is server-wide,
-  would be duplicated per team, and does not scale to several marketplaces.
-- **Trust merged marketplace URLs:** team/user settings could then request any
-  private repository visible to the App.
-- **Put the PEM or a server-wide PAT in sessions:** both grant substantially
-  broader and longer-lived authority.
-- **Use GitHub Connections:** the affected credential is the built-in App;
-  Connection configuration is unrelated to this path.
+- **Reuse the working token:** it is restricted to another repository and may
+  belong to another installation.
+- **Broaden the working token:** it still cannot span installations and would
+  unnecessarily expose other repositories in the working installation.
+- **Add marketplace installation IDs to team settings:** discovery already
+  identifies the correct installation and avoids duplicated configuration.
+- **Add a marketplace allowlist:** the built-in App's repository selection is
+  intentionally the server-wide access boundary for this deployment.
+- **Use GitHub Connections:** they are unrelated to the built-in App credential
+  path involved here.
 
 ## Implementation slices
 
-1. Add and validate `github.app.marketplaceRepositories` in config, Helm values,
-   schema, examples, `doctor`, and documentation.
-2. Extract the built-in App resolver with exact-repo installation discovery and
-   cached `contents:read`, single-repository tokens.
-3. Add the redacted provisioning-only field and populate it from the
-   materialized-marketplace/allowlist intersection.
-4. Use per-repository HTTPS Git credentials for marketplace clone, clean them up
-   after setup, and make enabled-plugin clone failures fatal.
-5. Apply preparation to all session-manager paths and add audit/metrics.
+1. Extract repository normalization and the built-in App marketplace resolver,
+   explicitly bypassing ambient `GITHUB_TOKEN`/`GITHUB_INSTALLATION_ID`.
+2. Add installation/token caches scoped by host, repository, installation, and
+   permission.
+3. Update marketplace clone to use a per-command HTTPS Git credential and clean
+   it up reliably.
+4. Preserve anonymous public clone fallback and make enabled-plugin clone
+   failures fatal.
+5. Add sanitized logs, metrics, and documentation of the server-wide App access
+   implication.
 
 ## Test plan
 
-- existing team working-repository behavior remains unchanged;
-- a private marketplace in another organization discovers its own installation
-  and clones with a token restricted to that repository;
-- working repository and marketplace installation IDs differ;
-- multiple allowlisted marketplaces across installations receive only their own
-  tokens;
-- a repository-less team session can clone an allowlisted marketplace;
-- changing a team/user URL to an unallowlisted private repository visible to the
-  App yields no token;
+- existing team working-repository authentication remains unchanged;
+- a marketplace in another organization discovers a different installation and
+  clones successfully;
+- the marketplace token is restricted to that one repository with
+  `contents:read`;
+- multiple marketplaces across different installations each receive their own
+  token;
+- marketplace resolution ignores working `GITHUB_TOKEN` and
+  `GITHUB_INSTALLATION_ID`;
+- a repository visible to the App can be selected without separate allowlist
+  configuration;
+- a repository not visible to the App falls back only to anonymous clone;
+- public marketplaces still clone when the App is not installed;
+- private inaccessible marketplaces fail setup when their plugin is enabled;
 - malformed, credential-bearing, wrong-host, case-variant, `.git`-suffixed, and
   URL-escaped inputs normalize or reject deterministically;
-- failures never fall back to working-token, PAT, OAuth, or Connection auth;
-- public unallowlisted marketplaces still clone anonymously;
-- enabled-plugin startup fails when its marketplace clone fails;
+- GitHub.com and GHES API/clone hosts do not leak configuration into each other;
 - argv, `origin`, environment, global Git config, logs, generated settings,
-  files, and archives contain no setup token;
-- temporary credential files are `0600` and removed on success and failure;
-- cache keys isolate host, installation, repository, and permission;
-- concurrent launches never reuse a token for another repository;
-- Kubernetes, native, and External Session Manager paths behave identically.
+  files, and archives contain no marketplace token;
+- temporary credential files are mode `0600` and removed on success/failure;
+- concurrent resolution never reuses a token for another repository.
