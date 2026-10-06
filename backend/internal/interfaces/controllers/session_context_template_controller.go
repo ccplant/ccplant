@@ -30,11 +30,21 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 	}
 	sessionID := ctx.Param("sessionId")
 	session := c.getSessionManager().GetSession(sessionID)
-	if session == nil {
+	var remoteRoute *repositories.SessionRoute
+	if c.sessionRouteRepo != nil {
+		remoteRoute, _ = c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
+	}
+	if session == nil && remoteRoute == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "Session not found")
 	}
+	ownerUserID, scope, teamID, status := "", entities.ScopeUser, "", ""
+	if session != nil {
+		ownerUserID, scope, teamID, status = session.UserID(), session.Scope(), session.TeamID(), session.Status()
+	} else {
+		ownerUserID, scope, teamID, status = remoteRoute.UserID, entities.ResourceScope(remoteRoute.Scope), remoteRoute.TeamID, remoteRoute.Status
+	}
 	authz := auth.GetAuthorizationContext(ctx)
-	if authz == nil || !authz.CanModifyResource(session.UserID(), string(session.Scope()), session.TeamID()) {
+	if authz == nil || !authz.CanModifyResource(ownerUserID, string(scope), teamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to templateize this session")
 	}
 	var input templateizeSessionRequest
@@ -45,34 +55,35 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 	if input.Name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
-	if session.Status() == "running" {
+	if status == "running" {
 		if !input.WaitForIdle {
 			return echo.NewHTTPError(http.StatusConflict, "session is busy")
 		}
 		deadline := time.Now().Add(30 * time.Second)
-		for session.Status() == "running" && time.Now().Before(deadline) {
+		for status == "running" && time.Now().Before(deadline) {
 			select {
 			case <-ctx.Request().Context().Done():
 				return ctx.Request().Context().Err()
 			case <-time.After(250 * time.Millisecond):
+				if session != nil {
+					status = session.Status()
+				} else if refreshed, _ := c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID); refreshed != nil {
+					status = refreshed.Status
+				}
 			}
 		}
-		if session.Status() == "running" {
+		if status == "running" {
 			return echo.NewHTTPError(http.StatusConflict, "session is busy")
 		}
 	}
 	snapshotManager, remoteSnapshot := c.getSessionManager().(repositories.SessionContextSnapshotManager)
-	var remoteRoute *repositories.SessionRoute
-	if c.sessionRouteRepo != nil {
-		remoteRoute, _ = c.sessionRouteRepo.Get(ctx.Request().Context(), sessionID)
-	}
 	tunneledSnapshot := remoteRoute != nil && remoteRoute.ManagerID != "" && remoteRoute.RemoteSessionID != "" && c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), remoteRoute.ManagerID)
 	checkpointer, localSnapshot := c.getSessionManager().(repositories.SessionCheckpointer)
 	if !tunneledSnapshot && !remoteSnapshot && (!localSnapshot || c.sessionStateStore == nil) {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "template_unsupported")
 	}
 	templateID := "tpl_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	template := &entities.SessionContextTemplate{ID: templateID, SourceSessionID: sessionID, SnapshotID: templateID, Name: input.Name, Description: strings.TrimSpace(input.Description), OwnerUserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Status: entities.SessionContextTemplatePreparing, CreatedAt: time.Now().UTC()}
+	template := &entities.SessionContextTemplate{ID: templateID, SourceSessionID: sessionID, SnapshotID: templateID, Name: input.Name, Description: strings.TrimSpace(input.Description), OwnerUserID: ownerUserID, Scope: scope, TeamID: teamID, Status: entities.SessionContextTemplatePreparing, CreatedAt: time.Now().UTC()}
 	if err := c.contextTemplateRepo.Create(ctx.Request().Context(), template); err != nil {
 		return echo.NewHTTPError(http.StatusConflict, "failed to reserve context template")
 	}
