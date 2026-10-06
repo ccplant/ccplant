@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,13 +15,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 )
 
 const (
 	// LabelTeamConfig is the label key for team config resources
 	LabelTeamConfig = "agentapi.proxy/team-config"
 	// LabelTeamID is the label key for team ID
-	LabelTeamID = "agentapi.proxy/team-id"
+	LabelTeamID                   = "agentapi.proxy/team-id"
+	LabelTeamConfigOwnerPrefix    = "agentapi.proxy/team-owner-"
+	LabelTeamConfigExternalPrefix = "agentapi.proxy/team-external-"
 	// SecretKeyConfig is the key in the Secret data for team config JSON
 	SecretKeyConfig = "config"
 	// TeamConfigSecretPrefix is the prefix for team config Secret names
@@ -87,10 +91,7 @@ func (r *KubernetesTeamConfigRepository) Save(ctx context.Context, config *entit
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: r.namespace,
-			Labels: map[string]string{
-				LabelTeamConfig: "true",
-				LabelTeamID:     labelValue,
-			},
+			Labels:    teamConfigLabels(config, labelValue),
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -221,9 +222,101 @@ func (r *KubernetesTeamConfigRepository) List(ctx context.Context) ([]*entities.
 			continue
 		}
 		configs = append(configs, config)
+		if !containsTeamConfigLookupLabels(secretList.Items[i].Labels, config) {
+			if err := r.Save(ctx, config); err != nil {
+				return nil, fmt.Errorf("backfill team config lookup labels for %s: %w", config.TeamID(), err)
+			}
+		}
 	}
 
 	return configs, nil
+}
+
+// ListRelevant resolves authentication-time team mappings with indexed label
+// queries. It never lists every TeamConfig. List() backfills these labels for
+// records written before the indexes were introduced.
+func (r *KubernetesTeamConfigRepository) ListRelevant(ctx context.Context, memberships []entities.GitHubTeamMembership, principalID string) ([]*entities.TeamConfig, error) {
+	selectors := make(map[string]struct{})
+	if principalID = strings.TrimSpace(principalID); principalID != "" {
+		selectors[teamConfigOwnerLabel(principalID)+"=true"] = struct{}{}
+	}
+	for _, membership := range memberships {
+		organization := strings.ToLower(strings.TrimSpace(membership.Organization))
+		teamSlug := strings.ToLower(strings.TrimSpace(membership.TeamSlug))
+		if organization == "" || teamSlug == "" {
+			continue
+		}
+		selectors[teamConfigExternalLabel(organization, teamSlug)+"=true"] = struct{}{}
+	}
+
+	configs := make(map[string]*entities.TeamConfig)
+	for selector := range selectors {
+		secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: LabelTeamConfig + "=true," + selector})
+		if err != nil {
+			return nil, fmt.Errorf("list relevant team configs: %w", err)
+		}
+		for i := range secrets.Items {
+			config, err := r.fromSecret(&secrets.Items[i])
+			if err != nil {
+				return nil, fmt.Errorf("parse relevant team config %s: %w", secrets.Items[i].Name, err)
+			}
+			configs[config.TeamID()] = config
+		}
+	}
+
+	// Direct/discovered teams use organization/slug as the TeamID. Point GETs
+	// preserve compatibility while startup List() backfills older indexes.
+	for _, membership := range memberships {
+		teamID := strings.ToLower(strings.TrimSpace(membership.Organization)) + "/" + strings.ToLower(strings.TrimSpace(membership.TeamSlug))
+		if teamID == "/" {
+			continue
+		}
+		if config, err := r.FindByTeamID(ctx, teamID); err == nil {
+			configs[config.TeamID()] = config
+		}
+	}
+
+	result := make([]*entities.TeamConfig, 0, len(configs))
+	for _, config := range configs {
+		result = append(result, config)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].TeamID() < result[j].TeamID() })
+	return result, nil
+}
+
+func teamConfigLabels(config *entities.TeamConfig, teamIDLabel string) map[string]string {
+	labels := map[string]string{LabelTeamConfig: "true", LabelTeamID: teamIDLabel}
+	for _, ownerID := range config.OwnerIDs() {
+		if ownerID = strings.TrimSpace(ownerID); ownerID != "" {
+			labels[teamConfigOwnerLabel(ownerID)] = "true"
+		}
+	}
+	for _, binding := range config.ExternalTeams() {
+		organization := strings.ToLower(strings.TrimSpace(binding.Organization))
+		teamSlug := strings.ToLower(strings.TrimSpace(binding.TeamSlug))
+		if organization != "" && teamSlug != "" {
+			labels[teamConfigExternalLabel(organization, teamSlug)] = "true"
+		}
+	}
+	return labels
+}
+
+func containsTeamConfigLookupLabels(labels map[string]string, config *entities.TeamConfig) bool {
+	expected := teamConfigLabels(config, sanitizeTeamIDForLabel(config.TeamID()))
+	for key, value := range expected {
+		if labels[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func teamConfigOwnerLabel(principalID string) string {
+	return LabelTeamConfigOwnerPrefix + services.HashLabelValue(principalID)
+}
+
+func teamConfigExternalLabel(organization, teamSlug string) string {
+	return LabelTeamConfigExternalPrefix + services.HashLabelValue(organization+"/"+teamSlug)
 }
 
 // secretName generates the secret name from team ID

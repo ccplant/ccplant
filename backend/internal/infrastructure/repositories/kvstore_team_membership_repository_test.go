@@ -45,6 +45,13 @@ func TestKVStoreTeamMembershipRepositoryPersistsAndRateLimitsSync(t *testing.T) 
 	require.Equal(t, "user-alice", stored.Members[0].PrincipalID)
 	require.Empty(t, stored.OperationID)
 
+	forAlice, err := repo.ListForPrincipal(ctx, "user-alice")
+	require.NoError(t, err)
+	require.Len(t, forAlice, 1)
+	forBob, err := repo.ListForPrincipal(ctx, "user-bob")
+	require.NoError(t, err)
+	require.Empty(t, forBob)
+
 	_, err = repo.AcquireSync(ctx, leased.TeamPrincipalID, "operation-3", now.Add(30*time.Second))
 	require.ErrorIs(t, err, ports.ErrTeamSyncRateLimited)
 

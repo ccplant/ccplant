@@ -31,16 +31,11 @@ func (r *TeamMembershipResolver) Resolve(ctx context.Context, memberships []enti
 
 // ResolveForPrincipal also grants membership to teams created by the principal.
 func (r *TeamMembershipResolver) ResolveForPrincipal(ctx context.Context, memberships []entities.GitHubTeamMembership, principalID string) ([]string, bool, error) {
-	configs, err := r.repo.List(ctx)
+	configs, err := r.repo.ListRelevant(ctx, memberships, principalID)
 	if err != nil {
 		return nil, false, err
 	}
-	configured := len(r.rules) > 0
-	for _, team := range configs {
-		if len(team.ExternalTeams()) > 0 || (principalID != "" && team.IsOwner(principalID)) {
-			configured = true
-		}
-	}
+	configured := len(r.rules) > 0 || len(configs) > 0
 	if !configured {
 		return nil, false, nil
 	}

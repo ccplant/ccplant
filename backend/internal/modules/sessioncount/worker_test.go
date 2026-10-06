@@ -48,6 +48,9 @@ func (r *fakeTeams) FindByTeamID(context.Context, string) (*entities.TeamConfig,
 func (r *fakeTeams) Delete(context.Context, string) error                 { return nil }
 func (r *fakeTeams) Exists(context.Context, string) (bool, error)         { return false, nil }
 func (r *fakeTeams) List(context.Context) ([]*entities.TeamConfig, error) { return nil, nil }
+func (r *fakeTeams) ListRelevant(context.Context, []entities.GitHubTeamMembership, string) ([]*entities.TeamConfig, error) {
+	return nil, nil
+}
 
 type memoryRepository struct {
 	events []entities.SessionStatusUsageEvent

@@ -22,6 +22,18 @@ func (r *membershipSnapshotRepo) Get(context.Context, string) (*entities.TeamMem
 func (r *membershipSnapshotRepo) List(context.Context) ([]*entities.TeamMembershipSnapshot, error) {
 	return r.snapshots, nil
 }
+func (r *membershipSnapshotRepo) ListForPrincipal(_ context.Context, principalID string) ([]*entities.TeamMembershipSnapshot, error) {
+	result := make([]*entities.TeamMembershipSnapshot, 0)
+	for _, snapshot := range r.snapshots {
+		for _, member := range snapshot.Members {
+			if member.PrincipalID == principalID {
+				result = append(result, snapshot)
+				break
+			}
+		}
+	}
+	return result, nil
+}
 func (r *membershipSnapshotRepo) AcquireSync(context.Context, string, string, time.Time) (*entities.TeamMembershipSnapshot, error) {
 	panic("not used")
 }
@@ -36,7 +48,8 @@ func (r *membershipSnapshotRepo) Delete(context.Context, string) error { panic("
 func TestResolveTeamMembershipsUsesPersistedSnapshotAndLinkedIdentity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	client := fake.NewSimpleClientset()
+	controller := NewGitHubConnectionsController(client, "test", "")
 	identity := githubIdentity{ID: "identity-1", PrincipalID: "principal-1", ConnectionID: "github", GitHubUserID: 42, Login: "alice"}
 	created, err := controller.linkIdentity(ctx, identity, "token-that-must-not-be-used", nil)
 	require.NoError(t, err)
@@ -46,6 +59,7 @@ func TestResolveTeamMembershipsUsesPersistedSnapshotAndLinkedIdentity(t *testing
 		ExternalMembers: []entities.ExternalTeamMember{{ConnectionID: "github", GitHubUserID: 42, Login: "alice", Sources: []entities.ExternalTeamRef{{ConnectionID: "github", Organization: "acme", TeamSlug: "platform"}}}},
 		Members:         []entities.TeamMember{{PrincipalID: "principal-1", Login: "alice", Sources: []entities.ExternalIdentityRef{{ConnectionID: "github", GitHubUserID: 42}}}},
 	}}})
+	client.ClearActions()
 
 	memberships, linked, err := controller.ResolveTeamMemberships(ctx, "principal-1")
 	require.NoError(t, err)
@@ -53,6 +67,9 @@ func TestResolveTeamMembershipsUsesPersistedSnapshotAndLinkedIdentity(t *testing
 	require.Len(t, memberships, 1)
 	require.Equal(t, "acme", memberships[0].Organization)
 	require.Equal(t, "platform", memberships[0].TeamSlug)
+	for _, action := range client.Actions() {
+		require.NotEqual(t, "list", action.GetVerb(), "authentication must not list every identity or principal")
+	}
 
 	require.NoError(t, controller.client.CoreV1().Secrets("test").Delete(ctx, identitySecretName("github", 42), metav1.DeleteOptions{}))
 	memberships, _, err = controller.ResolveTeamMemberships(ctx, "principal-1")

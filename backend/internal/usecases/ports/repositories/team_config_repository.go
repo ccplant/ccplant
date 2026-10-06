@@ -22,4 +22,8 @@ type TeamConfigRepository interface {
 
 	// List retrieves all team configurations
 	List(ctx context.Context) ([]*entities.TeamConfig, error)
+
+	// ListRelevant retrieves only configs owned by the principal or mapped to
+	// one of the supplied external team memberships.
+	ListRelevant(ctx context.Context, memberships []entities.GitHubTeamMembership, principalID string) ([]*entities.TeamConfig, error)
 }
