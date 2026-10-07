@@ -2120,6 +2120,9 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
 			return session, false, err
 		}
+		if err := m.preparePersistentWorkloadResume(ctx, ks); err != nil {
+			return session, false, err
+		}
 		if err := m.clearSessionSuspendState(ctx, ks.ServiceName()); err != nil {
 			return session, false, err
 		}
@@ -2141,6 +2144,9 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 		if err := m.requireSessionSettingsSecret(ctx, ks); err != nil {
 			return session, false, err
 		}
+		if err := m.preparePersistentWorkloadResume(ctx, ks); err != nil {
+			return session, false, err
+		}
 		if err := m.clearSessionSuspendState(ctx, ks.ServiceName()); err != nil {
 			return session, false, err
 		}
@@ -2155,6 +2161,28 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 	go m.watchDeploymentStatus(context.Background(), ks)
 	go m.scheduleSuspendWhenRestoredWorkloadReady(ks)
 	return session, true, nil
+}
+
+// preparePersistentWorkloadResume makes a recreated persistent workload fail
+// closed if its saved ACP conversation cannot be loaded. Initial workloads have
+// no ResumeFrom value and may create a new conversation; once the workload has
+// been removed, the stable proxy session ID becomes the required snapshot key.
+func (m *KubernetesSessionManager) preparePersistentWorkloadResume(ctx context.Context, session *KubernetesSession) error {
+	settings, err := m.CurrentSessionSettings(ctx, session.ID())
+	if err != nil {
+		return fmt.Errorf("load persistent resume settings: %w", err)
+	}
+	if m.config.SessionPersistence.Backend == "" {
+		return nil
+	}
+	if strings.TrimSpace(settings.Session.ResumeFrom) != "" {
+		return nil
+	}
+	settings.Session.ResumeFrom = session.ID()
+	if err := m.PrepareSessionResume(ctx, session.ID(), settings); err != nil {
+		return fmt.Errorf("persist required session resume: %w", err)
+	}
+	return nil
 }
 
 func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id string, settings *sessionsettings.SessionSettings) error {
