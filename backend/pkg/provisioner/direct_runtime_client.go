@@ -259,7 +259,9 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		return
 	}
 	if command.Method == http.MethodPost && command.Path == "/internal/checkpoint-session-state" {
-		err := executeControlCommand(commandCtx, w.client, os.Getenv("AGENTAPI_AGENT_TYPE"), controlCommand{Type: "checkpoint_session_state"})
+		query, _ := url.ParseQuery(command.RawQuery)
+		payload, _ := json.Marshal(map[string]string{"snapshot_id": query.Get("snapshot_id")})
+		err := executeControlCommand(commandCtx, w.client, os.Getenv("AGENTAPI_AGENT_TYPE"), controlCommand{Type: "checkpoint_session_state", Payload: payload})
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
 			return

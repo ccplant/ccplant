@@ -522,16 +522,21 @@ func (s *Server) restoreSessionState(ctx context.Context, sourceID, cwd string) 
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
 		archive, err := os.Open(volumePath)
 		if os.IsNotExist(err) {
-			return false, nil
-		}
-		if err != nil {
+			// A template starts with a fresh PVC, so its portable snapshot must
+			// be fetched from the execution plane's template store. Ordinary
+			// volume-backed resumes remain entirely local.
+			if !strings.HasPrefix(sourceID, "tpl_") {
+				return false, nil
+			}
+		} else if err != nil {
 			return false, err
+		} else {
+			defer func() { _ = archive.Close() }()
+			if err := sessionstate.Unpack(archive, runtimeHome, cwd); err != nil {
+				return false, err
+			}
+			return true, nil
 		}
-		defer func() { _ = archive.Close() }()
-		if err := sessionstate.Unpack(archive, runtimeHome, cwd); err != nil {
-			return false, err
-		}
-		return true, nil
 	}
 	proxy := strings.TrimRight(os.Getenv("SESSION_STATE_PROXY_URL"), "/")
 	if proxy == "" {

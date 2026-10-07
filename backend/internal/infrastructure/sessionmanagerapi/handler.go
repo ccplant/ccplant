@@ -124,6 +124,12 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 }
 
 func (h *Handler) createContextSnapshot(c echo.Context) error {
+	if creator, ok := h.manager.(portrepos.SessionContextSnapshotCreator); ok {
+		if err := creator.CreateSessionContextSnapshot(c.Request().Context(), c.Param("sessionId"), c.Param("snapshotId")); err != nil {
+			return internalError(c, err)
+		}
+		return c.NoContent(http.StatusNoContent)
+	}
 	checkpointer, ok := h.manager.(portrepos.SessionCheckpointer)
 	if !ok || h.stateStore == nil {
 		return unsupported(c, "session context snapshots are not supported")

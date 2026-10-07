@@ -85,6 +85,30 @@ func TestRestoreSessionStateNotFoundIsAnEmptyInitialSnapshot(t *testing.T) {
 	}
 }
 
+func TestVolumeBackedTemplateFallsBackToPortableSnapshot(t *testing.T) {
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		if r.URL.Path == "/internal/session-state/tpl_one/download-url" {
+			w.WriteHeader(http.StatusNotImplemented)
+			return
+		}
+		if r.URL.Path != "/internal/session-state/tpl_one" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	t.Setenv("AGENTAPI_SESSION_STATE_VOLUME_PATH", filepath.Join(t.TempDir(), "missing.tar.zst"))
+	t.Setenv("SESSION_STATE_PROXY_URL", server.URL)
+	t.Setenv("PROVISIONER_TOKEN", "provisioner-token")
+
+	found, err := (&Server{httpClient: server.Client()}).restoreSessionState(context.Background(), "tpl_one", t.TempDir())
+	if err != nil || found || !requested {
+		t.Fatalf("found=%v requested=%v err=%v", found, requested, err)
+	}
+}
+
 func TestRestoreSessionStateUnavailableCanBeSkipped(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)

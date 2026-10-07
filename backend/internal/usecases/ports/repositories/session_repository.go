@@ -87,6 +87,13 @@ type SessionCheckpointer interface {
 	CheckpointSessionState(ctx context.Context, id string) error
 }
 
+// SessionContextSnapshotCreator checkpoints a session directly under an
+// immutable template snapshot ID. This lets volume-backed sessions export a
+// portable copy without changing their normal persistence backend.
+type SessionContextSnapshotCreator interface {
+	CreateSessionContextSnapshot(ctx context.Context, sessionID, snapshotID string) error
+}
+
 // SessionContextSnapshotManager owns reusable snapshots in the execution
 // plane's persistence backend. Remote managers implement this capability so
 // the parent API never needs the execution plane's S3 credentials.

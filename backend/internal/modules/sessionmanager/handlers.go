@@ -127,6 +127,12 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 }
 
 func (h *Handlers) CreateContextSnapshot(c echo.Context) error {
+	if creator, ok := h.sessionManager.(repositories.SessionContextSnapshotCreator); ok {
+		if err := creator.CreateSessionContextSnapshot(c.Request().Context(), c.Param("sessionId"), c.Param("snapshotId")); err != nil {
+			return err
+		}
+		return c.NoContent(http.StatusNoContent)
+	}
 	checkpointer, ok := h.sessionManager.(repositories.SessionCheckpointer)
 	if !ok || h.stateStore == nil {
 		return echo.NewHTTPError(http.StatusNotImplemented, "session context snapshots are not supported")
