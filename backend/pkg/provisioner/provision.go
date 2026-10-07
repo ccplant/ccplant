@@ -386,7 +386,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// ── Step 7: build and start the agent subprocess ──────────────────────────
 	s.setPhase("provision:start-agent")
 	agentCmd, agentArgs := s.buildAgentCommand(settings, envMap)
-	if settings.Restart {
+	if shouldRequireConversationResume(settings) {
 		agentArgs = append([]string{agentArgs[0], "--require-resume"}, agentArgs[1:]...)
 	}
 	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
@@ -488,6 +488,10 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 func shouldImplicitlyRestoreSessionState(settings *sessionsettings.SessionSettings) bool {
 	return settings != nil && settings.Session.PersistenceEnabled && strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) == ""
+}
+
+func shouldRequireConversationResume(settings *sessionsettings.SessionSettings) bool {
+	return settings != nil && (settings.Restart || strings.TrimSpace(settings.Session.ResumeFrom) != "")
 }
 
 func injectUsageReportingHook(settings *sessionsettings.SessionSettings) {

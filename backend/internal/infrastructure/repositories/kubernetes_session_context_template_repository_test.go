@@ -14,7 +14,7 @@ import (
 
 func TestKubernetesSessionContextTemplateRepositoryCRUD(t *testing.T) {
 	repo := NewKubernetesSessionContextTemplateRepository(fake.NewSimpleClientset(), "default")
-	template := &entities.SessionContextTemplate{ID: "tpl_one", SourceSessionID: "session-one", SnapshotID: "tpl_one", Name: "base", OwnerUserID: "alice", Scope: entities.ScopeUser, Status: entities.SessionContextTemplateReady, CreatedAt: time.Now().UTC()}
+	template := &entities.SessionContextTemplate{ID: "tpl_one", SourceSessionID: "session-one", SnapshotID: "tpl_one", Name: "base", OwnerUserID: "alice", Scope: entities.ScopeUser, AgentType: "codex-acp", SessionProfileID: "profile-one", Tags: map[string]string{"repository": "owner/repo"}, Status: entities.SessionContextTemplateReady, CreatedAt: time.Now().UTC()}
 	require.NoError(t, repo.Create(context.Background(), template))
 
 	got, err := repo.Get(context.Background(), template.ID)
@@ -24,6 +24,9 @@ func TestKubernetesSessionContextTemplateRepositoryCRUD(t *testing.T) {
 	items, err := repo.List(context.Background(), portrepos.SessionContextTemplateFilter{UserID: "alice"})
 	require.NoError(t, err)
 	require.Len(t, items, 1)
+	require.Equal(t, "codex-acp", items[0].AgentType)
+	require.Equal(t, "profile-one", items[0].SessionProfileID)
+	require.Equal(t, "owner/repo", items[0].Tags["repository"])
 	items, err = repo.List(context.Background(), portrepos.SessionContextTemplateFilter{UserID: "bob"})
 	require.NoError(t, err)
 	require.Empty(t, items)

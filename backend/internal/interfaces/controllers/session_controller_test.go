@@ -477,6 +477,30 @@ func TestRoutedSessionStatusFallbacks(t *testing.T) {
 	}
 }
 
+func TestApplyContextTemplateLaunchRestoresCompatibleSourceSettings(t *testing.T) {
+	req := &entities.StartRequest{
+		Tags:   map[string]string{"caller": "kept", "repository": "wrong/repository"},
+		Params: &entities.SessionParams{Message: "continue"},
+	}
+	template := &entities.SessionContextTemplate{
+		AgentType:        "codex-acp",
+		SessionProfileID: "profile-source",
+		Tags: map[string]string{
+			"repository": "owner/source",
+			"branch":     "feature/context",
+		},
+	}
+
+	applyContextTemplateLaunch(req, template)
+
+	require.Equal(t, "owner/source", req.Tags["repository"])
+	require.Equal(t, "feature/context", req.Tags["branch"])
+	require.Equal(t, "kept", req.Tags["caller"])
+	require.Equal(t, "profile-source", req.SessionProfileID)
+	require.Equal(t, "codex-acp", req.Params.AgentType)
+	require.Equal(t, "continue", req.Params.Message)
+}
+
 func TestFindUncreatedSessionAllocation(t *testing.T) {
 	pending := &sessionListTestSession{id: "pending-id", status: "pending"}
 	sessions := []entities.Session{

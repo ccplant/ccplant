@@ -164,3 +164,23 @@ func TestKubernetesSessionImplicitlyRestoresPersistentSession(t *testing.T) {
 		t.Fatal("persistent Kubernetes session unexpectedly disabled implicit restore")
 	}
 }
+
+func TestTemplateRestoreRequiresConversationResume(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings *sessionsettings.SessionSettings
+		want     bool
+	}{
+		{name: "new session", settings: &sessionsettings.SessionSettings{}, want: false},
+		{name: "restart", settings: &sessionsettings.SessionSettings{Restart: true}, want: true},
+		{name: "template", settings: &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{ResumeFrom: "tpl_context"}}, want: true},
+		{name: "nil settings", settings: nil, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldRequireConversationResume(tt.settings); got != tt.want {
+				t.Fatalf("shouldRequireConversationResume() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
