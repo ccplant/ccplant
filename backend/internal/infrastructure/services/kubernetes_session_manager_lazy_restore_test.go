@@ -8,10 +8,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/yaml"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
@@ -21,11 +23,17 @@ func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
 		PVCEnabled: &pvcEnabled, CPURequest: "100m", CPULimit: "1",
 		MemoryRequest: "128Mi", MemoryLimit: "512Mi",
 	}, SessionPersistence: config.SessionPersistenceConfig{Backend: "volume", SuspendAfter: "1h"}}
+	settingsData, err := sessionsettings.MarshalYAML(&sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
+		ID: "session-1", UserID: "user-1", AgentType: "codex-acp", PersistenceEnabled: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	client := fake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-svc", Namespace: "test-ns", Annotations: map[string]string{
 			sessionSuspendedAtAnnotation: time.Now().UTC().Format(time.RFC3339Nano),
 		}}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-settings", Namespace: "test-ns"}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-session-1-settings", Namespace: "test-ns"}, Data: map[string][]byte{"settings.yaml": settingsData}},
 	)
 	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), client)
 	if err != nil {
@@ -67,6 +75,17 @@ func TestEnsureSessionWorkloadRecreatesMissingDeployment(t *testing.T) {
 	}
 	if service.Annotations[sessionSuspendedAtAnnotation] != "" {
 		t.Fatalf("suspended annotation was not cleared: %#v", service.Annotations)
+	}
+	secret, err := client.CoreV1().Secrets("test-ns").Get(context.Background(), "agentapi-session-session-1-settings", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resumedSettings sessionsettings.SessionSettings
+	if err := yaml.Unmarshal(secret.Data["settings.yaml"], &resumedSettings); err != nil {
+		t.Fatal(err)
+	}
+	if resumedSettings.Session.ResumeFrom != session.ID() {
+		t.Fatalf("resume_from = %q, want %q", resumedSettings.Session.ResumeFrom, session.ID())
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for service.Annotations[sessionSuspendAtAnnotation] == "" && time.Now().Before(deadline) {
