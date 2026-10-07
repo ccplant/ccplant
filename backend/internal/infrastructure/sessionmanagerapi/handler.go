@@ -124,11 +124,8 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 }
 
 func (h *Handler) createContextSnapshot(c echo.Context) error {
-	if h.stateStore != nil {
-		if snapshot, err := h.stateStore.Load(c.Request().Context(), c.Param("snapshotId")); err == nil && snapshot != nil {
-			_ = snapshot.Close()
-			return c.NoContent(http.StatusNoContent)
-		}
+	if c.Request().Header.Get("X-CCPlant-Template-Snapshot-Ready") == "1" {
+		return c.NoContent(http.StatusNoContent)
 	}
 	if creator, ok := h.manager.(portrepos.SessionContextSnapshotCreator); ok {
 		if err := creator.CreateSessionContextSnapshot(c.Request().Context(), c.Param("sessionId"), c.Param("snapshotId")); err != nil {

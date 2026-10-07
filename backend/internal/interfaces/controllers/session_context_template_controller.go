@@ -269,6 +269,9 @@ func (c *SessionController) manageTunneledContextSnapshot(ctx context.Context, r
 	if err != nil {
 		return err
 	}
+	if method == http.MethodPost {
+		req.Header.Set("X-CCPlant-Template-Snapshot-Ready", "1")
+	}
 	resp, err := c.esmControlTunnel.Do(ctx, route.ManagerID, route.SessionID, route.RemoteSessionID, req)
 	if err != nil {
 		return err
