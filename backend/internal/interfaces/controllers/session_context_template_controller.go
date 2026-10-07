@@ -120,7 +120,11 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
 		}
 	}
-	if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
+	if tunneledSnapshot {
+		if err := c.retireTunneledContextSource(ctx.Request().Context(), remoteRoute); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to retire source session").SetInternal(err)
+		}
+	} else if err := c.sessionCreator.DeleteSessionByID(sessionID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retire source session").SetInternal(err)
 	}
 	if c.sessionRouteRepo != nil {
@@ -140,6 +144,20 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 	}
 	rollback = false
 	return ctx.JSON(http.StatusCreated, template)
+}
+
+func (c *SessionController) retireTunneledContextSource(ctx context.Context, route *repositories.SessionRoute) error {
+	enqueuer, ok := c.esmControlTunnel.(esmControlEnqueuer)
+	if !ok {
+		return errors.New("external session manager lifecycle queue is unavailable")
+	}
+	target := "http://esm.local/api/v1/sessions/" + url.PathEscape(route.RemoteSessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	if err != nil {
+		return err
+	}
+	_, err = enqueuer.Enqueue(ctx, route.ManagerID, route.SessionID, route.RemoteSessionID, req)
+	return err
 }
 
 func (c *SessionController) checkpointTunneledRuntimeSnapshot(ctx context.Context, route *repositories.SessionRoute, snapshotID string) error {
