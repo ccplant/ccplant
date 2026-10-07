@@ -122,7 +122,6 @@ spec:
             {{- end }}
             - {name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME, value: {{ printf "%s-session-manager" (include "agentapi-proxy.fullname" .) | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: {{ $image.repository | default .Values.image.repository | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -284,8 +283,9 @@ spec:
             - {name: AGENTAPI_SCIA_TODOIST_HOSTS, value: {{ dig "todoistHosts" (list "api.todoist.com") $scia | join "," | quote }}}
             - {name: AGENTAPI_SCIA_TODOIST_PATHS, value: {{ dig "todoistPaths" (list "/api/v1/*") $scia | join "," | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
-            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
-              value: {{ $k8s.cliImage | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
+            {{- if $k8s.cliImage }}
+            - {name: AGENTAPI_K8S_SESSION_CLI_IMAGE, value: {{ $k8s.cliImage | quote }}}
+            {{- end }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ $k8s.image | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ $k8s.networkFilterImage | quote }}}

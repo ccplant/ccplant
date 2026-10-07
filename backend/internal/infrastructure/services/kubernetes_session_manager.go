@@ -238,10 +238,9 @@ func (m *KubernetesSessionManager) refreshConfig() {
 }
 
 // resolveLegacySessionRuntimeImages upgrades the old single-image defaults in
-// memory. This lets an auto-upgraded manager create new Pods with immutable
-// agent assets and inject the ccplant CLI from its own release, even when the
-// installed Helm chart predates the split image configuration. Explicit custom
-// session or CLI images are preserved.
+// memory. This lets a manager create new Pods with immutable agent assets and
+// inject the ccplant CLI from its own release without requiring the CLI image
+// to be passed separately. Explicit custom CLI images are preserved.
 func resolveLegacySessionRuntimeImages(cfg *config.Config) {
 	if cfg == nil || strings.TrimSpace(cfg.KubernetesSession.CLIImage) != "" {
 		return
@@ -252,10 +251,9 @@ func resolveLegacySessionRuntimeImages(cfg *config.Config) {
 		return
 	}
 	managerImage := repository + ":" + version
-	if strings.TrimSpace(cfg.KubernetesSession.Image) != managerImage {
-		return
+	if strings.TrimSpace(cfg.KubernetesSession.Image) == managerImage {
+		cfg.KubernetesSession.Image = config.DefaultKubernetesSessionImage
 	}
-	cfg.KubernetesSession.Image = config.DefaultKubernetesSessionImage
 	cfg.KubernetesSession.CLIImage = managerImage
 }
 
