@@ -475,12 +475,12 @@ export function getCurrentHostProxyUrlFromHeaders(requestHeaders?: HeadersInit):
                     (headersObj.get('x-forwarded-ssl') === 'on' ? 'https' : 'http')
     
     if (host) {
-      return `${protocol}://${host}/api/proxy`
+      return `${protocol}://${host}/api/v1`
     }
   }
   
   // Fallback to localhost for development
-  return 'http://localhost:3000/api/proxy'
+  return 'http://localhost:3000/api/v1'
 }
 
 // Get the current hostname for proxy URL
@@ -488,7 +488,7 @@ function getCurrentHostProxyUrl(): string {
   if (typeof window === 'undefined') {
     // Server-side: fallback to localhost for development
     // Note: headers() is async in Next.js 15, so we can't use it here
-    return 'http://localhost:3000/api/proxy'
+    return 'http://localhost:3000/api/v1'
   }
   
   // Client-side: construct URL from current hostname
@@ -502,7 +502,7 @@ function getCurrentHostProxyUrl(): string {
     baseUrl += `:${port}`
   }
   
-  return `${baseUrl}/api/proxy`
+  return `${baseUrl}/api/v1`
 }
 
 // Async version for server-side use with Next.js 15
@@ -518,7 +518,7 @@ export async function getCurrentHostProxyUrlAsync(): Promise<string> {
                       (headersList.get('x-forwarded-ssl') === 'on' ? 'https' : 'http')
       
       if (host) {
-        return `${protocol}://${host}/api/proxy`
+        return `${protocol}://${host}/api/v1`
       }
     } catch (error) {
       // headers() might not be available in all contexts
@@ -526,7 +526,7 @@ export async function getCurrentHostProxyUrlAsync(): Promise<string> {
     }
     
     // Fallback to localhost for development
-    return 'http://localhost:3000/api/proxy'
+    return 'http://localhost:3000/api/v1'
   }
   
   // Client-side: construct URL from current hostname
@@ -540,7 +540,7 @@ export async function getCurrentHostProxyUrlAsync(): Promise<string> {
     baseUrl += `:${port}`
   }
   
-  return `${baseUrl}/api/proxy`
+  return `${baseUrl}/api/v1`
 }
 
 // Default proxy settings for profiles
@@ -662,6 +662,9 @@ export const getEffectiveSettings = (repoFullname: string): SettingsFormData => 
 // Full global settings (with all fields)
 const FULL_GLOBAL_SETTINGS_KEY = 'agentapi-full-global-settings'
 
+export const normalizeAgentApiProxyEndpoint = (endpoint: string): string =>
+  endpoint.replace(/\/api\/proxy\/?$/, '/api/v1')
+
 export const getDefaultFullGlobalSettings = (): GlobalSettings => {
   const now = new Date().toISOString()
   return {
@@ -692,10 +695,13 @@ export const loadFullGlobalSettings = (): GlobalSettings => {
           })
         )
       }
-      return {
-        ...getDefaultFullGlobalSettings(),
-        ...parsedSettings
+      const defaults = getDefaultFullGlobalSettings()
+      const agentApiProxy = {
+        ...defaults.agentApiProxy,
+        ...parsedSettings.agentApiProxy,
       }
+      agentApiProxy.endpoint = normalizeAgentApiProxyEndpoint(agentApiProxy.endpoint)
+      return { ...defaults, ...parsedSettings, agentApiProxy }
     }
   } catch (err) {
     console.error('Failed to load full global settings:', err)

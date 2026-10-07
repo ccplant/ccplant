@@ -161,7 +161,7 @@ export function createSharedSessionClientFromStorage(): SharedSessionClient {
 
     const baseURL = proxySettings.enabled
       ? proxySettings.endpoint
-      : `${window.location.protocol}//${window.location.host}/api/proxy`;
+      : `${window.location.protocol}//${window.location.host}/api/v1`;
 
     return new SharedSessionClient({
       baseURL,
@@ -173,7 +173,7 @@ export function createSharedSessionClientFromStorage(): SharedSessionClient {
       console.warn('Failed to load settings for SharedSessionClient');
     }
     return new SharedSessionClient({
-      baseURL: `${window.location.protocol}//${window.location.host}/api/proxy`,
+      baseURL: `${window.location.protocol}//${window.location.host}/api/v1`,
       timeout: 10000,
       debug: defaultDebugEnabled(),
     });

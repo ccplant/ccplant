@@ -67,7 +67,7 @@ export const handlers = [
   }),
 
   // Agent API proxy
-  http.post('/api/proxy/messages', async ({ request }) => {
+  http.post('/api/v1/messages', async ({ request }) => {
     const body = await request.json() as any;
     
     // Simulate streaming response
@@ -113,7 +113,7 @@ export const handlers = [
   }),
 
   // Health check
-  http.get('/api/proxy/health', () => {
+  http.get('/api/v1/health', () => {
     return HttpResponse.json({ status: 'ok' });
   }),
 ];

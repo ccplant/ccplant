@@ -597,7 +597,7 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
 
     const onMessage = vi.fn();
-    const client = new AgentAPIProxyClient({ baseURL: '/api/proxy' });
+    const client = new AgentAPIProxyClient({ baseURL: '/api/v1' });
     const subscription = client.subscribeToACPSessionEventsForInitialization('session-1', {
       onMessage,
       onChunk: vi.fn(),
@@ -605,7 +605,7 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
       onPermission: vi.fn(),
       onError: vi.fn(),
     });
-    expect(FakeEventSource.instance.url).toBe('/api/proxy/session-1/sse');
+    expect(FakeEventSource.instance.url).toBe('/api/v1/session-1/sse');
     FakeEventSource.instance.onopen?.();
 
     await expect(subscription.opened).resolves.toBe(true);
@@ -640,7 +640,7 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
     }
     vi.stubGlobal('EventSource', FakeEventSource);
 
-    const client = new AgentAPIProxyClient({ baseURL: '/api/proxy' });
+    const client = new AgentAPIProxyClient({ baseURL: '/api/v1' });
     const subscription = client.subscribeToACPSessionEventsForInitialization('session-1', {
       onMessage: vi.fn(),
       onChunk: vi.fn(),
