@@ -71,6 +71,19 @@ unset REGISTRATION_TOKEN
 
 `X.Y.Z`は使用するccplantリリースのChartバージョンへ置き換えてください。Kubernetes版はNamespaceを必要に応じて作成し、OCI Chart `oci://ghcr.io/ccplant/charts/session-manager`をインストールして、リソースがReadyになるまで最大10分待ちます。
 
+`--persistence`を指定すると、各Session Podのworkspaceに専用PVCを作成します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
+
+```bash
+ccplant session-manager install \
+  --upstream https://ccplant.example.com \
+  --registration-token-file ./registration-token \
+  --namespace ccplant-session \
+  --version X.Y.Z \
+  --persistence \
+  --storage-class standard \
+  --persistence-size 20Gi
+```
+
 ネイティブ版は、現在の`ccplant`実行ファイルを管理対象の場所へコピーし、Linuxではsystemd service、macOSではユーザーのLaunchAgentとして起動します。macOSでは`sudo`を外して同じコマンドを実行してください。`os`、`arch`、`hostname`ラベルは自動で追加されます。
 
 ネイティブ版は親APIへoutbound接続するため、親APIからホストへのinbound接続やSession Manager用の公開URLは不要です。
@@ -230,6 +243,9 @@ sudo ccplant native uninstall \
 | `--instance-id` | `<namespace>/<release>` | 再登録でも変えない一意なインスタンスID |
 | `--version` | 未指定 | Session Manager Chartのバージョン |
 | `--chart` | 公式OCI Chart | 利用するHelm Chart |
+| `--persistence` | `false` | Session Podのworkspaceに専用PVCを作成する |
+| `--storage-class` | 未指定 | Session PVCのStorageClass。未指定時はクラスタのデフォルトを使用 |
+| `--persistence-size` | `10Gi` | Session PVCごとの容量 |
 | `--timeout` | `10m` | Helm処理のタイムアウト |
 | `--wait` | `true` | リソースがReadyになるまで待つ |
 | `--create-namespace` | `true` | Namespaceがなければ作成する |
