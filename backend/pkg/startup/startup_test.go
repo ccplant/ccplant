@@ -1,13 +1,78 @@
 package startup
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+func TestGenerateMarketplaceGitHubAppTokenDiscoversRepositoryInstallation(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemData := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+
+	var installationRequests, tokenRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/repos/acme/private-marketplace/installation":
+			installationRequests++
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+		case "/api/v3/app/installations/99/access_tokens":
+			tokenRequests++
+			var body struct {
+				Repositories []string          `json:"repositories"`
+				Permissions  map[string]string `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode token request: %v", err)
+			}
+			if !reflect.DeepEqual(body.Repositories, []string{"private-marketplace"}) {
+				t.Errorf("repositories = %v", body.Repositories)
+			}
+			if body.Permissions["contents"] != "read" {
+				t.Errorf("contents permission = %q", body.Permissions["contents"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"token":      "marketplace-token",
+				"expires_at": "2030-01-01T00:00:00Z",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("GITHUB_APP_ID", "123")
+	t.Setenv("GITHUB_APP_PEM", string(pemData))
+	t.Setenv("GITHUB_APP_PEM_PATH", "")
+	t.Setenv("GITHUB_URL", "https://github.enterprise.test")
+	t.Setenv("GITHUB_API", server.URL)
+	t.Setenv("GITHUB_TOKEN", "working-repository-token")
+	t.Setenv("GITHUB_INSTALLATION_ID", "42")
+
+	token, err := GenerateMarketplaceGitHubAppToken(context.Background(), "https://github.enterprise.test/acme/private-marketplace.git")
+	if err != nil {
+		t.Fatalf("GenerateMarketplaceGitHubAppToken: %v", err)
+	}
+	if token != "marketplace-token" {
+		t.Fatalf("token = %q", token)
+	}
+	if installationRequests != 1 || tokenRequests != 1 {
+		t.Fatalf("requests = installation:%d token:%d", installationRequests, tokenRequests)
+	}
+}
 
 func TestSetupClaudeCode(t *testing.T) {
 	// Create temporary directory for testing

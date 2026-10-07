@@ -1031,6 +1031,22 @@ func TestCloneMarketplace(t *testing.T) {
 	})
 }
 
+func TestMarketplaceAnonymousEnvRemovesAmbientCredentials(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "working-token")
+	t.Setenv("GH_TOKEN", "gh-token")
+	t.Setenv("GIT_ASKPASS", "/tmp/askpass")
+	t.Setenv("AGENTAPI_MARKETPLACE_GIT_PASSWORD", "marketplace-token")
+
+	env := marketplaceAnonymousEnv()
+	for _, entry := range env {
+		for _, prefix := range []string{"GITHUB_TOKEN=", "GH_TOKEN=", "GIT_ASKPASS=", "AGENTAPI_MARKETPLACE_GIT_"} {
+			if strings.HasPrefix(entry, prefix) {
+				t.Fatalf("credential environment leaked: %s", prefix)
+			}
+		}
+	}
+}
+
 func TestSync(t *testing.T) {
 	t.Run("succeeds without settings file", func(t *testing.T) {
 		tmpDir := t.TempDir()

@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -427,43 +428,42 @@ func buildGitHubEnvForHost(targetHost string) []string {
 func cloneMarketplace(url, targetDir string) error {
 	urlHost := github_pkg.ExtractRepositoryHostname(url)
 	ghesHost := getGHESHost()
-	env := buildGitHubEnvForHost(urlHost)
+	repoFullName := github_pkg.ParseRepositoryURL(url)
+
+	// Preserve the explicit GitHub.com credential used when the built-in App is
+	// configured for GHES rather than github.com.
+	if repoFullName != "" && urlHost == "github.com" && ghesHost != "" && os.Getenv("GITHUB_COM_TOKEN") != "" {
+		return cloneGitHubDotComMarketplace(repoFullName, targetDir)
+	}
+
+	var marketplaceToken string
+	if repoFullName != "" {
+		token, err := GenerateMarketplaceGitHubAppToken(context.Background(), url)
+		if err != nil {
+			log.Printf("[SYNC] Built-in GitHub App authentication unavailable for marketplace %s: %v; trying anonymous clone", repoFullName, err)
+		} else {
+			marketplaceToken = token
+		}
+	}
 
 	if _, err := os.Stat(filepath.Join(targetDir, ".git")); err == nil {
 		log.Printf("[SYNC] Marketplace already cloned at %s, pulling updates", targetDir)
-		cmd := exec.Command("git", "pull")
-		cmd.Dir = targetDir
-		cmd.Env = env
-		if output, err := cmd.CombinedOutput(); err != nil {
+		output, err := runMarketplaceGit(targetDir, marketplaceToken, "pull")
+		if err != nil {
 			return fmt.Errorf("git pull failed: %w, output: %s", err, string(output))
 		}
 		return nil
 	}
 
-	repoFullName := github_pkg.ParseRepositoryURL(url)
 	if repoFullName != "" {
-		// github.com URL in a GHES environment: keep GH_HOST off the GHES server.
-		if urlHost == "github.com" && ghesHost != "" {
-			log.Printf("[SYNC] github.com marketplace detected in GHES environment, using direct clone for %s", repoFullName)
-			return cloneGitHubDotComMarketplace(repoFullName, targetDir)
-		}
-
-		// GHES URL or non-GHES environment: use gh repo clone with appropriate auth.
-		log.Printf("[SYNC] Setting up GitHub authentication for marketplace repo: %s", repoFullName)
-		if err := SetupGitHubAuth(repoFullName); err != nil {
-			log.Printf("[SYNC] Warning: GitHub auth setup failed for %s: %v", repoFullName, err)
-		}
-
-		log.Printf("[SYNC] Cloning marketplace %s via gh repo clone", repoFullName)
+		log.Printf("[SYNC] Cloning GitHub marketplace %s via HTTPS git", repoFullName)
 		parentDir := filepath.Dir(targetDir)
 		if err := os.MkdirAll(parentDir, 0755); err != nil {
 			return fmt.Errorf("failed to create parent directory: %w", err)
 		}
-		cmd := exec.Command("gh", "repo", "clone", repoFullName, targetDir)
-		cmd.Env = env
-		cmd.Dir = parentDir
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("gh repo clone failed: %w, output: %s", err, string(output))
+		output, err := runMarketplaceGit(parentDir, marketplaceToken, "clone", "--depth", "1", url, targetDir)
+		if err != nil {
+			return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 		}
 		return nil
 	}
@@ -471,11 +471,61 @@ func cloneMarketplace(url, targetDir string) error {
 	// Non-GitHub URL (e.g., local path): fall back to git clone.
 	log.Printf("[SYNC] Cloning marketplace via git clone: %s", url)
 	cmd := exec.Command("git", "clone", "--depth", "1", url, targetDir)
-	cmd.Env = env
+	cmd.Env = marketplaceAnonymousEnv()
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
 	return nil
+}
+
+func runMarketplaceGit(dir, token string, args ...string) ([]byte, error) {
+	cmdArgs := append([]string{"-c", "credential.helper="}, args...)
+	cmd := exec.Command("git", cmdArgs...)
+	cmd.Dir = dir
+	if token == "" {
+		cmd.Env = marketplaceAnonymousEnv()
+		return cmd.CombinedOutput()
+	}
+
+	helperDir, err := os.MkdirTemp("", "agentapi-marketplace-credential-")
+	if err != nil {
+		return nil, fmt.Errorf("create temporary credential helper: %w", err)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(helperDir); removeErr != nil {
+			log.Printf("[SYNC] Warning: failed to remove temporary marketplace credential helper: %v", removeErr)
+		}
+	}()
+	helperPath := filepath.Join(helperDir, "askpass.sh")
+	helper := `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s' "$AGENTAPI_MARKETPLACE_GIT_USERNAME" ;;
+  *) printf '%s' "$AGENTAPI_MARKETPLACE_GIT_PASSWORD" ;;
+esac
+`
+	if err := os.WriteFile(helperPath, []byte(helper), 0700); err != nil {
+		return nil, fmt.Errorf("write temporary credential helper: %w", err)
+	}
+	cmd.Env = append(marketplaceAnonymousEnv(),
+		"GIT_ASKPASS="+helperPath,
+		"GIT_TERMINAL_PROMPT=0",
+		"AGENTAPI_MARKETPLACE_GIT_USERNAME=x-access-token",
+		"AGENTAPI_MARKETPLACE_GIT_PASSWORD="+token,
+	)
+	return cmd.CombinedOutput()
+}
+
+func marketplaceAnonymousEnv() []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "GITHUB_TOKEN=") || strings.HasPrefix(entry, "GH_TOKEN=") ||
+			strings.HasPrefix(entry, "GIT_ASKPASS=") || strings.HasPrefix(entry, "GIT_TERMINAL_PROMPT=") ||
+			strings.HasPrefix(entry, "AGENTAPI_MARKETPLACE_GIT_") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, "GIT_TERMINAL_PROMPT=0")
 }
 
 // cloneGitHubDotComMarketplace clones a marketplace from github.com in a GHES
