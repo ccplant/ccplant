@@ -412,6 +412,22 @@ func TestExcludeAllocatedSessions(t *testing.T) {
 	}
 }
 
+func TestExcludeTemplatedSessions(t *testing.T) {
+	sessions := []entities.Session{
+		&sessionListTestSession{id: "templated-public-id"},
+		&sessionListTestSession{id: "templated-runtime-id"},
+		&sessionListTestSession{id: "active-id"},
+	}
+	routes := []*repositories.SessionRoute{
+		{SessionID: "templated-public-id", RemoteSessionID: "templated-runtime-id", Status: "templated"},
+		{SessionID: "active-id", Status: "active"},
+	}
+
+	got := excludeTemplatedSessions(sessions, routes)
+	require.Len(t, got, 1)
+	require.Equal(t, "active-id", got[0].ID())
+}
+
 func TestIndexAllocatedSessionsPreservesRuntimeStatus(t *testing.T) {
 	sessions := []entities.Session{
 		&sessionListTestSession{id: "allocated-running", status: "running"},

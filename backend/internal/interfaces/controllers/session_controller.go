@@ -1005,8 +1005,15 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			log.Printf("[SEARCH] Failed to list session routes: %v", err)
 			routes = nil
 		} else {
+			matchingSessions = excludeTemplatedSessions(matchingSessions, routes)
 			activeRoutes := routes[:0]
 			for _, route := range routes {
+				// A templated session is retained as a tombstone so direct access can
+				// explain where it went, but it is no longer a usable session and must
+				// not appear in session listings.
+				if route.Status == "templated" {
+					continue
+				}
 				if c.reconcileQueuedDeletion(ctx.Request().Context(), route) {
 					continue
 				}
@@ -1308,6 +1315,30 @@ func excludeAllocatedSessions(sessions []entities.Session, routes []*repositorie
 	filtered := make([]entities.Session, 0, len(sessions))
 	for _, session := range sessions {
 		if _, allocated := allocatedIDs[session.ID()]; !allocated {
+			filtered = append(filtered, session)
+		}
+	}
+	return filtered
+}
+
+func excludeTemplatedSessions(sessions []entities.Session, routes []*repositories.SessionRoute) []entities.Session {
+	templatedIDs := make(map[string]struct{})
+	for _, route := range routes {
+		if route.Status != "templated" {
+			continue
+		}
+		templatedIDs[route.SessionID] = struct{}{}
+		if route.RemoteSessionID != "" {
+			templatedIDs[route.RemoteSessionID] = struct{}{}
+		}
+	}
+	if len(templatedIDs) == 0 {
+		return sessions
+	}
+
+	filtered := make([]entities.Session, 0, len(sessions))
+	for _, session := range sessions {
+		if _, templated := templatedIDs[session.ID()]; !templated {
 			filtered = append(filtered, session)
 		}
 	}
