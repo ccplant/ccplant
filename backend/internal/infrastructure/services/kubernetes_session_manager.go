@@ -530,7 +530,16 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 		templateID = snapshotID[0]
 	}
 	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
-		if settings := session.ProvisionSettings(); settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+		settings := session.ProvisionSettings()
+		// Claimed stock sessions and sessions reconstructed by another replica
+		// intentionally have no in-memory request. Their canonical settings
+		// Secret retains the parent runtime credentials needed for checkpointing.
+		if settings == nil || settings.ParentRuntime == nil {
+			if persisted, err := m.CurrentSessionSettings(ctx, sessionID); err == nil {
+				settings = persisted
+			}
+		}
+		if settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
 			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime, templateID)
 		}
 	}
