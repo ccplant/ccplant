@@ -94,6 +94,9 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 		}
 	}()
 	if tunneledSnapshot {
+		if err := c.checkpointTunneledRuntimeSnapshot(ctx.Request().Context(), remoteRoute, templateID); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to checkpoint session").SetInternal(err)
+		}
 		if err := c.manageTunneledContextSnapshot(ctx.Request().Context(), remoteRoute, templateID, http.MethodPost); err != nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to preserve template snapshot").SetInternal(err)
 		}
@@ -137,6 +140,23 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 	}
 	rollback = false
 	return ctx.JSON(http.StatusCreated, template)
+}
+
+func (c *SessionController) checkpointTunneledRuntimeSnapshot(ctx context.Context, route *repositories.SessionRoute, snapshotID string) error {
+	target := "http://session.local/internal/checkpoint-session-state?snapshot_id=" + url.QueryEscape(snapshotID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.esmControlTunnel.Do(ctx, route.SessionID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New(resp.Status)
+	}
+	return nil
 }
 
 func (c *SessionController) authorizedTemplate(ctx echo.Context, modify bool) (*entities.SessionContextTemplate, error) {
