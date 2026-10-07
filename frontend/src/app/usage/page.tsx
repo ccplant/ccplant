@@ -41,7 +41,7 @@ export default function UsagePage() {
     let active = true; const controller = new AbortController(); setLoading(true); setError(''); if (view === 'model') setUsage(null); else setRuntime(null)
     const load = async () => {
       try {
-        const path = view === 'model' ? `/api/proxy/usage?${usageParams}` : `/api/proxy/session-usage/dashboard?${runtimeParams}`
+        const path = view === 'model' ? `/api/v1/usage?${usageParams}` : `/api/v1/session-usage/dashboard?${runtimeParams}`
         const response = await fetch(path, { signal: controller.signal, cache: 'no-store' })
         if (!response.ok) { if (response.status === 404) throw new Error('この利用統計は環境で有効になっていません。'); if (response.status === 403) throw new Error('選択したチームの利用統計を表示する権限がありません。'); throw new Error('利用統計を取得できませんでした。もう一度お試しください。') }
         const data = await response.json(); if (!active) return; if (view === 'model') setUsage(data); else setRuntime(data)
@@ -64,7 +64,7 @@ export default function UsagePage() {
         <div className="inline-flex w-fit rounded-lg bg-gray-200 p-1 dark:bg-gray-800" aria-label="利用統計の種類">
           <ViewButton active={view === 'model'} onClick={() => setView('model')}>Model usage</ViewButton><ViewButton active={view === 'runtime'} onClick={() => setView('runtime')}>Session runtime</ViewButton>
         </div>
-        {view === 'model' ? <div className="flex items-center gap-2"><select aria-label="対象期間" value={range} onChange={event => setRange(event.target.value as Range)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">{ranges.map(option => <option key={option.value} value={option.value}>過去{option.label}</option>)}</select><a href={`/api/proxy/usage/export.parquet?${usageParams}`} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:border-blue-400 dark:border-gray-700 dark:bg-gray-900"><Download className="h-4 w-4" />Parquet</a></div>
+        {view === 'model' ? <div className="flex items-center gap-2"><select aria-label="対象期間" value={range} onChange={event => setRange(event.target.value as Range)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">{ranges.map(option => <option key={option.value} value={option.value}>過去{option.label}</option>)}</select><a href={`/api/v1/usage/export.parquet?${usageParams}`} className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:border-blue-400 dark:border-gray-700 dark:bg-gray-900"><Download className="h-4 w-4" />Parquet</a></div>
           : <div className="flex flex-wrap items-center gap-2"><label htmlFor="runtime-month" className="text-sm text-gray-500">対象月</label><input id="runtime-month" type="month" value={month} max={monthValue()} onChange={event => setMonth(event.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />{runtime && runtime.available_pools.length > 1 && <select aria-label="Pool" value={pool} onChange={event => setPool(event.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"><option value="">All pools</option>{runtime.available_pools.map(value => <option key={value}>{value}</option>)}</select>}</div>}
       </div>
       {loading && <div aria-live="polite" className="mt-8 h-72 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />}
