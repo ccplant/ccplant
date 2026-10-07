@@ -446,7 +446,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 				log.Printf("[PROVISIONER] Warning: invalid INITIAL_MESSAGE_WAIT_SECOND=%q: %v", v, err)
 			}
 		}
-		sendInitialMessage(ctx, agentapiURL, settings.InitialMessage, agentType, waitSec)
+		sendInitialMessage(ctx, agentapiURL, settings.InitialMessage, agentType, waitSec, strings.TrimSpace(settings.Session.ResumeFrom) != "")
 	}
 
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
@@ -1630,10 +1630,10 @@ type acpMessagesResponse struct {
 
 // sendInitialMessage sends an initial message to agentapi after it has
 // started, replicating the logic of initialMessageSenderScript.
-func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int) {
+func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int, restored bool) {
 	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
 	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi-ollama" || agentType == "cursor" {
-		sendACPInitialMessage(ctx, agentapiURL, message, waitSec)
+		sendACPInitialMessage(ctx, agentapiURL, message, waitSec, restored)
 		return
 	}
 
@@ -1703,12 +1703,16 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 
 // sendACPInitialMessage sends an initial message to an ACP bridge session
 // via POST /rpc (JSON-RPC 2.0 session/prompt).
-func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, waitSec int) {
+func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, waitSec int, restored bool) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Idempotency: check whether user messages already exist in ACP format.
-	if count := countACPUserMessages(client, agentapiURL); count > 0 {
+	if count := countACPUserMessages(client, agentapiURL); !restored && count > 0 {
 		log.Printf("[PROVISIONER] ACP user messages already exist (%d), skipping initial message", count)
+		return
+	}
+	if restored && hasACPUserMessage(client, agentapiURL, message) {
+		log.Printf("[PROVISIONER] Restored ACP history already contains the initial message, skipping")
 		return
 	}
 
@@ -1724,8 +1728,12 @@ func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, wai
 	}
 
 	// Double-check idempotency after wait.
-	if count := countACPUserMessages(client, agentapiURL); count > 0 {
+	if count := countACPUserMessages(client, agentapiURL); !restored && count > 0 {
 		log.Printf("[PROVISIONER] ACP user messages appeared during wait (%d), skipping", count)
+		return
+	}
+	if restored && hasACPUserMessage(client, agentapiURL, message) {
+		log.Printf("[PROVISIONER] Restored ACP history now contains the initial message, skipping")
 		return
 	}
 
@@ -1846,6 +1854,38 @@ func countACPUserMessages(client *http.Client, agentapiURL string) int {
 		}
 	}
 	return count
+}
+
+// hasACPUserMessage checks exact restored prompt content. A restored session
+// legitimately has older user messages, so message count alone cannot decide
+// whether the new launch prompt has already been delivered.
+func hasACPUserMessage(client *http.Client, agentapiURL, message string) bool {
+	resp, err := client.Get(agentapiURL + "/messages")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var mr acpMessagesResponse
+	if json.NewDecoder(resp.Body).Decode(&mr) != nil {
+		return false
+	}
+	for _, raw := range mr.Messages {
+		var event struct {
+			Method string `json:"method"`
+			Params struct {
+				Update struct {
+					SessionUpdate string `json:"sessionUpdate"`
+					Content       struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"update"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(raw, &event) == nil && event.Method == "session/update" && event.Params.Update.SessionUpdate == "user_message_chunk" && event.Params.Update.Content.Text == message {
+			return true
+		}
+	}
+	return false
 }
 
 // waitForDefaultAgentReady uses the two-phase strategy from the original shell
