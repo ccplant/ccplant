@@ -2480,6 +2480,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if override.Pool != "" {
 		merged.Pool = override.Pool
 	}
+	if override.ResumeFrom != "" {
+		merged.ResumeFrom = override.ResumeFrom
+	}
 	if override.Message != "" {
 		merged.Message = override.Message
 	}
