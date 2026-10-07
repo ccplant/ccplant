@@ -176,6 +176,19 @@ func TestResolveAutoSuspendPolicyForRemoteSessionWithoutLocalPersistence(t *test
 	}
 }
 
+func TestCheckpointSessionStateAcceptsReconstructedPersistentSession(t *testing.T) {
+	manager := newSuspendTestManager(t)
+	manager.config.SessionPersistence.Backend = "s3"
+	session := NewKubernetesSession("session-1", &entities.RunServerRequest{},
+		"agentapi-session-session-1", "agentapi-session-session-1-svc", "session-1-pvc", "test-ns", 9000, nil, nil)
+	manager.sessions[session.id] = session
+
+	err := manager.CheckpointSessionState(context.Background(), session.id)
+	if err == nil || err.Error() != "session control is unavailable" {
+		t.Fatalf("CheckpointSessionState() error = %v, want session control is unavailable", err)
+	}
+}
+
 func TestReconcileInitializesMissingSuspendTimer(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",

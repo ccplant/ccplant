@@ -577,7 +577,14 @@ func (m *KubernetesSessionManager) CheckpointSessionState(ctx context.Context, s
 	if !ok || session == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
-	if !m.requiresSessionCheckpoint(session) {
+	// Stock sessions and sessions reconstructed by another manager replica do
+	// not retain their original RunServerRequest. The public template endpoint
+	// has already restricted this operation to ACP sessions, so a missing
+	// request must not make an otherwise persistent session look unsupported.
+	if m.config.SessionPersistence.Backend == "" {
+		return fmt.Errorf("session context templates require a persistent ACP session")
+	}
+	if req := session.Request(); req != nil && req.AgentType != "" && req.AgentType != "claude-acp" && req.AgentType != "codex-acp" {
 		return fmt.Errorf("session context templates require a persistent ACP session")
 	}
 	return m.checkpointSessionState(ctx, sessionID)
