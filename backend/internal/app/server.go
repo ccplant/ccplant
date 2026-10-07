@@ -91,6 +91,7 @@ type Server struct {
 	sessionAllocationRedis      *redis.Client
 	userFileRepo                portrepos.UserFileRepository       // User-managed files repository
 	sessionProfileRepo          portrepos.SessionProfileRepository // Session profile repository
+	contextTemplateRepo         portrepos.SessionContextTemplateRepository
 	scheduleManager             schedule.Manager
 	apiTokenRepo                portrepos.APITokenRepository // Named API token repository
 	localUserRepo               portrepos.LocalUserRepository
@@ -469,6 +470,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		persistenceClient,
 		namespace, encryptionRegistry,
 	))
+	contextTemplateRepo := portrepos.SessionContextTemplateRepository(repositories.NewKubernetesSessionContextTemplateRepository(persistenceClient, namespace))
 	if k8sSessionManager != nil {
 		k8sSessionManager.SetSessionProfileRepository(sessionProfileRepo)
 	}
@@ -560,6 +562,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		sessionAllocationRedis:      sessionAllocationRedis,
 		userFileRepo:                userFileRepo,
 		sessionProfileRepo:          sessionProfileRepo,
+		contextTemplateRepo:         contextTemplateRepo,
 		scheduleManager:             scheduleManager,
 		apiTokenRepo:                apiTokenRepo,
 		localUserRepo:               localUserRepo,

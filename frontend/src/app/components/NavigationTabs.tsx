@@ -25,6 +25,15 @@ const allTabs: Tab[] = [
     ),
   },
   {
+    label: 'Workspaces',
+    href: '/workspaces',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7a2 2 0 012-2h3l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V7z" />
+      </svg>
+    ),
+  },
+  {
     label: 'Schedules',
     href: '/schedules',
     icon: (

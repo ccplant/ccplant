@@ -1,8 +1,10 @@
 package sessionmanagerapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -95,6 +97,23 @@ type fakeManager struct {
 	completedExternal  coreallocation.AllocationResult
 }
 
+type memorySessionStateStore struct{ data map[string][]byte }
+
+func (s *memorySessionStateStore) Save(_ context.Context, id string, r io.Reader) error {
+	b, err := io.ReadAll(r)
+	if err == nil {
+		s.data[id] = b
+	}
+	return err
+}
+func (s *memorySessionStateStore) Load(_ context.Context, id string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.data[id])), nil
+}
+func (s *memorySessionStateStore) Delete(_ context.Context, id string) error {
+	delete(s.data, id)
+	return nil
+}
+
 type fakeProvisionSettingsBuilder struct {
 	settings *sessionsettings.SessionSettings
 }
@@ -163,6 +182,8 @@ func (m *fakeManager) SuspendSession(_ context.Context, id string) error {
 	m.suspendedID = id
 	return nil
 }
+
+func (m *fakeManager) CheckpointSessionState(context.Context, string) error { return nil }
 
 func (m *fakeManager) GetMessages(context.Context, string) ([]portrepos.Message, error) {
 	return m.messages, nil
@@ -449,6 +470,24 @@ func TestClientRequestsManagerOwnedSuspend(t *testing.T) {
 	if manager.suspendedID != "session-1" {
 		t.Fatalf("suspended session = %q", manager.suspendedID)
 	}
+}
+
+func TestClientManagesContextSnapshotInExecutionPlane(t *testing.T) {
+	manager := newFakeManager()
+	store := &memorySessionStateStore{data: map[string][]byte{"session-1": []byte("checkpoint")}}
+	handler, err := NewHandler(manager, testBearerToken, WithSessionStateStore(store))
+	require.NoError(t, err)
+	e := echo.New()
+	handler.RegisterRoutes(e)
+	server := httptest.NewServer(e)
+	defer server.Close()
+	client, err := NewClient(server.URL, testBearerToken)
+	require.NoError(t, err)
+
+	require.NoError(t, client.CreateSessionContextSnapshot(context.Background(), "session-1", "tpl-1"))
+	require.Equal(t, []byte("checkpoint"), store.data["tpl-1"])
+	require.NoError(t, client.DeleteSessionContextSnapshot(context.Background(), "tpl-1"))
+	require.NotContains(t, store.data, "tpl-1")
 }
 
 func TestClientSendsAPIResolvedProvisionSettings(t *testing.T) {

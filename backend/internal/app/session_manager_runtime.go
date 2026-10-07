@@ -208,7 +208,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
 	})
-	privateHandler, err := sessionmanagerapi.NewHandler(manager, cfg.SessionManager.InternalAPIToken)
+	privateHandler, err := sessionmanagerapi.NewHandler(manager, cfg.SessionManager.InternalAPIToken, sessionmanagerapi.WithSessionStateStore(stateStore))
 	if err != nil {
 		runtimeCancel()
 		if redisClient != nil {
@@ -249,7 +249,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	// provisioner routes. The forwarding pattern is intentionally limited to
 	// one endpoint segment so it cannot overlap /internal/* callbacks.
 	if remoteMode {
-		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret).RegisterRoutes(e); err != nil {
+		if err := externalmanager.NewHandlers(manager, cfg.SessionManager.HMACSecret, externalmanager.WithSessionStateStore(stateStore)).RegisterRoutes(e); err != nil {
 			runtimeCancel()
 			if redisClient != nil {
 				_ = redisClient.Close()

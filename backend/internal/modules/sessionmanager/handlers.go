@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/codexauth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
@@ -36,6 +37,7 @@ import (
 // Handlers implements the custom route handler for the session manager forwarding endpoint.
 type Handlers struct {
 	sessionManager repositories.SessionManager
+	stateStore     services.SessionStateStore
 	hmacSecret     []byte
 }
 
@@ -46,11 +48,21 @@ type operationalProvider interface {
 
 // NewHandlers creates a new Handlers instance.
 // hmacSecret must be non-empty; if it is empty, RegisterRoutes will refuse to register.
-func NewHandlers(sessionManager repositories.SessionManager, hmacSecret string) *Handlers {
-	return &Handlers{
+type HandlerOption func(*Handlers)
+
+func WithSessionStateStore(store services.SessionStateStore) HandlerOption {
+	return func(h *Handlers) { h.stateStore = store }
+}
+
+func NewHandlers(sessionManager repositories.SessionManager, hmacSecret string, options ...HandlerOption) *Handlers {
+	h := &Handlers{
 		sessionManager: sessionManager,
 		hmacSecret:     []byte(hmacSecret),
 	}
+	for _, option := range options {
+		option(h)
+	}
+	return h
 }
 
 // GetName returns the handler name for logging.
@@ -74,6 +86,8 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 	g.GET("/:sessionId", h.GetSession)
 	g.POST("/:sessionId/resume", h.ResumeSession)
 	g.POST("/:sessionId/suspend", h.SuspendSession)
+	g.POST("/:sessionId/context-snapshots/:snapshotId", h.CreateContextSnapshot)
+	g.DELETE("/:sessionId/context-snapshots/:snapshotId", h.DeleteContextSnapshot)
 	g.POST("/:sessionId/restart", h.RestartSession)
 	g.POST("/:sessionId/restart/validate", h.ValidateRestart)
 	g.POST("/:sessionId/stop", h.StopSessionAgent)
@@ -110,6 +124,45 @@ func (h *Handlers) RegisterRoutes(e *echo.Echo) error {
 
 	log.Printf("[SESSION_MANAGER] Registered routes under /api/v1/sessions")
 	return nil
+}
+
+func (h *Handlers) CreateContextSnapshot(c echo.Context) error {
+	if c.Request().Header.Get("X-CCPlant-Template-Snapshot-Ready") == "1" {
+		return c.NoContent(http.StatusNoContent)
+	}
+	if creator, ok := h.sessionManager.(repositories.SessionContextSnapshotCreator); ok {
+		if err := creator.CreateSessionContextSnapshot(c.Request().Context(), c.Param("sessionId"), c.Param("snapshotId")); err != nil {
+			return err
+		}
+		return c.NoContent(http.StatusNoContent)
+	}
+	checkpointer, ok := h.sessionManager.(repositories.SessionCheckpointer)
+	if !ok || h.stateStore == nil {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session context snapshots are not supported")
+	}
+	if err := checkpointer.CheckpointSessionState(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return err
+	}
+	snapshot, err := h.stateStore.Load(c.Request().Context(), c.Param("sessionId"))
+	if err != nil {
+		return err
+	}
+	defer snapshot.Close()
+	if err := h.stateStore.Save(c.Request().Context(), c.Param("snapshotId"), snapshot); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *Handlers) DeleteContextSnapshot(c echo.Context) error {
+	deleter, ok := h.stateStore.(services.SessionStateDeleter)
+	if !ok {
+		return echo.NewHTTPError(http.StatusNotImplemented, "session context snapshot deletion is not supported")
+	}
+	if err := deleter.Delete(c.Request().Context(), c.Param("snapshotId")); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // DeleteOperationalRunner removes the complete workload through the session

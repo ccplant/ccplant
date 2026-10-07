@@ -47,6 +47,7 @@ type routeJSON struct {
 	Status            string            `json:"status,omitempty"`
 	StatusUpdatedAt   time.Time         `json:"status_updated_at,omitempty"`
 	DeletionRequestID string            `json:"deletion_request_id,omitempty"`
+	ContextTemplateID string            `json:"context_template_id,omitempty"`
 }
 
 // KubernetesSessionRouteRepository implements SessionRouteRepository using Kubernetes Secrets
@@ -99,6 +100,7 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 		Status:            route.Status,
 		StatusUpdatedAt:   route.StatusUpdatedAt,
 		DeletionRequestID: route.DeletionRequestID,
+		ContextTemplateID: route.ContextTemplateID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal route: %w", err)
@@ -207,6 +209,7 @@ func (r *KubernetesSessionRouteRepository) load(ctx context.Context, sessionID s
 		Status:            rj.Status,
 		StatusUpdatedAt:   rj.StatusUpdatedAt,
 		DeletionRequestID: rj.DeletionRequestID,
+		ContextTemplateID: rj.ContextTemplateID,
 	}
 	r.cacheRoute(route)
 	return route, nil
@@ -342,6 +345,7 @@ func decodeSessionRoutes(secrets []corev1.Secret) []*portrepos.SessionRoute {
 			Status:            rj.Status,
 			StatusUpdatedAt:   rj.StatusUpdatedAt,
 			DeletionRequestID: rj.DeletionRequestID,
+			ContextTemplateID: rj.ContextTemplateID,
 		})
 	}
 	return cloneSessionRoutes(routes)

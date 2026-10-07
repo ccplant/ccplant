@@ -406,6 +406,14 @@ func (c *Client) SuspendSession(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(id)+"/suspend", nil, nil)
 }
 
+func (c *Client) CreateSessionContextSnapshot(ctx context.Context, sessionID, snapshotID string) error {
+	return c.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(sessionID)+"/context-snapshots/"+url.PathEscape(snapshotID), nil, nil)
+}
+
+func (c *Client) DeleteSessionContextSnapshot(ctx context.Context, snapshotID string) error {
+	return c.do(ctx, http.MethodDelete, "/context-snapshots/"+url.PathEscape(snapshotID), nil, nil)
+}
+
 func (c *Client) GetMessages(ctx context.Context, id string) ([]portrepos.Message, error) {
 	return telemetry.Operation(ctx, "sessionmanagerapi.Client.GetMessages", func(ctx context.Context) ([]portrepos.Message, error) {
 		return c.getMessages(ctx, id)

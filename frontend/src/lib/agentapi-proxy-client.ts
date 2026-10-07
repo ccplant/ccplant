@@ -16,7 +16,9 @@ import {
   ToolStatusResponseBody,
   PendingAction,
   ActionRequest,
-  ActionResponse
+  ActionResponse,
+  SessionContextTemplate,
+  Workspace
 } from '../types/agentapi';
 import {
   Schedule,
@@ -1066,7 +1068,7 @@ export class AgentAPIProxyClient {
     // Handle backward compatibility and new format
     let data: Partial<CreateSessionRequest>;
 
-    if (sessionData && (sessionData.environment || sessionData.tags || sessionData.metadata || sessionData.params || sessionData.scope || sessionData.team_id || sessionData.session_profile_id)) {
+    if (sessionData && (sessionData.environment || sessionData.tags || sessionData.metadata || sessionData.params || sessionData.scope || sessionData.team_id || sessionData.session_profile_id || sessionData.workspace_id || sessionData.context_template_id)) {
       // New format: sessionData contains environment, metadata, tags, params, scope, and/or team_id
       data = {
         environment: sessionData.environment as Record<string, string> | undefined,
@@ -1075,7 +1077,9 @@ export class AgentAPIProxyClient {
         params: sessionData.params as { message?: string; github_token?: string; [key: string]: unknown } | undefined,
         scope: sessionData.scope as CreateSessionRequest['scope'],
         team_id: sessionData.team_id as string | undefined,
-        session_profile_id: sessionData.session_profile_id as string | undefined,
+		session_profile_id: sessionData.session_profile_id as string | undefined,
+		workspace_id: sessionData.workspace_id as string | undefined,
+		context_template_id: sessionData.context_template_id as string | undefined,
       };
     } else {
       // Backward compatibility: sessionData is just metadata
@@ -1205,6 +1209,49 @@ export class AgentAPIProxyClient {
     return this.makeRequest<{ session_id: string; status: string }>(`/sessions/${sessionId}/suspend`, {
       method: 'POST',
     });
+  }
+
+  async templateizeSession(sessionId: string, name: string, description = ''): Promise<SessionContextTemplate> {
+    return this.makeRequest<SessionContextTemplate>(`/sessions/${encodeURIComponent(sessionId)}/templateize`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ name, description, wait_for_idle: true }),
+    });
+  }
+
+  async saveSessionAsWorkspace(sessionId: string, name: string, description = ''): Promise<Workspace> {
+    return this.makeRequest<Workspace>(`/sessions/${encodeURIComponent(sessionId)}/workspace`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ name, description, wait_for_idle: true }),
+    });
+  }
+
+  async listWorkspaces(): Promise<{ workspaces: Workspace[] }> {
+    return this.makeRequest('/workspaces');
+  }
+
+  async getWorkspace(workspaceId: string): Promise<Workspace> {
+    return this.makeRequest(`/workspaces/${encodeURIComponent(workspaceId)}`);
+  }
+
+  async updateWorkspace(workspaceId: string, input: { name?: string; description?: string }): Promise<Workspace> {
+    return this.makeRequest(`/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    await this.makeRequest(`/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' });
+  }
+
+  async listSessionContextTemplates(): Promise<{ templates: SessionContextTemplate[] }> {
+    return this.makeRequest('/session-context-templates');
+  }
+
+  async deleteSessionContextTemplate(templateId: string): Promise<void> {
+    await this.makeRequest(`/session-context-templates/${encodeURIComponent(templateId)}`, { method: 'DELETE' });
   }
 
 

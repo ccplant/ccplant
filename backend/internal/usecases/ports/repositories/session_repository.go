@@ -82,6 +82,26 @@ type SessionSuspender interface {
 	SuspendSession(ctx context.Context, id string) error
 }
 
+// SessionCheckpointer persists the current ACP conversation and workspace state.
+type SessionCheckpointer interface {
+	CheckpointSessionState(ctx context.Context, id string) error
+}
+
+// SessionContextSnapshotCreator checkpoints a session directly under an
+// immutable template snapshot ID. This lets volume-backed sessions export a
+// portable copy without changing their normal persistence backend.
+type SessionContextSnapshotCreator interface {
+	CreateSessionContextSnapshot(ctx context.Context, sessionID, snapshotID string) error
+}
+
+// SessionContextSnapshotManager owns reusable snapshots in the execution
+// plane's persistence backend. Remote managers implement this capability so
+// the parent API never needs the execution plane's S3 credentials.
+type SessionContextSnapshotManager interface {
+	CreateSessionContextSnapshot(ctx context.Context, sessionID, snapshotID string) error
+	DeleteSessionContextSnapshot(ctx context.Context, snapshotID string) error
+}
+
 // SandboxDomains is execution-plane network-filter state for a session.
 type SandboxDomains struct {
 	Allowed []string `json:"allowed"`

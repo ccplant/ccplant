@@ -259,7 +259,9 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 		return
 	}
 	if command.Method == http.MethodPost && command.Path == "/internal/checkpoint-session-state" {
-		err := executeControlCommand(commandCtx, w.client, os.Getenv("AGENTAPI_AGENT_TYPE"), controlCommand{Type: "checkpoint_session_state"})
+		query, _ := url.ParseQuery(command.RawQuery)
+		payload, _ := json.Marshal(map[string]string{"snapshot_id": query.Get("snapshot_id")})
+		err := executeControlCommand(commandCtx, w.client, w.checkpointAgentType(commandCtx), controlCommand{Type: "checkpoint_session_state", Payload: payload})
 		if err != nil {
 			w.postExecutionError(commandCtx, command, err)
 			return
@@ -348,6 +350,28 @@ func (w *directRuntimeWorker) executeRequest(commandCtx context.Context, command
 			batchBytes = 0
 		}
 	}
+}
+
+func (w *directRuntimeWorker) checkpointAgentType(ctx context.Context) string {
+	if agentType := strings.TrimSpace(os.Getenv("AGENTAPI_AGENT_TYPE")); agentType != "" {
+		return agentType
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.localURL+"/status", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var status struct {
+		AgentType string `json:"agent_type"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&status) != nil {
+		return ""
+	}
+	return status.AgentType
 }
 
 func (w *directRuntimeWorker) postExecutionError(ctx context.Context, command core.Command, err error) {

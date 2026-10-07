@@ -524,10 +524,23 @@ func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *Kubernetes
 	return agentType == "claude-acp" || agentType == "codex-acp"
 }
 
-func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, sessionID string) error {
+func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, sessionID string, snapshotID ...string) error {
+	templateID := ""
+	if len(snapshotID) > 0 {
+		templateID = snapshotID[0]
+	}
 	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
-		if settings := session.ProvisionSettings(); settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
-			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime)
+		settings := session.ProvisionSettings()
+		// Claimed stock sessions and sessions reconstructed by another replica
+		// intentionally have no in-memory request. Their canonical settings
+		// Secret retains the parent runtime credentials needed for checkpointing.
+		if settings == nil || settings.ParentRuntime == nil {
+			if persisted, err := m.CurrentSessionSettings(ctx, sessionID); err == nil {
+				settings = persisted
+			}
+		}
+		if settings != nil && settings.ParentRuntime != nil && settings.ParentRuntime.Enabled {
+			return requestParentSessionCheckpoint(ctx, settings.ParentRuntime, templateID)
 		}
 	}
 	store := m.connectedSessionControlStore(ctx, sessionID)
@@ -535,7 +548,8 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 		return fmt.Errorf("session control is unavailable")
 	}
 	commandID := uuid.NewString()
-	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{ID: commandID, Type: "checkpoint_session_state", CreatedAt: time.Now().UTC()}); err != nil {
+	payload, _ := json.Marshal(map[string]string{"snapshot_id": templateID})
+	if _, err := store.EnqueueCommand(ctx, sessionID, coresessioncontrol.Command{ID: commandID, Type: "checkpoint_session_state", Payload: payload, CreatedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
 	cursor := "0-0"
@@ -571,8 +585,37 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 	}
 }
 
-func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig) error {
+// CheckpointSessionState exposes checkpointing without suspending the workload.
+func (m *KubernetesSessionManager) CheckpointSessionState(ctx context.Context, sessionID string) error {
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	// Stock sessions and sessions reconstructed by another manager replica do
+	// not retain their original RunServerRequest. The public template endpoint
+	// has already restricted this operation to ACP sessions, so a missing
+	// request must not make an otherwise persistent session look unsupported.
+	if m.config.SessionPersistence.Backend == "" {
+		return fmt.Errorf("session context templates require a persistent ACP session")
+	}
+	if req := session.Request(); req != nil && req.AgentType != "" && req.AgentType != "claude-acp" && req.AgentType != "codex-acp" {
+		return fmt.Errorf("session context templates require a persistent ACP session")
+	}
+	return m.checkpointSessionState(ctx, sessionID)
+}
+
+func (m *KubernetesSessionManager) CreateSessionContextSnapshot(ctx context.Context, sessionID, snapshotID string) error {
+	if !isTemplateSnapshotID(snapshotID) {
+		return fmt.Errorf("invalid template snapshot ID")
+	}
+	return m.checkpointSessionState(ctx, sessionID, snapshotID)
+}
+
+func requestParentSessionCheckpoint(ctx context.Context, runtime *sessionsettings.ParentRuntimeConfig, snapshotID string) error {
 	endpoint := strings.TrimRight(runtime.Endpoint, "/") + "/internal/session-runtime/" + url.PathEscape(runtime.SessionID) + "/checkpoint?generation=" + strconv.FormatInt(runtime.Generation, 10)
+	if snapshotID != "" {
+		endpoint += "&snapshot_id=" + url.QueryEscape(snapshotID)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return err

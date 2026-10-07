@@ -42,6 +42,14 @@ func TestMergeSessionParamsRequestPoolOverridesProfilePool(t *testing.T) {
 	require.Equal(t, "profile-pool", profile.Pool)
 }
 
+func TestMergeSessionParamsPreservesTemplateResumeSource(t *testing.T) {
+	profile := &entities.SessionParams{AgentType: "codex-acp"}
+	merged := mergeSessionParams(profile, &entities.SessionParams{ResumeFrom: "tpl_context"})
+
+	require.Equal(t, "tpl_context", merged.ResumeFrom)
+	require.Empty(t, profile.ResumeFrom)
+}
+
 func TestProfileFilesValidation(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetProfileFiles([]entities.ProfileFile{{Path: "relative/path"}})

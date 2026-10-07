@@ -229,6 +229,9 @@ export interface DockerConfig {
 
 export interface CreateSessionRequest {
   user_id: string;
+  workspace_id?: string;
+  /** @deprecated Use workspace_id. */
+  context_template_id?: string;
   environment?: Record<string, string>;
   metadata?: Record<string, unknown>;
   tags?: Record<string, string>;
@@ -247,6 +250,24 @@ export interface CreateSessionRequest {
   team_id?: string;
   session_profile_id?: string;
 }
+
+export interface Workspace {
+  id: string;
+  source_session_id: string;
+  snapshot_id: string;
+  name: string;
+  description?: string;
+  owner_user_id: string;
+  scope: ResourceScope;
+  team_id?: string;
+  status: 'preparing' | 'ready';
+  created_at: string;
+  last_used_at?: string;
+  use_count: number;
+}
+
+/** @deprecated Use Workspace. */
+export type SessionContextTemplate = Workspace;
 
 // Session message types
 export interface SessionMessage {

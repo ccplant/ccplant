@@ -10,6 +10,7 @@ import (
 	runnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
@@ -39,7 +40,11 @@ func (c *SessionRuntimeController) Checkpoint(ctx echo.Context) error {
 		return ctx.NoContent(status)
 	}
 	tunnel := infraesmcontrol.NewTunnel(c.store)
-	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, "http://session.local/internal/checkpoint-session-state", nil)
+	target := "http://session.local/internal/checkpoint-session-state"
+	if snapshotID := ctx.QueryParam("snapshot_id"); snapshotID != "" {
+		target += "?snapshot_id=" + url.QueryEscape(snapshotID)
+	}
+	req, err := http.NewRequestWithContext(ctx.Request().Context(), http.MethodPost, target, nil)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}

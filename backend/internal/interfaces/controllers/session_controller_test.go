@@ -412,6 +412,22 @@ func TestExcludeAllocatedSessions(t *testing.T) {
 	}
 }
 
+func TestExcludeTemplatedSessions(t *testing.T) {
+	sessions := []entities.Session{
+		&sessionListTestSession{id: "templated-public-id"},
+		&sessionListTestSession{id: "templated-runtime-id"},
+		&sessionListTestSession{id: "active-id"},
+	}
+	routes := []*repositories.SessionRoute{
+		{SessionID: "templated-public-id", RemoteSessionID: "templated-runtime-id", Status: "templated"},
+		{SessionID: "active-id", Status: "active"},
+	}
+
+	got := excludeTemplatedSessions(sessions, routes)
+	require.Len(t, got, 1)
+	require.Equal(t, "active-id", got[0].ID())
+}
+
 func TestIndexAllocatedSessionsPreservesRuntimeStatus(t *testing.T) {
 	sessions := []entities.Session{
 		&sessionListTestSession{id: "allocated-running", status: "running"},
@@ -459,6 +475,30 @@ func TestRoutedSessionStatusFallbacks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyContextTemplateLaunchRestoresCompatibleSourceSettings(t *testing.T) {
+	req := &entities.StartRequest{
+		Tags:   map[string]string{"caller": "kept", "repository": "wrong/repository"},
+		Params: &entities.SessionParams{Message: "continue"},
+	}
+	template := &entities.SessionContextTemplate{
+		AgentType:        "codex-acp",
+		SessionProfileID: "profile-source",
+		Tags: map[string]string{
+			"repository": "owner/source",
+			"branch":     "feature/context",
+		},
+	}
+
+	applyContextTemplateLaunch(req, template)
+
+	require.Equal(t, "owner/source", req.Tags["repository"])
+	require.Equal(t, "feature/context", req.Tags["branch"])
+	require.Equal(t, "kept", req.Tags["caller"])
+	require.Equal(t, "profile-source", req.SessionProfileID)
+	require.Equal(t, "codex-acp", req.Params.AgentType)
+	require.Equal(t, "continue", req.Params.Message)
 }
 
 func TestFindUncreatedSessionAllocation(t *testing.T) {

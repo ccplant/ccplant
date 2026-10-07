@@ -36,6 +36,7 @@ type SessionRoute struct {
 	// DeletionRequestID identifies the durable manager command that must finish
 	// before this route can be removed from the user-visible session list.
 	DeletionRequestID string
+	ContextTemplateID string
 }
 
 // RemoteProvisionSettingsBuilder is an optional interface that SessionManager implementations

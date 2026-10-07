@@ -174,6 +174,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		controllers.WithSessionRouteRepository(server.GetSessionRouteRepository()),
 		controllers.WithSettingsRepository(server.settingsRepo),
 		controllers.WithSessionProfileRepository(server.sessionProfileRepo),
+		controllers.WithSessionContextTemplates(server.contextTemplateRepo, server.sessionStateStore),
 		controllers.WithESMControlTunnel(server.esmControlTunnel),
 		controllers.WithSessionRunnerStore(server.sessionRunnerStore),
 		controllers.WithSessionTokenDebug(server.config.SessionTokenDebug),
@@ -465,6 +466,16 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.GET("/sessions/:sessionId/restart", r.handlers.sessionController.RestartStatus)
 	r.echo.POST("/sessions/:sessionId/pause", r.handlers.sessionController.PauseSession)
 	r.echo.POST("/sessions/:sessionId/suspend", r.handlers.sessionController.SuspendSession)
+	r.echo.POST("/sessions/:sessionId/templateize", r.handlers.sessionController.TemplateizeSession)
+	r.echo.POST("/sessions/:sessionId/workspace", r.handlers.sessionController.SaveSessionAsWorkspace)
+	r.echo.GET("/workspaces", r.handlers.sessionController.ListWorkspaces)
+	r.echo.GET("/workspaces/:workspaceId", r.handlers.sessionController.GetWorkspace)
+	r.echo.PATCH("/workspaces/:workspaceId", r.handlers.sessionController.UpdateWorkspace)
+	r.echo.DELETE("/workspaces/:workspaceId", r.handlers.sessionController.DeleteWorkspace)
+	r.echo.GET("/session-context-templates", r.handlers.sessionController.ListSessionContextTemplates)
+	r.echo.GET("/session-context-templates/:templateId", r.handlers.sessionController.GetSessionContextTemplate)
+	r.echo.PATCH("/session-context-templates/:templateId", r.handlers.sessionController.UpdateSessionContextTemplate)
+	r.echo.DELETE("/session-context-templates/:templateId", r.handlers.sessionController.DeleteSessionContextTemplate)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
 	if r.handlers.sessionSecretController != nil {
 		r.echo.GET("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.List,

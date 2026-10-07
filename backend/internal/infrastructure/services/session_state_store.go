@@ -24,6 +24,11 @@ type SessionStateStore interface {
 	Load(context.Context, string) (io.ReadCloser, error)
 }
 
+// SessionStateDeleter removes an immutable snapshot when its owning template is deleted.
+type SessionStateDeleter interface {
+	Delete(context.Context, string) error
+}
+
 type MultipartPart struct {
 	Number int32  `json:"number"`
 	ETag   string `json:"etag"`
@@ -45,12 +50,45 @@ type volumeSessionStateStore struct{ root string }
 // manager-side upload and download endpoints are intentionally unavailable.
 type podVolumeSessionStateStore struct{}
 
+type routedSessionStateStore struct {
+	volume    SessionStateStore
+	templates SessionStateStore
+}
+
+func isTemplateSnapshotID(id string) bool { return strings.HasPrefix(id, "tpl_") }
+
+func (s routedSessionStateStore) store(id string) SessionStateStore {
+	if isTemplateSnapshotID(id) {
+		return s.templates
+	}
+	return s.volume
+}
+
+func (s routedSessionStateStore) Save(ctx context.Context, id string, r io.Reader) error {
+	return s.store(id).Save(ctx, id, r)
+}
+
+func (s routedSessionStateStore) Load(ctx context.Context, id string) (io.ReadCloser, error) {
+	return s.store(id).Load(ctx, id)
+}
+
+func (s routedSessionStateStore) Delete(ctx context.Context, id string) error {
+	deleter, ok := s.store(id).(SessionStateDeleter)
+	if !ok {
+		return fmt.Errorf("session state deletion is unavailable")
+	}
+	return deleter.Delete(ctx, id)
+}
+
 func (podVolumeSessionStateStore) Save(context.Context, string, io.Reader) error {
 	return fmt.Errorf("volume session state is owned by the session pod")
 }
 
 func (podVolumeSessionStateStore) Load(context.Context, string) (io.ReadCloser, error) {
 	return nil, fmt.Errorf("volume session state is owned by the session pod")
+}
+func (podVolumeSessionStateStore) Delete(context.Context, string) error {
+	return fmt.Errorf("volume session state is owned by the session pod")
 }
 
 func newVolumeSessionStateStore(root string) (SessionStateStore, error) {
@@ -105,12 +143,24 @@ func (s *volumeSessionStateStore) Load(_ context.Context, id string) (io.ReadClo
 	}
 	return os.Open(p)
 }
+func (s *volumeSessionStateStore) Delete(_ context.Context, id string) error {
+	p, err := s.path(id)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(p)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
 
 type sessionStateS3Client interface {
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	CreateMultipartUpload(context.Context, *s3.CreateMultipartUploadInput, ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
 	CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput, ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
 	AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
+	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 type sessionStateS3Uploader interface {
 	Upload(context.Context, *s3.PutObjectInput, ...func(*manager.Uploader)) (*manager.UploadOutput, error)
@@ -241,6 +291,14 @@ func (s *s3SessionStateStore) Load(ctx context.Context, id string) (io.ReadClose
 	}
 	return out.Body, nil
 }
+func (s *s3SessionStateStore) Delete(ctx context.Context, id string) error {
+	k, err := s.key(id)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(k)})
+	return err
+}
 
 // NewSessionStateStore builds the configured backend. Empty backend disables persistence.
 func NewSessionStateStore(ctx context.Context, cfg config.SessionPersistenceConfig) (SessionStateStore, error) {
@@ -248,7 +306,15 @@ func NewSessionStateStore(ctx context.Context, cfg config.SessionPersistenceConf
 	case "":
 		return nil, nil
 	case "volume":
-		return podVolumeSessionStateStore{}, nil
+		volume := podVolumeSessionStateStore{}
+		if cfg.S3 == nil || cfg.S3.Bucket == "" {
+			return volume, nil
+		}
+		templates, err := newS3SessionStateStore(ctx, cfg.S3)
+		if err != nil {
+			return nil, err
+		}
+		return routedSessionStateStore{volume: volume, templates: templates}, nil
 	case "s3":
 		return newS3SessionStateStore(ctx, cfg.S3)
 	default:

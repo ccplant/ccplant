@@ -65,7 +65,13 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 		home = "/home/agentapi"
 	}
 	if volumePath := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")); volumePath != "" {
-		return writeSessionStateVolume(volumePath, agentType, readACPSessionID(cwd), home, cwd)
+		if err := writeSessionStateVolume(volumePath, agentType, readACPSessionID(cwd), home, cwd); err != nil {
+			return err
+		}
+		if snapshotID := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_TEMPLATE_SNAPSHOT_ID")); snapshotID != "" {
+			return uploadVolumeTemplateSnapshot(proxy, token, snapshotID, volumePath)
+		}
+		return nil
 	}
 	client := &http.Client{Timeout: 10 * time.Minute}
 	strict := os.Getenv("AGENTAPI_REQUIRE_SESSION_STATE_BACKUP") == "1"
@@ -111,6 +117,31 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 			return nil
 		}
 		return fmt.Errorf("session state backup failed: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func uploadVolumeTemplateSnapshot(proxy, token, snapshotID, path string) error {
+	if !strings.HasPrefix(snapshotID, "tpl_") {
+		return fmt.Errorf("invalid template snapshot ID")
+	}
+	archive, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer archive.Close()
+	req, err := internalRequest(http.MethodPut, proxy+"/internal/session-state/"+url.PathEscape(snapshotID), token, archive)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/zstd")
+	resp, err := (&http.Client{Timeout: 10 * time.Minute}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("template snapshot upload failed: HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
