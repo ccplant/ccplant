@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -29,7 +30,9 @@ type sessionManagerInstallOptions struct {
 	apiKeyEnv, apiKeyFile, scope, teamID                           string
 	namespace, release, chart, version, pool, name, instanceID     string
 	connectionSecret, internalSecret, provisionerSecret            string
+	storageClass, persistenceSize                                  string
 	createNamespace, wait                                          bool
+	persistence                                                    bool
 	timeout                                                        string
 }
 
@@ -66,6 +69,9 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.StringVar(&opts.connectionSecret, "connection-secret", "", "Secret holding manager credentials")
 	flags.StringVar(&opts.internalSecret, "internal-secret", "", "Secret holding the internal API token")
 	flags.StringVar(&opts.provisionerSecret, "provisioner-secret", "", "Secret holding the provisioner token")
+	flags.BoolVar(&opts.persistence, "persistence", false, "enable a PersistentVolumeClaim for each session workspace")
+	flags.StringVar(&opts.storageClass, "storage-class", "", "StorageClass for session workspace PVCs (uses the cluster default when empty)")
+	flags.StringVar(&opts.persistenceSize, "persistence-size", "10Gi", "size of each session workspace PVC")
 	flags.BoolVar(&opts.createNamespace, "create-namespace", true, "create the namespace if missing")
 	flags.BoolVar(&opts.wait, "wait", true, "wait for Helm resources to become ready")
 	flags.StringVar(&opts.timeout, "timeout", "10m", "Helm operation timeout")
@@ -85,6 +91,12 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	}
 	if opts.scope == "team" && strings.TrimSpace(opts.teamID) == "" {
 		return errors.New("--team-id is required when --scope=team")
+	}
+	if opts.persistence {
+		quantity, err := resource.ParseQuantity(opts.persistenceSize)
+		if err != nil || quantity.Sign() <= 0 {
+			return fmt.Errorf("--persistence-size must be a positive Kubernetes resource quantity")
+		}
 	}
 	if opts.registrationTokenFile != "" {
 		data, err := os.ReadFile(opts.registrationTokenFile)
@@ -141,18 +153,7 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return err
 	}
 
-	values := map[string]any{
-		"fullnameOverride": opts.release,
-		"parent": map[string]any{"url": apiBaseURL(opts.upstream),
-			"connectionTokenSecretRef": map[string]any{"name": opts.connectionSecret, "key": "connection-token"},
-			"hmacSecretRef":            map[string]any{"name": opts.connectionSecret, "key": "hmac-secret"}},
-		"runner":      map[string]any{"managerId": credentials.ManagerID, "pool": opts.pool},
-		"internalApi": map[string]any{"tokenSecretRef": map[string]any{"name": opts.internalSecret, "key": "token"}},
-		"session":     map[string]any{"provisioner": map[string]any{"tokenSecretRef": map[string]any{"name": opts.provisionerSecret, "key": "provisioner-token"}}},
-		"leaderElection": map[string]any{
-			"migrateLegacyLease": legacyLeaseMigration,
-		},
-	}
+	values := sessionManagerInstallValues(opts, credentials, legacyLeaseMigration)
 	data, err := yaml.Marshal(values)
 	if err != nil {
 		return err
@@ -197,6 +198,28 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return err
 	}
 	return nil
+}
+
+func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials *installedManagerCredentials, legacyLeaseMigration bool) map[string]any {
+	return map[string]any{
+		"fullnameOverride": opts.release,
+		"parent": map[string]any{"url": apiBaseURL(opts.upstream),
+			"connectionTokenSecretRef": map[string]any{"name": opts.connectionSecret, "key": "connection-token"},
+			"hmacSecretRef":            map[string]any{"name": opts.connectionSecret, "key": "hmac-secret"}},
+		"runner":      map[string]any{"managerId": credentials.ManagerID, "pool": opts.pool},
+		"internalApi": map[string]any{"tokenSecretRef": map[string]any{"name": opts.internalSecret, "key": "token"}},
+		"session": map[string]any{
+			"pvc": map[string]any{
+				"enabled":      opts.persistence,
+				"storageClass": opts.storageClass,
+				"storageSize":  opts.persistenceSize,
+			},
+			"provisioner": map[string]any{"tokenSecretRef": map[string]any{"name": opts.provisionerSecret, "key": "provisioner-token"}},
+		},
+		"leaderElection": map[string]any{
+			"migrateLegacyLease": legacyLeaseMigration,
+		},
+	}
 }
 
 func requiresLegacySessionManagerLeaseMigration(ctx context.Context, client kubernetes.Interface, namespace, deploymentName string) (bool, error) {

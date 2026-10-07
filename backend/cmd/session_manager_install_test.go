@@ -43,6 +43,50 @@ func TestRequiresLegacySessionManagerLeaseMigration(t *testing.T) {
 	})
 }
 
+func TestSessionManagerInstallPersistenceFlags(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+
+	require.Equal(t, "false", command.Flags().Lookup("persistence").DefValue)
+	require.Equal(t, "", command.Flags().Lookup("storage-class").DefValue)
+	require.Equal(t, "10Gi", command.Flags().Lookup("persistence-size").DefValue)
+}
+
+func TestSessionManagerInstallRejectsInvalidPersistenceSize(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+	command.SetArgs([]string{
+		"--upstream", "https://ccplant.example.com",
+		"--persistence",
+		"--persistence-size", "invalid",
+	})
+
+	err := command.ExecuteContext(context.Background())
+	require.ErrorContains(t, err, "--persistence-size must be a positive Kubernetes resource quantity")
+}
+
+func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
+	t.Parallel()
+	opts := sessionManagerInstallOptions{
+		upstream:          "https://ccplant.example.com",
+		release:           "manager",
+		pool:              "builders",
+		connectionSecret:  "manager-parent",
+		internalSecret:    "manager-internal",
+		provisionerSecret: "manager-provisioner",
+		persistence:       true,
+		storageClass:      "fast",
+		persistenceSize:   "20Gi",
+	}
+
+	values := sessionManagerInstallValues(opts, &installedManagerCredentials{ManagerID: "manager-1"}, false)
+	session := values["session"].(map[string]any)
+	pvc := session["pvc"].(map[string]any)
+	require.Equal(t, true, pvc["enabled"])
+	require.Equal(t, "fast", pvc["storageClass"])
+	require.Equal(t, "20Gi", pvc["storageSize"])
+}
+
 func sessionManagerDeploymentForLeaseMigrationTest(env []corev1.EnvVar) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "manager", Namespace: "sessions"},
