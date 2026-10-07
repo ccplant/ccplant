@@ -485,8 +485,6 @@ sessionManager:
     rbac:
       create: true
     image: "ghcr.io/ccplant/ccplant-agent:assets-e9dd7076e4ea8c854fdca440ba387ef2"
-    # CLI source follows the manager release.
-    cliImage: ""
     networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
     networkFilter:
       resources:

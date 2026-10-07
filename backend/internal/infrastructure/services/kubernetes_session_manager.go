@@ -239,10 +239,10 @@ func (m *KubernetesSessionManager) refreshConfig() {
 
 // resolveLegacySessionRuntimeImages upgrades the old single-image defaults in
 // memory. This lets a manager create new Pods with immutable agent assets and
-// inject the ccplant CLI from its own release without requiring the CLI image
-// to be passed separately. Explicit custom CLI images are preserved.
+// inject the ccplant CLI from its own release without allowing the CLI image
+// repository or tag to drift from the manager image.
 func resolveLegacySessionRuntimeImages(cfg *config.Config) {
-	if cfg == nil || strings.TrimSpace(cfg.KubernetesSession.CLIImage) != "" {
+	if cfg == nil {
 		return
 	}
 	repository := strings.TrimSuffix(strings.TrimSpace(cfg.SessionManager.ImageRepository), ":")

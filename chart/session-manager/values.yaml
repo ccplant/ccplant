@@ -82,9 +82,6 @@ sessionPersistence:
 
 session:
   image: "ghcr.io/ccplant/ccplant-agent:assets-e9dd7076e4ea8c854fdca440ba387ef2"
-  # Optional override. By default the CLI image is derived from the manager's
-  # repository and build-time version.
-  cliImage: ""
   serviceAccountName: agentapi-proxy-session
   isolation:
     # Hide Service-derived environment variables from session containers.
