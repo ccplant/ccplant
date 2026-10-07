@@ -158,7 +158,7 @@ func executeControlCommandAtBase(ctx context.Context, client *http.Client, agent
 	case "checkpoint_session_state":
 		binary := proxybinary.Resolve(os.Getenv(proxybinary.EnvName))
 		cmd := exec.CommandContext(ctx, binary, "client", "backup-session-state")
-		cmd.Env = append(os.Environ(), "AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1")
+		cmd.Env = append(os.Environ(), "AGENTAPI_REQUIRE_SESSION_STATE_BACKUP=1", "AGENTAPI_AGENT_TYPE="+agentType)
 		var checkpoint struct {
 			SnapshotID string `json:"snapshot_id"`
 		}
