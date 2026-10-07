@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import type { FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause } from 'lucide-react'
+import { Archive, ArrowRight, CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause, X } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams, SessionContextTemplate } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
@@ -126,6 +127,12 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [showHiddenSessions, setShowHiddenSessions] = useState(false)
   const [openAnnotationMenuId, setOpenAnnotationMenuId] = useState<string | null>(null)
   const [expandedErrorSessionId, setExpandedErrorSessionId] = useState<string | null>(null)
+  const [templateTarget, setTemplateTarget] = useState<Session | null>(null)
+  const [templateName, setTemplateName] = useState('')
+  const [templateDescription, setTemplateDescription] = useState('')
+  const [launchTarget, setLaunchTarget] = useState<SessionContextTemplate | null>(null)
+  const [launchInstruction, setLaunchInstruction] = useState('')
+  const [launchingTemplateId, setLaunchingTemplateId] = useState<string | null>(null)
 
   const fetchContextTemplates = useCallback(async () => {
     if (acpMode || isTeamScopeLoading) return
@@ -391,19 +398,25 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }
   }
 
-  const templateizeSession = async (session: Session) => {
+  const openTemplateDialog = (session: Session) => {
     const suggested = getSessionAnnotations(session).description || session.tags?.repository || `Session ${session.session_id.slice(0, 8)}`
-    const name = prompt('テンプレート名を入力してください。変換後、このセッションでは作業を続けられません。', suggested)
-    if (!name?.trim()) return
-    if (!confirm('このセッションをテンプレートへ変換しますか？この操作後、元のセッションは再開できません。')) return
+    setOpenAnnotationMenuId(null)
+    setTemplateTarget(session)
+    setTemplateName(suggested)
+    setTemplateDescription('')
+  }
+
+  const templateizeSession = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!templateTarget || !templateName.trim()) return
     try {
-      setSuspendingSession(session.session_id)
-      setOpenAnnotationMenuId(null)
+      setSuspendingSession(templateTarget.session_id)
       setError(null)
-      await agentAPI.templateizeSession(session.session_id, name.trim())
-      setSessions(current => current.filter(item => item.session_id !== session.session_id))
-      void fetchContextTemplates()
-      setSuccess('セッションをテンプレートとして保存しました')
+      await agentAPI.templateizeSession(templateTarget.session_id, templateName.trim(), templateDescription.trim())
+      setSessions(current => current.filter(item => item.session_id !== templateTarget.session_id))
+      await fetchContextTemplates()
+      setTemplateTarget(null)
+      setSuccess('作業環境をテンプレートとして保存しました')
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'テンプレート化に失敗しました')
@@ -412,14 +425,24 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
     }
   }
 
-  const startFromTemplate = async (template: SessionContextTemplate) => {
-    const message = prompt('新しいセッションへの最初の指示を入力してください。', '') ?? ''
+  const openLaunchDialog = (template: SessionContextTemplate) => {
+    setLaunchTarget(template)
+    setLaunchInstruction('')
+  }
+
+  const startFromTemplate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!launchTarget) return
     try {
       setError(null)
-      const session = await agentAPI.start({ context_template_id: template.id, params: message ? { message } : undefined, scope: template.scope, team_id: template.team_id })
-      router.push(`/agentapi/${session.session_id}`)
+      setLaunchingTemplateId(launchTarget.id)
+      const instruction = launchInstruction.trim()
+      const session = await agentAPI.start({ context_template_id: launchTarget.id, params: instruction ? { message: instruction } : undefined, scope: launchTarget.scope, team_id: launchTarget.team_id })
+      router.push(`/sessions/${session.session_id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'テンプレートからのセッション作成に失敗しました')
+    } finally {
+      setLaunchingTemplateId(null)
     }
   }
 
@@ -737,25 +760,48 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
         </div>
       </div>
 
-      {!acpMode && contextTemplates.length > 0 && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/20">
-          <div className="mb-3 flex items-center justify-between">
-            <h4 className="font-medium text-amber-900 dark:text-amber-100">コンテキストテンプレート</h4>
-            <span className="text-xs text-amber-700 dark:text-amber-300">{contextTemplates.length}件</span>
+      {!acpMode && (
+        <section className="overflow-hidden rounded-lg border border-amber-200 bg-white dark:border-amber-900 dark:bg-gray-900">
+          <div className="flex items-start justify-between gap-4 border-b border-amber-100 bg-amber-50/70 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/30">
+            <div className="flex min-w-0 gap-3">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200">
+                <Archive className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <div>
+                <h4 className="font-medium text-gray-900 dark:text-white">保存した作業環境</h4>
+                <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">ファイルと設定を引き継いで、別のセッションとして再開できます。</p>
+              </div>
+            </div>
+            <span className="shrink-0 text-xs text-amber-800 dark:text-amber-200">{contextTemplates.length}件</span>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {contextTemplates.map(template => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => void startFromTemplate(template)}
-                className="rounded-md border border-amber-200 bg-white px-3 py-3 text-left transition hover:border-amber-400 hover:shadow-sm dark:border-amber-800 dark:bg-gray-900"
-              >
-                <span className="block truncate text-sm font-medium text-gray-900 dark:text-white">{template.name}</span>
-                <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">使用 {template.use_count}回 · クリックして新規セッションを作成</span>
-              </button>
-            ))}
-          </div>
+          {contextTemplates.length > 0 ? (
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">
+              {contextTemplates.map(template => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => openLaunchDialog(template)}
+                  className="group flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-amber-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 dark:hover:bg-amber-950/20"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-gray-900 dark:text-white">{template.name}</span>
+                    <span className="mt-0.5 block truncate text-xs text-gray-500 dark:text-gray-400">
+                      {template.description || `これまでに ${template.use_count} 回使用`}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-amber-800 dark:text-amber-200">
+                    ここから始める
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-5 text-sm text-gray-600 dark:text-gray-400">
+              <p className="font-medium text-gray-800 dark:text-gray-200">保存した作業環境はありません</p>
+              <p className="mt-1">セッションの「…」メニューから「作業環境をテンプレートとして保存」を選ぶと、ここに追加されます。</p>
+            </div>
+          )}
         </section>
       )}
 
@@ -1248,11 +1294,11 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                 {!acpMode && ['active', 'running', 'suspended'].includes(session.status) && (
                                   <button
                                     type="button"
-                                    onClick={() => void templateizeSession(session)}
+                                    onClick={() => openTemplateDialog(session)}
                                     disabled={suspendingSession === session.session_id}
                                     className="block w-full px-3 py-2 text-left text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-900/30"
                                   >
-                                    テンプレートとして保存
+                                    作業環境をテンプレートとして保存
                                   </button>
                                 )}
                               </div>
@@ -1312,6 +1358,77 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {templateTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/50 px-4 py-8" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !suspendingSession) setTemplateTarget(null)
+        }}>
+          <form onSubmit={templateizeSession} className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-gray-900" role="dialog" aria-modal="true" aria-labelledby="template-dialog-title">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+              <div>
+                <h2 id="template-dialog-title" className="text-lg font-semibold text-gray-900 dark:text-white">作業環境を保存</h2>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">現在のファイルと設定を、繰り返し使えるテンプレートにします。</p>
+              </div>
+              <button type="button" onClick={() => setTemplateTarget(null)} disabled={Boolean(suspendingSession)} className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-50 dark:hover:bg-gray-800 dark:hover:text-white" aria-label="閉じる">
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-5">
+              <label className="block">
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">テンプレート名</span>
+                <input autoFocus required value={templateName} onChange={(event) => setTemplateName(event.target.value)} maxLength={120} className="mt-1.5 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:border-gray-600 dark:bg-gray-950 dark:text-white dark:focus:ring-amber-900" />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">用途のメモ <span className="font-normal text-gray-500">（任意）</span></span>
+                <textarea value={templateDescription} onChange={(event) => setTemplateDescription(event.target.value)} rows={3} maxLength={500} placeholder="例: API改修を始めるための依存関係と開発ツールを準備済み" className="mt-1.5 w-full resize-none rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:border-gray-600 dark:bg-gray-950 dark:text-white dark:focus:ring-amber-900" />
+              </label>
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                保存後、このセッションは終了して一覧から消えます。テンプレートからは何度でも新しいセッションを作れます。
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-900">
+              <button type="button" onClick={() => setTemplateTarget(null)} disabled={Boolean(suspendingSession)} className="rounded-md px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800">キャンセル</button>
+              <button type="submit" disabled={!templateName.trim() || Boolean(suspendingSession)} className="inline-flex min-w-32 items-center justify-center gap-2 rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50">
+                {suspendingSession && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                {suspendingSession ? '保存中…' : '保存して終了'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {launchTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/50 px-4 py-8" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !launchingTemplateId) setLaunchTarget(null)
+        }}>
+          <form onSubmit={startFromTemplate} className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-gray-900" role="dialog" aria-modal="true" aria-labelledby="launch-dialog-title">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-amber-700 dark:text-amber-300">{launchTarget.name}</p>
+                <h2 id="launch-dialog-title" className="mt-0.5 text-lg font-semibold text-gray-900 dark:text-white">この作業環境から始める</h2>
+              </div>
+              <button type="button" onClick={() => setLaunchTarget(null)} disabled={Boolean(launchingTemplateId)} className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-50 dark:hover:bg-gray-800 dark:hover:text-white" aria-label="閉じる">
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-5">
+              <p className="text-sm text-gray-600 dark:text-gray-400">保存されたファイルと設定を復元して、新しいセッションを作成します。</p>
+              <label className="block">
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">最初に実行する指示 <span className="font-normal text-gray-500">（任意）</span></span>
+                <textarea autoFocus value={launchInstruction} onChange={(event) => setLaunchInstruction(event.target.value)} rows={5} placeholder="例: 前回の実装状況を確認して、残っているテストを直してください" className="mt-1.5 w-full resize-y rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:border-gray-600 dark:bg-gray-950 dark:text-white dark:focus:ring-amber-900" />
+                <span className="mt-1.5 block text-xs text-gray-500 dark:text-gray-400">空欄でも開始できます。セッションを開いてから指示することもできます。</span>
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-900">
+              <button type="button" onClick={() => setLaunchTarget(null)} disabled={Boolean(launchingTemplateId)} className="rounded-md px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800">キャンセル</button>
+              <button type="submit" disabled={Boolean(launchingTemplateId)} className="inline-flex min-w-40 items-center justify-center gap-2 rounded-md bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50">
+                {launchingTemplateId && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                {launchingTemplateId ? '復元しています…' : '新しいセッションを作成'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
