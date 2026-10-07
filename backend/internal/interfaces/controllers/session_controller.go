@@ -1006,7 +1006,21 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	allocatedSessions := make(map[string]entities.Session)
 	if c.sessionRouteRepo != nil {
 		var err error
-		routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), userID)
+		// Team-scoped routes may be owned by another team member (for example,
+		// sessions launched by a team webhook). Do not owner-filter those routes;
+		// the authorization checks below decide visibility. Personal routes remain
+		// owner-filtered at the repository boundary.
+		if scopeFilter == string(entities.ScopeTeam) {
+			if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+				routes, err = filtered.ListFiltered(ctx.Request().Context(), repositories.SessionRouteFilter{
+					Scope: string(entities.ScopeTeam), TeamID: teamIDFilter,
+				})
+			} else {
+				routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), "")
+			}
+		} else {
+			routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), userID)
+		}
 		if err != nil {
 			log.Printf("[SEARCH] Failed to list session routes: %v", err)
 			routes = nil

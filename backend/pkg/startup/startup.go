@@ -476,6 +476,93 @@ func AutoDiscoverInstallationID(appIDStr, pemPath, repoFullName string) (string,
 	return strconv.FormatInt(installationID, 10), nil
 }
 
+// GenerateMarketplaceGitHubAppToken discovers the built-in GitHub App
+// installation for repositoryURL and returns a contents:read token restricted
+// to that repository. It deliberately ignores GITHUB_TOKEN and
+// GITHUB_INSTALLATION_ID, which belong to the session's working repository.
+func GenerateMarketplaceGitHubAppToken(ctx context.Context, repositoryURL string) (string, error) {
+	host := strings.ToLower(strings.TrimSpace(github_pkg.ExtractRepositoryHostname(repositoryURL)))
+	repoFullName := strings.TrimSpace(github_pkg.ParseRepositoryURL(repositoryURL))
+	parts := strings.Split(repoFullName, "/")
+	if host == "" || len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("invalid GitHub marketplace repository URL %q", repositoryURL)
+	}
+	parts[1] = strings.TrimSuffix(parts[1], ".git")
+	if parts[1] == "" {
+		return "", fmt.Errorf("invalid GitHub marketplace repository URL %q", repositoryURL)
+	}
+
+	apiBase, err := marketplaceGitHubAPIBase(host)
+	if err != nil {
+		return "", err
+	}
+	appIDString := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
+	if appIDString == "" {
+		return "", fmt.Errorf("GITHUB_APP_ID is not configured")
+	}
+	appID, err := strconv.ParseInt(appIDString, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid GITHUB_APP_ID: %w", err)
+	}
+	pemData, err := readGitHubAppPEM(os.Getenv("GITHUB_APP_PEM_PATH"))
+	if err != nil {
+		return "", err
+	}
+
+	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, pemData)
+	if err != nil {
+		return "", fmt.Errorf("create GitHub App transport: %w", err)
+	}
+	transport.BaseURL = apiBase
+	client := github.NewClient(&http.Client{Transport: transport})
+	if apiBase != "https://api.github.com" {
+		apiURL := strings.TrimSuffix(apiBase, "/") + "/"
+		client, err = client.WithEnterpriseURLs(apiURL, apiURL)
+		if err != nil {
+			return "", fmt.Errorf("configure GitHub Enterprise API: %w", err)
+		}
+	}
+
+	installation, _, err := client.Apps.FindRepositoryInstallation(ctx, parts[0], parts[1])
+	if err != nil {
+		return "", fmt.Errorf("find GitHub App installation for %s: %w", repoFullName, err)
+	}
+	result, _, err := client.Apps.CreateInstallationToken(ctx, installation.GetID(), &github.InstallationTokenOptions{
+		Repositories: []string{parts[1]},
+		Permissions:  &github.InstallationPermissions{Contents: github.String("read")},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create GitHub App token for %s: %w", repoFullName, err)
+	}
+	if result.GetToken() == "" {
+		return "", fmt.Errorf("GitHub returned an empty installation token for %s", repoFullName)
+	}
+	return result.GetToken(), nil
+}
+
+func marketplaceGitHubAPIBase(host string) (string, error) {
+	if host == "github.com" {
+		return "https://api.github.com", nil
+	}
+	configuredHost := strings.ToLower(github_pkg.ExtractHostname(github_pkg.GetGitHubURL()))
+	if host != configuredHost {
+		return "", fmt.Errorf("unsupported GitHub marketplace host %q", host)
+	}
+	return strings.TrimSuffix(github_pkg.GetAPIBase(), "/"), nil
+}
+
+func readGitHubAppPEM(pemPath string) ([]byte, error) {
+	if strings.TrimSpace(pemPath) != "" {
+		if pemData, err := os.ReadFile(pemPath); err == nil {
+			return pemData, nil
+		}
+	}
+	if pem := os.Getenv("GITHUB_APP_PEM"); pem != "" {
+		return []byte(pem), nil
+	}
+	return nil, fmt.Errorf("GitHub App private key is not configured")
+}
+
 // setupRepository sets up the git repository using gh repo clone
 func setupRepository(repoURL, token, cloneDir string) error {
 	log.Printf("Setting up repository in: %s", cloneDir)
