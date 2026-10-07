@@ -148,6 +148,12 @@ func (c *SessionController) TemplateizeSession(ctx echo.Context) error {
 	return ctx.JSON(http.StatusCreated, template)
 }
 
+// SaveSessionAsWorkspace is the canonical workspace API. TemplateizeSession is
+// retained as a backwards-compatible alias for older clients.
+func (c *SessionController) SaveSessionAsWorkspace(ctx echo.Context) error {
+	return c.TemplateizeSession(ctx)
+}
+
 func (c *SessionController) retireTunneledContextSource(ctx context.Context, route *repositories.SessionRoute) error {
 	enqueuer, ok := c.esmControlTunnel.(esmControlEnqueuer)
 	if !ok {
@@ -183,7 +189,11 @@ func (c *SessionController) authorizedTemplate(ctx echo.Context, modify bool) (*
 	if c.contextTemplateRepo == nil {
 		return nil, echo.NewHTTPError(http.StatusNotImplemented, "session context templates are unavailable")
 	}
-	template, err := c.contextTemplateRepo.Get(ctx.Request().Context(), ctx.Param("templateId"))
+	id := ctx.Param("workspaceId")
+	if id == "" {
+		id = ctx.Param("templateId")
+	}
+	template, err := c.contextTemplateRepo.Get(ctx.Request().Context(), id)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +224,33 @@ func (c *SessionController) ListSessionContextTemplates(ctx echo.Context) error 
 		return err
 	}
 	return ctx.JSON(http.StatusOK, map[string]interface{}{"templates": items})
+}
+
+func (c *SessionController) ListWorkspaces(ctx echo.Context) error {
+	if c.contextTemplateRepo == nil {
+		return echo.NewHTTPError(http.StatusNotImplemented, "workspaces are unavailable")
+	}
+	authz := auth.GetAuthorizationContext(ctx)
+	if authz == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized)
+	}
+	items, err := c.contextTemplateRepo.List(ctx.Request().Context(), repositories.SessionContextTemplateFilter{UserID: authz.PersonalScope.UserID, TeamIDs: authz.TeamScope.Teams})
+	if err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]interface{}{"workspaces": items})
+}
+
+func (c *SessionController) GetWorkspace(ctx echo.Context) error {
+	return c.GetSessionContextTemplate(ctx)
+}
+
+func (c *SessionController) UpdateWorkspace(ctx echo.Context) error {
+	return c.UpdateSessionContextTemplate(ctx)
+}
+
+func (c *SessionController) DeleteWorkspace(ctx echo.Context) error {
+	return c.DeleteSessionContextTemplate(ctx)
 }
 
 func (c *SessionController) GetSessionContextTemplate(ctx echo.Context) error {
@@ -304,13 +341,20 @@ func (c *SessionController) manageTunneledContextSnapshot(ctx context.Context, r
 }
 
 func (c *SessionController) resolveContextTemplate(ctx echo.Context, req *entities.StartRequest) (*entities.SessionContextTemplate, error) {
-	if req.ContextTemplateID == "" {
+	workspaceID := req.WorkspaceID
+	if workspaceID == "" {
+		workspaceID = req.ContextTemplateID
+	}
+	if req.WorkspaceID != "" && req.ContextTemplateID != "" && req.WorkspaceID != req.ContextTemplateID {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "workspace_id and context_template_id must match when both are provided")
+	}
+	if workspaceID == "" {
 		return nil, nil
 	}
 	if c.contextTemplateRepo == nil {
 		return nil, echo.NewHTTPError(http.StatusNotImplemented, "session context templates are unavailable")
 	}
-	template, err := c.contextTemplateRepo.Get(ctx.Request().Context(), req.ContextTemplateID)
+	template, err := c.contextTemplateRepo.Get(ctx.Request().Context(), workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +372,7 @@ func (c *SessionController) resolveContextTemplate(ctx echo.Context, req *entiti
 		req.Params = &entities.SessionParams{}
 	}
 	if req.Params.ResumeFrom != "" {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, "context_template_id and resume_from are mutually exclusive")
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "workspace_id and resume_from are mutually exclusive")
 	}
 	if len(template.Tags) == 0 && c.sessionRouteRepo != nil {
 		if route, routeErr := c.sessionRouteRepo.Get(ctx.Request().Context(), template.SourceSessionID); routeErr == nil && route != nil {

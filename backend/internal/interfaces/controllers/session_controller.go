@@ -234,6 +234,11 @@ func (c *SessionController) RegisterRoutes(e *echo.Echo) error {
 	e.GET("/sessions/:sessionId/restart", c.RestartStatus)
 	e.POST("/sessions/:sessionId/pause", c.PauseSession)
 	e.POST("/sessions/:sessionId/templateize", c.TemplateizeSession)
+	e.POST("/sessions/:sessionId/workspace", c.SaveSessionAsWorkspace)
+	e.GET("/workspaces", c.ListWorkspaces)
+	e.GET("/workspaces/:workspaceId", c.GetWorkspace)
+	e.PATCH("/workspaces/:workspaceId", c.UpdateWorkspace)
+	e.DELETE("/workspaces/:workspaceId", c.DeleteWorkspace)
 	e.GET("/session-context-templates", c.ListSessionContextTemplates)
 	e.GET("/session-context-templates/:templateId", c.GetSessionContextTemplate)
 	e.PATCH("/session-context-templates/:templateId", c.UpdateSessionContextTemplate)
@@ -583,6 +588,7 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 
 	response := map[string]interface{}{"session_id": session.ID()}
 	if contextTemplate != nil {
+		response["workspace_id"] = contextTemplate.ID
 		response["context_template_id"] = contextTemplate.ID
 	}
 	return ctx.JSON(http.StatusOK, response)

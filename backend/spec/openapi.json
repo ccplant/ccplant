@@ -8248,7 +8248,11 @@
           },
           "context_template_id": {
             "type": "string",
-            "description": "Immutable context template to restore into the new session"
+            "description": "Deprecated alias for workspace_id"
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "Saved workspace to restore into the new session"
           },
           "scope": {
             "$ref": "#/components/schemas/ResourceScope",

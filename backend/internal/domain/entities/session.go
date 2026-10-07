@@ -164,7 +164,10 @@ type UpdateSessionAnnotationsRequest struct {
 
 // StartRequest represents the request body for starting a new agentapi server
 type StartRequest struct {
+	// WorkspaceID restores a saved workspace into the new session.
+	WorkspaceID string `json:"workspace_id,omitempty"`
 	// ContextTemplateID restores an immutable context template into the new session.
+	// Deprecated: use WorkspaceID.
 	ContextTemplateID string `json:"context_template_id,omitempty"`
 	// WebhookPayload contains the original webhook body to mount in the session.
 	WebhookPayload []byte `json:"webhook_payload,omitempty"`

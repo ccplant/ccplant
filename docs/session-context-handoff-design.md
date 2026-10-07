@@ -1,9 +1,9 @@
-# セッションのコンテキストテンプレート化設計
+# セッションのワークスペース化設計
 
 ## 1. 結論
 
 特定のセッションの状態を別セッションへ引き継ぐ機能は、「元を残したまま fork」ではなく
-**セッションを immutable なコンテキストテンプレートへ変換する操作**として提供する。
+**セッションを再利用可能なワークスペースへ変換する操作**として提供する。
 
 テンプレート化が完了した元セッションは実行可能な session ではなくなる。
 
@@ -18,7 +18,8 @@ manifest を管理し、template ID で参照する。利用者向けに manifes
 含み得る snapshot 本体は download/upload させない。
 
 新規セッション作成 API にすでに存在する `params.resume_from` は execution-plane の内部入力として残す。
-公開 API では推測可能な session ID を直接受け付けず、認可済みの `context_template_id` を受け付ける。
+公開 API では推測可能な session ID を直接受け付けず、認可済みの `workspace_id` を受け付ける。
+旧 `/session-context-templates`、`context_template_id`、`templateize` は既存クライアント向けの互換 API として残す。
 
 ## 2. ライフサイクル
 
@@ -95,10 +96,10 @@ template は reusable であり、instantiate しても `ready` のまま残る�
 
 ## 5. API
 
-### 5.1 session を template に変換する
+### 5.1 session を workspace に変換する
 
 ```http
-POST /sessions/{sessionId}/templateize
+POST /sessions/{sessionId}/workspace
 Idempotency-Key: <uuid>
 Content-Type: application/json
 
@@ -126,7 +127,7 @@ Content-Type: application/json
 
 ```json
 {
-  "template_id": "tpl_...",
+  "id": "tpl_...",
   "source_session_id": "ses_...",
   "status": "ready",
   "name": "認証障害調査済みテンプレート"
@@ -143,9 +144,9 @@ checkpoint または transaction commit より前に失敗した場合は status
 - persistence 非対応、非 ACP agent、snapshot 不在は `422 template_unsupported` または
   `409 snapshot_unavailable` とする。
 
-長時間化に備えて `202 templating` と `GET /session-context-templates/{id}` を正式な API とする。
+長時間化に備えて `202 preparing` と `GET /workspaces/{id}` を正式な API とする。
 
-### 5.2 template から新規 session を作る
+### 5.2 workspace から新規 session を作る
 
 既存 `/start` に top-level field を追加する。
 
@@ -155,7 +156,7 @@ Idempotency-Key: <uuid>
 Content-Type: application/json
 
 {
-  "context_template_id": "tpl_...",
+  "workspace_id": "tpl_...",
   "params": {
     "message": "この状態を起点に別の方式を試してください"
   },
@@ -163,7 +164,7 @@ Content-Type: application/json
 }
 ```
 
-`context_template_id` は `params.resume_from` と排他的にする。controller が template を認可し、内部の
+`workspace_id` は `params.resume_from` と排他的にする。controller が workspace を認可し、内部の
 `RunServerRequest.ResumeFrom` に `SnapshotID` を設定する。execution-plane は template repository を参照せず、
 既存の restore 処理を使う。
 
@@ -175,20 +176,19 @@ instantiate は template を consume しない。成功時に `UseCount` / `Last
 {
   "session_id": "ses_new",
   "context": {
-    "template_id": "tpl_...",
+    "workspace_id": "tpl_...",
     "source_session_id": "ses_source"
   }
 }
 ```
 
-### 5.3 template の管理
+### 5.3 workspace の管理
 
 ```http
-GET    /session-context-templates
-GET    /session-context-templates/{id}
-PATCH  /session-context-templates/{id}
-DELETE /session-context-templates/{id}
-GET    /session-context-templates/{id}/manifest
+GET    /workspaces
+GET    /workspaces/{id}
+PATCH  /workspaces/{id}
+DELETE /workspaces/{id}
 ```
 
 PATCH で変更できるのは name と description のみで、snapshot は変更しない。同じ作業状態の新版が必要なら、
