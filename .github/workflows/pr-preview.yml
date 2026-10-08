@@ -105,7 +105,7 @@ jobs:
           push: true
           tags: ghcr.io/ccplant/ccplant-api:preview.pr-${{ env.PR_NUMBER }}.${{ env.SOURCE_SHA }}
           cache-from: type=gha,scope=preview-api
-          cache-to: type=gha,mode=max,scope=preview-api
+          cache-to: type=gha,mode=max,scope=preview-api,ignore-error=true
 
       - id: reference
         env:
