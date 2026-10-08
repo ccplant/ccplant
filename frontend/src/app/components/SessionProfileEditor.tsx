@@ -107,7 +107,6 @@ export default function SessionProfileEditor({
   const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
   const [skills, setSkills] = useState<string[]>([])
   const [commandWrapperTemplate, setCommandWrapperTemplate] = useState('')
-  const [assetImage, setAssetImage] = useState('')
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -213,7 +212,6 @@ export default function SessionProfileEditor({
       setSelectedSecretIds(cfg?.secret_ids ?? [])
       setSkills(cfg?.skills ?? [])
       setCommandWrapperTemplate(cfg?.command_wrapper_template ?? '')
-      setAssetImage(cfg?.asset_image ?? '')
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -288,7 +286,6 @@ export default function SessionProfileEditor({
       setSelectedSecretIds([])
       setSkills([])
       setCommandWrapperTemplate('')
-      setAssetImage('')
       setAvailableProfiles([])
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -464,7 +461,7 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'skills', 'files', 'command_wrapper_template', 'asset_image'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'skills', 'files', 'command_wrapper_template'] as const) delete extraConfig[key]
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -482,7 +479,6 @@ export default function SessionProfileEditor({
         ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
         ...(skills.length > 0 ? { skills } : {}),
         ...(wrapper ? { command_wrapper_template: wrapper } : {}),
-        ...(assetImage.trim() ? { asset_image: assetImage.trim() } : {}),
         files: parsedProfileFiles,
       }
 
@@ -1046,25 +1042,6 @@ export default function SessionProfileEditor({
                   
             </div>}
             {active.slug === 'runtime' && <div className="space-y-5">
-              <div>
-                <label htmlFor="session-profile-asset-image" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Asset image
-                </label>
-                <input
-                  id="session-profile-asset-image"
-                  type="text"
-                  value={assetImage}
-                  onChange={e => { setAssetImage(e.target.value); setDirty(true) }}
-                  placeholder="ghcr.io/example/ccplant-agent@sha256:..."
-                  className="w-full rounded-md border border-gray-300 bg-white p-2 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-                />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  セッションのメインコンテナだけを置き換えます。未指定ならシステム既定のイメージを使います。再現性のため digest 固定を推奨します。
-                </p>
-                {assetImage.trim() && !assetImage.includes('@sha256:') && (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">タグは内容が変わる可能性があります。可能なら digest を指定してください。</p>
-                )}
-              </div>
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <label htmlFor="session-profile-command-wrapper" className="block text-sm font-medium text-gray-700 dark:text-gray-300">

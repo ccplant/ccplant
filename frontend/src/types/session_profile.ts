@@ -43,7 +43,6 @@ export interface SessionProfileConfig {
   initial_message_template?: string;
   reuse_message_template?: string;
   command_wrapper_template?: string;
-  asset_image?: string;
   reuse_session?: boolean;
   params?: SessionProfileParams;
   sandbox_policy_id?: string;

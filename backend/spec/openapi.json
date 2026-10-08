@@ -11457,10 +11457,6 @@
           "maxLength": 65536,
           "description": "Go template that wraps the final session agent command. It must contain exactly one {{ .Command }} action; the inserted command is POSIX-shell quoted."
         },
-        "asset_image": {
-          "type": "string",
-          "description": "OCI image reference that overrides the Kubernetes session main asset image. The control-plane CLI and sidecar images remain operator-managed."
-        },
         "reuse_session": {
           "type": "boolean",
           "description": "Whether to reuse an existing session instead of creating a new one"
