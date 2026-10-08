@@ -72,19 +72,32 @@ func (m *KubernetesSessionManager) ApplyRuntimeProfile(ctx context.Context, prof
 	profileCopy.Scia.TodoistPaths = append([]string(nil), profile.Scia.TodoistPaths...)
 
 	m.mutex.Lock()
+	previousImage := m.k8sConfig.Image
 	m.inheritedRuntimeProfile = &profileCopy
 	m.applyRuntimeProfileLocked(&profileCopy)
+	imageChanged := profile.Kubernetes.SessionImage != "" && previousImage != m.k8sConfig.Image
 	m.mutex.Unlock()
 
 	if err := m.ensureRuntimeProfileServiceAccount(ctx, profile.Kubernetes.ServiceAccount); err != nil {
 		return err
 	}
+	if imageChanged {
+		if err := m.PurgeStockSessions(ctx); err != nil {
+			return fmt.Errorf("replace stock sessions after asset image change: %w", err)
+		}
+	}
+	m.mutex.Lock()
+	m.appliedSessionImage = m.k8sConfig.Image
+	m.mutex.Unlock()
 	log.Printf("[SESSION_MANAGER_ALLOCATOR] Applied parent runtime profile version %d", profile.Version)
 	return nil
 }
 
 func (m *KubernetesSessionManager) applyRuntimeProfileLocked(profile *sessionsettings.RuntimeProfile) {
 	k8s := profile.Kubernetes
+	if k8s.SessionImage != "" {
+		m.k8sConfig.Image = k8s.SessionImage
+	}
 	m.k8sConfig.ServiceAccount = k8s.ServiceAccount
 	m.k8sConfig.NetworkFilterImage = k8s.NetworkFilterImage
 	m.k8sConfig.NetworkFilterCPURequest = k8s.NetworkFilterCPURequest
@@ -110,6 +123,20 @@ func (m *KubernetesSessionManager) applyRuntimeProfileLocked(profile *sessionset
 	m.config.Scia.TodoistCredential = scia.TodoistCredential
 	m.config.Scia.TodoistHosts = append([]string(nil), scia.TodoistHosts...)
 	m.config.Scia.TodoistPaths = append([]string(nil), scia.TodoistPaths...)
+}
+
+// CurrentSessionImage reports the image used for newly provisioned session workloads.
+func (m *KubernetesSessionManager) CurrentSessionImage() string {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.k8sConfig.Image
+}
+
+// AppliedSessionImage reports the last image whose stock replacement completed.
+func (m *KubernetesSessionManager) AppliedSessionImage() string {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.appliedSessionImage
 }
 
 func (m *KubernetesSessionManager) ensureRuntimeProfileServiceAccount(ctx context.Context, name string) error {

@@ -3,6 +3,10 @@ export interface ClusterSessionManager {
   name: string
   enabled: boolean
   draining?: boolean
+  asset_image?: string
+  applied_asset_image?: string
+  asset_image_status?: 'pending' | 'reconciling' | 'ready' | 'failed'
+  asset_image_error?: string
   last_heartbeat_at?: string
 }
 

@@ -50,6 +50,10 @@ type Manager struct {
 	RegistrationExpiresAt time.Time         `json:"registration_expires_at,omitempty"`
 	Labels                map[string]string `json:"labels,omitempty"`
 	Capabilities          []string          `json:"capabilities,omitempty"`
+	AssetImage            string            `json:"asset_image,omitempty"`
+	AppliedAssetImage     string            `json:"applied_asset_image,omitempty"`
+	AssetImageStatus      string            `json:"asset_image_status,omitempty"`
+	AssetImageError       string            `json:"asset_image_error,omitempty"`
 	Enabled               bool              `json:"enabled"`
 	Draining              bool              `json:"draining,omitempty"`
 	LastHeartbeatAt       time.Time         `json:"last_heartbeat_at,omitempty"`

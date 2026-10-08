@@ -233,6 +233,7 @@ type RuntimeProfile struct {
 }
 
 type KubernetesRuntimeProfile struct {
+	SessionImage                   string `yaml:"session_image,omitempty" json:"session_image,omitempty"`
 	ServiceAccount                 string `yaml:"service_account" json:"service_account"`
 	NetworkFilterImage             string `yaml:"network_filter_image" json:"network_filter_image"`
 	NetworkFilterCPURequest        string `yaml:"network_filter_cpu_request" json:"network_filter_cpu_request"`

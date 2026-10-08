@@ -199,6 +199,7 @@ type KubernetesSessionManager struct {
 	runnerManagerToken        string
 	runnerDefaultPool         string
 	inheritedRuntimeProfile   *sessionsettings.RuntimeProfile
+	appliedSessionImage       string
 }
 
 func (m *KubernetesSessionManager) ConfigureSessionRunnerPool(parentURL, managerID, managerToken, defaultPool string) {
@@ -324,6 +325,7 @@ func NewKubernetesSessionManagerWithClient(
 		sessionInformerCtx:        informerCtx,
 		sessionInformerStop:       informerCancel,
 		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
+		appliedSessionImage:       k8sConfig.Image,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

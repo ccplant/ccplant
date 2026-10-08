@@ -31,22 +31,36 @@ Source-profile inheritance treats an empty child wrapper as inherited from the s
 
 ## Asset image
 
-The Session Manager deployment selects one asset image through its existing Kubernetes session image setting:
+Each Session Manager selects one asset image. Operators can set the initial image in the deployment:
 
 ```yaml
 session:
   image: ghcr.io/example/ccplant-agent@sha256:...
 ```
 
-The standalone chart renders this as `AGENTAPI_K8S_SESSION_IMAGE`. The image applies to both pre-warmed stock workloads and on-demand workloads created by that manager. The CLI init image, network filter, and other sidecars remain independently operator-managed.
+The standalone chart renders this as `AGENTAPI_K8S_SESSION_IMAGE`. The Manager owner can subsequently
+change the desired image without editing the deployment:
 
-Changing the asset image is a Session Manager rollout operation:
+```http
+PATCH /session-managers/{id}
+Content-Type: application/json
 
-1. Update `session.image` in the manager release values.
-2. Roll out the manager.
-3. On startup, purge stock workloads belonging to the previous manager revision.
-4. Reconcile and register fresh stock runners using the new image.
-5. Verify the parent reports the expected idle and total runner counts.
+{"asset_image":"ghcr.io/example/ccplant-agent@sha256:..."}
+```
+
+The Manager resource reports `asset_image`, `applied_asset_image`, and an asynchronous
+`asset_image_status` (`pending`, `reconciling`, `ready`, or `failed`) and any
+`asset_image_error`. The image applies to both pre-warmed
+stock workloads and on-demand workloads created by that manager. The CLI init image, network filter,
+and other sidecars remain independently operator-managed.
+
+Changing the asset image is a Session Manager reconciliation operation:
+
+1. Patch the Manager's `asset_image` desired state through the API.
+2. The Manager obtains the changed authenticated runtime profile.
+3. It purges idle stock workloads using the previous image; allocated sessions remain untouched.
+4. It reconciles and registers fresh stock runners using the new image.
+5. Its heartbeat reports the applied image and moves `asset_image_status` to `ready`.
 
 For reproducibility, production configuration should use an image digest. Registry credentials and admission policy remain cluster/operator concerns.
 
