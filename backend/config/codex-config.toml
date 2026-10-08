@@ -5,3 +5,6 @@ approval-mode = "full-auto"
 # Session containers are already isolated by agentapi-proxy. Keep Codex's own
 # nested Linux sandbox disabled for direct Codex invocations as well.
 sandbox_mode = "danger-full-access"
+# The Codex CLI otherwise checks the npm registry for a newer release whenever
+# the agent starts. Agent versions are managed by the immutable asset image.
+check_for_update_on_startup = false

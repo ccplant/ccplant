@@ -81,7 +81,7 @@ sessionPersistence:
       key: secret-access-key
 
 session:
-  image: "ghcr.io/ccplant/ccplant-agent:assets-aedb633ce961d665b23204a7fee03d7b"
+  image: "ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405"
   serviceAccountName: agentapi-proxy-session
   isolation:
     # Hide Service-derived environment variables from session containers.
