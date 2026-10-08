@@ -21,14 +21,14 @@ kept in mode-0600 temporary files and was not printed.
 
 | Check | Result |
 | --- | --- |
-| Wrapper without `{{ .Command }}` | HTTP 400 |
+| Wrapper without the required Command template action | HTTP 400 |
 | Invalid OCI asset image reference | HTTP 400 |
 | Profile containing a valid wrapper and asset image | HTTP 201 |
 | Returned wrapper equals the submitted template | Passed |
 | Returned asset image equals the submitted image | Passed |
 | Deleting both temporary profiles | HTTP 204 |
 
-The accepted wrapper wrote a unique marker before executing `{{ .Command }}`. The asset image
+The accepted wrapper wrote a unique marker before executing the Command template action. The asset image
 used the current compatible asset image so that the runtime check would test profile selection
 without changing the toolchain contents.
 
@@ -60,4 +60,3 @@ the local-user API has no delete operation.
 - Frontend type checking, the focused `SessionProfileEditor` test suite (18 tests), and the
   production frontend build passed.
 - Documentation build passed.
-
