@@ -65,6 +65,32 @@ func TestSessionCLIInjectionLegacyImage(t *testing.T) {
 	require.Equal(t, "/custom/ccplant", manager.sessionBinaryPath())
 }
 
+func TestSessionProfileAssetImageOnlyOverridesMainContainer(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.Image = "example/default-assets:v1"
+	manager.k8sConfig.CLIImage = "example/control-plane:v2"
+	req := &entities.RunServerRequest{
+		Environment:       map[string]string{},
+		ProfileAssetImage: "example/custom-assets:v3",
+	}
+	deployment, err := manager.buildDeployment(context.Background(), newWorkloadTestSession(), req)
+	require.NoError(t, err)
+	spec := deployment.Spec.Template.Spec
+	require.Equal(t, "example/custom-assets:v3", findContainerByName(spec.Containers, "agentapi").Image)
+	require.Equal(t, "example/control-plane:v2", findContainerByName(spec.InitContainers, "install-ccplant-cli").Image)
+}
+
+func TestBuildSessionSettingsIncludesProfileCommandWrapper(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	req := &entities.RunServerRequest{
+		Environment:           map[string]string{},
+		AgentType:             "codex-acp",
+		ProfileCommandWrapper: "exec env WRAPPED=1 {{ .Command }}",
+	}
+	settings := manager.buildSessionSettings(context.Background(), newWorkloadTestSession(), req, nil)
+	require.Equal(t, req.ProfileCommandWrapper, settings.Startup.CommandWrapperTemplate)
+}
+
 func TestResolveLegacySessionRuntimeImagesUsesManagerRelease(t *testing.T) {
 	cfg := &config.Config{
 		SessionManager: config.SessionManagerConfig{

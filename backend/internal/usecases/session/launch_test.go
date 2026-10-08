@@ -372,6 +372,8 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 		"SOURCE_ONLY": "source-value",
 	})
 	sourceCfg.SetSkills([]string{"org/source-skills", "org/shared"})
+	sourceCfg.SetCommandWrapperTemplate("exec env SOURCE=1 {{ .Command }}")
+	sourceCfg.SetAssetImage("ghcr.io/example/agent:source")
 	github := entities.NewMCPServer("github", "http")
 	github.SetURL("https://source.example/github")
 	servers := entities.NewMCPServersSettings()
@@ -387,6 +389,7 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 		"PROFILE_ONLY": "profile-value",
 	})
 	profileCfg.SetSkills([]string{"org/shared", "org/profile-skills"})
+	profileCfg.SetAssetImage("ghcr.io/example/agent:profile")
 	githubOverride := entities.NewMCPServer("github", "http")
 	githubOverride.SetURL("https://profile.example/github")
 	githubOverride.SetHeaders(map[string]string{"Authorization": "Bearer profile"})
@@ -422,6 +425,12 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	wantSkills := []string{"org/source-skills", "org/shared", "org/profile-skills"}
 	if !reflect.DeepEqual(sessionManager.req.ProfileSkills, wantSkills) {
 		t.Fatalf("ProfileSkills = %#v, want %#v", sessionManager.req.ProfileSkills, wantSkills)
+	}
+	if sessionManager.req.ProfileCommandWrapper != "exec env SOURCE=1 {{ .Command }}" {
+		t.Fatalf("ProfileCommandWrapper = %q", sessionManager.req.ProfileCommandWrapper)
+	}
+	if sessionManager.req.ProfileAssetImage != "ghcr.io/example/agent:profile" {
+		t.Fatalf("ProfileAssetImage = %q", sessionManager.req.ProfileAssetImage)
 	}
 }
 

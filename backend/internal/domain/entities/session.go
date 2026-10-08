@@ -272,6 +272,10 @@ type RunServerRequest struct {
 	ProfileMCPServers *MCPServersSettings
 	// ProfileSkills is applied as a settings layer above user/team settings.
 	ProfileSkills []string
+	// ProfileCommandWrapper wraps the final agent command and is resolved from a session profile.
+	ProfileCommandWrapper string
+	// ProfileAssetImage overrides the Kubernetes main container image for this session.
+	ProfileAssetImage string
 	// ProfileSecretIDs limits settings Secret projection to the references stored
 	// on the resolved session profile. Empty preserves legacy all-secret behavior.
 	ProfileSecretIDs         []string

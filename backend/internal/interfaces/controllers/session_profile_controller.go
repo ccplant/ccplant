@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 // SessionProfileController handles session profile CRUD endpoints
@@ -45,6 +47,8 @@ type SessionProfileConfigRequest struct {
 	Pool                   string                       `json:"pool,omitempty"`
 	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
+	CommandWrapperTemplate string                       `json:"command_wrapper_template,omitempty"`
+	AssetImage             string                       `json:"asset_image,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
 	ReuseSession           bool                         `json:"reuse_session,omitempty"`
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
@@ -102,6 +106,8 @@ type SessionProfileConfigResponse struct {
 	Pool                   string                       `json:"pool,omitempty"`
 	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
+	CommandWrapperTemplate string                       `json:"command_wrapper_template,omitempty"`
+	AssetImage             string                       `json:"asset_image,omitempty"`
 	Params                 *entities.SessionParams      `json:"params,omitempty"`
 	ReuseSession           bool                         `json:"reuse_session,omitempty"`
 	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
@@ -405,6 +411,14 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 }
 
 func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
+	if err := sessionsettings.ValidateCommandWrapperTemplate(config.CommandWrapperTemplate()); err != nil {
+		return err
+	}
+	if image := config.AssetImage(); image != "" {
+		if _, err := reference.ParseNormalizedNamed(image); err != nil {
+			return fmt.Errorf("invalid asset image reference: %w", err)
+		}
+	}
 	if params := config.Params(); params != nil {
 		if err := modelprovider.ValidateAuthModes(params.CodexAuthMode, params.ClaudeAuthMode); err != nil {
 			return err
@@ -505,6 +519,8 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetSettingsTeamID(req.SettingsTeamID)
 	cfg.SetInitialMessageTemplate(req.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(req.ReuseMessageTemplate)
+	cfg.SetCommandWrapperTemplate(req.CommandWrapperTemplate)
+	cfg.SetAssetImage(req.AssetImage)
 	cfg.SetReuseSession(req.ReuseSession)
 	if req.Params != nil {
 		cfg.SetParams(req.Params)
@@ -563,6 +579,8 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			SettingsTeamID:         cfg.SettingsTeamID(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
+			CommandWrapperTemplate: cfg.CommandWrapperTemplate(),
+			AssetImage:             cfg.AssetImage(),
 			Params:                 cfg.Params(),
 			ReuseSession:           cfg.ReuseSession(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),

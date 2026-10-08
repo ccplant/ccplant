@@ -347,9 +347,10 @@ type RepositoryConfig struct {
 
 // StartupConfig holds the startup command configuration.
 type StartupConfig struct {
-	Command   []string `yaml:"command,omitempty"    json:"command,omitempty"`
-	Args      []string `yaml:"args,omitempty"       json:"args,omitempty"`
-	PreScript string   `yaml:"pre_script,omitempty" json:"pre_script,omitempty"`
+	Command                []string `yaml:"command,omitempty"                  json:"command,omitempty"`
+	Args                   []string `yaml:"args,omitempty"                     json:"args,omitempty"`
+	PreScript              string   `yaml:"pre_script,omitempty"               json:"pre_script,omitempty"`
+	CommandWrapperTemplate string   `yaml:"command_wrapper_template,omitempty" json:"command_wrapper_template,omitempty"`
 }
 
 // GithubConfig holds GitHub authentication configuration reference info.

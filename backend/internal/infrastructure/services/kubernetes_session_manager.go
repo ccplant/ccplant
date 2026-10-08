@@ -862,7 +862,9 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 
 	// Attempt to adopt a stock session matching the requested pod capabilities
 	// before creating a new one.
-	if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
+	if req.ProfileAssetImage != "" {
+		log.Printf("[K8S_SESSION] Custom asset image requested; bypassing stock sessions")
+	} else if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
 		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
 	} else if stockSvc != nil {
 		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
@@ -3637,9 +3639,13 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// Build container spec.
 	// The container runs agent-provisioner, which serves local health/status
 	// endpoints and pulls provision requests from the proxy internal API.
+	assetImage := m.k8sConfig.Image
+	if req.ProfileAssetImage != "" {
+		assetImage = req.ProfileAssetImage
+	}
 	container := corev1.Container{
 		Name:            "agentapi",
-		Image:           m.k8sConfig.Image,
+		Image:           assetImage,
 		ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 		WorkingDir:      workingDir,
 		Ports: []corev1.ContainerPort{
@@ -7162,6 +7168,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			Args:    []string{"--allowed-hosts", "*", "--allowed-origins", "*", "--port", fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		}
 	}
+	settings.Startup.CommandWrapperTemplate = req.ProfileCommandWrapper
 
 	// Slack integration: embed SlackParams so the provisioner can launch
 	// acp-posts as a subprocess. This enables stock sessions (which have no

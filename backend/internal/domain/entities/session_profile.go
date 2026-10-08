@@ -31,6 +31,8 @@ type SessionProfileConfig struct {
 	pool                   string
 	initialMessageTemplate string
 	reuseMessageTemplate   string
+	commandWrapperTemplate string
+	assetImage             string
 	params                 *SessionParams
 	reuseSession           bool
 	// sandboxPolicyID is a reference to a SandboxPolicy resource.
@@ -262,6 +264,20 @@ func (c *SessionProfileConfig) ReuseMessageTemplate() string { return c.reuseMes
 
 // SetReuseMessageTemplate sets the reuse message template
 func (c *SessionProfileConfig) SetReuseMessageTemplate(t string) { c.reuseMessageTemplate = t }
+
+// CommandWrapperTemplate returns the Go template used to wrap the final agent command.
+func (c *SessionProfileConfig) CommandWrapperTemplate() string { return c.commandWrapperTemplate }
+
+// SetCommandWrapperTemplate sets the Go template used to wrap the final agent command.
+func (c *SessionProfileConfig) SetCommandWrapperTemplate(value string) {
+	c.commandWrapperTemplate = value
+}
+
+// AssetImage returns the custom Kubernetes session asset image.
+func (c *SessionProfileConfig) AssetImage() string { return c.assetImage }
+
+// SetAssetImage sets the custom Kubernetes session asset image.
+func (c *SessionProfileConfig) SetAssetImage(value string) { c.assetImage = value }
 
 // Params returns the session params
 func (c *SessionProfileConfig) Params() *SessionParams { return c.params }

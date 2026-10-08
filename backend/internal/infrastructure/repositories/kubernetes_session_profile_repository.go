@@ -59,6 +59,8 @@ type sessionProfileConfigJSON struct {
 	Pool                   string                    `json:"pool,omitempty"`
 	InitialMessageTemplate string                    `json:"initial_message_template,omitempty"`
 	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
+	CommandWrapperTemplate string                    `json:"command_wrapper_template,omitempty"`
+	AssetImage             string                    `json:"asset_image,omitempty"`
 	Params                 *entities.SessionParams   `json:"params,omitempty"`
 	ReuseSession           bool                      `json:"reuse_session,omitempty"`
 	SandboxPolicyID        string                    `json:"sandbox_policy_id,omitempty"`
@@ -366,6 +368,8 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetSettingsTeamID(pj.Config.SettingsTeamID)
 	cfg.SetInitialMessageTemplate(pj.Config.InitialMessageTemplate)
 	cfg.SetReuseMessageTemplate(pj.Config.ReuseMessageTemplate)
+	cfg.SetCommandWrapperTemplate(pj.Config.CommandWrapperTemplate)
+	cfg.SetAssetImage(pj.Config.AssetImage)
 	cfg.SetParams(pj.Config.Params)
 	cfg.SetReuseSession(pj.Config.ReuseSession)
 	cfg.SetSandboxPolicyID(pj.Config.SandboxPolicyID)
@@ -420,6 +424,8 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			SettingsTeamID:         cfg.SettingsTeamID(),
 			InitialMessageTemplate: cfg.InitialMessageTemplate(),
 			ReuseMessageTemplate:   cfg.ReuseMessageTemplate(),
+			CommandWrapperTemplate: cfg.CommandWrapperTemplate(),
+			AssetImage:             cfg.AssetImage(),
 			Params:                 cfg.Params(),
 			ReuseSession:           cfg.ReuseSession(),
 			SandboxPolicyID:        cfg.SandboxPolicyID(),

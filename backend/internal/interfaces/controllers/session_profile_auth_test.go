@@ -68,6 +68,20 @@ func TestProfileFilesValidation(t *testing.T) {
 	require.NoError(t, validateSessionProfileConfig(cfg))
 }
 
+func TestProfileRuntimeCustomizationValidation(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetCommandWrapperTemplate("exec env TEST=1 {{ .Command }}")
+	cfg.SetAssetImage("ghcr.io/example/agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.NoError(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetCommandWrapperTemplate("echo missing-command")
+	require.ErrorContains(t, validateSessionProfileConfig(cfg), "exactly one")
+
+	cfg.SetCommandWrapperTemplate("exec {{ .Command }}")
+	cfg.SetAssetImage("https://example.com/not-an-image")
+	require.ErrorContains(t, validateSessionProfileConfig(cfg), "invalid asset image")
+}
+
 func TestMergeSessionParamsModelOptions(t *testing.T) {
 	profile := &entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}}
 	merged := mergeSessionParams(profile, &entities.SessionParams{})

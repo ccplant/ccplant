@@ -55,6 +55,8 @@ type LaunchRequest struct {
 	SettingsTeamID           string
 	ProfileMCPServers        *entities.MCPServersSettings
 	ProfileSkills            []string
+	ProfileCommandWrapper    string
+	ProfileAssetImage        string
 	ResolvedSessionProfileID string
 
 	// Webhook payload to mount in the session filesystem (optional)
@@ -257,6 +259,8 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		ClaudeAuthMode:           req.ClaudeAuthMode,
 		ProfileMCPServers:        req.ProfileMCPServers,
 		ProfileSkills:            append([]string(nil), req.ProfileSkills...),
+		ProfileCommandWrapper:    req.ProfileCommandWrapper,
+		ProfileAssetImage:        req.ProfileAssetImage,
 		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
 	}
 
@@ -398,6 +402,12 @@ func profileMatchesTenant(profile *entities.SessionProfile, scope entities.Resou
 
 func mergeProfileConfigSources(base, override entities.SessionProfileConfig) entities.SessionProfileConfig {
 	local := override
+	if local.CommandWrapperTemplate() == "" {
+		local.SetCommandWrapperTemplate(base.CommandWrapperTemplate())
+	}
+	if local.AssetImage() == "" {
+		local.SetAssetImage(base.AssetImage())
+	}
 	if len(local.Environment()) == 0 {
 		local.SetEnvironment(base.Environment())
 	} else if len(base.Environment()) > 0 {
@@ -470,6 +480,8 @@ func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]st
 // applyProfileToLaunchRequest merges a SessionProfileConfig into a LaunchRequest.
 // The profile provides the base; explicit request fields override.
 func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
+	req.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
+	req.ProfileAssetImage = cfg.AssetImage()
 	if cfg.SettingsTeamID() != "" {
 		req.SettingsTeamID = cfg.SettingsTeamID()
 	}
