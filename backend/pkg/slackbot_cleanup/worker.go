@@ -237,6 +237,23 @@ func (w *CleanupWorker) pruneSessionsWithTTL(ctx context.Context) {
 		if ttlStr == "" {
 			continue
 		}
+		// Direct-runtime pool deletion is asynchronous. The first DELETE queues a
+		// command and leaves the durable route in terminating until a later DELETE
+		// observes the command result. Do not strand that route just because
+		// terminating is intentionally not a completion state for TTL timing.
+		if session.Status() == "terminating" {
+			if w.config.DryRun {
+				log.Printf("[SESSION_TTL_CLEANUP] [DRY-RUN] Would reconcile terminating session %s", session.ID())
+				continue
+			}
+			if err := w.sessionManager.DeleteSession(session.ID()); err != nil {
+				log.Printf("[SESSION_TTL_CLEANUP] Failed to reconcile terminating session %s: %v", session.ID(), err)
+			} else {
+				log.Printf("[SESSION_TTL_CLEANUP] Reconciled terminating session %s", session.ID())
+				deleted++
+			}
+			continue
+		}
 		ttl, err := time.ParseDuration(ttlStr)
 		if err != nil {
 			log.Printf("[SESSION_TTL_CLEANUP] %sSession %s: invalid session-ttl %q: %v", dryRunPrefix, session.ID(), ttlStr, err)

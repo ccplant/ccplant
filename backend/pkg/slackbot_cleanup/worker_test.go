@@ -98,6 +98,32 @@ func TestPruneSessionsWithTTLUsesExplicitTTL(t *testing.T) {
 	}
 }
 
+func TestPruneSessionsWithTTLReconcilesPendingPoolDeletion(t *testing.T) {
+	now := time.Now()
+	terminating := entities.NewProxySessionWithStatus("pool-session", "user", entities.ScopeUser, "", map[string]string{"session_ttl": "48h"}, now.Add(-time.Hour), "terminating")
+	terminating.SetUpdatedAt(now)
+	mgr := &mockSessionManager{sessions: []entities.Session{terminating}}
+
+	worker := NewCleanupWorker(mgr, CleanupWorkerConfig{SessionTTL: 72 * time.Hour})
+	worker.pruneSessionsWithTTL(context.Background())
+
+	if len(mgr.deletedIDs) != 1 || mgr.deletedIDs[0] != "pool-session" {
+		t.Fatalf("terminating pool deletion was not reconciled: %v", mgr.deletedIDs)
+	}
+}
+
+func TestPruneSessionsWithTTLDryRunDoesNotReconcilePendingPoolDeletion(t *testing.T) {
+	terminating := entities.NewProxySessionWithStatus("pool-session", "user", entities.ScopeUser, "", map[string]string{"session_ttl": "1m"}, time.Now().Add(-time.Hour), "terminating")
+	mgr := &mockSessionManager{sessions: []entities.Session{terminating}}
+
+	worker := NewCleanupWorker(mgr, CleanupWorkerConfig{DryRun: true})
+	worker.pruneSessionsWithTTL(context.Background())
+
+	if len(mgr.deletedIDs) != 0 {
+		t.Fatalf("dry-run reconciled pool deletion: %v", mgr.deletedIDs)
+	}
+}
+
 func TestTTLCleanupRegardlessOfOrigin(t *testing.T) {
 	for _, slack := range []bool{false, true} {
 		stale := completedTTLSession("stale", time.Now().Add(-2*time.Minute))
