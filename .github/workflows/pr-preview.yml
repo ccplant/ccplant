@@ -1,0 +1,151 @@
+name: PR preview lifecycle
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+concurrency:
+  group: >-
+    preview-source-${{
+      github.event.workflow_run.pull_requests[0].number ||
+      github.event.pull_request.number ||
+      github.run_id
+    }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.preview.outputs.action }}
+      pr_number: ${{ steps.preview.outputs.pr_number }}
+      source_sha: ${{ steps.preview.outputs.source_sha }}
+    steps:
+      - id: preview
+        name: Resolve trusted lifecycle request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
+          WORKFLOW_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          action=
+          pr_number=
+          source_sha=
+
+          if [[ "$EVENT_NAME" == workflow_run ]]; then
+            if [[ "$WORKFLOW_CONCLUSION" != success || "$WORKFLOW_EVENT" != pull_request || -z "$WORKFLOW_PR_NUMBER" ]]; then
+              echo 'CI run is not a successful pull request run; nothing to do.'
+            else
+              pr_number=$WORKFLOW_PR_NUMBER
+              source_sha=$WORKFLOW_HEAD_SHA
+              pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number")
+              current_sha=$(jq -r .head.sha <<<"$pr")
+              if [[ "$(jq -r .state <<<"$pr")" != open || "$current_sha" != "$source_sha" ]]; then
+                echo 'CI result is stale or the pull request is closed; skipping preview deployment.'
+              elif [[ "$(jq -r .head.repo.full_name <<<"$pr")" == "$GITHUB_REPOSITORY" ]]; then
+                action=deploy
+              else
+                echo 'Fork pull requests do not receive preview environments.'
+              fi
+            fi
+          elif [[ "$PR_ACTION" == closed && "$PR_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+            action=destroy
+            pr_number=$PR_NUMBER
+          fi
+
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  build-preview-image:
+    needs: prepare
+    if: needs.prepare.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    outputs:
+      api_image: ${{ steps.reference.outputs.api_image }}
+    env:
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        name: Build and publish preview API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: api
+          build-args: RELEASE_VERSION=preview.pr-${{ env.PR_NUMBER }}.${{ env.SOURCE_SHA }}
+          push: true
+          tags: ghcr.io/ccplant/ccplant-api:preview.pr-${{ env.PR_NUMBER }}.${{ env.SOURCE_SHA }}
+          cache-from: type=gha,scope=preview-api
+          cache-to: type=gha,mode=max,scope=preview-api
+
+      - id: reference
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "api_image=ghcr.io/ccplant/ccplant-api@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+  dispatch-deploy:
+    needs: [prepare, build-preview-image]
+    if: needs.prepare.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start deployment workflow
+        env:
+          GH_TOKEN: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          API_IMAGE: ${{ needs.build-preview-image.outputs.api_image }}
+        run: |
+          set -euo pipefail
+          gh workflow run preview-deploy.yml \
+            --repo ccplant/ccplant-deploy \
+            --ref main \
+            -f pr_number="$PR_NUMBER" \
+            -f source_sha="$SOURCE_SHA" \
+            -f api_image="$API_IMAGE"
+
+  dispatch-destroy:
+    needs: prepare
+    if: needs.prepare.outputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start cleanup workflow
+        env:
+          GH_TOKEN: ${{ secrets.CCPLANT_DEPLOY_TOKEN }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh workflow run preview-destroy.yml \
+            --repo ccplant/ccplant-deploy \
+            --ref main \
+            -f pr_number="$PR_NUMBER"
