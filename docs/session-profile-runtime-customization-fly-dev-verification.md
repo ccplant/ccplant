@@ -1,77 +1,64 @@
 # Session profile runtime customization — Fly dev verification
 
-Date: 2026-10-08 UTC  
-Implementation commit: `927f4b874169de23b8b3cf9ac43b88fb6a533ada`  
+Date: 2026-10-08 UTC
+
+Implementation commit: `92171b47c50816cfa8d563cfadc690e7dc570204`
+
 PR: https://github.com/ccplant/ccplant/pull/443
 
 ## Deployment
 
-- The API, session runtime, and frontend images were built from the implementation commit.
-- The API and worker deployment, and the Cloudflare frontend deployment, completed successfully:
-  https://github.com/ccplant/ccplant-deploy/actions/runs/37770425601
+- The API, session runtime, and frontend images were built by
+  https://github.com/ccplant/ccplant/actions/runs/37852237414.
+- The downstream dev deployment completed successfully:
+  https://github.com/ccplant/ccplant-deploy/actions/runs/37852671682.
 - `https://ccplant-api-dev.fly.dev/health` returned HTTP 200 and version
-  `dev.ccplant.927f4b874169de23b8b3cf9ac43b88fb6a533ada`.
-- The branch CI rerun passed:
-  https://github.com/ccplant/ccplant/actions/runs/37769482057
+  `dev.ccplant.92171b47c50816cfa8d563cfadc690e7dc570204`.
+- The `ccplant-session-dev/ccplant-session` deployment ran the matching API image.
 
-## API verification
+## Configuration ownership
 
-An isolated local user and one-hour API token were created for the test. The token secret was
-kept in mode-0600 temporary files and was not printed.
+The verification used the intended ownership split:
+
+- the session profile supplied `command_wrapper_template`;
+- the Session Manager supplied `AGENTAPI_K8S_SESSION_IMAGE`;
+- the profile API did not persist or return the removed `asset_image` field.
+
+The Manager image setting was
+`ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405`.
+
+## Runtime verification
+
+A temporary profile targeting pool `fly-dev` used this wrapper:
+
+```text
+printf passed > /tmp/ccplant-wrapper-test; exec {{ .Command }}
+```
+
+Starting a session with that profile allocated runner
+`6ee5ad3e-441f-4b53-97f0-b4e9f41ec80b`. Direct inspection in namespace
+`ccplant-session-dev` confirmed:
 
 | Check | Result |
 | --- | --- |
-| Wrapper without the required Command template action | HTTP 400 |
-| Invalid OCI asset image reference | HTTP 400 |
-| Profile containing a valid wrapper and asset image | HTTP 201 |
-| Returned wrapper equals the submitted template | Passed |
-| Returned asset image equals the submitted image | Passed |
-| Deleting both temporary profiles | HTTP 204 |
+| Allocated workload image | `ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405` |
+| Image equals the Session Manager setting | Passed |
+| `/tmp/ccplant-wrapper-test` contents | `passed` |
+| Wrapper command continued into the agent process | Passed; session became active |
 
-The accepted wrapper wrote a unique marker before executing the Command template action. The asset image
-used the current compatible asset image so that the runtime check would test profile selection
-without changing the toolchain contents.
+This also verifies the pooled-session propagation path. The first attempt exposed that the
+resolved profile wrapper was not copied from `StartRequest` into `RunServerRequest`; commit
+`92171b47` fixes that path and adds regression coverage.
 
-## Runtime verification and environment finding
-
-Three isolated sessions were started:
-
-1. wrapper plus asset-image profile;
-2. wrapper-only profile;
-3. a control session with no profile.
-
-All three start requests succeeded and received allocated runtime IDs, but all three remained in
-`starting`. Their message endpoints returned HTTP 502 because the runtime endpoint on port 9000
-was not listening. The control session reproduced the same behavior, so this was not specific to
-the new wrapper or asset-image fields. Because the Fly dev session runtime infrastructure did not
-become reachable, the marker file and live Pod image could not be inspected in this run.
-
-### GitHub-token retry
-
-At the user's suggestion, the runtime check was repeated with a valid GitHub token supplied as
-`params.github_token`, repository `ccplant/ccplant`, and the asset image pinned to digest
-`sha256:2d230b6c90a1e09c1ac54844cdb51655520bdf01be92981e4e9f10f3b89b4dc1`.
-The start request succeeded and allocated runtime `78efd17a-6f0c-45bb-a532-02b1ccc5236e`, but the
-session remained in `starting` for more than four minutes. Its messages endpoint again returned
-HTTP 502 with `127.0.0.1:9000: connect: connection refused`. This confirms that supplying GitHub
-authentication does not resolve the earlier startup failure: the failure occurs before the agent
-or repository authentication path becomes reachable.
-
-Deletion was requested for all three temporary sessions and returned HTTP 202. Both profiles were
-deleted, the temporary API token was revoked, and all local and remote files containing token
-secrets were removed. The test user remains as an inactive record without a usable token because
-the local-user API has no delete operation.
-
-The GitHub-token retry session was likewise queued for deletion with HTTP 202; its temporary
-profile was deleted with HTTP 204, its API token was revoked, and its local and remote token files
-were removed. The GitHub token value was never printed or persisted in the repository.
+The temporary session and the earlier failed verification session were deleted with HTTP 202.
+The temporary profile was deleted with HTTP 204. Authentication used the current GitHub CLI token
+as a bearer token; the token value was neither printed nor stored in the repository.
 
 ## Local verification
 
-- `go test ./...` passed locally and in CI. The initial CI attempt encountered an unrelated
-  temporary-directory cleanup race in
-  `TestNativeSessionWithNilRepositorySettingsDerivesPathsFromVirtualHome`; the failed-job rerun
-  passed without a code change.
-- Frontend type checking, the focused `SessionProfileEditor` test suite (18 tests), and the
-  production frontend build passed.
-- Documentation build passed.
+- `go test ./...` passed.
+- `go vet` passed for the changed application, controller, and session use-case packages.
+- Regression tests cover profile-to-start-request and start-request-to-pooled-run-request wrapper
+  propagation.
+- Frontend type checking, the focused `SessionProfileEditor` suite (18 tests), and ESLint passed
+  for the ownership-change commit; ESLint reported only pre-existing warnings.
