@@ -733,6 +733,9 @@ func TestBuildSessionSettings_CodexACPDisablesNestedSandbox(t *testing.T) {
 	if !strings.Contains(settings.Codex.ConfigTOML, `sandbox_mode = "danger-full-access"`) {
 		t.Fatalf("Codex config does not disable the nested sandbox: %q", settings.Codex.ConfigTOML)
 	}
+	if !strings.Contains(settings.Codex.ConfigTOML, `check_for_update_on_startup = false`) {
+		t.Fatalf("Codex config does not disable startup update checks: %q", settings.Codex.ConfigTOML)
+	}
 }
 
 func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {

@@ -175,8 +175,8 @@ ENV PATH="/opt/ccplant/bin:/opt/claude/bin:/opt/cursor/bin:/home/agentapi/.cargo
 # make upgrades explicit; session Pods use the resulting image contents and
 # never update packages during startup.
 ARG CODEX_VERSION=latest
-ARG CLAUDE_AGENT_ACP_VERSION=latest
-ARG CODEX_ACP_VERSION=latest
+ARG CLAUDE_AGENT_ACP_VERSION=0.87.0
+ARG CODEX_ACP_VERSION=2.1.1
 # `skills@latest` may resolve to a different npm package that does not expose
 # the CLI binary. Keep the runtime image on the known-compatible CLI release
 # and fail the image build if its executable is missing.

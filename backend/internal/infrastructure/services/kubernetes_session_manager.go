@@ -7055,10 +7055,10 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 			// Bypass permission prompts and disable Codex's own sandbox.
 			// agentapi-proxy provides its own sandbox, so Codex's bubblewrap-based
 			// sandbox is redundant and causes spurious permission requests.
-			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\n",
+			ConfigTOML: "approval-mode = \"full-auto\"\nsandbox_mode = \"danger-full-access\"\ncheck_for_update_on_startup = false\n",
 			MCPServers: materialized.MCPServers,
 		}
-		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval-mode=full-auto, sandbox_mode=danger-full-access for session %s", session.id)
+		log.Printf("[K8S_SESSION] Injected Codex hooks and set INITIAL_AGENT_MODE=agent-full-access, approval-mode=full-auto, sandbox_mode=danger-full-access, check_for_update_on_startup=false for session %s", session.id)
 	}
 
 	// Repository info
