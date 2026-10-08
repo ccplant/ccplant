@@ -11,7 +11,9 @@ Session profiles do not accept or return an asset image. A start request also do
 
 ## Command wrapper
 
-`SessionProfileConfig.command_wrapper_template` is an optional Go template. It must contain exactly one `{{ .Command }}` action. The provisioner renders it after constructing the final agent command and before starting the process.
+`SessionProfileConfig.command_wrapper_template` is an optional Go template. It must contain exactly one
+<code v-pre>{{ .Command }}</code> action. The provisioner renders it after constructing the final agent
+command and before starting the process.
 
 ```json
 {
