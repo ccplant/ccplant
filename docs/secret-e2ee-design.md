@@ -194,6 +194,63 @@ Control plane                 Session Runtime / provisioner            Agent
 
 既定の `automatic` は無人実行可能、`interactive` は control plane と事前登録 executor key の同時侵害にも強い、という trade-off を UI に明記する。
 
+### Time-bounded key lease
+
+`automatic` と毎回承認の `interactive` の中間として、`release_policy: leased` を推奨 policy にできる。ユーザー端末は secret の平文を定期送信するのではなく、認証済み executor の短期 public key に対して期間限定の `KeyLease` を発行する。
+
+```text
+User device                 Control plane                 Executor
+    | verify executor key,       |                           |
+    | scope and attestation      |                           |
+    | wrap SEK to lease key      |                           |
+    | sign expiry and policy     |                           |
+    |--- encrypted KeyLease ---->|--- encrypted KeyLease --->|
+    |                            |                           | unwrap SEK
+    |                            |                           | keep in memory
+    |                            |                           | decrypt while valid
+    |                            |                           | erase at expiry
+```
+
+```json
+{
+  "lease_id": "lease_...",
+  "secret_id": "sec_...",
+  "secret_version": 7,
+  "scope_id": "team:org/team",
+  "executor_kid": "ek_session_...",
+  "session_id": "session_...",
+  "generation": 3,
+  "not_before": "2026-10-08T08:00:00Z",
+  "expires_at": "2026-10-08T16:00:00Z",
+  "max_uses": 0,
+  "wrapped_secret_key": "base64url...",
+  "issuer_device_id": "device_...",
+  "signature": "base64url..."
+}
+```
+
+安全境界は次のようにする。
+
+- lease は executor trust domain だけでなく `session_id` と `generation` に bind し、別 session や再割当後に再利用できない。
+- executor は wall clock だけに依存せず、起動時に短寿命の signed time token を取得し、monotonic clock で残存期間を測る。clock rollback で延命しない。
+- 復号した `SEK` と secret plaintext は disk、Kubernetes Secret、swap、core dump に保存せず、memory にだけ保持する。
+- expiry、session終了、generation変更、明示 revoke のいずれかで key material を破棄する。
+- control plane は lease を保存・失効配信できるが復号できない。失効配信を遮断された executor も期限到来後には利用不能になる。
+- lease 発行後に侵害された executor は期限まで secret を利用できる。期限短縮はこの exposure window と可用性の trade-off である。
+- executor が期限内に平文を外へコピーすることは暗号では防げない。lease は将来の利用を制限する仕組みであり、既に取得された平文を回収する仕組みではない。
+
+推奨 default は8時間とし、利用者には「勤務日ごとに一度」の承認として見せる。risk level に応じて15分、1時間、8時間、24時間から選択でき、無期限は `automatic` として明確に区別する。承認時には対象を個々の secret ではなく、同一scope・profile・executor trust domain の bundle にまとめ、Web Pushまたは開いているSettings画面からワンタップで更新する。
+
+期限の少し前に登録済み端末へ通知し、本人確認済みかつ端末がunlock中なら policy に応じて更新できる。ただし完全なbackground自動更新を許すと実質的に無期限鍵になるため、次を分ける。
+
+- `manual renewal`: 毎回 user presence を要求する。高リスク用途向け。
+- `bounded auto-renewal`: 最初の承認時に「最大24時間、1時間ごとに更新」のような renewal horizon を署名し、その範囲だけ端末が自動更新する。
+- `automatic`: user presence 不要の長期 executor recipient。無人Schedule向け。
+
+ユーザーが応答しない場合、実行中processを即座にkillするのではなく、新しいsecret利用を止める。env/fileとして渡した値はprocessから回収できないため、厳密な期限が必要なconsumerは static env/file projection を使わず、local secret brokerから都度取得する。brokerはlease expiry後の新規取得を拒否し、既存connectionや子processも期限時にrestart/terminateするpolicyを選べるようにする。
+
+したがって leased mode の強い保証を得るには、secretを起動時に環境変数へコピーする現在の方式から、loopback brokerまたは短寿命credential発行方式へ移す必要がある。単にexecutor memoryから鍵を消すだけでは、既にagent processへ渡した平文の有効期限を強制できない。
+
 ## API and model changes
 
 ### Models
