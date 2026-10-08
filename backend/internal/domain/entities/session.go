@@ -190,6 +190,7 @@ type StartRequest struct {
 	ProfileFiles             []sessionsettings.ManagedFile `json:"-"`
 	ProfileMCPServers        *MCPServersSettings           `json:"-"`
 	ProfileSkills            []string                      `json:"-"`
+	ProfileCommandWrapper    string                        `json:"-"`
 	ResolvedSessionProfileID string                        `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
 	// ReuseMessage is queued to that session instead of creating a new one.

@@ -66,6 +66,26 @@ func TestPoolSessionPreservesDockerRequirement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "true", allocation.Requirements["dind"])
 }
+
+func TestPoolSessionPreservesProfileCommandWrapper(t *testing.T) {
+	store := infrasessionrunner.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	manager := &capturingPoolSettingsManager{}
+	server := &Server{sessionManager: manager, sessionRunnerStore: store, sessionRouteRepo: &recordingSessionRouteRepository{}}
+
+	_, err := server.createPoolSession(
+		context.Background(),
+		testAuthorizedRoute(t, "pool", nil),
+		"session",
+		entities.StartRequest{ProfileCommandWrapper: "exec env WRAPPED=1 {{ .Command }}"},
+		"user",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, manager.request)
+	require.Equal(t, "exec env WRAPPED=1 {{ .Command }}", manager.request.ProfileCommandWrapper)
+}
+
 func TestPoolSessionDoesNotIgnoreSettingsAuthorizationError(t *testing.T) {
 	// No allocation store: the function must stop before enqueueing anything.
 	server := &Server{sessionManager: rejectedProfileSettingsManager{}}

@@ -78,6 +78,17 @@ func TestProfileRuntimeCustomizationValidation(t *testing.T) {
 
 }
 
+func TestApplySessionProfilePreservesCommandWrapper(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetCommandWrapperTemplate("exec env WRAPPED=1 {{ .Command }}")
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, "exec env WRAPPED=1 {{ .Command }}", request.ProfileCommandWrapper)
+}
+
 func TestMergeSessionParamsModelOptions(t *testing.T) {
 	profile := &entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}}
 	merged := mergeSessionParams(profile, &entities.SessionParams{})
