@@ -69,7 +69,7 @@
       "required": ["provisioner"],
       "properties": {
         "image": {"type": "string"},
-        "cliImage": {"type": "string"},
+        "cliImage": {"type": "string", "description": "Deprecated and ignored; retained for upgrade compatibility."},
         "isolation": {
           "type": "object",
           "required": ["disableServiceLinks", "disableServiceAccountToken", "blockKubernetesAPI", "egressMode"],

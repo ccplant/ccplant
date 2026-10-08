@@ -317,15 +317,14 @@ assert_not_contains 'AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL' "$TMP_DIR/bac
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL, value: "https://app.example/api/v1/health"' "$TMP_DIR/backend-manager-version-poller.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_BASE_PORT, value: "9000"' "$TMP_DIR/backend-manager-default-port.yaml"
-assert_contains 'value: "example/session-manager:1.173.0"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'args: \["session-manager", "--port", "8080"\]' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains 'name: AGENTAPI_SESSION_MANAGER_LOCAL_URL, value: "http://control.default.svc.cluster.local:8080"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_LOCAL_URL, value: "http://control.separation-test.svc.cluster.local:8080"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_NAME, value: "backend-agentapi-proxy-session-manager"' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_ENCRYPTION_KEY' "$TMP_DIR/backend-session-manager-deployment.yaml"
@@ -493,8 +492,19 @@ agent_image="ghcr.io/ccplant/ccplant-agent:$("$REPO_ROOT/scripts/agent-image-tag
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set image.tag=v9.9.9 >"$TMP_DIR/manager-agent-assets.yaml"
 assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
-assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
-assert_contains 'value: "ghcr.io/ccplant/ccplant-api:v9.9.9"' "$TMP_DIR/manager-agent-assets.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: "ghcr.io/ccplant/ccplant-api"' "$TMP_DIR/manager-agent-assets.yaml"
+assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/manager-agent-assets.yaml"
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set session.cliImage=registry.example/legacy-cli >"$TMP_DIR/manager-legacy-cli-value.yaml"
+assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/manager-legacy-cli-value.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-legacy-cli-value.yaml"
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  "${all_role_args[@]}" \
+  --set sessionManager.kubernetesSession.cliImage=registry.example/legacy-cli \
+  >"$TMP_DIR/backend-manager-legacy-cli-value.yaml"
+assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
 
 # Independent standalone managers in one namespace must not share names or the
 # Kubernetes Lease that elects the allocation worker.
@@ -518,11 +528,8 @@ assert_not_contains '^  name: legacy-manager-session-manager$' "$TMP_DIR/manager
   --set leaderElection.migrateLegacyLease=true >"$TMP_DIR/manager-lease-migration.yaml"
 assert_contains '^  strategy:$' "$TMP_DIR/manager-lease-migration.yaml"
 assert_contains '^    type: Recreate$' "$TMP_DIR/manager-lease-migration.yaml"
-"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
-  --set session.cliImage=registry.example/cli:fixed >"$TMP_DIR/manager-custom-cli.yaml"
-assert_contains 'value: "registry.example/cli:fixed"' "$TMP_DIR/manager-custom-cli.yaml"
 assert_contains "value: \"${agent_image}\"" "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
 
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set sessionPersistence.backend=s3 \

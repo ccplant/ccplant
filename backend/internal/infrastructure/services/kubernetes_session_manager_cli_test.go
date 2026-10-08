@@ -80,28 +80,33 @@ func TestResolveLegacySessionRuntimeImagesUsesManagerRelease(t *testing.T) {
 	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
 }
 
-func TestResolveLegacySessionRuntimeImagesPreservesOverrides(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		image string
-		cli   string
-	}{
-		{name: "custom-session-image", image: "private/agent:fixed"},
-		{name: "custom-cli-image", image: "ghcr.io/ccplant/ccplant-backend:v1.2.3", cli: "private/cli:fixed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{
-				SessionManager: config.SessionManagerConfig{
-					ImageRepository: "ghcr.io/ccplant/ccplant-backend",
-					CurrentVersion:  "v1.2.3",
-				},
-				KubernetesSession: config.KubernetesSessionConfig{Image: tc.image, CLIImage: tc.cli},
-			}
-			resolveLegacySessionRuntimeImages(cfg)
-			require.Equal(t, tc.image, cfg.KubernetesSession.Image)
-			require.Equal(t, tc.cli, cfg.KubernetesSession.CLIImage)
-		})
+func TestResolveLegacySessionRuntimeImagesUsesManagerCLIWithCustomSessionImage(t *testing.T) {
+	cfg := &config.Config{
+		SessionManager: config.SessionManagerConfig{
+			ImageRepository: "ghcr.io/ccplant/ccplant-backend",
+			CurrentVersion:  "v1.2.3",
+		},
+		KubernetesSession: config.KubernetesSessionConfig{Image: "private/agent:fixed"},
 	}
+	resolveLegacySessionRuntimeImages(cfg)
+	require.Equal(t, "private/agent:fixed", cfg.KubernetesSession.Image)
+	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
+}
+
+func TestResolveLegacySessionRuntimeImagesOverridesCustomCLI(t *testing.T) {
+	cfg := &config.Config{
+		SessionManager: config.SessionManagerConfig{
+			ImageRepository: "ghcr.io/ccplant/ccplant-backend",
+			CurrentVersion:  "v1.2.3",
+		},
+		KubernetesSession: config.KubernetesSessionConfig{
+			Image:    "private/agent:fixed",
+			CLIImage: "private/cli:fixed",
+		},
+	}
+	resolveLegacySessionRuntimeImages(cfg)
+	require.Equal(t, "private/agent:fixed", cfg.KubernetesSession.Image)
+	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
 }
 
 func TestNormalizeProvisionSettingsUsesInjectedCLI(t *testing.T) {

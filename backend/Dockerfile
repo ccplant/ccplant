@@ -44,6 +44,8 @@ RUN npm install --global "@openai/codex@${CODEX_VERSION}" && \
 # Kubernetes session managers also use this image to supply the CLI to agents.
 FROM alpine:3.22 AS api
 
+ARG RELEASE_VERSION=dev
+
 RUN apk add --no-cache ca-certificates tzdata && \
     runtime_group="$(awk -F: '$3 == 999 { print $1; exit }' /etc/group)" && \
     if [ -z "$runtime_group" ]; then addgroup -S -g 999 agentapi; runtime_group=agentapi; fi && \
@@ -56,7 +58,8 @@ COPY --from=codex /codex /usr/local/bin/codex
 
 USER 999:999
 WORKDIR /home/agentapi/workdir
-ENV HOME=/home/agentapi
+ENV HOME=/home/agentapi \
+    AGENTAPI_SESSION_MANAGER_CURRENT_VERSION=${RELEASE_VERSION}
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

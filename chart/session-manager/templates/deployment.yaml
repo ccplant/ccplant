@@ -51,7 +51,6 @@ spec:
             - {name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: {{ .Values.autoUpgrade | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME, value: {{ include "session-manager.fullname" . | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: {{ .Values.image.repository | quote }}}
-            - {name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ENABLED, value: "true"}
             - {name: AGENTAPI_SESSION_MANAGER_UPSTREAM_URL, value: {{ required "parent.url is required" .Values.parent.url | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ID, value: {{ required "runner.managerId is required" .Values.runner.managerId | quote }}}
@@ -91,8 +90,6 @@ spec:
             {{- end }}
             {{- end }}
             - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
-            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
-              value: {{ .Values.session.cliImage | default (include "session-manager.image" .) | quote }}
             - {name: AGENTAPI_K8S_SESSION_IMAGE, value: {{ .Values.session.image | default (include "session-manager.image" .) | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ .Values.session.networkFilterImage | quote }}}
             - {name: AGENTAPI_K8S_SESSION_IMAGE_PULL_POLICY, value: {{ .Values.session.imagePullPolicy | quote }}}
