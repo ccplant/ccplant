@@ -2,18 +2,18 @@
 
 Date: 2026-10-08 UTC
 
-Implementation commit: `92171b47c50816cfa8d563cfadc690e7dc570204`
+Implementation commit: `60ebe4c705a6557a46245e2c42b98c249cbc9ca2`
 
 PR: https://github.com/ccplant/ccplant/pull/443
 
 ## Deployment
 
 - The API, session runtime, and frontend images were built by
-  https://github.com/ccplant/ccplant/actions/runs/37852237414.
+  https://github.com/ccplant/ccplant/actions/runs/37855861517.
 - The downstream dev deployment completed successfully:
-  https://github.com/ccplant/ccplant-deploy/actions/runs/37852671682.
+  https://github.com/ccplant/ccplant-deploy/actions/runs/37856556884.
 - `https://ccplant-api-dev.fly.dev/health` returned HTTP 200 and version
-  `dev.ccplant.92171b47c50816cfa8d563cfadc690e7dc570204`.
+  `dev.ccplant.60ebe4c705a6557a46245e2c42b98c249cbc9ca2`.
 - The `ccplant-session-dev/ccplant-session` deployment ran the matching API image.
 
 ## Configuration ownership
@@ -26,6 +26,31 @@ The verification used the intended ownership split:
 
 The Manager image setting was
 `ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405`.
+
+## Manager API image update
+
+Manager `5095c058-a00c-4a91-bc22-242f5ffb35e8` was patched through
+`PATCH /session-managers/{id}` to use the digest form of the same tested asset image:
+
+```text
+ghcr.io/ccplant/ccplant-agent@sha256:2d230b6c90a1e09c1ac54844cdb51655520bdf01be92981e4e9f10f3b89b4dc1
+```
+
+| Check | Result |
+| --- | --- |
+| Initial API status | `pending` |
+| Heartbeat convergence | `ready` with matching `applied_asset_image` |
+| Invalid image reference | HTTP 400 |
+| Old idle `fly-dev` stock | Both runners removed |
+| Replacement idle `fly-dev` stock | Two new runners, both using the digest reference |
+| Stock owned by the canary Manager | Unchanged |
+| Session allocated from replacement stock | Running on the digest reference |
+
+The desired image was then restored to the original tag. The API again converged from `pending`
+to `ready`, and two fresh idle runners used the restored tag. The already allocated digest-based
+runner remained running during this second replacement, confirming that reconciliation removes
+idle stock without disrupting allocated sessions. The verification session was then deleted with
+HTTP 202.
 
 ## Runtime verification
 
