@@ -495,16 +495,16 @@ assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
 assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: "ghcr.io/ccplant/ccplant-api"' "$TMP_DIR/manager-agent-assets.yaml"
 assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/manager-agent-assets.yaml"
-if "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
-  --set session.cliImage=registry.example/cli >"$TMP_DIR/manager-cli-override.yaml" 2>/dev/null; then
-  echo "session.cliImage unexpectedly accepted" >&2
-  exit 1
-fi
-if "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
-  --set sessionManager.kubernetesSession.cliImage=registry.example/cli >/dev/null 2>&1; then
-  echo "sessionManager.kubernetesSession.cliImage unexpectedly accepted" >&2
-  exit 1
-fi
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set session.cliImage=registry.example/legacy-cli >"$TMP_DIR/manager-legacy-cli-value.yaml"
+assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/manager-legacy-cli-value.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-legacy-cli-value.yaml"
+"$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  "${all_role_args[@]}" \
+  --set sessionManager.kubernetesSession.cliImage=registry.example/legacy-cli \
+  >"$TMP_DIR/backend-manager-legacy-cli-value.yaml"
+assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
 
 # Independent standalone managers in one namespace must not share names or the
 # Kubernetes Lease that elects the allocation worker.

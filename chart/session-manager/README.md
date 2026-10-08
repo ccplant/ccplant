@@ -39,7 +39,8 @@ The default manager image is `ccplant-api`. Session Pods use `ccplant-agent`
 with an independent content-based tag and `IfNotPresent`. An initContainer
 copies ccplant into an `emptyDir` mounted read-only at `/opt/ccplant/bin`.
 The CLI source always uses the session-manager image repository and the version
-embedded when that image was built; it is not independently configurable.
+embedded when that image was built; it is not independently configurable. The
+legacy `session.cliImage` value is accepted during upgrades but ignored.
 See [Agent image lifecycle](../../docs/guide/agent-image.md).
 
 Session Pod isolation is configurable per manager release under

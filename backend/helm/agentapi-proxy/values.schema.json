@@ -223,7 +223,7 @@
           "required": ["enabled", "serviceAccountName", "rbac", "resources", "pvc", "provisioner", "otelCollector"],
           "properties": {
             "image": { "type": "string" },
-            "cliImage": false,
+            "cliImage": { "type": "string", "description": "Deprecated and ignored; retained for upgrade compatibility." },
             "enabled": { "type": "boolean" },
             "serviceAccountName": { "type": "string", "minLength": 1 },
             "rbac": { "$ref": "#/definitions/rbac" },

@@ -41,7 +41,9 @@ image. `kubernetesSession.cliImage` defaults to the session-manager release imag
 chart has the equivalent `session.image` setting. Its CLI source always uses the
 session-manager image repository and the version embedded at image build time;
 it is not independently configurable. Both images use `imagePullPolicy`,
-defaulting to `IfNotPresent`.
+defaulting to `IfNotPresent`. The legacy standalone `session.cliImage` and
+dedicated-manager `sessionManager.kubernetesSession.cliImage` values are accepted
+during upgrades but ignored.
 
 Outside Helm, set `AGENTAPI_K8S_SESSION_IMAGE` and
 `AGENTAPI_K8S_SESSION_CLI_IMAGE`. An empty CLI image disables injection for legacy
