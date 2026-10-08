@@ -82,18 +82,6 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if cfg.SessionManager.RunnerPool != "" {
 		manager.ConfigureSessionRunnerPool(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken, cfg.SessionManager.RunnerPool)
 	}
-	// Stock workloads belong to the session-manager revision that created them.
-	// Purge the complete inventory at the process boundary instead of relying
-	// only on template-hash reconciliation: a manager replacement can otherwise
-	// leave apparently compatible stock backed by the previous revision.
-	purgeCtx, purgeCancel := context.WithTimeout(parent, 30*time.Second)
-	if err := purgeSessionManagerStock(purgeCtx, manager); err != nil {
-		purgeCancel()
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, fmt.Errorf("purge stock sessions on session-manager startup: %w", err)
-	}
-	purgeCancel()
-
 	persistence := manager.GetClient()
 	applicationStore, wrapped, err := buildApplicationKVStore(cfg.KVStore, persistence)
 	if err != nil {
@@ -281,6 +269,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		})
 		go elector.Run(runtimeCtx, func(leaderCtx context.Context) {
 			log.Printf("[SESSION_MANAGER] Became local allocation leader")
+			if !prepareSessionManagerLeadership(leaderCtx, manager, retry) {
+				return
+			}
 			if err := allocator.Start(leaderCtx); err != nil {
 				log.Printf("[SESSION_MANAGER] Allocation loop failed: %v", err)
 			}
@@ -311,6 +302,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 			Callbacks: leaderelection.LeaderCallbacks{
 				OnStartedLeading: func(leaderCtx context.Context) {
 					log.Printf("[SESSION_MANAGER] Became remote execution leader")
+					if !prepareSessionManagerLeadership(leaderCtx, manager, retry) {
+						return
+					}
 					// Session traffic for runner-pool workloads uses the per-session direct
 					// runtime channel, but manager-level lifecycle operations (notably
 					// deletion) still use outbound control during the migration to typed
@@ -370,6 +364,32 @@ type sessionManagerStockPurger interface {
 
 func purgeSessionManagerStock(ctx context.Context, purger sessionManagerStockPurger) error {
 	return purger.PurgeStockSessions(ctx)
+}
+
+// prepareSessionManagerLeadership purges revision-owned stock only after this
+// replica holds the same leadership lease that gates allocation and upstream
+// reconciliation. This prevents a rolling-update candidate from deleting stock
+// while the previous leader is still able to claim it.
+func prepareSessionManagerLeadership(ctx context.Context, purger sessionManagerStockPurger, retryPeriod time.Duration) bool {
+	if retryPeriod <= 0 {
+		retryPeriod = time.Second
+	}
+	for {
+		purgeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := purgeSessionManagerStock(purgeCtx, purger)
+		cancel()
+		if err == nil {
+			return true
+		}
+		log.Printf("[SESSION_MANAGER] Purge stock before starting leader work: %v", err)
+		timer := time.NewTimer(retryPeriod)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
 }
 
 func buildSessionManagerStatusEventRepository(cfg *config.Config, remoteMode bool) portrepos.StatusEventRepository {

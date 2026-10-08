@@ -97,11 +97,19 @@ func TestRunRecoveringLeaderElectionRetriesInitialization(t *testing.T) {
 
 type fakeSessionManagerStockPurger struct {
 	called bool
+	calls  int
 	err    error
+	errs   []error
 }
 
 func (f *fakeSessionManagerStockPurger) PurgeStockSessions(context.Context) error {
 	f.called = true
+	f.calls++
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		return err
+	}
 	return f.err
 }
 
@@ -120,6 +128,28 @@ func TestPurgeSessionManagerStockReturnsPurgeFailure(t *testing.T) {
 	purger := &fakeSessionManagerStockPurger{err: want}
 	if err := purgeSessionManagerStock(context.Background(), purger); !errors.Is(err, want) {
 		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
+func TestPrepareSessionManagerLeadershipRetriesPurgeBeforeStarting(t *testing.T) {
+	purger := &fakeSessionManagerStockPurger{errs: []error{errors.New("temporary failure"), nil}}
+	if !prepareSessionManagerLeadership(context.Background(), purger, time.Millisecond) {
+		t.Fatal("leadership preparation stopped before purge succeeded")
+	}
+	if purger.calls != 2 {
+		t.Fatalf("purge calls = %d, want 2", purger.calls)
+	}
+}
+
+func TestPrepareSessionManagerLeadershipStopsWhenLeadershipEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	purger := &fakeSessionManagerStockPurger{err: errors.New("kubernetes unavailable")}
+	if prepared := prepareSessionManagerLeadership(ctx, purger, time.Hour); prepared {
+		t.Fatal("leadership preparation succeeded after context cancellation")
+	}
+	if purger.calls != 1 {
+		t.Fatalf("purge calls = %d, want 1", purger.calls)
 	}
 }
 
