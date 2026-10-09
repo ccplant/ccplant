@@ -1344,6 +1344,13 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
 		// https://github.com/agentclientprotocol/codex-acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
+		log.Printf("[PROVISIONER] Codex ACP routing env: config=%t provider=%t auth_request=%t openai_key=%t scoped_key=%t",
+			strings.TrimSpace(envMap["CODEX_CONFIG"]) != "",
+			strings.TrimSpace(envMap["MODEL_PROVIDER"]) != "",
+			strings.TrimSpace(envMap["DEFAULT_AUTH_REQUEST"]) != "",
+			strings.TrimSpace(envMap["OPENAI_API_KEY"]) != "",
+			strings.TrimSpace(envMap["CCPLANT_CODEX_API_KEY"]) != "",
+		)
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
