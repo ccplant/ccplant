@@ -48,8 +48,21 @@ func TestSessionManagerInstallPersistenceFlags(t *testing.T) {
 	command := newSessionManagerInstallCommand()
 
 	require.Equal(t, "false", command.Flags().Lookup("persistence").DefValue)
+	require.Equal(t, "", command.Flags().Lookup("persistence-backend").DefValue)
 	require.Equal(t, "", command.Flags().Lookup("storage-class").DefValue)
 	require.Equal(t, "10Gi", command.Flags().Lookup("persistence-size").DefValue)
+}
+
+func TestSessionManagerInstallRejectsInvalidPersistenceBackend(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+	command.SetArgs([]string{
+		"--upstream", "https://ccplant.example.com",
+		"--persistence-backend", "unsupported",
+	})
+
+	err := command.ExecuteContext(context.Background())
+	require.ErrorContains(t, err, "--persistence-backend must be volume or empty")
 }
 
 func TestSessionManagerInstallRejectsInvalidPersistenceSize(t *testing.T) {
@@ -68,15 +81,15 @@ func TestSessionManagerInstallRejectsInvalidPersistenceSize(t *testing.T) {
 func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 	t.Parallel()
 	opts := sessionManagerInstallOptions{
-		upstream:          "https://ccplant.example.com",
-		release:           "manager",
-		pool:              "builders",
-		connectionSecret:  "manager-parent",
-		internalSecret:    "manager-internal",
-		provisionerSecret: "manager-provisioner",
-		persistence:       true,
-		storageClass:      "fast",
-		persistenceSize:   "20Gi",
+		upstream:           "https://ccplant.example.com",
+		release:            "manager",
+		pool:               "builders",
+		connectionSecret:   "manager-parent",
+		internalSecret:     "manager-internal",
+		provisionerSecret:  "manager-provisioner",
+		persistenceBackend: "volume",
+		storageClass:       "fast",
+		persistenceSize:    "20Gi",
 	}
 
 	values := sessionManagerInstallValues(opts, &installedManagerCredentials{ManagerID: "manager-1"}, false)
@@ -85,6 +98,8 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 	require.Equal(t, true, pvc["enabled"])
 	require.Equal(t, "fast", pvc["storageClass"])
 	require.Equal(t, "20Gi", pvc["storageSize"])
+	persistence := values["sessionPersistence"].(map[string]any)
+	require.Equal(t, "volume", persistence["backend"])
 }
 
 func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T) {

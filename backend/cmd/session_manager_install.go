@@ -30,7 +30,7 @@ type sessionManagerInstallOptions struct {
 	apiKeyEnv, apiKeyFile, scope, teamID                           string
 	namespace, release, chart, version, pool, name, instanceID     string
 	connectionSecret, internalSecret, provisionerSecret            string
-	storageClass, persistenceSize                                  string
+	storageClass, persistenceSize, persistenceBackend              string
 	createNamespace, wait                                          bool
 	persistence                                                    bool
 	timeout                                                        string
@@ -70,6 +70,7 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.StringVar(&opts.internalSecret, "internal-secret", "", "Secret holding the internal API token")
 	flags.StringVar(&opts.provisionerSecret, "provisioner-secret", "", "Secret holding the provisioner token")
 	flags.BoolVar(&opts.persistence, "persistence", false, "enable a PersistentVolumeClaim for each session workspace")
+	flags.StringVar(&opts.persistenceBackend, "persistence-backend", "", "session state persistence backend (volume)")
 	flags.StringVar(&opts.storageClass, "storage-class", "", "StorageClass for session workspace PVCs (uses the cluster default when empty)")
 	flags.StringVar(&opts.persistenceSize, "persistence-size", "10Gi", "size of each session workspace PVC")
 	flags.BoolVar(&opts.createNamespace, "create-namespace", true, "create the namespace if missing")
@@ -92,7 +93,10 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	if opts.scope == "team" && strings.TrimSpace(opts.teamID) == "" {
 		return errors.New("--team-id is required when --scope=team")
 	}
-	if opts.persistence {
+	if opts.persistenceBackend != "" && opts.persistenceBackend != "volume" {
+		return errors.New("--persistence-backend must be volume or empty")
+	}
+	if opts.persistence || opts.persistenceBackend == "volume" {
 		quantity, err := resource.ParseQuantity(opts.persistenceSize)
 		if err != nil || quantity.Sign() <= 0 {
 			return fmt.Errorf("--persistence-size must be a positive Kubernetes resource quantity")
@@ -226,12 +230,13 @@ func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials 
 		"internalApi": map[string]any{"tokenSecretRef": map[string]any{"name": opts.internalSecret, "key": "token"}},
 		"session": map[string]any{
 			"pvc": map[string]any{
-				"enabled":      opts.persistence,
+				"enabled":      opts.persistence || opts.persistenceBackend == "volume",
 				"storageClass": opts.storageClass,
 				"storageSize":  opts.persistenceSize,
 			},
 			"provisioner": map[string]any{"tokenSecretRef": map[string]any{"name": opts.provisionerSecret, "key": "provisioner-token"}},
 		},
+		"sessionPersistence": map[string]any{"backend": opts.persistenceBackend},
 		"leaderElection": map[string]any{
 			"migrateLegacyLease": legacyLeaseMigration,
 		},

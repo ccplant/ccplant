@@ -71,7 +71,7 @@ unset REGISTRATION_TOKEN
 
 `X.Y.Z`は使用するccplantリリースのChartバージョンへ置き換えてください。Kubernetes版はNamespaceを必要に応じて作成し、OCI Chart `oci://ghcr.io/ccplant/charts/session-manager`をインストールして、リソースがReadyになるまで最大10分待ちます。
 
-`--persistence`を指定すると、各Session Podのworkspaceに専用PVCを作成します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
+`--persistence`を指定すると、各Session Podのworkspaceに専用PVCを作成します。suspend/resume時にACPの会話履歴も保存・復元するには、`--persistence-backend volume`を指定します。`volume`バックエンドはSession PVCも自動的に有効化します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
 
 ```bash
 ccplant session-manager install \
@@ -79,7 +79,7 @@ ccplant session-manager install \
   --registration-token-file ./registration-token \
   --namespace ccplant-session \
   --version X.Y.Z \
-  --persistence \
+  --persistence-backend volume \
   --storage-class standard \
   --persistence-size 20Gi
 ```
@@ -244,6 +244,7 @@ sudo ccplant native uninstall \
 | `--version` | 未指定 | Session Manager Chartのバージョン |
 | `--chart` | 公式OCI Chart | 利用するHelm Chart |
 | `--persistence` | `false` | Session Podのworkspaceに専用PVCを作成する |
+| `--persistence-backend` | 未指定 | セッション状態の永続化方式。`volume`でsuspend/resume時の会話履歴をSession PVCへ保存する |
 | `--storage-class` | 未指定 | Session PVCのStorageClass。未指定時はクラスタのデフォルトを使用 |
 | `--persistence-size` | `10Gi` | Session PVCごとの容量 |
 | `--timeout` | `10m` | Helm処理のタイムアウト |
