@@ -68,6 +68,27 @@ func TestProfileFilesValidation(t *testing.T) {
 	require.NoError(t, validateSessionProfileConfig(cfg))
 }
 
+func TestProfileRuntimeCustomizationValidation(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetCommandWrapperTemplate("exec env TEST=1 {{ .Command }}")
+	require.NoError(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetCommandWrapperTemplate("echo missing-command")
+	require.ErrorContains(t, validateSessionProfileConfig(cfg), "exactly one")
+
+}
+
+func TestApplySessionProfilePreservesCommandWrapper(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetCommandWrapperTemplate("exec env WRAPPED=1 {{ .Command }}")
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, "exec env WRAPPED=1 {{ .Command }}", request.ProfileCommandWrapper)
+}
+
 func TestMergeSessionParamsModelOptions(t *testing.T) {
 	profile := &entities.SessionParams{ModelOptions: []string{"sonnet", "opus"}}
 	merged := mergeSessionParams(profile, &entities.SessionParams{})

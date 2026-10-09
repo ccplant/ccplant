@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	sessionallocation "github.com/takutakahashi/agentapi-proxy/internal/core/sessionallocation"
@@ -85,13 +86,18 @@ func (c *SessionPoolController) WithAllocationNotifier(notifier core.AllocationN
 }
 
 func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error {
-	if _, err := c.authenticateManager(ctx); err != nil {
+	manager, err := c.authenticateManager(ctx)
+	if err != nil {
 		return err
 	}
 	if c.profile == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "runtime profile is unavailable")
 	}
 	profile := c.profile.ExternalRuntimeProfile()
+	if profile == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "runtime profile is unavailable")
+	}
+	profile.Kubernetes.SessionImage = manager.AssetImage
 	raw, err := json.Marshal(profile)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "marshal runtime profile")
@@ -351,6 +357,7 @@ func (c *SessionPoolController) PatchManager(ctx echo.Context) error {
 		Capabilities []string          `json:"capabilities,omitempty"`
 		Enabled      *bool             `json:"enabled,omitempty"`
 		Draining     *bool             `json:"draining,omitempty"`
+		AssetImage   *string           `json:"asset_image,omitempty"`
 	}
 	if err := ctx.Bind(&patch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -369,6 +376,22 @@ func (c *SessionPoolController) PatchManager(ctx echo.Context) error {
 	}
 	if patch.Draining != nil {
 		manager.Draining = *patch.Draining
+	}
+	if patch.AssetImage != nil {
+		image := strings.TrimSpace(*patch.AssetImage)
+		if image == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "asset_image must not be empty")
+		}
+		if _, err := reference.ParseNormalizedNamed(image); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "asset_image must be a valid OCI image reference")
+		}
+		manager.AssetImage = image
+		manager.AssetImageError = ""
+		if manager.AppliedAssetImage == image {
+			manager.AssetImageStatus = "ready"
+		} else {
+			manager.AssetImageStatus = "pending"
+		}
 	}
 	if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
 		return sessionRunnerStoreError(err)
@@ -1085,8 +1108,10 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		}
 	}
 	var heartbeat struct {
-		LocalRunnerIDs  *[]string         `json:"local_runner_ids"`
-		SessionStatuses map[string]string `json:"session_statuses"`
+		LocalRunnerIDs    *[]string         `json:"local_runner_ids"`
+		SessionStatuses   map[string]string `json:"session_statuses"`
+		AppliedAssetImage string            `json:"applied_asset_image"`
+		AssetImageError   string            `json:"asset_image_error"`
 	}
 	if ctx.Request().Body != nil && ctx.Request().Body != http.NoBody {
 		if err := ctx.Bind(&heartbeat); err != nil {
@@ -1108,6 +1133,23 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 	}
 	if len(heartbeat.SessionStatuses) > 0 {
 		if err := c.reconcileManagerSessionStatuses(ctx.Request().Context(), manager.ID, heartbeat.SessionStatuses); err != nil {
+			return sessionRunnerStoreError(err)
+		}
+	}
+	if manager.AssetImage != "" && (heartbeat.AppliedAssetImage != "" || heartbeat.AssetImageError != "") {
+		if heartbeat.AppliedAssetImage != "" {
+			manager.AppliedAssetImage = heartbeat.AppliedAssetImage
+		}
+		manager.AssetImageError = heartbeat.AssetImageError
+		switch {
+		case heartbeat.AssetImageError != "":
+			manager.AssetImageStatus = "failed"
+		case manager.AssetImage == manager.AppliedAssetImage:
+			manager.AssetImageStatus = "ready"
+		default:
+			manager.AssetImageStatus = "reconciling"
+		}
+		if err := c.store.UpdateManager(ctx.Request().Context(), manager); err != nil {
 			return sessionRunnerStoreError(err)
 		}
 	}

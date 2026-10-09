@@ -65,6 +65,17 @@ func TestSessionCLIInjectionLegacyImage(t *testing.T) {
 	require.Equal(t, "/custom/ccplant", manager.sessionBinaryPath())
 }
 
+func TestBuildSessionSettingsIncludesProfileCommandWrapper(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	req := &entities.RunServerRequest{
+		Environment:           map[string]string{},
+		AgentType:             "codex-acp",
+		ProfileCommandWrapper: "exec env WRAPPED=1 {{ .Command }}",
+	}
+	settings := manager.buildSessionSettings(context.Background(), newWorkloadTestSession(), req, nil)
+	require.Equal(t, req.ProfileCommandWrapper, settings.Startup.CommandWrapperTemplate)
+}
+
 func TestResolveLegacySessionRuntimeImagesUsesManagerRelease(t *testing.T) {
 	cfg := &config.Config{
 		SessionManager: config.SessionManagerConfig{

@@ -190,6 +190,7 @@ type StartRequest struct {
 	ProfileFiles             []sessionsettings.ManagedFile `json:"-"`
 	ProfileMCPServers        *MCPServersSettings           `json:"-"`
 	ProfileSkills            []string                      `json:"-"`
+	ProfileCommandWrapper    string                        `json:"-"`
 	ResolvedSessionProfileID string                        `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
 	// ReuseMessage is queued to that session instead of creating a new one.
@@ -272,6 +273,8 @@ type RunServerRequest struct {
 	ProfileMCPServers *MCPServersSettings
 	// ProfileSkills is applied as a settings layer above user/team settings.
 	ProfileSkills []string
+	// ProfileCommandWrapper wraps the final agent command and is resolved from a session profile.
+	ProfileCommandWrapper string
 	// ProfileSecretIDs limits settings Secret projection to the references stored
 	// on the resolved session profile. Empty preserves legacy all-secret behavior.
 	ProfileSecretIDs         []string

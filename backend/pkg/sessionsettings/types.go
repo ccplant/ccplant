@@ -233,6 +233,7 @@ type RuntimeProfile struct {
 }
 
 type KubernetesRuntimeProfile struct {
+	SessionImage                   string `yaml:"session_image,omitempty" json:"session_image,omitempty"`
 	ServiceAccount                 string `yaml:"service_account" json:"service_account"`
 	NetworkFilterImage             string `yaml:"network_filter_image" json:"network_filter_image"`
 	NetworkFilterCPURequest        string `yaml:"network_filter_cpu_request" json:"network_filter_cpu_request"`
@@ -347,9 +348,10 @@ type RepositoryConfig struct {
 
 // StartupConfig holds the startup command configuration.
 type StartupConfig struct {
-	Command   []string `yaml:"command,omitempty"    json:"command,omitempty"`
-	Args      []string `yaml:"args,omitempty"       json:"args,omitempty"`
-	PreScript string   `yaml:"pre_script,omitempty" json:"pre_script,omitempty"`
+	Command                []string `yaml:"command,omitempty"                  json:"command,omitempty"`
+	Args                   []string `yaml:"args,omitempty"                     json:"args,omitempty"`
+	PreScript              string   `yaml:"pre_script,omitempty"               json:"pre_script,omitempty"`
+	CommandWrapperTemplate string   `yaml:"command_wrapper_template,omitempty" json:"command_wrapper_template,omitempty"`
 }
 
 // GithubConfig holds GitHub authentication configuration reference info.

@@ -7013,6 +7013,12 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "properties": {
+                  "asset_image": {
+                    "type": "string",
+                    "description": "OCI image used for newly provisioned session workloads. The manager replaces idle stock asynchronously."
+                  }
+                },
                 "additionalProperties": true
               }
             }
@@ -11451,6 +11457,11 @@
         "reuse_message_template": {
           "type": "string",
           "description": "Go template for the reuse message when reusing a session"
+        },
+        "command_wrapper_template": {
+          "type": "string",
+          "maxLength": 65536,
+          "description": "Go template that wraps the final session agent command. It must contain exactly one {{ .Command }} action; the inserted command is POSIX-shell quoted."
         },
         "reuse_session": {
           "type": "boolean",

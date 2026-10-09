@@ -437,8 +437,10 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 	defer ticker.Stop()
 	appliedRevision := ""
 	for {
+		assetImageError := ""
 		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
 			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
+			assetImageError = err.Error()
 		} else if revision != "" {
 			appliedRevision = revision
 		}
@@ -454,7 +456,12 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 					sessionStatuses[session.ID()] = session.Status()
 				}
 			}
-			payload, marshalErr := json.Marshal(map[string]any{"local_runner_ids": localRunnerIDs, "session_statuses": sessionStatuses})
+			payload, marshalErr := json.Marshal(map[string]any{
+				"local_runner_ids":    localRunnerIDs,
+				"session_statuses":    sessionStatuses,
+				"applied_asset_image": manager.AppliedSessionImage(),
+				"asset_image_error":   assetImageError,
+			})
 			if marshalErr != nil {
 				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
 			} else {

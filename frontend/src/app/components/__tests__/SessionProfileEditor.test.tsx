@@ -117,6 +117,32 @@ describe('SessionProfileEditor secrets', () => {
   })
 })
 
+describe('SessionProfileEditor runtime', () => {
+  it('loads and saves the command wrapper', async () => {
+    render(<SessionProfileEditor section="runtime" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+      id: 'profile', name: 'Runtime', created_at: '', updated_at: '',
+      config: { command_wrapper_template: 'exec env OLD=1 {{ .Command }}' },
+    }} />)
+    const wrapper = screen.getByLabelText('コマンドラッパー')
+    expect(wrapper).toHaveValue('exec env OLD=1 {{ .Command }}')
+    fireEvent.change(wrapper, { target: { value: 'exec env WRAPPED=1 {{ .Command }}' } })
+    fireEvent.submit(wrapper.closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config).toMatchObject({
+      command_wrapper_template: 'exec env WRAPPED=1 {{ .Command }}',
+    })
+  })
+
+  it('rejects a wrapper without exactly one command action', async () => {
+    render(<SessionProfileEditor section="runtime" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Runtime', created_at: '', updated_at: '', config: {} }} />)
+    const wrapper = screen.getByLabelText('コマンドラッパー')
+    fireEvent.change(wrapper, { target: { value: 'echo no command' } })
+    fireEvent.submit(wrapper.closest('form')!)
+    expect(await screen.findByRole('alert')).toHaveTextContent('{{ .Command }} を1回だけ指定してください')
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+})
+
 describe('SessionProfileEditor repository selector', () => {
   it('creates a profile with a repository selector', async () => {
     render(<SessionProfileEditor createScope={{ scope: 'user' }} onClose={vi.fn()} onSuccess={vi.fn()} />)

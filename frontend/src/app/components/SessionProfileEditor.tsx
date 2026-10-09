@@ -44,6 +44,7 @@ const profileSections = [
   { slug: 'files', label: 'セッションファイル', icon: Files, group: 'セッション環境' },
   { slug: 'tags', label: 'タグ', icon: Tags, group: 'セッション環境' },
   { slug: 'pool', label: 'プール', icon: Server, group: '実行基盤' },
+  { slug: 'runtime', label: 'ランタイム', icon: Terminal, group: '実行基盤' },
   { slug: 'sandbox', label: 'ネットワーク制限', icon: Shield, group: '実行基盤' },
   { slug: 'docker', label: 'Docker', icon: Container, group: '実行基盤' },
   { slug: 'lifecycle', label: '自動削除', icon: Clock, group: '実行基盤' },
@@ -105,6 +106,7 @@ export default function SessionProfileEditor({
   const [availableSecrets, setAvailableSecrets] = useState<SettingsSecret[]>([])
   const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
   const [skills, setSkills] = useState<string[]>([])
+  const [commandWrapperTemplate, setCommandWrapperTemplate] = useState('')
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -209,6 +211,7 @@ export default function SessionProfileEditor({
       setSourceProfileId(cfg?.source_session_profile_id ?? '')
       setSelectedSecretIds(cfg?.secret_ids ?? [])
       setSkills(cfg?.skills ?? [])
+      setCommandWrapperTemplate(cfg?.command_wrapper_template ?? '')
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -282,6 +285,7 @@ export default function SessionProfileEditor({
       setSourceProfileId('')
       setSelectedSecretIds([])
       setSkills([])
+      setCommandWrapperTemplate('')
       setAvailableProfiles([])
       setDockerEnabled(false)
       setDockerRegistries([])
@@ -379,6 +383,12 @@ export default function SessionProfileEditor({
       return
     }
 
+    const wrapper = commandWrapperTemplate.trim()
+    if (wrapper && (wrapper.match(/{{\s*\.Command\s*}}/g)?.length ?? 0) !== 1) {
+      setError('コマンドラッパーには {{ .Command }} を1回だけ指定してください')
+      return
+    }
+
     setIsSubmitting(true)
     try {
       const client = createAgentAPIProxyClientFromStorage()
@@ -451,7 +461,7 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'skills', 'files'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'skills', 'files', 'command_wrapper_template'] as const) delete extraConfig[key]
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -468,6 +478,7 @@ export default function SessionProfileEditor({
         ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
         ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
         ...(skills.length > 0 ? { skills } : {}),
+        ...(wrapper ? { command_wrapper_template: wrapper } : {}),
         files: parsedProfileFiles,
       }
 
@@ -1029,6 +1040,33 @@ export default function SessionProfileEditor({
                   </div>
 
                   
+            </div>}
+            {active.slug === 'runtime' && <div className="space-y-5">
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <label htmlFor="session-profile-command-wrapper" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    コマンドラッパー
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => { setCommandWrapperTemplate(value => `${value}${value && !value.endsWith('\n') ? '\n' : ''}exec {{ .Command }}`); setDirty(true) }}
+                    className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                  >
+                    {'{{ .Command }}'} を挿入
+                  </button>
+                </div>
+                <textarea
+                  id="session-profile-command-wrapper"
+                  value={commandWrapperTemplate}
+                  onChange={e => { setCommandWrapperTemplate(e.target.value); setDirty(true) }}
+                  placeholder={'#!/bin/sh\nset -eu\nexec env PROFILE=development {{ .Command }}'}
+                  rows={7}
+                  className="w-full rounded-md border border-gray-300 bg-white p-2 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Go template として保存され、shell quote 済みの既定コマンドを <code>{'{{ .Command }}'}</code> に1回挿入します。signal を正しく転送するため <code>exec</code> の使用を推奨します。
+                </p>
+              </div>
             </div>}
             {active.slug === 'sandbox' && <div className="space-y-5">
 {/* Network Sandbox */}

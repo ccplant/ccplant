@@ -31,6 +31,7 @@ func TestApplyRuntimeProfileInheritsSciaNFAAndSessionRBAC(t *testing.T) {
 	profile := &sessionsettings.RuntimeProfile{
 		Version: 1,
 		Kubernetes: sessionsettings.KubernetesRuntimeProfile{
+			SessionImage:                   "agent:parent",
 			ServiceAccount:                 "parent-session",
 			NetworkFilterImage:             "nfa:parent",
 			NetworkFilterCPURequest:        "111m",
@@ -57,7 +58,7 @@ func TestApplyRuntimeProfileInheritsSciaNFAAndSessionRBAC(t *testing.T) {
 	if err := manager.ApplyRuntimeProfile(context.Background(), profile); err != nil {
 		t.Fatalf("ApplyRuntimeProfile() error = %v", err)
 	}
-	if manager.k8sConfig.ServiceAccount != "parent-session" || manager.k8sConfig.NetworkFilterImage != "nfa:parent" {
+	if manager.k8sConfig.ServiceAccount != "parent-session" || manager.k8sConfig.NetworkFilterImage != "nfa:parent" || manager.CurrentSessionImage() != "agent:parent" || manager.AppliedSessionImage() != "agent:parent" {
 		t.Fatalf("kubernetes profile was not inherited: %#v", manager.k8sConfig)
 	}
 	if !manager.config.Scia.Enabled || !manager.config.Scia.SessionSidecarEnabled || manager.config.Scia.SessionSidecarImage != "scia:parent" {

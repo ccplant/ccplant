@@ -389,7 +389,21 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	if shouldRequireConversationResume(settings) {
 		agentArgs = append([]string{agentArgs[0], "--require-resume"}, agentArgs[1:]...)
 	}
-	log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
+	if settings.Startup.CommandWrapperTemplate != "" {
+		rendered, err := sessionsettings.RenderCommandWrapper(
+			settings.Startup.CommandWrapperTemplate,
+			append([]string{agentCmd}, agentArgs...),
+		)
+		if err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("failed to render command wrapper: %v", err))
+			return
+		}
+		agentCmd = "/bin/sh"
+		agentArgs = []string{"-c", rendered}
+		log.Printf("[PROVISIONER] Starting agent through session profile command wrapper")
+	} else {
+		log.Printf("[PROVISIONER] Starting agent: %s %v", agentCmd, agentArgs)
+	}
 
 	cmd := exec.CommandContext(ctx, agentCmd, agentArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

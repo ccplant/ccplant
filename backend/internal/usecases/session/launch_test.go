@@ -372,6 +372,7 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 		"SOURCE_ONLY": "source-value",
 	})
 	sourceCfg.SetSkills([]string{"org/source-skills", "org/shared"})
+	sourceCfg.SetCommandWrapperTemplate("exec env SOURCE=1 {{ .Command }}")
 	github := entities.NewMCPServer("github", "http")
 	github.SetURL("https://source.example/github")
 	servers := entities.NewMCPServersSettings()
@@ -422,6 +423,9 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	wantSkills := []string{"org/source-skills", "org/shared", "org/profile-skills"}
 	if !reflect.DeepEqual(sessionManager.req.ProfileSkills, wantSkills) {
 		t.Fatalf("ProfileSkills = %#v, want %#v", sessionManager.req.ProfileSkills, wantSkills)
+	}
+	if sessionManager.req.ProfileCommandWrapper != "exec env SOURCE=1 {{ .Command }}" {
+		t.Fatalf("ProfileCommandWrapper = %q", sessionManager.req.ProfileCommandWrapper)
 	}
 }
 
