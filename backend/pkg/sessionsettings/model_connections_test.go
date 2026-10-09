@@ -63,6 +63,11 @@ func TestCodexCompatibleConnectionConfiguresACPAuthentication(t *testing.T) {
 	require.Equal(t, "gateway-key", s.Env["CCPLANT_CODEX_API_KEY"])
 	require.Equal(t, "gateway-key", s.Env["OPENAI_API_KEY"])
 	require.JSONEq(t, `{"methodId":"api-key"}`, s.Env["DEFAULT_AUTH_REQUEST"])
+	require.Equal(t, codexCustomOpenAIProviderID, s.Env["MODEL_PROVIDER"])
+	var acpConfig map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(s.Env["CODEX_CONFIG"]), &acpConfig))
+	require.Equal(t, "profile-model", acpConfig["model"])
+	require.Equal(t, codexCustomOpenAIProviderID, acpConfig["model_provider"])
 	require.Contains(t, s.UnsetEnv, "OPENAI_API_KEY")
 
 	raw, err := json.Marshal(s)
