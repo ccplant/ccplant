@@ -47,6 +47,11 @@ var piOllamaCommandPath = filepath.Join(runtimeHome, ".session", "pi-ollama-pi")
 var piAgentInstructionsPath = filepath.Join(runtimeHome, ".pi", "agent", "AGENTS.md")
 var piSettingsPath = filepath.Join(runtimeHome, ".pi", "agent", "settings.json")
 
+const (
+	containerJavaScriptRuntime  = "/opt/claude/bin/claude"
+	containerCodexACPEntrypoint = "/home/agentapi/.bun/bin/codex-acp"
+)
+
 func envPath(name, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		return value
@@ -1344,21 +1349,24 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
 		// https://github.com/agentclientprotocol/codex-acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		log.Printf("[PROVISIONER] Codex ACP routing env: config=%t provider=%t auth_request=%t openai_key=%t scoped_key=%t",
-			strings.TrimSpace(envMap["CODEX_CONFIG"]) != "",
-			strings.TrimSpace(envMap["MODEL_PROVIDER"]) != "",
-			strings.TrimSpace(envMap["DEFAULT_AUTH_REQUEST"]) != "",
-			strings.TrimSpace(envMap["OPENAI_API_KEY"]) != "",
-			strings.TrimSpace(envMap["CCPLANT_CODEX_API_KEY"]) != "",
-		)
-		return agentapiProxyBinary, []string{
+		adapterCommand := []string{"codex-acp"}
+		if strings.TrimSpace(os.Getenv("CCPLANT_EXECUTOR_REQUIRED")) == "1" || strings.TrimSpace(envMap["CCPLANT_EXECUTOR_REQUIRED"]) == "1" {
+			// The executor replaces /bin/bash in the agent container. Run this
+			// control-plane adapter through the image's JavaScript runtime
+			// directly, so a wrapper shebang can never move codex-acp (and its
+			// app-server child) into the executor sidecar. Shells spawned by the
+			// agent still resolve to the executor client as intended.
+			envMap["BUN_BE_BUN"] = "1"
+			adapterCommand = []string{containerJavaScriptRuntime, containerCodexACPEntrypoint}
+		}
+		args := []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--auto-approve",
 			"--",
-			"codex-acp",
 		}
+		return agentapiProxyBinary, append(args, adapterCommand...)
 
 	case "pi-ollama":
 		// Start the acp-server bridge that wraps pi-acp via stdio. pi-acp starts

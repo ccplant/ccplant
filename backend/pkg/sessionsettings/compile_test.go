@@ -479,6 +479,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 		require.Equal(t, "https://gateway.example/v1", provider["base_url"])
 		require.Equal(t, "OPENAI_API_KEY", provider["env_key"])
 		require.Equal(t, false, provider["requires_openai_auth"])
+		require.Equal(t, filepath.Join(tmpDir, ".codex", CodexModelCatalogFile), config["model_catalog_json"])
 	})
 
 	t.Run("writes config.toml when CodexConfigTOML is set", func(t *testing.T) {
