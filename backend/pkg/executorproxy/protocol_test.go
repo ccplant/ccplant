@@ -20,7 +20,7 @@ func TestFrameRoundTrip(t *testing.T) {
 }
 
 func TestRequestRoundTrip(t *testing.T) {
-	want := Request{Args: []string{"bash", "-c", "echo ok"}, Cwd: "/workspace", Env: []string{"A=B"}}
+	want := Request{Args: []string{"bash", "-c", "echo ok"}, Cwd: "/workspace", Env: []string{"A=B"}, Files: []ManagedFile{{Path: "/home/agentapi/profile", Data: []byte("value"), Mode: 0o640}}}
 	var buffer bytes.Buffer
 	if err := WriteJSON(&buffer, want); err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestRequestRoundTrip(t *testing.T) {
 	if err := ReadJSON(&buffer, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Cwd != want.Cwd || len(got.Args) != 3 || got.Args[2] != "echo ok" {
+	if got.Cwd != want.Cwd || len(got.Args) != 3 || got.Args[2] != "echo ok" || len(got.Files) != 1 || string(got.Files[0].Data) != "value" || got.Files[0].Mode != 0o640 {
 		t.Fatalf("got %#v", got)
 	}
 }

@@ -329,6 +329,18 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// Step 3: prepare the process-only session environment.
 	s.setPhase("provision:load-env")
 	envMap := cloneEnvironment(settings.Env)
+	if strings.TrimSpace(os.Getenv("CCPLANT_EXECUTOR_REQUIRED")) == "1" && len(settings.Files) > 0 {
+		paths := make([]string, 0, len(settings.Files))
+		for _, file := range settings.Files {
+			paths = append(paths, file.Path)
+		}
+		if encoded, err := json.Marshal(paths); err != nil {
+			s.setStatus(StatusError, "failed to prepare executor managed files")
+			return
+		} else {
+			envMap["CCPLANT_EXECUTOR_MANAGED_FILE_PATHS"] = string(encoded)
+		}
+	}
 	log.Printf("[PROVISIONER] Prepared %d in-memory env vars", len(envMap))
 	prepareSciaCABundle(ctx, envMap)
 	stopEndpoint, err := prepareModelEndpoint(settings, compileOpts.OutputDir, envMap)

@@ -17,9 +17,19 @@ const (
 )
 
 type Request struct {
-	Args []string `json:"args"`
-	Cwd  string   `json:"cwd"`
-	Env  []string `json:"env"`
+	Args  []string      `json:"args"`
+	Cwd   string        `json:"cwd"`
+	Env   []string      `json:"env"`
+	Files []ManagedFile `json:"files,omitempty"`
+}
+
+// ManagedFile is a point-in-time copy of a session-managed file. The executor
+// client reads these from the agent filesystem for every shell invocation so
+// stock Pods can expose profile files at the same paths in both containers.
+type ManagedFile struct {
+	Path string `json:"path"`
+	Data []byte `json:"data"`
+	Mode uint32 `json:"mode"`
 }
 
 type Exit struct {

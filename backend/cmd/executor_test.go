@@ -33,7 +33,17 @@ func TestExecutorServerStreamsOutputAndExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
-	request := executorproxy.Request{Args: []string{"bash", "-c", "printf out; printf err >&2; exit 7"}, Cwd: dir, Env: os.Environ()}
+	managedPath := filepath.Join(dir, "profile", "managed.txt")
+	request := executorproxy.Request{
+		Args: []string{"bash", "-c", `cat "$0"; printf err >&2; exit 7`, managedPath},
+		Cwd:  dir,
+		Env:  os.Environ(),
+		Files: []executorproxy.ManagedFile{{
+			Path: managedPath,
+			Data: []byte("out"),
+			Mode: 0o600,
+		}},
+	}
 	if err := executorproxy.WriteJSON(conn, request); err != nil {
 		t.Fatal(err)
 	}
@@ -71,5 +81,43 @@ func TestExecutorClientBasename(t *testing.T) {
 	}
 	if _, ok := ExecutorClientArgsForBasename([]string{"ccplant", "server"}); ok {
 		t.Fatal("ccplant must not dispatch as a shell")
+	}
+}
+
+func TestExecutorManagedFilesAreHydratedAtOriginalPath(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "agent", ".config", "profile")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("profile-value"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal([]string{source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := readExecutorManagedFiles(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "executor", ".config", "profile")
+	files[0].Path = target
+	if err := hydrateExecutorManagedFiles(files); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "profile-value" {
+		t.Fatalf("content = %q", data)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %o, want 640", info.Mode().Perm())
 	}
 }

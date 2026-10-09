@@ -22,6 +22,7 @@ import (
 )
 
 const defaultExecutorSocket = "/run/ccplant-executor/executor.sock"
+const executorManagedFilePathsEnv = "CCPLANT_EXECUTOR_MANAGED_FILE_PATHS"
 
 var ExecutorServerCmd = &cobra.Command{
 	Use:   "executor-server",
@@ -90,6 +91,10 @@ func handleExecutorConnection(parent context.Context, conn net.Conn, shell, work
 	}
 	if !withinWorkspace(request.Cwd, workspaceRoot) {
 		writeExecutorExit(conn, executorproxy.Exit{Code: 126, Error: "working directory is outside executor workspace"})
+		return
+	}
+	if err := hydrateExecutorManagedFiles(request.Files); err != nil {
+		writeExecutorExit(conn, executorproxy.Exit{Code: 126, Error: err.Error()})
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
@@ -207,7 +212,11 @@ func runExecutorClient(args []string) error {
 	if err != nil {
 		return err
 	}
-	request := executorproxy.Request{Args: append([]string{"bash"}, args...), Cwd: cwd, Env: os.Environ()}
+	files, err := readExecutorManagedFiles(os.Getenv(executorManagedFilePathsEnv))
+	if err != nil {
+		return err
+	}
+	request := executorproxy.Request{Args: append([]string{"bash"}, args...), Cwd: cwd, Env: os.Environ(), Files: files}
 	if err := executorproxy.WriteJSON(conn, request); err != nil {
 		return err
 	}
@@ -264,6 +273,51 @@ func runExecutorClient(args []string) error {
 			return nil
 		}
 	}
+}
+
+func readExecutorManagedFiles(encodedPaths string) ([]executorproxy.ManagedFile, error) {
+	if strings.TrimSpace(encodedPaths) == "" {
+		return nil, nil
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(encodedPaths), &paths); err != nil {
+		return nil, fmt.Errorf("decode executor managed file paths: %w", err)
+	}
+	files := make([]executorproxy.ManagedFile, 0, len(paths))
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("stat executor managed file %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("executor managed file %s is not a regular file", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read executor managed file %s: %w", path, err)
+		}
+		files = append(files, executorproxy.ManagedFile{Path: path, Data: data, Mode: uint32(info.Mode().Perm())})
+	}
+	return files, nil
+}
+
+func hydrateExecutorManagedFiles(files []executorproxy.ManagedFile) error {
+	for _, file := range files {
+		if !filepath.IsAbs(file.Path) {
+			return fmt.Errorf("executor managed file path must be absolute: %s", file.Path)
+		}
+		if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
+			return fmt.Errorf("create executor managed file directory %s: %w", file.Path, err)
+		}
+		mode := os.FileMode(file.Mode) & os.ModePerm
+		if mode == 0 {
+			mode = 0o600
+		}
+		if err := os.WriteFile(file.Path, file.Data, mode); err != nil {
+			return fmt.Errorf("write executor managed file %s: %w", file.Path, err)
+		}
+	}
+	return nil
 }
 
 type executorExitError struct{ code int }
