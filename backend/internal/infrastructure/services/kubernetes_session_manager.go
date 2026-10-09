@@ -3793,7 +3793,7 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			Args:            []string{"-g", "--", sessionCLIPath, "executor-server", "--socket", defaultExecutorSocketPath},
 			VolumeMounts:    executorMounts,
 			Resources: buildResourceRequirements(
-				defaultIfEmpty(m.k8sConfig.ExecutorCPURequest, "500m"),
+				defaultIfEmpty(m.k8sConfig.ExecutorCPURequest, "10m"),
 				defaultIfEmpty(m.k8sConfig.ExecutorCPULimit, "2"),
 				defaultIfEmpty(m.k8sConfig.ExecutorMemoryRequest, "512Mi"),
 				defaultIfEmpty(m.k8sConfig.ExecutorMemoryLimit, "4Gi"),

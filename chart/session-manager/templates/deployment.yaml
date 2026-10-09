@@ -103,7 +103,7 @@ spec:
             - {name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST, value: {{ .Values.session.resources.requests.memory | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT, value: {{ .Values.session.resources.limits.memory | quote }}}
             - {name: AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED, value: {{ dig "enabled" true .Values.session.executor | quote }}}
-            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_CPU_REQUEST, value: {{ dig "resources" "requests" "cpu" "500m" .Values.session.executor | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_CPU_REQUEST, value: {{ dig "resources" "requests" "cpu" "10m" .Values.session.executor | quote }}}
             - {name: AGENTAPI_K8S_SESSION_EXECUTOR_CPU_LIMIT, value: {{ dig "resources" "limits" "cpu" "2" .Values.session.executor | quote }}}
             - {name: AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_REQUEST, value: {{ dig "resources" "requests" "memory" "512Mi" .Values.session.executor | quote }}}
             - {name: AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_LIMIT, value: {{ dig "resources" "limits" "memory" "4Gi" .Values.session.executor | quote }}}

@@ -107,7 +107,7 @@ session:
   executor:
     enabled: true
     resources:
-      requests: {cpu: "500m", memory: "512Mi"}
+      requests: {cpu: "10m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}
   pvc:
     # Automatically enabled when sessionPersistence.backend=volume.

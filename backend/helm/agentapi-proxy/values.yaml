@@ -504,7 +504,7 @@ sessionManager:
     executor:
       enabled: true
       resources:
-        requests: {cpu: "500m", memory: "512Mi"}
+        requests: {cpu: "10m", memory: "512Mi"}
         limits: {cpu: "2", memory: "4Gi"}
     pvc:
       enabled: false
@@ -1177,7 +1177,7 @@ kubernetesSession:
     enabled: true
     resources:
       requests:
-        cpu: "500m"
+        cpu: "10m"
         memory: "512Mi"
       limits:
         cpu: "2"

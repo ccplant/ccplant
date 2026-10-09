@@ -1417,7 +1417,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.memory_request", "512Mi")
 	v.SetDefault("kubernetes_session.memory_limit", "4Gi")
 	v.SetDefault("kubernetes_session.executor_enabled", true)
-	v.SetDefault("kubernetes_session.executor_cpu_request", "500m")
+	v.SetDefault("kubernetes_session.executor_cpu_request", "10m")
 	v.SetDefault("kubernetes_session.executor_cpu_limit", "2")
 	v.SetDefault("kubernetes_session.executor_memory_request", "512Mi")
 	v.SetDefault("kubernetes_session.executor_memory_limit", "4Gi")
