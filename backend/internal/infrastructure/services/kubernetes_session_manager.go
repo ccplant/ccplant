@@ -4857,6 +4857,14 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
+		// Shared Docker CLI configuration. The provisioner writes registry
+		// credentials here and executor-side docker commands consume them.
+		{
+			Name: "dot-docker",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
 	}
 
 	// Add notification subscription Secret volume (source for init container)
@@ -6185,6 +6193,10 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		{
 			Name:      "dot-claude",
 			MountPath: "/home/agentapi/.claude",
+		},
+		{
+			Name:      "dot-docker",
+			MountPath: "/home/agentapi/.docker",
 		},
 		// notification subscriptions source – read by setup on startup
 		{

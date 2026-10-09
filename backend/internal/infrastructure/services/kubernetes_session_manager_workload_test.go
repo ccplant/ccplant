@@ -269,6 +269,12 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasMount(main.VolumeMounts, "ccplant-cli", "/bin/bash", "ccplant") {
 		t.Fatalf("agent mounts = %#v, want ccplant mounted over /bin/bash", main.VolumeMounts)
 	}
+	if !hasMount(main.VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
+		t.Fatalf("agent mounts = %#v, want shared Docker config", main.VolumeMounts)
+	}
+	if !hasMount(containers[1].VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
+		t.Fatalf("executor mounts = %#v, want shared Docker config", containers[1].VolumeMounts)
+	}
 }
 
 func hasEnvValue(env []corev1.EnvVar, name, value string) bool {
