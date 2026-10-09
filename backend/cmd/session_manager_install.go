@@ -31,6 +31,10 @@ type sessionManagerInstallOptions struct {
 	namespace, release, chart, version, pool, name, instanceID     string
 	connectionSecret, internalSecret, provisionerSecret            string
 	storageClass, persistenceSize, persistenceBackend              string
+	persistenceS3Bucket, persistenceS3Region, persistenceS3Prefix  string
+	persistenceS3Endpoint                                          string
+	persistenceS3AccessKeySecret, persistenceS3AccessKeySecretKey  string
+	persistenceS3SecretKeySecret, persistenceS3SecretKeySecretKey  string
 	createNamespace, wait                                          bool
 	persistence                                                    bool
 	timeout                                                        string
@@ -71,6 +75,14 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.StringVar(&opts.provisionerSecret, "provisioner-secret", "", "Secret holding the provisioner token")
 	flags.BoolVar(&opts.persistence, "persistence", false, "enable a PersistentVolumeClaim for each session workspace")
 	flags.StringVar(&opts.persistenceBackend, "persistence-backend", "", "session state persistence backend (volume)")
+	flags.StringVar(&opts.persistenceS3Bucket, "persistence-s3-bucket", "", "S3 bucket for saved workspace snapshots")
+	flags.StringVar(&opts.persistenceS3Region, "persistence-s3-region", "garage", "S3 region for saved workspace snapshots")
+	flags.StringVar(&opts.persistenceS3Prefix, "persistence-s3-prefix", "agentapi-sessions/", "S3 key prefix for saved workspace snapshots")
+	flags.StringVar(&opts.persistenceS3Endpoint, "persistence-s3-endpoint", "", "custom S3-compatible endpoint")
+	flags.StringVar(&opts.persistenceS3AccessKeySecret, "persistence-s3-access-key-id-secret", "", "Secret containing the S3 access key ID")
+	flags.StringVar(&opts.persistenceS3AccessKeySecretKey, "persistence-s3-access-key-id-secret-key", "access-key-id", "key in the S3 access key ID Secret")
+	flags.StringVar(&opts.persistenceS3SecretKeySecret, "persistence-s3-secret-access-key-secret", "", "Secret containing the S3 secret access key")
+	flags.StringVar(&opts.persistenceS3SecretKeySecretKey, "persistence-s3-secret-access-key-secret-key", "secret-access-key", "key in the S3 secret access key Secret")
 	flags.StringVar(&opts.storageClass, "storage-class", "", "StorageClass for session workspace PVCs (uses the cluster default when empty)")
 	flags.StringVar(&opts.persistenceSize, "persistence-size", "10Gi", "size of each session workspace PVC")
 	flags.BoolVar(&opts.createNamespace, "create-namespace", true, "create the namespace if missing")
@@ -95,6 +107,9 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	}
 	if opts.persistenceBackend != "" && opts.persistenceBackend != "volume" {
 		return errors.New("--persistence-backend must be volume or empty")
+	}
+	if opts.persistenceS3Bucket != "" && opts.persistenceBackend != "volume" {
+		return errors.New("--persistence-s3-bucket requires --persistence-backend=volume")
 	}
 	if opts.persistence || opts.persistenceBackend == "volume" {
 		quantity, err := resource.ParseQuantity(opts.persistenceSize)
@@ -221,6 +236,23 @@ func sessionManagerHelmUpgradeArgs(opts sessionManagerInstallOptions, valuesFile
 }
 
 func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials *installedManagerCredentials, legacyLeaseMigration bool) map[string]any {
+	sessionPersistence := map[string]any{"backend": opts.persistenceBackend}
+	if opts.persistenceS3Bucket != "" {
+		sessionPersistence["s3"] = map[string]any{
+			"bucket":   opts.persistenceS3Bucket,
+			"region":   opts.persistenceS3Region,
+			"prefix":   opts.persistenceS3Prefix,
+			"endpoint": opts.persistenceS3Endpoint,
+			"accessKeyIdSecretRef": map[string]any{
+				"name": opts.persistenceS3AccessKeySecret,
+				"key":  opts.persistenceS3AccessKeySecretKey,
+			},
+			"secretAccessKeySecretRef": map[string]any{
+				"name": opts.persistenceS3SecretKeySecret,
+				"key":  opts.persistenceS3SecretKeySecretKey,
+			},
+		}
+	}
 	return map[string]any{
 		"fullnameOverride": opts.release,
 		"parent": map[string]any{"url": apiBaseURL(opts.upstream),
@@ -236,7 +268,7 @@ func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials 
 			},
 			"provisioner": map[string]any{"tokenSecretRef": map[string]any{"name": opts.provisionerSecret, "key": "provisioner-token"}},
 		},
-		"sessionPersistence": map[string]any{"backend": opts.persistenceBackend},
+		"sessionPersistence": sessionPersistence,
 		"leaderElection": map[string]any{
 			"migrateLegacyLease": legacyLeaseMigration,
 		},

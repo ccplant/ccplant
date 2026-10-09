@@ -71,7 +71,15 @@ unset REGISTRATION_TOKEN
 
 `X.Y.Z`は使用するccplantリリースのChartバージョンへ置き換えてください。Kubernetes版はNamespaceを必要に応じて作成し、OCI Chart `oci://ghcr.io/ccplant/charts/session-manager`をインストールして、リソースがReadyになるまで最大10分待ちます。
 
-`--persistence`を指定すると、各Session Podのworkspaceに専用PVCを作成します。suspend/resume時にACPの会話履歴も保存・復元するには、`--persistence-backend volume`を指定します。`volume`バックエンドはSession PVCも自動的に有効化します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
+`--persistence`を指定すると、各Session Podのworkdirに専用PVCを作成します。suspend/resume時にACPの会話履歴も保存・復元するには、`--persistence-backend volume`を指定します。`volume`バックエンドはSession PVCも自動的に有効化します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。
+
+セッションを再利用可能なWorkspaceとして保存するには、元セッションのPVCとは別に、Workspace snapshotを保持するS3またはS3互換ストレージが必要です。資格情報はコマンドラインへ直接指定せず、Session Managerと同じnamespaceにあるKubernetes Secretを参照します。ワークロードアイデンティティなどでS3認証を提供する場合、Secret参照は省略できます。
+
+```bash
+kubectl -n ccplant-session create secret generic workspace-s3 \
+  --from-literal=access-key-id="$AWS_ACCESS_KEY_ID" \
+  --from-literal=secret-access-key="$AWS_SECRET_ACCESS_KEY"
+```
 
 ```bash
 ccplant session-manager install \
@@ -82,7 +90,12 @@ ccplant session-manager install \
   --persistence \
   --persistence-backend volume \
   --storage-class standard \
-  --persistence-size 20Gi
+  --persistence-size 20Gi \
+  --persistence-s3-bucket ccplant-workspaces \
+  --persistence-s3-region us-east-1 \
+  --persistence-s3-prefix agentapi-sessions/ \
+  --persistence-s3-access-key-id-secret workspace-s3 \
+  --persistence-s3-secret-access-key-secret workspace-s3
 ```
 
 ネイティブ版は、現在の`ccplant`実行ファイルを管理対象の場所へコピーし、Linuxではsystemd service、macOSではユーザーのLaunchAgentとして起動します。macOSでは`sudo`を外して同じコマンドを実行してください。`os`、`arch`、`hostname`ラベルは自動で追加されます。
@@ -246,6 +259,14 @@ sudo ccplant native uninstall \
 | `--chart` | 公式OCI Chart | 利用するHelm Chart |
 | `--persistence` | `false` | Session Podのworkspaceに専用PVCを作成する |
 | `--persistence-backend` | 未指定 | セッション状態の永続化方式。`volume`でsuspend/resume時の会話履歴をSession PVCへ保存する |
+| `--persistence-s3-bucket` | 未指定 | 保存済みWorkspace snapshotを格納するS3 bucket |
+| `--persistence-s3-region` | `garage` | Workspace snapshot用S3 region |
+| `--persistence-s3-prefix` | `agentapi-sessions/` | Workspace snapshotのS3 key prefix |
+| `--persistence-s3-endpoint` | 未指定 | S3互換ストレージのendpoint |
+| `--persistence-s3-access-key-id-secret` | 未指定 | S3 Access Key IDを格納したSecret名 |
+| `--persistence-s3-access-key-id-secret-key` | `access-key-id` | Secret内のAccess Key IDのkey |
+| `--persistence-s3-secret-access-key-secret` | 未指定 | S3 Secret Access Keyを格納したSecret名 |
+| `--persistence-s3-secret-access-key-secret-key` | `secret-access-key` | Secret内のSecret Access Keyのkey |
 | `--storage-class` | 未指定 | Session PVCのStorageClass。未指定時はクラスタのデフォルトを使用 |
 | `--persistence-size` | `10Gi` | Session PVCごとの容量 |
 | `--timeout` | `10m` | Helm処理のタイムアウト |
