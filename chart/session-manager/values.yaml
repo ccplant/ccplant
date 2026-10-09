@@ -82,6 +82,9 @@ sessionPersistence:
 
 session:
   image: "ghcr.io/ccplant/ccplant-agent:assets-8eb2ff858281cc2752c32eda9df010ea"
+  # Source image for the ccplant binary injected into session Pods.
+  # Empty follows the session-manager image.
+  cliImage: ""
   serviceAccountName: agentapi-proxy-session
   isolation:
     # Hide Service-derived environment variables from session containers.
@@ -101,6 +104,11 @@ session:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "2", memory: 4Gi}
+  executor:
+    enabled: true
+    resources:
+      requests: {cpu: "500m", memory: "512Mi"}
+      limits: {cpu: "2", memory: "4Gi"}
   pvc:
     # Automatically enabled when sessionPersistence.backend=volume.
     enabled: false
