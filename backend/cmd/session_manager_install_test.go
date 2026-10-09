@@ -87,6 +87,32 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 	require.Equal(t, "20Gi", pvc["storageSize"])
 }
 
+func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T) {
+	t.Parallel()
+	opts := sessionManagerInstallOptions{
+		release:         "manager",
+		chart:           "oci://example.com/session-manager",
+		namespace:       "sessions",
+		timeout:         "10m",
+		createNamespace: true,
+		wait:            true,
+		version:         "v1.2.3",
+	}
+
+	args := sessionManagerHelmUpgradeArgs(opts, "/tmp/values.yaml", false)
+
+	require.Equal(t, []string{
+		"upgrade", "--install", "manager", "oci://example.com/session-manager",
+		"--namespace", "sessions",
+		"--values", "/tmp/values.yaml",
+		"--timeout", "10m",
+		"--force-conflicts",
+		"--create-namespace",
+		"--wait",
+		"--version", "v1.2.3",
+	}, args)
+}
+
 func sessionManagerDeploymentForLeaseMigrationTest(env []corev1.EnvVar) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "manager", Namespace: "sessions"},
