@@ -288,6 +288,12 @@ type KubernetesSessionConfig struct {
 	MemoryRequest string `json:"memory_request" mapstructure:"memory_request"`
 	// MemoryLimit is the memory limit for session pods
 	MemoryLimit string `json:"memory_limit" mapstructure:"memory_limit"`
+	// ExecutorEnabled runs model-generated shell commands in a memory-isolated sidecar.
+	ExecutorEnabled       bool   `json:"executor_enabled" mapstructure:"executor_enabled"`
+	ExecutorCPURequest    string `json:"executor_cpu_request" mapstructure:"executor_cpu_request"`
+	ExecutorCPULimit      string `json:"executor_cpu_limit" mapstructure:"executor_cpu_limit"`
+	ExecutorMemoryRequest string `json:"executor_memory_request" mapstructure:"executor_memory_request"`
+	ExecutorMemoryLimit   string `json:"executor_memory_limit" mapstructure:"executor_memory_limit"`
 	// PVCEnabled enables PersistentVolumeClaim for session pods workdir
 	// When disabled, EmptyDir is used instead (data is not persisted across pod restarts)
 	PVCEnabled *bool `json:"pvc_enabled,omitempty" mapstructure:"pvc_enabled"`
@@ -1211,6 +1217,11 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("kubernetes_session.cpu_limit", "AGENTAPI_K8S_SESSION_CPU_LIMIT")
 	_ = v.BindEnv("kubernetes_session.memory_request", "AGENTAPI_K8S_SESSION_MEMORY_REQUEST")
 	_ = v.BindEnv("kubernetes_session.memory_limit", "AGENTAPI_K8S_SESSION_MEMORY_LIMIT")
+	_ = v.BindEnv("kubernetes_session.executor_enabled", "AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED")
+	_ = v.BindEnv("kubernetes_session.executor_cpu_request", "AGENTAPI_K8S_SESSION_EXECUTOR_CPU_REQUEST")
+	_ = v.BindEnv("kubernetes_session.executor_cpu_limit", "AGENTAPI_K8S_SESSION_EXECUTOR_CPU_LIMIT")
+	_ = v.BindEnv("kubernetes_session.executor_memory_request", "AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_REQUEST")
+	_ = v.BindEnv("kubernetes_session.executor_memory_limit", "AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_LIMIT")
 	_ = v.BindEnv("kubernetes_session.pvc_enabled", "AGENTAPI_K8S_SESSION_PVC_ENABLED")
 	_ = v.BindEnv("kubernetes_session.pvc_storage_class", "AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS")
 	_ = v.BindEnv("kubernetes_session.pvc_storage_size", "AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE")
@@ -1405,6 +1416,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.cpu_limit", "2")
 	v.SetDefault("kubernetes_session.memory_request", "512Mi")
 	v.SetDefault("kubernetes_session.memory_limit", "4Gi")
+	v.SetDefault("kubernetes_session.executor_enabled", true)
+	v.SetDefault("kubernetes_session.executor_cpu_request", "500m")
+	v.SetDefault("kubernetes_session.executor_cpu_limit", "2")
+	v.SetDefault("kubernetes_session.executor_memory_request", "512Mi")
+	v.SetDefault("kubernetes_session.executor_memory_limit", "4Gi")
 	v.SetDefault("kubernetes_session.pvc_enabled", true)
 	v.SetDefault("kubernetes_session.pvc_storage_class", "")
 	v.SetDefault("kubernetes_session.pvc_storage_size", "10Gi")

@@ -243,6 +243,52 @@ func TestBuildDeploymentMountsGitHubConfigSecretWithoutAuthentication(t *testing
 	}
 }
 
+func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.CLIImage = "example/cli:v1"
+	manager.k8sConfig.ExecutorEnabled = true
+	manager.k8sConfig.ExecutorMemoryRequest = "256Mi"
+	manager.k8sConfig.ExecutorMemoryLimit = "2Gi"
+	session := newWorkloadTestSession()
+
+	deployment, err := manager.buildDeployment(context.Background(), session, session.Request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers := deployment.Spec.Template.Spec.Containers
+	if len(containers) < 2 || containers[1].Name != "executor" {
+		t.Fatalf("containers = %#v, want executor after agentapi", containers)
+	}
+	if got := containers[1].Resources.Limits.Memory().String(); got != "2Gi" {
+		t.Fatalf("executor memory limit = %q", got)
+	}
+	main := containers[0]
+	if !hasEnvValue(main.Env, "CCPLANT_EXECUTOR_REQUIRED", "1") {
+		t.Fatal("agent container does not require the executor")
+	}
+	if !hasMount(main.VolumeMounts, "ccplant-cli", "/bin/bash", "ccplant") {
+		t.Fatalf("agent mounts = %#v, want ccplant mounted over /bin/bash", main.VolumeMounts)
+	}
+}
+
+func hasEnvValue(env []corev1.EnvVar, name, value string) bool {
+	for _, item := range env {
+		if item.Name == name && item.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMount(mounts []corev1.VolumeMount, name, path, subPath string) bool {
+	for _, mount := range mounts {
+		if mount.Name == name && mount.MountPath == path && mount.SubPath == subPath {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreateSessionWorkloadWithPVCUsesDeploymentRestartPolicyAlways(t *testing.T) {
 	manager := newWorkloadTestManager(t, true)
 	session := newWorkloadTestSession()

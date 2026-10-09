@@ -1163,6 +1163,18 @@ kubernetesSession:
       cpu: "2"
       memory: "4Gi"
 
+  # Run model-generated bash commands in a separate container cgroup. The
+  # agent container reaches it through a Unix socket shared only within the Pod.
+  executor:
+    enabled: true
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+
   # PVC configuration for session workdir
   pvc:
     # Enable PersistentVolumeClaim for session pods workdir

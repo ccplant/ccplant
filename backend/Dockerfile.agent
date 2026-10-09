@@ -157,15 +157,15 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     rm -rf /home/agentapi/.cache/uv 2>/dev/null || true
 
 # Create npm, npx, bun, bunx, and node wrapper scripts that use claude x with BUN_BE_BUN=1
-RUN printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
+RUN printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/npm > /dev/null && \
     sudo chmod +x /usr/local/bin/npm && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
+    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/npx > /dev/null && \
     sudo chmod +x /usr/local/bin/npx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
+    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/bun > /dev/null && \
     sudo chmod +x /usr/local/bin/bun && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
+    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude x "$@"\n' | sudo tee /usr/local/bin/bunx > /dev/null && \
     sudo chmod +x /usr/local/bin/bunx && \
-    printf '#!/bin/bash\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
+    printf '#!/bin/sh\nexec env BUN_BE_BUN=1 /opt/claude/bin/claude "$@"\n' | sudo tee /usr/local/bin/node > /dev/null && \
     sudo chmod +x /usr/local/bin/node
 
 # Set combined PATH environment variable (including /opt/claude/bin for claude CLI and /opt/cursor/bin for Cursor CLI)
@@ -192,7 +192,7 @@ RUN bun install -g \
 # The bun-installed codex script uses "#!/usr/bin/env node", but /usr/local/bin/node is a
 # claude wrapper. The wrapper here explicitly invokes bun so codex works reliably in the proxy.
 # Uses the absolute path to the codex script so it works even when HOME is overridden.
-RUN printf '#!/bin/bash\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
+RUN printf '#!/bin/sh\nexec bun /home/agentapi/.bun/bin/codex "$@"\n' | \
     sudo tee /opt/claude/bin/codex > /dev/null && \
     sudo chmod +x /opt/claude/bin/codex
 

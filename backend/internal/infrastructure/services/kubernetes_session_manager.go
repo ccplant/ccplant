@@ -3513,6 +3513,7 @@ func (m *KubernetesSessionManager) createPod(ctx context.Context, session *Kuber
 }
 
 const sessionCLIPath = "/opt/ccplant/bin/ccplant"
+const defaultExecutorSocketPath = "/run/ccplant-executor/executor.sock"
 
 func (m *KubernetesSessionManager) sessionBinaryPath() string {
 	if m.k8sConfig.CLIImage != "" {
@@ -3701,6 +3702,16 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			PeriodSeconds:       2,
 		},
 	}
+	executorEnabled := m.k8sConfig.ExecutorEnabled && m.k8sConfig.CLIImage != ""
+	if executorEnabled {
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "CCPLANT_EXECUTOR_REQUIRED", Value: "1"},
+			corev1.EnvVar{Name: "CCPLANT_EXECUTOR_SOCKET", Value: defaultExecutorSocketPath},
+		)
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
+		)
+	}
 
 	// Build volumes
 	volumes := m.buildVolumes(session)
@@ -3752,6 +3763,15 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true,
 		})
+		if executorEnabled {
+			container.VolumeMounts = append(container.VolumeMounts,
+				corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/bin/bash", SubPath: "ccplant", ReadOnly: true},
+				corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/usr/bin/bash", SubPath: "ccplant", ReadOnly: true},
+			)
+		}
+	}
+	if executorEnabled {
+		volumes = append(volumes, corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	}
 
 	// Build containers list.
@@ -3759,6 +3779,27 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	// (pkg/provisioner/provision.go) after user context is established, so the
 	// UserID is always set correctly even for stock pool pods.
 	containers := []corev1.Container{container}
+	if executorEnabled {
+		executorMounts := m.buildMainContainerVolumeMounts(session, req)
+		executorMounts = append(executorMounts,
+			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
+			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
+		)
+		containers = append(containers, corev1.Container{
+			Name: "executor", Image: m.k8sConfig.Image,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			WorkingDir:      workingDir,
+			Command:         []string{"/usr/bin/tini"},
+			Args:            []string{"-g", "--", sessionCLIPath, "executor-server", "--socket", defaultExecutorSocketPath},
+			VolumeMounts:    executorMounts,
+			Resources: buildResourceRequirements(
+				defaultIfEmpty(m.k8sConfig.ExecutorCPURequest, "500m"),
+				defaultIfEmpty(m.k8sConfig.ExecutorCPULimit, "2"),
+				defaultIfEmpty(m.k8sConfig.ExecutorMemoryRequest, "512Mi"),
+				defaultIfEmpty(m.k8sConfig.ExecutorMemoryLimit, "4Gi"),
+			),
+		})
+	}
 	if sandboxSidecar != nil {
 		containers = append(containers, *sandboxSidecar)
 	}

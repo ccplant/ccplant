@@ -282,17 +282,22 @@ func applySections(cfg *config.Config, sections map[string]interface{}) error {
 	}
 
 	var sessions struct {
-		Image           *string `json:"image"`
-		CPURequest      *string `json:"cpu_request"`
-		CPULimit        *string `json:"cpu_limit"`
-		MemoryRequest   *string `json:"memory_request"`
-		MemoryLimit     *string `json:"memory_limit"`
-		PVCEnabled      *bool   `json:"pvc_enabled"`
-		PVCStorageClass *string `json:"pvc_storage_class"`
-		PVCSize         *string `json:"pvc_size"`
-		PodStartTimeout *int    `json:"pod_start_timeout"`
-		PodStopTimeout  *int    `json:"pod_stop_timeout"`
-		OtelEnabled     *bool   `json:"otel_enabled"`
+		Image                 *string `json:"image"`
+		CPURequest            *string `json:"cpu_request"`
+		CPULimit              *string `json:"cpu_limit"`
+		MemoryRequest         *string `json:"memory_request"`
+		MemoryLimit           *string `json:"memory_limit"`
+		ExecutorEnabled       *bool   `json:"executor_enabled"`
+		ExecutorCPURequest    *string `json:"executor_cpu_request"`
+		ExecutorCPULimit      *string `json:"executor_cpu_limit"`
+		ExecutorMemoryRequest *string `json:"executor_memory_request"`
+		ExecutorMemoryLimit   *string `json:"executor_memory_limit"`
+		PVCEnabled            *bool   `json:"pvc_enabled"`
+		PVCStorageClass       *string `json:"pvc_storage_class"`
+		PVCSize               *string `json:"pvc_size"`
+		PodStartTimeout       *int    `json:"pod_start_timeout"`
+		PodStopTimeout        *int    `json:"pod_stop_timeout"`
+		OtelEnabled           *bool   `json:"otel_enabled"`
 	}
 	decode("sessions", &sessions)
 	if sessions.Image != nil {
@@ -309,6 +314,21 @@ func applySections(cfg *config.Config, sections map[string]interface{}) error {
 	}
 	if sessions.MemoryLimit != nil {
 		cfg.KubernetesSession.MemoryLimit = *sessions.MemoryLimit
+	}
+	if sessions.ExecutorEnabled != nil {
+		cfg.KubernetesSession.ExecutorEnabled = *sessions.ExecutorEnabled
+	}
+	if sessions.ExecutorCPURequest != nil {
+		cfg.KubernetesSession.ExecutorCPURequest = *sessions.ExecutorCPURequest
+	}
+	if sessions.ExecutorCPULimit != nil {
+		cfg.KubernetesSession.ExecutorCPULimit = *sessions.ExecutorCPULimit
+	}
+	if sessions.ExecutorMemoryRequest != nil {
+		cfg.KubernetesSession.ExecutorMemoryRequest = *sessions.ExecutorMemoryRequest
+	}
+	if sessions.ExecutorMemoryLimit != nil {
+		cfg.KubernetesSession.ExecutorMemoryLimit = *sessions.ExecutorMemoryLimit
 	}
 	if sessions.PVCEnabled != nil {
 		cfg.KubernetesSession.PVCEnabled = sessions.PVCEnabled
