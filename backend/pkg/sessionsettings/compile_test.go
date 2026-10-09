@@ -477,7 +477,7 @@ func TestCompile_CodexConfigTOML(t *testing.T) {
 		providers := config["model_providers"].(map[string]interface{})
 		provider := providers[codexCustomOpenAIProviderID].(map[string]interface{})
 		require.Equal(t, "https://gateway.example/v1", provider["base_url"])
-		require.Equal(t, "CCPLANT_CODEX_API_KEY", provider["env_key"])
+		require.Equal(t, "OPENAI_API_KEY", provider["env_key"])
 		require.Equal(t, false, provider["requires_openai_auth"])
 	})
 

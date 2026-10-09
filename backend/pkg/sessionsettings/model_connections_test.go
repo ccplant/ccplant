@@ -108,7 +108,7 @@ func TestCodexConfigReplacement(t *testing.T) {
 	require.Equal(t, "danger-full-access", parsed["sandbox_mode"])
 	require.NotContains(t, parsed, "model_context_window")
 	require.NotContains(t, second, "never-in-toml")
-	require.Contains(t, second, "CCPLANT_CODEX_API_KEY")
+	require.Contains(t, second, "OPENAI_API_KEY")
 	restored, err := MergeCodexConnectionConfig(second, &modelprovider.Connection{Mode: "auth_json"})
 	require.NoError(t, err)
 	require.NotContains(t, restored, "gateway.example")
