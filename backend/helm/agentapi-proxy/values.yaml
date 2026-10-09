@@ -485,6 +485,9 @@ sessionManager:
     rbac:
       create: true
     image: "ghcr.io/ccplant/ccplant-agent:assets-8eb2ff858281cc2752c32eda9df010ea"
+    # Source image for the ccplant binary injected into session Pods.
+    # Empty follows the session-manager image.
+    cliImage: ""
     networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
     networkFilter:
       resources:
@@ -498,6 +501,11 @@ sessionManager:
     resources:
       requests: {cpu: "500m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}
+    executor:
+      enabled: true
+      resources:
+        requests: {cpu: "500m", memory: "512Mi"}
+        limits: {cpu: "2", memory: "4Gi"}
     pvc:
       enabled: false
       storageClass: ""
