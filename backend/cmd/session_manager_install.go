@@ -171,22 +171,9 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	args := []string{"upgrade", "--install", opts.release, opts.chart, "--namespace", opts.namespace, "--values", tmpName, "--timeout", opts.timeout}
-	if opts.createNamespace {
-		args = append(args, "--create-namespace")
-	}
-	if opts.wait {
-		args = append(args, "--wait")
-	}
+	args := sessionManagerHelmUpgradeArgs(opts, tmpName, legacyLeaseMigration)
 	if legacyLeaseMigration {
-		// Recreate prevents old and new Pods from leading concurrently with
-		// different Lease names. Atomic rollback restores the old ReplicaSet if
-		// the first migration upgrade cannot become ready.
-		args = append(args, "--atomic")
 		_, _ = fmt.Fprintf(stdout, "Migrating session manager %s from the legacy shared Lease\n", opts.release)
-	}
-	if opts.version != "" {
-		args = append(args, "--version", opts.version)
 	}
 	if err = runner.Run(ctx, stdout, stderr, "helm", args...); err != nil {
 		return fmt.Errorf("helm upgrade --install: %w", err)
@@ -198,6 +185,35 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 		return err
 	}
 	return nil
+}
+
+func sessionManagerHelmUpgradeArgs(opts sessionManagerInstallOptions, valuesFile string, legacyLeaseMigration bool) []string {
+	args := []string{
+		"upgrade", "--install", opts.release, opts.chart,
+		"--namespace", opts.namespace,
+		"--values", valuesFile,
+		"--timeout", opts.timeout,
+		// The chart owns the session-manager Deployment, including its image.
+		// Take over chart-managed fields if an earlier Helm invocation or another
+		// ccplant release owns them through server-side apply.
+		"--force-conflicts",
+	}
+	if opts.createNamespace {
+		args = append(args, "--create-namespace")
+	}
+	if opts.wait {
+		args = append(args, "--wait")
+	}
+	if legacyLeaseMigration {
+		// Recreate prevents old and new Pods from leading concurrently with
+		// different Lease names. Atomic rollback restores the old ReplicaSet if
+		// the first migration upgrade cannot become ready.
+		args = append(args, "--atomic")
+	}
+	if opts.version != "" {
+		args = append(args, "--version", opts.version)
+	}
+	return args
 }
 
 func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials *installedManagerCredentials, legacyLeaseMigration bool) map[string]any {
