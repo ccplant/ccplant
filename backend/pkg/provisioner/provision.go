@@ -47,6 +47,11 @@ var piOllamaCommandPath = filepath.Join(runtimeHome, ".session", "pi-ollama-pi")
 var piAgentInstructionsPath = filepath.Join(runtimeHome, ".pi", "agent", "AGENTS.md")
 var piSettingsPath = filepath.Join(runtimeHome, ".pi", "agent", "settings.json")
 
+const (
+	containerJavaScriptRuntime  = "/opt/claude/bin/claude"
+	containerCodexACPEntrypoint = "/home/agentapi/.bun/bin/codex-acp"
+)
+
 func envPath(name, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		return value
@@ -324,6 +329,18 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	// Step 3: prepare the process-only session environment.
 	s.setPhase("provision:load-env")
 	envMap := cloneEnvironment(settings.Env)
+	if strings.TrimSpace(os.Getenv("CCPLANT_EXECUTOR_REQUIRED")) == "1" && len(settings.Files) > 0 {
+		paths := make([]string, 0, len(settings.Files))
+		for _, file := range settings.Files {
+			paths = append(paths, file.Path)
+		}
+		if encoded, err := json.Marshal(paths); err != nil {
+			s.setStatus(StatusError, "failed to prepare executor managed files")
+			return
+		} else {
+			envMap["CCPLANT_EXECUTOR_MANAGED_FILE_PATHS"] = string(encoded)
+		}
+	}
 	log.Printf("[PROVISIONER] Prepared %d in-memory env vars", len(envMap))
 	prepareSciaCABundle(ctx, envMap)
 	stopEndpoint, err := prepareModelEndpoint(settings, compileOpts.OutputDir, envMap)
@@ -1344,14 +1361,24 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		// Start the acp-server bridge that wraps codex-acp (ACP adapter for OpenAI Codex) via stdio.
 		// https://github.com/agentclientprotocol/codex-acp
 		// --auto-approve bypasses the UI permission modal at the ACP bridge layer.
-		return agentapiProxyBinary, []string{
+		adapterCommand := []string{"codex-acp"}
+		if strings.TrimSpace(os.Getenv("CCPLANT_EXECUTOR_REQUIRED")) == "1" || strings.TrimSpace(envMap["CCPLANT_EXECUTOR_REQUIRED"]) == "1" {
+			// The executor replaces /bin/bash in the agent container. Run this
+			// control-plane adapter through the image's JavaScript runtime
+			// directly, so a wrapper shebang can never move codex-acp (and its
+			// app-server child) into the executor sidecar. Shells spawned by the
+			// agent still resolve to the executor client as intended.
+			envMap["BUN_BE_BUN"] = "1"
+			adapterCommand = []string{containerJavaScriptRuntime, containerCodexACPEntrypoint}
+		}
+		args := []string{
 			"acp-server",
 			"--port", agentapiPort,
 			"--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"),
 			"--auto-approve",
 			"--",
-			"codex-acp",
 		}
+		return agentapiProxyBinary, append(args, adapterCommand...)
 
 	case "pi-ollama":
 		// Start the acp-server bridge that wraps pi-acp via stdio. pi-acp starts

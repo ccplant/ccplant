@@ -1,6 +1,11 @@
 package sessionsettings
 
-import "github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
+import (
+	"encoding/json"
+
+	"github.com/pelletier/go-toml/v2"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
+)
 
 // ApplyModelConnections runs after all legacy environment layers have been merged.
 // Its persisted unset list prevents inherited credentials from reappearing at launch.
@@ -36,8 +41,23 @@ func (s *SessionSettings) ApplyModelConnections() {
 		return
 	}
 	if agent == "codex" {
+		config := map[string]interface{}{}
+		_ = toml.Unmarshal([]byte(structuredCodexProviderTOML(c)), &config)
+		encodedConfig, _ := json.Marshal(config)
+		s.Env["CODEX_CONFIG"] = string(encodedConfig)
+		s.Env["MODEL_PROVIDER"] = codexCustomOpenAIProviderID
 		if c.Authentication != "none" {
 			s.Env["CCPLANT_CODEX_API_KEY"] = c.APIKey
+			s.Env["OPENAI_API_KEY"] = c.APIKey
+			s.Env["DEFAULT_AUTH_REQUEST"] = `{"methodId":"api-key"}`
+		} else {
+			request, _ := json.Marshal(map[string]interface{}{
+				"methodId": "gateway",
+				"_meta": map[string]interface{}{"gateway": map[string]interface{}{
+					"baseUrl": c.BaseURL, "providerName": "OpenAI compatible",
+				}},
+			})
+			s.Env["DEFAULT_AUTH_REQUEST"] = string(request)
 		}
 	} else {
 		s.Env["ANTHROPIC_BASE_URL"] = c.BaseURL

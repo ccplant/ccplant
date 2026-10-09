@@ -251,6 +251,11 @@ func adminSettingsDefaults(cfg *proxyconfig.Config) map[string]interface{} {
 	put("sessions.cpu_limit", cfg.KubernetesSession.CPULimit)
 	put("sessions.memory_request", cfg.KubernetesSession.MemoryRequest)
 	put("sessions.memory_limit", cfg.KubernetesSession.MemoryLimit)
+	put("sessions.executor_enabled", cfg.KubernetesSession.ExecutorEnabled)
+	put("sessions.executor_cpu_request", cfg.KubernetesSession.ExecutorCPURequest)
+	put("sessions.executor_cpu_limit", cfg.KubernetesSession.ExecutorCPULimit)
+	put("sessions.executor_memory_request", cfg.KubernetesSession.ExecutorMemoryRequest)
+	put("sessions.executor_memory_limit", cfg.KubernetesSession.ExecutorMemoryLimit)
 	if cfg.KubernetesSession.PVCEnabled != nil {
 		put("sessions.pvc_enabled", *cfg.KubernetesSession.PVCEnabled)
 	}

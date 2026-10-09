@@ -283,6 +283,8 @@ spec:
             - {name: AGENTAPI_SCIA_TODOIST_HOSTS, value: {{ dig "todoistHosts" (list "api.todoist.com") $scia | join "," | quote }}}
             - {name: AGENTAPI_SCIA_TODOIST_PATHS, value: {{ dig "todoistPaths" (list "/api/v1/*") $scia | join "," | quote }}}
             - {name: AGENTAPI_K8S_SESSION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - name: AGENTAPI_K8S_SESSION_CLI_IMAGE
+              value: {{ $k8s.cliImage | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
             - name: AGENTAPI_K8S_SESSION_IMAGE
               value: {{ $k8s.image | default (include "agentapi-proxy.sessionManagerImage" .) | quote }}
             - {name: AGENTAPI_K8S_SESSION_NETWORK_FILTER_IMAGE, value: {{ $k8s.networkFilterImage | quote }}}
@@ -301,6 +303,11 @@ spec:
             - {name: AGENTAPI_K8S_SESSION_CPU_LIMIT, value: {{ $k8s.resources.limits.cpu | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MEMORY_REQUEST, value: {{ $k8s.resources.requests.memory | quote }}}
             - {name: AGENTAPI_K8S_SESSION_MEMORY_LIMIT, value: {{ $k8s.resources.limits.memory | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED, value: {{ dig "executor" "enabled" true $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_CPU_REQUEST, value: {{ dig "executor" "resources" "requests" "cpu" "10m" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_CPU_LIMIT, value: {{ dig "executor" "resources" "limits" "cpu" "2" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_REQUEST, value: {{ dig "executor" "resources" "requests" "memory" "512Mi" $k8s | quote }}}
+            - {name: AGENTAPI_K8S_SESSION_EXECUTOR_MEMORY_LIMIT, value: {{ dig "executor" "resources" "limits" "memory" "4Gi" $k8s | quote }}}
             - {name: AGENTAPI_K8S_SESSION_PVC_ENABLED, value: {{ $k8s.pvc.enabled | quote }}}
             - {name: AGENTAPI_K8S_SESSION_PVC_STORAGE_CLASS, value: {{ $k8s.pvc.storageClass | quote }}}
             - {name: AGENTAPI_K8S_SESSION_PVC_STORAGE_SIZE, value: {{ $k8s.pvc.storageSize | quote }}}

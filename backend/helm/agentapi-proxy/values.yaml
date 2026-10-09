@@ -484,7 +484,10 @@ sessionManager:
     serviceAccountName: agentapi-proxy-session
     rbac:
       create: true
-    image: "ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405"
+    image: "ghcr.io/ccplant/ccplant-agent:assets-8eb2ff858281cc2752c32eda9df010ea"
+    # Source image for the ccplant binary injected into session Pods.
+    # Empty follows the session-manager image.
+    cliImage: ""
     networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
     networkFilter:
       resources:
@@ -498,6 +501,11 @@ sessionManager:
     resources:
       requests: {cpu: "500m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}
+    executor:
+      enabled: true
+      resources:
+        requests: {cpu: "10m", memory: "512Mi"}
+        limits: {cpu: "2", memory: "4Gi"}
     pvc:
       enabled: false
       storageClass: ""
@@ -1122,7 +1130,7 @@ kubernetesSession:
   # Container image for session pods
   # Independent asset image; use an immutable tag or digest.
   # Outside Helm the equivalent runtime override is AGENTAPI_K8S_SESSION_IMAGE.
-  image: "ghcr.io/ccplant/ccplant-agent:assets-4b37a396b0634dac6b9a5dd6614af405"
+  image: "ghcr.io/ccplant/ccplant-agent:assets-8eb2ff858281cc2752c32eda9df010ea"
   # CLI source follows the manager release; override for a custom registry.
   cliImage: ""
 
@@ -1162,6 +1170,18 @@ kubernetesSession:
     limits:
       cpu: "2"
       memory: "4Gi"
+
+  # Run model-generated bash commands in a separate container cgroup. The
+  # agent container reaches it through a Unix socket shared only within the Pod.
+  executor:
+    enabled: true
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
 
   # PVC configuration for session workdir
   pvc:

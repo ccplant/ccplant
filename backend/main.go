@@ -18,6 +18,8 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.AddCommand(cmd.ExecutorServerCmd)
+	rootCmd.AddCommand(cmd.ExecutorClientCmd)
 	rootCmd.AddCommand(cmd.ServerCmd)
 	rootCmd.AddCommand(cmd.WorkerCmd)
 	rootCmd.AddCommand(cmd.SessionManagerCmd)
@@ -37,7 +39,17 @@ func init() {
 }
 
 func main() {
+	if args, ok := cmd.ExecutorClientArgsForBasename(os.Args); ok {
+		os.Args = append([]string{"ccplant", "executor-client"}, args...)
+		// A non-zero remote shell status is an expected process result, not a
+		// Cobra command failure. Keep shell stderr byte-for-byte compatible.
+		rootCmd.SilenceErrors = true
+		rootCmd.SilenceUsage = true
+	}
 	if err := rootCmd.Execute(); err != nil {
+		if code, ok := cmd.ExecutorExitCode(err); ok {
+			os.Exit(code)
+		}
 		log.Printf("Fatal error executing command: %v", err)
 		os.Exit(1)
 	}

@@ -29,7 +29,7 @@ func structuredCodexProviderTOML(c *modelprovider.Connection) string {
 	}
 	fmt.Fprintf(&b, "\n[model_providers.%s]\nname = \"OpenAI compatible\"\nbase_url = %s\nwire_api = \"responses\"\nrequires_openai_auth = false\n", codexCustomOpenAIProviderID, tomlString(c.BaseURL))
 	if c.Authentication != "none" {
-		b.WriteString("env_key = \"CCPLANT_CODEX_API_KEY\"\n")
+		b.WriteString("env_key = \"OPENAI_API_KEY\"\n")
 	}
 	return b.String()
 }

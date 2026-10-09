@@ -69,7 +69,8 @@
       "required": ["provisioner"],
       "properties": {
         "image": {"type": "string"},
-        "cliImage": {"type": "string", "description": "Deprecated and ignored; retained for upgrade compatibility."},
+        "cliImage": {"type": "string", "description": "Source image for the ccplant binary injected into session Pods; empty follows the session-manager image."},
+        "executor": {"type": "object"},
         "isolation": {
           "type": "object",
           "required": ["disableServiceLinks", "disableServiceAccountToken", "blockKubernetesAPI", "egressMode"],

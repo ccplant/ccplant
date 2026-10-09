@@ -66,6 +66,27 @@ func TestBuildAgentCommandUsesConfiguredProxyBinary(t *testing.T) {
 	}
 }
 
+func TestBuildAgentCommandKeepsCodexACPInAgentContainer(t *testing.T) {
+	t.Setenv("AGENTAPI_PORT", "9000")
+	t.Setenv("CCPLANT_EXECUTOR_REQUIRED", "1")
+	env := map[string]string{}
+
+	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{AgentType: "codex-acp"},
+	}, env)
+
+	if cmd != "ccplant" {
+		t.Fatalf("command = %q, want ccplant", cmd)
+	}
+	want := []string{"acp-server", "--port", "9000", "--history-file", filepath.Join(runtimeHome, ".session", "acp-history.jsonl"), "--auto-approve", "--", containerJavaScriptRuntime, containerCodexACPEntrypoint}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	if env["BUN_BE_BUN"] != "1" {
+		t.Fatalf("BUN_BE_BUN = %q, want 1", env["BUN_BE_BUN"])
+	}
+}
+
 func TestNormalizeNativeSettingsUsesManagedBinary(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")

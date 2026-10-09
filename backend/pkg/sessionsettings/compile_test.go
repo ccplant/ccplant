@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
 func TestCompile_FullSettings(t *testing.T) {
@@ -450,6 +451,37 @@ func TestCompile_AutoUpdatesChannelStable(t *testing.T) {
 }
 
 func TestCompile_CodexConfigTOML(t *testing.T) {
+	t.Run("passes a managed provider directly to codex-acp", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		settings := &SessionSettings{
+			Session: SessionMeta{AgentType: "codex-acp"},
+			Env:     map[string]string{"CCPLANT_CODEX_API_KEY": "gateway-key"},
+			Codex:   CodexConfig{ConfigTOML: "sandbox_mode = \"danger-full-access\"\n"},
+			CodexConnection: &modelprovider.Connection{
+				Mode: "openai_compatible", BaseURL: "https://gateway.example/v1",
+				Model: "profile-model", Authentication: "api_key",
+			},
+		}
+
+		err := CompileSettings(settings, CompileOptions{
+			OutputDir:   tmpDir,
+			StartupPath: filepath.Join(tmpDir, "startup.sh"),
+		})
+		require.NoError(t, err)
+		require.Equal(t, codexCustomOpenAIProviderID, settings.Env["MODEL_PROVIDER"])
+
+		var config map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(settings.Env["CODEX_CONFIG"]), &config))
+		require.Equal(t, "profile-model", config["model"])
+		require.Equal(t, codexCustomOpenAIProviderID, config["model_provider"])
+		providers := config["model_providers"].(map[string]interface{})
+		provider := providers[codexCustomOpenAIProviderID].(map[string]interface{})
+		require.Equal(t, "https://gateway.example/v1", provider["base_url"])
+		require.Equal(t, "OPENAI_API_KEY", provider["env_key"])
+		require.Equal(t, false, provider["requires_openai_auth"])
+		require.Equal(t, filepath.Join(tmpDir, ".codex", CodexModelCatalogFile), config["model_catalog_json"])
+	})
+
 	t.Run("writes config.toml when CodexConfigTOML is set", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "compile-codex-config-*")
 		require.NoError(t, err)
