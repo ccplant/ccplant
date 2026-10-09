@@ -79,6 +79,7 @@ ccplant session-manager install \
   --registration-token-file ./registration-token \
   --namespace ccplant-session \
   --version X.Y.Z \
+  --persistence \
   --persistence-backend volume \
   --storage-class standard \
   --persistence-size 20Gi

@@ -87,6 +87,7 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 		connectionSecret:   "manager-parent",
 		internalSecret:     "manager-internal",
 		provisionerSecret:  "manager-provisioner",
+		persistence:        true,
 		persistenceBackend: "volume",
 		storageClass:       "fast",
 		persistenceSize:    "20Gi",
