@@ -1351,7 +1351,6 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 			strings.TrimSpace(envMap["OPENAI_API_KEY"]) != "",
 			strings.TrimSpace(envMap["CCPLANT_CODEX_API_KEY"]) != "",
 		)
-		envMap["APP_SERVER_LOGS"] = "/tmp/codex-acp-diagnostics"
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
