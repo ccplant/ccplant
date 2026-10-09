@@ -48,8 +48,38 @@ func TestSessionManagerInstallPersistenceFlags(t *testing.T) {
 	command := newSessionManagerInstallCommand()
 
 	require.Equal(t, "false", command.Flags().Lookup("persistence").DefValue)
+	require.Equal(t, "", command.Flags().Lookup("persistence-backend").DefValue)
+	require.Equal(t, "", command.Flags().Lookup("persistence-s3-bucket").DefValue)
+	require.Equal(t, "garage", command.Flags().Lookup("persistence-s3-region").DefValue)
+	require.Equal(t, "agentapi-sessions/", command.Flags().Lookup("persistence-s3-prefix").DefValue)
+	require.Equal(t, "access-key-id", command.Flags().Lookup("persistence-s3-access-key-id-secret-key").DefValue)
+	require.Equal(t, "secret-access-key", command.Flags().Lookup("persistence-s3-secret-access-key-secret-key").DefValue)
 	require.Equal(t, "", command.Flags().Lookup("storage-class").DefValue)
 	require.Equal(t, "10Gi", command.Flags().Lookup("persistence-size").DefValue)
+}
+
+func TestSessionManagerInstallRequiresVolumeBackendForWorkspaceS3(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+	command.SetArgs([]string{
+		"--upstream", "https://ccplant.example.com",
+		"--persistence-s3-bucket", "workspaces",
+	})
+
+	err := command.ExecuteContext(context.Background())
+	require.ErrorContains(t, err, "--persistence-s3-bucket requires --persistence-backend=volume")
+}
+
+func TestSessionManagerInstallRejectsInvalidPersistenceBackend(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+	command.SetArgs([]string{
+		"--upstream", "https://ccplant.example.com",
+		"--persistence-backend", "unsupported",
+	})
+
+	err := command.ExecuteContext(context.Background())
+	require.ErrorContains(t, err, "--persistence-backend must be volume or empty")
 }
 
 func TestSessionManagerInstallRejectsInvalidPersistenceSize(t *testing.T) {
@@ -68,15 +98,24 @@ func TestSessionManagerInstallRejectsInvalidPersistenceSize(t *testing.T) {
 func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 	t.Parallel()
 	opts := sessionManagerInstallOptions{
-		upstream:          "https://ccplant.example.com",
-		release:           "manager",
-		pool:              "builders",
-		connectionSecret:  "manager-parent",
-		internalSecret:    "manager-internal",
-		provisionerSecret: "manager-provisioner",
-		persistence:       true,
-		storageClass:      "fast",
-		persistenceSize:   "20Gi",
+		upstream:                        "https://ccplant.example.com",
+		release:                         "manager",
+		pool:                            "builders",
+		connectionSecret:                "manager-parent",
+		internalSecret:                  "manager-internal",
+		provisionerSecret:               "manager-provisioner",
+		persistence:                     true,
+		persistenceBackend:              "volume",
+		persistenceS3Bucket:             "workspaces",
+		persistenceS3Region:             "us-east-1",
+		persistenceS3Prefix:             "snapshots/",
+		persistenceS3Endpoint:           "https://s3.example.com",
+		persistenceS3AccessKeySecret:    "workspace-s3",
+		persistenceS3AccessKeySecretKey: "access-key-id",
+		persistenceS3SecretKeySecret:    "workspace-s3",
+		persistenceS3SecretKeySecretKey: "secret-access-key",
+		storageClass:                    "fast",
+		persistenceSize:                 "20Gi",
 	}
 
 	values := sessionManagerInstallValues(opts, &installedManagerCredentials{ManagerID: "manager-1"}, false)
@@ -85,6 +124,15 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 	require.Equal(t, true, pvc["enabled"])
 	require.Equal(t, "fast", pvc["storageClass"])
 	require.Equal(t, "20Gi", pvc["storageSize"])
+	persistence := values["sessionPersistence"].(map[string]any)
+	require.Equal(t, "volume", persistence["backend"])
+	s3 := persistence["s3"].(map[string]any)
+	require.Equal(t, "workspaces", s3["bucket"])
+	require.Equal(t, "us-east-1", s3["region"])
+	require.Equal(t, "snapshots/", s3["prefix"])
+	require.Equal(t, "https://s3.example.com", s3["endpoint"])
+	require.Equal(t, map[string]any{"name": "workspace-s3", "key": "access-key-id"}, s3["accessKeyIdSecretRef"])
+	require.Equal(t, map[string]any{"name": "workspace-s3", "key": "secret-access-key"}, s3["secretAccessKeySecretRef"])
 }
 
 func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T) {
