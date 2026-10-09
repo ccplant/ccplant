@@ -48,6 +48,31 @@ func TestManagedConnectionCredentialsAndPersistedEnvironment(t *testing.T) {
 	require.Equal(t, s.Env, restored.Env)
 	require.Equal(t, s.UnsetEnv, restored.UnsetEnv)
 }
+
+func TestCodexCompatibleConnectionMirrorsAPIKeyForACPAuthentication(t *testing.T) {
+	s := &SessionSettings{
+		Env: map[string]string{"OPENAI_API_KEY": "old-key"},
+		CodexConnection: &modelprovider.Connection{
+			Mode: "openai_compatible", BaseURL: "https://gateway.example/v1",
+			Model: "profile-model", Authentication: "api_key", APIKey: "gateway-key",
+		},
+	}
+
+	s.ApplyModelConnections()
+
+	require.Equal(t, "gateway-key", s.Env["CCPLANT_CODEX_API_KEY"])
+	require.Equal(t, "gateway-key", s.Env["OPENAI_API_KEY"])
+	require.Contains(t, s.UnsetEnv, "OPENAI_API_KEY")
+
+	raw, err := json.Marshal(s)
+	require.NoError(t, err)
+	var restored SessionSettings
+	require.NoError(t, json.Unmarshal(raw, &restored))
+	require.Empty(t, restored.CodexConnection.APIKey)
+	require.Equal(t, "gateway-key", restored.Env["CCPLANT_CODEX_API_KEY"])
+	require.Equal(t, "gateway-key", restored.Env["OPENAI_API_KEY"])
+}
+
 func TestCodexConfigReplacement(t *testing.T) {
 	c := &modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://gateway.example/v1", Model: "profile-model", Authentication: "api_key", APIKey: "never-in-toml"}
 	base := "sandbox_mode = \"danger-full-access\"\nmodel_context_window = 128000\n[model_providers.agentapi_openai_compatible]\nbase_url = \"https://old.example\"\n"

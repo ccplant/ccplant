@@ -38,6 +38,11 @@ func (s *SessionSettings) ApplyModelConnections() {
 	if agent == "codex" {
 		if c.Authentication != "none" {
 			s.Env["CCPLANT_CODEX_API_KEY"] = c.APIKey
+			// codex-acp checks the standard OpenAI credential before it creates
+			// an ACP session, even when Codex is configured with a custom
+			// provider whose env_key is CCPLANT_CODEX_API_KEY. Keep the scoped
+			// variable for the provider and mirror it for that preflight check.
+			s.Env["OPENAI_API_KEY"] = c.APIKey
 		}
 	} else {
 		s.Env["ANTHROPIC_BASE_URL"] = c.BaseURL
