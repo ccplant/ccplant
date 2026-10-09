@@ -1,6 +1,10 @@
 package sessionsettings
 
-import "github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
+import (
+	"encoding/json"
+
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
+)
 
 // ApplyModelConnections runs after all legacy environment layers have been merged.
 // Its persisted unset list prevents inherited credentials from reappearing at launch.
@@ -38,11 +42,16 @@ func (s *SessionSettings) ApplyModelConnections() {
 	if agent == "codex" {
 		if c.Authentication != "none" {
 			s.Env["CCPLANT_CODEX_API_KEY"] = c.APIKey
-			// codex-acp checks the standard OpenAI credential before it creates
-			// an ACP session, even when Codex is configured with a custom
-			// provider whose env_key is CCPLANT_CODEX_API_KEY. Keep the scoped
-			// variable for the provider and mirror it for that preflight check.
 			s.Env["OPENAI_API_KEY"] = c.APIKey
+			s.Env["DEFAULT_AUTH_REQUEST"] = `{"methodId":"api-key"}`
+		} else {
+			request, _ := json.Marshal(map[string]interface{}{
+				"methodId": "gateway",
+				"_meta": map[string]interface{}{"gateway": map[string]interface{}{
+					"baseUrl": c.BaseURL, "providerName": "OpenAI compatible",
+				}},
+			})
+			s.Env["DEFAULT_AUTH_REQUEST"] = string(request)
 		}
 	} else {
 		s.Env["ANTHROPIC_BASE_URL"] = c.BaseURL

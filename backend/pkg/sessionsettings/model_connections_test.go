@@ -49,7 +49,7 @@ func TestManagedConnectionCredentialsAndPersistedEnvironment(t *testing.T) {
 	require.Equal(t, s.UnsetEnv, restored.UnsetEnv)
 }
 
-func TestCodexCompatibleConnectionMirrorsAPIKeyForACPAuthentication(t *testing.T) {
+func TestCodexCompatibleConnectionConfiguresACPAuthentication(t *testing.T) {
 	s := &SessionSettings{
 		Env: map[string]string{"OPENAI_API_KEY": "old-key"},
 		CodexConnection: &modelprovider.Connection{
@@ -62,6 +62,7 @@ func TestCodexCompatibleConnectionMirrorsAPIKeyForACPAuthentication(t *testing.T
 
 	require.Equal(t, "gateway-key", s.Env["CCPLANT_CODEX_API_KEY"])
 	require.Equal(t, "gateway-key", s.Env["OPENAI_API_KEY"])
+	require.JSONEq(t, `{"methodId":"api-key"}`, s.Env["DEFAULT_AUTH_REQUEST"])
 	require.Contains(t, s.UnsetEnv, "OPENAI_API_KEY")
 
 	raw, err := json.Marshal(s)
@@ -71,6 +72,22 @@ func TestCodexCompatibleConnectionMirrorsAPIKeyForACPAuthentication(t *testing.T
 	require.Empty(t, restored.CodexConnection.APIKey)
 	require.Equal(t, "gateway-key", restored.Env["CCPLANT_CODEX_API_KEY"])
 	require.Equal(t, "gateway-key", restored.Env["OPENAI_API_KEY"])
+	require.JSONEq(t, `{"methodId":"api-key"}`, restored.Env["DEFAULT_AUTH_REQUEST"])
+}
+
+func TestCodexCompatibleConnectionWithoutAuthenticationUsesGatewayRequest(t *testing.T) {
+	s := &SessionSettings{CodexConnection: &modelprovider.Connection{
+		Mode: "openai_compatible", BaseURL: "https://gateway.example/v1",
+		Model: "profile-model", Authentication: "none",
+	}}
+
+	s.ApplyModelConnections()
+
+	require.NotContains(t, s.Env, "OPENAI_API_KEY")
+	require.JSONEq(t, `{
+		"methodId":"gateway",
+		"_meta":{"gateway":{"baseUrl":"https://gateway.example/v1","providerName":"OpenAI compatible"}}
+	}`, s.Env["DEFAULT_AUTH_REQUEST"])
 }
 
 func TestCodexConfigReplacement(t *testing.T) {

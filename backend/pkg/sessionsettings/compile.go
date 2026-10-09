@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
 	mcputil "github.com/takutakahashi/agentapi-proxy/pkg/mcp"
 	"gopkg.in/yaml.v3"
 )
@@ -95,6 +96,25 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 	}
 	if err := generateCodexConfigTOML(opts.OutputDir, codexConfig, codexEnv, catalogEnv); err != nil {
 		return fmt.Errorf("failed to generate codex config.toml: %w", err)
+	}
+	// codex-acp starts Codex app-server before it creates the ACP session. Pass
+	// the selected provider through its supported environment interface as well
+	// as writing config.toml, so authentication is evaluated against the managed
+	// provider even when a Codex release does not load the on-disk user config.
+	if settings.CodexConnection != nil && settings.CodexConnection.Compatible() {
+		var config map[string]interface{}
+		if err := toml.Unmarshal([]byte(codexConfig), &config); err != nil {
+			return fmt.Errorf("failed to build codex-acp config: %w", err)
+		}
+		if len(catalogEnv) > 0 {
+			config["model_catalog_json"] = filepath.Join(opts.OutputDir, ".codex", CodexModelCatalogFile)
+		}
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return fmt.Errorf("failed to encode codex-acp config: %w", err)
+		}
+		settings.Env["CODEX_CONFIG"] = string(encoded)
+		settings.Env["MODEL_PROVIDER"] = codexCustomOpenAIProviderID
 	}
 
 	// 3d. Generate ~/.codex/AGENTS.md (codex sessions only)
