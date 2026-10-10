@@ -3774,24 +3774,24 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 		volumes = append(volumes, corev1.Volume{Name: "executor-socket", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	}
 
-	// Build containers list.
-	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
-	// (pkg/provisioner/provision.go) after user context is established, so the
-	// UserID is always set correctly even for stock pool pods.
-	containers := []corev1.Container{container}
+	// Run the executor as a native sidecar so kubelet restarts it independently
+	// after failures such as OOM kills, even for ephemeral Pods whose Pod-level
+	// restart policy remains Never.
 	if executorEnabled {
 		executorMounts := m.buildMainContainerVolumeMounts(session, req)
 		executorMounts = append(executorMounts,
 			corev1.VolumeMount{Name: "executor-socket", MountPath: filepath.Dir(defaultExecutorSocketPath)},
 			corev1.VolumeMount{Name: "ccplant-cli", MountPath: "/opt/ccplant/bin", ReadOnly: true},
 		)
-		containers = append(containers, corev1.Container{
+		restartAlways := corev1.ContainerRestartPolicyAlways
+		initContainers = append(initContainers, corev1.Container{
 			Name: "executor", Image: m.k8sConfig.Image,
 			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
 			WorkingDir:      workingDir,
 			Command:         []string{"/usr/bin/tini"},
 			Args:            []string{"-g", "--", sessionCLIPath, "executor-server", "--socket", defaultExecutorSocketPath},
 			VolumeMounts:    executorMounts,
+			RestartPolicy:   &restartAlways,
 			Resources: buildResourceRequirements(
 				defaultIfEmpty(m.k8sConfig.ExecutorCPURequest, "10m"),
 				defaultIfEmpty(m.k8sConfig.ExecutorCPULimit, "2"),
@@ -3800,6 +3800,12 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 			),
 		})
 	}
+
+	// Build containers list.
+	// Note: credentials-sync is now handled as a goroutine inside agent-provisioner
+	// (pkg/provisioner/provision.go) after user context is established, so the
+	// UserID is always set correctly even for stock pool pods.
+	containers := []corev1.Container{container}
 	if sandboxSidecar != nil {
 		containers = append(containers, *sandboxSidecar)
 	}
