@@ -221,6 +221,29 @@ func TestCreateSessionWorkloadWithoutPVCUsesPodRestartPolicyNever(t *testing.T) 
 	}
 }
 
+func TestCreateSessionWorkloadWithoutPVCKeepsPodRestartPolicyNeverWithExecutor(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.CLIImage = "example/cli:v1"
+	manager.k8sConfig.ExecutorEnabled = true
+	session := newWorkloadTestSession()
+
+	if err := manager.createSessionWorkload(context.Background(), session, session.Request()); err != nil {
+		t.Fatalf("Failed to create workload: %v", err)
+	}
+
+	pod, err := manager.client.CoreV1().Pods("test-ns").Get(context.Background(), session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Expected pod to be created: %v", err)
+	}
+	if pod.Spec.RestartPolicy != corev1.RestartPolicyNever {
+		t.Fatalf("Expected restartPolicy Never, got %s", pod.Spec.RestartPolicy)
+	}
+	executor := findContainerByName(pod.Spec.InitContainers, "executor")
+	if executor == nil || executor.RestartPolicy == nil || *executor.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+		t.Fatalf("executor restartPolicy = %v, want Always", executor)
+	}
+}
+
 func TestBuildDeploymentMountsGitHubConfigSecretWithoutAuthentication(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	manager.k8sConfig.GitHubConfigSecretName = "github-config"
@@ -256,10 +279,14 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 		t.Fatal(err)
 	}
 	containers := deployment.Spec.Template.Spec.Containers
-	if len(containers) < 2 || containers[1].Name != "executor" {
-		t.Fatalf("containers = %#v, want executor after agentapi", containers)
+	executor := findContainerByName(deployment.Spec.Template.Spec.InitContainers, "executor")
+	if executor == nil {
+		t.Fatalf("initContainers = %#v, want executor native sidecar", deployment.Spec.Template.Spec.InitContainers)
 	}
-	if got := containers[1].Resources.Limits.Memory().String(); got != "2Gi" {
+	if executor.RestartPolicy == nil || *executor.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+		t.Fatalf("executor restartPolicy = %v, want Always", executor.RestartPolicy)
+	}
+	if got := executor.Resources.Limits.Memory().String(); got != "2Gi" {
 		t.Fatalf("executor memory limit = %q", got)
 	}
 	main := containers[0]
@@ -272,8 +299,8 @@ func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {
 	if !hasMount(main.VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
 		t.Fatalf("agent mounts = %#v, want shared Docker config", main.VolumeMounts)
 	}
-	if !hasMount(containers[1].VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
-		t.Fatalf("executor mounts = %#v, want shared Docker config", containers[1].VolumeMounts)
+	if !hasMount(executor.VolumeMounts, "dot-docker", "/home/agentapi/.docker", "") {
+		t.Fatalf("executor mounts = %#v, want shared Docker config", executor.VolumeMounts)
 	}
 }
 
