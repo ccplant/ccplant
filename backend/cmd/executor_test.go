@@ -121,3 +121,34 @@ func TestExecutorManagedFilesAreHydratedAtOriginalPath(t *testing.T) {
 		t.Fatalf("mode = %o, want 640", info.Mode().Perm())
 	}
 }
+
+func TestExecutorMissingManagedFileIsRemovedAtOriginalPath(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "agent", ".config", "profile")
+	encoded, err := json.Marshal([]string{source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := readExecutorManagedFiles(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || !files[0].Absent {
+		t.Fatalf("files = %#v, want one absent file", files)
+	}
+
+	target := filepath.Join(dir, "executor", ".config", "profile")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("stale-profile-value"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files[0].Path = target
+	if err := hydrateExecutorManagedFiles(files); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("stat removed managed file: %v, want not exist", err)
+	}
+}
