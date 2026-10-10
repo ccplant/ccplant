@@ -27,9 +27,10 @@ type Request struct {
 // client reads these from the agent filesystem for every shell invocation so
 // stock Pods can expose profile files at the same paths in both containers.
 type ManagedFile struct {
-	Path string `json:"path"`
-	Data []byte `json:"data"`
-	Mode uint32 `json:"mode"`
+	Path   string `json:"path"`
+	Data   []byte `json:"data,omitempty"`
+	Mode   uint32 `json:"mode,omitempty"`
+	Absent bool   `json:"absent,omitempty"`
 }
 
 type Exit struct {

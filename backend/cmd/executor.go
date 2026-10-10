@@ -287,6 +287,10 @@ func readExecutorManagedFiles(encodedPaths string) ([]executorproxy.ManagedFile,
 	for _, path := range paths {
 		info, err := os.Stat(path)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				files = append(files, executorproxy.ManagedFile{Path: path, Absent: true})
+				continue
+			}
 			return nil, fmt.Errorf("stat executor managed file %s: %w", path, err)
 		}
 		if !info.Mode().IsRegular() {
@@ -305,6 +309,12 @@ func hydrateExecutorManagedFiles(files []executorproxy.ManagedFile) error {
 	for _, file := range files {
 		if !filepath.IsAbs(file.Path) {
 			return fmt.Errorf("executor managed file path must be absolute: %s", file.Path)
+		}
+		if file.Absent {
+			if err := os.Remove(file.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove absent executor managed file %s: %w", file.Path, err)
+			}
+			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
 			return fmt.Errorf("create executor managed file directory %s: %w", file.Path, err)
