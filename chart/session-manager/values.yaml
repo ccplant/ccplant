@@ -105,7 +105,8 @@ session:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "2", memory: 4Gi}
   executor:
-    enabled: true
+    # Opt in to isolating model-generated shell commands in a sidecar.
+    enabled: false
     resources:
       requests: {cpu: "10m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}

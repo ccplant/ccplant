@@ -502,7 +502,8 @@ sessionManager:
       requests: {cpu: "500m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}
     executor:
-      enabled: true
+      # Opt in to isolating model-generated shell commands in a sidecar.
+      enabled: false
       resources:
         requests: {cpu: "10m", memory: "512Mi"}
         limits: {cpu: "2", memory: "4Gi"}
@@ -1174,7 +1175,8 @@ kubernetesSession:
   # Run model-generated bash commands in a separate container cgroup. The
   # agent container reaches it through a Unix socket shared only within the Pod.
   executor:
-    enabled: true
+    # Opt in to isolating model-generated shell commands in a sidecar.
+    enabled: false
     resources:
       requests:
         cpu: "10m"

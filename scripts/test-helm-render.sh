@@ -29,6 +29,57 @@ assert_not_contains() {
   fi
 }
 
+assert_env_value() {
+  local name="$1"
+  local value="$2"
+  local file="$3"
+  if ! grep -A1 "name: ${name}" "$file" | grep -Fq "value: \"${value}\""; then
+    echo "expected ${name}=${value} ($file)" >&2
+    exit 1
+  fi
+}
+
+# Executor isolation is opt-in for built-in, bundled external, and standalone
+# session managers. Explicitly enabling it must still render true.
+"$HELM_BIN" template executor-builtin "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/deployment.yaml \
+  --set kubernetesSession.enabled=true >"$TMP_DIR/executor-builtin-default.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-builtin-default.yaml"
+"$HELM_BIN" template executor-builtin "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/deployment.yaml \
+  --set kubernetesSession.enabled=true \
+  --set kubernetesSession.executor.enabled=true >"$TMP_DIR/executor-builtin-enabled.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-builtin-enabled.yaml"
+
+"$HELM_BIN" template executor-manager "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/session-manager-deployment.yaml \
+  --set sessionManager.enabled=true \
+  --set api.sessionManager.url=http://session-manager:8080 \
+  --set api.sessionManager.tokenSecretRef.name=internal-api \
+  --set sessionManager.internalApi.tokenSecretRef.name=internal-api \
+  --set sessionManager.kubernetesSession.provisioner.tokenSecretRef.name=provisioner \
+  --set sessionManager.kvStore.databaseUrl=file:///tmp/session-manager.db \
+  >"$TMP_DIR/executor-manager-default.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-manager-default.yaml"
+"$HELM_BIN" template executor-manager "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/session-manager-deployment.yaml \
+  --set sessionManager.enabled=true \
+  --set api.sessionManager.url=http://session-manager:8080 \
+  --set api.sessionManager.tokenSecretRef.name=internal-api \
+  --set sessionManager.internalApi.tokenSecretRef.name=internal-api \
+  --set sessionManager.kubernetesSession.provisioner.tokenSecretRef.name=provisioner \
+  --set sessionManager.kvStore.databaseUrl=file:///tmp/session-manager.db \
+  --set sessionManager.kubernetesSession.executor.enabled=true \
+  >"$TMP_DIR/executor-manager-enabled.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-manager-enabled.yaml"
+
+"$HELM_BIN" template executor-standalone "$REPO_ROOT/chart/session-manager" \
+  >"$TMP_DIR/executor-standalone-default.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-standalone-default.yaml"
+"$HELM_BIN" template executor-standalone "$REPO_ROOT/chart/session-manager" \
+  --set session.executor.enabled=true >"$TMP_DIR/executor-standalone-enabled.yaml"
+assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-standalone-enabled.yaml"
+
 # Broker sessions can bypass the public ingress using the API Service. The
 # opt-in value must track the actual Service name, namespace and port, and
 # must not leave a duplicate override in the API environment.
