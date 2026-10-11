@@ -357,7 +357,7 @@ type KubernetesSessionConfig struct {
 	SlackBotTokenSecretKey string `json:"slack_bot_token_secret_key" mapstructure:"slack_bot_token_secret_key"`
 
 	// NetworkFilterImage is the container image for the iptables rule generation init
-	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.3.
+	// container and the network-filter sidecar. Defaults to ghcr.io/takutakahashi/nfa:0.12.4.
 	// The init container reads the generated policy config and runs "nfa setup-iptables --output";
 	// the sidecar runs "nfa proxy --deferred-policy".
 	NetworkFilterImage string `json:"network_filter_image" mapstructure:"network_filter_image"`
@@ -1427,7 +1427,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes_session.pod_start_timeout", 120)
 	v.SetDefault("kubernetes_session.pod_stop_timeout", 30)
 	v.SetDefault("kubernetes_session.provisioner_proxy_url", "")
-	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.3")
+	v.SetDefault("kubernetes_session.network_filter_image", "ghcr.io/takutakahashi/nfa:0.12.4")
 	v.SetDefault("kubernetes_session.network_filter_cpu_request", "250m")
 	v.SetDefault("kubernetes_session.network_filter_cpu_limit", "1000m")
 	v.SetDefault("kubernetes_session.network_filter_memory_request", "256Mi")

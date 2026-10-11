@@ -96,7 +96,7 @@ session:
     # Requires Cilium. Set to public-only to allow kube-dns and the Cilium
     # world entity while denying all other cluster-internal egress.
     egressMode: ""
-  networkFilterImage: ghcr.io/ccplant/network-filter-agent:latest
+  networkFilterImage: ghcr.io/takutakahashi/nfa:0.12.4
   imagePullPolicy: IfNotPresent
   basePort: 9000
   podStartTimeout: 120
