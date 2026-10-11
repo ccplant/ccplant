@@ -308,9 +308,10 @@ func (w *remoteScheduleWorker) processOnce(ctx context.Context) {
 	}
 	for _, job := range jobs {
 		var sessionID string
+		var sessionReused bool
 		var createErr error
 		for attempt := 1; attempt <= 3; attempt++ {
-			sessionID, createErr = w.client.StartScheduledSession(ctx, w.sessionAPIURL, job)
+			sessionID, sessionReused, createErr = w.client.StartScheduledSession(ctx, w.sessionAPIURL, job)
 			if createErr == nil {
 				break
 			}
@@ -326,11 +327,11 @@ func (w *remoteScheduleWorker) processOnce(ctx context.Context) {
 		if createErr != nil {
 			status, message = "failed", createErr.Error()
 		}
-		if err := w.client.FinalizeSchedule(ctx, job, status, sessionID, message); err != nil {
+		if err := w.client.FinalizeSchedule(ctx, job, status, sessionID, message, sessionReused); err != nil {
 			log.Printf("[SCHEDULE_WORKER] Finalize failed for %s: %v", job.ScheduleID, err)
 			continue
 		}
-		log.Printf("[SCHEDULE_WORKER] schedule=%s execution=%s status=%s session=%s", job.ScheduleID, job.ExecutionID, status, sessionID)
+		log.Printf("[SCHEDULE_WORKER] schedule=%s execution=%s status=%s session=%s reused=%t", job.ScheduleID, job.ExecutionID, status, sessionID, sessionReused)
 	}
 }
 

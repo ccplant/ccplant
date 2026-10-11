@@ -18,6 +18,10 @@ import (
 )
 
 const (
+	// MaxExecutionHistory bounds persisted schedule history so long-running
+	// recurring schedules do not grow their backing Secret indefinitely.
+	MaxExecutionHistory = 20
+
 	// LabelSchedule is the label key for schedule resources
 	LabelSchedule = "agentapi.proxy/schedule"
 	// LabelScheduleID is the label key for schedule ID
@@ -300,7 +304,7 @@ func (m *KubernetesManager) FinalizeClaim(ctx context.Context, id, executionID s
 		return fmt.Errorf("schedule execution claim does not match")
 	}
 	record.ExecutionID = executionID
-	item.LastExecution = &record
+	recordExecution(item, record)
 	item.ExecutionCount++
 	item.PendingExecution = nil
 	item.NextExecutionAt = nextAt
@@ -321,7 +325,7 @@ func (m *KubernetesManager) RecordExecution(ctx context.Context, id string, reco
 		return err
 	}
 
-	schedule.LastExecution = &record
+	recordExecution(schedule, record)
 	schedule.ExecutionCount++
 	schedule.UpdatedAt = m.clock.Now()
 
@@ -330,6 +334,24 @@ func (m *KubernetesManager) RecordExecution(ctx context.Context, id string, reco
 	}
 
 	return nil
+}
+
+func appendExecutionHistory(history []ExecutionRecord, record ExecutionRecord) []ExecutionRecord {
+	history = append(history, record)
+	if len(history) > MaxExecutionHistory {
+		history = history[len(history)-MaxExecutionHistory:]
+	}
+	return history
+}
+
+func recordExecution(schedule *Schedule, record ExecutionRecord) {
+	// Seed history from the legacy last_execution field on the first write after
+	// upgrading, so the last known attempt is not discarded during migration.
+	if len(schedule.ExecutionHistory) == 0 && schedule.LastExecution != nil {
+		schedule.ExecutionHistory = appendExecutionHistory(schedule.ExecutionHistory, *schedule.LastExecution)
+	}
+	schedule.ExecutionHistory = appendExecutionHistory(schedule.ExecutionHistory, record)
+	schedule.LastExecution = &record
 }
 
 // UpdateNextExecution updates the next execution time for a schedule

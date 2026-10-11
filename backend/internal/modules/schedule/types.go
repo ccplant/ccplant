@@ -56,6 +56,7 @@ type Schedule struct {
 
 	// LastExecution contains the most recent execution record
 	LastExecution    *ExecutionRecord  `json:"last_execution,omitempty"`
+	ExecutionHistory []ExecutionRecord `json:"execution_history,omitempty"`
 	PendingExecution *PendingExecution `json:"pending_execution,omitempty"`
 
 	// NextExecutionAt is the calculated next execution time
@@ -96,6 +97,19 @@ type SessionConfig struct {
 	// SessionProfileID is an optional reference to a SessionProfile.
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
+}
+
+// EffectiveReuseMessage returns the message delivered to a reused session.
+// The initial schedule message is the documented fallback when no dedicated
+// reuse message was configured.
+func (c SessionConfig) EffectiveReuseMessage() string {
+	if c.ReuseMessage != "" {
+		return c.ReuseMessage
+	}
+	if c.Params != nil {
+		return c.Params.Message
+	}
+	return ""
 }
 
 // ExecutionRecord represents a single execution attempt

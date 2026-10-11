@@ -56,9 +56,8 @@ func (m *SessionManager) ClaimDueSchedules(ctx context.Context) ([]ScheduleJob, 
 	return result.Jobs, err
 }
 
-func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL string, job ScheduleJob) (string, error) {
-	id, _, err := m.startSession(ctx, apiURL, job.StartRequest, job.ExecutionToken, job.ExecutionID)
-	return id, err
+func (m *SessionManager) StartScheduledSession(ctx context.Context, apiURL string, job ScheduleJob) (string, bool, error) {
+	return m.startSession(ctx, apiURL, job.StartRequest, job.ExecutionToken, job.ExecutionID)
 }
 
 func (m *SessionManager) startSession(ctx context.Context, apiURL string, start entities.StartRequest, token, executionID string) (string, bool, error) {
@@ -119,8 +118,8 @@ func (m *SessionManager) startSessionResponse(ctx context.Context, apiURL string
 	return data, nil
 }
 
-func (m *SessionManager) FinalizeSchedule(ctx context.Context, job ScheduleJob, status, sessionID, message string) error {
-	return m.do(ctx, http.MethodPost, "/internal/worker/schedules/"+url.PathEscape(job.ScheduleID)+"/finalize", map[string]string{"execution_id": job.ExecutionID, "session_id": sessionID, "status": status, "error": message}, nil)
+func (m *SessionManager) FinalizeSchedule(ctx context.Context, job ScheduleJob, status, sessionID, message string, sessionReused bool) error {
+	return m.do(ctx, http.MethodPost, "/internal/worker/schedules/"+url.PathEscape(job.ScheduleID)+"/finalize", map[string]any{"execution_id": job.ExecutionID, "session_id": sessionID, "status": status, "error": message, "session_reused": sessionReused}, nil)
 }
 
 func NewSessionManager(baseURL, token string) *SessionManager {

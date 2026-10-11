@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/core/kubelabel"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
@@ -351,6 +353,34 @@ func TestKubernetesManager_RecordExecution(t *testing.T) {
 	if got.ExecutionCount != 1 {
 		t.Errorf("got ExecutionCount = %d, want 1", got.ExecutionCount)
 	}
+	if len(got.ExecutionHistory) != 1 || got.ExecutionHistory[0].SessionID != "session-123" {
+		t.Fatalf("got ExecutionHistory = %#v, want recorded execution", got.ExecutionHistory)
+	}
+}
+
+func TestKubernetesManager_RecordExecutionBoundsHistory(t *testing.T) {
+	ctx := context.Background()
+	manager := NewKubernetesManager(fake.NewSimpleClientset(), "default")
+	now := time.Now()
+	require.NoError(t, manager.Create(ctx, &Schedule{
+		ID: "bounded-history", Name: "Bounded History", UserID: "user-1",
+		Status: ScheduleStatusActive, ScheduledAt: &now,
+	}))
+
+	for i := 0; i < MaxExecutionHistory+3; i++ {
+		require.NoError(t, manager.RecordExecution(ctx, "bounded-history", ExecutionRecord{
+			ExecutedAt: now.Add(time.Duration(i) * time.Minute),
+			SessionID:  fmt.Sprintf("session-%d", i),
+			Status:     "success",
+		}))
+	}
+
+	got, err := manager.Get(ctx, "bounded-history")
+	require.NoError(t, err)
+	require.Len(t, got.ExecutionHistory, MaxExecutionHistory)
+	require.Equal(t, "session-3", got.ExecutionHistory[0].SessionID)
+	require.Equal(t, fmt.Sprintf("session-%d", MaxExecutionHistory+2), got.ExecutionHistory[MaxExecutionHistory-1].SessionID)
+	require.Equal(t, MaxExecutionHistory+3, got.ExecutionCount)
 }
 
 func TestKubernetesManager_UpdateNextExecution(t *testing.T) {

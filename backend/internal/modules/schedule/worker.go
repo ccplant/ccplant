@@ -315,7 +315,7 @@ func (w *Worker) buildLaunchRequest(schedule *Schedule, sessionID string) sessio
 		// tag receives the message instead of a new session being created.
 		ReuseSession:   schedule.SessionConfig.ReuseSession,
 		ReuseMatchTags: map[string]string{"schedule_id": schedule.ID},
-		ReuseMessage:   schedule.SessionConfig.ReuseMessage,
+		ReuseMessage:   schedule.SessionConfig.EffectiveReuseMessage(),
 	}
 }
 

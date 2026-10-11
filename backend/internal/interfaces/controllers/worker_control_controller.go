@@ -69,7 +69,12 @@ func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
 			tags[k] = v
 		}
 		tags["schedule_id"] = item.ID
-		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, SessionProfileID: item.SessionConfig.SessionProfileID}})
+		startRequest := entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, SessionProfileID: item.SessionConfig.SessionProfileID}
+		if item.SessionConfig.ReuseSession {
+			startRequest.ReuseMatchTags = map[string]string{"schedule_id": item.ID}
+			startRequest.ReuseMessage = item.SessionConfig.EffectiveReuseMessage()
+		}
+		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: startRequest})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"jobs": jobs})
 }
@@ -79,10 +84,11 @@ func (wc *WorkerControlController) FinalizeSchedule(c echo.Context) error {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	var req struct {
-		ExecutionID string `json:"execution_id"`
-		SessionID   string `json:"session_id"`
-		Status      string `json:"status"`
-		Error       string `json:"error"`
+		ExecutionID   string `json:"execution_id"`
+		SessionID     string `json:"session_id"`
+		Status        string `json:"status"`
+		Error         string `json:"error"`
+		SessionReused bool   `json:"session_reused"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
@@ -109,7 +115,7 @@ func (wc *WorkerControlController) FinalizeSchedule(c echo.Context) error {
 		}
 		next = value
 	}
-	record := schedule.ExecutionRecord{ExecutionID: req.ExecutionID, SessionID: req.SessionID, Status: req.Status, Error: req.Error, ExecutedAt: time.Now()}
+	record := schedule.ExecutionRecord{ExecutionID: req.ExecutionID, SessionID: req.SessionID, Status: req.Status, Error: req.Error, ExecutedAt: time.Now(), SessionReused: req.SessionReused}
 	if err := wc.scheduleManager.FinalizeClaim(c.Request().Context(), item.ID, req.ExecutionID, record, next, completed); err != nil {
 		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
 	}

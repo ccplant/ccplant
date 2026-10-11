@@ -77,4 +77,39 @@ describe('ScheduleListView acceptance contract', () => {
     })
     expect(screen.queryByText('Deterministic schedule')).not.toBeInTheDocument()
   })
+
+  it('shows the latest failure and retained execution history', async () => {
+    mocks.getSchedules.mockResolvedValue({
+      schedules: [{
+        ...schedule,
+        execution_count: 2,
+        last_execution: {
+          executed_at: '2026-09-08T09:01:00Z',
+          status: 'success',
+          session_id: 'session-fixed',
+          session_reused: true,
+        },
+        execution_history: [
+          {
+            executed_at: '2026-09-08T09:00:00Z',
+            status: 'failed',
+            error: 'no healthy runner is available',
+          },
+          {
+            executed_at: '2026-09-08T09:01:00Z',
+            status: 'success',
+            session_id: 'session-fixed',
+            session_reused: true,
+          },
+        ],
+      }],
+    })
+
+    render(<ScheduleListView statusFilter={null} onScheduleEdit={vi.fn()} />)
+
+    expect(await screen.findByText(/前回: .*成功（再利用）/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '実行履歴を見る（2件）' }))
+    expect(screen.getByText('no healthy runner is available')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '実行履歴を閉じる' })).toBeInTheDocument()
+  })
 })

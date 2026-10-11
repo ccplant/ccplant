@@ -33,6 +33,7 @@ export interface Schedule {
   next_execution_at?: string;
   last_execution_at?: string;
   last_execution?: ExecutionRecord;
+  execution_history?: ExecutionRecord[];
   execution_count?: number;
   created_at: string;
   updated_at: string;
@@ -81,6 +82,7 @@ export interface ScheduleListResponse {
 
 // Execution record for a single schedule execution attempt
 export interface ExecutionRecord {
+  execution_id?: string;
   executed_at: string;
   session_id?: string;
   status: 'success' | 'failed' | 'skipped';
