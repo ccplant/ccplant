@@ -488,7 +488,7 @@ sessionManager:
     # Source image for the ccplant binary injected into session Pods.
     # Empty follows the session-manager image.
     cliImage: ""
-    networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
+    networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.4"
     networkFilter:
       resources:
         requests: {cpu: "250m", memory: "256Mi"}
@@ -1136,7 +1136,7 @@ kubernetesSession:
   cliImage: ""
 
   # Container image for the network-filter sidecar and initContainer (sandbox feature)
-  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.3"
+  networkFilterImage: "ghcr.io/takutakahashi/nfa:0.12.4"
 
   # Resource configuration for the network-filter sidecar and initContainer (sandbox feature)
   networkFilter:
