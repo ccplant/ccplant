@@ -12,7 +12,8 @@ import (
 
 // mockProxySessionManager implements portrepos.SessionManager for testing
 type mockProxySessionManager struct {
-	sessions map[string]*mockProxySession
+	sessions  map[string]*mockProxySession
+	createErr error
 }
 
 type mockProxySession struct {
@@ -43,6 +44,9 @@ func newMockProxySessionManager() *mockProxySessionManager {
 }
 
 func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
 	now := time.Now()
 	session := &mockProxySession{
 		id:        id,

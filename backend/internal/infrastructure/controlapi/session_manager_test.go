@@ -107,8 +107,15 @@ func TestScheduleClientClaimsStartsAndFinalizes(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer execution" || r.Header.Get("Idempotency-Key") != "e" {
 				t.Fatal("missing execution authentication")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": "session"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"session_id": "session", "session_reused": true})
 		case "/internal/worker/schedules/s/finalize":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["session_reused"] != true {
+				t.Fatalf("session_reused = %#v, want true", body["session_reused"])
+			}
 			finalized = true
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -121,11 +128,11 @@ func TestScheduleClientClaimsStartsAndFinalizes(t *testing.T) {
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("jobs=%v err=%v", jobs, err)
 	}
-	id, err := client.StartScheduledSession(context.Background(), server.URL, jobs[0])
-	if err != nil || id != "session" {
-		t.Fatalf("id=%q err=%v", id, err)
+	id, reused, err := client.StartScheduledSession(context.Background(), server.URL, jobs[0])
+	if err != nil || id != "session" || !reused {
+		t.Fatalf("id=%q reused=%t err=%v", id, reused, err)
 	}
-	if err := client.FinalizeSchedule(context.Background(), jobs[0], "success", id, ""); err != nil {
+	if err := client.FinalizeSchedule(context.Background(), jobs[0], "success", id, "", reused); err != nil {
 		t.Fatal(err)
 	}
 	if !finalized {

@@ -103,21 +103,22 @@ type UpdateScheduleRequest struct {
 
 // ScheduleResponse represents the response for a schedule
 type ScheduleResponse struct {
-	ID              string                 `json:"id"`
-	Name            string                 `json:"name"`
-	UserID          string                 `json:"user_id"`
-	Scope           entities.ResourceScope `json:"scope,omitempty"`
-	TeamID          string                 `json:"team_id,omitempty"`
-	Status          ScheduleStatus         `json:"status"`
-	ScheduledAt     *time.Time             `json:"scheduled_at,omitempty"`
-	CronExpr        string                 `json:"cron_expr,omitempty"`
-	Timezone        string                 `json:"timezone,omitempty"`
-	SessionConfig   SessionConfig          `json:"session_config"`
-	NextExecutionAt *time.Time             `json:"next_execution_at,omitempty"`
-	ExecutionCount  int                    `json:"execution_count"`
-	LastExecution   *ExecutionRecord       `json:"last_execution,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	ID               string                 `json:"id"`
+	Name             string                 `json:"name"`
+	UserID           string                 `json:"user_id"`
+	Scope            entities.ResourceScope `json:"scope,omitempty"`
+	TeamID           string                 `json:"team_id,omitempty"`
+	Status           ScheduleStatus         `json:"status"`
+	ScheduledAt      *time.Time             `json:"scheduled_at,omitempty"`
+	CronExpr         string                 `json:"cron_expr,omitempty"`
+	Timezone         string                 `json:"timezone,omitempty"`
+	SessionConfig    SessionConfig          `json:"session_config"`
+	NextExecutionAt  *time.Time             `json:"next_execution_at,omitempty"`
+	ExecutionCount   int                    `json:"execution_count"`
+	LastExecution    *ExecutionRecord       `json:"last_execution,omitempty"`
+	ExecutionHistory []ExecutionRecord      `json:"execution_history,omitempty"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
 }
 
 // CreateSchedule handles POST /schedules
@@ -584,7 +585,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		// tag receives the message instead of a new session being created.
 		ReuseSession:   schedule.SessionConfig.ReuseSession,
 		ReuseMatchTags: map[string]string{"schedule_id": schedule.ID},
-		ReuseMessage:   schedule.SessionConfig.ReuseMessage,
+		ReuseMessage:   schedule.SessionConfig.EffectiveReuseMessage(),
 	})
 	if err != nil {
 		log.Printf("Failed to trigger schedule %s: %v", id, err)
@@ -597,7 +598,9 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		}
 		_ = h.manager.RecordExecution(c.Request().Context(), id, record)
 
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session")
+		return c.JSON(http.StatusServiceUnavailable, map[string]interface{}{
+			"message": "Failed to create session: " + err.Error(),
+		})
 	}
 
 	// Record successful execution
@@ -627,21 +630,22 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 // toResponse converts a Schedule to ScheduleResponse
 func (h *Handlers) toResponse(s *Schedule) ScheduleResponse {
 	return ScheduleResponse{
-		ID:              s.ID,
-		Name:            s.Name,
-		UserID:          s.UserID,
-		Scope:           s.GetScope(), // Use GetScope() to handle default value
-		TeamID:          s.TeamID,
-		Status:          s.Status,
-		ScheduledAt:     s.ScheduledAt,
-		CronExpr:        s.CronExpr,
-		Timezone:        s.Timezone,
-		SessionConfig:   s.SessionConfig,
-		NextExecutionAt: s.NextExecutionAt,
-		ExecutionCount:  s.ExecutionCount,
-		LastExecution:   s.LastExecution,
-		CreatedAt:       s.CreatedAt,
-		UpdatedAt:       s.UpdatedAt,
+		ID:               s.ID,
+		Name:             s.Name,
+		UserID:           s.UserID,
+		Scope:            s.GetScope(), // Use GetScope() to handle default value
+		TeamID:           s.TeamID,
+		Status:           s.Status,
+		ScheduledAt:      s.ScheduledAt,
+		CronExpr:         s.CronExpr,
+		Timezone:         s.Timezone,
+		SessionConfig:    s.SessionConfig,
+		NextExecutionAt:  s.NextExecutionAt,
+		ExecutionCount:   s.ExecutionCount,
+		LastExecution:    s.LastExecution,
+		ExecutionHistory: s.ExecutionHistory,
+		CreatedAt:        s.CreatedAt,
+		UpdatedAt:        s.UpdatedAt,
 	}
 }
 

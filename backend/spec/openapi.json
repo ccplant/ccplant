@@ -3119,7 +3119,7 @@
     "/schedules/{id}/trigger": {
       "post": {
         "summary": "Manually trigger a schedule",
-        "description": "Immediately executes a schedule, creating a new session.",
+        "description": "Immediately executes a schedule, creating a new session or reusing a matching live session when configured.",
         "operationId": "triggerSchedule",
         "tags": [
           "Schedules"
@@ -3166,8 +3166,20 @@
           "404": {
             "description": "Schedule not found"
           },
-          "500": {
-            "description": "Failed to create session"
+          "503": {
+            "description": "Failed to create or reuse a session. The response message and schedule execution history contain the underlying error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -8934,6 +8946,13 @@
           "last_execution": {
             "$ref": "#/components/schemas/ExecutionRecord"
           },
+          "execution_history": {
+            "type": "array",
+            "description": "The most recent schedule execution attempts, oldest first (up to 20)",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionRecord"
+            }
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -8978,6 +8997,10 @@
       "ExecutionRecord": {
         "type": "object",
         "properties": {
+          "execution_id": {
+            "type": "string",
+            "description": "Stable execution identifier for worker-dispatched attempts"
+          },
           "executed_at": {
             "type": "string",
             "format": "date-time"

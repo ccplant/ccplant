@@ -3,7 +3,28 @@ package schedule
 import (
 	"testing"
 	"time"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
+
+func TestSessionConfigEffectiveReuseMessage(t *testing.T) {
+	tests := []struct {
+		name   string
+		config SessionConfig
+		want   string
+	}{
+		{name: "dedicated reuse message", config: SessionConfig{ReuseMessage: "reuse", Params: &entities.SessionParams{Message: "initial"}}, want: "reuse"},
+		{name: "initial message fallback", config: SessionConfig{Params: &entities.SessionParams{Message: "initial"}}, want: "initial"},
+		{name: "empty config", config: SessionConfig{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.config.EffectiveReuseMessage(); got != tt.want {
+				t.Fatalf("EffectiveReuseMessage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestSchedule_IsOneTime(t *testing.T) {
 	now := time.Now()

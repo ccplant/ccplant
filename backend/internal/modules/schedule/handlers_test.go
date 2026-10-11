@@ -4,15 +4,50 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestHandlers_TriggerScheduleReturnsAndPersistsCreationError(t *testing.T) {
+	e := echo.New()
+	manager := NewKubernetesManager(fake.NewSimpleClientset(), "default")
+	sessionManager := newMockProxySessionManager()
+	sessionManager.createErr = errors.New("no healthy runner is available")
+	handlers := NewHandlers(manager, sessionManager, nil)
+	now := time.Now()
+	require.NoError(t, manager.Create(context.Background(), &Schedule{
+		ID: "test-schedule", Name: "Test Schedule", UserID: "test-user",
+		Status: ScheduleStatusActive, ScheduledAt: &now,
+		SessionConfig: SessionConfig{Params: &entities.SessionParams{Message: "test"}},
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/schedules/test-schedule/trigger", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues("test-schedule")
+	setTestUser(c, "test-user")
+
+	require.NoError(t, handlers.TriggerSchedule(c))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "no healthy runner is available")
+
+	got, err := manager.Get(context.Background(), "test-schedule")
+	require.NoError(t, err)
+	require.Equal(t, 1, got.ExecutionCount)
+	require.NotNil(t, got.LastExecution)
+	require.Equal(t, "failed", got.LastExecution.Status)
+	require.Equal(t, "no healthy runner is available", got.LastExecution.Error)
+	require.Len(t, got.ExecutionHistory, 1)
+}
 
 func TestHandlers_CreateSchedule(t *testing.T) {
 	e := echo.New()

@@ -44,6 +44,7 @@ export default function ScheduleCard({
 }: ScheduleCardProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isTriggering, setIsTriggering] = useState(false)
+  const [showExecutionHistory, setShowExecutionHistory] = useState(false)
 
   const handleDelete = async () => {
     if (!confirm(`スケジュール「${schedule.name}」を削除してもよろしいですか？`)) {
@@ -115,12 +116,48 @@ export default function ScheduleCard({
         )}
 
         {/* Last Execution */}
-        {schedule.last_execution_at && (
+        {schedule.last_execution && (
           <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
             <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>前回: {formatDateTime(schedule.last_execution_at)}</span>
+            <span>
+              前回: {formatDateTime(schedule.last_execution.executed_at)}
+              {' · '}
+              {schedule.last_execution.status === 'success' ? '成功' : schedule.last_execution.status === 'failed' ? '失敗' : 'スキップ'}
+              {schedule.last_execution.session_reused ? '（再利用）' : ''}
+            </span>
+          </div>
+        )}
+
+        {schedule.last_execution?.error && (
+          <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+            {schedule.last_execution.error}
+          </div>
+        )}
+
+        {schedule.execution_history && schedule.execution_history.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowExecutionHistory((current) => !current)}
+              className="text-xs text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {showExecutionHistory ? '実行履歴を閉じる' : `実行履歴を見る（${schedule.execution_history.length}件）`}
+            </button>
+            {showExecutionHistory && (
+              <ul className="mt-2 space-y-1 rounded bg-gray-50 p-2 text-xs dark:bg-gray-700/50">
+                {[...schedule.execution_history].reverse().map((execution, index) => (
+                  <li key={execution.execution_id || `${execution.executed_at}-${index}`} className="text-gray-600 dark:text-gray-300">
+                    <span className={execution.status === 'failed' ? 'text-red-600 dark:text-red-400' : ''}>
+                      {formatDateTime(execution.executed_at)} · {execution.status}
+                      {execution.session_reused ? ' · 再利用' : ''}
+                    </span>
+                    {execution.error && <div className="break-words text-red-600 dark:text-red-400">{execution.error}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
