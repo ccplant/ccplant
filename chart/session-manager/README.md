@@ -51,8 +51,8 @@ creates a `CiliumNetworkPolicy` that preserves normal session Pod egress while
 denying access to the `kube-apiserver` entity. Setting `egressMode` to
 `public-only` instead permits kube-dns on TCP/UDP port 53 and Cilium's `world`
 entity, while default-denying all other cluster-internal egress (including the
-session-manager service and kube-apiserver). Isolation defaults remain disabled
-for compatibility.
+session-manager service and kube-apiserver). Service account token mounting is
+disabled by default; the other isolation controls remain disabled.
 
 Resource names and the leader-election Lease are derived from the Helm release
 name by default. This allows multiple session-manager releases to run in one

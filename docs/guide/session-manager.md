@@ -257,6 +257,7 @@ sudo ccplant native uninstall \
 | `--instance-id` | `<namespace>/<release>` | 再登録でも変えない一意なインスタンスID |
 | `--version` | 未指定 | Session Manager Chartのバージョン |
 | `--chart` | 公式OCI Chart | 利用するHelm Chart |
+| `--session-service-account` | 未指定 | Session PodにマウントするServiceAccount。存在しなければ権限なしで作成する。未指定時はServiceAccount tokenをマウントしない |
 | `--persistence` | `false` | Session Podのworkspaceに専用PVCを作成する |
 | `--persistence-backend` | 未指定 | セッション状態の永続化方式。`volume`でsuspend/resume時の会話履歴をSession PVCへ保存する |
 | `--persistence-s3-bucket` | 未指定 | 保存済みWorkspace snapshotを格納するS3 bucket |
