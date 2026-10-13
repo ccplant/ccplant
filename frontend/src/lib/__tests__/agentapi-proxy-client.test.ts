@@ -502,6 +502,7 @@ describe('AgentAPIProxyClient ACP SSE cursor', () => {
       }
 
       close() {}
+      addEventListener() {}
     }
     vi.stubGlobal('EventSource', FakeEventSource);
 
@@ -527,6 +528,49 @@ describe('AgentAPIProxyClient ACP SSE cursor', () => {
 
     expect(onMessage).toHaveBeenCalledTimes(1);
     subscription.close();
+  });
+
+  it('stops reconnecting after a permanent upstream SSE error', async () => {
+    vi.useFakeTimers();
+    class FakeEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      static instances: FakeEventSource[] = [];
+      readyState = FakeEventSource.OPEN;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private listeners = new Map<string, (event: MessageEvent) => void>();
+      constructor(readonly url: string) { FakeEventSource.instances.push(this); }
+      close() {}
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, listener as (event: MessageEvent) => void);
+      }
+      emit(type: string, data: string) {
+        this.listeners.get(type)?.(new MessageEvent(type, { data }));
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const client = new AgentAPIProxyClient({ baseURL: '/api/v1' });
+    const subscription = client.subscribeToACPSessionEvents('missing', 'acp-1', {
+      onMessage: vi.fn(),
+      onChunk: vi.fn(),
+      onThoughtChunk: vi.fn(),
+      onPermission: vi.fn(),
+      onError: vi.fn(),
+    });
+    FakeEventSource.instances[0].onopen?.();
+    FakeEventSource.instances[0].emit(
+      'agentapi_upstream_error',
+      JSON.stringify({ status: 404, retryable: false }),
+    );
+    await vi.runAllTimersAsync();
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+    subscription.close();
+    vi.useRealTimers();
   });
 
   it('uses the bridge status stream instead of inferring status from ACP messages', () => {
@@ -593,6 +637,7 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
       onerror: ((event: Event) => void) | null = null;
       constructor(readonly url: string) { FakeEventSource.instance = this; }
       close = close;
+      addEventListener() {}
     }
     vi.stubGlobal('EventSource', FakeEventSource);
 
@@ -637,6 +682,7 @@ describe('AgentAPIProxyClient ACP initialization subscription', () => {
       onerror: ((event: Event) => void) | null = null;
       constructor(readonly url: string) { FakeEventSource.instance = this; }
       close() {}
+      addEventListener() {}
     }
     vi.stubGlobal('EventSource', FakeEventSource);
 
