@@ -90,7 +90,7 @@ session:
     # Hide Service-derived environment variables from session containers.
     disableServiceLinks: false
     # Do not mount the service account token, cluster CA, or namespace into sessions.
-    disableServiceAccountToken: false
+    disableServiceAccountToken: true
     # Requires Cilium. Preserves normal egress while denying the kube-apiserver entity.
     blockKubernetesAPI: false
     # Requires Cilium. Set to public-only to allow kube-dns and the Cilium

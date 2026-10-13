@@ -545,6 +545,8 @@ agent_image="ghcr.io/ccplant/ccplant-agent:$("$REPO_ROOT/scripts/agent-image-tag
 assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
 assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: "ghcr.io/ccplant/ccplant-api"' "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: "agentapi-proxy-session"' "$TMP_DIR/manager-agent-assets.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN, value: "true"' "$TMP_DIR/manager-agent-assets.yaml"
 assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/manager-agent-assets.yaml"
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set session.cliImage=registry.example/legacy-cli >"$TMP_DIR/manager-legacy-cli-value.yaml"

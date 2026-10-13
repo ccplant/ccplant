@@ -58,6 +58,48 @@ func TestSessionManagerInstallPersistenceFlags(t *testing.T) {
 	require.Equal(t, "10Gi", command.Flags().Lookup("persistence-size").DefValue)
 }
 
+func TestSessionManagerInstallSessionServiceAccountFlags(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+
+	require.Equal(t, "", command.Flags().Lookup("session-service-account").DefValue)
+}
+
+func TestEnsureSessionServiceAccount(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("creates missing account without RBAC", func(t *testing.T) {
+		client := fake.NewSimpleClientset()
+		require.NoError(t, ensureSessionServiceAccount(ctx, client, "sessions", "builder"))
+
+		account, err := client.CoreV1().ServiceAccounts("sessions").Get(ctx, "builder", metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Equal(t, "builder", account.Name)
+		require.Empty(t, account.Secrets)
+		require.Len(t, client.Actions(), 3)
+	})
+
+	t.Run("keeps existing account", func(t *testing.T) {
+		existing := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Name: "builder", Namespace: "sessions", Annotations: map[string]string{"example.com/identity": "builder"},
+		}}
+		client := fake.NewSimpleClientset(existing)
+		require.NoError(t, ensureSessionServiceAccount(ctx, client, "sessions", "builder"))
+
+		account, err := client.CoreV1().ServiceAccounts("sessions").Get(ctx, "builder", metav1.GetOptions{})
+		require.NoError(t, err)
+		require.Equal(t, "builder", account.Annotations["example.com/identity"])
+		require.Len(t, client.Actions(), 2)
+	})
+
+	t.Run("does nothing when unset", func(t *testing.T) {
+		client := fake.NewSimpleClientset()
+		require.NoError(t, ensureSessionServiceAccount(ctx, client, "sessions", ""))
+		require.Empty(t, client.Actions())
+	})
+}
+
 func TestSessionManagerInstallRequiresVolumeBackendForWorkspaceS3(t *testing.T) {
 	t.Parallel()
 	command := newSessionManagerInstallCommand()
@@ -104,6 +146,7 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 		connectionSecret:                "manager-parent",
 		internalSecret:                  "manager-internal",
 		provisionerSecret:               "manager-provisioner",
+		sessionServiceAccount:           "builder-session",
 		persistence:                     true,
 		persistenceBackend:              "volume",
 		persistenceS3Bucket:             "workspaces",
@@ -120,6 +163,8 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 
 	values := sessionManagerInstallValues(opts, &installedManagerCredentials{ManagerID: "manager-1"}, false)
 	session := values["session"].(map[string]any)
+	require.Equal(t, "builder-session", session["serviceAccountName"])
+	require.Equal(t, map[string]any{"disableServiceAccountToken": false}, session["isolation"])
 	pvc := session["pvc"].(map[string]any)
 	require.Equal(t, true, pvc["enabled"])
 	require.Equal(t, "fast", pvc["storageClass"])
@@ -133,6 +178,15 @@ func TestSessionManagerInstallValuesIncludesSessionPVC(t *testing.T) {
 	require.Equal(t, "https://s3.example.com", s3["endpoint"])
 	require.Equal(t, map[string]any{"name": "workspace-s3", "key": "access-key-id"}, s3["accessKeyIdSecretRef"])
 	require.Equal(t, map[string]any{"name": "workspace-s3", "key": "secret-access-key"}, s3["secretAccessKeySecretRef"])
+}
+
+func TestSessionManagerInstallValuesDoesNotMountServiceAccountTokenByDefault(t *testing.T) {
+	t.Parallel()
+	values := sessionManagerInstallValues(sessionManagerInstallOptions{}, &installedManagerCredentials{}, false)
+
+	session := values["session"].(map[string]any)
+	require.Equal(t, "", session["serviceAccountName"])
+	require.Equal(t, map[string]any{"disableServiceAccountToken": true}, session["isolation"])
 }
 
 func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T) {

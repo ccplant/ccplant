@@ -30,6 +30,7 @@ type sessionManagerInstallOptions struct {
 	apiKeyEnv, apiKeyFile, scope, teamID                           string
 	namespace, release, chart, version, pool, name, instanceID     string
 	connectionSecret, internalSecret, provisionerSecret            string
+	sessionServiceAccount                                          string
 	storageClass, persistenceSize, persistenceBackend              string
 	persistenceS3Bucket, persistenceS3Region, persistenceS3Prefix  string
 	persistenceS3Endpoint                                          string
@@ -73,6 +74,7 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.StringVar(&opts.connectionSecret, "connection-secret", "", "Secret holding manager credentials")
 	flags.StringVar(&opts.internalSecret, "internal-secret", "", "Secret holding the internal API token")
 	flags.StringVar(&opts.provisionerSecret, "provisioner-secret", "", "Secret holding the provisioner token")
+	flags.StringVar(&opts.sessionServiceAccount, "session-service-account", "", "ServiceAccount mounted in session Pods (disabled when empty)")
 	flags.BoolVar(&opts.persistence, "persistence", false, "enable a PersistentVolumeClaim for each session workspace")
 	flags.StringVar(&opts.persistenceBackend, "persistence-backend", "", "session state persistence backend (volume)")
 	flags.StringVar(&opts.persistenceS3Bucket, "persistence-s3-bucket", "", "S3 bucket for saved workspace snapshots")
@@ -157,6 +159,9 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 			return fmt.Errorf("ensure namespace: %w", err)
 		}
 	}
+	if err = ensureSessionServiceAccount(ctx, client, opts.namespace, opts.sessionServiceAccount); err != nil {
+		return err
+	}
 	credentials, err := ensureManagerCredentials(ctx, client, opts)
 	if err != nil {
 		return err
@@ -206,6 +211,26 @@ func runSessionManagerInstall(ctx context.Context, stdout, stderr io.Writer, opt
 	return nil
 }
 
+func ensureSessionServiceAccount(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+
+	serviceAccounts := client.CoreV1().ServiceAccounts(namespace)
+	if _, err := serviceAccounts.Get(ctx, name, metav1.GetOptions{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get session ServiceAccount %s/%s: %w", namespace, name, err)
+	}
+	if _, err := serviceAccounts.Create(ctx, &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+	}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("create session ServiceAccount %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
 func sessionManagerHelmUpgradeArgs(opts sessionManagerInstallOptions, valuesFile string, legacyLeaseMigration bool) []string {
 	args := []string{
 		"upgrade", "--install", opts.release, opts.chart,
@@ -236,6 +261,7 @@ func sessionManagerHelmUpgradeArgs(opts sessionManagerInstallOptions, valuesFile
 }
 
 func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials *installedManagerCredentials, legacyLeaseMigration bool) map[string]any {
+	sessionServiceAccount := strings.TrimSpace(opts.sessionServiceAccount)
 	sessionPersistence := map[string]any{"backend": opts.persistenceBackend}
 	if opts.persistenceS3Bucket != "" {
 		sessionPersistence["s3"] = map[string]any{
@@ -261,6 +287,10 @@ func sessionManagerInstallValues(opts sessionManagerInstallOptions, credentials 
 		"runner":      map[string]any{"managerId": credentials.ManagerID, "pool": opts.pool},
 		"internalApi": map[string]any{"tokenSecretRef": map[string]any{"name": opts.internalSecret, "key": "token"}},
 		"session": map[string]any{
+			"serviceAccountName": sessionServiceAccount,
+			"isolation": map[string]any{
+				"disableServiceAccountToken": sessionServiceAccount == "",
+			},
 			"pvc": map[string]any{
 				"enabled":      opts.persistence || opts.persistenceBackend == "volume",
 				"storageClass": opts.storageClass,
