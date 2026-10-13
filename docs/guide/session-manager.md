@@ -23,6 +23,28 @@ Kubernetesへインストールする場合は、対象クラスタへ接続済�
 ccplant --version
 ```
 
+GitHub Releasesから配布されるCLIは、既定で24時間ごとに安定版の更新を確認します。
+更新は署名とSHA-256を検証してからatomicに適用され、実行中のコマンドは現在の
+バージョンで完了し、次回起動から新しいバージョンを使用します。
+
+```bash
+# ビルド情報と自動更新の状態を確認する
+ccplant version --json
+ccplant update status
+
+# 直ちに更新を確認・適用する
+ccplant update check
+ccplant update apply
+
+# 自動更新を永続的に停止・再開する
+ccplant update disable
+ccplant update enable
+```
+
+CIや閉域環境で一時的に更新確認を止める場合は`CCPLANT_AUTO_UPDATE=0`を指定してください。
+コンテナ、Kubernetesセッション内のCLI、Native app同梱CLIは、それぞれの配布機構が
+更新を管理するため自己更新しません。
+
 ::: warning Kubernetesの実行先を確認する
 インストール先は現在のkubeconfigコンテキストです。実行前に`kubectl config current-context`で対象クラスタを確認してください。
 :::

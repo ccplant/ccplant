@@ -13,7 +13,7 @@ const output = join(outputDir, `ccplant-${target}`);
 await mkdir(outputDir, { recursive: true });
 
 const command = Bun.spawn(
-  ["go", "build", "-trimpath", "-ldflags=-s -w", "-o", output, "./main.go"],
+  ["go", "build", "-trimpath", "-ldflags=-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Distribution=tauri-sidecar", "-o", output, "./main.go"],
   {
     cwd: backendDir,
     env: { ...process.env, CGO_ENABLED: "0", GOOS: goTarget.os, GOARCH: goTarget.arch },
