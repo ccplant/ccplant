@@ -106,6 +106,53 @@ func TestWorkerSessionListPreservesPoolTTLRequest(t *testing.T) {
 	require.Equal(t, "2m", sessions[0].Tags["session_ttl"])
 }
 
+func TestWorkerSessionListUsesRouteLifecycleForClaimedPoolRuntime(t *testing.T) {
+	completedAt := time.Now().Add(-2 * time.Minute).UTC()
+	runtimeUpdatedAt := time.Now().UTC()
+	runtimeTags := map[string]string{"runtime-only": "value", "shared": "runtime"}
+	runtimeRequest := &entities.RunServerRequest{}
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"runtime": {
+			id:        "runtime",
+			status:    "running",
+			updatedAt: runtimeUpdatedAt,
+			tags:      runtimeTags,
+			request:   runtimeRequest,
+		},
+	}}
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "public", RemoteSessionID: "runtime",
+		Transport: portrepos.SessionRouteTransportDirectRuntime,
+		Status:    "active", StatusUpdatedAt: completedAt,
+		Tags: map[string]string{"session_ttl": "1m", "shared": "route"},
+	}}
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
+	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+
+	require.NoError(t, controller.ListSessions(echo.New().NewContext(req, rec)))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sessions []struct {
+		ID        string            `json:"id"`
+		Tags      map[string]string `json:"tags"`
+		Status    string            `json:"status"`
+		UpdatedAt time.Time         `json:"updated_at"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sessions))
+	require.Len(t, sessions, 1)
+	require.Equal(t, "public", sessions[0].ID)
+	require.Equal(t, "1m", sessions[0].Tags["session_ttl"])
+	require.Equal(t, "route", sessions[0].Tags["shared"])
+	require.Equal(t, "value", sessions[0].Tags["runtime-only"])
+	require.Equal(t, "active", sessions[0].Status)
+	require.True(t, sessions[0].UpdatedAt.Equal(completedAt))
+
+	// Building the public alias must not mutate the claimed runtime metadata.
+	require.Empty(t, runtimeRequest.SessionTTL)
+	require.Equal(t, map[string]string{"runtime-only": "value", "shared": "runtime"}, runtimeTags)
+}
+
 func TestWorkerSessionListIncludesDirectRuntimeTTLRoute(t *testing.T) {
 	startedAt := time.Now().Add(-2 * time.Minute)
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{

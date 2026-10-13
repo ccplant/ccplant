@@ -159,7 +159,9 @@ func sessionTTL(session entities.Session) string {
 	if provider, ok := session.(interface {
 		Request() *entities.RunServerRequest
 	}); ok && provider.Request() != nil {
-		return provider.Request().SessionTTL
+		if ttl := provider.Request().SessionTTL; ttl != "" {
+			return ttl
+		}
 	}
 	// Remote worker transports expose the request TTL as a tag because the
 	// generic Session interface does not carry RunServerRequest.

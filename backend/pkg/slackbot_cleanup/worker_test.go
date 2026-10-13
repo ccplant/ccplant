@@ -2,16 +2,50 @@ package slackbot_cleanup
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
+	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
 
 type mockSessionManager struct {
 	sessions   []entities.Session
 	deletedIDs []string
+}
+
+type requestSession struct {
+	entities.Session
+	request *entities.RunServerRequest
+}
+
+func (s *requestSession) Request() *entities.RunServerRequest { return s.request }
+
+type ttlRouteRepository struct {
+	route      *portrepos.SessionRoute
+	deletedIDs []string
+}
+
+func (r *ttlRouteRepository) Save(context.Context, *portrepos.SessionRoute) error { return nil }
+func (r *ttlRouteRepository) Get(_ context.Context, id string) (*portrepos.SessionRoute, error) {
+	if r.route != nil && r.route.SessionID == id {
+		return r.route, nil
+	}
+	return nil, nil
+}
+func (r *ttlRouteRepository) List(context.Context, string) ([]*portrepos.SessionRoute, error) {
+	if r.route == nil {
+		return nil, nil
+	}
+	return []*portrepos.SessionRoute{r.route}, nil
+}
+func (r *ttlRouteRepository) Delete(_ context.Context, id string) error {
+	r.deletedIDs = append(r.deletedIDs, id)
+	return nil
 }
 
 func (m *mockSessionManager) CreateSession(context.Context, string, *entities.RunServerRequest, []byte) (entities.Session, error) {
@@ -95,6 +129,57 @@ func TestPruneSessionsWithTTLUsesExplicitTTL(t *testing.T) {
 
 	if len(mgr.deletedIDs) != 1 || mgr.deletedIDs[0] != "explicit-ttl" {
 		t.Fatalf("deleted = %v", mgr.deletedIDs)
+	}
+}
+
+func TestPruneSessionsWithTTLFallsBackToTagWhenRequestTTLIsEmpty(t *testing.T) {
+	session := &requestSession{
+		Session: completedTTLSession("tag-ttl", time.Now().Add(-2*time.Minute)),
+		request: &entities.RunServerRequest{},
+	}
+	mgr := &mockSessionManager{sessions: []entities.Session{session}}
+
+	worker := NewCleanupWorker(mgr, CleanupWorkerConfig{})
+	worker.pruneSessionsWithTTL(context.Background())
+
+	if len(mgr.deletedIDs) != 1 || mgr.deletedIDs[0] != "tag-ttl" {
+		t.Fatalf("deleted = %v", mgr.deletedIDs)
+	}
+}
+
+func TestClaimedPoolRouteFlowsFromControlListToTTLCleanup(t *testing.T) {
+	completedAt := time.Now().Add(-2 * time.Minute)
+	runtime := &requestSession{
+		Session: entities.NewProxySessionWithStatus(
+			"runtime", "alice", entities.ScopeUser, "", nil, time.Now().Add(-time.Hour), "running",
+		),
+		request: &entities.RunServerRequest{},
+	}
+	runtime.Session.(*entities.ProxySession).SetUpdatedAt(time.Now())
+	runtimeManager := &mockSessionManager{sessions: []entities.Session{runtime}}
+	routes := &ttlRouteRepository{route: &portrepos.SessionRoute{
+		SessionID: "public", RemoteSessionID: "runtime",
+		Transport: portrepos.SessionRouteTransportDirectRuntime,
+		UserID:    "alice", Scope: string(entities.ScopeUser),
+		Tags:   map[string]string{"session_ttl": "1m"},
+		Status: "active", StatusUpdatedAt: completedAt,
+	}}
+	controller := controllers.NewWorkerControlController(runtimeManager, "secret", nil, routes)
+	e := echo.New()
+	e.GET("/internal/worker/sessions", controller.ListSessions)
+	e.DELETE("/internal/worker/sessions/:sessionId", controller.DeleteSession)
+	server := httptest.NewServer(e)
+	t.Cleanup(server.Close)
+
+	client := controlapi.NewSessionManager(server.URL, "secret")
+	worker := NewCleanupWorker(client, CleanupWorkerConfig{})
+	worker.pruneSessionsWithTTL(context.Background())
+
+	if len(runtimeManager.deletedIDs) != 1 || runtimeManager.deletedIDs[0] != "runtime" {
+		t.Fatalf("runtime deleted = %v", runtimeManager.deletedIDs)
+	}
+	if len(routes.deletedIDs) != 1 || routes.deletedIDs[0] != "public" {
+		t.Fatalf("routes deleted = %v", routes.deletedIDs)
 	}
 }
 

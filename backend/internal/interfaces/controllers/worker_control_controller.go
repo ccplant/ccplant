@@ -333,7 +333,7 @@ func (wc *WorkerControlController) ListSessions(c echo.Context) error {
 				continue
 			}
 			if runtime := byID[route.RemoteSessionID]; runtime != nil {
-				sessions = append(sessions, &workerAliasSession{Session: runtime, id: route.SessionID})
+				sessions = append(sessions, &workerAliasSession{Session: runtime, route: route})
 				aliasedRuntime[route.RemoteSessionID] = true
 			} else if route.Transport == repositories.SessionRouteTransportDirectRuntime || route.Tags["session_ttl"] != "" {
 				// A claimed direct-runtime route has a runner ID, but that runner is not
@@ -424,19 +424,56 @@ func (wc *WorkerControlController) StopAgent(c echo.Context) error {
 
 type workerAliasSession struct {
 	entities.Session
-	id string
+	route *repositories.SessionRoute
 }
 
-func (s *workerAliasSession) ID() string { return s.id }
+func (s *workerAliasSession) ID() string { return s.route.SessionID }
+
+// Tags combines runtime metadata with the durable public route. Route values
+// win because they contain the policy attached to the public session, while a
+// claimed pool runtime may still expose metadata from its stock lifecycle.
+func (s *workerAliasSession) Tags() map[string]string {
+	tags := make(map[string]string, len(s.Session.Tags())+len(s.route.Tags))
+	for key, value := range s.Session.Tags() {
+		tags[key] = value
+	}
+	for key, value := range s.route.Tags {
+		tags[key] = value
+	}
+	return tags
+}
+
+func (s *workerAliasSession) Status() string {
+	if s.route.Status != "" {
+		return s.route.Status
+	}
+	return s.Session.Status()
+}
+
+func (s *workerAliasSession) UpdatedAt() time.Time {
+	if !s.route.StatusUpdatedAt.IsZero() {
+		return s.route.StatusUpdatedAt
+	}
+	return s.Session.UpdatedAt()
+}
 
 // Preserve cleanup settings that are not part of the embedded Session interface.
 func (s *workerAliasSession) Request() *entities.RunServerRequest {
+	var request *entities.RunServerRequest
 	if provider, ok := s.Session.(interface {
 		Request() *entities.RunServerRequest
 	}); ok {
-		return provider.Request()
+		request = provider.Request()
 	}
-	return nil
+	if ttl := s.route.Tags["session_ttl"]; ttl != "" {
+		if request == nil {
+			return &entities.RunServerRequest{SessionTTL: ttl}
+		}
+		copy := *request
+		copy.SessionTTL = ttl
+		return &copy
+	}
+	return request
 }
 
 func (wc *WorkerControlController) Stock(c echo.Context) error {
