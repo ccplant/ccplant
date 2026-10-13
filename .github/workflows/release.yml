@@ -79,10 +79,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          UPDATE_PUBLIC_KEY: ${{ secrets.CCPLANT_UPDATE_PUBLIC_KEY }}
         run: |
+          test -n "${UPDATE_PUBLIC_KEY}"
           mkdir -p ../dist
           go build \
-            -ldflags="-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Version=${RELEASE_TAG}" \
+            -ldflags="-s -w -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Version=${RELEASE_TAG} -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.Distribution=github-release -X github.com/takutakahashi/agentapi-proxy/internal/buildinfo.UpdatePublicKey=${UPDATE_PUBLIC_KEY}" \
             -o ../dist/ccplant \
             ./main.go
         working-directory: backend
@@ -103,6 +105,11 @@ jobs:
     needs: [metadata, binaries]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - uses: actions/download-artifact@v4
         with:
           pattern: binary-*
@@ -111,6 +118,13 @@ jobs:
       - name: Create checksums
         run: sha256sum ccplant_*.tar.gz > checksums.txt
         working-directory: dist
+      - name: Create signed update manifest
+        env:
+          CCPLANT_UPDATE_SIGNING_KEY: ${{ secrets.CCPLANT_UPDATE_SIGNING_KEY }}
+          CCPLANT_UPDATE_PUBLIC_KEY: ${{ secrets.CCPLANT_UPDATE_PUBLIC_KEY }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: go run ./misc/update-manifest --version "$TAG" --dist ../dist
+        working-directory: backend
       - name: Upload binary archives
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
