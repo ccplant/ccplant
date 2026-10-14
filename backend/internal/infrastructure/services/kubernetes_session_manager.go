@@ -6,8 +6,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log"
@@ -71,6 +73,8 @@ const (
 	sessionAutoSuspendIdleSecondsAnnotation  = "agentapi.proxy/auto-suspend-idle-seconds"
 	sessionAutoSuspendPolicySourceAnnotation = "agentapi.proxy/auto-suspend-policy-source"
 )
+
+var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 
 // ProvisionerPort is the exported version of provisionerPort for use by other packages
 // (e.g. the session controller error handler that checks provisioner /status).
@@ -443,6 +447,67 @@ func (m *KubernetesSessionManager) ApplyRunnerAutoSuspendPolicy(ctx context.Cont
 	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null,"%s":%q,"%s":%q}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, desiredEnabled, sessionAutoSuspendIdleSecondsAnnotation, desiredSeconds))
 	_, err = m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
 	return err
+}
+
+// ApplyRunnerAllocationMetadata persists allocation-specific metadata onto a
+// pre-warmed runner so every manager replica can reconstruct the claimed session.
+func (m *KubernetesSessionManager) ApplyRunnerAllocationMetadata(ctx context.Context, sessionID string, meta sessionsettings.SessionMeta) error {
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	if meta.AgentType != "" {
+		req := session.Request()
+		if req == nil {
+			req = &entities.RunServerRequest{}
+			session.SetRequest(req)
+		}
+		req.AgentType = meta.AgentType
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"agentapi.proxy/agent-type":%q}}}`, meta.AgentType))
+		if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, session.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("persist runner agent type: %w", err)
+		}
+	}
+	return m.ApplyRunnerAutoSuspendPolicy(ctx, sessionID, meta.AutoSuspendEnabled, meta.AutoSuspendMinutes)
+}
+
+// RefreshRunnerSessionStatus reconciles a leader's in-memory runner status
+// with the Service and the workload that may have been changed by another replica.
+func (m *KubernetesSessionManager) RefreshRunnerSessionStatus(ctx context.Context, sessionID string) error {
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get runner service: %w", err)
+	}
+	status := session.Status()
+	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
+		if !statusWatcherTerminal(status) {
+			session.SetStatus("suspended")
+		}
+		return nil
+	}
+	if status != "suspended" && status != "stopped" {
+		return nil
+	}
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-id=" + sessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("list runner pods: %w", err)
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp != nil || !isPodReady(pod) || !pod.CreationTimestamp.After(session.UpdatedAt()) {
+			continue
+		}
+		session.SetStatus("starting")
+		go m.watchAgentAPIStatus(context.Background(), session)
+		return nil
+	}
+	return nil
 }
 
 func (m *KubernetesSessionManager) resolveAutoSuspendPolicy(ctx context.Context, session *KubernetesSession) (time.Duration, bool, error) {
@@ -1307,9 +1372,27 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 // after the runner accepts an allocation. The Service is the durable local
 // source of truth because every session workload owns one, and removing the
 // marker keeps active runners out of all stock selectors across manager restarts.
-func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, sessionID string) error {
+func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, sessionID, runnerToken string, settings *sessionsettings.SessionSettings) error {
+	var parentRuntime *sessionsettings.ParentRuntimeConfig
+	if settings != nil {
+		parentRuntime = settings.ParentRuntime
+	}
+	if parentRuntime == nil || !parentRuntime.Enabled || parentRuntime.Endpoint == "" || parentRuntime.SessionID == "" || parentRuntime.ManagerID == "" || parentRuntime.Token == "" || parentRuntime.Generation <= 0 {
+		return fmt.Errorf("invalid parent runtime")
+	}
+	credential, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, runnerCredentialSecretName(sessionID), metav1.GetOptions{})
+	if err != nil {
+		return ErrInvalidRunnerToken
+	}
+	expectedToken := credential.Data["runner-token"]
+	if len(expectedToken) == 0 || subtle.ConstantTimeCompare(expectedToken, []byte(runnerToken)) != 1 {
+		return ErrInvalidRunnerToken
+	}
+	if err := m.PrepareSessionResume(ctx, sessionID, settings); err != nil {
+		return fmt.Errorf("persist claimed runner settings: %w", err)
+	}
 	name := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -1323,7 +1406,10 @@ func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, se
 		delete(svc.Labels, "agentapi.proxy/stock")
 		_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CountStockSessions returns the number of available or currently creating

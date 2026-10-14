@@ -927,7 +927,20 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 	ctx := context.Background()
 	const sessionID = "claimed-runner"
 	name := "agentapi-session-" + sessionID + "-svc"
-	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+	_, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + sessionID + "-runner", Namespace: "test-ns"},
+		Data:       map[string][]byte{"runner-token": []byte("runner-token")},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, name, "", "test-ns", 9000, cancel, nil)
+	manager.mutex.Lock()
+	manager.sessions[sessionID] = session
+	manager.mutex.Unlock()
+	_, err = manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-ns", Labels: map[string]string{
 			"app.kubernetes.io/managed-by": "agentapi-proxy",
 			"agentapi.proxy/session-id":    sessionID,
@@ -939,7 +952,17 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := manager.ClaimPoolStockSession(ctx, sessionID); err != nil {
+	claimedSettings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: "public-session", AgentType: "codex-acp"},
+		ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+			Enabled: true, Endpoint: "https://parent.example.com", SessionID: "public-session",
+			ManagerID: "manager-a", Token: "runtime-token", Generation: 1,
+		},
+	}
+	if err := manager.ClaimPoolStockSession(ctx, sessionID, "wrong-token", claimedSettings); err != ErrInvalidRunnerToken {
+		t.Fatalf("wrong-token error = %v", err)
+	}
+	if err := manager.ClaimPoolStockSession(ctx, sessionID, "runner-token", claimedSettings); err != nil {
 		t.Fatal(err)
 	}
 	svc, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name, metav1.GetOptions{})
@@ -952,6 +975,110 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 	if svc.Labels["agentapi.proxy/session-pool"] != "test-pool" {
 		t.Fatalf("pool label changed after claim: %v", svc.Labels)
 	}
+	persisted, err := manager.CurrentSessionSettings(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ParentRuntime == nil || persisted.ParentRuntime.SessionID != "public-session" {
+		t.Fatalf("parent runtime was not persisted: %#v", persisted.ParentRuntime)
+	}
+}
+
+func TestApplyRunnerAllocationMetadataPersistsAgentType(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "allocated-runner"
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, "agentapi-session-"+sessionID+"-svc", "", "test-ns", 9000, nil, nil)
+	manager.mutex.Lock()
+	manager.sessions[sessionID] = session
+	manager.mutex.Unlock()
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: session.ServiceName(), Namespace: "test-ns"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.ApplyRunnerAllocationMetadata(ctx, sessionID, sessionsettings.SessionMeta{AgentType: "claude-acp"}); err != nil {
+		t.Fatal(err)
+	}
+	if session.Request().AgentType != "claude-acp" {
+		t.Fatalf("agent type = %q", session.Request().AgentType)
+	}
+	svc, err := manager.client.CoreV1().Services("test-ns").Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.Annotations["agentapi.proxy/agent-type"] != "claude-acp" {
+		t.Fatalf("agent type annotation = %q", svc.Annotations["agentapi.proxy/agent-type"])
+	}
+}
+
+func TestRefreshRunnerSessionStatusUsesCanonicalSuspendState(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "suspended-runner"
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, "agentapi-session-"+sessionID+"-svc", "", "test-ns", 9000, nil, nil)
+	session.SetStatus("active")
+	manager.mutex.Lock()
+	manager.sessions[sessionID] = session
+	manager.mutex.Unlock()
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: session.ServiceName(), Namespace: "test-ns", Annotations: map[string]string{sessionSuspendedAtAnnotation: time.Now().Format(time.RFC3339Nano)}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.RefreshRunnerSessionStatus(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if session.Status() != "suspended" {
+		t.Fatalf("status = %q, want suspended", session.Status())
+	}
+}
+
+func TestRefreshRunnerSessionStatusDetectsNewReadyPod(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "resumed-runner"
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, "agentapi-session-"+sessionID+"-svc", "", "test-ns", 9000, nil, nil)
+	session.SetStatus("stopped")
+	session.SetUpdatedAt(time.Now().Add(-time.Minute))
+	manager.mutex.Lock()
+	manager.sessions[sessionID] = session
+	manager.mutex.Unlock()
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: session.ServiceName(), Namespace: "test-ns"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod, err := manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: session.DeploymentName(), Namespace: "test-ns", Labels: map[string]string{"agentapi.proxy/session-id": sessionID}, CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Minute))},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RefreshRunnerSessionStatus(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if session.Status() != "stopped" {
+		t.Fatalf("status with old ready pod = %q, want stopped", session.Status())
+	}
+	pod.CreationTimestamp = metav1.NewTime(time.Now())
+	if _, err := manager.client.CoreV1().Pods("test-ns").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.RefreshRunnerSessionStatus(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if session.Status() != "starting" {
+		t.Fatalf("status = %q, want starting", session.Status())
+	}
+	session.SetStatus("suspended")
 }
 
 func TestPurgeStaleStockSessionsRemovesOnlyExpiredCreatingStock(t *testing.T) {
