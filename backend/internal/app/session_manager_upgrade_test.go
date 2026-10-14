@@ -69,8 +69,8 @@ func TestReconcileSessionManagerVersionUpgradesDeploymentAndFutureSessions(t *te
 	if container.Env[0].Value != "example/manager:v1.3.0" {
 		t.Fatalf("session image = %q", container.Env[0].Value)
 	}
-	if container.Env[2].Value != "example/agent:assets-fixed" {
-		t.Fatalf("agent assets changed during application upgrade: %q", container.Env[2].Value)
+	if container.Env[2].Value != "example/manager:v1.3.0" {
+		t.Fatalf("session image = %q", container.Env[2].Value)
 	}
 	if container.Env[1].Value != "v1.3.0" {
 		t.Fatalf("current version = %q", container.Env[1].Value)
@@ -131,9 +131,9 @@ func TestSessionManagerUpgradeRequiredForDevelopmentCommit(t *testing.T) {
 	}
 }
 
-func TestReconcileSessionManagerVersionPreservesCustomCLIAndLegacySupport(t *testing.T) {
+func TestReconcileSessionManagerVersionReplacesImageOverrides(t *testing.T) {
 	for _, tc := range []struct{ name, cli, session, wantSession string }{
-		{name: "custom-cli", cli: "private/cli:fixed", session: "example/agent:assets-fixed", wantSession: "example/agent:assets-fixed"},
+		{name: "custom-cli", cli: "private/cli:fixed", session: "example/agent:assets-fixed", wantSession: "example/manager:v1.3.0"},
 		{name: "legacy", session: "example/manager:v1.2.3", wantSession: "example/manager:v1.3.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -148,7 +148,7 @@ func TestReconcileSessionManagerVersionPreservesCustomCLIAndLegacySupport(t *tes
 				t.Fatal(err)
 			}
 			actual := got.Spec.Template.Spec.Containers[0].Env
-			if actual[0].Value != tc.wantSession || actual[1].Value != tc.cli {
+			if actual[0].Value != tc.wantSession || actual[1].Value != "example/manager:v1.3.0" {
 				t.Fatalf("unexpected image configuration: %+v", actual)
 			}
 		})

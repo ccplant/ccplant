@@ -76,7 +76,7 @@ func TestBuildSessionSettingsIncludesProfileCommandWrapper(t *testing.T) {
 	require.Equal(t, req.ProfileCommandWrapper, settings.Startup.CommandWrapperTemplate)
 }
 
-func TestResolveLegacySessionRuntimeImagesUsesManagerRelease(t *testing.T) {
+func TestResolveSessionRuntimeImagesUsesManagerRelease(t *testing.T) {
 	cfg := &config.Config{
 		SessionManager: config.SessionManagerConfig{
 			ImageRepository: "ghcr.io/ccplant/ccplant-backend",
@@ -86,12 +86,12 @@ func TestResolveLegacySessionRuntimeImagesUsesManagerRelease(t *testing.T) {
 			Image: "ghcr.io/ccplant/ccplant-backend:v1.2.3",
 		},
 	}
-	resolveLegacySessionRuntimeImages(cfg)
-	require.Equal(t, config.DefaultKubernetesSessionImage, cfg.KubernetesSession.Image)
+	resolveSessionRuntimeImages(cfg)
+	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.Image)
 	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
 }
 
-func TestResolveLegacySessionRuntimeImagesUsesManagerCLIWithCustomSessionImage(t *testing.T) {
+func TestResolveSessionRuntimeImagesReplacesCustomSessionImage(t *testing.T) {
 	cfg := &config.Config{
 		SessionManager: config.SessionManagerConfig{
 			ImageRepository: "ghcr.io/ccplant/ccplant-backend",
@@ -99,12 +99,12 @@ func TestResolveLegacySessionRuntimeImagesUsesManagerCLIWithCustomSessionImage(t
 		},
 		KubernetesSession: config.KubernetesSessionConfig{Image: "private/agent:fixed"},
 	}
-	resolveLegacySessionRuntimeImages(cfg)
-	require.Equal(t, "private/agent:fixed", cfg.KubernetesSession.Image)
+	resolveSessionRuntimeImages(cfg)
+	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.Image)
 	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
 }
 
-func TestResolveLegacySessionRuntimeImagesOverridesCustomCLI(t *testing.T) {
+func TestResolveSessionRuntimeImagesOverridesCustomCLI(t *testing.T) {
 	cfg := &config.Config{
 		SessionManager: config.SessionManagerConfig{
 			ImageRepository: "ghcr.io/ccplant/ccplant-backend",
@@ -115,8 +115,8 @@ func TestResolveLegacySessionRuntimeImagesOverridesCustomCLI(t *testing.T) {
 			CLIImage: "private/cli:fixed",
 		},
 	}
-	resolveLegacySessionRuntimeImages(cfg)
-	require.Equal(t, "private/agent:fixed", cfg.KubernetesSession.Image)
+	resolveSessionRuntimeImages(cfg)
+	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.Image)
 	require.Equal(t, "ghcr.io/ccplant/ccplant-backend:v1.2.3", cfg.KubernetesSession.CLIImage)
 }
 

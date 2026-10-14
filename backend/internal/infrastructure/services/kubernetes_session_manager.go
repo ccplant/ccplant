@@ -203,7 +203,6 @@ type KubernetesSessionManager struct {
 	runnerManagerToken        string
 	runnerDefaultPool         string
 	inheritedRuntimeProfile   *sessionsettings.RuntimeProfile
-	appliedSessionImage       string
 }
 
 func (m *KubernetesSessionManager) ConfigureSessionRunnerPool(parentURL, managerID, managerToken, defaultPool string) {
@@ -234,7 +233,7 @@ func (m *KubernetesSessionManager) refreshConfig() {
 	if current.KubernetesSession.ProvisionerToken == "" && m.k8sConfig != nil {
 		current.KubernetesSession.ProvisionerToken = m.k8sConfig.ProvisionerToken
 	}
-	resolveLegacySessionRuntimeImages(current)
+	resolveSessionRuntimeImages(current)
 	m.config = current
 	m.k8sConfig = &current.KubernetesSession
 	if m.inheritedRuntimeProfile != nil {
@@ -242,11 +241,11 @@ func (m *KubernetesSessionManager) refreshConfig() {
 	}
 }
 
-// resolveLegacySessionRuntimeImages upgrades the old single-image defaults in
-// memory. This lets a manager create new Pods with immutable agent assets and
-// inject the ccplant CLI from its own release without allowing the CLI image
-// repository or tag to drift from the manager image.
-func resolveLegacySessionRuntimeImages(cfg *config.Config) {
+// resolveSessionRuntimeImages makes the running manager release the
+// single source of truth for session workloads. Session image overrides were
+// intentionally removed: a manager and the stock it creates must always run
+// the same binary version.
+func resolveSessionRuntimeImages(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
@@ -256,9 +255,7 @@ func resolveLegacySessionRuntimeImages(cfg *config.Config) {
 		return
 	}
 	managerImage := repository + ":" + version
-	if strings.TrimSpace(cfg.KubernetesSession.Image) == managerImage {
-		cfg.KubernetesSession.Image = config.DefaultKubernetesSessionImage
-	}
+	cfg.KubernetesSession.Image = managerImage
 	cfg.KubernetesSession.CLIImage = managerImage
 }
 
@@ -296,7 +293,7 @@ func NewKubernetesSessionManagerWithClient(
 	lgr *logger.Logger,
 	client kubernetes.Interface,
 ) (*KubernetesSessionManager, error) {
-	resolveLegacySessionRuntimeImages(cfg)
+	resolveSessionRuntimeImages(cfg)
 	k8sConfig := &cfg.KubernetesSession
 
 	// Determine namespace
@@ -329,7 +326,6 @@ func NewKubernetesSessionManagerWithClient(
 		sessionInformerCtx:        informerCtx,
 		sessionInformerStop:       informerCancel,
 		sessionAllocationNotifier: infrasessionallocation.NewLocalNotifier(),
-		appliedSessionImage:       k8sConfig.Image,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

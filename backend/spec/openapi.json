@@ -7025,12 +7025,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {
-                  "asset_image": {
-                    "type": "string",
-                    "description": "OCI image used for newly provisioned session workloads. The manager replaces idle stock asynchronously."
-                  }
-                },
+                "properties": {},
                 "additionalProperties": true
               }
             }
