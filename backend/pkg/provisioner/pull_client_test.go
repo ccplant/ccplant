@@ -49,10 +49,10 @@ func TestMarkPoolStockClaimedUsesLocalManagerAndProvisionerToken(t *testing.T) {
 		require.Equal(t, "Bearer runner-token", r.Header.Get("Authorization"))
 		require.Empty(t, r.Header.Get("X-Session-Manager-Token"))
 		var body struct {
-			ParentRuntime *sessionsettings.ParentRuntimeConfig `json:"parent_runtime"`
+			Settings *sessionsettings.SessionSettings `json:"settings"`
 		}
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		require.Equal(t, "public-session", body.ParentRuntime.SessionID)
+		require.Equal(t, "public-session", body.Settings.ParentRuntime.SessionID)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
@@ -64,7 +64,7 @@ func TestMarkPoolStockClaimedUsesLocalManagerAndProvisionerToken(t *testing.T) {
 		RunnerToken:       "runner-token",
 		UpstreamAuthToken: "parent-token",
 		RunnerID:          "runner-1",
-	}, &sessionsettings.ParentRuntimeConfig{Enabled: true, SessionID: "public-session"})
+	}, &sessionsettings.SessionSettings{ParentRuntime: &sessionsettings.ParentRuntimeConfig{Enabled: true, SessionID: "public-session"}})
 	require.NoError(t, err)
 	require.True(t, called)
 }

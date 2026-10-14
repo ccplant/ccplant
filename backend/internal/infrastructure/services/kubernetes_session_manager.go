@@ -1372,7 +1372,11 @@ func (m *KubernetesSessionManager) PurgeStaleStockSessions(ctx context.Context) 
 // after the runner accepts an allocation. The Service is the durable local
 // source of truth because every session workload owns one, and removing the
 // marker keeps active runners out of all stock selectors across manager restarts.
-func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, sessionID, runnerToken string, parentRuntime *sessionsettings.ParentRuntimeConfig) error {
+func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, sessionID, runnerToken string, settings *sessionsettings.SessionSettings) error {
+	var parentRuntime *sessionsettings.ParentRuntimeConfig
+	if settings != nil {
+		parentRuntime = settings.ParentRuntime
+	}
 	if parentRuntime == nil || !parentRuntime.Enabled || parentRuntime.Endpoint == "" || parentRuntime.SessionID == "" || parentRuntime.ManagerID == "" || parentRuntime.Token == "" || parentRuntime.Generation <= 0 {
 		return fmt.Errorf("invalid parent runtime")
 	}
@@ -1383,6 +1387,9 @@ func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, se
 	expectedToken := credential.Data["runner-token"]
 	if len(expectedToken) == 0 || subtle.ConstantTimeCompare(expectedToken, []byte(runnerToken)) != 1 {
 		return ErrInvalidRunnerToken
+	}
+	if err := m.PrepareSessionResume(ctx, sessionID, settings); err != nil {
+		return fmt.Errorf("persist claimed runner settings: %w", err)
 	}
 	name := fmt.Sprintf("agentapi-session-%s-svc", sessionID)
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -1401,14 +1408,6 @@ func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, se
 		return err
 	}); err != nil {
 		return err
-	}
-	settings, err := m.CurrentSessionSettings(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("load claimed runner settings: %w", err)
-	}
-	settings.ParentRuntime = parentRuntime
-	if err := m.PrepareSessionResume(ctx, sessionID, settings); err != nil {
-		return fmt.Errorf("persist claimed runner parent runtime: %w", err)
 	}
 	return nil
 }

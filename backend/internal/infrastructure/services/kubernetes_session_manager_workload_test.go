@@ -927,29 +927,16 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 	ctx := context.Background()
 	const sessionID = "claimed-runner"
 	name := "agentapi-session-" + sessionID + "-svc"
-	settings := &sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{ID: sessionID}}
-	settingsData, err := sessionsettings.MarshalYAML(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
+	_, err := manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + sessionID + "-runner", Namespace: "test-ns"},
 		Data:       map[string][]byte{"runner-token": []byte("runner-token")},
 	}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.client.CoreV1().Secrets("test-ns").Create(ctx, &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + sessionID + "-settings", Namespace: "test-ns"},
-		Data:       map[string][]byte{"settings.yaml": settingsData},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	_, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
-	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{ProvisionSettings: settings}, "agentapi-session-"+sessionID, name, "", "test-ns", 9000, cancel, nil)
-	session.SetProvisionSettings(settings)
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, name, "", "test-ns", 9000, cancel, nil)
 	manager.mutex.Lock()
 	manager.sessions[sessionID] = session
 	manager.mutex.Unlock()
@@ -965,16 +952,17 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := manager.ClaimPoolStockSession(ctx, sessionID, "wrong-token", &sessionsettings.ParentRuntimeConfig{
-		Enabled: true, Endpoint: "https://parent.example.com", SessionID: "public-session",
-		ManagerID: "manager-a", Token: "runtime-token", Generation: 1,
-	}); err != ErrInvalidRunnerToken {
+	claimedSettings := &sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{ID: "public-session", AgentType: "codex-acp"},
+		ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+			Enabled: true, Endpoint: "https://parent.example.com", SessionID: "public-session",
+			ManagerID: "manager-a", Token: "runtime-token", Generation: 1,
+		},
+	}
+	if err := manager.ClaimPoolStockSession(ctx, sessionID, "wrong-token", claimedSettings); err != ErrInvalidRunnerToken {
 		t.Fatalf("wrong-token error = %v", err)
 	}
-	if err := manager.ClaimPoolStockSession(ctx, sessionID, "runner-token", &sessionsettings.ParentRuntimeConfig{
-		Enabled: true, Endpoint: "https://parent.example.com", SessionID: "public-session",
-		ManagerID: "manager-a", Token: "runtime-token", Generation: 1,
-	}); err != nil {
+	if err := manager.ClaimPoolStockSession(ctx, sessionID, "runner-token", claimedSettings); err != nil {
 		t.Fatal(err)
 	}
 	svc, err := manager.client.CoreV1().Services("test-ns").Get(ctx, name, metav1.GetOptions{})

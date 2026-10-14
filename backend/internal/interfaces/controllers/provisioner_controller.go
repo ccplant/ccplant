@@ -47,7 +47,7 @@ type externalRuntimeProfileProvider interface {
 }
 
 type poolStockClaimer interface {
-	ClaimPoolStockSession(context.Context, string, string, *sessionsettings.ParentRuntimeConfig) error
+	ClaimPoolStockSession(context.Context, string, string, *sessionsettings.SessionSettings) error
 }
 
 func (pc *ProvisionerController) ClaimPoolStock(c echo.Context) error {
@@ -56,16 +56,16 @@ func (pc *ProvisionerController) ClaimPoolStock(c echo.Context) error {
 		return c.NoContent(http.StatusNotImplemented)
 	}
 	var request struct {
-		ParentRuntime *sessionsettings.ParentRuntimeConfig `json:"parent_runtime"`
+		Settings *sessionsettings.SessionSettings `json:"settings"`
 	}
-	if err := c.Bind(&request); err != nil || request.ParentRuntime == nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "parent_runtime is required"})
+	if err := c.Bind(&request); err != nil || request.Settings == nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "settings are required"})
 	}
 	token := strings.TrimPrefix(c.Request().Header.Get("Authorization"), "Bearer ")
 	if token == "" {
 		return c.NoContent(http.StatusUnauthorized)
 	}
-	if err := claimer.ClaimPoolStockSession(c.Request().Context(), c.Param("sessionId"), token, request.ParentRuntime); err != nil {
+	if err := claimer.ClaimPoolStockSession(c.Request().Context(), c.Param("sessionId"), token, request.Settings); err != nil {
 		if errors.Is(err, services.ErrInvalidRunnerToken) {
 			return c.NoContent(http.StatusUnauthorized)
 		}

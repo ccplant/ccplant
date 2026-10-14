@@ -190,7 +190,7 @@ func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client,
 		if err := ackRunnerClaim(ctx, client, cfg, claim.Allocation.SessionID, claim.LeaseID); err != nil {
 			return fmt.Errorf("ack runner claim: %w", err)
 		}
-		if err := markPoolStockClaimedWithRetry(ctx, client, cfg, claim.Settings.ParentRuntime); err != nil {
+		if err := markPoolStockClaimedWithRetry(ctx, client, cfg, claim.Settings); err != nil {
 			return fmt.Errorf("mark pool stock claimed: %w", err)
 		}
 		if !srv.claimProvisioning() {
@@ -202,7 +202,7 @@ func runRunnerClaimClient(ctx context.Context, srv *Server, client *http.Client,
 	}
 }
 
-func markPoolStockClaimedWithRetry(ctx context.Context, client *http.Client, cfg PullClientConfig, parentRuntime *sessionsettings.ParentRuntimeConfig) error {
+func markPoolStockClaimedWithRetry(ctx context.Context, client *http.Client, cfg PullClientConfig, settings *sessionsettings.SessionSettings) error {
 	local := cfg
 	local.ProxyURL = strings.TrimRight(cfg.LocalProxyURL, "/")
 	local.UpstreamAuthToken = ""
@@ -211,7 +211,7 @@ func markPoolStockClaimedWithRetry(ctx context.Context, client *http.Client, cfg
 		return fmt.Errorf("local provisioner proxy URL is required")
 	}
 	for {
-		if err := postJSON(ctx, client, local, "/internal/session-provisioners/"+url.PathEscape(cfg.RunnerID)+"/claim-pool-stock", map[string]any{"parent_runtime": parentRuntime}); err == nil {
+		if err := postJSON(ctx, client, local, "/internal/session-provisioners/"+url.PathEscape(cfg.RunnerID)+"/claim-pool-stock", map[string]any{"settings": settings}); err == nil {
 			return nil
 		} else {
 			log.Printf("[SESSION_RUNNER] Failed to clear stock marker for runner %s: %v", cfg.RunnerID, err)
