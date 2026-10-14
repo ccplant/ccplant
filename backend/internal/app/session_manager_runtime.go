@@ -437,10 +437,8 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 	defer ticker.Stop()
 	appliedRevision := ""
 	for {
-		assetImageError := ""
 		if revision, err := syncSessionRunnerRuntimeProfile(ctx, client, upstream, managerID, token, appliedRevision, manager); err != nil {
 			log.Printf("[SESSION_MANAGER] Runner runtime profile sync failed: %v", err)
-			assetImageError = err.Error()
 		} else if revision != "" {
 			appliedRevision = revision
 		}
@@ -460,10 +458,8 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 				}
 			}
 			payload, marshalErr := json.Marshal(map[string]any{
-				"local_runner_ids":    localRunnerIDs,
-				"session_statuses":    sessionStatuses,
-				"applied_asset_image": manager.AppliedSessionImage(),
-				"asset_image_error":   assetImageError,
+				"local_runner_ids": localRunnerIDs,
+				"session_statuses": sessionStatuses,
 			})
 			if marshalErr != nil {
 				log.Printf("[SESSION_MANAGER] Encode runner pool heartbeat: %v", marshalErr)
@@ -582,18 +578,10 @@ func reconcileSessionManagerVersion(ctx context.Context, cfg *config.Config, cli
 				continue
 			}
 			found = true
-			previousImage := container.Image
 			container.Image = image
-			injectedCLI := false
-			for _, env := range container.Env {
-				if env.Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" && env.Value != "" {
-					injectedCLI = true
-				}
-			}
 			for j := range container.Env {
-				if (container.Env[j].Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" ||
-					(!injectedCLI && container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE")) &&
-					container.Env[j].Value == previousImage {
+				if container.Env[j].Name == "AGENTAPI_K8S_SESSION_CLI_IMAGE" ||
+					container.Env[j].Name == "AGENTAPI_K8S_SESSION_IMAGE" {
 					container.Env[j].Value = image
 				}
 				if container.Env[j].Name == "AGENTAPI_SESSION_MANAGER_CURRENT_VERSION" {

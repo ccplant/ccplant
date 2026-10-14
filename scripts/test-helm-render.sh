@@ -202,7 +202,7 @@ if "$HELM_BIN" template backend-image-tag-override "$REPO_ROOT/backend/helm/agen
   echo "api.image.tag unexpectedly accepted" >&2
   exit 1
 fi
-assert_contains 'Additional property tag is not allowed' "$TMP_DIR/backend-image-tag-override.err"
+assert_contains "(Additional property tag is not allowed|additional properties 'tag' not allowed)" "$TMP_DIR/backend-image-tag-override.err"
 
 # Optional controllers and persistent components are disabled in the minimal defaults.
 assert_not_contains 'name: AGENTAPI_SCHEDULE_WORKER_ENABLED' "$TMP_DIR/backend-default.yaml"
@@ -369,7 +369,8 @@ assert_contains 'name: AGENTAPI_SESSION_MANAGER_UPGRADE_VERSION_URL, value: "htt
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_contains 'name: AGENTAPI_K8S_SESSION_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_IMAGE$' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE$' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_BASE_PORT, value: "9000"' "$TMP_DIR/backend-manager-default-port.yaml"
 assert_contains 'serviceAccountName: backend-agentapi-proxy-session-manager' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-session-manager-deployment.yaml"
@@ -538,26 +539,22 @@ fi
 
 echo "Helm render assertions passed"
 
-# Application versions affect only the CLI source, never the cached assets.
-agent_image="ghcr.io/ccplant/ccplant-agent:$("$REPO_ROOT/scripts/agent-image-tag.sh")"
+# The running binary version is authoritative; Helm does not inject image overrides.
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set image.tag=v9.9.9 >"$TMP_DIR/manager-agent-assets.yaml"
-assert_contains "value: \"${agent_image}\"" "$TMP_DIR/manager-agent-assets.yaml"
-assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-agent-assets.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_IMAGE$' "$TMP_DIR/manager-agent-assets.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE$' "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_IMAGE_REPOSITORY, value: "ghcr.io/ccplant/ccplant-api"' "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_SERVICE_ACCOUNT, value: "agentapi-proxy-session"' "$TMP_DIR/manager-agent-assets.yaml"
 assert_contains 'name: AGENTAPI_K8S_SESSION_DISABLE_SERVICE_ACCOUNT_TOKEN, value: "true"' "$TMP_DIR/manager-agent-assets.yaml"
 assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/manager-agent-assets.yaml"
-"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
-  --set session.cliImage=registry.example/legacy-cli >"$TMP_DIR/manager-legacy-cli-value.yaml"
-assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/manager-legacy-cli-value.yaml"
-assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-legacy-cli-value.yaml"
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
   "${all_role_args[@]}" \
   --set sessionManager.kubernetesSession.cliImage=registry.example/legacy-cli \
   >"$TMP_DIR/backend-manager-legacy-cli-value.yaml"
 assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
-assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_IMAGE$' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
+assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE$' "$TMP_DIR/backend-manager-legacy-cli-value.yaml"
 
 # Independent standalone managers in one namespace must not share names or the
 # Kubernetes Lease that elects the allocation worker.
@@ -581,9 +578,6 @@ assert_not_contains '^  name: legacy-manager-session-manager$' "$TMP_DIR/manager
   --set leaderElection.migrateLegacyLease=true >"$TMP_DIR/manager-lease-migration.yaml"
 assert_contains '^  strategy:$' "$TMP_DIR/manager-lease-migration.yaml"
 assert_contains '^    type: Recreate$' "$TMP_DIR/manager-lease-migration.yaml"
-assert_contains "value: \"${agent_image}\"" "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/backend-session-manager-deployment.yaml"
-
 "$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
   --set sessionPersistence.backend=s3 \
   --set sessionPersistence.s3.bucket=manager-sessions \

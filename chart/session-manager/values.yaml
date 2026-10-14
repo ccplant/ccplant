@@ -81,10 +81,6 @@ sessionPersistence:
       key: secret-access-key
 
 session:
-  image: "ghcr.io/ccplant/ccplant-agent:assets-8eb2ff858281cc2752c32eda9df010ea"
-  # Source image for the ccplant binary injected into session Pods.
-  # Empty follows the session-manager image.
-  cliImage: ""
   serviceAccountName: agentapi-proxy-session
   isolation:
     # Hide Service-derived environment variables from session containers.

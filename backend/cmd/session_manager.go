@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
@@ -50,6 +51,10 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// The session workload must run the exact same release as the manager.
+	// Do not trust a deployment or parent-provided version override here: the
+	// linked build version is the authoritative identity of this binary.
+	cfg.SessionManager.CurrentVersion = buildinfo.Version
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	runtime, err := app.NewSessionManagerRuntime(ctx, cfg, sessionManagerVerbose)

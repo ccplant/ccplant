@@ -15,8 +15,7 @@ Secret references, `runner.managerId`, `runner.pool`, `internalApi.tokenSecretRe
 
 By default, the authenticated heartbeat also advertises the parent proxy's
 semantic version. When it is newer, the elected manager updates its own
-Deployment image and the CLI source for newly created session Pods. The
-`session.image` asset reference stays fixed across application upgrades. Set
+Deployment image and newly created session Pods together. Set
 `autoUpgrade=false` to pin the manager to the installed chart version. Existing
 session Pods are never restarted or mutated.
 
@@ -35,13 +34,9 @@ Volume persistence automatically enables `session.pvc`; no shared manager PVC
 is created. `suspendAfter` controls how long an idle session waits before it is
 checkpointed and suspended.
 
-The default manager image is `ccplant-api`. Session Pods use `ccplant-agent`
-with an independent content-based tag and `IfNotPresent`. An initContainer
-copies ccplant into an `emptyDir` mounted read-only at `/opt/ccplant/bin`.
-The CLI source always uses the session-manager image repository and the version
-embedded when that image was built; it is not independently configurable. The
-legacy `session.cliImage` value is accepted during upgrades but ignored.
-See [Agent image lifecycle](../../docs/guide/agent-image.md).
+The manager binary's linked version is authoritative. Session Pods and the CLI
+initContainer use the manager image repository with that exact version. Neither
+Helm values nor a parent runtime profile can override the session image.
 
 Session Pod isolation is configurable per manager release under
 `session.isolation`. `disableServiceLinks` suppresses Service-derived environment
