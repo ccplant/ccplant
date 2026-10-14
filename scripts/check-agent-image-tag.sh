@@ -8,7 +8,6 @@ files=(
   backend/Dockerfile
   backend/pkg/config/config.go
   backend/helm/agentapi-proxy/values.yaml
-  chart/session-manager/values.yaml
 )
 
 status=0
