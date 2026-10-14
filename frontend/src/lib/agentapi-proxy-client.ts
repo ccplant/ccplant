@@ -728,6 +728,7 @@ export class AgentAPIProxyClient {
   ): ACPInitializationSubscription {
     let eventSource: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stableConnectionTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
     let reconnectAttempts = 0;
     let lastEventId = initialLastEventId;
@@ -762,6 +763,13 @@ export class AgentAPIProxyClient {
       }
     };
 
+    const clearStableConnectionTimer = () => {
+      if (stableConnectionTimer) {
+        clearTimeout(stableConnectionTimer);
+        stableConnectionTimer = null;
+      }
+    };
+
     const scheduleReconnect = (event: Event, state: number) => {
       if (closed || !reconnectEnabled) {
         handlers.onClosed?.(event, state);
@@ -791,10 +799,49 @@ export class AgentAPIProxyClient {
 
       source.onopen = () => {
         if (source !== eventSource || closed) return;
-        reconnectAttempts = 0;
+        // The BFF commits eager SSE responses before the upstream handshake.
+        // Reset backoff only after the connection has remained healthy.
+        clearStableConnectionTimer();
+        stableConnectionTimer = setTimeout(() => {
+          reconnectAttempts = 0;
+          stableConnectionTimer = null;
+        }, 30000);
         settleHandshake(true);
         handlers.onOpen?.();
       };
+
+      source.addEventListener('agentapi_upstream_error', (event) => {
+        if (source !== eventSource || closed) return;
+        clearStableConnectionTimer();
+        settleHandshake(false);
+        source.close();
+        eventSource = null;
+
+        let retryable = true;
+        let retryAfterMs: number | undefined;
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            retryable?: boolean;
+            retryAfterMs?: number;
+          };
+          retryable = payload.retryable !== false;
+          retryAfterMs = payload.retryAfterMs;
+        } catch {
+          // Malformed errors remain retryable using the normal backoff.
+        }
+
+        if (!retryable) {
+          handlers.onClosed?.(event, EventSource.CLOSED);
+          return;
+        }
+        if (retryAfterMs !== undefined) {
+          reconnectAttempts = Math.max(
+            reconnectAttempts,
+            Math.ceil(Math.log2(Math.max(1, retryAfterMs / baseDelayMs))),
+          );
+        }
+        scheduleReconnect(event, EventSource.CLOSED);
+      });
 
       source.onmessage = (event) => {
         if (source !== eventSource || closed) return;
@@ -835,6 +882,7 @@ export class AgentAPIProxyClient {
       close: () => {
         closed = true;
         settleHandshake(false);
+        clearStableConnectionTimer();
         clearReconnectTimer();
         eventSource?.close();
         eventSource = null;
@@ -1466,23 +1514,74 @@ export class AgentAPIProxyClient {
     const url = isUsingProxy
       ? `/api/v1/${sessionId}/events`
       : `${this.baseURL}/${sessionId}/events`;
-    const source = new EventSource(url);
+    let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let stableTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+    let closed = false;
 
-    source.addEventListener('status_change', (event) => {
-      try {
-        const data = JSON.parse((event as MessageEvent).data) as { status?: unknown };
-        if (data.status === 'running' || data.status === 'stable' || data.status === 'error') {
-          onStatus({ status: data.status });
-        }
-      } catch (error) {
-        onError?.(error instanceof Error ? error : new Error('Failed to parse ACP status event'));
-      }
-    });
-    source.onerror = () => {
-      onError?.(new Error('ACP status event stream disconnected'));
+    const scheduleReconnect = (minimumDelayMs = 0) => {
+      if (closed) return;
+      reconnectAttempts += 1;
+      const delay = Math.max(minimumDelayMs, Math.min(1000 * 2 ** (reconnectAttempts - 1), 30000));
+      reconnectTimer = setTimeout(connect, delay);
     };
+    const connect = () => {
+      if (closed) return;
+      const current = new EventSource(url);
+      source = current;
+      current.onopen = () => {
+        if (source !== current || closed) return;
+        if (stableTimer) clearTimeout(stableTimer);
+        stableTimer = setTimeout(() => {
+          reconnectAttempts = 0;
+          stableTimer = null;
+        }, 30000);
+      };
+      current.addEventListener('status_change', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data) as { status?: unknown };
+          if (data.status === 'running' || data.status === 'stable' || data.status === 'error') {
+            onStatus({ status: data.status });
+          }
+        } catch (error) {
+          onError?.(error instanceof Error ? error : new Error('Failed to parse ACP status event'));
+        }
+      });
+      current.addEventListener('agentapi_upstream_error', (event) => {
+        if (source !== current || closed) return;
+        let retryable = true;
+        let retryAfterMs = 0;
+        try {
+          const payload = JSON.parse((event as MessageEvent).data) as { retryable?: boolean; retryAfterMs?: number };
+          retryable = payload.retryable !== false;
+          retryAfterMs = payload.retryAfterMs ?? 0;
+        } catch {
+          // Use retry defaults for malformed events.
+        }
+        current.close();
+        source = null;
+        if (stableTimer) clearTimeout(stableTimer);
+        if (retryable) scheduleReconnect(retryAfterMs);
+        else onError?.(new Error('ACP status stream is no longer available'));
+      });
+      current.onerror = () => {
+        if (source !== current || closed) return;
+        current.close();
+        source = null;
+        if (stableTimer) clearTimeout(stableTimer);
+        onError?.(new Error('ACP status event stream disconnected'));
+        scheduleReconnect();
+      };
+    };
+    connect();
 
-    return { close: () => source.close() };
+    return { close: () => {
+      closed = true;
+      source?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (stableTimer) clearTimeout(stableTimer);
+    } };
   }
 
   /**
@@ -1539,6 +1638,17 @@ export class AgentAPIProxyClient {
     }
 
     const eventSource = new EventSource(eventSourceUrl);
+
+    eventSource.addEventListener('agentapi_upstream_error', (event) => {
+      eventSource.close();
+      let status = 0;
+      try {
+        status = (JSON.parse((event as MessageEvent).data) as { status?: number }).status ?? 0;
+      } catch {
+        // Report a generic upstream stream failure below.
+      }
+      onError?.(new Error(`Proxy status stream upstream failed${status ? ` (${status})` : ''}`));
+    });
 
     eventSource.onmessage = (event) => {
       // Skip heartbeat comments (EventSource ignores comment lines automatically,

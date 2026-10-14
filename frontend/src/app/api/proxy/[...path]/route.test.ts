@@ -91,6 +91,25 @@ describe('API proxy route transport', () => {
     await reader.cancel()
   })
 
+  it('reports an upstream SSE error as an event and closes cleanly', async () => {
+    vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 503, headers: { 'Retry-After': '2' } }),
+    )
+    const request = new NextRequest('https://ui.example.test/api/proxy/session-1/events', {
+      headers: { Accept: 'text/event-stream', Authorization: 'Bearer api-client-token' },
+    })
+
+    const response = await GET(request, {
+      params: Promise.resolve({ path: ['session-1', 'events'] }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe(
+      ': connected\n\nevent: agentapi_upstream_error\ndata: {"status":503,"retryable":true,"retryAfterMs":2000}\n\n',
+    )
+  })
+
   it('aborts the upstream stream when the downstream reader cancels', async () => {
     vi.stubEnv('AGENTAPI_PROXY_URL', 'http://backend:8080')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(

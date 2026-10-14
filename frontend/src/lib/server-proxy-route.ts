@@ -196,6 +196,25 @@ function proxyServerSentEvents(
     linkedAbort.cleanup()
   }
 
+  const closeWithUpstreamError = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    status: number,
+    retryAfter: string | null = null,
+  ) => {
+    const parsedRetryAfter = retryAfter === null ? undefined : Number(retryAfter)
+    const retryAfterMs = parsedRetryAfter !== undefined && Number.isFinite(parsedRetryAfter)
+      ? Math.max(0, parsedRetryAfter) * 1000
+      : undefined
+    const payload = JSON.stringify({
+      status,
+      retryable: status !== 404 && status !== 410,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+    })
+    controller.enqueue(encoder.encode(`event: agentapi_upstream_error\ndata: ${payload}\n\n`))
+    finish()
+    controller.close()
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       // Do not wait for the upstream server to emit its first event before
@@ -214,7 +233,8 @@ function proxyServerSentEvents(
         try {
           const response = await fetch(targetUrl, requestInit)
           if (!response.ok || !response.body) {
-            throw new Error(`Upstream SSE request failed with status ${response.status}`)
+            closeWithUpstreamError(controller, response.status, response.headers.get('retry-after'))
+            return
           }
 
           upstreamReader = response.body.getReader()
@@ -227,9 +247,18 @@ function proxyServerSentEvents(
             }
             controller.enqueue(value)
           }
-        } catch (error) {
+        } catch {
           finish()
-          controller.error(error)
+          // Once the eager SSE response has been committed, surfacing an
+          // exception makes Next.js fail its response pipe and log a full stack
+          // trace. Tell EventSource clients to retry, then close cleanly.
+          if (!linkedAbort.controller.signal.aborted) {
+            try {
+              closeWithUpstreamError(controller, 502)
+            } catch {
+              // The downstream may have disconnected concurrently.
+            }
+          }
         }
       })()
     },
