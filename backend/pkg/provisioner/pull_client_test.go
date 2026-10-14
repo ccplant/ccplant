@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 func TestNewPullHTTPClientLoadsSCIACA(t *testing.T) {
@@ -44,8 +46,13 @@ func TestMarkPoolStockClaimedUsesLocalManagerAndProvisionerToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		require.Equal(t, "/internal/session-provisioners/runner-1/claim-pool-stock", r.URL.Path)
-		require.Equal(t, "Bearer provisioner-token", r.Header.Get("Authorization"))
+		require.Equal(t, "Bearer runner-token", r.Header.Get("Authorization"))
 		require.Empty(t, r.Header.Get("X-Session-Manager-Token"))
+		var body struct {
+			ParentRuntime *sessionsettings.ParentRuntimeConfig `json:"parent_runtime"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "public-session", body.ParentRuntime.SessionID)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
@@ -54,9 +61,10 @@ func TestMarkPoolStockClaimedUsesLocalManagerAndProvisionerToken(t *testing.T) {
 		ProxyURL:          "https://parent.example.com",
 		LocalProxyURL:     server.URL,
 		Token:             "provisioner-token",
+		RunnerToken:       "runner-token",
 		UpstreamAuthToken: "parent-token",
 		RunnerID:          "runner-1",
-	})
+	}, &sessionsettings.ParentRuntimeConfig{Enabled: true, SessionID: "public-session"})
 	require.NoError(t, err)
 	require.True(t, called)
 }

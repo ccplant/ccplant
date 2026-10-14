@@ -452,6 +452,9 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 		if inventoryErr == nil {
 			sessionStatuses := make(map[string]string)
 			for _, runnerID := range localRunnerIDs {
+				if err := manager.RefreshRunnerSessionStatus(ctx, runnerID); err != nil {
+					log.Printf("[SESSION_MANAGER] Refresh runner %s status: %v", runnerID, err)
+				}
 				if session := manager.GetSession(runnerID); session != nil {
 					sessionStatuses[session.ID()] = session.Status()
 				}
@@ -498,9 +501,9 @@ func runSessionRunnerManagerHeartbeat(ctx context.Context, upstream, managerID, 
 						manager.ConfigureSessionRunnerPool(upstream, managerID, token, cfg.SessionManager.RunnerPool)
 					}
 					reconcileSessionRunnerHeartbeat(ctx, manager, result.Pools, result.RegisteredRunnerIDs)
-					for runnerID, policy := range result.AllocatedRunnerPolicies {
-						if err := manager.ApplyRunnerAutoSuspendPolicy(ctx, runnerID, policy.AutoSuspendEnabled, policy.AutoSuspendMinutes); err != nil {
-							log.Printf("[SESSION_MANAGER] Apply runner %s auto-suspend policy: %v", runnerID, err)
+					for runnerID, metadata := range result.AllocatedRunnerPolicies {
+						if err := manager.ApplyRunnerAllocationMetadata(ctx, runnerID, metadata); err != nil {
+							log.Printf("[SESSION_MANAGER] Apply runner %s allocation metadata: %v", runnerID, err)
 						}
 					}
 					if err := reconcileSessionManagerVersion(ctx, cfg, manager.GetClient(), manager.GetNamespace(), result.UpstreamVersion); err != nil {
