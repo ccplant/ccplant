@@ -106,9 +106,6 @@ func CompileSettings(settings *SessionSettings, opts CompileOptions) error {
 		if err := toml.Unmarshal([]byte(codexConfig), &config); err != nil {
 			return fmt.Errorf("failed to build codex-acp config: %w", err)
 		}
-		if len(catalogEnv) > 0 {
-			config["model_catalog_json"] = filepath.Join(opts.OutputDir, ".codex", CodexModelCatalogFile)
-		}
 		encoded, err := json.Marshal(config)
 		if err != nil {
 			return fmt.Errorf("failed to encode codex-acp config: %w", err)
