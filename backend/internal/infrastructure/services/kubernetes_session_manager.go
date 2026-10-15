@@ -484,7 +484,7 @@ func (m *KubernetesSessionManager) RefreshRunnerSessionStatus(ctx context.Contex
 	}
 	status := session.Status()
 	if svc.Annotations[sessionSuspendedAtAnnotation] != "" {
-		if !statusWatcherTerminal(status) {
+		if status == "stopped" || !statusWatcherTerminal(status) {
 			session.SetStatus("suspended")
 		}
 		return nil

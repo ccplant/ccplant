@@ -1038,6 +1038,30 @@ func TestRefreshRunnerSessionStatusUsesCanonicalSuspendState(t *testing.T) {
 	}
 }
 
+func TestRefreshRunnerSessionStatusCorrectsStoppedObservedFromOtherReplicaSuspend(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	ctx := context.Background()
+	const sessionID = "suspended-by-other-replica"
+	session := NewKubernetesSession(sessionID, &entities.RunServerRequest{}, "agentapi-session-"+sessionID, "agentapi-session-"+sessionID+"-svc", "", "test-ns", 9000, nil, nil)
+	session.SetStatus("stopped")
+	manager.mutex.Lock()
+	manager.sessions[sessionID] = session
+	manager.mutex.Unlock()
+	_, err := manager.client.CoreV1().Services("test-ns").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: session.ServiceName(), Namespace: "test-ns", Annotations: map[string]string{sessionSuspendedAtAnnotation: time.Now().Format(time.RFC3339Nano)}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.RefreshRunnerSessionStatus(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if session.Status() != "suspended" {
+		t.Fatalf("status = %q, want suspended", session.Status())
+	}
+}
+
 func TestRefreshRunnerSessionStatusDetectsNewReadyPod(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	ctx := context.Background()
