@@ -259,6 +259,9 @@ func TestCompileSettingsRegistersCatalogWithConnection(t *testing.T) {
 	require.Contains(t, string(encoded), "model_catalog_json")
 	require.Contains(t, string(encoded), CodexModelCatalogFile)
 	require.Contains(t, string(encoded), "model = 'glm-5.3'")
+	var acpConfig map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(settings.Env["CODEX_CONFIG"]), &acpConfig))
+	require.NotContains(t, acpConfig, "model_catalog_json")
 
 	models := readGeneratedCatalog(t, outputDir)
 	require.Contains(t, catalogSlugs(models), "glm-5.3")
