@@ -261,6 +261,21 @@ sudo ccplant native logs --daemon --tail 100
 
 同じNamespaceとReleaseでコマンドを再実行すると、既存のマネージャーIDと接続トークンを維持したままHelm Releaseを更新します。
 
+インストール済みのvaluesは、同じNamespaceとRelease名を指定してYAMLとして取得できます。
+デフォルトでは明示的に設定されたvaluesだけを出力するため、そのまま`-f`へ再利用できます。
+Chartのデフォルト値を含むcomputed valuesが必要な場合は`--all`を付けます。
+
+```bash
+ccplant session-manager values \
+  --namespace ccplant-session \
+  --release session-manager > session-values.yaml
+
+ccplant session-manager values \
+  --namespace ccplant-session \
+  --release session-manager \
+  --all > session-values-all.yaml
+```
+
 ```bash
 ccplant session-manager install \
   --upstream https://ccplant.example.com \
