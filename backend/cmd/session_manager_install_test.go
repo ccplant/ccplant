@@ -65,6 +65,15 @@ func TestSessionManagerInstallSessionServiceAccountFlags(t *testing.T) {
 	require.Equal(t, "", command.Flags().Lookup("session-service-account").DefValue)
 }
 
+func TestSessionManagerInstallValuesFlag(t *testing.T) {
+	t.Parallel()
+	command := newSessionManagerInstallCommand()
+
+	flag := command.Flags().Lookup("values")
+	require.NotNil(t, flag)
+	require.Equal(t, "f", flag.Shorthand)
+}
+
 func TestEnsureSessionServiceAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -199,6 +208,7 @@ func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T
 		createNamespace: true,
 		wait:            true,
 		version:         "v1.2.3",
+		valuesFiles:     []string{"base.yaml", "scheduling.yaml"},
 	}
 
 	args := sessionManagerHelmUpgradeArgs(opts, "/tmp/values.yaml", false)
@@ -206,6 +216,8 @@ func TestSessionManagerHelmUpgradeArgsForceServerSideApplyConflicts(t *testing.T
 	require.Equal(t, []string{
 		"upgrade", "--install", "manager", "oci://example.com/session-manager",
 		"--namespace", "sessions",
+		"--values", "base.yaml",
+		"--values", "scheduling.yaml",
 		"--values", "/tmp/values.yaml",
 		"--timeout", "10m",
 		"--force-conflicts",

@@ -110,6 +110,12 @@ session:
     resources:
       requests: {cpu: "10m", memory: "512Mi"}
       limits: {cpu: "2", memory: "4Gi"}
+  # Scheduling rules for the session Pods created by this manager.
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # Additional PodTemplateSpec fields merged into every generated session Pod.
+  podTemplate: {}
   pvc:
     # Automatically enabled when sessionPersistence.backend=volume.
     enabled: false

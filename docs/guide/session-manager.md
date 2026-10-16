@@ -91,6 +91,38 @@ unset REGISTRATION_TOKEN
 
 :::
 
+Session Podの配置設定など、Chart固有の追加設定はHelm valuesファイルを
+`-f`（または`--values`）で渡せます。複数回指定した場合は後のファイルが優先され、
+接続資格情報などCLIが管理する値は最後に安全に上書きされます。
+
+```yaml
+# session-values.yaml
+session:
+  nodeSelector:
+    workload: agent-session
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: agent-session
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: workload
+                operator: In
+                values: [agent-session]
+```
+
+```bash
+ccplant session-manager install \
+  --upstream https://ccplant.example.com \
+  --registration-token-file ./registration-token \
+  --version X.Y.Z \
+  -f ./session-values.yaml
+```
+
 `X.Y.Z`は使用するccplantリリースのChartバージョンへ置き換えてください。Kubernetes版はNamespaceを必要に応じて作成し、OCI Chart `oci://ghcr.io/ccplant/charts/session-manager`をインストールして、リソースがReadyになるまで最大10分待ちます。
 
 `--persistence`を指定すると、各Session Podのworkdirに専用PVCを作成します。suspend/resume時にACPの会話履歴も保存・復元するには、`--persistence-backend volume`を指定します。`volume`バックエンドはSession PVCも自動的に有効化します。`--storage-class`を省略した場合はクラスタのデフォルトStorageClassを使用し、`--persistence-size`のデフォルトは`10Gi`です。これはSession Manager Pod自身の共有PVCではありません。

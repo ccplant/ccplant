@@ -552,6 +552,24 @@ assert_not_contains 'name: AGENTAPI_SESSION_MANAGER_CURRENT_VERSION' "$TMP_DIR/m
   --set session.cliImage=registry.example/legacy-cli >"$TMP_DIR/manager-legacy-cli-value.yaml"
 assert_not_contains 'registry.example/legacy-cli' "$TMP_DIR/manager-legacy-cli-value.yaml"
 assert_not_contains 'name: AGENTAPI_K8S_SESSION_CLI_IMAGE' "$TMP_DIR/manager-legacy-cli-value.yaml"
+
+"$HELM_BIN" template manager "$REPO_ROOT/chart/session-manager" \
+  --set session.nodeSelector.workload=agent-session \
+  --set session.tolerations[0].key=dedicated \
+  --set session.tolerations[0].operator=Equal \
+  --set session.tolerations[0].value=agent-session \
+  --set session.tolerations[0].effect=NoSchedule \
+  --set session.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=workload \
+  --set session.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=In \
+  --set session.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]=agent-session \
+  --set session.podTemplate.spec.priorityClassName=agent-session \
+  >"$TMP_DIR/manager-session-scheduling.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_CONFIG_FILE' "$TMP_DIR/manager-session-scheduling.yaml"
+assert_contains 'name: AGENTAPI_K8S_SESSION_POD_TEMPLATE_FILE' "$TMP_DIR/manager-session-scheduling.yaml"
+assert_contains 'workload: "agent-session"' "$TMP_DIR/manager-session-scheduling.yaml"
+assert_contains 'effect: NoSchedule' "$TMP_DIR/manager-session-scheduling.yaml"
+assert_contains 'priorityClassName: agent-session' "$TMP_DIR/manager-session-scheduling.yaml"
+assert_contains 'mountPath: /etc/k8s-session-config' "$TMP_DIR/manager-session-scheduling.yaml"
 "$HELM_BIN" template backend "$REPO_ROOT/backend/helm/agentapi-proxy" \
   "${all_role_args[@]}" \
   --set sessionManager.kubernetesSession.cliImage=registry.example/legacy-cli \

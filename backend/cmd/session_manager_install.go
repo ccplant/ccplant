@@ -29,6 +29,7 @@ type sessionManagerInstallOptions struct {
 	targetType, upstream, registrationToken, registrationTokenFile string
 	apiKeyEnv, apiKeyFile, scope, teamID                           string
 	namespace, release, chart, version, pool, name, instanceID     string
+	valuesFiles                                                    []string
 	connectionSecret, internalSecret, provisionerSecret            string
 	sessionServiceAccount                                          string
 	storageClass, persistenceSize, persistenceBackend              string
@@ -68,6 +69,7 @@ func newSessionManagerInstallCommand() *cobra.Command {
 	flags.StringVar(&opts.release, "release", "session-manager", "Helm release name")
 	flags.StringVar(&opts.chart, "chart", "oci://ghcr.io/ccplant/charts/session-manager", "session-manager Helm chart")
 	flags.StringVar(&opts.version, "version", "", "Helm chart version")
+	flags.StringArrayVarP(&opts.valuesFiles, "values", "f", nil, "additional Helm values file (can be specified multiple times)")
 	flags.StringVar(&opts.pool, "pool", "default", "logical pool supplied by this manager")
 	flags.StringVar(&opts.name, "name", "", "manager display name")
 	flags.StringVar(&opts.instanceID, "instance-id", "", "stable manager instance ID")
@@ -235,13 +237,20 @@ func sessionManagerHelmUpgradeArgs(opts sessionManagerInstallOptions, valuesFile
 	args := []string{
 		"upgrade", "--install", opts.release, opts.chart,
 		"--namespace", opts.namespace,
+	}
+	for _, file := range opts.valuesFiles {
+		args = append(args, "--values", file)
+	}
+	args = append(args,
+		// Installer-managed connection and credential values must take precedence
+		// over user values files, so the generated file is deliberately last.
 		"--values", valuesFile,
 		"--timeout", opts.timeout,
 		// The chart owns the session-manager Deployment, including its image.
 		// Take over chart-managed fields if an earlier Helm invocation or another
 		// ccplant release owns them through server-side apply.
 		"--force-conflicts",
-	}
+	)
 	if opts.createNamespace {
 		args = append(args, "--create-namespace")
 	}
