@@ -54,6 +54,13 @@ entity, while default-denying all other cluster-internal egress (including the
 session-manager service and kube-apiserver). Service account token mounting is
 disabled by default; the other isolation controls remain disabled.
 
+Session Pod placement is configured independently from the manager Pod under
+`session.nodeSelector`, `session.affinity`, and `session.tolerations`. Additional
+`PodTemplateSpec` fields can be supplied with `session.podTemplate`. The chart
+mounts these settings into the manager and applies them to newly created session
+Pods; the top-level `nodeSelector`, `affinity`, and `tolerations` continue to
+configure the session-manager Pods themselves.
+
 Resource names and the leader-election Lease are derived from the Helm release
 name by default. This allows multiple session-manager releases to run in one
 namespace without sharing Kubernetes objects or electing a leader across managers.

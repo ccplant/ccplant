@@ -1,0 +1,30 @@
+{{- $session := .Values.session | default dict -}}
+{{- if or $session.nodeSelector $session.affinity $session.tolerations $session.podTemplate }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "session-manager.fullname" . }}-session-config
+  labels:
+    {{- include "session-manager.labels" . | nindent 4 }}
+data:
+  {{- if or $session.nodeSelector $session.affinity $session.tolerations }}
+  k8s-session-config.yaml: |
+    kubernetes_session:
+      {{- with $session.nodeSelector }}
+      node_selector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $session.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $session.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- end }}
+  {{- with $session.podTemplate }}
+  session-pod-template.yaml: |
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
