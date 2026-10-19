@@ -1,0 +1,51 @@
+{{- if .Values.internalIngress.enabled -}}
+{{- $cfg := .Values.internalIngress -}}
+{{- if not $cfg.allowedCIDRs -}}
+{{- fail "internalIngress.allowedCIDRs must contain at least one CIDR when internalIngress.enabled=true" -}}
+{{- end -}}
+{{- $className := $cfg.className | default .Values.ingress.className -}}
+{{- if .Values.global -}}
+  {{- if .Values.global.ingress -}}
+    {{- $className = $cfg.className | default (.Values.global.ingress.className | default .Values.ingress.className) -}}
+  {{- end -}}
+{{- end -}}
+{{- $defaultHostname := .Values.config.hostname -}}
+{{- if .Values.global -}}
+  {{- $defaultHostname = .Values.global.apiHostname | default .Values.config.hostname -}}
+{{- end -}}
+{{- $hosts := $cfg.hosts -}}
+{{- if not $hosts -}}
+  {{- $hosts = list $defaultHostname -}}
+{{- end -}}
+{{- $annotations := deepCopy ($cfg.annotations | default dict) -}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/whitelist-source-range" (join "," $cfg.allowedCIDRs) -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "agentapi-proxy.fullname" . }}-internal
+  labels:
+    {{- include "agentapi-proxy.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml $annotations | nindent 4 }}
+spec:
+  {{- if $className }}
+  ingressClassName: {{ $className }}
+  {{- end }}
+  {{- with $cfg.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: {{ $cfg.path }}
+            pathType: {{ $cfg.pathType }}
+            backend:
+              service:
+                name: {{ include "agentapi-proxy.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+    {{- end }}
+{{- end }}

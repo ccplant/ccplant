@@ -815,6 +815,25 @@ ingress:
   #   hosts:
   #     - agentapi.example.com
 
+# Create a more-specific Ingress for /internal so ingress-nginx can reject
+# requests whose source address is not explicitly allowed. This is an
+# additional network boundary; internal endpoint authentication still applies.
+internalIngress:
+  enabled: false
+  # Empty inherits ingress.className (or global.ingress.className).
+  className: ""
+  path: /internal
+  pathType: Prefix
+  # Enabling this Ingress with an empty allowlist fails template rendering.
+  allowedCIDRs: []
+  annotations: {}
+  # Empty uses global.apiHostname or config.hostname.
+  hosts: []
+  tls: []
+  # - secretName: agentapi-proxy-tls
+  #   hosts:
+  #     - agentapi.example.com
+
 resources:
   requests:
     memory: "512Mi"
