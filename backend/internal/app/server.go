@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,6 +86,8 @@ type Server struct {
 	shareRepo                   portrepos.ShareRepository                       // Share repository for session sharing
 	teamConfigRepo              portrepos.TeamConfigRepository                  // Team configuration repository
 	sandboxPolicyRepo           portrepos.SandboxPolicyRepository               // Sandbox policy repository
+	storageRepo                 portrepos.StorageRepository                     // Scoped persistent storage metadata
+	storageObjectStore          services.StorageObjectStore                     // Immutable object_snapshot blobs
 	sandboxDomainRepo           *repositories.KubernetesSandboxDomainRepository // Sandbox domain log repository
 	sessionRouteRepo            portrepos.SessionRouteRepository                // Session route repository for External Session Manager routing
 	sessionRunnerStore          sessionrunnercore.Store                         // Cluster-wide managers, pools, bindings, runners and pool allocations
@@ -170,7 +174,7 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 			// (at least 3 parts, not starting with "start", "search", "sessions", "oauth", "auth", "notification", or "notifications")
 			if len(pathParts) >= 3 && pathParts[1] != "" {
 				firstSegment := pathParts[1]
-				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "assets" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
+				return firstSegment != "start" && firstSegment != "search" && firstSegment != "sessions" && firstSegment != "oauth" && firstSegment != "auth" && firstSegment != "notification" && firstSegment != "notifications" && firstSegment != "assets" && firstSegment != "credentials" && firstSegment != "files" && firstSegment != "storages" && firstSegment != "session-profiles" && firstSegment != "sandbox-policies" && firstSegment != "integrations"
 			}
 			return false
 		},
@@ -433,6 +437,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		k8sSessionManager.SetSandboxPolicyRepository(sandboxPolicyRepo)
 	}
 	log.Printf("[SERVER] Sandbox policy repository initialized")
+	storageRepo := portrepos.StorageRepository(repositories.NewKubernetesStorageRepository(
+		persistenceClient,
+		namespace,
+	))
+	log.Printf("[SERVER] Storage repository initialized")
 
 	// Initialize sandbox domain repository (Kubernetes ConfigMap-backed)
 	sandboxDomainRepo := repositories.NewKubernetesSandboxDomainRepository(
@@ -508,6 +517,11 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		log.Printf("[SERVER] Session persistence disabled because S3 store initialization failed: %v", err)
 		sessionStateStore = nil
 	}
+	storageObjectStore, err := services.NewStorageObjectStore(context.Background(), cfg.SessionPersistence.S3)
+	if err != nil {
+		log.Printf("[SERVER] Object-backed storage disabled because S3 store initialization failed: %v", err)
+		storageObjectStore = nil
+	}
 
 	var sessionControlStore sessioncontrol.Store
 	var esmControlStore esmcontrol.Store
@@ -555,6 +569,8 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		shareRepo:                   shareRepo,
 		teamConfigRepo:              teamConfigRepo,
 		sandboxPolicyRepo:           sandboxPolicyRepo,
+		storageRepo:                 storageRepo,
+		storageObjectStore:          storageObjectStore,
 		sandboxDomainRepo:           sandboxDomainRepo,
 		sessionRouteRepo:            sessionRouteRepo,
 		sessionRunnerStore:          sessionRunnerStore,
@@ -1298,6 +1314,11 @@ func (s *Server) previewWithPlacement(ctx context.Context, sessionID string, sta
 	if !ok {
 		return nil, fmt.Errorf("session settings preview is not supported")
 	}
+	resolvedStorages, err := s.resolveStorageAttachments(ctx, startReq, userID, placement.Pool)
+	if err != nil {
+		return nil, err
+	}
+	startReq.ResolvedStorages = resolvedStorages
 	runReq := s.runRequestForStart(sessionID, startReq, userID, teams)
 	runReq.Pool = placement.Pool
 	settings, err := builder.BuildRemoteProvisionSettings(ctx, sessionID, runReq)
@@ -1339,6 +1360,11 @@ func (s *Server) createSession(ctx context.Context, sessionID string, startReq e
 	if explicitManagerID != "" && !authorizedRouteContainsManager(route, explicitManagerID) {
 		return nil, fmt.Errorf("requested session manager is not an authorized supplier of pool %q", route.PoolName())
 	}
+	resolvedStorages, err := s.resolveStorageAttachments(ctx, startReq, userID, route.PoolName())
+	if err != nil {
+		return nil, err
+	}
+	startReq.ResolvedStorages = resolvedStorages
 
 	// Identity and TeamConfig mutation belong to the API. The execution-plane
 	// manager receives an already-authorized request and never initializes the
@@ -1420,6 +1446,7 @@ func (s *Server) createLocalSession(ctx context.Context, route sessionrunnercore
 		CodexAuthMode: codexAuthMode, ClaudeAuthMode: claudeAuthMode, ProfileFiles: startReq.ProfileFiles,
 		ProfileMCPServers: startReq.ProfileMCPServers, ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
 		ProfileSkills: startReq.ProfileSkills, ProfileCommandWrapper: startReq.ProfileCommandWrapper,
+		Storages: startReq.ResolvedStorages,
 	})
 	if err != nil {
 		return nil, err
@@ -2060,6 +2087,7 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		ProfileSkills:            startReq.ProfileSkills,
 		ProfileCommandWrapper:    startReq.ProfileCommandWrapper,
 		ResolvedSessionProfileID: startReq.ResolvedSessionProfileID,
+		Storages:                 append([]entities.ResolvedStorageAttachment(nil), startReq.ResolvedStorages...),
 	}
 	if startReq.Params != nil {
 		runReq.SlackParams = startReq.Params.Slack
@@ -2069,6 +2097,80 @@ func (s *Server) runRequestForStart(sessionID string, startReq entities.StartReq
 		runReq.CycleMaxCount = startReq.Params.CycleMaxCount
 	}
 	return runReq
+}
+
+func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entities.StartRequest, userID, pool string) ([]entities.ResolvedStorageAttachment, error) {
+	if startReq.Params == nil || len(startReq.Params.Storages) == 0 {
+		return nil, nil
+	}
+	if s.storageRepo == nil {
+		return nil, fmt.Errorf("storage repository is unavailable")
+	}
+	seenIDs := make(map[string]struct{}, len(startReq.Params.Storages))
+	seenPaths := make(map[string]struct{}, len(startReq.Params.Storages))
+	resolved := make([]entities.ResolvedStorageAttachment, 0, len(startReq.Params.Storages))
+	for _, attachment := range startReq.Params.Storages {
+		attachment.StorageID = strings.TrimSpace(attachment.StorageID)
+		attachment.MountPath = filepath.Clean(strings.TrimSpace(attachment.MountPath))
+		if attachment.StorageID == "" || !filepath.IsAbs(attachment.MountPath) || attachment.MountPath == "/" {
+			return nil, fmt.Errorf("storage_id and an absolute non-root mount_path are required")
+		}
+		if storageMountPathReserved(attachment.MountPath) {
+			return nil, fmt.Errorf("storage mount path %q is reserved", attachment.MountPath)
+		}
+		if _, exists := seenIDs[attachment.StorageID]; exists {
+			return nil, fmt.Errorf("storage %q is attached more than once", attachment.StorageID)
+		}
+		for existing := range seenPaths {
+			if attachment.MountPath == existing || strings.HasPrefix(attachment.MountPath+"/", existing+"/") || strings.HasPrefix(existing+"/", attachment.MountPath+"/") {
+				return nil, fmt.Errorf("storage mount path %q overlaps %q", attachment.MountPath, existing)
+			}
+		}
+		storage, err := s.storageRepo.GetByID(ctx, attachment.StorageID)
+		if err != nil {
+			return nil, fmt.Errorf("load storage %q: %w", attachment.StorageID, err)
+		}
+		if storage.Scope() != startReq.Scope || (storage.Scope() == entities.ScopeUser && storage.OwnerID() != userID) || (storage.Scope() == entities.ScopeTeam && storage.TeamID() != startReq.TeamID) {
+			return nil, fmt.Errorf("storage %q does not belong to the session scope", attachment.StorageID)
+		}
+		if storage.State() != entities.StorageStateReady {
+			return nil, fmt.Errorf("storage %q is not ready", attachment.StorageID)
+		}
+		if storage.Pool() != "" && pool != "" && storage.Pool() != pool {
+			return nil, fmt.Errorf("storage %q requires pool %q, selected pool is %q", attachment.StorageID, storage.Pool(), pool)
+		}
+		entry := entities.ResolvedStorageAttachment{
+			StorageAttachment: attachment, Kind: storage.Kind(), Pool: storage.Pool(),
+			Provider: storage.Provider(), Size: storage.Size(), Revision: storage.Revision(),
+		}
+		if storage.Kind() == entities.StorageKindObjectSnapshot {
+			files := storage.Files()
+			paths := make([]string, 0, len(files))
+			for filePath, file := range files {
+				if !file.Deleted {
+					paths = append(paths, filePath)
+				}
+			}
+			sort.Strings(paths)
+			for _, filePath := range paths {
+				entry.Files = append(entry.Files, files[filePath])
+			}
+		}
+		seenIDs[attachment.StorageID] = struct{}{}
+		seenPaths[attachment.MountPath] = struct{}{}
+		resolved = append(resolved, entry)
+	}
+	return resolved, nil
+}
+
+func storageMountPathReserved(value string) bool {
+	reserved := []string{"/bin", "/boot", "/dev", "/etc", "/proc", "/sys", "/usr", "/var/run", "/session-settings", "/credentials", "/opt/ccplant", "/home/agentapi/.codex", "/home/agentapi/.claude", "/home/agentapi/.docker", "/home/agentapi/workdir"}
+	for _, prefix := range reserved {
+		if value == prefix || (prefix != "/home/agentapi/workdir" && strings.HasPrefix(value, prefix+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) ResolveRestartSettings(ctx context.Context, id string, input entities.StartRequest, userID string, teams []string) (*sessionsettings.SessionSettings, error) {

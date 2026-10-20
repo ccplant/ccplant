@@ -48,6 +48,7 @@ type HandlerRegistry struct {
 	apiTokenController             *controllers.APITokenController
 	adminLocalUserController       *controllers.AdminLocalUserController
 	sandboxPolicyController        *controllers.SandboxPolicyController
+	storageController              *controllers.StorageController
 	resourceTransferController     *controllers.ResourceTransferController
 	fileController                 *controllers.FileController
 	assetController                *controllers.AssetController
@@ -240,6 +241,11 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		sandboxPolicyController = controllers.NewSandboxPolicyController(server.sandboxPolicyRepo, server.sandboxDomainRepo)
 		log.Printf("[ROUTER] Sandbox policy controller initialized")
 	}
+	var storageController *controllers.StorageController
+	if server.storageRepo != nil {
+		storageController = controllers.NewStorageController(server.storageRepo, server.storageObjectStore)
+		log.Printf("[ROUTER] Storage controller initialized")
+	}
 
 	resourceTransferOptions := []resource_transfer.Option{
 		resource_transfer.WithSessionProfileRepository(server.sessionProfileRepo),
@@ -366,6 +372,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			apiTokenController:             apiTokenController,
 			adminLocalUserController:       adminLocalUserController,
 			sandboxPolicyController:        sandboxPolicyController,
+			storageController:              storageController,
 			resourceTransferController:     resourceTransferController,
 			fileController:                 fileController,
 			assetController:                assetController,
@@ -841,6 +848,20 @@ func (r *Router) registerConditionalRoutes() error {
 		log.Printf("[ROUTES] Sandbox policy endpoints registered")
 	} else {
 		log.Printf("[ROUTES] Sandbox policy repository not available, skipping sandbox policy routes")
+	}
+
+	if r.server.storageRepo != nil && r.handlers.storageController != nil {
+		log.Printf("[ROUTES] Registering storage endpoints...")
+		r.echo.POST("/storages", r.handlers.storageController.Create, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/storages", r.handlers.storageController.List, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/storages/:id", r.handlers.storageController.Get, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PATCH("/storages/:id", r.handlers.storageController.Update, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.DELETE("/storages/:id", r.handlers.storageController.Delete, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/storages/:id/files", r.handlers.storageController.ListFiles, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.PUT("/storages/:id/files/*", r.handlers.storageController.PutFile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		r.echo.GET("/storages/:id/files/*", r.handlers.storageController.GetFile, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.DELETE("/storages/:id/files/*", r.handlers.storageController.DeleteFile, auth.RequirePermission(entities.PermissionSessionCreate, r.server.container.AuthService))
+		log.Printf("[ROUTES] Storage endpoints registered")
 	}
 
 	// Add file routes if user file repository is available (Kubernetes mode only)

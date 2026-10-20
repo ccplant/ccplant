@@ -927,17 +927,19 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	applySelectedAgentDefaultModel(req)
 	applySandboxDefaults(req)
 
-	// Attempt to adopt a stock session matching the requested pod capabilities
-	// before creating a new one.
-	if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
-		log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
-	} else if stockSvc != nil {
-		claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
-		if claimErr != nil {
-			log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
-		} else {
-			log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
-			return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+	// Storage volumes cannot be added to an already-running stock Pod. Only
+	// storage-free requests are eligible for stock adoption.
+	if len(req.Storages) == 0 {
+		if stockSvc, err := m.findStockSession(ctx, sessionRequirements(req)); err != nil {
+			log.Printf("[K8S_SESSION] Warning: failed to search for stock sessions: %v", err)
+		} else if stockSvc != nil {
+			claimedSvc, claimErr := m.claimStockService(ctx, stockSvc)
+			if claimErr != nil {
+				log.Printf("[K8S_SESSION] Stock session claim failed (concurrent claim?), falling back to new session creation: %v", claimErr)
+			} else {
+				log.Printf("[K8S_SESSION] Found stock session %s, adopting for new request", claimedSvc.Labels["agentapi.proxy/session-id"])
+				return m.adoptStockSession(ctx, req, webhookPayload, claimedSvc)
+			}
 		}
 	}
 
@@ -992,7 +994,6 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	} else {
 		log.Printf("[K8S_SESSION] PVC disabled, using EmptyDir for session %s", id)
 	}
-
 	// Cache initial message as description
 	if req.InitialMessage != "" {
 		session.SetDescription(req.InitialMessage)
@@ -2283,6 +2284,16 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 		return fmt.Errorf("get restart settings secret %s: %w", name, getErr)
 	}
 	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
+	for _, storage := range settings.Storages {
+		resolved := entities.ResolvedStorageAttachment{
+			StorageAttachment: entities.StorageAttachment{StorageID: storage.StorageID, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly},
+			Kind:              entities.StorageKind(storage.Kind), Revision: storage.Revision,
+		}
+		for _, file := range storage.Files {
+			resolved.Files = append(resolved.Files, entities.StorageFile{Path: file.Path, Digest: file.Digest, Size: file.Size, Mode: file.Mode, Revision: file.Revision})
+		}
+		req.Storages = append(req.Storages, resolved)
+	}
 	if settings.Sandbox != nil {
 		req.Sandbox = &entities.SandboxParams{Enabled: settings.Sandbox.Enabled, PolicyID: settings.Sandbox.PolicyID, AllowedDomains: settings.Sandbox.AllowedDomains, DeniedDomains: settings.Sandbox.DeniedDomains, CountMode: settings.Sandbox.CountMode}
 	}
@@ -4971,6 +4982,16 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 			},
 		},
 	})
+	if request := session.Request(); request != nil {
+		for index, storage := range request.Storages {
+			if storage.Kind != entities.StorageKindObjectSnapshot {
+				continue
+			}
+			volume := corev1.Volume{Name: storageVolumeName(index)}
+			volume.EmptyDir = &corev1.EmptyDirVolumeSource{}
+			volumes = append(volumes, volume)
+		}
+	}
 
 	// session-settings Secret – optional volume for Pod restart auto-provisioning.
 	// Created after successful provisioning; not present on first startup.
@@ -6304,6 +6325,11 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		MountPath: "/session-settings",
 		ReadOnly:  true,
 	})
+	for index, storage := range req.Storages {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name: storageVolumeName(index), MountPath: storage.MountPath, ReadOnly: storage.ReadOnly,
+		})
+	}
 
 	if m.sciaSessionSidecarEnabled(req) {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -6315,6 +6341,8 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 
 	return volumeMounts
 }
+
+func storageVolumeName(index int) string { return fmt.Sprintf("shared-storage-%d", index) }
 
 // restoreSessionFromService restores a session from Kubernetes Service
 // This is used to recover sessions after agentapi-proxy restart
@@ -6947,6 +6975,21 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		settings.Session.AutoSuspendMinutes = int(after / time.Minute)
 	}
 	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
+	for _, storage := range req.Storages {
+		resolved := sessionsettings.StorageAttachment{
+			StorageID: storage.StorageID, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly,
+			Kind: string(storage.Kind), Revision: storage.Revision,
+		}
+		for _, file := range storage.Files {
+			if file.Deleted {
+				continue
+			}
+			resolved.Files = append(resolved.Files, sessionsettings.StorageFile{
+				Path: file.Path, Digest: file.Digest, Size: file.Size, Mode: file.Mode, Revision: file.Revision,
+			})
+		}
+		settings.Storages = append(settings.Storages, resolved)
+	}
 
 	// Build env vars (mirrors buildEnvVars logic from line 2695)
 	env := map[string]string{

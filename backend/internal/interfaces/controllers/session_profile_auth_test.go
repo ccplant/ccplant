@@ -99,6 +99,43 @@ func TestMergeSessionParamsModelOptions(t *testing.T) {
 	require.Equal(t, []string{"sonnet", "opus"}, profile.ModelOptions)
 }
 
+func TestMergeSessionParamsStorages(t *testing.T) {
+	profile := &entities.SessionParams{Storages: []entities.StorageAttachment{
+		{StorageID: "shared", MountPath: "/home/agentapi/workdir/shared"},
+		{StorageID: "cache", MountPath: "/home/agentapi/workdir/cache", ReadOnly: true},
+	}}
+	override := &entities.SessionParams{Storages: []entities.StorageAttachment{
+		{StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true},
+		{StorageID: "extra", MountPath: "/home/agentapi/workdir/extra"},
+	}}
+
+	merged := mergeSessionParams(profile, override)
+
+	require.Equal(t, []entities.StorageAttachment{
+		{StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true},
+		{StorageID: "cache", MountPath: "/home/agentapi/workdir/cache", ReadOnly: true},
+		{StorageID: "extra", MountPath: "/home/agentapi/workdir/extra"},
+	}, merged.Storages)
+	require.Equal(t, "/home/agentapi/workdir/shared", profile.Storages[0].MountPath)
+}
+
+func TestApplySessionProfileAddsStorageAttachments(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{Storages: []entities.StorageAttachment{{
+		StorageID: "shared", MountPath: "/home/agentapi/workdir/shared",
+	}}})
+	request := &entities.StartRequest{Params: &entities.SessionParams{Storages: []entities.StorageAttachment{{
+		StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true,
+	}}}}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, []entities.StorageAttachment{{
+		StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true,
+	}}, request.Params.Storages)
+}
+
 func TestProfileConnectionSecretLifecycle(t *testing.T) {
 	raw := []byte(`{"mode":"openai_compatible","base_url":"https://profile.example/v1","authentication":"api_key","api_key":"profile-secret"}`)
 	connection, err := mergeProfileConnection(nil, raw, "codex")
