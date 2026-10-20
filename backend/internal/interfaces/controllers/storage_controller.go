@@ -99,6 +99,9 @@ func (c *StorageController) Create(ctx echo.Context) error {
 	if err := ctx.Bind(&request); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
+	if strings.TrimSpace(request.Scope) == "" {
+		request.Scope = string(entities.ScopeUser)
+	}
 	request.Scope, request.TeamID = auth.ResolveUserScope(user, request.Scope, request.TeamID)
 	if request.Scope == string(entities.ScopeTeam) && !storageUserInTeam(user, request.TeamID) {
 		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
