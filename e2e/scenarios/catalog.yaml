@@ -1,0 +1,27 @@
+categories:
+  - id: smoke
+    description: スモークテスト
+  - id: auth
+    description: 認証
+  - id: session
+    description: セッション
+  - id: settings
+    description: 設定
+  - id: integration
+    description: 外部連携
+
+scenarios:
+  - id: api.smoke.health
+    category: smoke
+    description: APIが正常に応答する
+    kind: go-test
+    package: ./scenarios/api
+    test: TestHealth
+    timeout: 30s
+  - id: frontend.smoke.home
+    category: smoke
+    description: トップ画面を表示できる
+    kind: playwright
+    tag: "@smoke-home"
+    timeout: 1m
+    capabilities: [chromium]

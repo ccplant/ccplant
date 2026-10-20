@@ -1,0 +1,9 @@
+FROM mcr.microsoft.com/playwright:v1.53.2-noble
+RUN curl -fsSL https://go.dev/dl/go1.25.0.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV PATH=/usr/local/go/bin:$PATH E2E_ROOT=/app
+WORKDIR /app
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+RUN go build -o /usr/local/bin/e2e-worker ./cmd/worker && cd scenarios/frontend && npm install
+ENTRYPOINT ["e2e-worker"]
