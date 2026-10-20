@@ -3,7 +3,7 @@
 ## 目的
 
 ルートの `e2e/` 以下に、ccplant の実サービスをブラックボックスで検証する独立した E2E
-実行基盤を置く。利用者は Web UI または API から Go で実装されたシナリオを選択して実行し、
+実行基盤を置く。利用者は Web UI または API からシナリオを選択して実行し、
 進捗、ログ、失敗理由、スクリーンショットなどの成果物を確認できる。
 
 既存の `frontend/e2e` は、モックを使ったフロントエンド単体の Playwright テストとして残す。
@@ -11,7 +11,8 @@
 
 ## 設計方針
 
-- シナリオ、API、worker の主要部分は Go で実装する。操作 UI のみ TypeScript/React とする。
+- API E2E は Go 標準の `testing`、frontend E2E は Playwright を使う。共通シナリオ SDK は作らない。
+- E2E API と worker は Go、操作 UI と frontend scenario は TypeScript とする。
 - API と worker を分離し、ローカル、CI、将来の共有検証環境で同じプロトコルを使う。
 - worker は登録済みシナリオだけを実行する。API から任意のコマンドや Go コードを渡せないようにする。
 - シナリオは外部から見える HTTP/SSE/ブラウザ操作を使い、backend や frontend の内部 package を import しない。
@@ -52,17 +53,19 @@ e2e/
 │   ├── api/                     # HTTP handler、認証、SSE
 │   ├── store/                   # run、event、lease、artifact metadata
 │   ├── worker/                  # claim loop、実行、heartbeat、cancel
+│   │   └── executor/            # go-test / playwright adapter
 │   └── artifact/                # filesystem 実装。将来 S3 実装を追加
 ├── pkg/
-│   └── scenario/                # シナリオ SDK。外部公開する型と helper のみ
+│   └── apitest/                 # API URL、認証、polling だけの薄い test helper
 ├── scenarios/
-│   ├── registry.go              # ID と実装の静的登録
-│   ├── smoke/
-│   │   └── health.go
-│   ├── session/
-│   │   └── create_and_chat.go
-│   └── browser/
-│       └── create_session.go
+│   ├── catalog.yaml             # 実行可能な scenario の allowlist と metadata
+│   ├── api/
+│   │   ├── smoke_test.go
+│   │   └── session_test.go
+│   └── frontend/
+│       ├── playwright.config.ts
+│       ├── package.json
+│       └── session.spec.ts
 ├── frontend/                    # E2E 操作用の小さな React/Vite アプリ
 │   ├── package.json
 │   └── src/
@@ -73,8 +76,8 @@ e2e/
 └── .env.example
 ```
 
-`e2e` は独立した Go module とする。アプリ本体の module にテスト用依存を混ぜず、worker image
-だけにブラウザ操作ライブラリなどを含めるためである。Go のバージョンは `backend/go.mod` と揃える。
+`e2e` は独立した Go module とする。アプリ本体の module にテスト用依存を混ぜず、API scenario を
+通常の `go test` として単独実行できるようにするためである。Go のバージョンは `backend/go.mod` と揃える。
 
 ## コンポーネント
 
@@ -93,8 +96,9 @@ store に置く。
 
 ### Worker
 
-worker は起動時に `worker_id`、build revision、登録済み scenario manifest、capability を API に
-通知する。空きがある間だけ run を claim し、各 run を個別プロセスとして実行する。
+worker は起動時に `worker_id`、build revision、登録済み scenario catalog、capability を API に
+通知する。空きがある間だけ run を claim し、各 run を個別プロセスとして実行する。run の `kind` に
+応じて `go-test` または `playwright` executor を選択する。
 
 初期値は worker 1 台につき同時実行数 1 とする。ブラウザ状態やテスト対象データの競合を避け、
 並列安全性が確認できたシナリオだけ `concurrency_key` を分けて並列化する。
@@ -103,7 +107,7 @@ lease の既定値は 30 秒、heartbeat は 10 秒間隔とする。lease が�
 `infra_error` にする。副作用済みか判断できないためである。利用者が明示的に再実行する。
 
 worker は SIGTERM 時に新規 claim を停止し、実行中 run を grace period 内で終了する。キャンセル時は
-scenario の context を cancel し、子プロセスを終了した後も teardown と artifact upload を試みる。
+子プロセスへ SIGTERM を送り、猶予後に終了したうえで artifact upload を試みる。
 
 ### E2E frontend
 
@@ -116,66 +120,83 @@ scenario の context を cancel し、子プロセスを終了した後も teard
 UI は API の OpenAPI から生成した client を利用する。run detail の更新は SSE、変更操作は REST とし、
 WebSocket は導入しない。
 
-### Scenario SDK
+## シナリオ方式
 
-シナリオは `testing.T` へ依存させず、worker から呼び出せる小さな interface にする。
+API と frontend は、目的に合う既存のテストランナーをそのまま使う。worker はプロセス管理と結果の
+正規化だけを担当し、独自の assertion、step、browser abstraction は持たない。
 
-```go
-type Definition struct {
-    ID              string
-    Description     string
-    Tags            []string
-    Timeout         time.Duration
-    Parameters      []Parameter
-    Capabilities    []Capability
-    ConcurrencyKey  string
-    Run             func(context.Context, *Env) error
-}
+| 種別 | 定義言語 | runner | assertion / step | 主な artifact |
+| --- | --- | --- | --- | --- |
+| API | Go | `go test` | `testing.T`、`t.Run` | `test2json`、任意のresponse dump |
+| frontend | TypeScript | Playwright | `test.step`、`expect` | trace、screenshot、video、DOM |
 
-type Env struct {
-    Target   Target
-    HTTP     *http.Client
-    Browser  Browser
-    Artifacts ArtifactWriter
-    Secrets  SecretReader
-}
+### API E2E
 
-func Step(ctx context.Context, name string, fn func(context.Context) error) error
-func Eventually(ctx context.Context, policy RetryPolicy, check func(context.Context) error) error
-```
-
-`Step` は開始、成功、失敗と時間を event として記録し、panic を失敗へ変換する。`Eventually` は
-read-only な状態確認用であり、POST などの副作用操作には原則使用しない。
-
-シナリオは package の `init()` に依存せず、`scenarios/registry.go` で明示的に登録する。重複 ID や
-不正な parameter schema は worker/API の起動時に検証する。
-
-例:
+API scenario は通常の `_test.go` として書く。標準ライブラリの `net/http` と `testing` を基本にし、
+追加する helper は認証 header、JSON encode/decode、SSE、eventual polling など ccplant 固有の重複だけに
+限定する。HTTP client libraryや独自DSLは導入しない。
 
 ```go
-func Definition() scenario.Definition {
-    return scenario.Definition{
-        ID:      "session.create-and-chat",
-        Timeout: 3 * time.Minute,
-        Capabilities: []scenario.Capability{scenario.AgentCredential},
-        Run: func(ctx context.Context, env *scenario.Env) error {
-            var sessionID string
-            if err := scenario.Step(ctx, "create session", func(ctx context.Context) error {
-                var err error
-                sessionID, err = createSession(ctx, env.HTTP, env.Target.APIURL)
-                return err
-            }); err != nil {
-                return err
-            }
-            defer deleteSession(context.WithoutCancel(ctx), env.HTTP, sessionID)
+func TestSessionCreateAndChat(t *testing.T) {
+    client := apitest.NewClient(t, apitest.ConfigFromEnv())
 
-            return scenario.Step(ctx, "send and receive message", func(ctx context.Context) error {
-                return assertReply(ctx, env, sessionID)
-            })
-        },
-    }
+    session := client.CreateSession(t, apitest.CreateSessionRequest{
+        Repository: os.Getenv("E2E_REPOSITORY"),
+    })
+    t.Cleanup(func() { client.DeleteSession(context.Background(), session.ID) })
+
+    t.Run("session becomes ready", func(t *testing.T) {
+        client.EventuallyStatus(t, session.ID, "ready", 90*time.Second)
+    })
+    t.Run("message receives a reply", func(t *testing.T) {
+        reply := client.SendAndWait(t, session.ID, "reply with pong")
+        assert.Equal(t, "pong", reply.Text)
+    })
 }
 ```
+
+worker image の build 時に `go test -c` で test binary を作り、実行時には Go source の compile や
+dependency download を行わない。scenario ID は catalog に記載した package と test name にだけ解決する。
+
+```text
+go tool test2json -t /opt/e2e/api.test \
+  -test.v -test.run '^TestSessionCreateAndChat$' -test.timeout 3m
+```
+
+worker は `test2json` の `run/pass/fail/output` を共通 run event に変換する。`t.Run` の subtest が UI 上の
+step になる。開発者は同じ test を `go test -v ./scenarios/api -run TestSessionCreateAndChat` で直接実行できる。
+
+### Frontend E2E
+
+frontend scenario は Playwright Test を使う。auto-wait、role selector、trace viewer、screenshot/video など
+ブラウザテストに必要な機能が揃っているため、Go 用browser wrapperは作らない。既存の
+`frontend/e2e` はモック主体、`e2e/scenarios/frontend` は実backendを使う、という境界にする。
+
+worker は catalog の scenario ID を Playwright tag（例: `@session-create`）へ安全に解決し、固定引数で
+`playwright test --grep` を実行する。JSON reporter の結果を共通 run event に変換し、Playwright が出力した
+artifact をそのまま収集する。
+
+### Scenario catalog
+
+`catalog.yaml` は実行可能な scenario の allowlist であり、任意の command line は持たせない。
+
+```yaml
+scenarios:
+  - id: api.session.create-and-chat
+    kind: go-test
+    test: TestSessionCreateAndChat
+    timeout: 3m
+    capabilities: [agent-credential]
+  - id: frontend.session.create
+    kind: playwright
+    tag: "@session-create"
+    timeout: 3m
+    capabilities: [chromium, agent-credential]
+```
+
+CI で、catalog の Go test name が `go test -list` に存在すること、Playwright tag が一意に存在すること、
+ID・timeout・parameter schema が妥当であることを検証する。scenario の列挙と実行対象の決定は catalog
+だけを正とし、API request から package、test name、tag、コマンド引数を直接指定させない。
 
 ## API 契約
 
@@ -201,7 +222,7 @@ func Definition() scenario.Definition {
 
 ```json
 {
-  "scenario_id": "session.create-and-chat",
+  "scenario_id": "api.session.create-and-chat",
   "environment": "local",
   "parameters": {"repository": "ccplant/ccplant"}
 }
@@ -235,13 +256,12 @@ run と event の主キーは ULID とする。event は run ごとの単調増�
 
 ## ブラウザ操作
 
-Go から Chrome DevTools Protocol を操作できる `chromedp` を第一候補とする。Chromium は worker
-image に同居させず、compose 上の browser service または CI の service container として起動し、
-remote debugging endpoint へ接続する。これにより worker image と browser version の責務を分離する。
+Playwright 管理下の Chromium を worker image に導入し、Playwright の browser/version 対応を崩さない。
+最初は worker と browser を同じ container で動かして構成を単純にする。worker pool の分離が必要に
+なった場合だけ、frontend capability を持つ専用 worker image として分ける。
 
-各 browser scenario は独立した browser context を使い、終了時に破棄する。失敗時には最低限、
-スクリーンショット、現在 URL、DOM snapshot、browser console を保存する。trace/video は容量が大きい
-ため、初期実装では opt-in とする。
+各 browser scenario は Playwright の独立した browser context を使い、終了時に破棄する。失敗時には
+trace と screenshot を常に保存し、video は容量が大きいため opt-in とする。
 
 セレクタは表示文言や CSS class ではなく `data-testid` と role を優先する。E2E 用の安定した識別子を
 プロダクション UI に置くことは許容するが、E2E 専用分岐は置かない。
@@ -278,7 +298,7 @@ E2E API 8081 を既定とし、SUT は既存の 3000/8080 を維持する。
 
 段階的に次の job を追加する。
 
-1. `e2e-unit`: API/store/worker/SDK の unit test、race test、frontend type-check/test。
+1. `e2e-unit`: API/store/worker/helper の unit test、race test、frontend type-check/test、catalog検証。
 2. `e2e-smoke`: compose を起動し、health と認証なしの基本導線を実行。全 PR で必須。
 3. `e2e-agent`: 実 provider credential が必要なシナリオ。fork 以外の main push または手動実行。
 
@@ -290,10 +310,12 @@ path filter には `e2e/**` に加え、E2E が対象とする `backend/**` と 
 
 ## テスト戦略
 
-- SDK: step の event 順序、panic/error/cancel/timeout、redaction を unit test。
+- API helper: HTTP error、SSE、polling timeout、redaction を `httptest.Server` で unit test。
 - Store: lease の排他、期限切れ、event sequence、complete の冪等性を SQLite で test。
 - API: `openapi.yaml` と status code/body の contract test。
-- Worker: fake API と fake scenario で claim、heartbeat、cancel、異常終了を test。
+- Worker: fake API と fake executor で claim、heartbeat、cancel、異常終了を test。
+- Executor: `test2json` と Playwright JSON reporter の fixture を共通 event に変換する test。
+- Catalog: Go test name、Playwright tag、schema、scenario ID の一意性を test。
 - System: compose 上で `smoke.health` を投入し、UI を介さず run が passed になることを test。
 - UI: mock API による component test と、E2E API まで含む最小の browser test。
 
@@ -304,9 +326,9 @@ E2E 基盤自身のテストと、ccplant の E2E シナリオを分離する。
 
 ### Phase 1: 最小実行ループ
 
-- Go module、scenario SDK、静的 registry
+- Go module、API test helper、scenario catalog
 - SQLite store、run 作成/取得、claim/heartbeat/complete
-- worker と API-only の `smoke.health`
+- worker の `go-test` executor と API-only の `smoke.health`
 - compose、CLI、unit/system test
 
 この時点で CI から Go シナリオを安定して実行できる。
@@ -319,7 +341,7 @@ E2E 基盤自身のテストと、ccplant の E2E シナリオを分離する。
 
 ### Phase 3: 実ユーザーフロー
 
-- remote Chromium と browser SDK
+- Playwright executor と browser artifact
 - セッション作成、チャット、削除の API/browser シナリオ
 - credential capability、CI の protected job
 
@@ -332,7 +354,8 @@ E2E 基盤自身のテストと、ccplant の E2E シナリオを分離する。
 ## 受け入れ条件
 
 - `e2e/` だけで API、worker、E2E frontend、scenario の責務を追える。
-- シナリオ追加は Go package の追加と registry への 1 行の明示登録で完結する。
+- API scenario は通常の `_test.go` として、frontend scenario は通常の Playwright test として書ける。
+- シナリオ追加は test と catalog entry の追加だけで完結し、worker/API の実装変更を必要としない。
 - ローカルで 1 コマンド起動でき、CLI と UI のどちらからも同じ run を開始できる。
 - worker が落ちても run が永続化され、`infra_error` として確定できる。
 - run の各 step、ログ、失敗 artifact を UI と API から参照できる。
@@ -341,8 +364,10 @@ E2E 基盤自身のテストと、ccplant の E2E シナリオを分離する。
 
 ## 今回採用しない案
 
-- **Go の `_test.go` をそのまま worker から起動する**: 一覧、parameter schema、step event、cancel の
-  制御が弱くなるため、scenario interface を採用する。ただし SDK 自体の検証には `go test` を使う。
+- **全シナリオ共通の独自 Go SDK**: API test には過剰で、frontend test では Playwright の機能を再実装
+  することになる。run管理だけを共通化し、シナリオ記述は既存runnerへ任せる。
+- **API E2E 用のYAML/DSL**: 単純なhealth checkには短いが、認証、SSE、非同期状態、cleanupが入ると
+  独自言語が複雑になる。Goの型、標準testing、IDE、通常のdebuggerをそのまま使う。
 - **API が Docker socket を操作して SUT を毎回構築する**: 権限が強すぎ、CI/Kubernetes で移植しにくい。
   SUT の lifecycle は compose または CI workflow、API は run lifecycle のみ担当する。
 - **最初から Kubernetes Job を run ごとに作る**: MVP として運用負荷が大きい。lease protocol を先に
