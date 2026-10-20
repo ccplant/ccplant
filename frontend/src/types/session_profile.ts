@@ -50,7 +50,7 @@ export interface SessionProfileConfig {
   unsynced_file_paths?: string[];
   source_session_profile_id?: string;
   secret_ids?: string[];
-  github_repositories?: string[]; // clone を許可する owner/repository または regex:<RE2式>
+  github_repositories?: string[]; // clone を許可する owner/repository 全体に適用する RE2 正規表現
   skills?: string[];
   files?: ProfileFile[];
   mcp_servers?: Record<string, APIMCPServerConfig>;

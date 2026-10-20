@@ -9873,15 +9873,9 @@
           "github_repositories": {
             "type": "array",
             "maxItems": 100,
-            "items": {
-              "type": "string",
-              "oneOf": [
-                { "pattern": "^[^/]+/[^/]+$" },
-                { "pattern": "^regex:.+$" }
-              ]
-            },
+            "items": { "type": "string", "maxLength": 512 },
             "uniqueItems": true,
-            "description": "Additional exact owner/repository names or regex:<RE2 expression> rules that team sessions may clone through the GitHub App broker. Regex rules are matched case-insensitively against the full owner/repository name."
+            "description": "RE2 expressions that team sessions may clone through the GitHub App broker. Each expression is matched case-insensitively against the full owner/repository name."
           },
           "slack_user_id": {
             "type": "string",
@@ -10095,7 +10089,7 @@
             "type": "array",
             "maxItems": 100,
             "items": { "type": "string" },
-            "description": "Additional exact owner/repository names or regex:<RE2 expression> rules available through the team GitHub App broker."
+            "description": "RE2 repository expressions available through the team GitHub App broker."
           },
           "slack_user_id": {
             "type": "string",
@@ -11544,14 +11538,8 @@
         "github_repositories": {
           "type": "array",
           "maxItems": 100,
-          "description": "Additional exact owner/repository names or regex:<RE2 expression> rules made available through the GitHub App broker. Regex rules are matched case-insensitively against the full owner/repository name.",
-          "items": {
-            "type": "string",
-            "oneOf": [
-              { "pattern": "^[^/]+/[^/]+$" },
-              { "pattern": "^regex:.+$" }
-            ]
-          },
+          "description": "RE2 expressions made available through the GitHub App broker. Each expression is matched case-insensitively against the full owner/repository name.",
+          "items": { "type": "string", "maxLength": 512 },
           "uniqueItems": true
         },
         "skills": {

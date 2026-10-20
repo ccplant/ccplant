@@ -133,7 +133,7 @@ export interface SettingsData {
   env_var_keys?: string[];  // 環境変数のキーのみ（読み取り時のみ、セキュリティのため値は含まない）
   preferred_team_id?: string;  // 使用するチームの ID（"org/team-slug" 形式）
   github_app_installation_id?: string;  // Team sessions で使用する GitHub App installation ID
-  github_repositories?: string[];  // clone を許可する owner/repository または regex:<RE2式>
+  github_repositories?: string[];  // clone を許可する owner/repository 全体に適用する RE2 正規表現
   slack_user_id?: string;  // Slack User ID（設定すると Slack DM 通知が有効になる）
   notification_channels?: string[];  // Active notification channels (e.g. ["web", "slack"])
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers

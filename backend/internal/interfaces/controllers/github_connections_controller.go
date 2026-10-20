@@ -1707,21 +1707,22 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 	if selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID) {
 		return "", selected.ID, false, nil
 	}
-	repositories, err := normalizeRepositoryList(append([]string{repository}, additional...))
+	primaryRepositories, err := normalizeRepositoryList([]string{repository})
 	if err != nil {
 		return "", "", true, err
 	}
-	for _, allowedRepository := range repositories {
-		if isRepositoryRegex(allowedRepository) {
-			continue
-		}
-		if !containsOrganization(selected.Organizations, repositoryOwner(allowedRepository)) {
-			return "", "", true, fmt.Errorf("repository %s does not use the selected GitHub connection", allowedRepository)
-		}
-		if _, _, err := c.mintGitHubAppToken(ctx, *selected, allowedRepository); err != nil {
-			return "", "", true, err
-		}
+	patterns, err := normalizeRepositoryPatterns(additional)
+	if err != nil {
+		return "", "", true, err
 	}
+	primaryRepository := primaryRepositories[0]
+	if !containsOrganization(selected.Organizations, repositoryOwner(primaryRepository)) {
+		return "", "", true, fmt.Errorf("repository %s does not use the selected GitHub connection", primaryRepository)
+	}
+	if _, _, err := c.mintGitHubAppToken(ctx, *selected, primaryRepository); err != nil {
+		return "", "", true, err
+	}
+	repositories := append([]string{primaryRepository}, prefixedRepositoryPatterns(patterns)...)
 	leaseToken := uuid.NewString() + uuid.NewString()
 	lease := githubBrokerLease{SessionID: sessionID, ConnectionID: selected.ID, Repository: repository, Repositories: repositories, ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
 	if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
@@ -1804,29 +1805,13 @@ func repositoryAllowedByLease(repository string, lease githubBrokerLease) bool {
 
 func normalizeRepositoryList(repositories []string) ([]string, error) {
 	const maxRepositories = 100
-	const maxRegexLength = 512
 	seen := make(map[string]struct{}, len(repositories))
 	result := make([]string, 0, len(repositories))
 	for _, repository := range repositories {
-		repository = strings.TrimSpace(repository)
-		if isRepositoryRegex(repository) {
-			pattern := strings.TrimSpace(strings.TrimPrefix(repository, repositoryRegexPrefix))
-			if pattern == "" {
-				return nil, errors.New("repository regex must not be empty")
-			}
-			if len(pattern) > maxRegexLength {
-				return nil, fmt.Errorf("repository regex must be at most %d bytes", maxRegexLength)
-			}
-			if _, err := regexp.Compile("(?i:^(?:" + pattern + ")$)"); err != nil {
-				return nil, fmt.Errorf("invalid repository regex %q: %w", pattern, err)
-			}
-			repository = repositoryRegexPrefix + pattern
-		} else {
-			repository = strings.TrimSuffix(repository, ".git")
-			parts := strings.Split(repository, "/")
-			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-				return nil, fmt.Errorf("repository %q must use owner/name format or regex:<RE2 expression>", repository)
-			}
+		repository = strings.TrimSpace(strings.TrimSuffix(repository, ".git"))
+		parts := strings.Split(repository, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("repository %q must use owner/name format", repository)
 		}
 		key := strings.ToLower(repository)
 		if _, ok := seen[key]; ok {
@@ -1839,6 +1824,43 @@ func normalizeRepositoryList(repositories []string) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+func normalizeRepositoryPatterns(patterns []string) ([]string, error) {
+	const maxPatterns = 100
+	const maxRegexLength = 512
+	seen := make(map[string]struct{}, len(patterns))
+	result := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if len(pattern) > maxRegexLength {
+			return nil, fmt.Errorf("repository regex must be at most %d bytes", maxRegexLength)
+		}
+		if _, err := regexp.Compile("(?i:^(?:" + pattern + ")$)"); err != nil {
+			return nil, fmt.Errorf("invalid repository regex %q: %w", pattern, err)
+		}
+		key := strings.ToLower(pattern)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, pattern)
+		if len(result) > maxPatterns {
+			return nil, fmt.Errorf("at most %d GitHub repository patterns may be configured", maxPatterns)
+		}
+	}
+	return result, nil
+}
+
+func prefixedRepositoryPatterns(patterns []string) []string {
+	result := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		result = append(result, repositoryRegexPrefix+pattern)
+	}
+	return result
 }
 
 const repositoryRegexPrefix = "regex:"

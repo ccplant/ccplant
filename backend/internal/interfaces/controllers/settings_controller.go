@@ -539,7 +539,7 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 		settings.SetDefaultSessionProfileID(*req.DefaultSessionProfileID)
 	}
 	if req.GitHubRepositories != nil {
-		repositories, err := normalizeRepositoryList(*req.GitHubRepositories)
+		repositories, err := normalizeRepositoryPatterns(*req.GitHubRepositories)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}

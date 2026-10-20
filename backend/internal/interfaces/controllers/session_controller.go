@@ -171,7 +171,7 @@ func (c *SessionController) githubRepositoriesForSession(ctx context.Context, re
 			repositories = append(repositories, settings.GitHubRepositories()...)
 		}
 	}
-	return normalizeRepositoryList(repositories)
+	return normalizeRepositoryPatterns(repositories)
 }
 
 // NewSessionController creates a new SessionController instance

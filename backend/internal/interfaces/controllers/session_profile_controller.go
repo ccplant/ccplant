@@ -439,7 +439,7 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 			return err
 		}
 	}
-	if _, err := normalizeRepositoryList(config.GitHubRepositories()); err != nil {
+	if _, err := normalizeRepositoryPatterns(config.GitHubRepositories()); err != nil {
 		return err
 	}
 	seenPaths := make(map[string]bool)
@@ -528,7 +528,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
 	cfg.SetSourceSessionProfileID(req.SourceSessionProfileID)
 	cfg.SetSecretIDs(req.SecretIDs)
-	if repositories, err := normalizeRepositoryList(req.GitHubRepositories); err == nil {
+	if repositories, err := normalizeRepositoryPatterns(req.GitHubRepositories); err == nil {
 		cfg.SetGitHubRepositories(repositories)
 	} else {
 		cfg.SetGitHubRepositories(req.GitHubRepositories)
