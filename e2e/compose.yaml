@@ -1,0 +1,25 @@
+services:
+  e2e-api:
+    build:
+      context: ./e2e
+      dockerfile: Dockerfile.api
+    environment:
+      E2E_DATABASE: /data/e2e.db
+    volumes:
+      - e2e-data:/data
+    ports: ["8081:8081"]
+  e2e-worker:
+    build:
+      context: ./e2e
+      dockerfile: Dockerfile.worker
+    depends_on: [e2e-api]
+    environment:
+      E2E_API_URL: http://e2e-api:8081
+      E2E_TARGET_API_URL: http://backend:8080
+      E2E_TARGET_FRONTEND_URL: http://frontend:3000
+  e2e-frontend:
+    build: ./e2e/frontend
+    depends_on: [e2e-api]
+    ports: ["3001:80"]
+volumes:
+  e2e-data:

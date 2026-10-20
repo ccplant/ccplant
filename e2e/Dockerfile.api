@@ -1,0 +1,12 @@
+FROM golang:1.25-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/e2e-api ./cmd/api && mkdir /out/data
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY --from=build /out/e2e-api /usr/local/bin/e2e-api
+COPY scenarios/catalog.yaml /app/scenarios/catalog.yaml
+COPY --chown=65532:65532 --from=build /out/data /data
+ENTRYPOINT ["e2e-api"]

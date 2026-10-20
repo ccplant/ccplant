@@ -1,0 +1,6 @@
+e2e.db
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+scenarios/frontend/node_modules/
+scenarios/frontend/test-results/
