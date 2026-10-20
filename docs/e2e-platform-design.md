@@ -113,8 +113,8 @@ worker は SIGTERM 時に新規 claim を停止し、実行中 run を grace per
 
 最初の UI は以下の 3 画面だけにする。
 
-- Run list: 状態、シナリオ、対象環境、開始時刻、所要時間
-- New run: シナリオ、許可された parameter、対象 environment の選択
+- Run list: category 別の分類、状態、日本語description、対象環境、開始時刻、所要時間
+- New run: category で絞り込んだシナリオ、許可された parameter、対象 environment の選択
 - Run detail: step timeline、追従ログ、artifact、cancel/re-run
 
 UI は API の OpenAPI から生成した client を利用する。run detail の更新は SSE、変更操作は REST とし、
@@ -179,15 +179,27 @@ artifact をそのまま収集する。
 ### Scenario catalog
 
 `catalog.yaml` は実行可能な scenario の allowlist であり、任意の command line は持たせない。
+`id` はAPI・CLI・ログで使う変更しない識別子、`description` はUIに表示する日本語タイトルとする。
+category も同様に安定した `id` と日本語の `description` を分離する。
 
 ```yaml
+categories:
+  - id: smoke
+    description: スモークテスト
+  - id: session
+    description: セッション
+
 scenarios:
   - id: api.session.create-and-chat
+    category: session
+    description: APIでセッションを作成してチャットできる
     kind: go-test
     test: TestSessionCreateAndChat
     timeout: 3m
     capabilities: [agent-credential]
   - id: frontend.session.create
+    category: session
+    description: 画面からセッションを作成できる
     kind: playwright
     tag: "@session-create"
     timeout: 3m
@@ -195,8 +207,13 @@ scenarios:
 ```
 
 CI で、catalog の Go test name が `go test -list` に存在すること、Playwright tag が一意に存在すること、
-ID・timeout・parameter schema が妥当であることを検証する。scenario の列挙と実行対象の決定は catalog
-だけを正とし、API request から package、test name、tag、コマンド引数を直接指定させない。
+ID・category・日本語description・timeout・parameter schema が妥当であることを検証する。未定義category、
+空のdescription、重複IDはエラーにする。scenario の列挙と実行対象の決定は catalog だけを正とし、API
+request から package、test name、tag、コマンド引数を直接指定させない。
+
+初期categoryは `smoke`、`auth`、`session`、`settings`、`integration` とする。シナリオ数が増えるまでは
+階層化せず、1 scenario は必ず1 categoryに所属させる。横断的な属性はcategoryを増やさず、任意の
+`tags`（例: `critical`、`requires-github`）で表現する。
 
 ## API 契約
 
@@ -204,9 +221,9 @@ ID・timeout・parameter schema が妥当であることを検証する。scenar
 
 | Method | Path | 用途 |
 | --- | --- | --- |
-| `GET` | `/api/v1/scenarios` | 実行可能なシナリオと parameter schema |
+| `GET` | `/api/v1/scenarios` | category、日本語description、parameter schemaを含むシナリオ一覧 |
 | `POST` | `/api/v1/runs` | run を queued で作成 |
-| `GET` | `/api/v1/runs` | run 一覧 |
+| `GET` | `/api/v1/runs` | run 一覧。`category`、`scenario_id`、`status`で絞り込み |
 | `GET` | `/api/v1/runs/{id}` | run、step、artifact の snapshot |
 | `POST` | `/api/v1/runs/{id}/cancel` | キャンセル要求。冪等 |
 | `POST` | `/api/v1/runs/{id}/rerun` | 元の入力から新しい run を作成 |
@@ -233,6 +250,30 @@ JSON Schema で検証する。target URL や secret を自由入力にせず、�
 解決する。これにより SSRF と secret の持ち出しを防ぐ。
 
 API 仕様は `e2e/openapi.yaml` を正とし、Go handler の contract test と frontend client 生成に使う。
+
+`GET /api/v1/scenarios` はcategory定義とscenarioを返す。UIはscenario IDを利用者向けタイトルとして
+表示せず、categoryとscenarioの `description` を表示する。IDは詳細画面の補助情報として参照できる。
+
+```json
+{
+  "categories": [
+    {"id": "session", "description": "セッション"}
+  ],
+  "scenarios": [
+    {
+      "id": "api.session.create-and-chat",
+      "category": "session",
+      "description": "APIでセッションを作成してチャットできる",
+      "kind": "go-test"
+    }
+  ]
+}
+```
+
+run 作成時に `scenario_id` だけでなく `scenario_description`、`category_id`、
+`category_description` を `runs` tableへsnapshotする。catalogの文言や分類を後から変更しても、過去の
+実行結果は実行時点の日本語タイトルとcategoryで表示する。rerunは最新catalogで実行可否を検証するが、
+新しいrunにはその時点のmetadataをsnapshotする。
 
 ## Run の状態遷移
 
@@ -269,6 +310,7 @@ trace と screenshot を常に保存し、video は容量が大きいため opt-
 ## データ、artifact、secret
 
 初期実装の SQLite table は `runs`、`run_events`、`artifacts`、`workers`、`scenario_manifests` とする。
+`runs` は検索・過去表示用に scenario/category のIDとdescriptionのsnapshotを保持する。
 log も event として保存するが、1 event の上限と run 全体の上限を設ける。
 
 artifact は `run_id/artifact_id/name` の固定規則で保存し、利用者指定パスを連結しない。metadata には
@@ -315,7 +357,7 @@ path filter には `e2e/**` に加え、E2E が対象とする `backend/**` と 
 - API: `openapi.yaml` と status code/body の contract test。
 - Worker: fake API と fake executor で claim、heartbeat、cancel、異常終了を test。
 - Executor: `test2json` と Playwright JSON reporter の fixture を共通 event に変換する test。
-- Catalog: Go test name、Playwright tag、schema、scenario ID の一意性を test。
+- Catalog: Go test name、Playwright tag、schema、scenario/category ID の一意性、日本語descriptionを test。
 - System: compose 上で `smoke.health` を投入し、UI を介さず run が passed になることを test。
 - UI: mock API による component test と、E2E API まで含む最小の browser test。
 
@@ -356,6 +398,7 @@ E2E 基盤自身のテストと、ccplant の E2E シナリオを分離する。
 - `e2e/` だけで API、worker、E2E frontend、scenario の責務を追える。
 - API scenario は通常の `_test.go` として、frontend scenario は通常の Playwright test として書ける。
 - シナリオ追加は test と catalog entry の追加だけで完結し、worker/API の実装変更を必要としない。
+- 実行結果をcategoryで分類でき、日本語descriptionで現在・過去のrunを閲覧できる。
 - ローカルで 1 コマンド起動でき、CLI と UI のどちらからも同じ run を開始できる。
 - worker が落ちても run が永続化され、`infra_error` として確定できる。
 - run の各 step、ログ、失敗 artifact を UI と API から参照できる。
