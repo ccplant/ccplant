@@ -57,6 +57,7 @@ type LaunchRequest struct {
 	ProfileSkills            []string
 	ProfileCommandWrapper    string
 	ResolvedSessionProfileID string
+	Storages                 []entities.ResolvedStorageAttachment
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -260,6 +261,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		ProfileSkills:            append([]string(nil), req.ProfileSkills...),
 		ProfileCommandWrapper:    req.ProfileCommandWrapper,
 		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
+		Storages:                 append([]entities.ResolvedStorageAttachment(nil), req.Storages...),
 	}
 
 	session, err := uc.sessionManager.CreateSession(ctx, sessionID, runReq, req.WebhookPayload)

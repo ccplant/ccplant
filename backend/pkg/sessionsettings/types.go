@@ -167,6 +167,26 @@ type RegistryConfig struct {
 	Insecure bool `yaml:"insecure,omitempty"    json:"insecure,omitempty"`
 }
 
+// StorageFile describes one object_snapshot entry restored by the provisioner.
+type StorageFile struct {
+	Path     string `yaml:"path" json:"path"`
+	Digest   string `yaml:"digest" json:"digest"`
+	Size     int64  `yaml:"size,omitempty" json:"size,omitempty"`
+	Mode     uint32 `yaml:"mode,omitempty" json:"mode,omitempty"`
+	Revision int64  `yaml:"revision" json:"revision"`
+}
+
+// StorageAttachment is the resolved persistent mount contract delivered to a
+// Session Pod. Provider credentials are deliberately excluded.
+type StorageAttachment struct {
+	StorageID string        `yaml:"storage_id" json:"storage_id"`
+	MountPath string        `yaml:"mount_path" json:"mount_path"`
+	ReadOnly  bool          `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	Kind      string        `yaml:"kind" json:"kind"`
+	Revision  int64         `yaml:"revision,omitempty" json:"revision,omitempty"`
+	Files     []StorageFile `yaml:"files,omitempty" json:"files,omitempty"`
+}
+
 // SessionSettings is the top-level unified settings YAML structure.
 // It consolidates all configuration needed for a session Pod.
 type SessionSettings struct {
@@ -197,6 +217,7 @@ type SessionSettings struct {
 	UsageReportingEnabled bool                      `yaml:"usage_reporting_enabled,omitempty" json:"usage_reporting_enabled,omitempty"`
 	Sandbox               *SandboxConfig            `yaml:"sandbox,omitempty"         json:"sandbox,omitempty"`
 	Docker                *DockerConfig             `yaml:"docker,omitempty"          json:"docker,omitempty"`
+	Storages              []StorageAttachment       `yaml:"storages,omitempty"        json:"storages,omitempty"`
 	// Files holds the managed files to be restored at session startup.
 	// They are read from the agentapi-agent-files-{userID} Secret at session creation
 	// time and written to their respective paths by the provisioner.

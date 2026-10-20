@@ -74,6 +74,25 @@ type DockerRegistry struct {
 	Insecure bool `json:"insecure,omitempty"`
 }
 
+// StorageAttachment mounts one scope-owned persistent Storage into a session.
+type StorageAttachment struct {
+	StorageID string `json:"storage_id"`
+	MountPath string `json:"mount_path"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+}
+
+// ResolvedStorageAttachment is produced by the parent API after ownership and
+// placement checks. Clients cannot provide these data-plane fields directly.
+type ResolvedStorageAttachment struct {
+	StorageAttachment
+	Kind     StorageKind   `json:"kind"`
+	Pool     string        `json:"pool,omitempty"`
+	Provider string        `json:"provider,omitempty"`
+	Size     string        `json:"size,omitempty"`
+	Revision int64         `json:"revision,omitempty"`
+	Files    []StorageFile `json:"files,omitempty"`
+}
+
 // SessionParams represents session parameters for agentapi server
 type SessionParams struct {
 	// Pool selects the logical session runner pool used to execute the session.
@@ -143,6 +162,8 @@ type SessionParams struct {
 	// and profile-wide model fallbacks by authentication mode.
 	CodexDefaultModels  map[string]string `json:"codex_default_models,omitempty"`
 	ClaudeDefaultModels map[string]string `json:"claude_default_models,omitempty"`
+	// Storages mounts scope-owned persistent Storage resources into the session.
+	Storages []StorageAttachment `json:"storages,omitempty"`
 }
 
 // SessionAnnotations contains user-managed annotations attached to a session.
@@ -192,6 +213,8 @@ type StartRequest struct {
 	ProfileSkills            []string                      `json:"-"`
 	ProfileCommandWrapper    string                        `json:"-"`
 	ResolvedSessionProfileID string                        `json:"-"`
+	// ResolvedStorages is populated by the parent API after authorization.
+	ResolvedStorages []ResolvedStorageAttachment `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
 	// ReuseMessage is queued to that session instead of creating a new one.
 	ReuseMatchTags map[string]string `json:"reuse_match_tags,omitempty"`
@@ -281,6 +304,8 @@ type RunServerRequest struct {
 	ResolvedSessionProfileID string
 	// SettingsTeamID is authorized and resolved from the profile at launch.
 	SettingsTeamID string `json:"-"`
+	// Storages contains authorized and placement-checked persistent mounts.
+	Storages []ResolvedStorageAttachment `json:"storages,omitempty"`
 }
 
 // SessionStartPlacement describes where a session would be started.

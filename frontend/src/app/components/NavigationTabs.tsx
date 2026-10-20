@@ -34,6 +34,15 @@ const allTabs: Tab[] = [
     ),
   },
   {
+    label: 'Storage',
+    href: '/storages',
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7c0-2 16-2 16 0m-16 0c0 2 16 2 16 0M4 7v10c0 2 16 2 16 0V7M4 12c0 2 16 2 16 0" />
+      </svg>
+    ),
+  },
+  {
     label: 'Schedules',
     href: '/schedules',
     icon: (

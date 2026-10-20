@@ -69,6 +69,20 @@ func TestLoadConfigSessionManagerLeaseNameCompatibility(t *testing.T) {
 	assert.Equal(t, "release-a-session-manager", loadedConfig.SessionManager.Allocation.LeaseName)
 }
 
+func TestLoadConfigSessionPersistenceS3DedicatedCredentials(t *testing.T) {
+	clearAGENTAPIEnvVars(t)
+	t.Setenv("AGENTAPI_SESSION_PERSISTENCE_S3_BUCKET", "storage-bucket")
+	t.Setenv("AGENTAPI_SESSION_PERSISTENCE_S3_ACCESS_KEY_ID", "storage-access")
+	t.Setenv("AGENTAPI_SESSION_PERSISTENCE_S3_SECRET_ACCESS_KEY", "storage-secret")
+
+	loadedConfig, err := LoadConfig("")
+	assert.NoError(t, err)
+	if assert.NotNil(t, loadedConfig.SessionPersistence.S3) {
+		assert.Equal(t, "storage-access", loadedConfig.SessionPersistence.S3.AccessKeyID)
+		assert.Equal(t, "storage-secret", loadedConfig.SessionPersistence.S3.SecretAccessKey)
+	}
+}
+
 func TestLoadConfigKubernetesSessionIsolationFromEnv(t *testing.T) {
 	clearAGENTAPIEnvVars(t)
 	t.Setenv("AGENTAPI_K8S_SESSION_DISABLE_SERVICE_LINKS", "true")

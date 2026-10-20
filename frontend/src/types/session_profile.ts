@@ -1,8 +1,10 @@
 import { ResourceScope, SandboxConfig, DockerConfig } from './agentapi';
 import type { APIMCPServerConfig, ModelConnection } from './settings';
+import type { StorageAttachment } from './storage';
 
 // Session profile params
 export interface SessionProfileParams {
+  storages?: StorageAttachment[];
   /** Legacy pool location; the editor saves this as SessionProfileConfig.pool. */
   pool?: string;
   initial_message?: string;
