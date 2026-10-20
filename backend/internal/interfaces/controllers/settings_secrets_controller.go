@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
+	"github.com/takutakahashi/agentapi-proxy/pkg/urlutil"
 )
 
 var secretEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -188,7 +189,7 @@ func (c *SettingsController) authorizedSecretSettings(ctx echo.Context, modify, 
 	if user == nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 	}
-	name := ctx.Param("name")
+	name := urlutil.DecodeSlashParam(ctx.Param("name"))
 	allowed := c.canAccess(user, name)
 	if modify {
 		allowed = c.canModify(user, name)
