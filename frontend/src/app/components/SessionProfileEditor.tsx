@@ -675,9 +675,9 @@ export default function SessionProfileEditor({
               <label htmlFor="profile-github-repositories" className="block text-sm font-medium mb-1">クローン可能な追加リポジトリ</label>
               <textarea id="profile-github-repositories" value={githubRepositories}
                 onChange={event => { setGitHubRepositories(event.target.value); setDirty(true) }}
-                rows={5} placeholder={'owner/repository\nowner/another-repository'}
+                rows={5} placeholder={'owner/repository\nregex:owner/service-[a-z]+'}
                 className="w-full rounded-md border bg-white p-2 font-mono text-xs dark:bg-gray-800" />
-              <p className="mt-2 text-xs text-gray-500">1行に1つ、owner/repository形式で指定します。チーム設定のリストに追加されます。</p>
+              <p className="mt-2 text-xs text-gray-500">1行に1つ、owner/repository または regex:&lt;RE2式&gt; で指定します。正規表現はリポジトリ名全体に適用され、チーム設定のリストに追加されます。</p>
             </div>
 
             </div>}

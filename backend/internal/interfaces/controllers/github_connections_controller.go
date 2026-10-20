@@ -1712,6 +1712,9 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx contex
 		return "", "", true, err
 	}
 	for _, allowedRepository := range repositories {
+		if isRepositoryRegex(allowedRepository) {
+			continue
+		}
 		if !containsOrganization(selected.Organizations, repositoryOwner(allowedRepository)) {
 			return "", "", true, fmt.Errorf("repository %s does not use the selected GitHub connection", allowedRepository)
 		}
@@ -1768,6 +1771,9 @@ func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error 
 	if normalizeErr != nil || len(normalized) != 1 || !repositoryAllowedByLease(normalized[0], lease) {
 		return echo.NewHTTPError(http.StatusForbidden, "repository is not allowed by this broker credential")
 	}
+	if !containsOrganization(connection.Organizations, repositoryOwner(normalized[0])) {
+		return echo.NewHTTPError(http.StatusForbidden, "repository does not use the broker credential's GitHub connection")
+	}
 	installationToken, expiresAt, err := c.mintGitHubAppToken(ctx.Request().Context(), connection, normalized[0])
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh GitHub token").SetInternal(err)
@@ -1781,6 +1787,14 @@ func repositoryAllowedByLease(repository string, lease githubBrokerLease) bool {
 		allowed = []string{lease.Repository}
 	}
 	for _, candidate := range allowed {
+		if isRepositoryRegex(candidate) {
+			pattern := strings.TrimPrefix(candidate, repositoryRegexPrefix)
+			compiled, err := regexp.Compile("(?i:^(?:" + pattern + ")$)")
+			if err == nil && compiled.MatchString(repository) {
+				return true
+			}
+			continue
+		}
 		if strings.EqualFold(candidate, repository) {
 			return true
 		}
@@ -1790,13 +1804,29 @@ func repositoryAllowedByLease(repository string, lease githubBrokerLease) bool {
 
 func normalizeRepositoryList(repositories []string) ([]string, error) {
 	const maxRepositories = 100
+	const maxRegexLength = 512
 	seen := make(map[string]struct{}, len(repositories))
 	result := make([]string, 0, len(repositories))
 	for _, repository := range repositories {
-		repository = strings.TrimSpace(strings.TrimSuffix(repository, ".git"))
-		parts := strings.Split(repository, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return nil, fmt.Errorf("repository %q must use owner/name format", repository)
+		repository = strings.TrimSpace(repository)
+		if isRepositoryRegex(repository) {
+			pattern := strings.TrimSpace(strings.TrimPrefix(repository, repositoryRegexPrefix))
+			if pattern == "" {
+				return nil, errors.New("repository regex must not be empty")
+			}
+			if len(pattern) > maxRegexLength {
+				return nil, fmt.Errorf("repository regex must be at most %d bytes", maxRegexLength)
+			}
+			if _, err := regexp.Compile("(?i:^(?:" + pattern + ")$)"); err != nil {
+				return nil, fmt.Errorf("invalid repository regex %q: %w", pattern, err)
+			}
+			repository = repositoryRegexPrefix + pattern
+		} else {
+			repository = strings.TrimSuffix(repository, ".git")
+			parts := strings.Split(repository, "/")
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return nil, fmt.Errorf("repository %q must use owner/name format or regex:<RE2 expression>", repository)
+			}
 		}
 		key := strings.ToLower(repository)
 		if _, ok := seen[key]; ok {
@@ -1809,6 +1839,12 @@ func normalizeRepositoryList(repositories []string) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+const repositoryRegexPrefix = "regex:"
+
+func isRepositoryRegex(repository string) bool {
+	return strings.HasPrefix(strings.TrimSpace(repository), repositoryRegexPrefix)
 }
 
 func brokerLeaseTokenHash(token string) string {

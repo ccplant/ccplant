@@ -100,6 +100,9 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 		case "/api/v3/repos/acme/shared/installation":
 			installationCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+		case "/api/v3/repos/acme/generated-one/installation":
+			installationCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
 		case "/api/v3/app/installations/99/access_tokens":
 			tokenCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().UTC().Add(time.Hour)})
@@ -117,7 +120,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
 
-	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "acme", "acme/payments", []string{"acme/shared"})
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "acme", "acme/payments", []string{"acme/shared", "regex:acme/generated-[a-z]+"})
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
@@ -147,6 +150,18 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, controller.BrokerCredentials(sharedCtx))
 	require.Equal(t, http.StatusOK, sharedRecorder.Code)
 
+	regexReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials?repository=acme%2Fgenerated-one", nil)
+	regexReq.Header.Set("Authorization", "Bearer "+lease)
+	regexRecorder := httptest.NewRecorder()
+	regexCtx := e.NewContext(regexReq, regexRecorder)
+	regexCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	regexCtx.SetParamNames("sessionId")
+	regexCtx.SetParamValues("session-1")
+	require.NoError(t, controller.BrokerCredentials(regexCtx))
+	require.Equal(t, http.StatusOK, regexRecorder.Code)
+	require.Equal(t, 3, installationCalls)
+	require.Equal(t, 3, tokenCalls)
+
 	deniedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials?repository=acme%2Fsecret", nil)
 	deniedReq.Header.Set("Authorization", "Bearer "+lease)
 	deniedCtx := e.NewContext(deniedReq, httptest.NewRecorder())
@@ -155,6 +170,19 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	deniedCtx.SetParamValues("session-1")
 	err = controller.BrokerCredentials(deniedCtx)
 	var deniedHTTPError *echo.HTTPError
+	require.ErrorAs(t, err, &deniedHTTPError)
+	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
+
+	broadLease, _, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-2", "acme", "acme/payments", []string{"regex:.*"})
+	require.NoError(t, err)
+	require.True(t, matched)
+	otherOrgReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-2/github-credentials?repository=other%2Fsecret", nil)
+	otherOrgReq.Header.Set("Authorization", "Bearer "+broadLease)
+	otherOrgCtx := e.NewContext(otherOrgReq, httptest.NewRecorder())
+	otherOrgCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	otherOrgCtx.SetParamNames("sessionId")
+	otherOrgCtx.SetParamValues("session-2")
+	err = controller.BrokerCredentials(otherOrgCtx)
 	require.ErrorAs(t, err, &deniedHTTPError)
 	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
 
@@ -173,6 +201,21 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, pemValue, stored.Data[githubAppPrivateKeyKey])
 	require.NotContains(t, string(stored.Data["record.json"]), string(pemValue))
+}
+
+func TestNormalizeRepositoryListSupportsRegexRules(t *testing.T) {
+	t.Parallel()
+
+	got, err := normalizeRepositoryList([]string{"acme/exact.git", " regex:^acme/service-[a-z]+$ "})
+	require.NoError(t, err)
+	require.Equal(t, []string{"acme/exact", "regex:^acme/service-[a-z]+$"}, got)
+	require.True(t, repositoryAllowedByLease("ACME/service-api", githubBrokerLease{Repositories: got}))
+	require.False(t, repositoryAllowedByLease("acme/service-123", githubBrokerLease{Repositories: got}))
+
+	for _, rule := range []string{"regex:", "regex:["} {
+		_, err := normalizeRepositoryList([]string{rule})
+		require.Error(t, err, rule)
+	}
 }
 
 func TestValidateGitHubAppPrivateKey(t *testing.T) {
