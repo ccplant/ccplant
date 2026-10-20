@@ -87,9 +87,9 @@ type SessionConfig struct {
 	Tags map[string]string `json:"tags,omitempty"`
 	// Params contains session parameters like initial message
 	Params *entities.SessionParams `json:"params,omitempty"`
-	// ReuseSession when true, will reuse an existing active session matching schedule_id tag
-	// instead of creating a new session. The existing session receives the initial message (or
-	// ReuseMessage if set) instead of starting a new process.
+	// ReuseSession controls whether schedule executions share the same reuse tags.
+	// When false, each execution receives a unique schedule_execution_time tag.
+	// Session lookup and message delivery are always delegated to /start.
 	ReuseSession bool `json:"reuse_session,omitempty"`
 	// ReuseMessage is the message sent to the reused session when ReuseSession is true.
 	// Falls back to Params.Message when empty.
@@ -97,6 +97,24 @@ type SessionConfig struct {
 	// SessionProfileID is an optional reference to a SessionProfile.
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
+}
+
+const ScheduleExecutionTimeTag = "schedule_execution_time"
+
+// SessionTags returns the complete tag set sent to /start. A non-reusable
+// execution includes its execution time, making its reuse lookup unique while
+// keeping the reuse decision in the shared /start implementation.
+func (c SessionConfig) SessionTags(scheduleID, scheduleName string, executedAt time.Time) map[string]string {
+	tags := make(map[string]string, len(c.Tags)+3)
+	for key, value := range c.Tags {
+		tags[key] = value
+	}
+	tags["schedule_id"] = scheduleID
+	tags["schedule_name"] = scheduleName
+	if !c.ReuseSession {
+		tags[ScheduleExecutionTimeTag] = executedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return tags
 }
 
 // EffectiveReuseMessage returns the message delivered to a reused session.

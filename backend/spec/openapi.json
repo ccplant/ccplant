@@ -8985,12 +8985,12 @@
           },
           "reuse_session": {
             "type": "boolean",
-            "description": "When true, reuse an existing active session matching the schedule_id tag instead of creating a new session. The existing session receives reuse_message (or params.message if not set).",
+            "description": "Controls the tags sent to the shared /start reuse logic. When false, each invocation includes a unique schedule_execution_time tag; when true, that tag is omitted so an active session with the same schedule tags can be reused.",
             "default": false
           },
           "reuse_message": {
             "type": "string",
-            "description": "Message sent to the reused session when reuse_session is true. Falls back to params.message when empty."
+            "description": "Message sent by /start when it reuses a matching session. Falls back to params.message when empty."
           }
         }
       },
