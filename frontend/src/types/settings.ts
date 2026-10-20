@@ -133,6 +133,7 @@ export interface SettingsData {
   env_var_keys?: string[];  // 環境変数のキーのみ（読み取り時のみ、セキュリティのため値は含まない）
   preferred_team_id?: string;  // 使用するチームの ID（"org/team-slug" 形式）
   github_app_installation_id?: string;  // Team sessions で使用する GitHub App installation ID
+  github_repositories?: string[];  // Team sessions が GitHub App broker 経由で clone できる追加 repository
   slack_user_id?: string;  // Slack User ID（設定すると Slack DM 通知が有効になる）
   notification_channels?: string[];  // Active notification channels (e.g. ["web", "slack"])
   external_session_managers?: ExternalSessionManagerConfig[];  // External session managers
@@ -412,6 +413,9 @@ export const prepareSettingsForSave = (data: SettingsData): SettingsData => {
 
   if (data.github_app_installation_id !== undefined) {
     prepared.github_app_installation_id = data.github_app_installation_id.trim()
+  }
+  if (data.github_repositories !== undefined) {
+    prepared.github_repositories = data.github_repositories.map(value => value.trim()).filter(Boolean)
   }
 
   // Slack User ID の処理

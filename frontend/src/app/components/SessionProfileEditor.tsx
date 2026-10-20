@@ -107,6 +107,7 @@ export default function SessionProfileEditor({
   const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
   const [skills, setSkills] = useState<string[]>([])
   const [commandWrapperTemplate, setCommandWrapperTemplate] = useState('')
+  const [githubRepositories, setGitHubRepositories] = useState('')
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -212,6 +213,7 @@ export default function SessionProfileEditor({
       setSelectedSecretIds(cfg?.secret_ids ?? [])
       setSkills(cfg?.skills ?? [])
       setCommandWrapperTemplate(cfg?.command_wrapper_template ?? '')
+      setGitHubRepositories((cfg?.github_repositories ?? []).join('\n'))
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -461,7 +463,8 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'skills', 'files', 'command_wrapper_template'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'files', 'command_wrapper_template'] as const) delete extraConfig[key]
+	  const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
@@ -477,6 +480,7 @@ export default function SessionProfileEditor({
         ...(parsedUnsyncedFilePaths.length > 0 ? { unsynced_file_paths: parsedUnsyncedFilePaths } : {}),
         ...(sourceProfileId.trim() ? { source_session_profile_id: sourceProfileId.trim() } : {}),
         ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
+        ...(parsedGitHubRepositories.length > 0 ? { github_repositories: parsedGitHubRepositories } : {}),
         ...(skills.length > 0 ? { skills } : {}),
         ...(wrapper ? { command_wrapper_template: wrapper } : {}),
         files: parsedProfileFiles,
@@ -666,6 +670,15 @@ export default function SessionProfileEditor({
             </div>
 
             {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={value => { setClaudeConnection(value); setDirty(true) }} />}
+
+            <div>
+              <label htmlFor="profile-github-repositories" className="block text-sm font-medium mb-1">クローン可能な追加リポジトリ</label>
+              <textarea id="profile-github-repositories" value={githubRepositories}
+                onChange={event => { setGitHubRepositories(event.target.value); setDirty(true) }}
+                rows={5} placeholder={'owner/repository\nowner/another-repository'}
+                className="w-full rounded-md border bg-white p-2 font-mono text-xs dark:bg-gray-800" />
+              <p className="mt-2 text-xs text-gray-500">1行に1つ、owner/repository形式で指定します。チーム設定のリストに追加されます。</p>
+            </div>
 
             </div>}
             {active.slug === 'agent' && <div className="space-y-5">

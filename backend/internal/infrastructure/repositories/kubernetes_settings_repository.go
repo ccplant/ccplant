@@ -66,6 +66,7 @@ type settingsJSON struct {
 	EncryptedEnvVars        map[string]encryptedEnvVarJSON         `json:"encrypted_env_vars,omitempty"` // encrypted env vars
 	PreferredTeamID         string                                 `json:"preferred_team_id,omitempty"`  // "org/team-slug" format
 	GitHubAppInstallationID string                                 `json:"github_app_installation_id,omitempty"`
+	GitHubRepositories      []string                               `json:"github_repositories,omitempty"`
 	SlackUserID             string                                 `json:"slack_user_id,omitempty"`             // Slack DM notification user ID
 	NotificationChannels    []string                               `json:"notification_channels,omitempty"`     // Active notification channels
 	ExternalSessionManagers []entities.ExternalSessionManagerEntry `json:"external_session_managers,omitempty"` // Registered external session managers
@@ -365,6 +366,7 @@ func (r *KubernetesSettingsRepository) toJSON(ctx context.Context, settings *ent
 	if installationID := settings.GitHubAppInstallationID(); installationID != "" {
 		sj.GitHubAppInstallationID = installationID
 	}
+	sj.GitHubRepositories = settings.GitHubRepositories()
 
 	if slackUserID := settings.SlackUserID(); slackUserID != "" {
 		sj.SlackUserID = slackUserID
@@ -610,6 +612,8 @@ func (r *KubernetesSettingsRepository) fromSecret(ctx context.Context, secret *c
 		// Reset updatedAt since SetNotificationChannels updates it
 		settings.SetUpdatedAt(sj.UpdatedAt)
 	}
+	settings.SetGitHubRepositories(sj.GitHubRepositories)
+	settings.SetUpdatedAt(sj.UpdatedAt)
 
 	if len(sj.ExternalSessionManagers) > 0 {
 		settings.SetExternalSessionManagers(sj.ExternalSessionManagers)

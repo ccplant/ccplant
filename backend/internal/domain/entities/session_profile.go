@@ -48,10 +48,11 @@ type SessionProfileConfig struct {
 	// secretIDs selects settings-scoped secrets whose projections are exposed to
 	// sessions created with this profile. An empty list preserves the legacy
 	// behavior of exposing every projected secret in the settings scope.
-	secretIDs  []string
-	skills     []string
-	files      []ProfileFile
-	mcpServers *MCPServersSettings
+	secretIDs          []string
+	githubRepositories []string
+	skills             []string
+	files              []ProfileFile
+	mcpServers         *MCPServersSettings
 }
 
 // ErrSessionProfileAccessDenied is returned when a session profile cannot be
@@ -317,6 +318,16 @@ func (c *SessionProfileConfig) SecretIDs() []string { return copyStringSlice(c.s
 
 // SetSecretIDs sets the settings Secret references selected by this profile.
 func (c *SessionProfileConfig) SetSecretIDs(ids []string) { c.secretIDs = copyStringSlice(ids) }
+
+// GitHubRepositories returns additional repositories made available by this profile.
+func (c *SessionProfileConfig) GitHubRepositories() []string {
+	return copyStringSlice(c.githubRepositories)
+}
+
+// SetGitHubRepositories sets additional repositories made available by this profile.
+func (c *SessionProfileConfig) SetGitHubRepositories(repositories []string) {
+	c.githubRepositories = copyStringSlice(repositories)
+}
 
 // Skills returns skills.sh package sources contributed by this profile.
 func (c *SessionProfileConfig) Skills() []string { return copyStringSlice(c.skills) }

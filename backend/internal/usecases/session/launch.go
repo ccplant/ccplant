@@ -27,36 +27,37 @@ type LaunchRequest struct {
 	Teams []string
 
 	// Session configuration
-	Environment              map[string]string
-	ProfileEnvironment       map[string]string
-	Tags                     map[string]string
-	InitialMessage           string
-	GithubToken              string
-	AgentType                string
-	Model                    string
-	ModelOptions             []string
-	Pool                     string
-	ManagerID                string
-	SlackParams              *entities.SlackParams
-	RepoInfo                 *entities.RepositoryInfo
-	InitialMessageWaitSecond *int
-	Sandbox                  *entities.SandboxParams
-	Docker                   *entities.DockerParams
-	AuthProxy                *bool
-	CycleMessage             string
-	CycleMaxCount            int
-	SessionTTL               string
-	UnsyncedFilePaths        []string
-	CodexAuthMode            string
-	ClaudeAuthMode           string
-	CredentialSource         string
-	ProfileFiles             []sessionsettings.ManagedFile
-	ProfileSecretIDs         []string
-	SettingsTeamID           string
-	ProfileMCPServers        *entities.MCPServersSettings
-	ProfileSkills            []string
-	ProfileCommandWrapper    string
-	ResolvedSessionProfileID string
+	Environment               map[string]string
+	ProfileEnvironment        map[string]string
+	Tags                      map[string]string
+	InitialMessage            string
+	GithubToken               string
+	AgentType                 string
+	Model                     string
+	ModelOptions              []string
+	Pool                      string
+	ManagerID                 string
+	SlackParams               *entities.SlackParams
+	RepoInfo                  *entities.RepositoryInfo
+	InitialMessageWaitSecond  *int
+	Sandbox                   *entities.SandboxParams
+	Docker                    *entities.DockerParams
+	AuthProxy                 *bool
+	CycleMessage              string
+	CycleMaxCount             int
+	SessionTTL                string
+	UnsyncedFilePaths         []string
+	CodexAuthMode             string
+	ClaudeAuthMode            string
+	CredentialSource          string
+	ProfileFiles              []sessionsettings.ManagedFile
+	ProfileSecretIDs          []string
+	SettingsTeamID            string
+	ProfileMCPServers         *entities.MCPServersSettings
+	ProfileSkills             []string
+	ProfileGitHubRepositories []string
+	ProfileCommandWrapper     string
+	ResolvedSessionProfileID  string
 
 	// Webhook payload to mount in the session filesystem (optional)
 	WebhookPayload []byte
@@ -483,6 +484,7 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		req.ProfileMCPServers = cfg.MCPServers()
 	}
 	req.ProfileSkills = cfg.Skills()
+	req.ProfileGitHubRepositories = cfg.GitHubRepositories()
 	// Keep profile environment separate so settings resolution can apply it above
 	// team/user settings while still allowing explicit request values to win.
 	if len(cfg.Environment()) > 0 {

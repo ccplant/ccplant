@@ -184,7 +184,7 @@ export const settingsNavItems: SettingsNavItem[] = [
     icon: Github,
     group: 'アクセス',
     scopes: ['team'],
-    fields: ['github_app_installation_id'],
+    fields: ['github_app_installation_id', 'github_repositories'],
   },
   {
     slug: 'github-teams',

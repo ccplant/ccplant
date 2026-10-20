@@ -67,6 +67,7 @@ type sessionProfileConfigJSON struct {
 	UnsyncedFilePaths      []string                  `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                    `json:"source_session_profile_id,omitempty"`
 	SecretIDs              []string                  `json:"secret_ids,omitempty"`
+	GitHubRepositories     []string                  `json:"github_repositories,omitempty"`
 	Skills                 []string                  `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile    `json:"files,omitempty"`
 	MCPServers             map[string]*mcpServerJSON `json:"mcp_servers,omitempty"`
@@ -375,6 +376,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetUnsyncedFilePaths(pj.Config.UnsyncedFilePaths)
 	cfg.SetSourceSessionProfileID(pj.Config.SourceSessionProfileID)
 	cfg.SetSecretIDs(pj.Config.SecretIDs)
+	cfg.SetGitHubRepositories(pj.Config.GitHubRepositories)
 	cfg.SetSkills(pj.Config.Skills)
 	cfg.SetProfileFiles(pj.Config.Files)
 	if pj.Config.MCPServers != nil {
@@ -430,6 +432,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 			SourceSessionProfileID: cfg.SourceSessionProfileID(),
 			SecretIDs:              cfg.SecretIDs(),
+			GitHubRepositories:     cfg.GitHubRepositories(),
 			Skills:                 cfg.Skills(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,

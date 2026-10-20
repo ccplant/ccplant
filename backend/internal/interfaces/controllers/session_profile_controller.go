@@ -54,6 +54,7 @@ type SessionProfileConfigRequest struct {
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
+	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
 	Skills                 []string                     `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
@@ -112,6 +113,7 @@ type SessionProfileConfigResponse struct {
 	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
 	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
+	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
 	Skills                 []string                     `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
@@ -433,7 +435,12 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 		}
 	}
 	if config.MCPServers() != nil {
-		return config.MCPServers().Validate()
+		if err := config.MCPServers().Validate(); err != nil {
+			return err
+		}
+	}
+	if _, err := normalizeRepositoryList(config.GitHubRepositories()); err != nil {
+		return err
 	}
 	seenPaths := make(map[string]bool)
 	for _, file := range config.ProfileFiles() {
@@ -521,6 +528,11 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	cfg.SetUnsyncedFilePaths(req.UnsyncedFilePaths)
 	cfg.SetSourceSessionProfileID(req.SourceSessionProfileID)
 	cfg.SetSecretIDs(req.SecretIDs)
+	if repositories, err := normalizeRepositoryList(req.GitHubRepositories); err == nil {
+		cfg.SetGitHubRepositories(repositories)
+	} else {
+		cfg.SetGitHubRepositories(req.GitHubRepositories)
+	}
 	cfg.SetSkills(req.Skills)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
@@ -578,6 +590,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			UnsyncedFilePaths:      cfg.UnsyncedFilePaths(),
 			SourceSessionProfileID: cfg.SourceSessionProfileID(),
 			SecretIDs:              cfg.SecretIDs(),
+			GitHubRepositories:     cfg.GitHubRepositories(),
 			Skills:                 cfg.Skills(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,

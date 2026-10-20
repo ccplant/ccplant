@@ -97,6 +97,9 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 		case "/api/v3/repos/acme/payments/installation":
 			installationCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
+		case "/api/v3/repos/acme/shared/installation":
+			installationCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 99})
 		case "/api/v3/app/installations/99/access_tokens":
 			tokenCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"token": "installation-token", "expires_at": time.Now().UTC().Add(time.Hour)})
@@ -114,7 +117,7 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, controller.saveGitHubAppPrivateKey(context.Background(), connection, pemValue, resourceVersion))
 
-	lease, connectionID, matched, err := controller.IssueBrokerLeaseForOrganization(context.Background(), "session-1", "acme", "acme/payments")
+	lease, connectionID, matched, err := controller.IssueBrokerLeaseForRepositories(context.Background(), "session-1", "acme", "acme/payments", []string{"acme/shared"})
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.Equal(t, connection.ID, connectionID)
@@ -131,8 +134,30 @@ func TestGitHubAppPrivateKeyAndBrokerRefresh(t *testing.T) {
 	require.NoError(t, controller.BrokerCredentials(ctx))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "installation-token")
-	require.Equal(t, 1, installationCalls)
-	require.Equal(t, 1, tokenCalls)
+	require.Equal(t, 2, installationCalls)
+	require.Equal(t, 2, tokenCalls)
+
+	sharedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials?repository=acme%2Fshared", nil)
+	sharedReq.Header.Set("Authorization", "Bearer "+lease)
+	sharedRecorder := httptest.NewRecorder()
+	sharedCtx := e.NewContext(sharedReq, sharedRecorder)
+	sharedCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	sharedCtx.SetParamNames("sessionId")
+	sharedCtx.SetParamValues("session-1")
+	require.NoError(t, controller.BrokerCredentials(sharedCtx))
+	require.Equal(t, http.StatusOK, sharedRecorder.Code)
+
+	deniedReq := httptest.NewRequest(http.MethodGet, "/internal/sessions/session-1/github-credentials?repository=acme%2Fsecret", nil)
+	deniedReq.Header.Set("Authorization", "Bearer "+lease)
+	deniedCtx := e.NewContext(deniedReq, httptest.NewRecorder())
+	deniedCtx.SetPath("/internal/sessions/:sessionId/github-credentials")
+	deniedCtx.SetParamNames("sessionId")
+	deniedCtx.SetParamValues("session-1")
+	err = controller.BrokerCredentials(deniedCtx)
+	var deniedHTTPError *echo.HTTPError
+	require.ErrorAs(t, err, &deniedHTTPError)
+	require.Equal(t, http.StatusForbidden, deniedHTTPError.Code)
+
 	require.NoError(t, controller.RevokeBrokerLeases(context.Background(), "session-1"))
 	recorder = httptest.NewRecorder()
 	ctx = e.NewContext(req, recorder)

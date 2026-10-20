@@ -187,11 +187,12 @@ type StartRequest struct {
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
 	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
-	ProfileFiles             []sessionsettings.ManagedFile `json:"-"`
-	ProfileMCPServers        *MCPServersSettings           `json:"-"`
-	ProfileSkills            []string                      `json:"-"`
-	ProfileCommandWrapper    string                        `json:"-"`
-	ResolvedSessionProfileID string                        `json:"-"`
+	ProfileFiles              []sessionsettings.ManagedFile `json:"-"`
+	ProfileMCPServers         *MCPServersSettings           `json:"-"`
+	ProfileSkills             []string                      `json:"-"`
+	ProfileGitHubRepositories []string                      `json:"-"`
+	ProfileCommandWrapper     string                        `json:"-"`
+	ResolvedSessionProfileID  string                        `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
 	// ReuseMessage is queued to that session instead of creating a new one.
 	ReuseMatchTags map[string]string `json:"reuse_match_tags,omitempty"`

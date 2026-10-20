@@ -238,6 +238,7 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	updatedBedrock.SetProfile("updated-profile")
 	settings.SetBedrock(updatedBedrock)
 	settings.SetGitHubAppInstallationID("4242")
+	settings.SetGitHubRepositories([]string{"acme/payments", "acme/shared"})
 
 	err = repo.Save(ctx, settings)
 	if err != nil {
@@ -286,6 +287,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	if parsed["github_app_installation_id"] != "4242" {
 		t.Errorf("Expected github_app_installation_id='4242', got '%v'", parsed["github_app_installation_id"])
 	}
+	if repositories, ok := parsed["github_repositories"].([]interface{}); !ok || len(repositories) != 2 {
+		t.Errorf("Expected two github_repositories, got '%v'", parsed["github_repositories"])
+	}
 
 	// Verify through FindByName as well
 	loaded, err := repo.FindByName(ctx, "update-all-fields")
@@ -310,6 +314,9 @@ func TestKubernetesSettingsRepository_SaveUpdate_AllFields(t *testing.T) {
 	}
 	if loaded.GitHubAppInstallationID() != "4242" {
 		t.Errorf("FindByName: Expected github_app_installation_id '4242', got '%s'", loaded.GitHubAppInstallationID())
+	}
+	if got := loaded.GitHubRepositories(); len(got) != 2 || got[0] != "acme/payments" || got[1] != "acme/shared" {
+		t.Errorf("FindByName: unexpected github_repositories: %v", got)
 	}
 }
 
