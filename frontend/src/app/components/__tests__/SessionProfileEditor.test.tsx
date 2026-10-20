@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn().mockResolvedValue(undefined),
   update: vi.fn().mockResolvedValue(undefined),
   client: {
+    getStorages: vi.fn().mockResolvedValue({ storages: [{ id: 'shared', name: 'Shared files' }], total: 1 }),
     getSandboxPolicies: vi.fn().mockResolvedValue({ sandbox_policies: [] }),
     getAvailableSessionPools: vi.fn().mockResolvedValue([]),
     getSessionProfiles: vi.fn().mockResolvedValue({ session_profiles: [] }),
@@ -19,6 +20,22 @@ vi.mock('../../../contexts/TeamScopeContext', () => ({ useTeamScope: () => ({ ge
 vi.mock('../../../lib/agentapi-proxy-client', () => ({ createAgentAPIProxyClientFromStorage: () => ({ ...mocks.client, updateSessionProfile: mocks.update, createSessionProfile: mocks.create }) }))
 vi.mock('../../../components/settings/MCPServerSettings', () => ({ MCPServerSettings: () => null }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
+
+describe('SessionProfileEditor storage', () => {
+  it('loads mounts, saves edits, and removes the final attachment', async () => {
+    render(<SessionProfileEditor section="storages" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Storage', scope: 'team', team_id: 'org/team', created_at: '', updated_at: '', config: { params: { storages: [{ storage_id: 'shared', mount_path: '/data', read_only: false }] } } }} />)
+    await waitFor(() => expect(mocks.client.getStorages).toHaveBeenCalledWith({ scope: 'team', team_id: 'org/team' }))
+    fireEvent.change(screen.getByLabelText('マウント先'), { target: { value: '/home/agentapi/shared' } })
+    fireEvent.click(screen.getByLabelText('読み取り専用'))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.params.storages).toEqual([{ storage_id: 'shared', mount_path: '/home/agentapi/shared', read_only: true }])
+    fireEvent.click(screen.getByRole('button', { name: '取り外す' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2))
+    expect(mocks.update.mock.calls[1][1].config.params.storages).toEqual([])
+  })
+})
 
 describe('SessionProfileEditor legacy pool settings', () => {
   it('returns the saved profile without closing the editor', async () => {
