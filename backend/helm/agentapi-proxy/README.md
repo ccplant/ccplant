@@ -401,6 +401,46 @@ helm install agentapi-proxy ./helm/agentapi-proxy -f values.yaml
 helm install agentapi-proxy oci://ghcr.io/takutakahashi/charts/agentapi-proxy --version 0.1.0 -f values.yaml
 ```
 
+### Restricting `/internal` by source IP
+
+For ingress-nginx, enable a dedicated, more-specific Ingress for `/internal`.
+Only requests whose source address matches `allowedCIDRs` are forwarded. Keep
+application-level tokens enabled: the allowlist is an additional network
+boundary, not a replacement for authentication.
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: agentapi.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+internalIngress:
+  enabled: true
+  allowedCIDRs:
+    - 10.0.0.0/8
+    - 203.0.113.10/32
+  hosts:
+    - agentapi.example.com
+  tls:
+    - secretName: agentapi-tls
+      hosts:
+        - agentapi.example.com
+```
+
+Rendering fails when `internalIngress.enabled=true` and `allowedCIDRs` is
+empty, preventing an accidentally unrestricted internal Ingress. Ensure the
+load balancer and ingress-nginx preserve the actual client address; otherwise
+the allowlist may see the load balancer address instead.
+
+Gateway API `HTTPRoute` does not define a portable source-IP match. Apply the
+Gateway implementation's authorization policy (for example Envoy Gateway
+`SecurityPolicy`, Istio `AuthorizationPolicy`, or a Cilium network policy)
+instead of creating an unrestricted `/internal` HTTPRoute.
+
 ### With scia Google OAuth
 
 ```yaml
