@@ -511,6 +511,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	// memberships), falling back to the memberships captured at schedule creation time.
 	scheduleScope := schedule.GetScope() // Use GetScope() to handle default value
 	sessionID := h.ids.New()
+	executedAt := h.clock.Now()
 
 	// Resolve user teams: prefer live auth context, fall back to saved UserTeams
 	var userTeams []string
@@ -522,13 +523,9 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 	}
 	teams := sessionuc.ResolveTeams(scheduleScope, schedule.TeamID, userTeams)
 
-	// Collect tags and add schedule metadata
-	tags := schedule.SessionConfig.Tags
-	if tags == nil {
-		tags = make(map[string]string)
-	}
-	tags["schedule_id"] = schedule.ID
-	tags["schedule_name"] = schedule.Name
+	// /start owns reuse. The execution-time tag makes this invocation unique
+	// when schedule session reuse is disabled.
+	tags := schedule.SessionConfig.SessionTags(schedule.ID, schedule.Name, executedAt)
 
 	var initialMessage, githubToken, agentType, model, pool, managerID string
 	var slackParams *entities.SlackParams
@@ -581,18 +578,16 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 		SessionTTL:               sessionTTL,
 		RepoInfo:                 extractRepositoryInfo(tags, sessionID),
 		SessionProfileID:         schedule.SessionConfig.SessionProfileID,
-		// Session reuse: when enabled, an existing active session matching schedule_id
-		// tag receives the message instead of a new session being created.
-		ReuseSession:   schedule.SessionConfig.ReuseSession,
-		ReuseMatchTags: map[string]string{"schedule_id": schedule.ID},
-		ReuseMessage:   schedule.SessionConfig.EffectiveReuseMessage(),
+		ReuseMatchTags:           tags,
+		ReuseMessage:             schedule.SessionConfig.EffectiveReuseMessage(),
+		DeferReuseToStart:        true,
 	})
 	if err != nil {
 		log.Printf("Failed to trigger schedule %s: %v", id, err)
 
 		// Record failed execution
 		record := ExecutionRecord{
-			ExecutedAt: h.clock.Now(),
+			ExecutedAt: executedAt,
 			Status:     "failed",
 			Error:      err.Error(),
 		}
@@ -605,7 +600,7 @@ func (h *Handlers) TriggerSchedule(c echo.Context) error {
 
 	// Record successful execution
 	record := ExecutionRecord{
-		ExecutedAt:    h.clock.Now(),
+		ExecutedAt:    executedAt,
 		SessionID:     result.SessionID,
 		Status:        "success",
 		SessionReused: result.SessionReused,

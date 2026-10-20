@@ -64,16 +64,10 @@ func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
 		if err != nil {
 			return err
 		}
-		tags := make(map[string]string, len(item.SessionConfig.Tags)+1)
-		for k, v := range item.SessionConfig.Tags {
-			tags[k] = v
-		}
-		tags["schedule_id"] = item.ID
+		tags := item.SessionConfig.SessionTags(item.ID, item.Name, item.PendingExecution.ClaimedAt)
 		startRequest := entities.StartRequest{Environment: item.SessionConfig.Environment, Tags: tags, Params: item.SessionConfig.Params, Scope: item.GetScope(), TeamID: item.TeamID, SessionProfileID: item.SessionConfig.SessionProfileID}
-		if item.SessionConfig.ReuseSession {
-			startRequest.ReuseMatchTags = map[string]string{"schedule_id": item.ID}
-			startRequest.ReuseMessage = item.SessionConfig.EffectiveReuseMessage()
-		}
+		startRequest.ReuseMatchTags = tags
+		startRequest.ReuseMessage = item.SessionConfig.EffectiveReuseMessage()
 		jobs = append(jobs, scheduleJob{ScheduleID: item.ID, ExecutionID: claims.ExecutionID, SessionID: claims.SessionID, ExecutionToken: token, StartRequest: startRequest})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"jobs": jobs})

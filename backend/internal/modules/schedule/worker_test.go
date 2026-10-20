@@ -61,6 +61,54 @@ func (m *mockProxySessionManager) CreateSession(ctx context.Context, id string, 
 	return session, nil
 }
 
+func TestWorkerBuildLaunchRequestDelegatesReuseToStart(t *testing.T) {
+	executedAt := time.Date(2026, time.October, 20, 6, 7, 8, 0, time.UTC)
+	worker := NewWorker(nil, newMockProxySessionManager(), WorkerConfig{}, nil)
+
+	for _, tt := range []struct {
+		name              string
+		reuseSession      bool
+		wantExecutionTime bool
+	}{
+		{name: "reuse", reuseSession: true},
+		{name: "new session", wantExecutionTime: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			schedule := &Schedule{
+				ID: "schedule-1", Name: "daily", UserID: "alice",
+				SessionConfig: SessionConfig{
+					Tags:         map[string]string{"custom": "value"},
+					Params:       &entities.SessionParams{Message: "run"},
+					ReuseSession: tt.reuseSession,
+				},
+			}
+			request := worker.buildLaunchRequest(schedule, "session-1", executedAt)
+
+			if !request.DeferReuseToStart {
+				t.Fatal("schedule reuse must be delegated to /start")
+			}
+			if request.ReuseSession {
+				t.Fatal("schedule worker must not run its own reuse lookup")
+			}
+			if request.ReuseMessage != "run" {
+				t.Fatalf("ReuseMessage = %q, want run", request.ReuseMessage)
+			}
+			if len(request.Tags) != len(request.ReuseMatchTags) {
+				t.Fatalf("Tags = %#v, ReuseMatchTags = %#v", request.Tags, request.ReuseMatchTags)
+			}
+			for key, value := range request.Tags {
+				if request.ReuseMatchTags[key] != value {
+					t.Fatalf("ReuseMatchTags[%q] = %q, want %q", key, request.ReuseMatchTags[key], value)
+				}
+			}
+			_, hasExecutionTime := request.Tags[ScheduleExecutionTimeTag]
+			if hasExecutionTime != tt.wantExecutionTime {
+				t.Fatalf("%s presence = %t, want %t", ScheduleExecutionTimeTag, hasExecutionTime, tt.wantExecutionTime)
+			}
+		})
+	}
+}
+
 func (m *mockProxySessionManager) GetSession(id string) entities.Session {
 	s, ok := m.sessions[id]
 	if !ok {
@@ -179,7 +227,7 @@ func TestWorker_ProcessSchedules(t *testing.T) {
 	}
 }
 
-func TestWorker_SkipActiveSession(t *testing.T) {
+func TestWorker_DelegatesActiveSessionReuseToStart(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
 	sessionManager := newMockProxySessionManager()
@@ -229,18 +277,19 @@ func TestWorker_SkipActiveSession(t *testing.T) {
 	// Process schedules
 	worker.processSchedules(ctx)
 
-	// Verify no new session was created (only prev-session exists)
-	if len(sessionManager.sessions) != 1 {
-		t.Errorf("expected 1 session (only prev), got %d", len(sessionManager.sessions))
+	// The schedule worker must not skip based on its own session lookup. The
+	// SessionManager implementation owns the /start call and its reuse decision.
+	if len(sessionManager.sessions) != 2 {
+		t.Errorf("expected the /start delegate to be called, got %d sessions", len(sessionManager.sessions))
 	}
 
-	// Verify skipped execution was recorded
+	// Verify the delegated execution was recorded.
 	updated, _ := manager.Get(ctx, "test-schedule")
 	if updated.LastExecution == nil {
 		t.Error("expected execution to be recorded")
 	}
-	if updated.LastExecution.Status != "skipped" {
-		t.Errorf("expected status 'skipped', got %q", updated.LastExecution.Status)
+	if updated.LastExecution.Status != "success" {
+		t.Errorf("expected status 'success', got %q", updated.LastExecution.Status)
 	}
 }
 
@@ -336,7 +385,7 @@ func TestWorker_RecurringScheduleNextExecution(t *testing.T) {
 	}
 }
 
-func TestWorker_DeletePreviousInactiveSession(t *testing.T) {
+func TestWorker_DoesNotDeletePreviousInactiveSession(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	manager := NewKubernetesManager(client, "default")
 	sessionManager := newMockProxySessionManager()
@@ -386,14 +435,14 @@ func TestWorker_DeletePreviousInactiveSession(t *testing.T) {
 	// Process schedules
 	worker.processSchedules(ctx)
 
-	// Verify previous session was deleted
-	if _, exists := sessionManager.sessions["prev-session"]; exists {
-		t.Error("expected previous session to be deleted")
+	// Lifecycle cleanup is not schedule-specific; /start decides whether a live
+	// route can be reused and leaves old sessions untouched.
+	if _, exists := sessionManager.sessions["prev-session"]; !exists {
+		t.Error("expected previous session to remain")
 	}
 
-	// Verify new session was created (should have 1 session, the new one)
-	if len(sessionManager.sessions) != 1 {
-		t.Errorf("expected 1 session (new one), got %d", len(sessionManager.sessions))
+	if len(sessionManager.sessions) != 2 {
+		t.Errorf("expected previous and newly delegated sessions, got %d", len(sessionManager.sessions))
 	}
 
 	// Verify execution was recorded as success

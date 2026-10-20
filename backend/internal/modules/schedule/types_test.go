@@ -26,6 +26,35 @@ func TestSessionConfigEffectiveReuseMessage(t *testing.T) {
 	}
 }
 
+func TestSessionConfigSessionTags(t *testing.T) {
+	executedAt := time.Date(2026, time.October, 20, 6, 7, 8, 900, time.FixedZone("JST", 9*60*60))
+
+	t.Run("reusable schedule keeps stable tags", func(t *testing.T) {
+		config := SessionConfig{Tags: map[string]string{"custom": "value"}, ReuseSession: true}
+		got := config.SessionTags("schedule-1", "daily", executedAt)
+
+		if got["schedule_id"] != "schedule-1" || got["schedule_name"] != "daily" || got["custom"] != "value" {
+			t.Fatalf("SessionTags() = %#v", got)
+		}
+		if _, ok := got[ScheduleExecutionTimeTag]; ok {
+			t.Fatalf("reusable schedule must not include %q: %#v", ScheduleExecutionTimeTag, got)
+		}
+	})
+
+	t.Run("non-reusable schedule includes UTC execution time", func(t *testing.T) {
+		config := SessionConfig{Tags: map[string]string{"custom": "value"}}
+		got := config.SessionTags("schedule-1", "daily", executedAt)
+
+		want := executedAt.UTC().Format(time.RFC3339Nano)
+		if got[ScheduleExecutionTimeTag] != want {
+			t.Fatalf("%s = %q, want %q", ScheduleExecutionTimeTag, got[ScheduleExecutionTimeTag], want)
+		}
+		if _, ok := config.Tags[ScheduleExecutionTimeTag]; ok {
+			t.Fatal("SessionTags mutated the configured tags")
+		}
+	})
+}
+
 func TestSchedule_IsOneTime(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
