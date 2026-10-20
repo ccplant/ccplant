@@ -25,7 +25,8 @@ func Open(path string) (*Store, error) {
 CREATE TABLE IF NOT EXISTS runs (
  id TEXT PRIMARY KEY, scenario_id TEXT NOT NULL, scenario_description TEXT NOT NULL,
  category_id TEXT NOT NULL, category_description TEXT NOT NULL, kind TEXT NOT NULL,
- environment TEXT NOT NULL, parameters TEXT NOT NULL, status TEXT NOT NULL,
+ environment TEXT NOT NULL, target_api_url TEXT NOT NULL, target_frontend_url TEXT NOT NULL,
+ auth_type TEXT NOT NULL, parameters TEXT NOT NULL, status TEXT NOT NULL,
  cancel_requested INTEGER NOT NULL DEFAULT 0, worker_id TEXT NOT NULL DEFAULT '',
  lease_expires_at TEXT, created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT
 );
@@ -46,7 +47,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) CreateRun(ctx context.Context, r domain.Run) error {
 	p, _ := json.Marshal(r.Parameters)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO runs(id,scenario_id,scenario_description,category_id,category_description,kind,environment,parameters,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, r.ID, r.ScenarioID, r.ScenarioDescription, r.CategoryID, r.CategoryDescription, r.Kind, r.Environment, string(p), r.Status, format(r.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO runs(id,scenario_id,scenario_description,category_id,category_description,kind,environment,target_api_url,target_frontend_url,auth_type,parameters,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.ScenarioID, r.ScenarioDescription, r.CategoryID, r.CategoryDescription, r.Kind, r.Environment, r.TargetAPIURL, r.TargetFrontendURL, r.AuthType, string(p), r.Status, format(r.CreatedAt))
 	return err
 }
 
@@ -184,7 +185,7 @@ func (s *Store) Complete(ctx context.Context, id, worker, status string) error {
 	return nil
 }
 
-const runColumns = `id,scenario_id,scenario_description,category_id,category_description,kind,environment,parameters,status,cancel_requested,worker_id,lease_expires_at,created_at,started_at,finished_at`
+const runColumns = `id,scenario_id,scenario_description,category_id,category_description,kind,environment,target_api_url,target_frontend_url,auth_type,parameters,status,cancel_requested,worker_id,lease_expires_at,created_at,started_at,finished_at`
 
 type scanner interface{ Scan(...any) error }
 
@@ -192,7 +193,7 @@ func scanRun(s scanner) (domain.Run, error) {
 	var r domain.Run
 	var p, lease, created, started, finished sql.NullString
 	var cancel int
-	err := s.Scan(&r.ID, &r.ScenarioID, &r.ScenarioDescription, &r.CategoryID, &r.CategoryDescription, &r.Kind, &r.Environment, &p, &r.Status, &cancel, &r.WorkerID, &lease, &created, &started, &finished)
+	err := s.Scan(&r.ID, &r.ScenarioID, &r.ScenarioDescription, &r.CategoryID, &r.CategoryDescription, &r.Kind, &r.Environment, &r.TargetAPIURL, &r.TargetFrontendURL, &r.AuthType, &p, &r.Status, &cancel, &r.WorkerID, &lease, &created, &started, &finished)
 	if err != nil {
 		return r, err
 	}

@@ -25,11 +25,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [scenario_id]
+              required: [scenario_id, target]
               properties:
                 scenario_id: {type: string}
                 environment: {type: string, default: local}
                 parameters: {type: object, additionalProperties: true}
+                target:
+                  type: object
+                  required: [api_url, auth_type]
+                  properties:
+                    api_url: {type: string, format: uri}
+                    frontend_url: {type: string, format: uri}
+                    auth_type: {type: string, enum: [none, bearer, api-key]}
+                    auth_value: {type: string, writeOnly: true}
       responses:
         "201": {description: Created run}
         "400": {description: Invalid scenario or parameters}

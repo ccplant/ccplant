@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ccplant/ccplant/e2e/internal/catalog"
@@ -22,6 +24,7 @@ type Server struct {
 	store   *store.Store
 	catalog *domain.Catalog
 	mux     *http.ServeMux
+	secrets sync.Map
 }
 
 func New(s *store.Store, c *domain.Catalog) *Server {
@@ -48,6 +51,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		ScenarioID  string         `json:"scenario_id"`
 		Environment string         `json:"environment"`
 		Parameters  map[string]any `json:"parameters"`
+		Target      domain.Target  `json:"target"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -60,13 +64,28 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	if in.Environment == "" {
 		in.Environment = "local"
 	}
-	run := domain.Run{ID: newID(), ScenarioID: sc.ID, ScenarioDescription: sc.Description, CategoryID: cat.ID, CategoryDescription: cat.Description, Kind: sc.Kind, Environment: in.Environment, Parameters: in.Parameters, Status: "queued", CreatedAt: time.Now().UTC()}
+	if in.Target.AuthType == "" {
+		in.Target.AuthType = "none"
+	}
+	if err := validateTarget(in.Target); err != nil {
+		problem(w, 400, err.Error())
+		return
+	}
+	run := domain.Run{ID: newID(), ScenarioID: sc.ID, ScenarioDescription: sc.Description, CategoryID: cat.ID, CategoryDescription: cat.Description, Kind: sc.Kind, Environment: in.Environment, TargetAPIURL: in.Target.APIURL, TargetFrontendURL: in.Target.FrontendURL, AuthType: in.Target.AuthType, Parameters: in.Parameters, Status: "queued", CreatedAt: time.Now().UTC()}
 	if run.Parameters == nil {
 		run.Parameters = map[string]any{}
 	}
 	if err := s.store.CreateRun(r.Context(), run); err != nil {
 		problem(w, 500, err.Error())
 		return
+	}
+	if in.Target.AuthValue != "" {
+		s.secrets.Store(run.ID, in.Target.AuthValue)
+		time.AfterFunc(5*time.Minute, func() {
+			if _, ok := s.secrets.LoadAndDelete(run.ID); ok {
+				_ = s.store.Cancel(context.Background(), run.ID)
+			}
+		})
 	}
 	write(w, 201, run)
 }
@@ -100,6 +119,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		dbError(w, err)
 		return
 	}
+	s.secrets.Delete(r.PathValue("id"))
 	write(w, 202, map[string]bool{"cancel_requested": true})
 }
 func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +140,11 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc, _, _ := catalog.Find(s.catalog, run.ScenarioID)
-	write(w, 200, map[string]any{"run": run, "scenario": sc})
+	target := domain.Target{APIURL: run.TargetAPIURL, FrontendURL: run.TargetFrontendURL, AuthType: run.AuthType}
+	if value, ok := s.secrets.LoadAndDelete(run.ID); ok {
+		target.AuthValue, _ = value.(string)
+	}
+	write(w, 200, map[string]any{"run": run, "scenario": sc, "target": target})
 }
 func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -223,6 +247,27 @@ func newID() string {
 	b := make([]byte, 12)
 	rand.Read(b)
 	return fmt.Sprintf("%d-%s", time.Now().UnixMilli(), hex.EncodeToString(b))
+}
+func validateTarget(t domain.Target) error {
+	if t.AuthType == "" {
+		t.AuthType = "none"
+	}
+	if t.AuthType != "none" && t.AuthType != "bearer" && t.AuthType != "api-key" {
+		return fmt.Errorf("unsupported auth_type")
+	}
+	if t.AuthType != "none" && strings.TrimSpace(t.AuthValue) == "" {
+		return fmt.Errorf("auth_value is required")
+	}
+	for name, raw := range map[string]string{"api_url": t.APIURL, "frontend_url": t.FrontendURL} {
+		if raw == "" && name == "frontend_url" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			return fmt.Errorf("invalid %s", name)
+		}
+	}
+	return nil
 }
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

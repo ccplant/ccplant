@@ -33,6 +33,9 @@ type Run struct {
 	CategoryDescription string         `json:"category_description"`
 	Kind                string         `json:"kind"`
 	Environment         string         `json:"environment"`
+	TargetAPIURL        string         `json:"target_api_url"`
+	TargetFrontendURL   string         `json:"target_frontend_url,omitempty"`
+	AuthType            string         `json:"auth_type"`
 	Parameters          map[string]any `json:"parameters"`
 	Status              string         `json:"status"`
 	CancelRequested     bool           `json:"cancel_requested"`
@@ -41,6 +44,13 @@ type Run struct {
 	CreatedAt           time.Time      `json:"created_at"`
 	StartedAt           *time.Time     `json:"started_at,omitempty"`
 	FinishedAt          *time.Time     `json:"finished_at,omitempty"`
+}
+
+type Target struct {
+	APIURL      string `json:"api_url"`
+	FrontendURL string `json:"frontend_url,omitempty"`
+	AuthType    string `json:"auth_type"`
+	AuthValue   string `json:"auth_value,omitempty"`
 }
 
 type Event struct {

@@ -317,9 +317,10 @@ artifact は `run_id/artifact_id/name` の固定規則で保存し、利用者�
 SHA-256、content type、size を持たせる。保持期間は既定 7 日、失敗 run は 14 日とし、後続の GC で
 削除する。
 
-secret は API の DB、run parameter、event、artifact に保存しない。worker に環境変数または
-secret mount で渡し、scenario からは論理名で参照する。logger は既知 secret を redact するが、
-redaction だけに依存せずシナリオ側で値を出力しない。
+対象URLと認証方式はrunへ保存するが、認証値は API の DB、run parameter、event、artifact に保存しない。
+利用者がrunごとに入力し、APIプロセスの一時メモリからworkerのclaim時に一度だけ渡して直後に削除する。
+API再起動やclaim応答の通信断では復元・再送せず、利用者が再入力して新しいrunを作る。workerは認証値を
+環境変数でscenarioへ渡す。loggerは既知secretをredactするが、シナリオ側でも値を出力しない。
 
 ## ローカル実行
 

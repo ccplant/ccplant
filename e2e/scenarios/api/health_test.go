@@ -17,7 +17,14 @@ func TestHealth(t *testing.T) {
 		base = "http://localhost:8080"
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	res, err := client.Get(strings.TrimRight(base, "/") + "/health")
+	req, _ := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+"/health", nil)
+	switch os.Getenv("E2E_AUTH_TYPE") {
+	case "bearer":
+		req.Header.Set("Authorization", "Bearer "+os.Getenv("E2E_AUTH_VALUE"))
+	case "api-key":
+		req.Header.Set("X-API-Key", os.Getenv("E2E_AUTH_VALUE"))
+	}
+	res, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

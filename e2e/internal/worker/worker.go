@@ -24,6 +24,7 @@ type Worker struct {
 type claim struct {
 	Run      domain.Run      `json:"run"`
 	Scenario domain.Scenario `json:"scenario"`
+	Target   domain.Target   `json:"target"`
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -80,6 +81,7 @@ func (w *Worker) execute(parent context.Context, c claim) {
 		cmd.Dir = w.Root
 	}
 	cmd.Env = append(os.Environ(), parameters(c.Run.Parameters)...)
+	cmd.Env = append(cmd.Env, "E2E_TARGET_API_URL="+c.Target.APIURL, "E2E_TARGET_FRONTEND_URL="+c.Target.FrontendURL, "E2E_AUTH_TYPE="+c.Target.AuthType, "E2E_AUTH_VALUE="+c.Target.AuthValue)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 	if err := cmd.Start(); err != nil {
