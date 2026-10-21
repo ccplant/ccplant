@@ -11,6 +11,104 @@ categories:
     description: 外部連携
 
 scenarios:
+  - id: api.session.dry-run
+    category: session
+    description: セッション作成を実行せずにプレビューできる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSessionDryRun
+    timeout: 1m
+  - id: api.auth.current-user
+    category: auth
+    description: 認証済みユーザー情報を取得できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestAuthenticatedUser
+    timeout: 30s
+  - id: api.auth.reject-anonymous
+    category: auth
+    description: 未認証ユーザーのアクセスを拒否する
+    kind: go-test
+    package: ./scenarios/api
+    test: TestUnauthenticatedAccessDenied
+    timeout: 30s
+  - id: api.session.search
+    category: session
+    description: セッションを一覧表示してタグで検索できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSessionSearch
+    timeout: 1m
+  - id: api.settings.managers
+    category: settings
+    description: 利用可能な設定マネージャーを取得できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSettingsManagers
+    timeout: 30s
+  - id: api.settings.profiles-list
+    category: settings
+    description: セッションプロファイルを一覧表示できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSessionProfilesList
+    timeout: 30s
+  - id: api.settings.profile-lifecycle
+    category: settings
+    description: セッションプロファイルを作成・更新・削除できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSessionProfileLifecycle
+    timeout: 3m
+  - id: api.settings.invalid-profile
+    category: settings
+    description: 名前のないプロファイルを拒否する
+    kind: go-test
+    package: ./scenarios/api
+    test: TestInvalidProfileRejected
+    timeout: 30s
+  - id: api.integration.schedules-list
+    category: integration
+    description: スケジュールを一覧表示できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSchedulesList
+    timeout: 30s
+  - id: api.integration.schedule-lifecycle
+    category: integration
+    description: 停止中スケジュールを作成・更新・削除できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestScheduleLifecycle
+    timeout: 3m
+  - id: api.integration.invalid-schedule
+    category: integration
+    description: 不正なcron式のスケジュールを拒否する
+    kind: go-test
+    package: ./scenarios/api
+    test: TestInvalidScheduleRejected
+    timeout: 30s
+  - id: api.integration.webhooks-list
+    category: integration
+    description: Webhookを一覧表示できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestWebhooksList
+    timeout: 30s
+  - id: api.integration.webhook-lifecycle
+    category: integration
+    description: 停止中Webhookを作成・更新・削除できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestWebhookLifecycle
+    timeout: 3m
+  - id: api.integration.slackbots-list
+    category: integration
+    description: SlackBotを一覧表示できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSlackbotsList
+    timeout: 30s
   - id: api.smoke.health
     category: smoke
     description: APIが正常に応答する

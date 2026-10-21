@@ -308,6 +308,10 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
 	}
+	if err := restoreObjectStorages(ctx, settings); err != nil {
+		s.setStatus(StatusError, "failed to restore persistent storage: "+err.Error())
+		return
+	}
 
 	if err := persistModelConnectionIdentity(settings, compileOpts.OutputDir, restoreRequired || restoredConnectionState); err != nil {
 		s.setStatus(StatusError, err.Error())
@@ -502,6 +506,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		defer s.agentWorkers.Done()
 		s.runFilesSync(ctx, settings)
 	}()
+	s.runStorageSync(ctx, settings)
 
 	// Supervise: if agentapi exits, report error so K8s restarts the Pod.
 	go func() {

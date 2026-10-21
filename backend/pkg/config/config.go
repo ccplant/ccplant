@@ -399,6 +399,10 @@ type S3StorageConfig struct {
 	Prefix string `json:"prefix" mapstructure:"prefix"`
 	// Endpoint is a custom S3-compatible endpoint URL (e.g., for rustfs or other S3-compatible services)
 	Endpoint string `json:"endpoint" mapstructure:"endpoint"`
+	// AccessKeyID and SecretAccessKey optionally isolate S3-compatible storage
+	// credentials from the process-wide AWS credential chain (for example KMS).
+	AccessKeyID     string `json:"access_key_id" mapstructure:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key" mapstructure:"secret_access_key"`
 }
 
 // SessionPersistenceConfig stores ACP conversation snapshots. "volume" writes
@@ -909,6 +913,7 @@ func initializeConfigStructsFromEnv(config *Config, v *viper.Viper) {
 		config.SessionPersistence.S3 = &S3StorageConfig{
 			Bucket: bucket, Region: v.GetString("session_persistence.s3.region"),
 			Prefix: v.GetString("session_persistence.s3.prefix"), Endpoint: v.GetString("session_persistence.s3.endpoint"),
+			AccessKeyID: v.GetString("session_persistence.s3.access_key_id"), SecretAccessKey: v.GetString("session_persistence.s3.secret_access_key"),
 		}
 	}
 	// Static API key authentication was removed. Warn loudly when its legacy
@@ -1341,6 +1346,8 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_persistence.s3.region", "AGENTAPI_SESSION_PERSISTENCE_S3_REGION")
 	_ = v.BindEnv("session_persistence.s3.prefix", "AGENTAPI_SESSION_PERSISTENCE_S3_PREFIX")
 	_ = v.BindEnv("session_persistence.s3.endpoint", "AGENTAPI_SESSION_PERSISTENCE_S3_ENDPOINT")
+	_ = v.BindEnv("session_persistence.s3.access_key_id", "AGENTAPI_SESSION_PERSISTENCE_S3_ACCESS_KEY_ID")
+	_ = v.BindEnv("session_persistence.s3.secret_access_key", "AGENTAPI_SESSION_PERSISTENCE_S3_SECRET_ACCESS_KEY")
 
 	// Asset backend configuration
 	_ = v.BindEnv("asset.backend", "AGENTAPI_ASSET_BACKEND")

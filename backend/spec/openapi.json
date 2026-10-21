@@ -4256,6 +4256,33 @@
         }
       }
     },
+    "/storages": {
+      "post": {
+        "summary": "Create persistent storage", "operationId": "createStorage", "tags": ["Storage"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateStorageRequest"}}}},
+        "responses": {"201": {"description": "Storage created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Storage"}}}}, "400": {"description": "Invalid storage"}, "503": {"description": "Storage provider unavailable"}}
+      },
+      "get": {
+        "summary": "List visible persistent storages", "operationId": "listStorages", "tags": ["Storage"],
+        "parameters": [{"name": "scope", "in": "query", "schema": {"$ref": "#/components/schemas/ResourceScope"}}, {"name": "team_id", "in": "query", "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Storage list", "content": {"application/json": {"schema": {"type": "object", "properties": {"storages": {"type": "array", "items": {"$ref": "#/components/schemas/Storage"}}, "total": {"type": "integer"}}}}}}}
+      }
+    },
+    "/storages/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "get": {"summary": "Get persistent storage", "operationId": "getStorage", "tags": ["Storage"], "responses": {"200": {"description": "Storage", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Storage"}}}}, "404": {"description": "Not found"}}},
+      "patch": {"summary": "Update persistent storage metadata", "operationId": "updateStorage", "tags": ["Storage"], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateStorageRequest"}}}}, "responses": {"200": {"description": "Updated storage", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Storage"}}}}, "409": {"description": "Concurrent update"}}},
+      "delete": {"summary": "Delete persistent storage", "operationId": "deleteStorage", "tags": ["Storage"], "responses": {"204": {"description": "Deleted"}, "404": {"description": "Not found"}}}
+    },
+    "/storages/{id}/files": {
+      "get": {"summary": "List object storage files", "operationId": "listStorageFiles", "tags": ["Storage"], "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "include_deleted", "in": "query", "schema": {"type": "boolean"}}], "responses": {"200": {"description": "Current last-write-wins manifest", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/StorageFileList"}}}}}}
+    },
+    "/storages/{id}/files/{path}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "path", "in": "path", "required": true, "description": "Normalized relative path; nested paths are accepted", "schema": {"type": "string"}}],
+      "put": {"summary": "Commit a file using last-write-wins", "operationId": "putStorageFile", "tags": ["Storage"], "parameters": [{"name": "mode", "in": "query", "schema": {"type": "string", "example": "644"}}], "requestBody": {"required": true, "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}, "responses": {"200": {"description": "Committed file metadata", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/StorageFile"}}}}, "409": {"description": "Storage busy"}, "413": {"description": "File exceeds 64 MiB"}}},
+      "get": {"summary": "Download a storage file", "operationId": "getStorageFile", "tags": ["Storage"], "responses": {"200": {"description": "File content", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}, "404": {"description": "File not found"}}},
+      "delete": {"summary": "Commit a file tombstone", "operationId": "deleteStorageFile", "tags": ["Storage"], "responses": {"200": {"description": "Committed tombstone", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/StorageFile"}}}}}}
+    },
     "/sandbox-policies": {
       "post": {
         "summary": "Create a sandbox policy",
@@ -8282,12 +8309,39 @@
           }
         }
       },
+      "StorageAttachment": {
+        "type": "object", "required": ["storage_id", "mount_path"],
+        "properties": {"storage_id": {"type": "string"}, "mount_path": {"type": "string", "description": "Absolute non-reserved mount path"}, "read_only": {"type": "boolean", "default": false}}
+      },
+      "StorageFile": {
+        "type": "object", "required": ["path", "revision", "updated_at"],
+        "properties": {"path": {"type": "string"}, "digest": {"type": "string"}, "size": {"type": "integer", "format": "int64"}, "mode": {"type": "integer"}, "deleted": {"type": "boolean"}, "revision": {"type": "integer", "format": "int64"}, "updated_at": {"type": "string", "format": "date-time"}}
+      },
+      "StorageFileList": {
+        "type": "object", "required": ["revision", "files"],
+        "properties": {"revision": {"type": "integer", "format": "int64"}, "files": {"type": "array", "items": {"$ref": "#/components/schemas/StorageFile"}}}
+      },
+      "Storage": {
+        "type": "object", "required": ["id", "name", "owner_id", "scope", "kind", "state", "revision", "file_count", "created_at", "updated_at"],
+        "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"}, "owner_id": {"type": "string"}, "scope": {"$ref": "#/components/schemas/ResourceScope"}, "team_id": {"type": "string"}, "kind": {"type": "string", "enum": ["object_snapshot"]}, "pool": {"type": "string"}, "provider": {"type": "string", "description": "Object storage provider name"}, "size": {"type": "string"}, "state": {"type": "string", "enum": ["pending", "ready", "deleting", "error"]}, "revision": {"type": "integer", "format": "int64"}, "file_count": {"type": "integer"}, "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}}
+      },
+      "CreateStorageRequest": {
+        "type": "object", "required": ["name", "kind"],
+        "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "scope": {"$ref": "#/components/schemas/ResourceScope"}, "team_id": {"type": "string"}, "kind": {"type": "string", "enum": ["object_snapshot"]}, "pool": {"type": "string"}, "provider": {"type": "string"}, "size": {"type": "string"}}
+      },
+      "UpdateStorageRequest": {
+        "type": "object", "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "size": {"type": "string"}}
+      },
       "SessionParams": {
         "type": "object",
         "properties": {
           "pool": {
             "type": "string",
             "description": "Logical session runner pool to use. The caller must have an enabled binding to an available pool with this name."
+          },
+          "storages": {
+            "type": "array", "description": "Scope-owned persistent storages to mount into the session",
+            "items": {"$ref": "#/components/schemas/StorageAttachment"}
           },
           "resume_from": {
             "type": "string",
@@ -11504,7 +11558,8 @@
           "description": "Whether to reuse an existing session instead of creating a new one"
         },
         "params": {
-          "$ref": "#/components/schemas/SessionParams"
+          "allOf": [{"$ref": "#/components/schemas/SessionParams"}],
+          "description": "Reusable session parameters. storages are inherited by sessions; an explicit start-request attachment with the same storage_id replaces the profile attachment, while other attachments are retained."
         },
         "sandbox_policy_id": {
           "type": "string",

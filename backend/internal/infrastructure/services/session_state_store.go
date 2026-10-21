@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -179,6 +180,12 @@ func newS3SessionStateStore(ctx context.Context, cfg *config.S3StorageConfig) (S
 	opts := []func(*awsconfig.LoadOptions) error{}
 	if cfg.Region != "" {
 		opts = append(opts, awsconfig.WithRegion(cfg.Region))
+	}
+	if cfg.AccessKeyID != "" || cfg.SecretAccessKey != "" {
+		if cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
+			return nil, fmt.Errorf("session persistence S3 access key ID and secret access key must be configured together")
+		}
+		opts = append(opts, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, "")))
 	}
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {

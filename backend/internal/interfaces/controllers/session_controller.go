@@ -2594,7 +2594,37 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	if override.CredentialSource != "" {
 		merged.CredentialSource = override.CredentialSource
 	}
+	merged.Storages = mergeStorageAttachments(base.Storages, override.Storages)
 	return &merged
+}
+
+// mergeStorageAttachments keeps profile ordering, replaces matching storage IDs
+// with explicit request entries, and appends request-only entries.
+func mergeStorageAttachments(base, override []entities.StorageAttachment) []entities.StorageAttachment {
+	if len(override) == 0 {
+		return append([]entities.StorageAttachment(nil), base...)
+	}
+	overrides := make(map[string]entities.StorageAttachment, len(override))
+	for _, attachment := range override {
+		overrides[attachment.StorageID] = attachment
+	}
+	result := make([]entities.StorageAttachment, 0, len(base)+len(override))
+	seen := make(map[string]struct{}, len(base)+len(override))
+	for _, attachment := range base {
+		if replacement, ok := overrides[attachment.StorageID]; ok {
+			attachment = replacement
+		}
+		result = append(result, attachment)
+		seen[attachment.StorageID] = struct{}{}
+	}
+	for _, attachment := range override {
+		if _, ok := seen[attachment.StorageID]; ok {
+			continue
+		}
+		result = append(result, attachment)
+		seen[attachment.StorageID] = struct{}{}
+	}
+	return result
 }
 
 func applyProfileSandboxDefaults(cfg entities.SessionProfileConfig, params *entities.SessionParams) {
