@@ -43,10 +43,12 @@ native/
 
 ## What it shows
 
-- **Service** card: service state, health, manager ID, version, upstream,
-  state directory, filesystem-sandbox flag, and labels.
+- **Service** card: registered manager name, immutable manager ID, local
+  instance, owner, service state, health, version, upstream/listen addresses,
+  state directory, filesystem-sandbox/runtime-profile flags, and labels.
 - **Active session count** in the header.
-- **Sessions** table: id, status, pid, start time, with an empty state.
+- **Sessions** table: description, id, status and failure detail, last activity,
+  tags, and pid, with a responsive empty state.
 - **Logs** viewer: live tail for the session manager or each session's combined
   provisioner and agent stdout/stderr.
 - **Doctor** card: result of `native doctor --json` (healthy / issues).
@@ -107,6 +109,9 @@ the sidecar is unavailable, the fallback lookup order is:
 The first-run form invokes `native install` with the bundled sidecar. Its
 one-time registration token is passed only to that child process and is not written to GUI settings;
 the CLI continues to store only the resulting connection credential.
+The manager name entered in the form is sent during enrollment, persisted as
+the registered display name, and stored in the local instance configuration so
+status, list, update, restart, and token rotation keep the same identity.
 
 When command setup is selected, the app locates an existing `mise` installation,
 runs `mise use --global node@<version> github-cli@<version>`, and passes a PATH

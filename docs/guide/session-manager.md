@@ -156,6 +156,11 @@ ccplant session-manager install \
 
 ネイティブ版は親APIへoutbound接続するため、親APIからホストへのinbound接続やSession Manager用の公開URLは不要です。
 
+`--name` は親ccplantのSession Manager一覧や実行先選択に表示する名前です。登録時に
+親側へ保存され、ローカル設定にも保持されるため、サービス再起動、バイナリ更新、
+接続トークンのローテーション後も維持されます。`--instance` は同じホスト内での
+ローカル識別子、Manager IDは親が発行する不変IDであり、それぞれ別の値です。
+
 正常に完了すると、次の形式でインストール先とマネージャーIDが表示されます。
 
 ```text

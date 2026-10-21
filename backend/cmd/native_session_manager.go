@@ -50,6 +50,7 @@ type nativeDaemonConfig struct {
 	StateDir              string                        `json:"state_dir"`
 	BinaryPath            string                        `json:"binary_path,omitempty"`
 	ManagerID             string                        `json:"manager_id,omitempty"`
+	Name                  string                        `json:"name,omitempty"`
 	InstanceID            string                        `json:"instance_id,omitempty"`
 	Scope                 string                        `json:"scope,omitempty"`
 	TeamID                string                        `json:"team_id,omitempty"`

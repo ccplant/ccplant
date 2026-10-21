@@ -215,6 +215,21 @@ pub async fn native_install(
     if request.filesystem_sandbox {
         args.push("--filesystem-sandbox");
     }
+    let labels = request
+        .labels
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    if labels.iter().any(|label| !label.contains('=')) {
+        return Err("labels must use key=value syntax".to_string());
+    }
+    for label in labels {
+        args.extend(["--label", label]);
+    }
+    if request.inherit_runtime_profile {
+        args.push("--inherit-runtime-profile");
+    }
     let manager_path;
     let manager_env;
     if let Some(mise) = mise_path.as_ref() {

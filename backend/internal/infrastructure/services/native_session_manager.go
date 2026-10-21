@@ -55,6 +55,8 @@ type NativeSession struct {
 	statusMessage   string
 	description     string
 	cancel          context.CancelFunc
+	deleteDone      chan struct{}
+	deleteErr       error
 }
 
 type nativeSessionState struct {
@@ -222,7 +224,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		err := cmd.Wait()
 		_ = logFile.Close()
 		s.mu.Lock()
-		if s.status != "stopped" {
+		if s.status != "stopped" && s.status != "terminating" {
 			s.status = "error"
 			if err != nil {
 				s.statusMessage = err.Error()
@@ -397,40 +399,71 @@ func (m *NativeSessionManager) DeleteSession(id string) error {
 	s := m.sessions[id]
 	if s == nil {
 		m.mu.Unlock()
-		return fmt.Errorf("session %s not found", id)
-	}
-	delete(m.provisionRequests, id)
-	s.mu.Lock()
-	if s.status == "stopped" {
-		s.mu.Unlock()
-		m.mu.Unlock()
 		return nil
 	}
-	s.status = "stopped"
+	rel, pathErr := filepath.Rel(filepath.Join(m.stateDir, "sessions"), s.rootDir)
+	if pathErr != nil || rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		m.mu.Unlock()
+		return fmt.Errorf("unsafe session state path for %s", id)
+	}
+	s.mu.Lock()
+	if s.deleteDone != nil {
+		done := s.deleteDone
+		s.mu.Unlock()
+		m.mu.Unlock()
+		<-done
+		s.mu.RLock()
+		err := s.deleteErr
+		s.mu.RUnlock()
+		return err
+	}
+	s.deleteDone = make(chan struct{})
+	s.deleteErr = nil
+	done := s.deleteDone
+	s.status = "terminating"
 	s.updatedAt = time.Now().UTC()
 	pid := s.pid
 	cancel := s.cancel
 	s.mu.Unlock()
+	delete(m.provisionRequests, id)
 	m.mu.Unlock()
-	if pid > 0 {
-		_ = syscall.Kill(-pid, syscall.SIGTERM)
-	}
 	if cancel != nil {
 		cancel()
 	}
-	go func() {
-		terminateNativeProcessGroup(pid, s.rootDir)
+	err := terminateNativeProcessGroup(pid, s.rootDir)
+	if err == nil {
 		m.mu.Lock()
 		if m.sessions[id] == s {
 			delete(m.sessions, id)
 		}
 		m.mu.Unlock()
-	}()
-	return nil
+	}
+	s.mu.Lock()
+	s.deleteErr = err
+	if err != nil {
+		s.status = "stopped"
+		s.statusMessage = "session cleanup failed: " + err.Error()
+		s.updatedAt = time.Now().UTC()
+	}
+	close(done)
+	if err != nil {
+		s.deleteDone = nil
+	}
+	s.mu.Unlock()
+	if err != nil {
+		_ = m.persistSession(s)
+	}
+	return err
 }
 
-func terminateNativeProcessGroup(pid int, root string) {
+func terminateNativeProcessGroup(pid int, root string) error {
+	if strings.TrimSpace(root) == "" || filepath.Clean(root) == string(filepath.Separator) {
+		return errors.New("unsafe session state path")
+	}
 	if pid > 0 {
+		if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("terminate process group: %w", err)
+		}
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
 			if syscall.Kill(-pid, 0) != nil {
@@ -439,10 +472,22 @@ func terminateNativeProcessGroup(pid int, root string) {
 			time.Sleep(100 * time.Millisecond)
 		}
 		if syscall.Kill(-pid, 0) == nil {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("kill process group: %w", err)
+			}
+			deadline = time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) && syscall.Kill(-pid, 0) == nil {
+				time.Sleep(25 * time.Millisecond)
+			}
+			if syscall.Kill(-pid, 0) == nil {
+				return errors.New("process group still exists after SIGKILL")
+			}
 		}
 	}
-	_ = os.RemoveAll(root)
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("remove session state: %w", err)
+	}
+	return nil
 }
 
 func (m *NativeSessionManager) SendMessage(ctx context.Context, id, message string) error {
@@ -632,6 +677,14 @@ func (m *NativeSessionManager) restoreSessions() error {
 			continue
 		}
 		if state.FilesystemSandbox != m.filesystemSandbox {
+			continue
+		}
+		if state.Status == "terminating" || state.Status == "stopped" {
+			if syscall.Kill(state.PID, 0) == nil && nativeProcessMatchesSession(state.PID, state.RootDir) {
+				_ = terminateNativeProcessGroup(state.PID, sessionDir)
+			} else {
+				_ = os.RemoveAll(sessionDir)
+			}
 			continue
 		}
 		if err := syscall.Kill(state.PID, 0); err != nil || !nativeProcessMatchesSession(state.PID, state.RootDir) {

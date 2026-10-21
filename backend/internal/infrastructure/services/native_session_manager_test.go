@@ -240,3 +240,33 @@ func TestNativeProvisionRequestPullLifecycle(t *testing.T) {
 		t.Fatalf("StatusMessage() = %q", got)
 	}
 }
+
+func TestNativeSessionManagerDeleteRemovesStateBeforeReturning(t *testing.T) {
+	stateDir := t.TempDir()
+	root := filepath.Join(stateDir, "sessions", "failed-1")
+	if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime", "state.json"), []byte(`{"id":"failed-1","status":"error"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewNativeSessionManager(stateDir, "http://127.0.0.1:8080", "token", "", os.Args[0], false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &NativeSession{id: "failed-1", request: &entities.RunServerRequest{}, rootDir: root, status: "error"}
+	m.sessions[session.id] = session
+
+	if err := m.DeleteSession(session.id); err != nil {
+		t.Fatal(err)
+	}
+	if m.GetSession(session.id) != nil {
+		t.Fatal("deleted session remains in memory")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("deleted session state remains: %v", err)
+	}
+	if err := m.DeleteSession(session.id); err != nil {
+		t.Fatalf("repeated delete must be idempotent: %v", err)
+	}
+}

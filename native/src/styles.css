@@ -429,6 +429,26 @@ body {
   text-overflow: ellipsis;
 }
 
+.session-summary {
+  display: grid;
+  gap: 3px;
+  min-width: 220px;
+}
+
+.session-summary strong { font-weight: 600; }
+.session-summary > span { color: var(--text-muted); }
+.session-summary .session-summary__error { color: var(--bad); }
+.session-summary__tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+
+@media (max-width: 620px) {
+  .table thead { display: none; }
+  .table, .table tbody, .table tr, .table td { display: block; }
+  .table tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .table tr:last-child { border-bottom: 0; }
+  .table td { border: 0; padding: 3px 0; }
+  .session-summary { min-width: 0; }
+}
+
 .logs__header {
   gap: 12px;
 }

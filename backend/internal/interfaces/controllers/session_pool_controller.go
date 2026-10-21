@@ -124,6 +124,7 @@ type managerRegistrationRequest struct {
 type managerEnrollRequest struct {
 	RegistrationToken string            `json:"registration_token"`
 	InstanceID        string            `json:"instance_id"`
+	Name              string            `json:"name,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Capabilities      []string          `json:"capabilities,omitempty"`
 }
@@ -206,6 +207,12 @@ func (c *SessionPoolController) EnrollManager(ctx echo.Context) error {
 		manager.RegistrationTokenHash = ""
 		manager.RegistrationExpiresAt = time.Time{}
 		manager.Enabled = true
+		if name := strings.TrimSpace(input.Name); name != "" {
+			if len([]rune(name)) > 100 {
+				return echo.NewHTTPError(http.StatusBadRequest, "name must be 100 characters or fewer")
+			}
+			manager.Name = name
+		}
 		if input.Labels != nil {
 			manager.Labels = input.Labels
 		}

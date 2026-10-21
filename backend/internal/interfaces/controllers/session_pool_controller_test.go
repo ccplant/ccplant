@@ -492,7 +492,7 @@ func TestSystemManagerRegistrationDoesNotConfigurePools(t *testing.T) {
 	}
 
 	enrolled := callSessionPoolHandler(t, controller.EnrollManager, http.MethodPost, "/session-managers/enroll",
-		map[string]any{"registration_token": registration.Token, "instance_id": "dev/session-manager"}, nil, nil)
+		map[string]any{"registration_token": registration.Token, "instance_id": "dev/session-manager", "name": "Native build host"}, nil, nil)
 	if enrolled.Code != http.StatusOK {
 		t.Fatalf("enroll status=%d body=%s", enrolled.Code, enrolled.Body.String())
 	}
@@ -503,6 +503,10 @@ func TestSystemManagerRegistrationDoesNotConfigurePools(t *testing.T) {
 	decodeRecorder(t, enrolled, &credentials)
 	if credentials.ID != registration.Manager.ID || credentials.ConnectionToken == "" {
 		t.Fatalf("invalid enrollment response: %s", enrolled.Body.String())
+	}
+	manager, err := store.GetManager(context.Background(), credentials.ID)
+	if err != nil || manager.Name != "Native build host" {
+		t.Fatalf("enrollment name = %q, err=%v", manager.Name, err)
 	}
 	if _, err := store.GetLogicalPool(context.Background(), "default"); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("registration unexpectedly created a logical pool: %v", err)

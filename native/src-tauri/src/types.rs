@@ -9,12 +9,22 @@ pub struct NativeStatus {
     pub instance: String,
     pub service: String,
     pub manager_id: String,
+    #[serde(default)]
+    pub name: String,
     pub upstream: String,
+    #[serde(default)]
+    pub listen: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub team_id: String,
     #[serde(default)]
     pub labels: std::collections::BTreeMap<String, String>,
     pub version: String,
     #[serde(default)]
     pub filesystem_sandbox: bool,
+    #[serde(default)]
+    pub inherit_runtime_profile: bool,
     #[serde(default)]
     pub active_sessions: i64,
     pub health: String,
@@ -30,6 +40,8 @@ pub struct NativeInstance {
     pub instance: String,
     pub service: String,
     pub manager_id: String,
+    #[serde(default)]
+    pub name: String,
     pub upstream: String,
     pub state: String,
     pub config: String,
@@ -48,7 +60,23 @@ pub struct NativeSession {
     #[serde(default)]
     pub started_at: String,
     #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub last_message_at: String,
+    #[serde(default)]
     pub status: String,
+    #[serde(default)]
+    pub status_message: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub team_id: String,
+    #[serde(default)]
+    pub tags: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub log_path: String,
 }
@@ -107,6 +135,10 @@ pub struct InstallRequest {
     pub upstream: String,
     pub listen: String,
     pub name: String,
+    #[serde(default)]
+    pub labels: String,
+    #[serde(default)]
+    pub inherit_runtime_profile: bool,
     pub registration_token: String,
     #[serde(default)]
     pub filesystem_sandbox: bool,
