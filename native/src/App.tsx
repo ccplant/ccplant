@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchDashboard,
   fetchInstances,
@@ -30,11 +30,14 @@ export function App() {
   const [instances, setInstances] = useState<NativeInstance[]>([]);
   const [selectedInstance, setSelectedInstance] = useState("default");
   const [adding, setAdding] = useState(false);
+  const refreshSequence = useRef(0);
 
   const refresh = useCallback(async (includeDoctor = true) => {
+    const sequence = ++refreshSequence.current;
     setState((prev) => (prev === "ready" ? "ready" : "loading"));
     try {
       const available = await fetchInstances();
+      if (sequence !== refreshSequence.current) return;
       setInstances(available);
       if (available.length === 0) {
         setData(null);
@@ -48,11 +51,13 @@ export function App() {
         : available[0].instance;
       if (target !== selectedInstance) setSelectedInstance(target);
       const next = await fetchDashboard(target, includeDoctor);
+      if (sequence !== refreshSequence.current) return;
       setData((current) => includeDoctor ? next : { ...next, doctor: current?.doctor ?? null });
       setWarnings(next.warnings ?? []);
       setState("ready");
       setLastUpdated(new Date());
     } catch (err) {
+      if (sequence !== refreshSequence.current) return;
       setError(String(err));
       setState("error");
     }
@@ -124,7 +129,7 @@ export function App() {
         <div className="app__actions">
           {instances.length > 0 && (
             <select value={selectedInstance} onChange={(event) => setSelectedInstance(event.target.value)}>
-              {instances.map((item) => <option key={item.instance} value={item.instance}>{item.instance}</option>)}
+              {instances.map((item) => <option key={item.instance} value={item.instance}>{item.name || item.instance}</option>)}
             </select>
           )}
           <button className="btn btn--ghost" onClick={() => setAdding((value) => !value)}>

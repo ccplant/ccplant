@@ -109,9 +109,9 @@ func TestReadNativeSessionList(t *testing.T) {
 	entries, err := readNativeSessionList(stateDir)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
-	require.Equal(t, "session-old", entries[0].ID)
-	require.Equal(t, filepath.Join(stateDir, "sessions", "session-old", "runtime", "provisioner.log"), entries[0].LogPath)
-	require.Equal(t, "session-new", entries[1].ID)
+	require.Equal(t, "session-new", entries[0].ID)
+	require.Equal(t, filepath.Join(stateDir, "sessions", "session-new", "runtime", "provisioner.log"), entries[0].LogPath)
+	require.Equal(t, "session-old", entries[1].ID)
 }
 
 func TestNativeCLIStatusActive(t *testing.T) {
@@ -142,8 +142,10 @@ func TestNativeGUIJSONContracts(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{
 		"instance":"default","service":"running","manager_id":"manager-1","upstream":"https://parent.example",
+		"name":"","listen":"","scope":"","team_id":"",
 		"labels":null,"version":"",
-		"filesystem_sandbox":false,"active_sessions":2,"health":"ok","state":""
+		"filesystem_sandbox":false,"inherit_runtime_profile":false,
+		"active_sessions":2,"health":"ok","state":""
 	}`, string(statusJSON))
 
 	doctorJSON, err := json.Marshal(nativeDoctorOutput{OK: false, Checks: []nativeDoctorCheck{{

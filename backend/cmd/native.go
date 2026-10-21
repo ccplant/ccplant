@@ -59,6 +59,8 @@ type nativeRegistrationResponse struct {
 	ID              string            `json:"id"`
 	InstanceID      string            `json:"instance_id"`
 	Name            string            `json:"name"`
+	Scope           string            `json:"scope"`
+	OwnerID         string            `json:"owner_id"`
 	ConnectionToken string            `json:"connection_token"`
 	Labels          map[string]string `json:"labels"`
 	Created         bool              `json:"created"`
@@ -135,6 +137,15 @@ func validateNativeInstanceName(name string) error {
 		return fmt.Errorf("invalid --instance %q; use 1-32 lowercase letters, digits, and hyphens (hyphens only in the middle)", name)
 	}
 	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func runNativeInstall(command *cobra.Command, _ []string) error {
@@ -215,7 +226,7 @@ func runNativeInstall(command *cobra.Command, _ []string) error {
 	}
 	cfg := nativeDaemonConfig{Listen: nativeManageOpts.listen, UpstreamURL: strings.TrimRight(nativeManageOpts.upstream, "/"),
 		ConnectionToken: token, StateDir: paths.state,
-		BinaryPath: paths.binary, ManagerID: registration.ID, InstanceID: instanceID, Scope: nativeManageOpts.scope, TeamID: nativeManageOpts.teamID,
+		BinaryPath: paths.binary, ManagerID: registration.ID, Name: firstNonEmpty(registration.Name, nativeManageOpts.name), InstanceID: instanceID, Scope: firstNonEmpty(registration.Scope, nativeManageOpts.scope), TeamID: firstNonEmpty(registration.OwnerID, nativeManageOpts.teamID),
 		Labels: labels, ManagerEnvironment: environment, Version: nativeBuildVersion(),
 		FilesystemSandbox:     nativeFilesystemSandboxConfig{Enabled: nativeManageOpts.filesystemSandbox},
 		InheritRuntimeProfile: nativeManageOpts.inheritRuntimeProfile}
@@ -428,16 +439,21 @@ func renderNativeLaunchAgent(paths nativeInstallPaths, environment map[string]st
 }
 
 type nativeStatusOutput struct {
-	Instance          string            `json:"instance"`
-	Service           string            `json:"service"`
-	ManagerID         string            `json:"manager_id"`
-	Upstream          string            `json:"upstream"`
-	Labels            map[string]string `json:"labels"`
-	Version           string            `json:"version"`
-	FilesystemSandbox bool              `json:"filesystem_sandbox"`
-	ActiveSessions    int               `json:"active_sessions"`
-	Health            string            `json:"health"`
-	State             string            `json:"state"`
+	Instance              string            `json:"instance"`
+	Service               string            `json:"service"`
+	ManagerID             string            `json:"manager_id"`
+	Name                  string            `json:"name"`
+	Upstream              string            `json:"upstream"`
+	Listen                string            `json:"listen"`
+	Scope                 string            `json:"scope"`
+	TeamID                string            `json:"team_id"`
+	Labels                map[string]string `json:"labels"`
+	Version               string            `json:"version"`
+	FilesystemSandbox     bool              `json:"filesystem_sandbox"`
+	InheritRuntimeProfile bool              `json:"inherit_runtime_profile"`
+	ActiveSessions        int               `json:"active_sessions"`
+	Health                string            `json:"health"`
+	State                 string            `json:"state"`
 }
 
 func runNativeStatus(command *cobra.Command, _ []string) error {
@@ -468,13 +484,15 @@ func runNativeStatus(command *cobra.Command, _ []string) error {
 			activeSessions++
 		}
 	}
-	status := nativeStatusOutput{Instance: instance, Service: service, ManagerID: cfg.ManagerID, Upstream: cfg.UpstreamURL,
+	status := nativeStatusOutput{Instance: instance, Service: service, ManagerID: cfg.ManagerID, Name: cfg.Name, Upstream: cfg.UpstreamURL,
+		Listen: cfg.Listen, Scope: cfg.Scope, TeamID: cfg.TeamID,
 		Labels: cfg.Labels, Version: cfg.Version, FilesystemSandbox: cfg.FilesystemSandbox.Enabled,
-		ActiveSessions: activeSessions, Health: health, State: cfg.StateDir}
+		InheritRuntimeProfile: cfg.InheritRuntimeProfile,
+		ActiveSessions:        activeSessions, Health: health, State: cfg.StateDir}
 	if nativeManageOpts.jsonOutput {
 		return json.NewEncoder(command.OutOrStdout()).Encode(status)
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager ID: %s\nUpstream: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, cfg.ManagerID, cfg.UpstreamURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, activeSessions, health, cfg.StateDir)
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Instance: %s\nService: %s\nManager name: %s\nManager ID: %s\nUpstream: %s\nLabels: %s\nVersion: %s\nFilesystem sandbox: %t\nActive sessions: %d\nHealth: %s\nState: %s\n", instance, service, firstNonEmpty(cfg.Name, "-"), cfg.ManagerID, cfg.UpstreamURL, formatLabels(cfg.Labels), cfg.Version, cfg.FilesystemSandbox.Enabled, activeSessions, health, cfg.StateDir)
 	return err
 }
 
@@ -492,11 +510,19 @@ func processExists(pid int) bool {
 }
 
 type nativeSessionListEntry struct {
-	ID        string    `json:"id"`
-	PID       int       `json:"pid"`
-	StartedAt time.Time `json:"started_at"`
-	Status    string    `json:"status"`
-	LogPath   string    `json:"log_path"`
+	ID            string            `json:"id"`
+	PID           int               `json:"pid"`
+	StartedAt     time.Time         `json:"started_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	LastMessageAt time.Time         `json:"last_message_at"`
+	Status        string            `json:"status"`
+	StatusMessage string            `json:"status_message,omitempty"`
+	Description   string            `json:"description,omitempty"`
+	UserID        string            `json:"user_id,omitempty"`
+	Scope         string            `json:"scope,omitempty"`
+	TeamID        string            `json:"team_id,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	LogPath       string            `json:"log_path"`
 }
 
 func readNativeSessionList(stateDir string) ([]nativeSessionListEntry, error) {
@@ -514,13 +540,32 @@ func readNativeSessionList(stateDir string) ([]nativeSessionListEntry, error) {
 		if err := json.Unmarshal(data, &entry); err != nil {
 			return nil, fmt.Errorf("read session state %s: %w", filepath.Base(sessionDir), err)
 		}
+		var metadata struct {
+			Request *struct {
+				UserID string            `json:"user_id"`
+				Scope  string            `json:"scope"`
+				TeamID string            `json:"team_id"`
+				Tags   map[string]string `json:"tags"`
+			} `json:"request"`
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return nil, fmt.Errorf("read session metadata %s: %w", filepath.Base(sessionDir), err)
+		}
+		if metadata.Request != nil {
+			entry.UserID, entry.Scope, entry.TeamID, entry.Tags = metadata.Request.UserID, metadata.Request.Scope, metadata.Request.TeamID, metadata.Request.Tags
+		}
 		if entry.ID == "" {
 			entry.ID = filepath.Base(sessionDir)
 		}
 		entry.LogPath = filepath.Join(sessionDir, "runtime", "provisioner.log")
 		entries = append(entries, entry)
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].StartedAt.Before(entries[j].StartedAt) })
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].StartedAt.Equal(entries[j].StartedAt) {
+			return entries[i].ID < entries[j].ID
+		}
+		return entries[i].StartedAt.After(entries[j].StartedAt)
+	})
 	return entries, nil
 }
 
@@ -794,12 +839,15 @@ func runNativeRotateToken(_ *cobra.Command, _ []string) error {
 	registration, err := enrollNativeManager(cfg.UpstreamURL, map[string]interface{}{
 		"registration_token": issued.RegistrationToken,
 		"instance_id":        cfg.InstanceID,
-		"name":               cfg.ManagerID,
+		"name":               cfg.Name,
 	})
 	if err != nil {
 		return err
 	}
 	cfg.ConnectionToken = registration.ConnectionToken
+	if registration.Name != "" {
+		cfg.Name = registration.Name
+	}
 	credentials, _ := json.MarshalIndent(map[string]string{"connection_token": cfg.ConnectionToken}, "", "  ")
 	if err := atomicWriteFile(cfg.CredentialsPath, append(credentials, '\n'), 0o600); err != nil {
 		return err
@@ -1250,6 +1298,7 @@ type nativeInstanceListEntry struct {
 	Instance   string `json:"instance"`
 	Service    string `json:"service"`
 	ManagerID  string `json:"manager_id"`
+	Name       string `json:"name"`
 	Upstream   string `json:"upstream"`
 	State      string `json:"state"`
 	BinaryPath string `json:"binary_path,omitempty"`
@@ -1263,13 +1312,13 @@ func runNativeList(command *cobra.Command, _ []string) error {
 		return json.NewEncoder(command.OutOrStdout()).Encode(entries)
 	}
 	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "INSTANCE\tSERVICE\tMANAGER ID\tSTATE\tRUNNING")
+	_, _ = fmt.Fprintln(w, "INSTANCE\tNAME\tSERVICE\tMANAGER ID\tSTATE\tRUNNING")
 	for _, entry := range entries {
 		running := "no"
 		if entry.Running {
 			running = "yes"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", entry.Instance, entry.Service, entry.ManagerID, entry.State, running)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.Instance, firstNonEmpty(entry.Name, "-"), entry.Service, entry.ManagerID, entry.State, running)
 	}
 	return w.Flush()
 }
@@ -1313,7 +1362,7 @@ func discoverNativeInstances(defaultConfig, pattern string) []nativeInstanceList
 			return
 		}
 		entries = append(entries, nativeInstanceListEntry{
-			Instance: name, Service: nativeServiceName(name), ManagerID: cfg.ManagerID,
+			Instance: name, Service: nativeServiceName(name), ManagerID: cfg.ManagerID, Name: cfg.Name,
 			Upstream: cfg.UpstreamURL, State: cfg.StateDir,
 			BinaryPath: cfg.BinaryPath, Config: configPath, Running: nativeServiceRunning(name),
 		})

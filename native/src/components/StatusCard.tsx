@@ -14,15 +14,20 @@ export function StatusCard({ status }: Props) {
         </span>
       </header>
       <dl className="grid">
+        <Field label="Manager name" value={status.name || "—"} />
         <Field label="Health" value={status.health} mono />
         <Field label="Manager ID" value={status.manager_id || "—"} mono />
+        <Field label="Local instance" value={status.instance || "default"} mono />
         <Field label="Version" value={status.version || "—"} mono />
         <Field label="Upstream" value={status.upstream || "—"} mono />
+        <Field label="Listen address" value={status.listen || "—"} mono />
+        <Field label="Owner" value={formatOwner(status)} />
         <Field label="State dir" value={status.state || "—"} mono />
         <Field
           label="Filesystem sandbox"
           value={status.filesystem_sandbox ? "Enabled (macOS)" : "Disabled"}
         />
+        <Field label="Runtime profile" value={status.inherit_runtime_profile ? "Inherited from parent" : "Local defaults"} />
       </dl>
       {Object.keys(status.labels).length > 0 && (
         <div className="labels">
@@ -34,6 +39,11 @@ export function StatusCard({ status }: Props) {
       )}
     </section>
   );
+}
+
+function formatOwner(status: NativeStatus): string {
+  if (status.scope === "team") return status.team_id ? `Team · ${status.team_id}` : "Team";
+  return status.scope === "user" ? "Personal" : "—";
 }
 
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

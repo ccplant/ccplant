@@ -5,10 +5,15 @@ export interface NativeStatus {
   instance: string;
   service: string;
   manager_id: string;
+  name: string;
   upstream: string;
+  listen: string;
+  scope: string;
+  team_id: string;
   labels: Record<string, string>;
   version: string;
   filesystem_sandbox: boolean;
+  inherit_runtime_profile: boolean;
   active_sessions: number;
   health: string;
   state: string;
@@ -18,6 +23,7 @@ export interface NativeInstance {
   instance: string;
   service: string;
   manager_id: string;
+  name: string;
   upstream: string;
   state: string;
   config: string;
@@ -28,7 +34,15 @@ export interface NativeSession {
   id: string;
   pid: number;
   started_at: string;
+  updated_at: string;
+  last_message_at: string;
   status: string;
+  status_message: string;
+  description: string;
+  user_id: string;
+  scope: string;
+  team_id: string;
+  tags: Record<string, string>;
   log_path: string;
 }
 
@@ -67,6 +81,8 @@ export interface InstallRequest {
   upstream: string;
   listen: string;
   name: string;
+  labels: string;
+  inheritRuntimeProfile: boolean;
   registrationToken: string;
   filesystemSandbox: boolean;
   setupNodejs: boolean;

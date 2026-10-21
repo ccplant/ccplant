@@ -8,6 +8,8 @@ export function SetupCard({ onInstalled, initialInstance = "default" }: { onInst
     upstream: "",
     listen: initialInstance === "default" ? ":8080" : ":8081",
     name: "",
+    labels: "",
+    inheritRuntimeProfile: false,
     registrationToken: "",
     filesystemSandbox: true,
     setupNodejs: true,
@@ -46,7 +48,9 @@ export function SetupCard({ onInstalled, initialInstance = "default" }: { onInst
         <label>Instance name<input required pattern="[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?" value={request.instance} onChange={(e) => update("instance", e.target.value)} /></label>
         <label>Parent AgentAPI URL<input type="url" required placeholder="https://agentapi.example.com" value={request.upstream} onChange={(e) => update("upstream", e.target.value)} /></label>
         <label>Listen address<input required placeholder=":8081" value={request.listen} onChange={(e) => update("listen", e.target.value)} /></label>
-        <label>This Mac's name<input required placeholder="native-mac" value={request.name} onChange={(e) => update("name", e.target.value)} /></label>
+        <label>Manager name<input required maxLength={100} placeholder="Mina's Mac Studio" value={request.name} onChange={(e) => update("name", e.target.value)} /><span className="setup__hint">Shown in ccplant when selecting and inspecting this Session Manager.</span></label>
+        <label>Labels<input placeholder="pool=local, gpu=false" value={request.labels} onChange={(e) => update("labels", e.target.value)} /><span className="setup__hint">Comma-separated key=value labels used for placement.</span></label>
+        <label className="setup__checkbox"><input type="checkbox" checked={request.inheritRuntimeProfile} onChange={(e) => update("inheritRuntimeProfile", e.target.checked)} /> Inherit runtime profile from parent</label>
         <label>Registration token<input type="password" required autoComplete="off" value={request.registrationToken} onChange={(e) => update("registrationToken", e.target.value)} /></label>
         <label className="setup__checkbox"><input type="checkbox" checked={request.filesystemSandbox} onChange={(e) => update("filesystemSandbox", e.target.checked)} /> Restrict session filesystem access</label>
         <fieldset className="setup__group">
