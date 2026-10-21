@@ -28,6 +28,20 @@ export function GitHubAppSection() {
             placeholder="12345678"
           />
         </FieldRow>
+        <FieldRow
+          label="クローン可能な追加リポジトリ"
+          htmlFor="github-repositories"
+          description="1行に1つ、RE2正規表現を指定します。リポジトリ名全体に適用され、セッション起動時のリポジトリは自動的に含まれます"
+        >
+          <textarea
+            id="github-repositories"
+            value={(settings.github_repositories || []).join('\n')}
+            onChange={(event) => update({ github_repositories: event.target.value.split('\n') })}
+            rows={5}
+            placeholder={'^owner/repository$\n^owner/service-[a-z]+$'}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+          />
+        </FieldRow>
       </FieldGroup>
     </>
   )

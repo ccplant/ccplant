@@ -113,6 +113,7 @@ type githubBrokerLease struct {
 	SessionID    string    `json:"session_id"`
 	ConnectionID string    `json:"connection_id"`
 	Repository   string    `json:"repository"`
+	Repositories []string  `json:"repositories,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	TokenHash    string    `json:"token_hash"`
 }
@@ -1680,6 +1681,12 @@ func (c *GitHubConnectionsController) mintGitHubAppToken(ctx context.Context, co
 // IssueBrokerLeaseForOrganization selects the existing organization-mapped
 // connection and grants one session renewable access to that repository token.
 func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx context.Context, sessionID, organization, repository string) (string, string, bool, error) {
+	return c.IssueBrokerLeaseForRepositories(ctx, sessionID, organization, repository, nil)
+}
+
+// IssueBrokerLeaseForRepositories grants one session renewable access to the
+// working repository and explicitly configured additional repositories.
+func (c *GitHubConnectionsController) IssueBrokerLeaseForRepositories(ctx context.Context, sessionID, organization, repository string, additional []string) (string, string, bool, error) {
 	connections, err := c.listConnections(ctx)
 	if err != nil {
 		return "", "", false, err
@@ -1700,11 +1707,24 @@ func (c *GitHubConnectionsController) IssueBrokerLeaseForOrganization(ctx contex
 	if selected.GitHubApp == nil || selected.GitHubApp.AppID <= 0 || !c.githubAppPrivateKeyConfigured(ctx, selected.ID) {
 		return "", selected.ID, false, nil
 	}
-	if _, _, err := c.mintGitHubAppToken(ctx, *selected, repository); err != nil {
+	primaryRepositories, err := normalizeRepositoryList([]string{repository})
+	if err != nil {
 		return "", "", true, err
 	}
+	patterns, err := normalizeRepositoryPatterns(additional)
+	if err != nil {
+		return "", "", true, err
+	}
+	primaryRepository := primaryRepositories[0]
+	if !containsOrganization(selected.Organizations, repositoryOwner(primaryRepository)) {
+		return "", "", true, fmt.Errorf("repository %s does not use the selected GitHub connection", primaryRepository)
+	}
+	if _, _, err := c.mintGitHubAppToken(ctx, *selected, primaryRepository); err != nil {
+		return "", "", true, err
+	}
+	repositories := append([]string{primaryRepository}, prefixedRepositoryPatterns(patterns)...)
 	leaseToken := uuid.NewString() + uuid.NewString()
-	lease := githubBrokerLease{SessionID: sessionID, ConnectionID: selected.ID, Repository: repository, ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
+	lease := githubBrokerLease{SessionID: sessionID, ConnectionID: selected.ID, Repository: repository, Repositories: repositories, ExpiresAt: time.Now().UTC().Add(24 * time.Hour), TokenHash: brokerLeaseTokenHash(leaseToken)}
 	if err := c.createObject(ctx, brokerLeaseSecretName(leaseToken), githubBrokerLeaseLabel, lease, map[string]string{"agentapi.ccplant.io/session-id-hash": shortHash(sessionID)}); err != nil {
 		return "", "", true, fmt.Errorf("store GitHub broker lease: %w", err)
 	}
@@ -1744,11 +1764,109 @@ func (c *GitHubConnectionsController) BrokerCredentials(ctx echo.Context) error 
 	if err != nil || !connection.Enabled {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "GitHub connection is unavailable")
 	}
-	installationToken, expiresAt, err := c.mintGitHubAppToken(ctx.Request().Context(), connection, lease.Repository)
+	repository := strings.TrimSpace(ctx.QueryParam("repository"))
+	if repository == "" {
+		repository = lease.Repository
+	}
+	normalized, normalizeErr := normalizeRepositoryList([]string{repository})
+	if normalizeErr != nil || len(normalized) != 1 || !repositoryAllowedByLease(normalized[0], lease) {
+		return echo.NewHTTPError(http.StatusForbidden, "repository is not allowed by this broker credential")
+	}
+	if !containsOrganization(connection.Organizations, repositoryOwner(normalized[0])) {
+		return echo.NewHTTPError(http.StatusForbidden, "repository does not use the broker credential's GitHub connection")
+	}
+	installationToken, expiresAt, err := c.mintGitHubAppToken(ctx.Request().Context(), connection, normalized[0])
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "failed to refresh GitHub token").SetInternal(err)
 	}
 	return ctx.JSON(http.StatusOK, map[string]any{"username": "x-access-token", "token": installationToken, "expires_at": expiresAt})
+}
+
+func repositoryAllowedByLease(repository string, lease githubBrokerLease) bool {
+	allowed := lease.Repositories
+	if len(allowed) == 0 {
+		allowed = []string{lease.Repository}
+	}
+	for _, candidate := range allowed {
+		if isRepositoryRegex(candidate) {
+			pattern := strings.TrimPrefix(candidate, repositoryRegexPrefix)
+			compiled, err := regexp.Compile("(?i:^(?:" + pattern + ")$)")
+			if err == nil && compiled.MatchString(repository) {
+				return true
+			}
+			continue
+		}
+		if strings.EqualFold(candidate, repository) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeRepositoryList(repositories []string) ([]string, error) {
+	const maxRepositories = 100
+	seen := make(map[string]struct{}, len(repositories))
+	result := make([]string, 0, len(repositories))
+	for _, repository := range repositories {
+		repository = strings.TrimSpace(strings.TrimSuffix(repository, ".git"))
+		parts := strings.Split(repository, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("repository %q must use owner/name format", repository)
+		}
+		key := strings.ToLower(repository)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, repository)
+		if len(result) > maxRepositories {
+			return nil, fmt.Errorf("at most %d GitHub repositories may be configured", maxRepositories)
+		}
+	}
+	return result, nil
+}
+
+func normalizeRepositoryPatterns(patterns []string) ([]string, error) {
+	const maxPatterns = 100
+	const maxRegexLength = 512
+	seen := make(map[string]struct{}, len(patterns))
+	result := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if len(pattern) > maxRegexLength {
+			return nil, fmt.Errorf("repository regex must be at most %d bytes", maxRegexLength)
+		}
+		if _, err := regexp.Compile("(?i:^(?:" + pattern + ")$)"); err != nil {
+			return nil, fmt.Errorf("invalid repository regex %q: %w", pattern, err)
+		}
+		key := strings.ToLower(pattern)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, pattern)
+		if len(result) > maxPatterns {
+			return nil, fmt.Errorf("at most %d GitHub repository patterns may be configured", maxPatterns)
+		}
+	}
+	return result, nil
+}
+
+func prefixedRepositoryPatterns(patterns []string) []string {
+	result := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		result = append(result, repositoryRegexPrefix+pattern)
+	}
+	return result
+}
+
+const repositoryRegexPrefix = "regex:"
+
+func isRepositoryRegex(repository string) bool {
+	return strings.HasPrefix(strings.TrimSpace(repository), repositoryRegexPrefix)
 }
 
 func brokerLeaseTokenHash(token string) string {

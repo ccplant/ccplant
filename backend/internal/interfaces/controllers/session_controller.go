@@ -120,6 +120,7 @@ type SessionController struct {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+		IssueBrokerLeaseForRepositories(context.Context, string, string, string, []string) (string, string, bool, error)
 		ResolveConnectionURLs(context.Context, string) (string, string, error)
 		RevokeBrokerLeases(context.Context, string) error
 	}
@@ -131,6 +132,7 @@ func WithGitHubTokenResolver(resolver interface {
 	ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 	ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 	IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)
+	IssueBrokerLeaseForRepositories(context.Context, string, string, string, []string) (string, string, bool, error)
 	ResolveConnectionURLs(context.Context, string) (string, string, error)
 	RevokeBrokerLeases(context.Context, string) error
 }) SessionControllerOption {
@@ -145,6 +147,31 @@ func WithSessionTokenDebug(enabled bool) SessionControllerOption {
 // WithGitHubBrokerBaseURL sets the session-reachable broker base URL, including any API prefix.
 func WithGitHubBrokerBaseURL(baseURL string) SessionControllerOption {
 	return func(c *SessionController) { c.githubBrokerBaseURL = baseURL }
+}
+
+func (c *SessionController) githubRepositoriesForSession(ctx context.Context, req entities.StartRequest, userID string, authzCtx *auth.AuthorizationContext) ([]string, error) {
+	repositories := append([]string(nil), req.ProfileGitHubRepositories...)
+	if len(repositories) == 0 && c.sessionProfileRepo != nil {
+		profile, _, err := c.resolveSessionProfile(ctx, req.SessionProfileID, userID, req.Scope, req.TeamID, req.Tags, authzCtx)
+		if err != nil {
+			return nil, err
+		}
+		profileConfig, err := sessionuc.ResolveEffectiveSessionProfileConfig(ctx, c.sessionProfileRepo, profile, req.Scope, userID, req.TeamID)
+		if err != nil {
+			return nil, err
+		}
+		repositories = append(repositories, profileConfig.GitHubRepositories()...)
+	}
+	if req.Scope == entities.ScopeTeam && req.TeamID != "" && c.settingsRepo != nil {
+		settings, err := c.settingsRepo.FindByName(ctx, req.TeamID)
+		if err != nil {
+			return nil, fmt.Errorf("load team GitHub repositories: %w", err)
+		}
+		if settings != nil {
+			repositories = append(repositories, settings.GitHubRepositories()...)
+		}
+	}
+	return normalizeRepositoryPatterns(repositories)
 }
 
 // NewSessionController creates a new SessionController instance
@@ -346,7 +373,11 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			_, connectionID, matched, err = c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
 			lease = "<generated-at-apply>"
 		} else {
-			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForOrganization(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository)
+			allowedRepositories, allowedErr := c.githubRepositoriesForSession(ctx.Request().Context(), startReq, userID, authzCtx)
+			if allowedErr != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, allowedErr.Error())
+			}
+			lease, connectionID, matched, err = c.githubTokenResolver.IssueBrokerLeaseForRepositories(ctx.Request().Context(), sessionID, repositoryOwner(repository), repository, allowedRepositories)
 		}
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -2827,6 +2858,7 @@ func applySessionProfile(
 		startReq.ResolvedSessionProfileID = profile.ID()
 		startReq.ProfileMCPServers = cfg.MCPServers()
 		startReq.ProfileSkills = cfg.Skills()
+		startReq.ProfileGitHubRepositories = cfg.GitHubRepositories()
 		startReq.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
 			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))

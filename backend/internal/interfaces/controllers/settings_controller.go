@@ -94,6 +94,7 @@ type UpdateSettingsRequest struct {
 	EnvVars                 map[string]string                `json:"env_vars,omitempty"`                   // Custom environment variables
 	PreferredTeamID         *string                          `json:"preferred_team_id,omitempty"`          // "org/team-slug" format; "" to clear
 	GitHubAppInstallationID *string                          `json:"github_app_installation_id,omitempty"` // Team GitHub App installation ID; "" to clear
+	GitHubRepositories      *[]string                        `json:"github_repositories,omitempty"`
 	SlackUserID             *string                          `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
 	NotificationChannels    *[]string                        `json:"notification_channels,omitempty"`      // Active notification channels (e.g. ["web", "slack"])
 	ExternalSessionManagers *[]ExternalSessionManagerRequest `json:"external_session_managers,omitempty"`  // External session managers (External Session Manager registrations)
@@ -152,6 +153,7 @@ type SettingsResponse struct {
 	EnvVarKeys              []string                         `json:"env_var_keys,omitempty"`      // only keys, not values
 	PreferredTeamID         string                           `json:"preferred_team_id,omitempty"` // "org/team-slug" format
 	GitHubAppInstallationID string                           `json:"github_app_installation_id,omitempty"`
+	GitHubRepositories      []string                         `json:"github_repositories,omitempty"`
 	SlackUserID             string                           `json:"slack_user_id,omitempty"`              // Slack DM notification user ID
 	NotificationChannels    []string                         `json:"notification_channels,omitempty"`      // Active notification channels
 	ExternalSessionManagers []ExternalSessionManagerResponse `json:"external_session_managers,omitempty"`  // Registered external session managers
@@ -536,6 +538,13 @@ func (c *SettingsController) UpdateSettings(ctx echo.Context) error {
 	if req.DefaultSessionProfileID != nil {
 		settings.SetDefaultSessionProfileID(*req.DefaultSessionProfileID)
 	}
+	if req.GitHubRepositories != nil {
+		repositories, err := normalizeRepositoryPatterns(*req.GitHubRepositories)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		settings.SetGitHubRepositories(repositories)
+	}
 	if req.DefaultAgentType != nil {
 		if !isValidDefaultAgentType(*req.DefaultAgentType) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid default_agent_type")
@@ -801,6 +810,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 
 	resp.PreferredTeamID = settings.PreferredTeamID()
 	resp.GitHubAppInstallationID = settings.GitHubAppInstallationID()
+	resp.GitHubRepositories = settings.GitHubRepositories()
 	resp.SlackUserID = settings.SlackUserID()
 	resp.NotificationChannels = settings.NotificationChannels()
 	resp.DefaultSessionProfileID = settings.DefaultSessionProfileID()

@@ -38,6 +38,10 @@ func (s githubConnectionURLResolverStub) IssueBrokerLeaseForOrganization(context
 	return "", "", false, nil
 }
 
+func (s githubConnectionURLResolverStub) IssueBrokerLeaseForRepositories(context.Context, string, string, string, []string) (string, string, bool, error) {
+	return "", "", false, nil
+}
+
 func (s githubConnectionURLResolverStub) ResolveConnectionURLs(context.Context, string) (string, string, error) {
 	return s.baseURL, s.apiURL, nil
 }

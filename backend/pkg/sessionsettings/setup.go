@@ -150,7 +150,15 @@ func configureGitHubTokenBroker(settings *SessionSettings) error {
 	helper := `#!/bin/sh
 set -eu
 [ "${1:-get}" = "get" ] || exit 0
-response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+repository=""
+while IFS='=' read -r key value; do
+  [ "$key" = "path" ] && repository="${value%.git}"
+done
+if [ -n "$repository" ]; then
+  response="$(curl -fsS -G --data-urlencode "repository=$repository" -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+else
+  response="$(curl -fsS -H "Authorization: Bearer $AGENTAPI_GITHUB_BROKER_TOKEN" "$AGENTAPI_GITHUB_BROKER_URL")"
+fi
 token="$(printf '%s' "$response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
 [ -n "$token" ] || exit 1
 printf 'username=x-access-token\npassword=%s\n\n' "$token"
@@ -162,6 +170,11 @@ printf 'username=x-access-token\npassword=%s\n\n' "$token"
 	cmd.Env = githubCommandEnv()
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git credential helper: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	cmd = exec.Command("git", "config", "--global", "credential.useHttpPath", "true")
+	cmd.Env = githubCommandEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git credential useHttpPath: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 
 	realGH, err := exec.LookPath("gh")
