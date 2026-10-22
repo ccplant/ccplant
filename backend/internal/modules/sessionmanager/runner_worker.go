@@ -102,12 +102,17 @@ func (w *RunnerWorker) reconcileOnce(ctx context.Context) {
 		return
 	}
 	var result struct {
-		Pools []runnerPool `json:"pools"`
+		Pools              []runnerPool `json:"pools"`
+		OrphanedSessionIDs []string     `json:"orphaned_session_ids"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&result) != nil {
 		return
 	}
-	active := len(sessions)
+	cleanupOrphanedSessions(w.manager, result.OrphanedSessionIDs)
+	// Re-read after orphan cleanup so stale local workloads do not consume pool
+	// capacity for another heartbeat interval.
+	sessions = w.manager.ListSessions(entities.SessionFilter{})
+	active := activeSessionCount(sessions)
 	for _, p := range result.Pools {
 		if !p.Enabled || p.Draining {
 			continue
@@ -129,6 +134,39 @@ func (w *RunnerWorker) reconcileOnce(ctx context.Context) {
 		for range max(0, missing) {
 			go w.runSlot(ctx, p.Pool)
 		}
+	}
+}
+
+func activeSessionCount(sessions []entities.Session) int {
+	active := 0
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+		switch strings.ToLower(session.Status()) {
+		case "error", "failed", "exited", "stopped", "terminated":
+			continue
+		default:
+			active++
+		}
+	}
+	return active
+}
+
+type orphanSessionDeleter interface {
+	DeleteSession(string) error
+}
+
+func cleanupOrphanedSessions(manager orphanSessionDeleter, sessionIDs []string) {
+	for _, sessionID := range sessionIDs {
+		if sessionID == "" {
+			continue
+		}
+		if err := manager.DeleteSession(sessionID); err != nil {
+			log.Printf("[SESSION_RUNNER] cleanup orphaned session %s: %v", sessionID, err)
+			continue
+		}
+		log.Printf("[SESSION_RUNNER] cleaned up orphaned session %s absent from parent routes", sessionID)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -769,6 +770,39 @@ func TestSessionManagerHeartbeatReconcilesSuspendedSessionStatus(t *testing.T) {
 	}
 	if updated.Status != "suspended" || updated.StatusUpdatedAt.IsZero() {
 		t.Fatalf("route status=%q updated_at=%v", updated.Status, updated.StatusUpdatedAt)
+	}
+}
+
+func TestSessionManagerHeartbeatReturnsOnlySessionsAbsentFromParentRoutes(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	requireNoError(t, err)
+	manager := &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}
+	requireNoError(t, store.CreateManager(ctx, manager))
+	requireNoError(t, routes.Save(ctx, &portrepos.SessionRoute{
+		SessionID: "public-a", RemoteSessionID: "remote-a", ManagerID: manager.ID, Status: "active",
+	}))
+	requireNoError(t, routes.Save(ctx, &portrepos.SessionRoute{
+		SessionID: "other", RemoteSessionID: "other-remote", ManagerID: "manager-b", Status: "active",
+	}))
+
+	result := callSessionPoolHandler(t, NewSessionPoolController(store, routes).HeartbeatManager,
+		http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"session_statuses": map[string]string{
+			"public-a": "running", "remote-a": "running", "other": "running", "orphan-b": "running", "orphan-a": "error",
+		}}, map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var response struct {
+		OrphanedSessionIDs []string `json:"orphaned_session_ids"`
+	}
+	decodeRecorder(t, result, &response)
+	if got, want := response.OrphanedSessionIDs, []string{"orphan-a", "orphan-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("orphaned_session_ids=%v, want %v", got, want)
 	}
 }
 
