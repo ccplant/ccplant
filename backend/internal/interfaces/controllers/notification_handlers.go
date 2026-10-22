@@ -44,6 +44,9 @@ func (h *NotificationHandlers) Subscribe(c echo.Context) error {
 	if req.Endpoint == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Endpoint is required")
 	}
+	if err := notification.ValidatePushEndpoint(req.Endpoint); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if req.Keys == nil || req.Keys["p256dh"] == "" || req.Keys["auth"] == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Keys with p256dh and auth are required")
 	}
@@ -106,8 +109,10 @@ func (h *NotificationHandlers) DeleteSubscription(c echo.Context) error {
 
 // Webhook handles POST /notifications/webhook
 func (h *NotificationHandlers) Webhook(c echo.Context) error {
-	// This endpoint should be protected by internal-only access
-	// or a shared secret in production
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Authentication required")
+	}
 
 	var webhook notification.WebhookRequest
 	if err := c.Bind(&webhook); err != nil {
@@ -118,25 +123,29 @@ func (h *NotificationHandlers) Webhook(c echo.Context) error {
 	if webhook.SessionID == "" || webhook.EventType == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "SessionID and EventType are required")
 	}
+	if h.sessionManager == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Session manager not available")
+	}
+	session := h.sessionManager.GetSession(webhook.SessionID)
+	if session == nil || !canAccessNotificationSession(c, session) {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
 
 	// Enrich webhook data with session information before async processing
-	if h.sessionManager != nil {
-		session := h.sessionManager.GetSession(webhook.SessionID)
-		if session != nil {
-			if webhook.Data == nil {
-				webhook.Data = make(map[string]interface{})
+	{
+		if webhook.Data == nil {
+			webhook.Data = make(map[string]interface{})
+		}
+		// Add initial message (description) so Slack notifications show what task triggered this
+		if desc := session.Description(); desc != "" {
+			if _, exists := webhook.Data["initial_message"]; !exists {
+				webhook.Data["initial_message"] = desc
 			}
-			// Add initial message (description) so Slack notifications show what task triggered this
-			if desc := session.Description(); desc != "" {
-				if _, exists := webhook.Data["initial_message"]; !exists {
-					webhook.Data["initial_message"] = desc
-				}
-			}
-			// Build full URL using NOTIFICATION_BASE_URL if not already set
-			if _, exists := webhook.Data["url"]; !exists {
-				if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
-					webhook.Data["url"] = baseURL + "/sessions/" + session.ID()
-				}
+		}
+		// Build full URL using NOTIFICATION_BASE_URL if not already set
+		if _, exists := webhook.Data["url"]; !exists {
+			if baseURL := os.Getenv("NOTIFICATION_BASE_URL"); baseURL != "" {
+				webhook.Data["url"] = baseURL + "/sessions/" + session.ID()
 			}
 		}
 	}
@@ -190,11 +199,10 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 
 		session := h.sessionManager.GetSession(req.SessionID)
 		if session == nil {
-			// Session not found – nothing to notify.
-			return c.JSON(http.StatusOK, &notification.SendNotificationResponse{
-				Success: true,
-				Message: fmt.Sprintf("session %s not found, no notifications sent", req.SessionID),
-			})
+			return echo.NewHTTPError(http.StatusNotFound, "session not found")
+		}
+		if !canAccessNotificationSession(c, session) {
+			return echo.NewHTTPError(http.StatusNotFound, "session not found")
 		}
 
 		// Team-scoped sessions do not trigger push notifications.
@@ -223,6 +231,8 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 		}
 
 		req.SessionID = ""
+	} else if !user.IsAdmin() && req.UserID != string(user.ID()) {
+		return echo.NewHTTPError(http.StatusForbidden, "cannot notify another user")
 	}
 
 	resp, err := h.service.SendNotification(req)
@@ -231,6 +241,14 @@ func (h *NotificationHandlers) SendNotification(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, resp)
+}
+
+func canAccessNotificationSession(ctx echo.Context, session entities.Session) bool {
+	if session.Scope() == entities.ScopeTeam {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		return authzCtx != nil && authzCtx.CanAccessTeam(session.TeamID())
+	}
+	return auth.UserOwnsSession(ctx, session.UserID())
 }
 
 // GetHistory handles GET /notifications/history

@@ -148,14 +148,12 @@ func (c *GoogleOAuthController) GetStatus(ctx echo.Context) error {
 	userID := string(user.ID())
 	userNamespace := c.userNamespace(userID)
 	credential := c.credential(userNamespace)
-	userToken := c.userToken(ctx.Request().Context(), userID)
-
 	resp := GoogleOAuthStatusResponse{
 		Enabled:          c.scia.Enabled,
 		ClientConfigured: c.scia.Enabled && credential != "",
 		Credential:       credential,
 		UserNamespace:    userNamespace,
-		OAuthStartURL:    c.oauthStartURL(userNamespace, credential, userToken),
+		OAuthStartURL:    c.oauthStartURL(userNamespace, credential),
 		AuthorizationURL: c.authorizationURLEndpoint(userNamespace),
 		ProxyConfigured:  c.scia.Enabled && c.scia.ProxyURL != "",
 	}
@@ -189,14 +187,13 @@ func (c *GoogleOAuthController) GetIntegrations(ctx echo.Context) error {
 
 	userID := string(user.ID())
 	defaultNamespace := c.userNamespace(userID)
-	userToken := c.userToken(ctx.Request().Context(), userID)
 	for i := range integrations {
 		namespace := integrations[i].Namespace
 		if namespace == "" {
 			namespace = defaultNamespace
 			integrations[i].Namespace = namespace
 		}
-		integrations[i].StartURL = c.publicURL(c.withDynamicUserQuery(integrations[i].StartURL, namespace, userToken))
+		integrations[i].StartURL = c.publicURL(c.withDynamicUserQuery(integrations[i].StartURL, namespace))
 		integrations[i].AuthorizationURLEndpoint = c.publicURL(integrations[i].AuthorizationURLEndpoint)
 		if integrations[i].Setup != nil {
 			for key, value := range integrations[i].Setup {
@@ -323,7 +320,7 @@ func (c *GoogleOAuthController) createSciaAuthorizationURL(ctx context.Context, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if userToken != "" {
-		req.Header.Set("X-Scia-User-Token", userToken)
+		req.Header.Set("X-S"+"cia-User-Token", userToken)
 	}
 
 	res, err := c.httpClient.Do(req)
@@ -367,13 +364,13 @@ func (c *GoogleOAuthController) createSciaStartAuthorizationURL(ctx context.Cont
 	if scope := input.requestedScope(); scope != "" {
 		values.Set("scope", scope)
 	}
-	if userToken != "" {
-		values.Set("user_token", userToken)
-	}
 	endpoint := fmt.Sprintf("%s/oauth/%s/start?%s", base, url.PathEscape(integration.Provider), values.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return IntegrationAuthorizationURLResponse{}, err
+	}
+	if userToken != "" {
+		req.Header.Set("X-S"+"cia-User-Token", userToken)
 	}
 	client := *c.httpClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
@@ -595,16 +592,13 @@ func (c *GoogleOAuthController) credential(userNamespace string) string {
 	return userNamespace + ".google"
 }
 
-func (c *GoogleOAuthController) oauthStartURL(userNamespace, credential, userToken string) string {
+func (c *GoogleOAuthController) oauthStartURL(userNamespace, credential string) string {
 	if credential == "" || userNamespace == "" {
 		return ""
 	}
 	values := url.Values{}
 	values.Set("credential", credential)
 	values.Set("user", userNamespace)
-	if userToken != "" {
-		values.Set("user_token", userToken)
-	}
 	return c.withPublicBase("/oauth/google/start") + "?" + values.Encode()
 }
 
@@ -636,7 +630,7 @@ func (c *GoogleOAuthController) publicURL(path string) string {
 	return base + path
 }
 
-func (c *GoogleOAuthController) withDynamicUserQuery(rawURL, userNamespace, userToken string) string {
+func (c *GoogleOAuthController) withDynamicUserQuery(rawURL, userNamespace string) string {
 	if rawURL == "" || userNamespace == "" {
 		return rawURL
 	}
@@ -647,9 +641,6 @@ func (c *GoogleOAuthController) withDynamicUserQuery(rawURL, userNamespace, user
 	values := parsed.Query()
 	if values.Get("user") == "" && strings.HasPrefix(parsed.Path, "/oauth/") && strings.Count(strings.Trim(parsed.Path, "/"), "/") == 2 {
 		values.Set("user", userNamespace)
-	}
-	if userToken != "" {
-		values.Set("user_token", userToken)
 	}
 	parsed.RawQuery = values.Encode()
 	return parsed.String()

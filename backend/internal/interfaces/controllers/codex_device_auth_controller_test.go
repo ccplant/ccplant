@@ -174,7 +174,7 @@ func TestDeviceAuthCredentialName(t *testing.T) {
 func TestCodexDeviceAuthWorkloadFlow(t *testing.T) {
 	repo := &fakeCodexCredentialsRepository{}
 	launcher := &fakeCodexAuthLauncher{}
-	controller := NewCodexDeviceAuthController(repo, launcher)
+	controller := NewCodexDeviceAuthController(repo, launcher).WithCallbackBaseURL("https://callback.invalid")
 	e := echo.New()
 	user := entities.NewGitHubUser("alice", "alice", "alice@example.com", nil)
 
@@ -188,7 +188,7 @@ func TestCodexDeviceAuthWorkloadFlow(t *testing.T) {
 	require.NoError(t, controller.StartDeviceAuth(startContext))
 	assert.Equal(t, http.StatusAccepted, startRecorder.Code)
 	require.Regexp(t, `^cda-[0-9a-f]{32}$`, launcher.request.AttemptID)
-	assert.Equal(t, "https://proxy.example/internal/codex-device-auth", launcher.request.CallbackURL)
+	assert.Equal(t, "https://callback.invalid/internal/codex-device-auth", launcher.request.CallbackURL)
 	assert.Equal(t, string(sessionrunnercore.SubjectUser), launcher.request.SubjectType)
 	assert.Equal(t, "alice", launcher.request.SubjectID)
 
@@ -223,7 +223,7 @@ func TestCodexDeviceAuthAttemptStateSharedAcrossReplicas(t *testing.T) {
 	store := newFakeAttemptStore()
 	repo := &fakeCodexCredentialsRepository{}
 	launcher := &fakeCodexAuthLauncher{}
-	owner := NewCodexDeviceAuthController(repo, launcher).WithAttemptStore(store)
+	owner := NewCodexDeviceAuthController(repo, launcher).WithAttemptStore(store).WithCallbackBaseURL("https://callback.invalid")
 	poller := NewCodexDeviceAuthController(repo).WithAttemptStore(store)
 
 	e := echo.New()

@@ -506,8 +506,8 @@ func (c *SessionPoolController) CreateLogicalPool(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "pool name must be a valid Kubernetes label value")
 	}
 	user := auth.GetUserFromContext(ctx)
-	if input.TeamID != "" && user != nil && !user.IsAdmin() && !user.IsMemberOfTeam(input.TeamID) {
-		return echo.NewHTTPError(http.StatusForbidden, "access denied")
+	if user != nil && !user.IsAdmin() {
+		return echo.NewHTTPError(http.StatusForbidden, "administrator access required")
 	}
 	enabled := true
 	if input.Enabled != nil {
@@ -896,7 +896,7 @@ func (c *SessionPoolController) PatchBinding(ctx echo.Context) error {
 		if binding.Role != core.BindingRoleUse || binding.SubjectType == core.SubjectAll || !bindingAppliesToUser(binding, user) {
 			return echo.NewHTTPError(http.StatusForbidden, "pool manage binding required")
 		}
-		if patch.Enabled == nil || patch.Role != nil || patch.Priority != nil || patch.MaxConcurrent != nil {
+		if patch.Enabled == nil || patch.Role != nil || patch.Roles != nil || patch.Priority != nil || patch.MaxConcurrent != nil {
 			return echo.NewHTTPError(http.StatusForbidden, "use binding may only change enabled")
 		}
 	}

@@ -251,6 +251,12 @@ func (c *SessionProfileController) PreviewSessionProfile(ctx echo.Context) error
 
 	resolvedScope, resolvedTeamID := auth.ResolveUserScope(user, string(req.Scope), req.TeamID)
 	scope := entities.ResourceScope(resolvedScope)
+	if scope == entities.ScopeTeam {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if resolvedTeamID == "" || authzCtx == nil || !authzCtx.CanAccessTeam(resolvedTeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "team access denied")
+		}
+	}
 
 	var userTeamIDs []string
 	if authzCtx := auth.GetAuthorizationContext(ctx); authzCtx != nil {

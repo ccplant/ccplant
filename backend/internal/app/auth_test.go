@@ -150,12 +150,22 @@ func TestHandleOAuthCallback(t *testing.T) {
 	err = json.Unmarshal(rec.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, resp.SessionID)
-	assert.Equal(t, "gho_test_token", resp.AccessToken)
+	assert.NotEqual(t, "gho_test_token", resp.AccessToken)
+	assert.NotEmpty(t, resp.AccessToken)
 	assert.Equal(t, "Bearer", resp.TokenType)
 	assert.NotNil(t, resp.User)
 	assert.NotEmpty(t, resp.User.UserID)
 	assert.NotEqual(t, "testuser", resp.User.UserID)
 	assert.Equal(t, "testuser", resp.User.GitHubUser.Login)
+	assert.NotContains(t, rec.Body.String(), "gho_test_token")
+}
+
+func TestAllowedRedirectURIRejectsPrefixConfusion(t *testing.T) {
+	t.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", "https://login.example.test/callback")
+	assert.True(t, isAllowedRedirectURI("https://login.example.test/callback/complete"))
+	assert.False(t, isAllowedRedirectURI("https://login.example.test.attacker.invalid/callback"))
+	assert.False(t, isAllowedRedirectURI("https://login.example.test@attacker.invalid/callback"))
+	assert.False(t, isAllowedRedirectURI("https://login.example.test/callback-elsewhere"))
 }
 
 func TestHandleOAuthCallback_MissingParameters(t *testing.T) {

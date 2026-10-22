@@ -5156,6 +5156,9 @@
           "200": {
             "description": "Subscription created successfully"
           },
+          "400": {
+            "description": "Invalid or untrusted Web Push endpoint"
+          },
           "401": {
             "description": "Unauthorized"
           }
@@ -6550,7 +6553,7 @@
         }
       },
       "post": {
-        "summary": "Create a logical pool and grant its creator manage-and-use access",
+        "summary": "Create a logical pool as an administrator",
         "operationId": "createManagedSessionPool",
         "tags": [
           "Session Pools"
@@ -6580,6 +6583,9 @@
         "responses": {
           "201": {
             "description": "Pool created"
+          },
+          "403": {
+            "description": "Administrator access required"
           }
         }
       }
@@ -7134,6 +7140,9 @@
         "responses": {
           "200": {
             "description": "Updated binding"
+          },
+          "403": {
+            "description": "Pool manage access required; use-only subjects may only toggle enabled"
           },
           "409": {
             "description": "The update would remove the pool's last enabled manage binding"
