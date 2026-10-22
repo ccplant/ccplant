@@ -526,6 +526,30 @@ func TestSystemManagerRegistrationDoesNotConfigurePools(t *testing.T) {
 	}
 }
 
+func TestCreatePoolSupplierRequiresManagerAuthorization(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{
+		ID: "manager-a", Name: "Manager A", Scope: core.ManagerScopeUser, OwnerID: "alice", Enabled: true,
+	}))
+	requireNoError(t, store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}))
+	requireNoError(t, store.CreateBinding(ctx, &core.Binding{
+		Pool: "linux", SubjectType: core.SubjectUser, SubjectID: "bob", Role: core.BindingRoleManage, Enabled: true,
+	}))
+	bob := entities.NewUser(entities.UserID("bob"), entities.UserTypeAPIKey, "bob")
+
+	result := callSessionPoolHandlerAs(t, controller.CreatePoolSupplier, http.MethodPost, "/session-pools/linux/suppliers/manager-a",
+		map[string]any{"pool": "linux"}, map[string]string{"pool": "linux", "id": "manager-a"}, nil, bob)
+
+	if result.Code != http.StatusNotFound {
+		t.Fatalf("create supplier status=%d body=%s", result.Code, result.Body.String())
+	}
+	if _, err := store.GetPoolSupplier(ctx, "manager-a", "linux"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("supplier unexpectedly created: %v", err)
+	}
+}
+
 func requireNoError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

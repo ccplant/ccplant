@@ -178,6 +178,25 @@ func TestKVStoreClaimMatchesDinDCapability(t *testing.T) {
 	require.Equal(t, "docker-session", allocation.SessionID)
 }
 
+func TestKVStoreClaimOnlyUsesAuthorizedManagers(t *testing.T) {
+	ctx := context.Background()
+	store := newVersionedTestStore(t)
+	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-a", ManagerID: "manager-a", Pool: "linux"}))
+	require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-b", ManagerID: "manager-b", Pool: "linux"}))
+	require.NoError(t, store.Enqueue(ctx, &core.Allocation{
+		SessionID: "session-a", Pool: "linux", AuthorizedManagerIDs: []string{"manager-a"},
+	}))
+
+	_, found, err := store.ClaimNext(ctx, "linux", "runner-b", time.Minute)
+	require.NoError(t, err)
+	require.False(t, found)
+
+	allocation, found, err := store.ClaimNext(ctx, "linux", "runner-a", time.Minute)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "manager-a", allocation.ManagerID)
+}
+
 func newVersionedTestStore(t *testing.T) *Store {
 	t.Helper()
 	return NewStore(&versionedMemoryStore{records: make(map[string]kvstore.Record)}, "test")

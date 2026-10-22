@@ -1533,8 +1533,15 @@ func (s *Server) createPoolSession(ctx context.Context, route sessionrunnercore.
 	if err != nil {
 		return nil, fmt.Errorf("create pool runtime credential: %w", err)
 	}
+	authorizedManagerIDs := make([]string, 0, len(route.Managers()))
+	for _, manager := range route.Managers() {
+		if manager != nil {
+			authorizedManagerIDs = append(authorizedManagerIDs, manager.ID)
+		}
+	}
 	allocation := &sessionrunnercore.Allocation{
 		SessionID: sessionID, Pool: pool, BindingID: route.BindingID(), Generation: 1,
+		AuthorizedManagerIDs: authorizedManagerIDs,
 		Requirements: map[string]string{
 			"agent_type": agentType,
 			"dind":       fmt.Sprintf("%t", docker != nil && docker.Enabled),
