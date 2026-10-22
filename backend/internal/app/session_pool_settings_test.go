@@ -65,6 +65,7 @@ func TestPoolSessionPreservesDockerRequirement(t *testing.T) {
 	allocation, err := store.GetAllocation(context.Background(), "session")
 	require.NoError(t, err)
 	require.Equal(t, "true", allocation.Requirements["dind"])
+	require.Equal(t, []string{"test-manager"}, allocation.AuthorizedManagerIDs)
 }
 
 func TestPoolSessionPreservesProfileCommandWrapper(t *testing.T) {

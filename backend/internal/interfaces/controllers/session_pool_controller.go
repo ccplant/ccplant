@@ -459,6 +459,9 @@ func (c *SessionPoolController) CreatePoolSupplier(ctx echo.Context) error {
 	if err != nil {
 		return sessionRunnerStoreError(err)
 	}
+	if user := auth.GetUserFromContext(ctx); user != nil && !c.managerAuthorized(user, manager) {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
 	var supplier core.PoolSupplier
 	supplier.Enabled = true
 	if err := ctx.Bind(&supplier); err != nil {
@@ -1445,6 +1448,10 @@ func (c *SessionPoolController) ensureLogicalPoolExists(ctx context.Context, nam
 }
 
 func (c *SessionPoolController) prepareClaimRoute(ctx context.Context, allocation *core.Allocation, runner *core.Runner) error {
+	if allocation == nil || runner == nil ||
+		(len(allocation.AuthorizedManagerIDs) > 0 && !containsString(allocation.AuthorizedManagerIDs, runner.ManagerID)) {
+		return core.ErrUnauthorized
+	}
 	if c.routes == nil {
 		return nil
 	}

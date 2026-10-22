@@ -582,10 +582,22 @@ func runnerMatchesAllocation(runner *core.Runner, allocation *core.Allocation) b
 	if runner == nil || allocation == nil {
 		return false
 	}
+	if len(allocation.AuthorizedManagerIDs) > 0 && !managerIDAllowed(runner.ManagerID, allocation.AuthorizedManagerIDs) {
+		return false
+	}
 	// DinD changes the Pod shape and cannot be enabled after a stock runner has
 	// started. Treat omitted values as false for records created before
 	// capability-aware matching was introduced.
 	return capabilityEnabled(runner.Capabilities, "dind") == capabilityEnabled(allocation.Requirements, "dind")
+}
+
+func managerIDAllowed(managerID string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if candidate == managerID {
+			return true
+		}
+	}
+	return false
 }
 
 func capabilityEnabled(values map[string]string, name string) bool {

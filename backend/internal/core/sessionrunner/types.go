@@ -201,22 +201,23 @@ const (
 )
 
 type Allocation struct {
-	SessionID         string            `json:"session_id"`
-	Pool              string            `json:"pool"`
-	BindingID         string            `json:"binding_id,omitempty"`
-	ManagerID         string            `json:"manager_id,omitempty"`
-	RunnerID          string            `json:"runner_id,omitempty"`
-	Status            AllocationStatus  `json:"status"`
-	LeaseID           string            `json:"lease_id,omitempty"`
-	LeaseExpiresAt    time.Time         `json:"lease_expires_at,omitempty"`
-	Generation        int64             `json:"generation"`
-	Attempts          int               `json:"attempts"`
-	Requirements      map[string]string `json:"requirements,omitempty"`
-	RuntimeToken      string            `json:"runtime_token,omitempty"`
-	RuntimeTokenHash  string            `json:"runtime_token_hash,omitempty"`
-	ProvisionSettings []byte            `json:"provision_settings,omitempty"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	SessionID            string            `json:"session_id"`
+	Pool                 string            `json:"pool"`
+	BindingID            string            `json:"binding_id,omitempty"`
+	AuthorizedManagerIDs []string          `json:"authorized_manager_ids,omitempty"`
+	ManagerID            string            `json:"manager_id,omitempty"`
+	RunnerID             string            `json:"runner_id,omitempty"`
+	Status               AllocationStatus  `json:"status"`
+	LeaseID              string            `json:"lease_id,omitempty"`
+	LeaseExpiresAt       time.Time         `json:"lease_expires_at,omitempty"`
+	Generation           int64             `json:"generation"`
+	Attempts             int               `json:"attempts"`
+	Requirements         map[string]string `json:"requirements,omitempty"`
+	RuntimeToken         string            `json:"runtime_token,omitempty"`
+	RuntimeTokenHash     string            `json:"runtime_token_hash,omitempty"`
+	ProvisionSettings    []byte            `json:"provision_settings,omitempty"`
+	CreatedAt            time.Time         `json:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at"`
 }
 
 type QuotaExceededError struct {
