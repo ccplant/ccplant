@@ -1,18 +1,13 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,9 +15,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	infrasessioncontrol "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessioncontrol"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/sessionmanager"
-	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 var NativeSessionManagerCmd = &cobra.Command{
@@ -135,7 +130,7 @@ func runNativeSessionManager(command *cobra.Command, _ []string) error {
 	}
 	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok"}) })
 	registerNativeManagementRoutes(e, o, manager, []byte(o.connectionToken))
-	e.Any("/:sessionId/*", nativeSessionProxy(manager, []byte(o.connectionToken)))
+	registerNativeSessionControlRoutes(e, manager)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -171,42 +166,8 @@ func nativeBuildVersion() string {
 	return buildinfo.Version
 }
 
-func nativeSessionProxy(manager *services.NativeSessionManager, secret []byte) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		body, err := io.ReadAll(c.Request().Body)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "read body")
-		}
-		c.Request().Body = io.NopCloser(bytes.NewReader(body))
-		ts := c.Request().Header.Get(hmacutil.TimestampHeader)
-		sig := c.Request().Header.Get("X-Hub-Signature-256")
-		msg := hmacutil.BuildMessage(c.Request().Method, c.Request().URL.RequestURI(), ts, body)
-		if hmacutil.ValidateTimestamp(ts) != nil || !hmacutil.Verify(secret, msg, sig) {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
-		}
-		session := manager.GetSession(c.Param("sessionId"))
-		if session == nil {
-			return echo.NewHTTPError(http.StatusNotFound, "session not found")
-		}
-		target, _ := url.Parse("http://" + session.Addr())
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		proxy.FlushInterval = -1
-		originalDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
-			originalDirector(req)
-			suffix := strings.TrimPrefix(c.Request().URL.Path, "/"+c.Param("sessionId"))
-			if suffix == "" {
-				suffix = "/"
-			}
-			req.URL.Path = suffix
-			req.URL.RawPath = ""
-			req.Host = target.Host
-		}
-		proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
-			log.Printf("[NATIVE_ESM] proxy error: %v", proxyErr)
-			http.Error(w, "native session unavailable", http.StatusBadGateway)
-		}
-		proxy.ServeHTTP(c.Response(), c.Request())
-		return nil
-	}
+func registerNativeSessionControlRoutes(e *echo.Echo, manager *services.NativeSessionManager) {
+	control := controllers.NewSessionControlController(infrasessioncontrol.NewMemoryStore(), manager)
+	e.GET("/internal/session-control/:sessionId/commands", control.WaitCommands)
+	e.POST("/internal/session-control/:sessionId/events", control.AppendEvents)
 }

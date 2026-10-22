@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1146,6 +1147,10 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 			return sessionRunnerStoreError(err)
 		}
 	}
+	orphanedSessionIDs, err := c.orphanedManagerSessionIDs(ctx.Request().Context(), manager.ID, heartbeat.SessionStatuses)
+	if err != nil {
+		return sessionRunnerStoreError(err)
+	}
 	if manager.AssetImage != "" && (heartbeat.AppliedAssetImage != "" || heartbeat.AssetImageError != "") {
 		if heartbeat.AppliedAssetImage != "" {
 			manager.AppliedAssetImage = heartbeat.AppliedAssetImage
@@ -1250,8 +1255,44 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 		"registered_runner_ids":     registeredRunnerIDs,
 		"allocated_runner_ids":      allocatedRunnerIDs,
 		"allocated_runner_policies": allocatedRunnerPolicies,
+		"orphaned_session_ids":      orphanedSessionIDs,
 		"upstream_version":          buildinfo.Version,
 	})
+}
+
+// orphanedManagerSessionIDs compares a manager's local workload inventory with
+// the parent's durable routes. The response is advisory: the manager performs
+// cleanup through its normal idempotent DeleteSession path. If routes cannot be
+// read, HeartbeatManager fails instead of risking deletion from an incomplete
+// authoritative snapshot.
+func (c *SessionPoolController) orphanedManagerSessionIDs(ctx context.Context, managerID string, statuses map[string]string) ([]string, error) {
+	if c.routes == nil || len(statuses) == 0 {
+		return []string{}, nil
+	}
+	routes, err := c.routes.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(routes)*2)
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		// Public IDs are globally unique. Preserve a matching route even while
+		// its manager assignment is being repaired after a claim or restart.
+		known[route.SessionID] = true
+		if route.ManagerID == managerID && route.RemoteSessionID != "" {
+			known[route.RemoteSessionID] = true
+		}
+	}
+	orphaned := make([]string, 0)
+	for id := range statuses {
+		if id != "" && !known[id] {
+			orphaned = append(orphaned, id)
+		}
+	}
+	sort.Strings(orphaned)
+	return orphaned, nil
 }
 
 func (c *SessionPoolController) reconcileManagerSessionStatuses(ctx context.Context, managerID string, statuses map[string]string) error {
