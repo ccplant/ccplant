@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/takutakahashi/agentapi-proxy/pkg/hmacutil"
 )
 
 const nativeDefaultInstance = "default"
@@ -107,11 +108,12 @@ func init() {
 	listCmd.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
 	sessionList := &cobra.Command{Use: "session-list", Aliases: []string{"sessions"}, Short: "List native sessions on this host", Args: cobra.NoArgs, RunE: runNativeSessionList}
 	sessionList.Flags().BoolVar(&nativeManageOpts.jsonOutput, "json", false, "output machine-readable JSON")
+	sessionDelete := &cobra.Command{Use: "session-delete <session-id>", Short: "Delete a native session on this host", Args: cobra.ExactArgs(1), RunE: runNativeSessionDelete}
 	logs := &cobra.Command{Use: "logs [session-id]", Short: "Show native daemon or session logs", Args: cobra.MaximumNArgs(1), RunE: runNativeLogs}
 	logs.Flags().BoolVarP(&nativeManageOpts.logsFollow, "follow", "f", false, "follow log output")
 	logs.Flags().IntVarP(&nativeManageOpts.logsTail, "tail", "n", 100, "number of lines to show")
 	logs.Flags().BoolVar(&nativeManageOpts.logsDaemon, "daemon", false, "show the native daemon log")
-	NativeCmd.AddCommand(install, status, doctor, restart, update, rotate, uninstall, listCmd, sessionList, logs)
+	NativeCmd.AddCommand(install, status, doctor, restart, update, rotate, uninstall, listCmd, sessionList, sessionDelete, logs)
 }
 
 // resolveNativeInstance validates and normalizes the selected instance name,
@@ -599,6 +601,47 @@ func runNativeSessionList(command *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", entry.ID, entry.Status, entry.PID, started, entry.LogPath)
 	}
 	return w.Flush()
+}
+
+func runNativeSessionDelete(command *cobra.Command, args []string) error {
+	instance, err := resolveNativeInstance()
+	if err != nil {
+		return err
+	}
+	paths, err := nativePaths(nativeManageOpts.configPath, instance)
+	if err != nil {
+		return err
+	}
+	cfg, err := readNativeConfig(paths.config)
+	if err != nil {
+		return fmt.Errorf("read native daemon config: %w", err)
+	}
+	sessionID := strings.TrimSpace(args[0])
+	if sessionID == "" {
+		return errors.New("session ID is required")
+	}
+	base, err := nativeSessionManagerLocalURL(cfg.Listen)
+	if err != nil {
+		return err
+	}
+	path := "/api/v1/sessions/" + url.PathEscape(sessionID)
+	req, err := http.NewRequestWithContext(command.Context(), http.MethodDelete, base+path, nil)
+	if err != nil {
+		return err
+	}
+	ts := hmacutil.NowTimestamp()
+	req.Header.Set(hmacutil.TimestampHeader, ts)
+	req.Header.Set("X-Hub-Signature-256", hmacutil.Sign([]byte(cfg.ConnectionToken), hmacutil.BuildMessage(http.MethodDelete, path, ts, nil)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete native session: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return responseError(resp)
+	}
+	_, err = fmt.Fprintf(command.OutOrStdout(), "Deleted native session %s\n", sessionID)
+	return err
 }
 
 func nativeLogPath(paths nativeInstallPaths, cfg nativeDaemonConfig, sessionID string, daemon bool) (string, error) {

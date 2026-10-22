@@ -429,6 +429,10 @@ body {
   text-overflow: ellipsis;
 }
 
+.table__actions { text-align: right !important; }
+.table__actions .btn { padding: 4px 9px; }
+.session-delete-error { margin: 8px; color: var(--bad); font-size: 12px; }
+
 .session-summary {
   display: grid;
   gap: 3px;
