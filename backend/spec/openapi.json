@@ -11684,6 +11684,11 @@
             },
             "description": "Tag selector used to choose this profile when launching a session"
           },
+          "selector_repositories": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Repository alternatives (owner/repository) used to choose this profile when launching a session"
+          },
           "config": {
             "$ref": "#/components/schemas/SessionProfileConfig"
           }
@@ -11710,6 +11715,11 @@
               "type": "string"
             },
             "description": "Tag selector used to choose this profile when launching a session"
+          },
+          "selector_repositories": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Repository alternatives (owner/repository) used to choose this profile when launching a session"
           },
           "config": {
             "$ref": "#/components/schemas/SessionProfileConfig"
@@ -11752,6 +11762,11 @@
               "type": "string"
             },
             "description": "Tag selector used to choose this profile when launching a session"
+          },
+          "selector_repositories": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Repository alternatives (owner/repository) used to choose this profile when launching a session"
           },
           "config": {
             "$ref": "#/components/schemas/SessionProfileConfig"

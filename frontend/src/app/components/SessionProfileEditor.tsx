@@ -193,7 +193,10 @@ export default function SessionProfileEditor({
       setDescription(editingProfile.description ?? '')
       setIsDefault(editingProfile.is_default ?? false)
       const selectorEntries = Object.entries(editingProfile.selector_tags ?? {})
-      setRepositorySelector(selectorEntries.find(([key]) => key === 'repository' || key === 'repo')?.[1] ?? '')
+      setRepositorySelector((editingProfile.selector_repositories?.length
+        ? editingProfile.selector_repositories
+        : [selectorEntries.find(([key]) => key === 'repository' || key === 'repo')?.[1]].filter(Boolean)
+      ).join('\n'))
       setOtherSelectorTags(Object.fromEntries(selectorEntries.filter(([key]) => key !== 'repository' && key !== 'repo')))
 
       const cfg = editingProfile.config
@@ -385,8 +388,8 @@ export default function SessionProfileEditor({
       return
     }
 
-    const selectorRepository = repositorySelector.trim()
-    if (selectorRepository && !/^[^/\s]+\/[^/\s]+$/.test(selectorRepository)) {
+    const selectorRepositories = repositorySelector.split('\n').map(value => value.trim()).filter(Boolean)
+    if (selectorRepositories.some(repository => !/^[^/\s]+\/[^/\s]+$/.test(repository))) {
       setError('リポジトリ自動選択は org/repo 形式で入力してください')
       return
     }
@@ -407,10 +410,7 @@ export default function SessionProfileEditor({
         ...(claudeModel.trim() ? { ANTHROPIC_MODEL: claudeModel.trim() } : {}),
       }
       const tags = pairsToRecord(tagPairs)
-      const selectorTags = {
-        ...otherSelectorTags,
-        ...(selectorRepository ? { repository: selectorRepository } : {}),
-      }
+      const selectorTags = { ...otherSelectorTags }
       const parsedUnsyncedFilePaths = unsyncedFilePaths
         .split('\n')
         .map(path => path.trim())
@@ -503,6 +503,7 @@ export default function SessionProfileEditor({
           description: description.trim(),
           is_default: isDefault,
           selector_tags: selectorTags,
+          selector_repositories: selectorRepositories,
           config: Object.keys(config).length > 0 ? config : undefined,
         }
         savedProfile = await client.updateSessionProfile(editingProfile.id, updateData)
@@ -513,6 +514,7 @@ export default function SessionProfileEditor({
           description: description.trim(),
           is_default: isDefault,
           ...(Object.keys(selectorTags).length > 0 ? { selector_tags: selectorTags } : {}),
+          ...(selectorRepositories.length > 0 ? { selector_repositories: selectorRepositories } : {}),
           ...(Object.keys(config).length > 0 ? { config } : {}),
           ...scopeParams,
         }
@@ -611,16 +613,16 @@ export default function SessionProfileEditor({
               <label htmlFor="session-profile-repository-selector" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 リポジトリ自動選択
               </label>
-              <input
+              <textarea
                 id="session-profile-repository-selector"
-                type="text"
                 value={repositorySelector}
                 onChange={(e) => setRepositorySelector(e.target.value)}
-                placeholder="例: org/repo"
+                rows={3}
+                placeholder={'例: org/repo\norg/another-repo'}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                org/repo を入力すると、そのリポジトリのセッション起動時にこのプロファイルを自動選択します。
+                1行に1つ owner/repository を入力すると、いずれかのリポジトリのセッション起動時にこのプロファイルを自動選択します。
               </p>
             </div>
 

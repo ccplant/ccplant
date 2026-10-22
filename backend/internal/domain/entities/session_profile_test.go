@@ -36,3 +36,34 @@ func TestSessionProfileSelectorTagsReturnsCopy(t *testing.T) {
 		t.Fatal("SelectorTags should return a copy")
 	}
 }
+
+func TestSessionProfileMatchesAnySelectorRepository(t *testing.T) {
+	profile := NewSessionProfile("profile-1", "selected", "user-1")
+	profile.SetSelectorRepositories([]string{"owner/api", "owner/web"})
+
+	if !profile.MatchesSelectorTags(map[string]string{"repository": "owner/web"}) {
+		t.Fatal("expected any configured repository to match")
+	}
+	if profile.MatchesSelectorTags(map[string]string{"repository": "owner/other"}) {
+		t.Fatal("unexpected repository match")
+	}
+
+	repositories := profile.SelectorRepositories()
+	repositories[0] = "changed/repo"
+	if profile.SelectorRepositories()[0] != "owner/api" {
+		t.Fatal("SelectorRepositories should return a copy")
+	}
+}
+
+func TestSessionProfileSelectorRepositoriesCombineWithTags(t *testing.T) {
+	profile := NewSessionProfile("profile-1", "selected", "user-1")
+	profile.SetSelectorRepositories([]string{"owner/api", "owner/web"})
+	profile.SetSelectorTags(map[string]string{"env": "dev"})
+
+	if !profile.MatchesSelectorTags(map[string]string{"repository": "owner/api", "env": "dev"}) {
+		t.Fatal("expected repository and tag selector to match")
+	}
+	if profile.MatchesSelectorTags(map[string]string{"repository": "owner/api", "env": "prod"}) {
+		t.Fatal("repository selector must not bypass other tags")
+	}
+}
