@@ -68,6 +68,7 @@ export interface SessionProfile {
   team_id?: string;
   is_default?: boolean;
   selector_tags?: Record<string, string>;
+  selector_repositories?: string[];
   config?: SessionProfileConfig;
   created_at: string;
   updated_at: string;
@@ -81,6 +82,7 @@ export interface CreateSessionProfileRequest {
   team_id?: string;
   is_default?: boolean;
   selector_tags?: Record<string, string>;
+  selector_repositories?: string[];
   config?: SessionProfileConfig;
 }
 
@@ -90,6 +92,7 @@ export interface UpdateSessionProfileRequest {
   description?: string;
   is_default?: boolean;
   selector_tags?: Record<string, string>;
+  selector_repositories?: string[];
   config?: SessionProfileConfig;
 }
 

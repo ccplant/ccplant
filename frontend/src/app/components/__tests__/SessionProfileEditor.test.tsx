@@ -161,13 +161,14 @@ describe('SessionProfileEditor runtime', () => {
 })
 
 describe('SessionProfileEditor repository selector', () => {
-  it('creates a profile with a repository selector', async () => {
+  it('creates a profile with multiple repository selectors', async () => {
     render(<SessionProfileEditor createScope={{ scope: 'user' }} onClose={vi.fn()} onSuccess={vi.fn()} />)
     fireEvent.change(screen.getByPlaceholderText('例: my-profile'), { target: { value: 'Repo profile' } })
-    fireEvent.change(screen.getByLabelText('リポジトリ自動選択'), { target: { value: 'org/repo' } })
+    fireEvent.change(screen.getByLabelText('リポジトリ自動選択'), { target: { value: 'org/repo\norg/web' } })
     fireEvent.click(screen.getByRole('button', { name: '作成' }))
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1))
-    expect(mocks.create.mock.calls[0][0].selector_tags).toEqual({ repository: 'org/repo' })
+    expect(mocks.create.mock.calls[0][0].selector_repositories).toEqual(['org/repo', 'org/web'])
+    expect(mocks.create.mock.calls[0][0].selector_tags).toBeUndefined()
   })
 
   it('normalizes the legacy repo selector and preserves other selectors', async () => {
@@ -181,7 +182,8 @@ describe('SessionProfileEditor repository selector', () => {
     expect(screen.getByLabelText('リポジトリ自動選択')).toHaveValue('legacy/repo')
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
-    expect(mocks.update.mock.calls[0][1].selector_tags).toEqual({ env: 'dev', repository: 'legacy/repo' })
+    expect(mocks.update.mock.calls[0][1].selector_tags).toEqual({ env: 'dev' })
+    expect(mocks.update.mock.calls[0][1].selector_repositories).toEqual(['legacy/repo'])
   })
 })
 

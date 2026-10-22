@@ -82,10 +82,13 @@ export default function SessionProfileCard({
 
       {/* Config summary */}
       <div className="flex items-center gap-4 mb-3 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
-        {profile.selector_tags?.repository && (
+        {profile.selector_repositories && profile.selector_repositories.length > 0 && (
+          <span>リポジトリ: <strong className="text-gray-700 dark:text-gray-300">{profile.selector_repositories.join(', ')}</strong></span>
+        )}
+        {!profile.selector_repositories?.length && profile.selector_tags?.repository && (
           <span>リポジトリ: <strong className="text-gray-700 dark:text-gray-300">{profile.selector_tags.repository}</strong></span>
         )}
-        {profile.selector_tags?.repo && (
+        {!profile.selector_repositories?.length && profile.selector_tags?.repo && (
           <span>リポジトリ: <strong className="text-gray-700 dark:text-gray-300">{profile.selector_tags.repo}</strong></span>
         )}
         {profile.config?.params?.agent_type && (

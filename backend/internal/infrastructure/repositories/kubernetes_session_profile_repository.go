@@ -37,17 +37,18 @@ const (
 
 // sessionProfileJSON is the JSON representation for storage
 type sessionProfileJSON struct {
-	ID           string                   `json:"id"`
-	Name         string                   `json:"name"`
-	Description  string                   `json:"description,omitempty"`
-	UserID       string                   `json:"user_id"`
-	Scope        entities.ResourceScope   `json:"scope,omitempty"`
-	TeamID       string                   `json:"team_id,omitempty"`
-	IsDefault    bool                     `json:"is_default,omitempty"`
-	SelectorTags map[string]string        `json:"selector_tags,omitempty"`
-	Config       sessionProfileConfigJSON `json:"config"`
-	CreatedAt    time.Time                `json:"created_at"`
-	UpdatedAt    time.Time                `json:"updated_at"`
+	ID                   string                   `json:"id"`
+	Name                 string                   `json:"name"`
+	Description          string                   `json:"description,omitempty"`
+	UserID               string                   `json:"user_id"`
+	Scope                entities.ResourceScope   `json:"scope,omitempty"`
+	TeamID               string                   `json:"team_id,omitempty"`
+	IsDefault            bool                     `json:"is_default,omitempty"`
+	SelectorTags         map[string]string        `json:"selector_tags,omitempty"`
+	SelectorRepositories []string                 `json:"selector_repositories,omitempty"`
+	Config               sessionProfileConfigJSON `json:"config"`
+	CreatedAt            time.Time                `json:"created_at"`
+	UpdatedAt            time.Time                `json:"updated_at"`
 }
 
 type sessionProfileConfigJSON struct {
@@ -358,6 +359,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	profile.SetTeamID(pj.TeamID)
 	profile.SetIsDefault(pj.IsDefault)
 	profile.SetSelectorTags(pj.SelectorTags)
+	profile.SetSelectorRepositories(pj.SelectorRepositories)
 	profile.SetCreatedAt(pj.CreatedAt)
 	profile.SetUpdatedAt(pj.UpdatedAt)
 
@@ -409,14 +411,15 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 		}
 	}
 	return &sessionProfileJSON{
-		ID:           profile.ID(),
-		Name:         profile.Name(),
-		Description:  profile.Description(),
-		UserID:       profile.UserID(),
-		Scope:        profile.Scope(),
-		TeamID:       profile.TeamID(),
-		IsDefault:    profile.IsDefault(),
-		SelectorTags: profile.SelectorTags(),
+		ID:                   profile.ID(),
+		Name:                 profile.Name(),
+		Description:          profile.Description(),
+		UserID:               profile.UserID(),
+		Scope:                profile.Scope(),
+		TeamID:               profile.TeamID(),
+		IsDefault:            profile.IsDefault(),
+		SelectorTags:         profile.SelectorTags(),
+		SelectorRepositories: profile.SelectorRepositories(),
 		Config: sessionProfileConfigJSON{
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),

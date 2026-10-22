@@ -62,37 +62,40 @@ type SessionProfileConfigRequest struct {
 
 // CreateSessionProfileRequest is the request body for creating a session profile
 type CreateSessionProfileRequest struct {
-	Name         string                      `json:"name"`
-	Description  string                      `json:"description,omitempty"`
-	Scope        entities.ResourceScope      `json:"scope,omitempty"`
-	TeamID       string                      `json:"team_id,omitempty"`
-	IsDefault    bool                        `json:"is_default,omitempty"`
-	SelectorTags map[string]string           `json:"selector_tags,omitempty"`
-	Config       SessionProfileConfigRequest `json:"config"`
+	Name                 string                      `json:"name"`
+	Description          string                      `json:"description,omitempty"`
+	Scope                entities.ResourceScope      `json:"scope,omitempty"`
+	TeamID               string                      `json:"team_id,omitempty"`
+	IsDefault            bool                        `json:"is_default,omitempty"`
+	SelectorTags         map[string]string           `json:"selector_tags,omitempty"`
+	SelectorRepositories []string                    `json:"selector_repositories,omitempty"`
+	Config               SessionProfileConfigRequest `json:"config"`
 }
 
 // UpdateSessionProfileRequest is the request body for updating a session profile
 type UpdateSessionProfileRequest struct {
-	Name         *string                      `json:"name,omitempty"`
-	Description  *string                      `json:"description,omitempty"`
-	IsDefault    *bool                        `json:"is_default,omitempty"`
-	SelectorTags map[string]string            `json:"selector_tags,omitempty"`
-	Config       *SessionProfileConfigRequest `json:"config,omitempty"`
+	Name                 *string                      `json:"name,omitempty"`
+	Description          *string                      `json:"description,omitempty"`
+	IsDefault            *bool                        `json:"is_default,omitempty"`
+	SelectorTags         map[string]string            `json:"selector_tags,omitempty"`
+	SelectorRepositories *[]string                    `json:"selector_repositories,omitempty"`
+	Config               *SessionProfileConfigRequest `json:"config,omitempty"`
 }
 
 // SessionProfileResponse is the response for a session profile
 type SessionProfileResponse struct {
-	ID           string                       `json:"id"`
-	Name         string                       `json:"name"`
-	Description  string                       `json:"description,omitempty"`
-	UserID       string                       `json:"user_id"`
-	Scope        entities.ResourceScope       `json:"scope,omitempty"`
-	TeamID       string                       `json:"team_id,omitempty"`
-	IsDefault    bool                         `json:"is_default,omitempty"`
-	SelectorTags map[string]string            `json:"selector_tags,omitempty"`
-	Config       SessionProfileConfigResponse `json:"config"`
-	CreatedAt    string                       `json:"created_at"`
-	UpdatedAt    string                       `json:"updated_at"`
+	ID                   string                       `json:"id"`
+	Name                 string                       `json:"name"`
+	Description          string                       `json:"description,omitempty"`
+	UserID               string                       `json:"user_id"`
+	Scope                entities.ResourceScope       `json:"scope,omitempty"`
+	TeamID               string                       `json:"team_id,omitempty"`
+	IsDefault            bool                         `json:"is_default,omitempty"`
+	SelectorTags         map[string]string            `json:"selector_tags,omitempty"`
+	SelectorRepositories []string                     `json:"selector_repositories,omitempty"`
+	Config               SessionProfileConfigResponse `json:"config"`
+	CreatedAt            string                       `json:"created_at"`
+	UpdatedAt            string                       `json:"updated_at"`
 }
 
 // SessionProfileConfigResponse represents session profile config in responses
@@ -165,6 +168,7 @@ func (c *SessionProfileController) CreateSessionProfile(ctx echo.Context) error 
 	profile.SetTeamID(req.TeamID)
 	profile.SetIsDefault(req.IsDefault)
 	profile.SetSelectorTags(req.SelectorTags)
+	profile.SetSelectorRepositories(req.SelectorRepositories)
 	config := c.requestToConfig(req.Config)
 	if err := c.validateSourceSessionProfile(ctx.Request().Context(), profile, config); err != nil {
 		return err
@@ -381,6 +385,9 @@ func (c *SessionProfileController) UpdateSessionProfile(ctx echo.Context) error 
 	if req.SelectorTags != nil {
 		profile.SetSelectorTags(req.SelectorTags)
 	}
+	if req.SelectorRepositories != nil {
+		profile.SetSelectorRepositories(*req.SelectorRepositories)
+	}
 	if req.Config != nil {
 		config := c.requestToConfig(*req.Config)
 		if err := c.validateSourceSessionProfile(ctx.Request().Context(), profile, config); err != nil {
@@ -565,14 +572,15 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		}
 	}
 	return SessionProfileResponse{
-		ID:           p.ID(),
-		Name:         p.Name(),
-		Description:  p.Description(),
-		UserID:       p.UserID(),
-		Scope:        p.Scope(),
-		TeamID:       p.TeamID(),
-		IsDefault:    p.IsDefault(),
-		SelectorTags: p.SelectorTags(),
+		ID:                   p.ID(),
+		Name:                 p.Name(),
+		Description:          p.Description(),
+		UserID:               p.UserID(),
+		Scope:                p.Scope(),
+		TeamID:               p.TeamID(),
+		IsDefault:            p.IsDefault(),
+		SelectorTags:         p.SelectorTags(),
+		SelectorRepositories: p.SelectorRepositories(),
 		Config: SessionProfileConfigResponse{
 			CodexConnection:        cfg.CodexConnection(),
 			ClaudeConnection:       cfg.ClaudeConnection(),

@@ -8,17 +8,18 @@ import (
 
 // SessionProfile represents a named, reusable session configuration for a tenant
 type SessionProfile struct {
-	id           string
-	name         string
-	description  string
-	userID       string
-	scope        ResourceScope
-	teamID       string
-	isDefault    bool
-	selectorTags map[string]string
-	config       SessionProfileConfig
-	createdAt    time.Time
-	updatedAt    time.Time
+	id                   string
+	name                 string
+	description          string
+	userID               string
+	scope                ResourceScope
+	teamID               string
+	isDefault            bool
+	selectorTags         map[string]string
+	selectorRepositories []string
+	config               SessionProfileConfig
+	createdAt            time.Time
+	updatedAt            time.Time
 }
 
 // SessionProfileConfig contains the reusable session configuration fields
@@ -166,10 +167,37 @@ func (p *SessionProfile) SetSelectorTags(tags map[string]string) {
 	p.updatedAt = time.Now()
 }
 
+// SelectorRepositories returns the repositories that may select this profile.
+func (p *SessionProfile) SelectorRepositories() []string {
+	return copyStringSlice(p.selectorRepositories)
+}
+
+// SetSelectorRepositories sets repository alternatives used for automatic selection.
+func (p *SessionProfile) SetSelectorRepositories(repositories []string) {
+	p.selectorRepositories = copyStringSlice(repositories)
+	p.updatedAt = time.Now()
+}
+
 // MatchesSelectorTags returns true when requestTags contains all selector tags.
 func (p *SessionProfile) MatchesSelectorTags(requestTags map[string]string) bool {
-	if len(p.selectorTags) == 0 {
+	if len(p.selectorTags) == 0 && len(p.selectorRepositories) == 0 {
 		return false
+	}
+	if len(p.selectorRepositories) > 0 {
+		repository := requestTags["repository"]
+		if repository == "" {
+			repository = requestTags["repo"]
+		}
+		matched := false
+		for _, candidate := range p.selectorRepositories {
+			if candidate == repository {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
 	}
 	for k, v := range p.selectorTags {
 		if k == "repo" {
@@ -187,7 +215,11 @@ func (p *SessionProfile) MatchesSelectorTags(requestTags map[string]string) bool
 
 // SelectorSpecificity returns the number of selector tags.
 func (p *SessionProfile) SelectorSpecificity() int {
-	return len(p.selectorTags)
+	specificity := len(p.selectorTags)
+	if len(p.selectorRepositories) > 0 {
+		specificity++
+	}
+	return specificity
 }
 
 // Config returns the session profile configuration
