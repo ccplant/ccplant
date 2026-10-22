@@ -205,8 +205,11 @@ func (w *RunnerWorker) runSlotOnce(ctx context.Context, pool string) {
 			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
 			return
 		}
-		if _, err = creator.CreateSessionDirect(ctx, claim.Allocation.SessionID, req, nil); err != nil {
-			log.Printf("[SESSION_RUNNER] create %s: %v", claim.Allocation.SessionID, err)
+		// The parent route addresses the allocated workload by runner ID. Keep the
+		// manager's local session key aligned with that route so lifecycle commands
+		// (especially DELETE) target the process that was actually created.
+		if _, err = creator.CreateSessionDirect(ctx, runnerID, req, nil); err != nil {
+			log.Printf("[SESSION_RUNNER] create %s for session %s: %v", runnerID, claim.Allocation.SessionID, err)
 			_ = w.complete(ctx, runnerID, runnerToken, claim.Allocation.SessionID, claim.LeaseID, "fail")
 			continue
 		}

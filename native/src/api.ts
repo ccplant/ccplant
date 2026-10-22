@@ -27,6 +27,10 @@ export async function fetchSessions(instance: string): Promise<NativeSession[]> 
   return invoke<NativeSession[]>("native_sessions", { instance });
 }
 
+export async function deleteSession(instance: string, sessionId: string): Promise<RestartResult> {
+  return invoke<RestartResult>("native_delete_session", { instance, sessionId });
+}
+
 export async function fetchLogs(
   instance: string,
   target: { daemon: true } | { daemon: false; sessionId: string },

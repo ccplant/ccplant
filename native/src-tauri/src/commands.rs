@@ -68,6 +68,32 @@ pub async fn native_sessions(
     parse_json::<Vec<NativeSession>>(&stdout, "sessions")
 }
 
+/// `agentapi-proxy native session-delete <session-id>`.
+#[tauri::command]
+pub async fn native_delete_session(
+    app: AppHandle,
+    instance: Option<String>,
+    session_id: String,
+) -> Result<CommandResult, String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Err("a session ID is required".to_string());
+    }
+    let mut args = vec![
+        "native".to_string(),
+        "session-delete".to_string(),
+        session_id.to_string(),
+    ];
+    if let Some(name) = instance
+        .as_deref()
+        .filter(|name| !name.is_empty() && *name != "default")
+    {
+        args.extend(["--instance".to_string(), name.to_string()]);
+    }
+    let (ok, message) = run_binary_plain(&app, args).await?;
+    Ok(CommandResult { ok, message })
+}
+
 /// Return the tail of the session-manager log or a session's combined
 /// provisioner/agent log. Following is intentionally handled by UI polling so
 /// no long-lived child process crosses the Tauri IPC boundary.

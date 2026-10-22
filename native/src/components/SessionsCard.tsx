@@ -1,10 +1,33 @@
+import { useState } from "react";
+import { deleteSession } from "../api";
 import type { NativeSession } from "../types";
 
 interface Props {
+  instance: string;
   sessions: NativeSession[];
+  onDeleted: () => void | Promise<void>;
 }
 
-export function SessionsCard({ sessions }: Props) {
+export function SessionsCard({ instance, sessions, onDeleted }: Props) {
+  const [deleting, setDeleting] = useState("");
+  const [error, setError] = useState("");
+
+  const remove = async (session: NativeSession) => {
+    const label = session.description || shortId(session.id);
+    if (!window.confirm(`Delete native session “${label}”? This stops its process and removes its local state.`)) return;
+    setDeleting(session.id);
+    setError("");
+    try {
+      const result = await deleteSession(instance, session.id);
+      if (!result.ok) throw new Error(result.message || "Session deletion failed");
+      await onDeleted();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeleting("");
+    }
+  };
+
   return (
     <section className="card">
       <header className="card__header">
@@ -23,6 +46,7 @@ export function SessionsCard({ sessions }: Props) {
               <th>Session</th>
               <th>Activity</th>
               <th>Process</th>
+              <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -45,11 +69,17 @@ export function SessionsCard({ sessions }: Props) {
                 </td>
                 <td title={formatDate(session.last_message_at || session.updated_at || session.started_at)}>{formatActivity(session.last_message_at || session.updated_at || session.started_at)}</td>
                 <td className="mono">{session.pid ? `PID ${session.pid}` : "—"}</td>
+                <td className="table__actions">
+                  <button className="btn btn--danger" disabled={deleting === session.id} onClick={() => void remove(session)}>
+                    {deleting === session.id ? "Deleting…" : "Delete"}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {error && <p className="session-delete-error">{error}</p>}
     </section>
   );
 }

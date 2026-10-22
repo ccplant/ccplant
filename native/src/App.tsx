@@ -198,7 +198,7 @@ export function App() {
         {state === "ready" && data && !adding && (
           <>
             {data.status ? <StatusCard status={data.status} /> : <EmptyState label="No status available" />}
-            <SessionsCard sessions={data.sessions} />
+            <SessionsCard instance={selectedInstance} sessions={data.sessions} onDeleted={() => refresh(false)} />
             <LogsCard instance={selectedInstance} sessions={data.sessions} />
             <EnvironmentCard instance={selectedInstance} activeSessions={activeCount} onSaved={() => refresh(true)} />
             {data.doctor ? <DoctorCard doctor={data.doctor} /> : <EmptyState label="Doctor result unavailable" />}
