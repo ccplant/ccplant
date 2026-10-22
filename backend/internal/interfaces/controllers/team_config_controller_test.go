@@ -133,3 +133,37 @@ func TestTeamConfigControllerRenameAndDelete(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, deleteRecorder.Code)
 	require.Empty(t, repo.teams)
 }
+
+func TestTeamConfigControllerUpdateRequiresExternalTeamMembership(t *testing.T) {
+	team := entities.NewTeamConfig("team-test", nil, nil)
+	team.SetPrincipalID(team.TeamID())
+	team.SetOwnerIDs([]string{"owner"})
+	repo := &teamConfigControllerRepo{teams: map[string]*entities.TeamConfig{team.TeamID(): team}}
+	controller := NewTeamConfigController(repo)
+	e := echo.New()
+
+	owner := entities.NewUser("owner", entities.UserTypeRegular, "owner")
+	authz := &auth.AuthorizationContext{User: owner}
+	req := httptest.NewRequest(http.MethodPut, "/teams/team-test/config", bytes.NewBufferString(`{"github_teams":["example/platform"]}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	ctx := e.NewContext(req, httptest.NewRecorder())
+	ctx.SetParamNames("team")
+	ctx.SetParamValues(team.TeamID())
+	ctx.Set("authz_context", authz)
+	err := controller.Update(ctx)
+	var httpErr *echo.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusForbidden, httpErr.Code)
+
+	owner.SetGitHubInfo(entities.NewGitHubUserInfo(1, "owner", "", "", "", "", ""),
+		[]entities.GitHubTeamMembership{{Organization: "example", TeamSlug: "platform"}})
+	recorder := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/teams/team-test/config", bytes.NewBufferString(`{"github_teams":["example/platform"]}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	ctx = e.NewContext(req, recorder)
+	ctx.SetParamNames("team")
+	ctx.SetParamValues(team.TeamID())
+	ctx.Set("authz_context", authz)
+	require.NoError(t, controller.Update(ctx))
+	require.Equal(t, http.StatusOK, recorder.Code)
+}

@@ -663,7 +663,7 @@ func (r *Router) registerConditionalRoutes() error {
 		r.echo.DELETE("/notification/subscribe", r.handlers.notificationHandlers.DeleteSubscription, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 
 		// Internal routes
-		r.echo.POST("/notifications/webhook", r.handlers.notificationHandlers.Webhook)
+		r.echo.POST("/notifications/webhook", r.handlers.notificationHandlers.Webhook, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.GET("/notifications/history", r.handlers.notificationHandlers.GetHistory, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.POST("/notifications/send", r.handlers.notificationHandlers.SendNotification, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		log.Printf("[ROUTES] Notification endpoints registered")

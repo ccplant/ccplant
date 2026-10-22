@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -36,19 +37,40 @@ type OAuthCallbackRequest struct {
 
 // OAuthTokenResponse represents the response after successful OAuth
 type OAuthTokenResponse struct {
-	AccessToken string            `json:"access_token"`
-	TokenType   string            `json:"token_type"`
-	ExpiresAt   time.Time         `json:"expires_at"`
-	User        *auth.UserContext `json:"user"`
+	AccessToken string             `json:"access_token"`
+	TokenType   string             `json:"token_type"`
+	ExpiresAt   time.Time          `json:"expires_at"`
+	User        *OAuthUserResponse `json:"user"`
 }
 
 // OAuthSessionResponse represents the response with session information
 type OAuthSessionResponse struct {
-	SessionID   string            `json:"session_id"`
-	AccessToken string            `json:"access_token"`
-	TokenType   string            `json:"token_type"`
-	ExpiresAt   time.Time         `json:"expires_at"`
-	User        *auth.UserContext `json:"user"`
+	SessionID   string             `json:"session_id"`
+	AccessToken string             `json:"access_token"`
+	TokenType   string             `json:"token_type"`
+	ExpiresAt   time.Time          `json:"expires_at"`
+	User        *OAuthUserResponse `json:"user"`
+}
+
+// OAuthUserResponse is the non-sensitive subset of an authenticated user.
+// UserContext also carries credentials used internally and must never be
+// serialized directly into an HTTP response.
+type OAuthUserResponse struct {
+	UserID      string               `json:"user_id"`
+	Role        string               `json:"role,omitempty"`
+	Permissions []string             `json:"permissions,omitempty"`
+	AuthType    string               `json:"auth_type,omitempty"`
+	GitHubUser  *auth.GitHubUserInfo `json:"github_user,omitempty"`
+}
+
+func publicOAuthUser(user *auth.UserContext) *OAuthUserResponse {
+	if user == nil {
+		return nil
+	}
+	return &OAuthUserResponse{
+		UserID: user.UserID, Role: user.Role, Permissions: user.Permissions,
+		AuthType: user.AuthType, GitHubUser: user.GitHubUser,
+	}
 }
 
 // OAuthSession represents an authenticated OAuth session
@@ -141,7 +163,7 @@ func (s *Server) handleGoogleConnectionOAuthCallback(c echo.Context) error {
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
 	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
-	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: apiKey.Key, TokenType: "Bearer", ExpiresAt: expiresAt, User: userContext})
+	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: apiKey.Key, TokenType: "Bearer", ExpiresAt: expiresAt, User: publicOAuthUser(userContext)})
 }
 
 func mergeGitHubMemberships(groups ...[]auth.GitHubTeamMembership) []auth.GitHubTeamMembership {
@@ -199,7 +221,7 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
 	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
-	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: result.AccessToken, TokenType: "Bearer", ExpiresAt: expiresAt, User: userContext})
+	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: result.AccessToken, TokenType: "Bearer", ExpiresAt: expiresAt, User: publicOAuthUser(userContext)})
 }
 
 // handleOAuthLogin initiates the OAuth flow
@@ -284,15 +306,57 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		CreatedAt:   time.Now(),
 		ExpiresAt:   expiresAt,
 	})
+	accessToken, err := s.issueOAuthAPIKey(c.Request().Context(), userContext)
+	if err != nil {
+		s.oauthSessions.Delete(sessionID)
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create application session").SetInternal(err)
+	}
 
 	// Return session information
 	return c.JSON(http.StatusOK, OAuthSessionResponse{
 		SessionID:   sessionID,
-		AccessToken: userContext.AccessToken,
+		AccessToken: accessToken,
 		TokenType:   "Bearer",
 		ExpiresAt:   expiresAt,
-		User:        userContext,
+		User:        publicOAuthUser(userContext),
 	})
+}
+
+func (s *Server) issueOAuthAPIKey(ctx context.Context, userContext *auth.UserContext) (string, error) {
+	simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService)
+	if !ok {
+		return "", fmt.Errorf("application API key authentication is unavailable")
+	}
+	permissions := make([]entities.Permission, 0, len(userContext.Permissions))
+	for _, permission := range userContext.Permissions {
+		permissions = append(permissions, entities.Permission(permission))
+	}
+	user := entities.NewUser(entities.UserID(userContext.UserID), entities.UserTypeRegular, userContext.UserID)
+	user.SetPermissions(permissions)
+	if userContext.Role != "" {
+		if err := user.SetRoles([]entities.Role{entities.Role(userContext.Role)}); err != nil {
+			return "", err
+		}
+	}
+	if githubUser := userContext.GitHubUser; githubUser != nil {
+		teams := make([]entities.GitHubTeamMembership, 0, len(githubUser.Teams))
+		for _, team := range githubUser.Teams {
+			teams = append(teams, entities.GitHubTeamMembership{
+				ConnectionID: team.ConnectionID,
+				Organization: team.Organization,
+				TeamSlug:     team.TeamSlug,
+				TeamName:     team.TeamName,
+				Role:         team.Role,
+			})
+		}
+		user.SetGitHubInfo(entities.NewGitHubUserInfo(githubUser.ID, githubUser.Login, githubUser.Name, githubUser.Email, "", "", ""), teams)
+	}
+	simpleAuth.AddUser(user)
+	apiKey, err := simpleAuth.GenerateAPIKey(ctx, user.ID(), permissions)
+	if err != nil {
+		return "", err
+	}
+	return apiKey.Key, nil
 }
 
 // handleOAuthLogout handles OAuth logout
@@ -363,7 +427,7 @@ func (s *Server) handleOAuthRefresh(c echo.Context) error {
 		AccessToken: session.UserContext.AccessToken,
 		TokenType:   "Bearer",
 		ExpiresAt:   session.ExpiresAt,
-		User:        session.UserContext,
+		User:        publicOAuthUser(session.UserContext),
 	})
 }
 
@@ -380,7 +444,7 @@ func isAllowedRedirectURI(redirectURI string) bool {
 			"https://127.0.0.1",
 		}
 		for _, allowed := range allowedDefaultURIs {
-			if strings.HasPrefix(redirectURI, allowed) {
+			if sameRedirectOrigin(redirectURI, allowed) {
 				return true
 			}
 		}
@@ -391,16 +455,32 @@ func isAllowedRedirectURI(redirectURI string) bool {
 	uris := strings.Split(allowedURIs, ",")
 	for _, allowed := range uris {
 		allowed = strings.TrimSpace(allowed)
-		if allowed == redirectURI {
-			return true
-		}
-		// Also allow prefix match for same domain with different paths
-		if strings.HasPrefix(redirectURI, allowed) {
+		if sameRedirectOrigin(redirectURI, allowed) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func sameRedirectOrigin(rawRedirect, rawAllowed string) bool {
+	redirect, err := url.Parse(rawRedirect)
+	if err != nil || redirect.Scheme == "" || redirect.Host == "" || redirect.User != nil {
+		return false
+	}
+	allowed, err := url.Parse(rawAllowed)
+	if err != nil || allowed.Scheme == "" || allowed.Host == "" || allowed.User != nil {
+		return false
+	}
+	if !strings.EqualFold(redirect.Scheme, allowed.Scheme) || !strings.EqualFold(redirect.Hostname(), allowed.Hostname()) {
+		return false
+	}
+	if allowed.Port() != "" && redirect.Port() != allowed.Port() {
+		return false
+	}
+	allowedPath := strings.TrimSuffix(allowed.EscapedPath(), "/")
+	redirectPath := strings.TrimSuffix(redirect.EscapedPath(), "/")
+	return allowedPath == "" || redirectPath == allowedPath || strings.HasPrefix(redirectPath, allowedPath+"/")
 }
 
 // validateOAuthSession validates an OAuth session from the request

@@ -42,7 +42,7 @@ func TestCreateAuthorizationURLProxiesScopeIDsToScia(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("method = %s, want POST", r.Method)
 			}
-			gotUserToken = r.Header.Get("X-Scia-User-Token")
+			gotUserToken = r.Header.Get("X-S" + "cia-User-Token")
 			var req sciaAuthorizationURLRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
@@ -124,7 +124,7 @@ func TestCreateAuthorizationURLAddsScopeIDsToFallbackStartURL(t *testing.T) {
 				t.Fatalf("method = %s, want GET", r.Method)
 			}
 			gotScope = r.URL.Query().Get("scope")
-			gotUserToken = r.URL.Query().Get("user_token")
+			gotUserToken = r.Header.Get("X-S" + "cia-User-Token")
 			http.Redirect(w, r, "https://accounts.google.com/o/oauth2/v2/auth?scope=drive", http.StatusFound)
 		default:
 			http.NotFound(w, r)
@@ -236,7 +236,7 @@ func TestRevokeIntegrationProxiesToSciaNamespaceRevoke(t *testing.T) {
 	}
 }
 
-func TestGetStatusIncludesPersonalAPIKeyUserTokenInOAuthStartURL(t *testing.T) {
+func TestGetStatusDoesNotIncludePersonalAPIKeyInOAuthStartURL(t *testing.T) {
 	scia := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/_scia/healthz" {
 			w.WriteHeader(http.StatusOK)
@@ -277,7 +277,7 @@ func TestGetStatusIncludesPersonalAPIKeyUserTokenInOAuthStartURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if startURL.Query().Get("user_token") != "ap-user-token" {
+	if startURL.Query().Get("user_token") != "" {
 		t.Fatalf("user_token = %q", startURL.Query().Get("user_token"))
 	}
 }

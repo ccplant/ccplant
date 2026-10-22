@@ -1186,7 +1186,8 @@ func TestBindingPriorityAndMaxConcurrentValidationAndPatch(t *testing.T) {
 func TestPoolCreatorReceivesManageAndUseBinding(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
-	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAdmin, "alice")
+	requireNoError(t, alice.SetRoles([]entities.Role{entities.RoleAdmin}))
 	bob := entities.NewUser(entities.UserID("bob"), entities.UserTypeAPIKey, "bob")
 
 	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
@@ -1217,10 +1218,23 @@ func TestPoolCreatorReceivesManageAndUseBinding(t *testing.T) {
 	}
 }
 
+func TestCreateLogicalPoolRequiresAdministrator(t *testing.T) {
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	controller := NewSessionPoolController(store, nil)
+	member := entities.NewUser(entities.UserID("member"), entities.UserTypeAPIKey, "member")
+
+	result := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
+		map[string]any{"name": "shared"}, nil, nil, member)
+	if result.Code != http.StatusForbidden {
+		t.Fatalf("create pool status=%d body=%s", result.Code, result.Body.String())
+	}
+}
+
 func TestCreateBindingAcceptsMultipleRoles(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
-	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAdmin, "alice")
+	requireNoError(t, alice.SetRoles([]entities.Role{entities.RoleAdmin}))
 	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
 		map[string]any{"name": "linux"}, nil, nil, alice)
 	if created.Code != http.StatusCreated {
@@ -1244,7 +1258,8 @@ func TestCreateBindingAcceptsMultipleRoles(t *testing.T) {
 func TestLastEnabledManageBindingCannotBeRemoved(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
-	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAdmin, "alice")
+	requireNoError(t, alice.SetRoles([]entities.Role{entities.RoleAdmin}))
 	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
 		map[string]any{"name": "linux"}, nil, nil, alice)
 	if created.Code != http.StatusCreated {
@@ -1288,7 +1303,8 @@ func TestLastEnabledManageBindingCannotBeRemoved(t *testing.T) {
 func TestAllBindingCannotManagePool(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	controller := NewSessionPoolController(store, nil)
-	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAPIKey, "alice")
+	alice := entities.NewUser(entities.UserID("alice"), entities.UserTypeAdmin, "alice")
+	requireNoError(t, alice.SetRoles([]entities.Role{entities.RoleAdmin}))
 	created := callSessionPoolHandlerAs(t, controller.CreateLogicalPool, http.MethodPost, "/session-pools",
 		map[string]any{"name": "linux"}, nil, nil, alice)
 	if created.Code != http.StatusCreated {
@@ -1331,6 +1347,11 @@ func TestUseBindingCanListPoolAndOnlyToggleOwnUsage(t *testing.T) {
 		map[string]any{"priority": 10}, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("patch use binding priority status=%d body=%s", forbidden.Code, forbidden.Body.String())
+	}
+	forbidden = callSessionPoolHandlerAs(t, controller.PatchBinding, http.MethodPatch, "/session-pools/linux/bindings/"+binding.ID,
+		map[string]any{"roles": []string{"manage"}}, map[string]string{"pool": "linux", "bindingId": binding.ID}, nil, alice)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("patch use binding roles status=%d body=%s", forbidden.Code, forbidden.Body.String())
 	}
 
 	pools = callSessionPoolHandlerAs(t, controller.ListPools, http.MethodGet, "/session-pools", nil, nil, nil, alice)

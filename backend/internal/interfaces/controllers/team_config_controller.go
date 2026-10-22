@@ -187,6 +187,9 @@ func (c *TeamConfigController) Update(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, "github team must use org/slug format")
 		}
 		binding := entities.ExternalTeamBinding{Organization: parts[0], TeamSlug: parts[1], ManagedBy: "api"}
+		if !canBindExternalGitHubTeam(auth.GetAuthorizationContext(ctx), binding) {
+			return echo.NewHTTPError(http.StatusForbidden, "GitHub team membership required")
+		}
 		key := bindingKey(binding)
 		if _, exists := seen[key]; exists {
 			return echo.NewHTTPError(http.StatusConflict, "external GitHub team is already mapped")
@@ -214,6 +217,25 @@ func (c *TeamConfigController) Update(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to save team config").SetInternal(err)
 	}
 	return ctx.JSON(http.StatusOK, teamConfigResponse(team))
+}
+
+func canBindExternalGitHubTeam(authz *auth.AuthorizationContext, binding entities.ExternalTeamBinding) bool {
+	if authz == nil || authz.User == nil {
+		return false
+	}
+	if authz.TeamScope.IsAdmin {
+		return true
+	}
+	githubInfo := authz.User.GitHubInfo()
+	if githubInfo == nil {
+		return false
+	}
+	for _, team := range githubInfo.Teams() {
+		if strings.EqualFold(team.Organization, binding.Organization) && strings.EqualFold(team.TeamSlug, binding.TeamSlug) {
+			return true
+		}
+	}
+	return false
 }
 
 func canManageTeam(authz *auth.AuthorizationContext, team *entities.TeamConfig) bool {

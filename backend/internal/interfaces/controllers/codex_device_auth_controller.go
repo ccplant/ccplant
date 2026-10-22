@@ -482,8 +482,8 @@ func newDeviceAuthToken() (string, [sha256.Size]byte, error) {
 }
 
 // deviceAuthCallbackURL resolves the callback URL advertised to the auth
-// worker. An explicitly configured base URL always wins because the request
-// derived host may only be reachable from the browser.
+// worker. The callback is security-sensitive because it receives credentials,
+// so it must only be derived from trusted server-side configuration.
 func (c *CodexDeviceAuthController) deviceAuthCallbackURL(ctx echo.Context) (string, error) {
 	if base := strings.TrimSuffix(c.callbackBaseURL, "/"); base != "" {
 		parsed, err := url.Parse(base)
@@ -496,9 +496,11 @@ func (c *CodexDeviceAuthController) deviceAuthCallbackURL(ctx echo.Context) (str
 		}
 		return base + "/internal/codex-device-auth", nil
 	}
-	return requestDerivedCallbackURL(ctx)
+	return "", fmt.Errorf("device auth callback base URL is required")
 }
 
+// requestDerivedCallbackURL remains as a parser for compatibility checks. It
+// is deliberately not used to select the credential callback destination.
 func requestDerivedCallbackURL(ctx echo.Context) (string, error) {
 	scheme := ctx.Request().Header.Get("X-Forwarded-Proto")
 	if scheme == "" {
