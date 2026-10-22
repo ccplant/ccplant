@@ -5,8 +5,9 @@ const CREDENTIAL_STORE = 'credentials';
 const ENCRYPTION_KEY_ID = 'credential-key';
 
 export type AuthType = 'bearer' | 'api-key';
-export type SavedCredential = { name: string; authType: AuthType; updatedAt: string };
-type EncryptedCredential = SavedCredential & { iv: ArrayBuffer; ciphertext: ArrayBuffer };
+export type ConnectionProfile = { apiURL: string; frontendURL: string; authType: 'none' | AuthType; authValue: string };
+export type SavedCredential = { name: string; updatedAt: string };
+type EncryptedCredential = SavedCredential & { authType?: AuthType; iv: ArrayBuffer; ciphertext: ArrayBuffer };
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -40,30 +41,36 @@ export async function listCredentials(): Promise<SavedCredential[]> {
   const db = await openDatabase();
   try {
     const records = await requestResult<EncryptedCredential[]>(db.transaction(CREDENTIAL_STORE, 'readonly').objectStore(CREDENTIAL_STORE).getAll());
-    return records.map(({ name, authType, updatedAt }) => ({ name, authType, updatedAt })).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    return records.map(({ name, updatedAt }) => ({ name, updatedAt })).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   } finally { db.close(); }
 }
 
-export async function saveCredential(name: string, authType: AuthType, value: string): Promise<void> {
+export async function saveCredential(name: string, profile: ConnectionProfile): Promise<void> {
   const db = await openDatabase();
   try {
     const key = await encryptionKey(db);
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const additionalData = new TextEncoder().encode(`${name}\0${authType}`);
-    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, new TextEncoder().encode(value));
-    await requestResult(db.transaction(CREDENTIAL_STORE, 'readwrite').objectStore(CREDENTIAL_STORE).put({ name, authType, updatedAt: new Date().toISOString(), iv: iv.buffer.slice(0) as ArrayBuffer, ciphertext }));
+    const additionalData = new TextEncoder().encode(name);
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, new TextEncoder().encode(JSON.stringify(profile)));
+    await requestResult(db.transaction(CREDENTIAL_STORE, 'readwrite').objectStore(CREDENTIAL_STORE).put({ name, updatedAt: new Date().toISOString(), iv: iv.buffer.slice(0) as ArrayBuffer, ciphertext }));
   } finally { db.close(); }
 }
 
-export async function loadCredential(name: string): Promise<{ authType: AuthType; value: string }> {
+export async function loadCredential(name: string): Promise<ConnectionProfile> {
   const db = await openDatabase();
   try {
     const record = await requestResult<EncryptedCredential | undefined>(db.transaction(CREDENTIAL_STORE, 'readonly').objectStore(CREDENTIAL_STORE).get(name));
     if (!record) throw new Error('保存済みの認証情報が見つかりません。');
     const key = await encryptionKey(db);
-    const additionalData = new TextEncoder().encode(`${record.name}\0${record.authType}`);
-    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(record.iv), additionalData }, key, record.ciphertext);
-    return { authType: record.authType, value: new TextDecoder().decode(plaintext) };
+    let plaintext: ArrayBuffer;
+    try {
+      plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(record.iv), additionalData: new TextEncoder().encode(record.name) }, key, record.ciphertext);
+      return JSON.parse(new TextDecoder().decode(plaintext)) as ConnectionProfile;
+    } catch (error) {
+      if (!record.authType) throw error;
+      plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(record.iv), additionalData: new TextEncoder().encode(`${record.name}\0${record.authType}`) }, key, record.ciphertext);
+      return { apiURL: '', frontendURL: '', authType: record.authType, authValue: new TextDecoder().decode(plaintext) };
+    }
   } finally { db.close(); }
 }
 
