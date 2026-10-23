@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo, type ClipboardEvent, type TouchEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, type ClipboardEvent, type ReactElement, type TouchEvent } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createAgentAPIProxyClientFromStorage, ACPSessionInfo, ACPConfigOption, ACPUserPromptInfo, SessionSecretMetadata } from '../../lib/agentapi-proxy-client';
@@ -2307,7 +2307,7 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
 
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
           {(() => {
-            const renderedMessages: JSX.Element[] = [];
+            const renderedMessages: ReactElement[] = [];
             const processedIds = new Set<number>();
 
             messages.forEach((message) => {

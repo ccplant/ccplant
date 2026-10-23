@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactElement } from 'react';
 import Link from 'next/link';
 import { createSharedSessionClientFromStorage, SharedSessionClientError } from '../../lib/shared-session-client';
 import { SessionMessage, SessionMessageListResponse } from '../../types/agentapi';
@@ -50,7 +50,7 @@ function convertSessionMessageId(id: string | number, fallbackId: number): numbe
   return hashId > 0 ? hashId : fallbackId;
 }
 
-function formatTextWithLinks(text: string): JSX.Element {
+function formatTextWithLinks(text: string): ReactElement {
   if (!text || typeof text !== 'string') {
     return <>{text || ''}</>;
   }

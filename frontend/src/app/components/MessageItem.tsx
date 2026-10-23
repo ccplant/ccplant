@@ -108,7 +108,7 @@ function hasMarkdownSyntax(text: string): boolean {
 }
 
 // Markdown をレンダリングするコンポーネント
-function MarkdownContent({ content }: { content: string }): JSX.Element {
+function MarkdownContent({ content }: { content: string }): React.ReactElement {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none">
       <ReactMarkdown
@@ -253,7 +253,7 @@ function MarkdownContent({ content }: { content: string }): JSX.Element {
 }
 
 // テキストコンテンツをレンダリングする関数
-function formatTextWithLinks(text: string): JSX.Element {
+function formatTextWithLinks(text: string): React.ReactElement {
   if (!text || typeof text !== 'string') {
     return <>{text || ''}</>;
   }
@@ -285,7 +285,7 @@ function formatTextWithLinks(text: string): JSX.Element {
 }
 
 // コンテンツをレンダリングする関数（enableMarkdown が true のときのみ Markdown 変換を行う）
-function renderContent(content: string, enableMarkdown: boolean = false): JSX.Element {
+function renderContent(content: string, enableMarkdown: boolean = false): React.ReactElement {
   if (!enableMarkdown || !hasMarkdownSyntax(content)) {
     return <div className="whitespace-pre-wrap break-words overflow-wrap-anywhere max-w-full">{formatTextWithLinks(content)}</div>;
   }

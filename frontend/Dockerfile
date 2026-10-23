@@ -5,7 +5,7 @@ FROM oven/bun:1.3.5-alpine AS base
 WORKDIR /app
 
 # Copy package files
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock ./
 
 # Install dependencies
 FROM base AS deps
@@ -20,7 +20,7 @@ RUN bun install --frozen-lockfile
 # so `.next/standalone` and `.next/static` are always complete.
 RUN apk add --no-cache nodejs \
     && BROWSERSLIST_IGNORE_OLD_DATA=1 NEXT_TELEMETRY_DISABLED=1 \
-       /usr/bin/node ./node_modules/next/dist/bin/next build
+       /usr/bin/node ./node_modules/next/dist/bin/next build --webpack
 
 # Production stage
 FROM oven/bun:1.3.5-alpine AS runner

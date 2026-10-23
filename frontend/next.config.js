@@ -21,7 +21,6 @@ const nextConfig = {
     '/': ['./public/**/*'],
   },
   images: {
-    domains: ['avatars.githubusercontent.com'],
     remotePatterns: [
       {
         protocol: 'https',
