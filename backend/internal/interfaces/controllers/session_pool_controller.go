@@ -107,6 +107,16 @@ func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error
 	return ctx.JSON(http.StatusOK, &sessionallocation.RuntimeProfileSnapshot{Revision: hex.EncodeToString(digest[:]), Profile: profile})
 }
 
+// GetManagerVersion returns the release version over the manager-authenticated
+// control plane. Managers can migrate from the public health response to this
+// endpoint without introducing a separate credential.
+func (c *SessionPoolController) GetManagerVersion(ctx echo.Context) error {
+	if _, err := c.authenticateManager(ctx); err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]string{"version": buildinfo.Version})
+}
+
 type managerCreateRequest struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`

@@ -1687,6 +1687,11 @@
                     "status": {
                       "type": "string",
                       "example": "ok"
+                    },
+                    "version": {
+                      "type": "string",
+                      "description": "Running ccplant release version",
+                      "example": "v0.3.85"
                     }
                   }
                 }

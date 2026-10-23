@@ -107,6 +107,18 @@ func TestOwnedManagerAssetImageRuntimeProfileAndHeartbeat(t *testing.T) {
 	if snapshot.Profile.Kubernetes.SessionImage != "ghcr.io/ccplant/ccplant-agent:assets-test" || snapshot.Revision == "" {
 		t.Fatalf("runtime profile=%+v", snapshot)
 	}
+	versionResult := callSessionPoolHandler(t, controller.GetManagerVersion, http.MethodGet,
+		"/internal/session-managers/manager-a/version", nil,
+		map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer " + token})
+	if versionResult.Code != http.StatusOK || !strings.Contains(versionResult.Body.String(), `"version":`) {
+		t.Fatalf("version status=%d body=%s", versionResult.Code, versionResult.Body.String())
+	}
+	unauthorizedVersion := callSessionPoolHandler(t, controller.GetManagerVersion, http.MethodGet,
+		"/internal/session-managers/manager-a/version", nil,
+		map[string]string{"id": "manager-a"}, map[string]string{"Authorization": "Bearer invalid"})
+	if unauthorizedVersion.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized version status=%d body=%s", unauthorizedVersion.Code, unauthorizedVersion.Body.String())
+	}
 
 	heartbeat := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost,
 		"/internal/session-managers/manager-a/heartbeat",

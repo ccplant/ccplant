@@ -7,14 +7,18 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/internal/buildinfo"
 )
 
-func TestHealthCheckDoesNotExposeReleaseVersion(t *testing.T) {
+func TestHealthCheckIncludesReleaseVersion(t *testing.T) {
+	previous := buildinfo.Version
+	buildinfo.Version = "v1.4.0"
+	t.Cleanup(func() { buildinfo.Version = previous })
 	e := echo.New()
 	recorder := httptest.NewRecorder()
 	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/health", nil), recorder)
 
 	require.NoError(t, NewHealthController().HealthCheck(ctx))
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"status":"ok"}`, recorder.Body.String())
+	require.JSONEq(t, `{"status":"ok","version":"v1.4.0"}`, recorder.Body.String())
 }

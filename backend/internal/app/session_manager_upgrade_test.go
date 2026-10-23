@@ -15,13 +15,16 @@ import (
 )
 
 func TestFetchSessionManagerDesiredVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer manager-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok","version":" v1.4.0 "}`))
 	}))
 	defer server.Close()
 
-	got, err := fetchSessionManagerDesiredVersion(context.Background(), server.Client(), server.URL)
+	got, err := fetchSessionManagerDesiredVersion(context.Background(), server.Client(), server.URL, "manager-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +39,7 @@ func TestFetchSessionManagerDesiredVersionRejectsEmptyVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if _, err := fetchSessionManagerDesiredVersion(context.Background(), server.Client(), server.URL); err == nil {
+	if _, err := fetchSessionManagerDesiredVersion(context.Background(), server.Client(), server.URL, ""); err == nil {
 		t.Fatal("expected an empty version error")
 	}
 }

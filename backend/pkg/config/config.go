@@ -472,6 +472,7 @@ type SessionManagerConfig struct {
 	AutoUpgrade bool `json:"auto_upgrade" mapstructure:"auto_upgrade"`
 	// UpgradeVersionURL is an optional HTTP endpoint polled by a standalone
 	// Kubernetes manager. It must return JSON containing a "version" field.
+	// When ConnectionToken is configured, the poller sends it as a Bearer token.
 	UpgradeVersionURL string                                  `json:"upgrade_version_url" mapstructure:"upgrade_version_url"`
 	DeploymentName    string                                  `json:"deployment_name" mapstructure:"deployment_name"`
 	ImageRepository   string                                  `json:"image_repository" mapstructure:"image_repository"`
