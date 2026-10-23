@@ -118,7 +118,7 @@ func authorizeTarget(actor *entities.User, scope entities.ResourceScope, userID,
 		if userID == "" {
 			return fmt.Errorf("target_user_id is required when target_scope is user")
 		}
-		if !actor.IsAdmin() && userID != string(actor.ID()) {
+		if userID != string(actor.ID()) {
 			return fmt.Errorf("cannot transfer to another user")
 		}
 	case entities.ScopeTeam:
@@ -134,12 +134,14 @@ func authorizeTarget(actor *entities.User, scope entities.ResourceScope, userID,
 	return nil
 }
 
-func canModify(actor *entities.User, ownerID string, scope entities.ResourceScope, teamID string) bool {
-	if actor.IsAdmin() {
-		return true
-	}
+func canModify(actor *entities.User, ownerID string, scope entities.ResourceScope, teamID string, targetScope entities.ResourceScope) bool {
 	if scope == entities.ScopeTeam {
-		return actor.IsMemberOfTeam(teamID)
+		// Moving a shared asset into a personal scope is a destructive ownership
+		// change and is reserved for administrators.
+		if targetScope == entities.ScopeUser {
+			return actor.IsAdmin()
+		}
+		return actor.IsAdmin() || actor.IsMemberOfTeam(teamID)
 	}
 	return ownerID == string(actor.ID())
 }
@@ -178,7 +180,7 @@ func (uc *UseCase) transferWebhook(ctx context.Context, req Request, targetUserI
 	if err != nil {
 		return Result{}, err
 	}
-	if !canModify(req.Actor, w.UserID(), w.Scope(), w.TeamID()) {
+	if !canModify(req.Actor, w.UserID(), w.Scope(), w.TeamID(), req.TargetScope) {
 		return Result{}, fmt.Errorf("access denied")
 	}
 	res := result(req, endpoint(w.Scope(), w.UserID(), w.TeamID()), targetUserID)
@@ -202,7 +204,7 @@ func (uc *UseCase) transferSlackBot(ctx context.Context, req Request, targetUser
 	if err != nil {
 		return Result{}, err
 	}
-	if !canModify(req.Actor, b.UserID(), b.Scope(), b.TeamID()) {
+	if !canModify(req.Actor, b.UserID(), b.Scope(), b.TeamID(), req.TargetScope) {
 		return Result{}, fmt.Errorf("access denied")
 	}
 	res := result(req, endpoint(b.Scope(), b.UserID(), b.TeamID()), targetUserID)
@@ -226,7 +228,7 @@ func (uc *UseCase) transferSessionProfile(ctx context.Context, req Request, targ
 	if err != nil {
 		return Result{}, err
 	}
-	if !canModify(req.Actor, p.UserID(), p.Scope(), p.TeamID()) {
+	if !canModify(req.Actor, p.UserID(), p.Scope(), p.TeamID(), req.TargetScope) {
 		return Result{}, fmt.Errorf("access denied")
 	}
 	res := result(req, endpoint(p.Scope(), p.UserID(), p.TeamID()), targetUserID)
@@ -249,7 +251,7 @@ func (uc *UseCase) transferSandboxPolicy(ctx context.Context, req Request, targe
 	if err != nil {
 		return Result{}, err
 	}
-	if !canModify(req.Actor, p.OwnerID(), p.Scope(), p.TeamID()) {
+	if !canModify(req.Actor, p.OwnerID(), p.Scope(), p.TeamID(), req.TargetScope) {
 		return Result{}, fmt.Errorf("access denied")
 	}
 	res := result(req, endpoint(p.Scope(), p.OwnerID(), p.TeamID()), targetUserID)

@@ -195,7 +195,7 @@ func NewGitHubConnectionsController(client kubernetes.Interface, namespace, publ
 	controller := &GitHubConnectionsController{
 		client:        client,
 		namespace:     namespace,
-		httpClient:    utils.NewDefaultHTTPClient(),
+		httpClient:    utils.NewPublicHTTPClient(),
 		builtInAPIURL: "https://api.github.com",
 		tokenCache:    make(map[string]githubCachedToken),
 	}
@@ -1960,12 +1960,21 @@ func (c *GitHubConnectionsController) resolveCallbackURL(ctx echo.Context, reque
 
 func (c *GitHubConnectionsController) resolveLoginCallbackURL(ctx echo.Context, requested string) (string, error) {
 	callback, err := url.Parse(requested)
-	origin, originErr := url.Parse(ctx.Request().Header.Get("Origin"))
 	allowedPath := callback != nil && (callback.Path == "/api/v1/auth/github-connections/callback" || callback.Path == "/api/proxy/auth/github-connections/callback")
-	if err != nil || originErr != nil || callback.Scheme != origin.Scheme || callback.Host != origin.Host || !allowedPath || callback.RawQuery != "" || callback.Fragment != "" {
-		return "", errors.New("callback URL must use the request origin and the GitHub login callback path")
+	if err != nil || callback.Scheme != "https" || callback.Host == "" || !allowedPath || callback.RawQuery != "" || callback.Fragment != "" || !allowedOAuthCallbackOrigin(callback) {
+		return "", errors.New("callback URL must use an allowed GitHub login callback origin and path")
 	}
 	return callback.String(), nil
+}
+
+func allowedOAuthCallbackOrigin(callback *url.URL) bool {
+	for _, raw := range strings.Split(os.Getenv("OAUTH_ALLOWED_REDIRECT_URIS"), ",") {
+		allowed, err := url.Parse(strings.TrimSpace(raw))
+		if err == nil && allowed.Scheme == callback.Scheme && allowed.Host == callback.Host {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *GitHubConnectionsController) fetchGitHubUser(ctx context.Context, connection githubConnection, token string) (githubOAuthUser, error) {
@@ -2006,6 +2015,9 @@ func normalizeGitHubURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("URL must be an HTTPS origin or path without credentials, query, or fragment")
+	}
+	if !utils.IsPublicHTTPSURL(parsed.String()) {
+		return "", errors.New("URL must use a public HTTPS destination")
 	}
 	return strings.TrimSuffix(parsed.String(), "/"), nil
 }

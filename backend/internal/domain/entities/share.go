@@ -17,11 +17,13 @@ type SessionShare struct {
 
 // NewSessionShare creates a new SessionShare
 func NewSessionShare(sessionID, createdBy string) *SessionShare {
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	return &SessionShare{
 		token:     generateShareToken(),
 		sessionID: sessionID,
 		createdBy: createdBy,
 		createdAt: time.Now(),
+		expiresAt: &expiresAt,
 	}
 }
 

@@ -34,7 +34,7 @@ func TestHealthCheck(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	expected := "{\"status\":\"ok\",\"version\":\"v1.4.0\"}\n"
+	expected := "{\"status\":\"ok\"}\n"
 	if body != expected {
 		t.Errorf("Expected body '%s' (len=%d), got '%s' (len=%d)", expected, len(expected), body, len(body))
 	}

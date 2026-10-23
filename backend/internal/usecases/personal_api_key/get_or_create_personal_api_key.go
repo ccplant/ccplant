@@ -15,6 +15,12 @@ type GetOrCreatePersonalAPIKeyUseCase struct {
 	apiKeyRepo repositories.PersonalAPIKeyRepository
 }
 
+// Find returns an existing key without creating or rotating credential
+// material. Callers must not serialize the returned APIKey value.
+func (uc *GetOrCreatePersonalAPIKeyUseCase) Find(ctx context.Context, userID entities.UserID) (*entities.PersonalAPIKey, error) {
+	return uc.apiKeyRepo.FindByUserID(ctx, userID)
+}
+
 // NewGetOrCreatePersonalAPIKeyUseCase creates a new GetOrCreatePersonalAPIKeyUseCase
 func NewGetOrCreatePersonalAPIKeyUseCase(
 	apiKeyRepo repositories.PersonalAPIKeyRepository,

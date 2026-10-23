@@ -148,6 +148,7 @@ func TestManagerAndRunnerLogsUseSeparateEndpoints(t *testing.T) {
 	tunnel := &statusTestTunnel{connected: map[string]bool{"manager-a": true}}
 	controller := NewSessionPoolController(store, nil).WithManagerTunnel(tunnel)
 	user := entities.NewUser("alice", entities.UserTypeRegular, "alice")
+	requireNoError(t, user.SetRoles([]entities.Role{entities.RoleAdmin}))
 
 	managerLogs := callSessionPoolHandlerAs(t, controller.GetManagerLogs, http.MethodGet, "/session-managers/manager-a/logs?tail=10", nil, map[string]string{"id": "manager-a"}, nil, user)
 	if managerLogs.Code != http.StatusOK {

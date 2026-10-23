@@ -122,6 +122,10 @@ func (c *SessionPoolController) ListManageablePoolStatus(ctx echo.Context) error
 }
 
 func (c *SessionPoolController) GetManagerLogs(ctx echo.Context) error {
+	user := auth.GetUserFromContext(ctx)
+	if user == nil || !user.IsAdmin() {
+		return echo.NewHTTPError(http.StatusNotFound, "session manager not found")
+	}
 	managerID := ctx.Param("id")
 	if err := c.requireManageableManager(ctx, managerID); err != nil {
 		return err

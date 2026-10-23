@@ -2,6 +2,8 @@ package entities
 
 import (
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -80,8 +82,13 @@ func (f *UserFile) SetUpdatedAt(t time.Time) { f.updatedAt = t }
 
 // Validate returns an error if the entity is invalid.
 func (f *UserFile) Validate() error {
-	if f.path == "" {
+	clean := filepath.Clean(f.path)
+	if f.path == "" || !filepath.IsAbs(clean) || (clean != "/home/agentapi" && !strings.HasPrefix(clean, "/home/agentapi/")) {
 		return ErrUserFilePathRequired
 	}
+	if f.permissions != "" && f.permissions != "0400" && f.permissions != "0600" && f.permissions != "0644" {
+		return errors.New("user file permissions must be 0400, 0600, or 0644")
+	}
+	f.path = clean
 	return nil
 }

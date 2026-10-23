@@ -76,6 +76,25 @@ func (c *TeamConfigController) Create(ctx echo.Context) error {
 	if name == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
+	existingTeams, err := c.repo.List(ctx.Request().Context())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to enforce team limits").SetInternal(err)
+	}
+	owned := 0
+	for _, existing := range existingTeams {
+		if strings.EqualFold(strings.TrimSpace(existing.Name()), name) {
+			return echo.NewHTTPError(http.StatusConflict, "team name already exists")
+		}
+		for _, ownerID := range existing.OwnerIDs() {
+			if ownerID == string(authz.User.ID()) {
+				owned++
+				break
+			}
+		}
+	}
+	if owned >= 20 && !authz.User.IsAdmin() {
+		return echo.NewHTTPError(http.StatusTooManyRequests, "team creation limit reached")
+	}
 	var teamID string
 	for attempts := 0; attempts < 3; attempts++ {
 		generated, err := entities.NewTeamPrincipalID()

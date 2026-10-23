@@ -37,10 +37,8 @@ type OAuthCallbackRequest struct {
 
 // OAuthTokenResponse represents the response after successful OAuth
 type OAuthTokenResponse struct {
-	AccessToken string             `json:"access_token"`
-	TokenType   string             `json:"token_type"`
-	ExpiresAt   time.Time          `json:"expires_at"`
-	User        *OAuthUserResponse `json:"user"`
+	ExpiresAt time.Time          `json:"expires_at"`
+	User      *OAuthUserResponse `json:"user"`
 }
 
 // OAuthSessionResponse represents the response with session information
@@ -361,11 +359,9 @@ func (s *Server) issueOAuthAPIKey(ctx context.Context, userContext *auth.UserCon
 
 // handleOAuthLogout handles OAuth logout
 func (s *Server) handleOAuthLogout(c echo.Context) error {
-	// Get the session ID from the Authorization header or query parameter
+	// Session identifiers are bearer credentials and must never be accepted in
+	// a URL, where they can leak through browser history and access logs.
 	sessionID := c.Request().Header.Get("X-Session-ID")
-	if sessionID == "" {
-		sessionID = c.QueryParam("session_id")
-	}
 
 	if sessionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Session ID required")
@@ -424,10 +420,8 @@ func (s *Server) handleOAuthRefresh(c echo.Context) error {
 	session.ExpiresAt = time.Now().Add(24 * time.Hour)
 
 	return c.JSON(http.StatusOK, OAuthTokenResponse{
-		AccessToken: session.UserContext.AccessToken,
-		TokenType:   "Bearer",
-		ExpiresAt:   session.ExpiresAt,
-		User:        publicOAuthUser(session.UserContext),
+		ExpiresAt: session.ExpiresAt,
+		User:      publicOAuthUser(session.UserContext),
 	})
 }
 

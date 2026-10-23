@@ -93,7 +93,7 @@ func (c *ShareController) CreateShare(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create share")
 	}
 
-	log.Printf("Created share for session %s by user %s, token: %s", sessionID, userID, share.Token())
+	log.Printf("Created share for session %s by user %s", sessionID, userID)
 
 	return ctx.JSON(http.StatusCreated, map[string]interface{}{
 		"token":      share.Token(),

@@ -593,7 +593,6 @@ func (r *Router) registerCoreRoutes() error {
 			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
 			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 			c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
-			c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 			c.Response().Header().Set("Access-Control-Max-Age", "86400")
 			return c.NoContent(http.StatusNoContent)
 		})
@@ -603,7 +602,6 @@ func (r *Router) registerCoreRoutes() error {
 			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
 			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 			c.Response().Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host, X-API-Key")
-			c.Response().Header().Set("Access-Control-Allow-Credentials", "true")
 			c.Response().Header().Set("Access-Control-Max-Age", "86400")
 			return c.NoContent(http.StatusNoContent)
 		})
@@ -815,7 +813,7 @@ func (r *Router) registerConditionalRoutes() error {
 	// Add personal API key routes if controller is available (Kubernetes mode only)
 	if r.handlers.personalAPIKeyController != nil {
 		log.Printf("[ROUTES] Registering personal API key endpoints...")
-		r.echo.GET("/users/me/api-key", r.handlers.personalAPIKeyController.GetOrCreatePersonalAPIKey, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
+		r.echo.GET("/users/me/api-key", r.handlers.personalAPIKeyController.GetPersonalAPIKeyMetadata, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		r.echo.POST("/users/me/api-key", r.handlers.personalAPIKeyController.GetOrCreatePersonalAPIKey, auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 		log.Printf("[ROUTES] Personal API key endpoints registered")
 	} else {

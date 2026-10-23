@@ -13,6 +13,7 @@ import (
 // GetOrCreatePersonalAPIKeyUseCase defines the interface for personal API key use case
 type GetOrCreatePersonalAPIKeyUseCase interface {
 	Execute(ctx context.Context, userID entities.UserID) (*entities.PersonalAPIKey, error)
+	Find(ctx context.Context, userID entities.UserID) (*entities.PersonalAPIKey, error)
 }
 
 // AuthServiceForPersonalAPIKey defines the interface for auth service methods needed by this controller
@@ -41,6 +42,7 @@ func NewPersonalAPIKeyController(
 // GET returns the existing API key (without revealing the key value for security)
 // POST creates a new API key or regenerates if one already exists
 func (c *PersonalAPIKeyController) GetOrCreatePersonalAPIKey(ctx echo.Context) error {
+	setSensitiveResponseHeaders(ctx)
 	// Get authorization context from middleware
 	authzCtx := auth.GetAuthorizationContext(ctx)
 	if authzCtx == nil {
@@ -80,4 +82,24 @@ func (c *PersonalAPIKeyController) GetOrCreatePersonalAPIKey(ctx echo.Context) e
 	}
 
 	return ctx.JSON(http.StatusOK, response)
+}
+
+// GetPersonalAPIKeyMetadata is intentionally read-only. It reports whether a
+// key exists without creating one or returning bearer credential material.
+func (c *PersonalAPIKeyController) GetPersonalAPIKeyMetadata(ctx echo.Context) error {
+	setSensitiveResponseHeaders(ctx)
+	authzCtx := auth.GetAuthorizationContext(ctx)
+	if authzCtx == nil || authzCtx.PersonalScope.UserID == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
+	}
+	apiKey, err := c.getOrCreateAPIKeyUC.Find(ctx.Request().Context(), entities.UserID(authzCtx.PersonalScope.UserID))
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"user_id": authzCtx.PersonalScope.UserID,
+		"exists":  err == nil && apiKey != nil,
+	})
+}
+
+func setSensitiveResponseHeaders(ctx echo.Context) {
+	ctx.Response().Header().Set("Cache-Control", "no-store, private")
+	ctx.Response().Header().Set("Pragma", "no-cache")
 }

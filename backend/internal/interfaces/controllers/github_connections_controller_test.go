@@ -273,6 +273,7 @@ func TestBuiltInTeamRequestsUseConfiguredEnterpriseAPIURL(t *testing.T) {
 	defer server.Close()
 
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
+	controller.httpClient = server.Client()
 	controller.SetBuiltInAPIURL(server.URL + "/api/v3/")
 
 	teams, err := controller.FetchBuiltInTeams(context.Background(), "enterprise-token")
@@ -374,6 +375,7 @@ func TestResolveTeamMembershipsMergesLinkedConnections(t *testing.T) {
 
 	client := fake.NewSimpleClientset()
 	controller := NewGitHubConnectionsController(client, "test", "", true)
+	controller.httpClient = first.Client()
 	connections := []githubConnection{
 		{ID: "ghes", Name: "GHES", BaseURL: first.URL, APIURL: first.URL, Enabled: true},
 		{ID: "ghec", Name: "GHEC", BaseURL: second.URL, APIURL: second.URL, Enabled: true},
@@ -444,7 +446,7 @@ func TestSanitizeReturnTo(t *testing.T) {
 }
 
 func TestResolveGitHubConnectionCallbackURLsAcceptAPIV1(t *testing.T) {
-	t.Parallel()
+	t.Setenv("OAUTH_ALLOWED_REDIRECT_URIS", "https://ui.example.test/api/auth/github/callback")
 	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "")
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/users/me/github-identities/link", nil)
