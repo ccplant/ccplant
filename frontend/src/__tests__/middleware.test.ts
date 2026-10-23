@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { NextRequest } from 'next/server'
 
-import { middleware } from '../middleware'
+import { proxy as middleware } from '../proxy'
 
 describe('frontend middleware', () => {
   it('allows the MCP endpoint without a browser cookie', async () => {
