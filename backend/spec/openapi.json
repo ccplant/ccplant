@@ -11955,7 +11955,7 @@
     },
     {
       "name": "API Tokens",
-      "description": "Named, revocable API tokens for personal users and teams. Plaintext secrets are returned only once on creation; list/get responses expose only metadata and a short token_prefix. Scope uses the public vocabulary 'personal'/'team'. Legacy GET/POST /users/me/api-key is preserved for backward compatibility."
+      "description": "Named, revocable API tokens for personal users and teams. Plaintext secrets are returned only once on creation; list/get responses expose only metadata and a short token_prefix. Scope uses the public vocabulary 'personal'/'team'. Legacy POST /users/me/api-key remains available; GET returns metadata only."
     },
     {
       "name": "Session Pools",

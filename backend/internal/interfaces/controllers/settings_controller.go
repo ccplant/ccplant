@@ -639,15 +639,14 @@ func (c *SettingsController) canAccess(user *entities.User, name string) bool {
 		return false
 	}
 
-	// Admin can access all settings
-	if user.IsAdmin() {
-		log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s is admin", user.ID())
-		return true
-	}
-
 	// Check if it's the user's own settings
 	if string(user.ID()) == name {
 		log.Printf("[SETTINGS_ACCESS] GRANTED: user=%s owns settings (userID match)", user.ID())
+		return true
+	}
+	// Administrators may manage shared team settings, but personal settings
+	// remain private even from the administrator role.
+	if user.IsAdmin() && strings.Contains(name, "/") {
 		return true
 	}
 
@@ -685,15 +684,12 @@ func (c *SettingsController) canModify(user *entities.User, name string) bool {
 		return false
 	}
 
-	// Admin can modify all settings
-	if user.IsAdmin() {
-		log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s is admin", user.ID())
-		return true
-	}
-
 	// Check if it's the user's own settings
 	if string(user.ID()) == name {
 		log.Printf("[SETTINGS_MODIFY] GRANTED: user=%s owns settings (userID match)", user.ID())
+		return true
+	}
+	if user.IsAdmin() && strings.Contains(name, "/") {
 		return true
 	}
 

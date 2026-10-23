@@ -391,7 +391,7 @@ func runSessionManagerVersionPoller(ctx context.Context, cfg *config.Config, cli
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		desired, err := fetchSessionManagerDesiredVersion(ctx, httpClient, cfg.SessionManager.UpgradeVersionURL)
+		desired, err := fetchSessionManagerDesiredVersion(ctx, httpClient, cfg.SessionManager.UpgradeVersionURL, cfg.SessionManager.ConnectionToken)
 		if err != nil {
 			log.Printf("[SESSION_MANAGER] Version check failed: %v", err)
 		} else if err := reconcileSessionManagerVersion(ctx, cfg, client, namespace, desired); err != nil {
@@ -405,10 +405,13 @@ func runSessionManagerVersionPoller(ctx context.Context, cfg *config.Config, cli
 	}
 }
 
-func fetchSessionManagerDesiredVersion(ctx context.Context, client *http.Client, endpoint string) (string, error) {
+func fetchSessionManagerDesiredVersion(ctx context.Context, client *http.Client, endpoint, token string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -100,9 +100,10 @@ func TestTeamConfigControllerCreateAndListAsRegularUser(t *testing.T) {
 	duplicateCtx := e.NewContext(httptest.NewRequest(http.MethodPost, "/teams", bytes.NewBufferString(`{"name":"Platform / コア"}`)), duplicateRecorder)
 	duplicateCtx.Request().Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	duplicateCtx.Set("authz_context", authz)
-	require.NoError(t, controller.Create(duplicateCtx))
-	require.Equal(t, http.StatusCreated, duplicateRecorder.Code)
-	require.Len(t, repo.teams, 2)
+	err := controller.Create(duplicateCtx)
+	require.Error(t, err)
+	require.Equal(t, http.StatusConflict, err.(*echo.HTTPError).Code)
+	require.Len(t, repo.teams, 1)
 }
 
 func TestTeamConfigControllerRenameAndDelete(t *testing.T) {

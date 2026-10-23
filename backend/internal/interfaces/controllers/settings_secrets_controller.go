@@ -226,10 +226,24 @@ func toSecretSettingResponse(secret entities.SecretSetting) secretSettingRespons
 }
 
 func validateSecretSetting(values map[string]string, projections []entities.SecretProjection) error {
-	for key := range values {
+	const maxSecretValueBytes = 64 * 1024
+	const maxSecretTotalBytes = 768 * 1024
+	const maxSecretValues = 64
+	if len(values) > maxSecretValues {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "too many secret values")
+	}
+	totalBytes := 0
+	for key, value := range values {
 		if strings.TrimSpace(key) == "" || len(key) > 128 {
 			return echo.NewHTTPError(http.StatusBadRequest, "secret keys must be between 1 and 128 characters")
 		}
+		if len(value) > maxSecretValueBytes {
+			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "secret value is too large")
+		}
+		totalBytes += len(key) + len(value)
+	}
+	if totalBytes > maxSecretTotalBytes {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "secret values are too large")
 	}
 	seen := make(map[string]bool)
 	for _, projection := range projections {
@@ -247,7 +261,7 @@ func validateSecretSetting(values map[string]string, projections []entities.Secr
 			}
 		case "file":
 			clean := filepath.Clean(projection.Path)
-			if !filepath.IsAbs(clean) || strings.HasPrefix(clean, "/proc/") || strings.HasPrefix(clean, "/sys/") || strings.HasPrefix(clean, "/dev/") {
+			if !filepath.IsAbs(clean) || (clean != "/home/agentapi" && !strings.HasPrefix(clean, "/home/agentapi/")) {
 				return echo.NewHTTPError(http.StatusBadRequest, "invalid secret file path")
 			}
 			if projection.Permissions != "" && projection.Permissions != "0400" && projection.Permissions != "0600" {

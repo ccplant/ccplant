@@ -107,6 +107,16 @@ func (c *SessionPoolController) GetManagerRuntimeProfile(ctx echo.Context) error
 	return ctx.JSON(http.StatusOK, &sessionallocation.RuntimeProfileSnapshot{Revision: hex.EncodeToString(digest[:]), Profile: profile})
 }
 
+// GetManagerVersion returns the release version over the manager-authenticated
+// control plane. Managers can migrate from the public health response to this
+// endpoint without introducing a separate credential.
+func (c *SessionPoolController) GetManagerVersion(ctx echo.Context) error {
+	if _, err := c.authenticateManager(ctx); err != nil {
+		return err
+	}
+	return ctx.JSON(http.StatusOK, map[string]string{"version": buildinfo.Version})
+}
+
 type managerCreateRequest struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
@@ -787,13 +797,21 @@ func (c *SessionPoolController) CreateBinding(ctx echo.Context) error {
 		if listErr != nil {
 			return sessionRunnerStoreError(listErr)
 		}
-		hasGlobalUse := false
+		var globalUse *core.Binding
 		for _, candidate := range bindings {
-			hasGlobalUse = hasGlobalUse || (candidate.Enabled && candidate.Role == core.BindingRoleUse && candidate.SubjectType == core.SubjectAll && candidate.SubjectID == "")
+			if candidate.Enabled && candidate.Role == core.BindingRoleUse && candidate.SubjectType == core.SubjectAll && candidate.SubjectID == "" {
+				globalUse = candidate
+				break
+			}
 		}
-		if !hasGlobalUse {
+		if globalUse == nil {
 			return echo.NewHTTPError(http.StatusForbidden, "pool manage binding required")
 		}
+		// Self-service bindings may narrow a global grant, but must not override
+		// its scheduling policy or quota.
+		binding.Priority = globalUse.Priority
+		binding.MaxConcurrent = globalUse.MaxConcurrent
+		binding.ExplicitOnly = globalUse.ExplicitOnly
 	}
 	if err := c.store.CreateBinding(ctx.Request().Context(), &binding); err != nil {
 		return sessionRunnerStoreError(err)

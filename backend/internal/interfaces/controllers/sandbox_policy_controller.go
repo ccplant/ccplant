@@ -131,7 +131,7 @@ func (c *SandboxPolicyController) GetSandboxPolicy(ctx echo.Context) error {
 	}
 
 	if !c.canAccess(user, policy) {
-		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+		return echo.NewHTTPError(http.StatusNotFound, "Sandbox policy not found")
 	}
 
 	return ctx.JSON(http.StatusOK, c.toResponse(policy))
@@ -231,7 +231,7 @@ func (c *SandboxPolicyController) UpdateSandboxPolicy(ctx echo.Context) error {
 	}
 
 	if !c.canModify(user, policy) {
-		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+		return echo.NewHTTPError(http.StatusNotFound, "Sandbox policy not found")
 	}
 
 	var req UpdateSandboxPolicyRequest
@@ -391,7 +391,7 @@ func (c *SandboxPolicyController) GetSandboxPolicyDomains(ctx echo.Context) erro
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get sandbox policy")
 	}
 	if !c.canAccess(user, policy) {
-		return echo.NewHTTPError(http.StatusForbidden, "Access denied")
+		return echo.NewHTTPError(http.StatusNotFound, "Sandbox policy not found")
 	}
 
 	data, err := c.domainRepo.Get(ctx.Request().Context(), policy.ID())

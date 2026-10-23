@@ -250,7 +250,8 @@ func TestHandleOAuthRefresh(t *testing.T) {
 	var resp OAuthTokenResponse
 	err = json.Unmarshal(rec.Body.Bytes(), &resp)
 	assert.NoError(t, err)
-	assert.Equal(t, "gho_test_token", resp.AccessToken)
+	assert.NotContains(t, rec.Body.String(), "gho_test_token")
+	assert.NotContains(t, rec.Body.String(), "access_token")
 	assert.True(t, resp.ExpiresAt.After(time.Now().Add(23*time.Hour)))
 }
 
