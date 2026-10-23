@@ -424,12 +424,27 @@ internalIngress:
     - 10.0.0.0/8
     - 203.0.113.10/32
   hosts:
-    - agentapi.example.com
+    - host: api.example.com
+      paths:
+        - path: /internal
+          pathType: Prefix
+    - host: example.com
+      paths:
+        - path: /api/v1/internal
+          pathType: Prefix
+        - path: /api/proxy/internal
+          pathType: Prefix
   tls:
     - secretName: agentapi-tls
       hosts:
-        - agentapi.example.com
+        - api.example.com
+        - example.com
 ```
+
+When `hosts` is omitted, the chart exposes `/internal` on the API host
+(`global.apiHostname`) and the two frontend proxy paths `/api/v1/internal` and
+`/api/proxy/internal` on the frontend host (`global.hostname`). Use `hosts` only
+when these defaults need to be overridden.
 
 Rendering fails when `internalIngress.enabled=true` and `allowedCIDRs` is
 empty, preventing an accidentally unrestricted internal Ingress. Ensure the

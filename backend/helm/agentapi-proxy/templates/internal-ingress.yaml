@@ -10,12 +10,17 @@
   {{- end -}}
 {{- end -}}
 {{- $defaultHostname := .Values.config.hostname -}}
+{{- $frontendHostname := "" -}}
 {{- if .Values.global -}}
   {{- $defaultHostname = .Values.global.apiHostname | default .Values.config.hostname -}}
+  {{- $frontendHostname = .Values.global.hostname | default "" -}}
 {{- end -}}
 {{- $hosts := $cfg.hosts -}}
 {{- if not $hosts -}}
-  {{- $hosts = list $defaultHostname -}}
+  {{- $hosts = list (dict "host" $defaultHostname "paths" (list (dict "path" $cfg.path "pathType" $cfg.pathType))) -}}
+  {{- if and $frontendHostname (ne $frontendHostname $defaultHostname) -}}
+    {{- $hosts = append $hosts (dict "host" $frontendHostname "paths" (list (dict "path" "/api/v1/internal" "pathType" "Prefix") (dict "path" "/api/proxy/internal" "pathType" "Prefix"))) -}}
+  {{- end -}}
 {{- end -}}
 {{- $annotations := deepCopy ($cfg.annotations | default dict) -}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/whitelist-source-range" (join "," $cfg.allowedCIDRs) -}}
@@ -36,16 +41,24 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    {{- range $hosts }}
-    - host: {{ . | quote }}
+    {{- range $hostConfig := $hosts }}
+    {{- $hostname := $hostConfig }}
+    {{- $paths := list (dict "path" $cfg.path "pathType" $cfg.pathType) }}
+    {{- if kindIs "map" $hostConfig }}
+      {{- $hostname = $hostConfig.host }}
+      {{- $paths = $hostConfig.paths | default $paths }}
+    {{- end }}
+    - host: {{ $hostname | quote }}
       http:
         paths:
-          - path: {{ $cfg.path }}
-            pathType: {{ $cfg.pathType }}
+          {{- range $pathConfig := $paths }}
+          - path: {{ $pathConfig.path }}
+            pathType: {{ $pathConfig.pathType | default $cfg.pathType }}
             backend:
               service:
                 name: {{ include "agentapi-proxy.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
+          {{- end }}
     {{- end }}
 {{- end }}
