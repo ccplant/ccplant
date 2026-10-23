@@ -5,7 +5,7 @@ FROM oven/bun:1.3.5-alpine AS base
 WORKDIR /app
 
 # Copy package files
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock ./
 
 # Install dependencies
 FROM base AS deps
