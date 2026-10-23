@@ -827,8 +827,21 @@ internalIngress:
   # Enabling this Ingress with an empty allowlist fails template rendering.
   allowedCIDRs: []
   annotations: {}
-  # Empty uses global.apiHostname or config.hostname.
+  # Configure paths per host. When empty, global.apiHostname (or
+  # config.hostname) receives /internal, while global.hostname receives
+  # /api/v1/internal and /api/proxy/internal. A string host entry remains
+  # supported for backward compatibility and uses the top-level defaults.
   hosts: []
+  # - host: api.example.com
+  #   paths:
+  #     - path: /internal
+  #       pathType: Prefix
+  # - host: example.com
+  #   paths:
+  #     - path: /api/v1/internal
+  #       pathType: Prefix
+  #     - path: /api/proxy/internal
+  #       pathType: Prefix
   tls: []
   # - secretName: agentapi-proxy-tls
   #   hosts:

@@ -11,6 +11,28 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 "$HELM_BIN" template frontend "$REPO_ROOT/frontend/helm/agentapi-ui" >"$TMP_DIR/frontend-default.yaml"
 "$HELM_BIN" template ccplant "$REPO_ROOT/chart/ccplant" >"$TMP_DIR/ccplant-default.yaml"
 
+"$HELM_BIN" template agentapi-proxy "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/internal-ingress.yaml \
+  --set internalIngress.enabled=true \
+  --set internalIngress.allowedCIDRs[0]=10.0.0.0/8 \
+  --set internalIngress.hosts[0].host=api.xx.com \
+  --set internalIngress.hosts[0].paths[0].path=/internal \
+  --set internalIngress.hosts[0].paths[0].pathType=Prefix \
+  --set internalIngress.hosts[1].host=xx.com \
+  --set internalIngress.hosts[1].paths[0].path=/api/v1/internal \
+  --set internalIngress.hosts[1].paths[0].pathType=Prefix \
+  --set internalIngress.hosts[1].paths[1].path=/api/proxy/internal \
+  --set internalIngress.hosts[1].paths[1].pathType=Prefix \
+  >"$TMP_DIR/backend-internal-ingress.yaml"
+
+"$HELM_BIN" template agentapi-proxy "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/internal-ingress.yaml \
+  --set global.apiHostname=api.xx.com \
+  --set global.hostname=xx.com \
+  --set internalIngress.enabled=true \
+  --set internalIngress.allowedCIDRs[0]=10.0.0.0/8 \
+  >"$TMP_DIR/backend-default-internal-ingress.yaml"
+
 assert_contains() {
   local pattern="$1"
   local file="$2"
@@ -28,6 +50,18 @@ assert_not_contains() {
     exit 1
   fi
 }
+
+assert_contains 'ingressClassName: nginx' "$TMP_DIR/backend-internal-ingress.yaml"
+assert_contains 'host: "api.xx.com"' "$TMP_DIR/backend-internal-ingress.yaml"
+assert_contains 'host: "xx.com"' "$TMP_DIR/backend-internal-ingress.yaml"
+assert_contains 'path: /internal' "$TMP_DIR/backend-internal-ingress.yaml"
+assert_contains 'path: /api/v1/internal' "$TMP_DIR/backend-internal-ingress.yaml"
+assert_contains 'path: /api/proxy/internal' "$TMP_DIR/backend-internal-ingress.yaml"
+assert_contains 'host: "api.xx.com"' "$TMP_DIR/backend-default-internal-ingress.yaml"
+assert_contains 'host: "xx.com"' "$TMP_DIR/backend-default-internal-ingress.yaml"
+assert_contains 'path: /internal' "$TMP_DIR/backend-default-internal-ingress.yaml"
+assert_contains 'path: /api/v1/internal' "$TMP_DIR/backend-default-internal-ingress.yaml"
+assert_contains 'path: /api/proxy/internal' "$TMP_DIR/backend-default-internal-ingress.yaml"
 
 assert_env_value() {
   local name="$1"
