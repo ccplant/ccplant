@@ -103,3 +103,13 @@ func TestStorageSyncUploadsFilesPresentBeforeWorkerStarts(t *testing.T) {
 	})
 	require.EqualValues(t, 1, uploads.Load())
 }
+
+func TestRegularRootStorageSyncExcludesManagedNamespaces(t *testing.T) {
+	storage := sessionsettings.StorageAttachment{StorageID: "state", MountPath: "/home/agentapi/memory"}
+	require.True(t, storageSyncPathAllowed(storage, "notes/todo.md"))
+	require.False(t, storageSyncPathAllowed(storage, "session-state/codex/state.json"))
+	require.False(t, storageSyncPathAllowed(storage, "workspace/repo/file.txt"))
+
+	storage.Managed = true
+	require.True(t, storageSyncPathAllowed(storage, "session-state/codex/state.json"))
+}

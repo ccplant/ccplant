@@ -2113,7 +2113,7 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 	if s.storageRepo == nil {
 		return nil, fmt.Errorf("storage repository is unavailable")
 	}
-	seenSources := make(map[string][]string, len(startReq.Params.Storages))
+	seenSources := make(map[string][]entities.StorageAttachment, len(startReq.Params.Storages))
 	seenPaths := make(map[string]struct{}, len(startReq.Params.Storages))
 	resolved := make([]entities.ResolvedStorageAttachment, 0, len(startReq.Params.Storages))
 	for _, attachment := range startReq.Params.Storages {
@@ -2134,8 +2134,8 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 			attachment.StoragePath = cleaned
 		}
 		for _, existing := range seenSources[attachment.StorageID] {
-			if attachment.StoragePath == "" || existing == "" || attachment.StoragePath == existing || strings.HasPrefix(attachment.StoragePath+"/", existing+"/") || strings.HasPrefix(existing+"/", attachment.StoragePath+"/") {
-				return nil, fmt.Errorf("storage path %q overlaps %q for storage %q", attachment.StoragePath, existing, attachment.StorageID)
+			if storageSourcePathsOverlap(attachment.StoragePath, existing.StoragePath) && !managedStorageNamespaceOverlapAllowed(attachment, existing) {
+				return nil, fmt.Errorf("storage path %q overlaps %q for storage %q", attachment.StoragePath, existing.StoragePath, attachment.StorageID)
 			}
 		}
 		for existing := range seenPaths {
@@ -2165,6 +2165,9 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 			paths := make([]string, 0, len(files))
 			selectedFiles := make(map[string]entities.StorageFile, len(files))
 			for filePath, file := range files {
+				if !storageAttachmentIncludesRemotePath(attachment, filePath) {
+					continue
+				}
 				if attachment.StoragePath != "" {
 					prefix := attachment.StoragePath + "/"
 					if !strings.HasPrefix(filePath, prefix) {
@@ -2183,11 +2186,42 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 				entry.Files = append(entry.Files, selectedFiles[filePath])
 			}
 		}
-		seenSources[attachment.StorageID] = append(seenSources[attachment.StorageID], attachment.StoragePath)
+		seenSources[attachment.StorageID] = append(seenSources[attachment.StorageID], attachment)
 		seenPaths[attachment.MountPath] = struct{}{}
 		resolved = append(resolved, entry)
 	}
 	return resolved, nil
+}
+
+func storageSourcePathsOverlap(left, right string) bool {
+	return left == "" || right == "" || left == right || strings.HasPrefix(left+"/", right+"/") || strings.HasPrefix(right+"/", left+"/")
+}
+
+func managedStorageNamespaceOverlapAllowed(left, right entities.StorageAttachment) bool {
+	if left.Managed == right.Managed {
+		return false
+	}
+	managed := left
+	regular := right
+	if !managed.Managed {
+		managed, regular = right, left
+	}
+	return regular.StoragePath == "" && managedStorageNamespace(managed.StoragePath)
+}
+
+func managedStorageNamespace(storagePath string) bool {
+	return storagePath == "workspace" || strings.HasPrefix(storagePath, "workspace/") || storagePath == "session-state" || strings.HasPrefix(storagePath, "session-state/")
+}
+
+// storageAttachmentIncludesRemotePath keeps system-managed state out of a
+// regular root attachment. Managed attachments mount those namespaces at the
+// agent-specific paths instead, so syncing them through both attachments would
+// allow the two workers to overwrite or delete each other's files.
+func storageAttachmentIncludesRemotePath(attachment entities.StorageAttachment, remotePath string) bool {
+	if attachment.Managed || attachment.StoragePath != "" {
+		return true
+	}
+	return !managedStorageNamespace(remotePath)
 }
 
 func storageMountPathReserved(value string) bool {
