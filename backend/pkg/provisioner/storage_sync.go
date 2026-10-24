@@ -156,10 +156,19 @@ func (s *Server) runStorageSync(ctx context.Context, settings *sessionsettings.S
 }
 
 func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKey string, storage sessionsettings.StorageAttachment) {
-	last, err := scanStorageTree(storage.MountPath)
-	if err != nil {
+	if _, err := scanStorageTree(storage.MountPath); err != nil {
 		log.Printf("[STORAGE_SYNC] Initial scan failed for %s: %v", storage.StorageID, err)
 		return
+	}
+	// Treat the manifest restored by provisioning as the common baseline. Files
+	// created locally during setup or agent startup must be uploaded on the first
+	// sync even when they are not modified again afterwards.
+	last := make(map[string]storageLocalFile, len(storage.Files))
+	for _, file := range storage.Files {
+		if !managedStoragePathAllowed(storage.MountPath, file.Path) {
+			continue
+		}
+		last[file.Path] = storageLocalFile{digest: file.Digest, mode: file.Mode}
 	}
 	knownRevision := storage.Revision
 	syncOnce := func(syncCtx context.Context) {

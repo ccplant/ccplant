@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -73,4 +74,32 @@ func TestSafeStorageTargetRejectsTraversal(t *testing.T) {
 	target, err := safeStorageTarget(root, "dir/file")
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(root, "dir", "file"), target)
+}
+
+func TestStorageSyncUploadsFilesPresentBeforeWorkerStarts(t *testing.T) {
+	mount := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(mount, "initial.txt"), []byte("initial"), 0o640))
+
+	var uploads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "Bearer secret", request.Header.Get("Authorization"))
+		switch request.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"revision":0,"files":[]}`))
+		case http.MethodPut:
+			require.Equal(t, "/storages/storage-1/files/workspace/initial.txt", request.URL.Path)
+			uploads.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancellation performs a final sync without waiting for the ticker
+	runOneStorageSync(ctx, server.Client(), server.URL, "secret", sessionsettings.StorageAttachment{
+		StorageID: "storage-1", StoragePath: "workspace", MountPath: mount, Kind: "object_snapshot",
+	})
+	require.EqualValues(t, 1, uploads.Load())
 }
