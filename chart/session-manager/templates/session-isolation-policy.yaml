@@ -12,9 +12,10 @@ spec:
       app.kubernetes.io/name: agentapi-session
       agentapi.proxy/session-manager-id: {{ include "session-manager.managerIdLabelValue" . | quote }}
   {{- if eq .Values.session.isolation.egressMode "public-only" }}
-  # Permit public destinations and cluster DNS only. Selecting these endpoints
-  # enables default-deny egress for every other destination, including the
-  # session-manager service and kube-apiserver.
+  # Permit public destinations, cluster DNS, and this release's session-manager
+  # endpoint. Pool runners must call the local claim-pool-stock endpoint after
+  # accepting an allocation; all other cluster-internal destinations remain
+  # default-denied, including the kube-apiserver.
   egress:
     - toEntities:
         - world
@@ -27,6 +28,15 @@ spec:
             - port: "53"
               protocol: UDP
             - port: "53"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace | quote }}
+            k8s:app.kubernetes.io/component: session-manager
+            k8s:app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      toPorts:
+        - ports:
+            - port: {{ .Values.service.port | quote }}
               protocol: TCP
   {{- else }}
   # A deny-only Cilium policy enables egress policy enforcement without allowing

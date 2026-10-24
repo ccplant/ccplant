@@ -49,9 +49,10 @@ variables, while `disableServiceAccountToken` prevents the projected Kubernetes
 credentials from being mounted. On Cilium clusters, `blockKubernetesAPI` also
 creates a `CiliumNetworkPolicy` that preserves normal session Pod egress while
 denying access to the `kube-apiserver` entity. Setting `egressMode` to
-`public-only` instead permits kube-dns on TCP/UDP port 53 and Cilium's `world`
-entity, while default-denying all other cluster-internal egress (including the
-session-manager service and kube-apiserver). Service account token mounting is
+`public-only` instead permits kube-dns on TCP/UDP port 53, Cilium's `world`
+entity, and this release's session-manager port required by the authenticated
+pool-stock claim lifecycle. It default-denies every other cluster-internal
+destination, including the kube-apiserver. Service account token mounting is
 disabled by default; the other isolation controls remain disabled.
 
 Session Pod placement is configured independently from the manager Pod under

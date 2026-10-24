@@ -114,6 +114,17 @@ assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED false "$TMP_DIR/executor-
   --set session.executor.enabled=true >"$TMP_DIR/executor-standalone-enabled.yaml"
 assert_env_value AGENTAPI_K8S_SESSION_EXECUTOR_ENABLED true "$TMP_DIR/executor-standalone-enabled.yaml"
 
+# Public-only session egress must retain the authenticated callback from pool
+# runners to their own manager while denying arbitrary cluster-internal peers.
+"$HELM_BIN" template isolated-manager "$REPO_ROOT/chart/session-manager" \
+  --namespace isolated-sessions \
+  --set session.isolation.egressMode=public-only \
+  >"$TMP_DIR/isolated-manager.yaml"
+assert_contains 'k8s:io.kubernetes.pod.namespace: "isolated-sessions"' "$TMP_DIR/isolated-manager.yaml"
+assert_contains 'k8s:app.kubernetes.io/component: session-manager' "$TMP_DIR/isolated-manager.yaml"
+assert_contains 'k8s:app.kubernetes.io/instance: "isolated-manager"' "$TMP_DIR/isolated-manager.yaml"
+assert_contains 'port: "8080"' "$TMP_DIR/isolated-manager.yaml"
+
 # Broker sessions can bypass the public ingress using the API Service. The
 # opt-in value must track the actual Service name, namespace and port, and
 # must not leave a duplicate override in the API environment.
