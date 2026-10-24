@@ -58,6 +58,7 @@ type SessionProfileConfigRequest struct {
 	Skills                 []string                     `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
+	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
 }
 
 // CreateSessionProfileRequest is the request body for creating a session profile
@@ -120,6 +121,7 @@ type SessionProfileConfigResponse struct {
 	Skills                 []string                     `json:"skills,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
+	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
 }
 
 // PreviewSessionProfileRequest is the request body for POST /session-profiles/preview
@@ -455,6 +457,9 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 	if _, err := normalizeRepositoryPatterns(config.GitHubRepositories()); err != nil {
 		return err
 	}
+	if err := validateSessionStateConfig(config.SessionState(), config.Params()); err != nil {
+		return err
+	}
 	seenPaths := make(map[string]bool)
 	for _, file := range config.ProfileFiles() {
 		if file.Path == "" {
@@ -469,6 +474,61 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 		seenPaths[file.Path] = true
 	}
 	return nil
+}
+
+func validateSessionStateConfig(value *entities.SessionStateConfig, params *entities.SessionParams) error {
+	if value == nil || !value.Enabled {
+		return nil
+	}
+	if value.StorageID == "" {
+		return fmt.Errorf("session state storage_id is required")
+	}
+	components := make(map[string]struct{}, len(value.Components))
+	for _, component := range value.Components {
+		if component != "agent_state" && component != "workspace" {
+			return fmt.Errorf("unsupported session state component: %s", component)
+		}
+		if _, exists := components[component]; exists {
+			return fmt.Errorf("duplicate session state component: %s", component)
+		}
+		components[component] = struct{}{}
+	}
+	if len(components) == 0 {
+		return fmt.Errorf("at least one session state component is required")
+	}
+	agents := make(map[string]struct{}, len(value.Agents))
+	for _, agent := range value.Agents {
+		if agent != "codex" && agent != "claude" {
+			return fmt.Errorf("unsupported session state agent: %s", agent)
+		}
+		if _, exists := agents[agent]; exists {
+			return fmt.Errorf("duplicate session state agent: %s", agent)
+		}
+		agents[agent] = struct{}{}
+	}
+	if _, enabled := components["agent_state"]; enabled && len(agents) == 0 {
+		return fmt.Errorf("at least one session state agent is required")
+	}
+	if params != nil {
+		fixedAgent := sessionStateAgent(params.AgentType)
+		if _, enabled := components["agent_state"]; enabled && fixedAgent != "" {
+			if _, selected := agents[fixedAgent]; !selected {
+				return fmt.Errorf("session state agent %s must be selected for agent_type %s", fixedAgent, params.AgentType)
+			}
+		}
+	}
+	return nil
+}
+
+func sessionStateAgent(agentType string) string {
+	switch agentType {
+	case "codex", "codex-acp":
+		return "codex"
+	case "claude", "claude-acp", "claude-legacy":
+		return "claude"
+	default:
+		return ""
+	}
 }
 
 // DeleteSessionProfile handles DELETE /session-profiles/:id
@@ -547,6 +607,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 		cfg.SetGitHubRepositories(req.GitHubRepositories)
 	}
 	cfg.SetSkills(req.Skills)
+	cfg.SetSessionState(req.SessionState)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
 	}
@@ -608,6 +669,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			Skills:                 cfg.Skills(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
+			SessionState:           cfg.SessionState(),
 		},
 		CreatedAt: p.CreatedAt().Format(time.RFC3339),
 		UpdatedAt: p.UpdatedAt().Format(time.RFC3339),

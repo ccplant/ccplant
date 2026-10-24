@@ -49,10 +49,9 @@ commit する。この変更は不可とする。
 - 同じ Storage の source range は、完全一致か非 overlap のどちらかだけを許可する。
   親子関係にある `storage_path` は二重 sync を避けるため拒否する。
 
-完全一致する `(storage_id, storage_path)` を複数の `mount_path` に指定した場合は alias とする。
-alias 群は 1 個の local volume と 1 個の sync worker を共有し、同じ内容が全 target から見える。
-同じ source group 内で `read_only` が混在することは許可するが、1 個でも writable mount があれば
-sync worker は write-back を行う。全 mount が read-only の場合だけ pull-only とする。
+初期実装では完全一致する `(storage_id, storage_path)` の重複は拒否する。1 個の Storage は異なる
+`storage_path` を使って複数の `mount_path` へ mount できる。同一 subtree の alias は、1 個の local volume と
+1 個の sync worker を共有できる runtime group 形式へ移行した後の拡張とする。
 
 Profile と明示的な start request の merge key は `storage_id` から normalized `mount_path` へ変更する。
 これにより同じ Storage の複数 mount を保持したまま、request は特定 target の attachment だけを
@@ -122,7 +121,7 @@ Profile が agent type を固定している場合、固定された agent を�
 
 | component | UI label | 保持する情報 | 保持しない情報 |
 | --- | --- | --- | --- |
-| `agent_state` | 会話とエージェント状態 | agent の会話 file、resume index、ACP history | credential、Profile 生成設定、plugin、cache |
+| `agent_state` | 会話とエージェント状態 | agent の会話 file、resume index、状態 DB | credential、Profile 生成設定、plugin、cache |
 | `workspace` | 作業ディレクトリ | repository の変更、未追跡 file、非 Git workspace | `.git` object のうち clone で再現可能なもの、secret と判定した managed file |
 
 `agent_state` は既定で選択する。`workspace` は容量と同期時間が増えるため opt-in とする。
@@ -136,8 +135,6 @@ managed attachment を生成する。
 | --- | --- | --- | --- | --- |
 | `agent_state` | `codex-acp` | `session-state/codex` | `/home/agentapi/.codex` | rollout、session index、state DB |
 | `agent_state` | `claude-acp` | `session-state/claude` | `/home/agentapi/.claude` | project conversation state |
-| `agent_state` | `codex-acp` | `session-state/acp/codex` | `/home/agentapi/.session` | Codex ACP bridge history と resume metadata |
-| `agent_state` | `claude-acp` | `session-state/acp/claude` | `/home/agentapi/.session` | Claude ACP bridge history と resume metadata |
 | `workspace` | all | `workspace` | `/home/agentapi/workdir` | checkout 後の working tree |
 
 `agents` は Storage に保持してよい agent state の allowlist である。起動時には実際の agent との交差だけを
@@ -191,10 +188,9 @@ restore 順序を次に変更する。
 順序は変更しない。
 
 Codex の SQLite DB と WAL、同じ workspace の同時更新は file 単位の last-write-wins では整合性を
-保証できない。そのため writable component を 1 件でも選んだ session は Storage 単位の exclusive lease を
-取得する。既に別の active session が lease を持つ場合、start は `409 session_state_storage_in_use` を返す。
-lease は canonical session resource に選択 component とともに記録し、正常終了、削除、期限切れ reconciler で
-解放する。generic Storage attachment の既存 multi-writer semantics は変更しない。
+保証できない。初期実装ではUIで同時利用を避けるよう警告し、運用上1 writerとする。Storage単位の
+distributed leaseと `409 session_state_storage_in_use` は次段階で追加する。generic Storage attachment の
+既存multi-writer semanticsは変更しない。
 
 ## 6. Frontend
 
@@ -271,7 +267,7 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 - 子 Profile で component/agent を増減でき、未知の値をフロントが消さない。
 - workspace の Git/non-Git restore と repository identity mismatch を検証する。
 - restore 後に現在の Profile 設定と credential が優先される。
-- writable managed state の二重起動は 409 になり、異常終了後に lease が回収される。
+- 同じmanaged stateを複数sessionで同時利用しない旨がUIに表示される。
 - read-only alias と generic multi-writer Storage の既存挙動を壊さない。
 - Pod restart は同じ resolved mount group を再利用する。
 - capability のない External Session Manager で明示的な error を返す。

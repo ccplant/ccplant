@@ -205,6 +205,11 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 
 	// ── Step 2: run setup ─────────────────────────────────────────────────────
 	compileOpts := sessionsettings.DefaultCompileOptions()
+	managedStorage := true
+	if err := restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
+		s.setStatus(StatusError, "failed to restore managed session state: "+err.Error())
+		return
+	}
 
 	opts := sessionsettings.SetupOptions{
 		CompileOptions:            compileOpts,
@@ -308,7 +313,8 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 			log.Printf("[PROVISIONER] Restored credentials to ~/.codex/auth.json (legacy)")
 		}
 	}
-	if err := restoreObjectStorages(ctx, settings); err != nil {
+	managedStorage = false
+	if err := restoreObjectStoragesMatching(ctx, settings, &managedStorage); err != nil {
 		s.setStatus(StatusError, "failed to restore persistent storage: "+err.Error())
 		return
 	}

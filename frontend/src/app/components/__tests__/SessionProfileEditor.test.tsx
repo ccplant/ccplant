@@ -22,6 +22,23 @@ vi.mock('../../../components/settings/MCPServerSettings', () => ({ MCPServerSett
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 describe('SessionProfileEditor storage', () => {
+  it('selects session state components and agents', async () => {
+    render(<SessionProfileEditor section="storages" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'State', scope: 'user', created_at: '', updated_at: '', config: {} }} />)
+    await screen.findByRole('option', { name: 'Shared files' })
+    fireEvent.click(screen.getByLabelText('有効'))
+    fireEvent.change(screen.getByLabelText('保存先Storage'), { target: { value: 'shared' } })
+    fireEvent.click(screen.getByLabelText(/作業ディレクトリ/))
+    fireEvent.click(screen.getByLabelText('Claude'))
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config.session_state).toEqual({
+      enabled: true,
+      storage_id: 'shared',
+      components: ['agent_state', 'workspace'],
+      agents: ['codex'],
+    })
+  })
+
   it('loads mounts, saves edits, and removes the final attachment', async () => {
     render(<SessionProfileEditor section="storages" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'Storage', scope: 'team', team_id: 'org/team', created_at: '', updated_at: '', config: { params: { storages: [{ storage_id: 'shared', mount_path: '/data', read_only: false }] } } }} />)
     await waitFor(() => expect(mocks.client.getStorages).toHaveBeenCalledWith({ scope: 'team', team_id: 'org/team' }))

@@ -56,6 +56,17 @@ export interface SessionProfileConfig {
   skills?: string[];
   files?: ProfileFile[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
+  session_state?: SessionStateConfig;
+}
+
+export type SessionStateComponent = 'agent_state' | 'workspace';
+export type SessionStateAgent = 'codex' | 'claude';
+
+export interface SessionStateConfig {
+  enabled: boolean;
+  storage_id?: string;
+  components?: SessionStateComponent[];
+  agents?: SessionStateAgent[];
 }
 
 // SessionProfile entity

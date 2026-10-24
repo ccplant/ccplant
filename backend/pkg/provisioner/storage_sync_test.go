@@ -43,6 +43,29 @@ func TestRestoreObjectStorages(t *testing.T) {
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
+func TestRestoreObjectStorageUsesStoragePath(t *testing.T) {
+	content := []byte("rollout")
+	digestBytes := sha256.Sum256(content)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "/storages/state/files/session-state/codex/sessions/rollout.jsonl", request.URL.Path)
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	mount := t.TempDir()
+	settings := &sessionsettings.SessionSettings{
+		Env: map[string]string{"AGENTAPI_KEY": "secret"}, ParentRuntime: &sessionsettings.ParentRuntimeConfig{Endpoint: server.URL},
+		Storages: []sessionsettings.StorageAttachment{{
+			StorageID: "state", StoragePath: "session-state/codex", MountPath: mount, Kind: "object_snapshot",
+			Files: []sessionsettings.StorageFile{{Path: "sessions/rollout.jsonl", Digest: hex.EncodeToString(digestBytes[:])}},
+		}},
+	}
+	require.NoError(t, restoreObjectStorages(context.Background(), settings))
+	data, err := os.ReadFile(filepath.Join(mount, "sessions", "rollout.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, content, data)
+}
+
 func TestSafeStorageTargetRejectsTraversal(t *testing.T) {
 	root := t.TempDir()
 	_, err := safeStorageTarget(root, "../outside")

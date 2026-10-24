@@ -63,9 +63,16 @@ func storageSyncConnection(settings *sessionsettings.SessionSettings) (string, s
 }
 
 func restoreObjectStorages(ctx context.Context, settings *sessionsettings.SessionSettings) error {
+	return restoreObjectStoragesMatching(ctx, settings, nil)
+}
+
+func restoreObjectStoragesMatching(ctx context.Context, settings *sessionsettings.SessionSettings, managed *bool) error {
 	endpoint, apiKey := storageSyncConnection(settings)
 	for _, storage := range settings.Storages {
 		if storage.Kind != "object_snapshot" {
+			continue
+		}
+		if managed != nil && storage.Managed != *managed {
 			continue
 		}
 		if endpoint == "" || apiKey == "" {
@@ -84,11 +91,14 @@ func restoreObjectStorages(ctx context.Context, settings *sessionsettings.Sessio
 }
 
 func restoreStorageFile(ctx context.Context, client *http.Client, endpoint, apiKey string, storage sessionsettings.StorageAttachment, file sessionsettings.StorageFile) error {
+	if storage.Managed && !managedStoragePathAllowed(storage.MountPath, file.Path) {
+		return nil
+	}
 	target, err := safeStorageTarget(storage.MountPath, file.Path)
 	if err != nil {
 		return err
 	}
-	body, err := storageRequest(ctx, client, endpoint, apiKey, http.MethodGet, storage.StorageID, file.Path, nil, 0)
+	body, err := storageRequest(ctx, client, endpoint, apiKey, http.MethodGet, storage.StorageID, storageRemotePath(storage, file.Path), nil, 0)
 	if err != nil {
 		return fmt.Errorf("restore storage %s path %s: %w", storage.StorageID, file.Path, err)
 	}
@@ -153,7 +163,7 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 	}
 	knownRevision := storage.Revision
 	syncOnce := func(syncCtx context.Context) {
-		manifest, listErr := fetchStorageManifest(syncCtx, client, endpoint, apiKey, storage.StorageID, knownRevision)
+		manifest, listErr := fetchStorageManifest(syncCtx, client, endpoint, apiKey, storage, knownRevision)
 		if listErr != nil {
 			log.Printf("[STORAGE_SYNC] Manifest fetch failed for %s: %v", storage.StorageID, listErr)
 			return
@@ -221,7 +231,7 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 			if readErr != nil || len(data) > storageSyncMaxFileBytes {
 				continue
 			}
-			body, putErr := storageRequest(syncCtx, client, endpoint, apiKey, http.MethodPut, storage.StorageID, filePath, data, file.mode)
+			body, putErr := storageRequest(syncCtx, client, endpoint, apiKey, http.MethodPut, storage.StorageID, storageRemotePath(storage, filePath), data, file.mode)
 			if body != nil {
 				_ = body.Close()
 			}
@@ -235,7 +245,7 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 			if _, ok := current[filePath]; ok {
 				continue
 			}
-			body, deleteErr := storageRequest(syncCtx, client, endpoint, apiKey, http.MethodDelete, storage.StorageID, filePath, nil, 0)
+			body, deleteErr := storageRequest(syncCtx, client, endpoint, apiKey, http.MethodDelete, storage.StorageID, storageRemotePath(storage, filePath), nil, 0)
 			if body != nil {
 				_ = body.Close()
 			}
@@ -260,8 +270,8 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 	}
 }
 
-func fetchStorageManifest(ctx context.Context, client *http.Client, endpoint, apiKey, storageID string, _ int64) (*storageManifestResponse, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/storages/"+url.PathEscape(storageID)+"/files?include_deleted=true", nil)
+func fetchStorageManifest(ctx context.Context, client *http.Client, endpoint, apiKey string, storage sessionsettings.StorageAttachment, _ int64) (*storageManifestResponse, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/storages/"+url.PathEscape(storage.StorageID)+"/files?include_deleted=true", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +289,25 @@ func fetchStorageManifest(ctx context.Context, client *http.Client, endpoint, ap
 	if err := json.NewDecoder(response.Body).Decode(&manifest); err != nil {
 		return nil, err
 	}
+	if storage.StoragePath != "" {
+		prefix := strings.Trim(storage.StoragePath, "/") + "/"
+		filtered := manifest.Files[:0]
+		for _, file := range manifest.Files {
+			if strings.HasPrefix(file.Path, prefix) {
+				file.Path = strings.TrimPrefix(file.Path, prefix)
+				filtered = append(filtered, file)
+			}
+		}
+		manifest.Files = filtered
+	}
 	return &manifest, nil
+}
+
+func storageRemotePath(storage sessionsettings.StorageAttachment, filePath string) string {
+	if storage.StoragePath == "" {
+		return filePath
+	}
+	return strings.Trim(storage.StoragePath, "/") + "/" + strings.TrimLeft(filePath, "/")
 }
 
 func storageRequest(ctx context.Context, client *http.Client, endpoint, apiKey, method, storageID, filePath string, content []byte, mode uint32) (io.ReadCloser, error) {
@@ -325,6 +353,13 @@ func scanStorageTree(root string) (map[string]storageLocalFile, error) {
 			if entry.Name() == ".ccplant-storage" {
 				return filepath.SkipDir
 			}
+			if filepath.Clean(root) == filepath.Join(runtimeHome, "workdir") && filepath.ToSlash(relative) == ".git/objects" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		relativeSlash := filepath.ToSlash(relative)
+		if !managedStoragePathAllowed(root, relativeSlash) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -340,6 +375,22 @@ func scanStorageTree(root string) (map[string]storageLocalFile, error) {
 		return nil
 	})
 	return result, err
+}
+
+func managedStoragePathAllowed(root, relative string) bool {
+	root = filepath.Clean(root)
+	switch root {
+	case filepath.Join(runtimeHome, ".codex"):
+		return strings.HasPrefix(relative, "sessions/") || relative == "session_index.jsonl" || (strings.HasPrefix(relative, "state_") && strings.Contains(relative, ".sqlite"))
+	case filepath.Join(runtimeHome, ".claude"):
+		return strings.HasPrefix(relative, "projects/")
+	case filepath.Join(runtimeHome, ".session"):
+		return relative == "acp-history.jsonl" || relative == "model-connection.json"
+	case filepath.Join(runtimeHome, "workdir"):
+		return relative != ".git" && !strings.HasPrefix(relative, ".git/objects/")
+	default:
+		return true
+	}
 }
 
 func safeStorageTarget(root, relative string) (string, error) {

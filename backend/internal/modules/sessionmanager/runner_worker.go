@@ -283,7 +283,7 @@ func (w *RunnerWorker) managerRequest(ctx context.Context, method, path string, 
 func runRequestFromSettings(settings *sessionsettings.SessionSettings) *entities.RunServerRequest {
 	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
 	for _, storage := range settings.Storages {
-		resolved := entities.ResolvedStorageAttachment{StorageAttachment: entities.StorageAttachment{StorageID: storage.StorageID, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly}, Kind: entities.StorageKind(storage.Kind), Revision: storage.Revision}
+		resolved := entities.ResolvedStorageAttachment{StorageAttachment: entities.StorageAttachment{StorageID: storage.StorageID, StoragePath: storage.StoragePath, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly, Managed: storage.Managed}, Kind: entities.StorageKind(storage.Kind), Revision: storage.Revision}
 		for _, file := range storage.Files {
 			resolved.Files = append(resolved.Files, entities.StorageFile{Path: file.Path, Digest: file.Digest, Size: file.Size, Mode: file.Mode, Revision: file.Revision})
 		}

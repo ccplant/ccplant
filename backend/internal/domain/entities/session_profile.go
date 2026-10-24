@@ -54,6 +54,15 @@ type SessionProfileConfig struct {
 	skills             []string
 	files              []ProfileFile
 	mcpServers         *MCPServersSettings
+	sessionState       *SessionStateConfig
+}
+
+// SessionStateConfig selects profile-owned Storage-backed state.
+type SessionStateConfig struct {
+	Enabled    bool     `json:"enabled"`
+	StorageID  string   `json:"storage_id,omitempty"`
+	Components []string `json:"components,omitempty"`
+	Agents     []string `json:"agents,omitempty"`
 }
 
 // ErrSessionProfileAccessDenied is returned when a session profile cannot be
@@ -384,6 +393,29 @@ func (c *SessionProfileConfig) MCPServers() *MCPServersSettings { return c.mcpSe
 
 // SetMCPServers sets the MCP servers contributed by this profile.
 func (c *SessionProfileConfig) SetMCPServers(servers *MCPServersSettings) { c.mcpServers = servers }
+
+// SessionState returns the Storage-backed session state selection.
+func (c *SessionProfileConfig) SessionState() *SessionStateConfig {
+	if c.sessionState == nil {
+		return nil
+	}
+	value := *c.sessionState
+	value.Components = copyStringSlice(value.Components)
+	value.Agents = copyStringSlice(value.Agents)
+	return &value
+}
+
+// SetSessionState sets the Storage-backed session state selection.
+func (c *SessionProfileConfig) SetSessionState(value *SessionStateConfig) {
+	if value == nil {
+		c.sessionState = nil
+		return
+	}
+	copyValue := *value
+	copyValue.Components = copyStringSlice(value.Components)
+	copyValue.Agents = copyStringSlice(value.Agents)
+	c.sessionState = &copyValue
+}
 
 // --- Error types ---
 

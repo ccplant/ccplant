@@ -6,12 +6,15 @@ import { createAgentAPIProxyClientFromStorage } from '../../lib/agentapi-proxy-c
 import type { Storage, StorageAttachment } from '../../types/storage'
 
 export function validateStorageAttachments(values: StorageAttachment[]): string | null {
-  const ids = new Set<string>()
   const paths: string[] = []
+  const sources = new Map<string, string[]>()
   for (const value of values) {
     if (!value.storage_id) return 'Storage を選択してください'
-    if (ids.has(value.storage_id)) return '同じ Storage は一度だけ追加できます'
-    ids.add(value.storage_id)
+    const storagePath = (value.storage_path ?? '').trim().replace(/^\/+|\/+$/g, '')
+    if (storagePath && storagePath.split('/').some(segment => segment === '.' || segment === '..' || segment === '')) return 'Storage内のパスには相対パスを指定してください'
+    const sameStorageSources = sources.get(value.storage_id) ?? []
+    if (sameStorageSources.some(other => !storagePath || !other || other === storagePath || other.startsWith(storagePath + '/') || storagePath.startsWith(other + '/'))) return '同じStorage内のパスが重複しています'
+    sources.set(value.storage_id, [...sameStorageSources, storagePath])
     const segments = value.mount_path.trim().split('/').filter(Boolean)
     const path = '/' + segments.join('/')
     if (!value.mount_path.startsWith('/') || segments.length === 0 || segments.some(segment => segment === '.' || segment === '..')) return 'マウント先には / 以外の絶対パスを指定してください'
@@ -56,12 +59,13 @@ export default function StorageAttachmentEditor({ value, onChange, scope, teamId
       <label className="block text-sm">Storage<select value={attachment.storage_id} onChange={event => update(index, { storage_id: event.target.value })} className={`${field} mt-1`}>
         <option value="">選択してください</option>
         {attachment.storage_id && !storages.some(storage => storage.id === attachment.storage_id) && <option value={attachment.storage_id}>未取得の Storage ({attachment.storage_id})</option>}
-        {storages.map(storage => <option key={storage.id} value={storage.id} disabled={value.some((other, i) => i !== index && other.storage_id === storage.id)}>{storage.name}</option>)}
+        {storages.map(storage => <option key={storage.id} value={storage.id}>{storage.name}</option>)}
       </select></label>
+      <label className="block text-sm">Storage内のパス（任意）<input value={attachment.storage_path ?? ''} onChange={event => update(index, { storage_path: event.target.value })} placeholder="datasets/shared" className={`${field} mt-1`} /></label>
       <label className="block text-sm">マウント先<input value={attachment.mount_path} onChange={event => update(index, { mount_path: event.target.value })} placeholder="/home/agentapi/workdir/shared" className={`${field} mt-1`} /></label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={attachment.read_only ?? false} onChange={event => update(index, { read_only: event.target.checked })} />読み取り専用</label>
       <button type="button" onClick={() => onChange(value.filter((_, i) => i !== index))} className="text-sm text-red-600 dark:text-red-400">取り外す</button>
     </fieldset>)}
-    <button type="button" disabled={loading || !!error || !storages.some(storage => !value.some(item => item.storage_id === storage.id))} onClick={() => onChange([...value, { storage_id: '', mount_path: '', read_only: false }])} className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-50">Storage を追加</button>
+    <button type="button" disabled={loading || !!error || storages.length === 0} onClick={() => onChange([...value, { storage_id: '', storage_path: '', mount_path: '', read_only: false }])} className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-50">Storage を追加</button>
   </div>
 }
