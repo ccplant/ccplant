@@ -8320,7 +8320,7 @@
       },
       "StorageAttachment": {
         "type": "object", "required": ["storage_id", "mount_path"],
-        "properties": {"storage_id": {"type": "string"}, "mount_path": {"type": "string", "description": "Absolute non-reserved mount path"}, "read_only": {"type": "boolean", "default": false}}
+        "properties": {"storage_id": {"type": "string"}, "storage_path": {"type": "string", "description": "Optional normalized relative path within the Storage"}, "mount_path": {"type": "string", "description": "Absolute non-reserved mount path"}, "read_only": {"type": "boolean", "default": false}}
       },
       "StorageFile": {
         "type": "object", "required": ["path", "revision", "updated_at"],
@@ -11088,6 +11088,17 @@
           "description": "Human-readable name for the SlackBot",
           "example": "My Slack Bot"
         },
+        "session_state": {
+          "type": "object",
+          "description": "Storage-backed session information selected by this profile.",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "storage_id": {"type": "string"},
+            "components": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["agent_state", "workspace"]}},
+            "agents": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["codex", "claude"]}}
+          }
+        },
         "scope": {
           "$ref": "#/components/schemas/ResourceScope"
         },
@@ -11568,7 +11579,7 @@
         },
         "params": {
           "allOf": [{"$ref": "#/components/schemas/SessionParams"}],
-          "description": "Reusable session parameters. storages are inherited by sessions; an explicit start-request attachment with the same storage_id replaces the profile attachment, while other attachments are retained."
+          "description": "Reusable session parameters. storages are inherited by sessions; an explicit start-request attachment with the same mount_path replaces the profile attachment, while other attachments are retained."
         },
         "sandbox_policy_id": {
           "type": "string",

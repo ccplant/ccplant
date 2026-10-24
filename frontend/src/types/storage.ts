@@ -2,6 +2,7 @@ import type { ResourceScope } from './agentapi'
 
 export interface StorageAttachment {
   storage_id: string
+  storage_path?: string
   mount_path: string
   read_only?: boolean
 }

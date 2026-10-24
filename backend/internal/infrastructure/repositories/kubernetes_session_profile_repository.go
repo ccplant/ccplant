@@ -52,26 +52,27 @@ type sessionProfileJSON struct {
 }
 
 type sessionProfileConfigJSON struct {
-	SettingsTeamID         string                    `json:"settings_team_id,omitempty"`
-	CodexConnection        *connectionJSON           `json:"codex_connection,omitempty"`
-	ClaudeConnection       *connectionJSON           `json:"claude_connection,omitempty"`
-	Environment            map[string]string         `json:"environment,omitempty"`
-	Tags                   map[string]string         `json:"tags,omitempty"`
-	Pool                   string                    `json:"pool,omitempty"`
-	InitialMessageTemplate string                    `json:"initial_message_template,omitempty"`
-	ReuseMessageTemplate   string                    `json:"reuse_message_template,omitempty"`
-	CommandWrapperTemplate string                    `json:"command_wrapper_template,omitempty"`
-	Params                 *entities.SessionParams   `json:"params,omitempty"`
-	ReuseSession           bool                      `json:"reuse_session,omitempty"`
-	SandboxPolicyID        string                    `json:"sandbox_policy_id,omitempty"`
-	SessionTTL             string                    `json:"session_ttl,omitempty"`
-	UnsyncedFilePaths      []string                  `json:"unsynced_file_paths,omitempty"`
-	SourceSessionProfileID string                    `json:"source_session_profile_id,omitempty"`
-	SecretIDs              []string                  `json:"secret_ids,omitempty"`
-	GitHubRepositories     []string                  `json:"github_repositories,omitempty"`
-	Skills                 []string                  `json:"skills,omitempty"`
-	Files                  []entities.ProfileFile    `json:"files,omitempty"`
-	MCPServers             map[string]*mcpServerJSON `json:"mcp_servers,omitempty"`
+	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
+	CodexConnection        *connectionJSON              `json:"codex_connection,omitempty"`
+	ClaudeConnection       *connectionJSON              `json:"claude_connection,omitempty"`
+	Environment            map[string]string            `json:"environment,omitempty"`
+	Tags                   map[string]string            `json:"tags,omitempty"`
+	Pool                   string                       `json:"pool,omitempty"`
+	InitialMessageTemplate string                       `json:"initial_message_template,omitempty"`
+	ReuseMessageTemplate   string                       `json:"reuse_message_template,omitempty"`
+	CommandWrapperTemplate string                       `json:"command_wrapper_template,omitempty"`
+	Params                 *entities.SessionParams      `json:"params,omitempty"`
+	ReuseSession           bool                         `json:"reuse_session,omitempty"`
+	SandboxPolicyID        string                       `json:"sandbox_policy_id,omitempty"`
+	SessionTTL             string                       `json:"session_ttl,omitempty"`
+	UnsyncedFilePaths      []string                     `json:"unsynced_file_paths,omitempty"`
+	SourceSessionProfileID string                       `json:"source_session_profile_id,omitempty"`
+	SecretIDs              []string                     `json:"secret_ids,omitempty"`
+	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
+	Skills                 []string                     `json:"skills,omitempty"`
+	Files                  []entities.ProfileFile       `json:"files,omitempty"`
+	MCPServers             map[string]*mcpServerJSON    `json:"mcp_servers,omitempty"`
+	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
 }
 
 // KubernetesSessionProfileRepository implements SessionProfileRepository using Kubernetes Secrets
@@ -380,6 +381,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetSecretIDs(pj.Config.SecretIDs)
 	cfg.SetGitHubRepositories(pj.Config.GitHubRepositories)
 	cfg.SetSkills(pj.Config.Skills)
+	cfg.SetSessionState(pj.Config.SessionState)
 	cfg.SetProfileFiles(pj.Config.Files)
 	if pj.Config.MCPServers != nil {
 		servers := entities.NewMCPServersSettings()
@@ -439,6 +441,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			Skills:                 cfg.Skills(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
+			SessionState:           cfg.SessionState(),
 		},
 		CreatedAt: profile.CreatedAt(),
 		UpdatedAt: profile.UpdatedAt(),

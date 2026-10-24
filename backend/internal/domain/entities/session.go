@@ -76,9 +76,11 @@ type DockerRegistry struct {
 
 // StorageAttachment mounts one scope-owned persistent Storage into a session.
 type StorageAttachment struct {
-	StorageID string `json:"storage_id"`
-	MountPath string `json:"mount_path"`
-	ReadOnly  bool   `json:"read_only,omitempty"`
+	StorageID   string `json:"storage_id"`
+	StoragePath string `json:"storage_path,omitempty"`
+	MountPath   string `json:"mount_path"`
+	ReadOnly    bool   `json:"read_only,omitempty"`
+	Managed     bool   `json:"-"`
 }
 
 // ResolvedStorageAttachment is produced by the parent API after ownership and

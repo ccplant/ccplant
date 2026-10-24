@@ -112,8 +112,9 @@ func TestMergeSessionParamsStorages(t *testing.T) {
 	merged := mergeSessionParams(profile, override)
 
 	require.Equal(t, []entities.StorageAttachment{
-		{StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true},
+		{StorageID: "shared", MountPath: "/home/agentapi/workdir/shared"},
 		{StorageID: "cache", MountPath: "/home/agentapi/workdir/cache", ReadOnly: true},
+		{StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true},
 		{StorageID: "extra", MountPath: "/home/agentapi/workdir/extra"},
 	}, merged.Storages)
 	require.Equal(t, "/home/agentapi/workdir/shared", profile.Storages[0].MountPath)
@@ -131,9 +132,35 @@ func TestApplySessionProfileAddsStorageAttachments(t *testing.T) {
 
 	applySessionProfile(request, profile, cfg, false, false)
 
-	require.Equal(t, []entities.StorageAttachment{{
-		StorageID: "shared", MountPath: "/home/agentapi/project-data", ReadOnly: true,
-	}}, request.Params.Storages)
+	require.Len(t, request.Params.Storages, 2)
+}
+
+func TestApplySessionProfileAddsSelectedSessionState(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{AgentType: "codex-acp"})
+	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"agent_state", "workspace"}, Agents: []string{"codex"}})
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, []entities.StorageAttachment{
+		{StorageID: "state", StoragePath: "session-state/codex", MountPath: "/home/agentapi/.codex", Managed: true},
+		{StorageID: "state", StoragePath: "workspace", MountPath: "/home/agentapi/workdir", Managed: true},
+	}, request.Params.Storages)
+}
+
+func TestValidateSessionStateConfig(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{AgentType: "codex-acp"})
+	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"agent_state"}, Agents: []string{"codex"}})
+	require.NoError(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"agent_state"}, Agents: []string{"claude"}})
+	require.ErrorContains(t, validateSessionProfileConfig(cfg), "codex must be selected")
+
+	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"workspace"}})
+	require.NoError(t, validateSessionProfileConfig(cfg))
 }
 
 func TestProfileConnectionSecretLifecycle(t *testing.T) {

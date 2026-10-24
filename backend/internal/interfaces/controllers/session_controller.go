@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -2598,7 +2599,7 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	return &merged
 }
 
-// mergeStorageAttachments keeps profile ordering, replaces matching storage IDs
+// mergeStorageAttachments keeps profile ordering, replaces matching mount paths
 // with explicit request entries, and appends request-only entries.
 func mergeStorageAttachments(base, override []entities.StorageAttachment) []entities.StorageAttachment {
 	if len(override) == 0 {
@@ -2606,23 +2607,25 @@ func mergeStorageAttachments(base, override []entities.StorageAttachment) []enti
 	}
 	overrides := make(map[string]entities.StorageAttachment, len(override))
 	for _, attachment := range override {
-		overrides[attachment.StorageID] = attachment
+		overrides[filepath.Clean(attachment.MountPath)] = attachment
 	}
 	result := make([]entities.StorageAttachment, 0, len(base)+len(override))
 	seen := make(map[string]struct{}, len(base)+len(override))
 	for _, attachment := range base {
-		if replacement, ok := overrides[attachment.StorageID]; ok {
+		key := filepath.Clean(attachment.MountPath)
+		if replacement, ok := overrides[key]; ok {
 			attachment = replacement
 		}
 		result = append(result, attachment)
-		seen[attachment.StorageID] = struct{}{}
+		seen[key] = struct{}{}
 	}
 	for _, attachment := range override {
-		if _, ok := seen[attachment.StorageID]; ok {
+		key := filepath.Clean(attachment.MountPath)
+		if _, ok := seen[key]; ok {
 			continue
 		}
 		result = append(result, attachment)
-		seen[attachment.StorageID] = struct{}{}
+		seen[key] = struct{}{}
 	}
 	return result
 }
@@ -2942,5 +2945,52 @@ func applySessionProfile(
 				startReq.Params.UnsyncedFilePaths = cfg.UnsyncedFilePaths()
 			}
 		}
+		applyProfileSessionState(startReq, cfg.SessionState())
+	}
+}
+
+func applyProfileSessionState(startReq *entities.StartRequest, state *entities.SessionStateConfig) {
+	if state == nil || !state.Enabled || state.StorageID == "" {
+		return
+	}
+	if startReq.Params == nil {
+		startReq.Params = &entities.SessionParams{}
+	}
+	componentEnabled := func(value string) bool {
+		for _, component := range state.Components {
+			if component == value {
+				return true
+			}
+		}
+		return false
+	}
+	agentEnabled := func(value string) bool {
+		for _, agent := range state.Agents {
+			if agent == value {
+				return true
+			}
+		}
+		return false
+	}
+	appendManaged := func(storagePath, mountPath string) {
+		startReq.Params.Storages = append(startReq.Params.Storages, entities.StorageAttachment{
+			StorageID: state.StorageID, StoragePath: storagePath, MountPath: mountPath, Managed: true,
+		})
+	}
+	if componentEnabled("agent_state") {
+		agent := sessionStateAgent(startReq.Params.AgentType)
+		if agent == "" || agent == "codex" {
+			if agentEnabled("codex") {
+				appendManaged("session-state/codex", "/home/agentapi/.codex")
+			}
+		}
+		if agent == "" || agent == "claude" {
+			if agentEnabled("claude") {
+				appendManaged("session-state/claude", "/home/agentapi/.claude")
+			}
+		}
+	}
+	if componentEnabled("workspace") {
+		appendManaged("workspace", "/home/agentapi/workdir")
 	}
 }

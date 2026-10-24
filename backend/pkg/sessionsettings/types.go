@@ -179,12 +179,14 @@ type StorageFile struct {
 // StorageAttachment is the resolved persistent mount contract delivered to a
 // Session Pod. Provider credentials are deliberately excluded.
 type StorageAttachment struct {
-	StorageID string        `yaml:"storage_id" json:"storage_id"`
-	MountPath string        `yaml:"mount_path" json:"mount_path"`
-	ReadOnly  bool          `yaml:"read_only,omitempty" json:"read_only,omitempty"`
-	Kind      string        `yaml:"kind" json:"kind"`
-	Revision  int64         `yaml:"revision,omitempty" json:"revision,omitempty"`
-	Files     []StorageFile `yaml:"files,omitempty" json:"files,omitempty"`
+	StorageID   string        `yaml:"storage_id" json:"storage_id"`
+	StoragePath string        `yaml:"storage_path,omitempty" json:"storage_path,omitempty"`
+	MountPath   string        `yaml:"mount_path" json:"mount_path"`
+	ReadOnly    bool          `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	Managed     bool          `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Kind        string        `yaml:"kind" json:"kind"`
+	Revision    int64         `yaml:"revision,omitempty" json:"revision,omitempty"`
+	Files       []StorageFile `yaml:"files,omitempty" json:"files,omitempty"`
 }
 
 // SessionSettings is the top-level unified settings YAML structure.

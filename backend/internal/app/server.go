@@ -2113,20 +2113,30 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 	if s.storageRepo == nil {
 		return nil, fmt.Errorf("storage repository is unavailable")
 	}
-	seenIDs := make(map[string]struct{}, len(startReq.Params.Storages))
+	seenSources := make(map[string][]string, len(startReq.Params.Storages))
 	seenPaths := make(map[string]struct{}, len(startReq.Params.Storages))
 	resolved := make([]entities.ResolvedStorageAttachment, 0, len(startReq.Params.Storages))
 	for _, attachment := range startReq.Params.Storages {
 		attachment.StorageID = strings.TrimSpace(attachment.StorageID)
+		attachment.StoragePath = strings.Trim(strings.TrimSpace(attachment.StoragePath), "/")
 		attachment.MountPath = filepath.Clean(strings.TrimSpace(attachment.MountPath))
 		if attachment.StorageID == "" || !filepath.IsAbs(attachment.MountPath) || attachment.MountPath == "/" {
 			return nil, fmt.Errorf("storage_id and an absolute non-root mount_path are required")
 		}
-		if storageMountPathReserved(attachment.MountPath) {
+		if storageMountPathReserved(attachment.MountPath) && !attachment.Managed {
 			return nil, fmt.Errorf("storage mount path %q is reserved", attachment.MountPath)
 		}
-		if _, exists := seenIDs[attachment.StorageID]; exists {
-			return nil, fmt.Errorf("storage %q is attached more than once", attachment.StorageID)
+		if attachment.StoragePath != "" {
+			cleaned := filepath.ToSlash(filepath.Clean(attachment.StoragePath))
+			if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || filepath.IsAbs(attachment.StoragePath) {
+				return nil, fmt.Errorf("storage_path must be a normalized relative path")
+			}
+			attachment.StoragePath = cleaned
+		}
+		for _, existing := range seenSources[attachment.StorageID] {
+			if attachment.StoragePath == "" || existing == "" || attachment.StoragePath == existing || strings.HasPrefix(attachment.StoragePath+"/", existing+"/") || strings.HasPrefix(existing+"/", attachment.StoragePath+"/") {
+				return nil, fmt.Errorf("storage path %q overlaps %q for storage %q", attachment.StoragePath, existing, attachment.StorageID)
+			}
 		}
 		for existing := range seenPaths {
 			if attachment.MountPath == existing || strings.HasPrefix(attachment.MountPath+"/", existing+"/") || strings.HasPrefix(existing+"/", attachment.MountPath+"/") {
@@ -2153,17 +2163,27 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 		if storage.Kind() == entities.StorageKindObjectSnapshot {
 			files := storage.Files()
 			paths := make([]string, 0, len(files))
+			selectedFiles := make(map[string]entities.StorageFile, len(files))
 			for filePath, file := range files {
+				if attachment.StoragePath != "" {
+					prefix := attachment.StoragePath + "/"
+					if !strings.HasPrefix(filePath, prefix) {
+						continue
+					}
+					filePath = strings.TrimPrefix(filePath, prefix)
+					file.Path = filePath
+				}
 				if !file.Deleted {
 					paths = append(paths, filePath)
+					selectedFiles[filePath] = file
 				}
 			}
 			sort.Strings(paths)
 			for _, filePath := range paths {
-				entry.Files = append(entry.Files, files[filePath])
+				entry.Files = append(entry.Files, selectedFiles[filePath])
 			}
 		}
-		seenIDs[attachment.StorageID] = struct{}{}
+		seenSources[attachment.StorageID] = append(seenSources[attachment.StorageID], attachment.StoragePath)
 		seenPaths[attachment.MountPath] = struct{}{}
 		resolved = append(resolved, entry)
 	}

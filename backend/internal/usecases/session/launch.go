@@ -428,6 +428,9 @@ func mergeProfileConfigSources(base, override entities.SessionProfileConfig) ent
 		}
 		local.SetMCPServers(servers)
 	}
+	if local.SessionState() == nil {
+		local.SetSessionState(base.SessionState())
+	}
 	local.SetSkills(unionProfileStrings(base.Skills(), local.Skills()))
 	return local
 }

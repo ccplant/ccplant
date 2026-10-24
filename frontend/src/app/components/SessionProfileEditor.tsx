@@ -12,6 +12,7 @@ import {
   UpdateSessionProfileRequest,
   SessionProfileParams,
   ProfileFile,
+  SessionStateConfig,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
 import { LogicalSessionPool } from '../../types/session_pool'
@@ -24,6 +25,7 @@ import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
 import { SkillSettings } from '../../components/settings/SkillSettings'
 import StorageAttachmentEditor, { validateStorageAttachments } from './StorageAttachmentEditor'
 import type { StorageAttachment } from '../../types/storage'
+import SessionStateStorageEditor from './SessionStateStorageEditor'
 
 interface SessionProfileEditorProps {
   onClose: () => void
@@ -104,6 +106,7 @@ export default function SessionProfileEditor({
   const [modelOptions, setModelOptions] = useState('')
   const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
   const [storages, setStorages] = useState<StorageAttachment[]>([])
+  const [sessionState, setSessionState] = useState<SessionStateConfig>({ enabled: false, components: ['agent_state'], agents: ['codex', 'claude'] })
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
   const [sourceProfileId, setSourceProfileId] = useState('')
   const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
@@ -268,6 +271,7 @@ export default function SessionProfileEditor({
       setUnsyncedFilePaths(paths.join('\n'))
       setProfileFiles(cfg?.files ?? [])
       setStorages(cfg?.params?.storages ?? [])
+      setSessionState(cfg?.session_state ?? { enabled: false, components: ['agent_state'], agents: ['codex', 'claude'] })
 
       setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
@@ -304,6 +308,7 @@ export default function SessionProfileEditor({
       setUnsyncedFilePaths('')
       setProfileFiles([])
       setStorages([])
+      setSessionState({ enabled: false, components: ['agent_state'], agents: ['codex', 'claude'] })
       setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
       setCodexConnection(null)
       setClaudeConnection(null)
@@ -445,6 +450,13 @@ export default function SessionProfileEditor({
       delete extraParams.storages
       const storageError = validateStorageAttachments(storages)
       if (storageError) throw new Error(storageError)
+      if (sessionState.enabled) {
+        if (!sessionState.storage_id) throw new Error('セッション情報の保存先Storageを選択してください')
+        if (!sessionState.components?.length) throw new Error('保持するセッション情報を選択してください')
+        if (sessionState.components.includes('agent_state') && !sessionState.agents?.length) throw new Error('対象エージェントを選択してください')
+        const fixedAgent = agentType.includes('codex') ? 'codex' : agentType.includes('claude') ? 'claude' : ''
+        if (fixedAgent && sessionState.components.includes('agent_state') && !sessionState.agents?.includes(fixedAgent as 'codex' | 'claude')) throw new Error('Profileのエージェントを保持対象に選択してください')
+      }
       for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'codex_default_models', 'claude_default_models', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const parsedModelOptions = modelOptions.split('\n').map(line => line.trim()).filter(Boolean)
       const trimmedModels = <T extends Record<string, string | undefined>>(models: T) => Object.fromEntries(
@@ -473,7 +485,7 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'files', 'command_wrapper_template'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'files', 'command_wrapper_template', 'session_state'] as const) delete extraConfig[key]
 	  const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
       const config = {
         ...extraConfig,
@@ -494,6 +506,7 @@ export default function SessionProfileEditor({
         ...(skills.length > 0 ? { skills } : {}),
         ...(wrapper ? { command_wrapper_template: wrapper } : {}),
         files: parsedProfileFiles,
+        session_state: sessionState,
       }
 
       let savedProfile: SessionProfile
@@ -628,12 +641,25 @@ export default function SessionProfileEditor({
 
             
             </div>}
-            {active.slug === 'storages' && <StorageAttachmentEditor
-              value={storages}
-              onChange={value => { setStorages(value); setDirty(true) }}
-              scope={(editingProfile ?? createScope ?? getScopeParams()).scope ?? 'user'}
-              teamId={(editingProfile ?? createScope ?? getScopeParams()).team_id}
-            />}
+            {active.slug === 'storages' && <div className="space-y-6">
+              <SessionStateStorageEditor
+                value={sessionState}
+                onChange={value => { setSessionState(value); setDirty(true) }}
+                scope={(editingProfile ?? createScope ?? getScopeParams()).scope ?? 'user'}
+                teamId={(editingProfile ?? createScope ?? getScopeParams()).team_id}
+                agentType={agentType}
+              />
+              <div>
+                <h3 className="mb-1 font-medium">追加のStorageマウント</h3>
+                <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">データセットや共有ファイルを任意のパスへ配置します。</p>
+                <StorageAttachmentEditor
+                  value={storages}
+                  onChange={value => { setStorages(value); setDirty(true) }}
+                  scope={(editingProfile ?? createScope ?? getScopeParams()).scope ?? 'user'}
+                  teamId={(editingProfile ?? createScope ?? getScopeParams()).team_id}
+                />
+              </div>
+            </div>}
             {active.slug === 'inheritance' && <div className="space-y-5">
             <div>
               <label htmlFor="profile-settings-team" className="block text-sm font-medium mb-1">ベースにする設定</label>

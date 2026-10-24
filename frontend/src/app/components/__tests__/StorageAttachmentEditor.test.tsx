@@ -5,11 +5,12 @@ describe('storage mount validation', () => {
   it.each(['/', 'relative/path', '/data/../other'])('rejects invalid path %s', path => {
     expect(validateStorageAttachments([{ storage_id: 'a', mount_path: path }])).not.toBeNull()
   })
-  it('rejects overlapping normalized paths and duplicate IDs', () => {
+  it('rejects overlapping target and source paths', () => {
     expect(validateStorageAttachments([{ storage_id: 'a', mount_path: '/data//' }, { storage_id: 'b', mount_path: '/data/files' }])).not.toBeNull()
-    expect(validateStorageAttachments([{ storage_id: 'a', mount_path: '/data' }, { storage_id: 'a', mount_path: '/other' }])).not.toBeNull()
+    expect(validateStorageAttachments([{ storage_id: 'a', storage_path: 'state', mount_path: '/data' }, { storage_id: 'a', storage_path: 'state/sub', mount_path: '/other' }])).not.toBeNull()
   })
   it('accepts independent mounts', () => {
     expect(validateStorageAttachments([{ storage_id: 'a', mount_path: '/data' }, { storage_id: 'b', mount_path: '/database' }])).toBeNull()
+    expect(validateStorageAttachments([{ storage_id: 'a', storage_path: 'codex', mount_path: '/codex' }, { storage_id: 'a', storage_path: 'claude', mount_path: '/claude' }])).toBeNull()
   })
 })

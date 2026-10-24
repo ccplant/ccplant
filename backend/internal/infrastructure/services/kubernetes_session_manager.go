@@ -924,6 +924,7 @@ func (m *KubernetesSessionManager) allocateSessionResources(ctx context.Context,
 	}
 	req.AgentType = m.resolveAutoAgentType(ctx, req)
 	req.AgentType = supportedAgentTypeOrDefault(req.AgentType)
+	req.Storages = filterManagedStoragesForAgent(req.Storages, req.AgentType)
 	applySelectedAgentDefaultModel(req)
 	applySandboxDefaults(req)
 
@@ -2286,7 +2287,7 @@ func (m *KubernetesSessionManager) PrepareSessionResume(ctx context.Context, id 
 	req := &entities.RunServerRequest{UserID: settings.Session.UserID, Scope: entities.ResourceScope(settings.Session.Scope), TeamID: settings.Session.TeamID, AgentType: settings.Session.AgentType, Teams: settings.Session.Teams, InitialMessage: settings.InitialMessage, ProvisionSettings: settings}
 	for _, storage := range settings.Storages {
 		resolved := entities.ResolvedStorageAttachment{
-			StorageAttachment: entities.StorageAttachment{StorageID: storage.StorageID, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly},
+			StorageAttachment: entities.StorageAttachment{StorageID: storage.StorageID, StoragePath: storage.StoragePath, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly, Managed: storage.Managed},
 			Kind:              entities.StorageKind(storage.Kind), Revision: storage.Revision,
 		}
 		for _, file := range storage.Files {
@@ -4984,7 +4985,7 @@ func (m *KubernetesSessionManager) buildVolumes(session *KubernetesSession) []co
 	})
 	if request := session.Request(); request != nil {
 		for index, storage := range request.Storages {
-			if storage.Kind != entities.StorageKindObjectSnapshot {
+			if storage.Kind != entities.StorageKindObjectSnapshot || storage.Managed {
 				continue
 			}
 			volume := corev1.Volume{Name: storageVolumeName(index)}
@@ -6326,6 +6327,9 @@ func (m *KubernetesSessionManager) buildMainContainerVolumeMounts(session *Kuber
 		ReadOnly:  true,
 	})
 	for index, storage := range req.Storages {
+		if storage.Managed {
+			continue
+		}
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name: storageVolumeName(index), MountPath: storage.MountPath, ReadOnly: storage.ReadOnly,
 		})
@@ -6977,7 +6981,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	settings.UnsyncedFilePaths = append([]string(nil), req.UnsyncedFilePaths...)
 	for _, storage := range req.Storages {
 		resolved := sessionsettings.StorageAttachment{
-			StorageID: storage.StorageID, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly,
+			StorageID: storage.StorageID, StoragePath: storage.StoragePath, MountPath: storage.MountPath, ReadOnly: storage.ReadOnly, Managed: storage.Managed,
 			Kind: string(storage.Kind), Revision: storage.Revision,
 		}
 		for _, file := range storage.Files {
@@ -7569,6 +7573,28 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	applyModelConnections(settings, req)
 
 	return settings
+}
+
+func filterManagedStoragesForAgent(storages []entities.ResolvedStorageAttachment, agentType string) []entities.ResolvedStorageAttachment {
+	agent := ""
+	if strings.Contains(agentType, "codex") {
+		agent = "codex"
+	} else if strings.Contains(agentType, "claude") {
+		agent = "claude"
+	}
+	result := make([]entities.ResolvedStorageAttachment, 0, len(storages))
+	for _, storage := range storages {
+		if storage.Managed && strings.HasPrefix(storage.StoragePath, "session-state/") && !strings.HasPrefix(storage.StoragePath, "session-state/acp/") {
+			if (strings.Contains(storage.StoragePath, "/codex") && agent != "codex") || (strings.Contains(storage.StoragePath, "/claude") && agent != "claude") {
+				continue
+			}
+		}
+		if storage.Managed && strings.HasPrefix(storage.StoragePath, "session-state/acp/") && !strings.HasSuffix(storage.StoragePath, "/"+agent) {
+			continue
+		}
+		result = append(result, storage)
+	}
+	return result
 }
 
 func (m *KubernetesSessionManager) setTeamGitHubInstallationToken(
