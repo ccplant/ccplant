@@ -100,7 +100,8 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
     "session_state": {
       "enabled": true,
       "storage_id": "storage-1",
-      "components": ["agent_state", "workspace"]
+      "components": ["agent_state", "workspace"],
+      "agents": ["codex", "claude"]
     }
   }
 }
@@ -110,6 +111,12 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
 有効時は profile と同じ scope の `ready` な Storage が必須である。Pool 制約も通常 attachment と
 同じタイミングで検証する。`components` も無効時に保持し、有効時は 1 件以上を必須とする。
 未知の値は silently ignore せず validation error にする。
+
+`agents` は `agent_state` の保持対象を選ぶ独立した軸で、`codex` と `claude` の unique array とする。
+`agent_state` が選択されている場合は 1 件以上を必須とする。`workspace` だけを選択した場合、`agents` は
+空でもよい。無効化や component の切り替えで選択を失わないよう、利用されない `agents` も保存する。
+Profile が agent type を固定している場合、固定された agent を選んでいない `agent_state` 設定は
+実行時に黙って無効化せず validation error にする。
 
 初期 version では次の component を提供する。
 
@@ -122,18 +129,22 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
 component は server が所有する versioned policy 名であり、任意 path や glob を Profile API からは
 受け付けない。新しい component を追加するときは既存名の意味を広げず、新しい enum 値を追加する。
 
-Profile 解決後、選択された component と agent type に応じて server が次の managed attachment を生成する。
+Profile 解決後、選択された component、`agents`、実際に起動する agent type に応じて server が次の
+managed attachment を生成する。
 
 | component | agent type | storage path | container path | 保存対象 |
 | --- | --- | --- | --- | --- |
 | `agent_state` | `codex-acp` | `session-state/codex` | `/home/agentapi/.codex` | rollout、session index、state DB |
 | `agent_state` | `claude-acp` | `session-state/claude` | `/home/agentapi/.claude` | project conversation state |
-| `agent_state` | all | `session-state/acp` | `/home/agentapi/.session` | ACP bridge history と resume metadata |
+| `agent_state` | `codex-acp` | `session-state/acp/codex` | `/home/agentapi/.session` | Codex ACP bridge history と resume metadata |
+| `agent_state` | `claude-acp` | `session-state/acp/claude` | `/home/agentapi/.session` | Claude ACP bridge history と resume metadata |
 | `workspace` | all | `workspace` | `/home/agentapi/workdir` | checkout 後の working tree |
 
-`agent_state` が選択され、Profile が agent type を固定していない場合は Codex と Claude の両方を生成する。
+`agents` は Storage に保持してよい agent state の allowlist である。起動時には実際の agent との交差だけを
+mount し、Codex session に Claude の state volumeを不要に mount しない。たとえば `agents=["codex"]` の
+Profile から Claude session を起動した場合、`workspace` は選択どおり保持するが `agent_state` は保持しない。
 同じ Storage を異なる source/target の組として使うため、multi-path mount が必要になる。将来 agent を
-追加するときは server-side mapping を増やし、Profile schema を変更しない。
+追加するときは `agents` enum と server-side mapping に明示的に追加する。
 
 `workspace` の target は既存 workdir volume と同じなので、別の EmptyDir を重ねて mount しない。
 Kubernetes Session Manager は managed group を既存 workdir volume に関連付け、repository clone 完了後に
@@ -143,8 +154,8 @@ Storage の内容をそのまま復元する。Profile の repository が変わ�
 
 managed attachment と `config.params.storages` の target が衝突した場合は validation error とし、暗黙の
 上書きはしない。`session_state` は Profile inheritance の通常の scalar として、子で指定した object が
-親を置換する。したがって子 Profile は `components` を明示して、親の保持対象を減らすことも増やすことも
-できる。
+親を置換する。したがって子 Profile は `components` と `agents` を明示して、親の保持対象を減らすことも
+増やすこともできる。
 
 ## 5. Safe persistence boundary
 
@@ -188,16 +199,19 @@ lease は canonical session resource に選択 component とともに記録し�
 ## 6. Frontend
 
 Session Profile の Storage section の先頭に「セッション情報を保持する」toggle、Storage selector、
-「保持する情報」の checkbox group を追加する。selector は Profile と同じ user/team scope の Storage のみを
-表示する。
+「保持する情報」と「対象エージェント」の checkbox group を追加する。selector は Profile と同じ
+user/team scope の Storage のみを表示する。
 
 - toggle OFF: selector は disabled だが値を保持する。
 - toggle ON で未選択: save を無効化し、Storage 作成画面への link を表示する。
 - checkbox は「会話とエージェント状態」を既定 ON、「作業ディレクトリ」を既定 OFF とする。
+- 対象エージェントは Codex / Claude の checkbox とし、Profile の agent type が固定ならその agent、
+  未固定なら両方を新規 Profile の既定値とする。
+- 「会話とエージェント状態」が OFF の間は対象エージェントを disabled にするが値は保持する。
+- 固定 agent と対象エージェントが矛盾する場合は field error を表示する。
 - toggle ON で checkbox がすべて OFF: save を無効化する。
 - 各 checkbox の下に、保持する主な path、保持しない credential、容量・排他利用への影響を表示する。
-- agent type 固定時は実際に保持する agent state を表示する。
-- agent type 未固定時は「Codex と Claude の状態を同じ Storage 内の別領域に保存」と表示する。
+- agent type 未固定時は、選択した agent ごとに同じ Storage 内の別領域へ保存することを表示する。
 - team scope では同時に 1 session だけ利用できることと、team member が履歴へアクセスできることを
   warning として表示する。
 - 編集時に server が未対応の component 値を返した場合は read-only の「このバージョンでは未対応」項目として
@@ -222,6 +236,7 @@ target range を検証する。
 - `StorageAttachment` schema に optional `storage_path` を追加する。
 - `SessionProfileConfig` schema に optional `session_state` を追加する。
 - `session_state.components` は `agent_state | workspace` の unique array とする。
+- `session_state.agents` は `codex | claude` の unique array とする。
 - storage manifest list に optional `prefix` を追加する。
 - session start の 400/409 error code を OpenAPI に追加する。
 - External Session Manager capability に `storage_multi_mount` と `managed_session_state_v1` を追加する。
@@ -237,8 +252,8 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 2. Kubernetes と native runtime に multi-target mount を実装し、capability を公開する。
 3. prefix-aware restore/sync と、同一 source group に sync worker が 1 個だけ作られることを検証する。
 4. component ごとの managed include policy、restore ordering、exclusive lease を実装する。
-5. Profile API に `session_state.storage_id` と `components` を追加する。
-6. フロントの toggle/selector/checkbox group と汎用 attachment editor を更新する。
+5. Profile API に `session_state.storage_id`, `components`, `agents` を追加する。
+6. フロントの toggle/selector/component・agent checkbox group と汎用 attachment editor を更新する。
 7. feature flag `storage_backed_session_state` で有効化し、既存 Storage workload に影響がないことを
    確認後に default-on とする。
 
@@ -251,7 +266,9 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 - legacy attachment と保存済み flat SessionSettings を復元できる。
 - credential、hooks、settings、skills が object storage に upload されない。
 - `agent_state` だけ、`workspace` だけ、両方、無効の各 Profile が選択どおりの group を生成する。
-- 子 Profile で component を増減でき、未知の component をフロントが消さない。
+- Codexだけ、Claudeだけ、両方の選択が、実際の起動 agent と交差した group だけを生成する。
+- 固定 agent との矛盾、`agent_state` 選択時の空 agents、未知の agent を validation で拒否する。
+- 子 Profile で component/agent を増減でき、未知の値をフロントが消さない。
 - workspace の Git/non-Git restore と repository identity mismatch を検証する。
 - restore 後に現在の Profile 設定と credential が優先される。
 - writable managed state の二重起動は 409 になり、異常終了後に lease が回収される。
