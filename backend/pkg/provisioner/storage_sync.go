@@ -165,7 +165,7 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 	// sync even when they are not modified again afterwards.
 	last := make(map[string]storageLocalFile, len(storage.Files))
 	for _, file := range storage.Files {
-		if !managedStoragePathAllowed(storage.MountPath, file.Path) {
+		if !storageSyncPathAllowed(storage, file.Path) {
 			continue
 		}
 		last[file.Path] = storageLocalFile{digest: file.Digest, mode: file.Mode}
@@ -182,6 +182,7 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 			log.Printf("[STORAGE_SYNC] Scan failed for %s: %v", storage.StorageID, scanErr)
 			return
 		}
+		current = filterStorageSyncFiles(storage, current)
 		remoteTouched := make(map[string]struct{})
 		for _, remote := range manifest.Files {
 			if remote.Revision <= knownRevision {
@@ -226,6 +227,7 @@ func runOneStorageSync(ctx context.Context, client *http.Client, endpoint, apiKe
 		if scanErr != nil {
 			return
 		}
+		current = filterStorageSyncFiles(storage, current)
 		paths := make([]string, 0, len(current))
 		for filePath := range current {
 			paths = append(paths, filePath)
@@ -308,8 +310,35 @@ func fetchStorageManifest(ctx context.Context, client *http.Client, endpoint, ap
 			}
 		}
 		manifest.Files = filtered
+	} else if !storage.Managed {
+		filtered := manifest.Files[:0]
+		for _, file := range manifest.Files {
+			if storageSyncPathAllowed(storage, file.Path) {
+				filtered = append(filtered, file)
+			}
+		}
+		manifest.Files = filtered
 	}
 	return &manifest, nil
+}
+
+func filterStorageSyncFiles(storage sessionsettings.StorageAttachment, files map[string]storageLocalFile) map[string]storageLocalFile {
+	for filePath := range files {
+		if !storageSyncPathAllowed(storage, filePath) {
+			delete(files, filePath)
+		}
+	}
+	return files
+}
+
+func storageSyncPathAllowed(storage sessionsettings.StorageAttachment, filePath string) bool {
+	if !managedStoragePathAllowed(storage.MountPath, filePath) {
+		return false
+	}
+	if storage.Managed || storage.StoragePath != "" {
+		return true
+	}
+	return filePath != "workspace" && !strings.HasPrefix(filePath, "workspace/") && filePath != "session-state" && !strings.HasPrefix(filePath, "session-state/")
 }
 
 func storageRemotePath(storage sessionsettings.StorageAttachment, filePath string) string {

@@ -2,6 +2,8 @@ package app
 
 import (
 	"testing"
+
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 )
 
 func TestExtractRepoFullNameFromURL(t *testing.T) {
@@ -39,6 +41,35 @@ func TestExtractRepoFullNameFromURL(t *testing.T) {
 				t.Errorf("Expected %s, got %s", tt.expected, result)
 			}
 		})
+	}
+}
+
+func TestManagedStorageNamespaceOverlapAllowed(t *testing.T) {
+	regularRoot := entities.StorageAttachment{StorageID: "state", MountPath: "/home/agentapi/memory"}
+	managedState := entities.StorageAttachment{StorageID: "state", StoragePath: "session-state/codex", MountPath: "/home/agentapi/.codex", Managed: true}
+	repeatedRoot := entities.StorageAttachment{StorageID: "state", MountPath: "/home/agentapi/other"}
+	regularManagedPath := entities.StorageAttachment{StorageID: "state", StoragePath: "session-state", MountPath: "/home/agentapi/state"}
+
+	if !managedStorageNamespaceOverlapAllowed(regularRoot, managedState) {
+		t.Fatal("regular root and managed session state should be safely partitioned")
+	}
+	if managedStorageNamespaceOverlapAllowed(regularRoot, repeatedRoot) {
+		t.Fatal("two regular overlapping attachments must remain rejected")
+	}
+	if managedStorageNamespaceOverlapAllowed(regularManagedPath, managedState) {
+		t.Fatal("an explicit regular managed-namespace attachment must remain rejected")
+	}
+}
+
+func TestRegularRootStorageExcludesManagedNamespaces(t *testing.T) {
+	regularRoot := entities.StorageAttachment{StorageID: "state", MountPath: "/home/agentapi/memory"}
+	for _, path := range []string{"session-state/codex/state.json", "workspace/repo/file.txt"} {
+		if storageAttachmentIncludesRemotePath(regularRoot, path) {
+			t.Fatalf("regular root unexpectedly includes managed path %q", path)
+		}
+	}
+	if !storageAttachmentIncludesRemotePath(regularRoot, "notes/todo.md") {
+		t.Fatal("regular root should include ordinary storage files")
 	}
 }
 
