@@ -2,9 +2,9 @@
 
 ## 1. Goal
 
-Session Profile で既存の scope-owned Storage を選び、セッションを削除・再作成しても
-agent のローカル状態を引き継げるようにする。1 個の Storage の異なる領域を複数の
-container path へ mount できることを、汎用の Storage attachment として先に実現する。
+Session Profile で既存の scope-owned Storage と保持対象を選び、セッションを削除・再作成しても
+会話状態や workspace など、選択した情報だけを引き継げるようにする。1 個の Storage の異なる領域を
+複数の container path へ mount できることを、汎用の Storage attachment として先に実現する。
 
 この機能は同じ論理 session を復元する `resume_from` / session snapshot の置き換えではない。
 Storage は Profile を使う複数 session 間で agent home の状態を継承するために使い、
@@ -99,7 +99,8 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
   "config": {
     "session_state": {
       "enabled": true,
-      "storage_id": "storage-1"
+      "storage_id": "storage-1",
+      "components": ["agent_state", "workspace"]
     }
   }
 }
@@ -107,22 +108,43 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
 
 `enabled=false` でも `storage_id` は保存し、再度有効にしたときに選択を維持する。
 有効時は profile と同じ scope の `ready` な Storage が必須である。Pool 制約も通常 attachment と
-同じタイミングで検証する。
+同じタイミングで検証する。`components` も無効時に保持し、有効時は 1 件以上を必須とする。
+未知の値は silently ignore せず validation error にする。
 
-Profile 解決後、選択された agent type に応じて server が次の managed attachment を生成する。
+初期 version では次の component を提供する。
 
-| agent type | storage path | container path | 保存対象 |
+| component | UI label | 保持する情報 | 保持しない情報 |
 | --- | --- | --- | --- |
-| `codex-acp` | `session-state/codex` | `/home/agentapi/.codex` | rollout、session index、state DB |
-| `claude-acp` | `session-state/claude` | `/home/agentapi/.claude` | project conversation state |
+| `agent_state` | 会話とエージェント状態 | agent の会話 file、resume index、ACP history | credential、Profile 生成設定、plugin、cache |
+| `workspace` | 作業ディレクトリ | repository の変更、未追跡 file、非 Git workspace | `.git` object のうち clone で再現可能なもの、secret と判定した managed file |
 
-Profile が agent type を固定していない場合は両方を生成する。同じ Storage を異なる source/target の
-組として使うため、multi-path mount が必要になる。将来 agent を追加するときは server-side mapping を
-増やし、Profile schema を変更しない。
+`agent_state` は既定で選択する。`workspace` は容量と同期時間が増えるため opt-in とする。
+component は server が所有する versioned policy 名であり、任意 path や glob を Profile API からは
+受け付けない。新しい component を追加するときは既存名の意味を広げず、新しい enum 値を追加する。
+
+Profile 解決後、選択された component と agent type に応じて server が次の managed attachment を生成する。
+
+| component | agent type | storage path | container path | 保存対象 |
+| --- | --- | --- | --- | --- |
+| `agent_state` | `codex-acp` | `session-state/codex` | `/home/agentapi/.codex` | rollout、session index、state DB |
+| `agent_state` | `claude-acp` | `session-state/claude` | `/home/agentapi/.claude` | project conversation state |
+| `agent_state` | all | `session-state/acp` | `/home/agentapi/.session` | ACP bridge history と resume metadata |
+| `workspace` | all | `workspace` | `/home/agentapi/workdir` | checkout 後の working tree |
+
+`agent_state` が選択され、Profile が agent type を固定していない場合は Codex と Claude の両方を生成する。
+同じ Storage を異なる source/target の組として使うため、multi-path mount が必要になる。将来 agent を
+追加するときは server-side mapping を増やし、Profile schema を変更しない。
+
+`workspace` の target は既存 workdir volume と同じなので、別の EmptyDir を重ねて mount しない。
+Kubernetes Session Manager は managed group を既存 workdir volume に関連付け、repository clone 完了後に
+restore する。Git repository では clone した HEAD を基底に Storage の変更を重ね、非 Git workspace では
+Storage の内容をそのまま復元する。Profile の repository が変わった場合は、保存済み repository identity と
+一致しないため `409 session_state_workspace_mismatch` とし、別 repository に古い差分を適用しない。
 
 managed attachment と `config.params.storages` の target が衝突した場合は validation error とし、暗黙の
 上書きはしない。`session_state` は Profile inheritance の通常の scalar として、子で指定した object が
-親を置換する。
+親を置換する。したがって子 Profile は `components` を明示して、親の保持対象を減らすことも増やすことも
+できる。
 
 ## 5. Safe persistence boundary
 
@@ -130,41 +152,56 @@ agent home 全体をそのまま同期してはいけない。認証情報と現
 別 session に持ち越すためである。managed session-state group には server-defined include/exclude policyを
 付け、client から変更できないようにする。
 
-初期 policy は次のとおりとする。
+`agent_state` policy は次のとおりとする。
 
 - Codex include: `sessions/**`, `session_index.jsonl`, `state_*.sqlite*`
 - Claude include: `projects/**`
 - 常時 exclude: `auth.json`, `.credentials.json`, model connection identity、hooks、settings、skills、plugin、cache
 - symlink、socket、device、64 MiB を超える file は従来どおり同期しない
 
+`workspace` policy は次のとおりとする。
+
+- Git repository は HEAD、branch、staged/unstaged patch、未追跡 file を保持する既存 session snapshot の
+  filter を再利用する。clone で再現できる tracked file と `.git/objects` は複製しない。
+- 非 Git workspace は通常 file を保持する。
+- `.git` credential、Profile の managed file、socket、device、64 MiB を超える file は除外する。
+- `unsynced_file_paths` は managed session state にも適用し、component の include より優先する。
+
 restore 順序を次に変更する。
 
 1. Storage volume を空の agent home target に mount する。
-2. managed session-state を restore する。
-3. `SetupSettings` / `CompileSettings` で現在の Profile の設定を生成する。
-4. managed credential を書き込み、connection identity を検証する。
-5. agent を起動して sync worker を開始する。
+2. `agent_state` を restore する。
+3. repository を clone し、選択時だけ `workspace` を restore する。
+4. `SetupSettings` / `CompileSettings` で現在の Profile の設定を生成する。
+5. managed credential を書き込み、connection identity を検証する。
+6. agent を起動して component ごとの sync worker を開始する。
 
 これにより永続状態より現在の Profile・credential が常に優先される。generic attachment の restore
 順序は変更しない。
 
-Codex の SQLite DB と WAL は個別 file の last-write-wins では整合性を保証できない。そのため managed
-session state を writable attach する session は Storage 単位の exclusive lease を取得する。既に別の
-active session が lease を持つ場合、start は `409 session_state_storage_in_use` を返す。lease は canonical
-session resource に記録し、正常終了、削除、期限切れ reconciler で解放する。generic Storage attachment の
-既存 multi-writer semantics は変更しない。
+Codex の SQLite DB と WAL、同じ workspace の同時更新は file 単位の last-write-wins では整合性を
+保証できない。そのため writable component を 1 件でも選んだ session は Storage 単位の exclusive lease を
+取得する。既に別の active session が lease を持つ場合、start は `409 session_state_storage_in_use` を返す。
+lease は canonical session resource に選択 component とともに記録し、正常終了、削除、期限切れ reconciler で
+解放する。generic Storage attachment の既存 multi-writer semantics は変更しない。
 
 ## 6. Frontend
 
-Session Profile の Storage section の先頭に「エージェントの状態を保持する」toggle と Storage selector を
-追加する。selector は Profile と同じ user/team scope の Storage のみを表示する。
+Session Profile の Storage section の先頭に「セッション情報を保持する」toggle、Storage selector、
+「保持する情報」の checkbox group を追加する。selector は Profile と同じ user/team scope の Storage のみを
+表示する。
 
 - toggle OFF: selector は disabled だが値を保持する。
 - toggle ON で未選択: save を無効化し、Storage 作成画面への link を表示する。
-- agent type 固定時は実際に保持する対象を表示する。
+- checkbox は「会話とエージェント状態」を既定 ON、「作業ディレクトリ」を既定 OFF とする。
+- toggle ON で checkbox がすべて OFF: save を無効化する。
+- 各 checkbox の下に、保持する主な path、保持しない credential、容量・排他利用への影響を表示する。
+- agent type 固定時は実際に保持する agent state を表示する。
 - agent type 未固定時は「Codex と Claude の状態を同じ Storage 内の別領域に保存」と表示する。
 - team scope では同時に 1 session だけ利用できることと、team member が履歴へアクセスできることを
   warning として表示する。
+- 編集時に server が未対応の component 値を返した場合は read-only の「このバージョンでは未対応」項目として
+  保持し、保存操作で勝手に削除しない。
 
 同じ画面の詳細設定として既存 `StorageAttachmentEditor` は残す。ここでは同じ Storage を再選択可能にし、
 各 row に任意の `storage_path` field を追加する。追加 button は「未使用 Storage があるか」ではなく、
@@ -184,6 +221,7 @@ target range を検証する。
 
 - `StorageAttachment` schema に optional `storage_path` を追加する。
 - `SessionProfileConfig` schema に optional `session_state` を追加する。
+- `session_state.components` は `agent_state | workspace` の unique array とする。
 - storage manifest list に optional `prefix` を追加する。
 - session start の 400/409 error code を OpenAPI に追加する。
 - External Session Manager capability に `storage_multi_mount` と `managed_session_state_v1` を追加する。
@@ -198,9 +236,9 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 1. `storage_path` の schema、validation、grouping、settings backward compatibility を導入する。
 2. Kubernetes と native runtime に multi-target mount を実装し、capability を公開する。
 3. prefix-aware restore/sync と、同一 source group に sync worker が 1 個だけ作られることを検証する。
-4. managed include policy、restore ordering、exclusive lease を実装する。
-5. Profile API に `session_state` を追加する。
-6. フロントの toggle/selector と汎用 attachment editor を更新する。
+4. component ごとの managed include policy、restore ordering、exclusive lease を実装する。
+5. Profile API に `session_state.storage_id` と `components` を追加する。
+6. フロントの toggle/selector/checkbox group と汎用 attachment editor を更新する。
 7. feature flag `storage_backed_session_state` で有効化し、既存 Storage workload に影響がないことを
    確認後に default-on とする。
 
@@ -212,6 +250,9 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 - Profile/start merge が target path ごとに置換され、同じ Storage の他 mount を失わない。
 - legacy attachment と保存済み flat SessionSettings を復元できる。
 - credential、hooks、settings、skills が object storage に upload されない。
+- `agent_state` だけ、`workspace` だけ、両方、無効の各 Profile が選択どおりの group を生成する。
+- 子 Profile で component を増減でき、未知の component をフロントが消さない。
+- workspace の Git/non-Git restore と repository identity mismatch を検証する。
 - restore 後に現在の Profile 設定と credential が優先される。
 - writable managed state の二重起動は 409 になり、異常終了後に lease が回収される。
 - read-only alias と generic multi-writer Storage の既存挙動を壊さない。
@@ -224,3 +265,4 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 - 複数 session から同じ Codex SQLite state を同時更新すること。
 - `resume_from`、automatic suspend、session snapshot を Storage に統合すること。
 - agent home 全体、credential、Profile 生成物を永続化すること。
+- Profile から任意 path や任意 glob を保持対象として指定すること。
