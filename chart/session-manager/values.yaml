@@ -93,8 +93,9 @@ session:
     disableServiceAccountToken: true
     # Requires Cilium. Preserves normal egress while denying the kube-apiserver entity.
     blockKubernetesAPI: false
-    # Requires Cilium. Set to public-only to allow kube-dns and the Cilium
-    # world entity while denying all other cluster-internal egress.
+    # Requires Cilium. Set to public-only to allow kube-dns, the Cilium world
+    # entity, and this release's authenticated session-manager endpoint while
+    # denying all other cluster-internal egress.
     egressMode: ""
   networkFilterImage: ghcr.io/takutakahashi/nfa:0.12.4
   imagePullPolicy: IfNotPresent
