@@ -100,7 +100,7 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
       "enabled": true,
       "storage_id": "storage-1",
       "components": ["agent_state", "workspace"],
-      "agents": ["codex", "claude"]
+      "agents": ["claude"]
     }
   }
 }
@@ -111,7 +111,9 @@ Storage の低レベル attachment editor とは別に、Profile に intent を�
 同じタイミングで検証する。`components` も無効時に保持し、有効時は 1 件以上を必須とする。
 未知の値は silently ignore せず validation error にする。
 
-`agents` は `agent_state` の保持対象を選ぶ独立した軸で、`codex` と `claude` の unique array とする。
+`agents` は `agent_state` の保持対象を選ぶ独立した軸で、初期実装では `claude` の unique array とする。
+旧payloadの識別と明示的なerror応答のためschema上は `codex` も受理するが、`agent_state` と同時に指定すると
+validation errorにする。
 `agent_state` が選択されている場合は 1 件以上を必須とする。`workspace` だけを選択した場合、`agents` は
 空でもよい。無効化や component の切り替えで選択を失わないよう、利用されない `agents` も保存する。
 Profile が agent type を固定している場合、固定された agent を選んでいない `agent_state` 設定は
@@ -133,13 +135,17 @@ managed attachment を生成する。
 
 | component | agent type | storage path | container path | 保存対象 |
 | --- | --- | --- | --- | --- |
-| `agent_state` | `codex-acp` | `session-state/codex` | `/home/agentapi/.codex` | rollout、session index、state DB |
 | `agent_state` | `claude-acp` | `session-state/claude` | `/home/agentapi/.claude` | project conversation state |
 | `workspace` | all | `workspace` | `/home/agentapi/workdir` | checkout 後の working tree |
 
+Codex の state DB と WAL は file 単位の object Storage 同期では整合性を保証できないため、Codex の
+`agent_state` は非対応とし、設定時に validation error とする。現在のvolume-backed session persistenceも
+稼働中のCodex stateをarchiveへcopyする方式であり、この制約の安全な代替にはならない。Codexを停止してから
+snapshotするか、`.codex`自体をsession専用volumeで保持する方式を実装するまでresume保証の対象外とする。
+
 `agents` は Storage に保持してよい agent state の allowlist である。起動時には実際の agent との交差だけを
-mount し、Codex session に Claude の state volumeを不要に mount しない。たとえば `agents=["codex"]` の
-Profile から Claude session を起動した場合、`workspace` は選択どおり保持するが `agent_state` は保持しない。
+mount し、Codex session に Claude の state volumeを不要に mount しない。Codex Profileでは `workspace`
+だけをStorageへ保持でき、`agent_state`を選ぶとvalidation errorになる。
 同じ Storage を異なる source/target の組として使うため、multi-path mount が必要になる。将来 agent を
 追加するときは `agents` enum と server-side mapping に明示的に追加する。
 
@@ -162,7 +168,6 @@ agent home 全体をそのまま同期してはいけない。認証情報と現
 
 `agent_state` policy は次のとおりとする。
 
-- Codex include: `sessions/**`, `session_index.jsonl`, `state_*.sqlite*`
 - Claude include: `projects/**`
 - 常時 exclude: `auth.json`, `.credentials.json`, model connection identity、hooks、settings、skills、plugin、cache
 - symlink、socket、device、64 MiB を超える file は従来どおり同期しない
@@ -187,9 +192,9 @@ restore 順序を次に変更する。
 これにより永続状態より現在の Profile・credential が常に優先される。generic attachment の restore
 順序は変更しない。
 
-Codex の SQLite DB と WAL、同じ workspace の同時更新は file 単位の last-write-wins では整合性を
-保証できない。初期実装ではUIで同時利用を避けるよう警告し、運用上1 writerとする。Storage単位の
-distributed leaseと `409 session_state_storage_in_use` は次段階で追加する。generic Storage attachment の
+同じClaude project stateやworkspaceの同時更新はfile単位のlast-write-winsでは整合性を保証できない。
+初期実装ではUIで同時利用を避けるよう警告し、運用上1 writerとする。Storage単位のdistributed leaseと
+`409 session_state_storage_in_use` は次段階で追加する。generic Storage attachment の
 既存multi-writer semanticsは変更しない。
 
 ## 6. Frontend
@@ -201,8 +206,7 @@ user/team scope の Storage のみを表示する。
 - toggle OFF: selector は disabled だが値を保持する。
 - toggle ON で未選択: save を無効化し、Storage 作成画面への link を表示する。
 - checkbox は「会話とエージェント状態」を既定 ON、「作業ディレクトリ」を既定 OFF とする。
-- 対象エージェントは Codex / Claude の checkbox とし、Profile の agent type が固定ならその agent、
-  未固定なら両方を新規 Profile の既定値とする。
+- 対象エージェントはClaudeだけを選択可能にする。Codexは非対応と表示する。
 - 「会話とエージェント状態」が OFF の間は対象エージェントを disabled にするが値は保持する。
 - 固定 agent と対象エージェントが矛盾する場合は field error を表示する。
 - toggle ON で checkbox がすべて OFF: save を無効化する。
@@ -232,7 +236,7 @@ target range を検証する。
 - `StorageAttachment` schema に optional `storage_path` を追加する。
 - `SessionProfileConfig` schema に optional `session_state` を追加する。
 - `session_state.components` は `agent_state | workspace` の unique array とする。
-- `session_state.agents` は `codex | claude` の unique array とする。
+- `session_state.agents` は互換性のため `codex | claude` のunique arrayとするが、`agent_state`と`codex`の組は拒否する。
 - storage manifest list に optional `prefix` を追加する。
 - session start の 400/409 error code を OpenAPI に追加する。
 - External Session Manager capability に `storage_multi_mount` と `managed_session_state_v1` を追加する。
@@ -255,14 +259,14 @@ agentapi 自体の API 変更はない。この機能は親 proxy の start/Prof
 
 ## 10. Verification
 
-- 同じ Storage の別 subtree を Codex/Claude path に同時 mount できる。
+- 同じ Storage の別 subtree を複数のmanaged componentへmountできる。
 - 同じ `(storage_id, storage_path)` の alias は同じ volume を参照し、sync worker は 1 個だけである。
 - source/target の親子 overlap、reserved path の通常 attachment、scope/Pool 不一致を拒否する。
 - Profile/start merge が target path ごとに置換され、同じ Storage の他 mount を失わない。
 - legacy attachment と保存済み flat SessionSettings を復元できる。
 - credential、hooks、settings、skills が object storage に upload されない。
 - `agent_state` だけ、`workspace` だけ、両方、無効の各 Profile が選択どおりの group を生成する。
-- Codexだけ、Claudeだけ、両方の選択が、実際の起動 agent と交差した group だけを生成する。
+- Claudeを選択した場合だけ、実際の起動agentと交差したagent state groupを生成する。
 - 固定 agent との矛盾、`agent_state` 選択時の空 agents、未知の agent を validation で拒否する。
 - 子 Profile で component/agent を増減でき、未知の値をフロントが消さない。
 - workspace の Git/non-Git restore と repository identity mismatch を検証する。

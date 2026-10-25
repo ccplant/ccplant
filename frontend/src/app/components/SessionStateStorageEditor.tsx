@@ -27,7 +27,7 @@ export default function SessionStateStorageEditor({ value, onChange, scope, team
   }, [scope, teamId])
 
   const components = value.components ?? ['agent_state']
-  const agents = value.agents ?? ['codex', 'claude']
+  const agents = value.agents ?? ['claude']
   const toggleComponent = (component: SessionStateComponent) => onChange({
     ...value,
     components: components.includes(component) ? components.filter(item => item !== component) : [...components, component],
@@ -80,13 +80,14 @@ export default function SessionStateStorageEditor({ value, onChange, scope, team
         <legend className="mb-2 text-sm font-medium">対象エージェント</legend>
         <div className="flex flex-wrap gap-4">
           {(['codex', 'claude'] as const).map(agent => <label key={agent} className="flex items-center gap-2 text-sm">
-            <input disabled={!value.enabled || !agentStateEnabled} type="checkbox" checked={agents.includes(agent)} onChange={() => toggleAgent(agent)} />
-            {agent === 'codex' ? 'Codex' : 'Claude'}
+            <input disabled={!value.enabled || !agentStateEnabled || (agent === 'codex' && !agents.includes(agent))} type="checkbox" checked={agents.includes(agent)} onChange={() => toggleAgent(agent)} />
+            {agent === 'codex' ? 'Codex（非対応）' : 'Claude'}
           </label>)}
         </div>
-        {fixedAgent && !agents.includes(fixedAgent) && <p className="text-sm text-red-600 dark:text-red-400">このProfileのエージェント（{fixedAgent === 'codex' ? 'Codex' : 'Claude'}）を選択してください。</p>}
+        {agentStateEnabled && agents.includes('codex') && <p className="text-sm text-red-600 dark:text-red-400">Codexの状態DBはファイル単位では安全に同期できないため、セッション情報のStorage保存には対応していません。Codexのチェックを外してください。</p>}
+        {fixedAgent === 'claude' && !agents.includes('claude') && <p className="text-sm text-red-600 dark:text-red-400">このProfileのエージェント（Claude）を選択してください。</p>}
       </fieldset>
-      <p className="text-xs text-amber-700 dark:text-amber-300">同じ保存先を使うセッションは同時に起動しないでください。状態DBや作業ファイルが競合する可能性があります。</p>
+      <p className="text-xs text-amber-700 dark:text-amber-300">Claudeの会話状態と作業ファイルは、同じ保存先を使う複数セッションから同時に更新しないでください。</p>
     </div>
   </section>
 }
