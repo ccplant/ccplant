@@ -509,6 +509,11 @@ func validateSessionStateConfig(value *entities.SessionStateConfig, params *enti
 	if _, enabled := components["agent_state"]; enabled && len(agents) == 0 {
 		return fmt.Errorf("at least one session state agent is required")
 	}
+	if _, enabled := components["agent_state"]; enabled {
+		if _, selected := agents["codex"]; selected {
+			return fmt.Errorf("storage-backed session state is not supported for codex")
+		}
+	}
 	if params != nil {
 		fixedAgent := sessionStateAgent(params.AgentType)
 		if _, enabled := components["agent_state"]; enabled && fixedAgent != "" {

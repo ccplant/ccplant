@@ -135,7 +135,7 @@ func TestApplySessionProfileAddsStorageAttachments(t *testing.T) {
 	require.Len(t, request.Params.Storages, 2)
 }
 
-func TestApplySessionProfileAddsSelectedSessionState(t *testing.T) {
+func TestApplySessionProfileDoesNotAddLegacyCodexSessionState(t *testing.T) {
 	profile := entities.NewSessionProfile("profile", "Profile", "user")
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetParams(&entities.SessionParams{AgentType: "codex-acp"})
@@ -145,8 +145,21 @@ func TestApplySessionProfileAddsSelectedSessionState(t *testing.T) {
 	applySessionProfile(request, profile, cfg, false, false)
 
 	require.Equal(t, []entities.StorageAttachment{
-		{StorageID: "state", StoragePath: "session-state/codex", MountPath: "/home/agentapi/.codex", Managed: true},
 		{StorageID: "state", StoragePath: "workspace", MountPath: "/home/agentapi/workdir", Managed: true},
+	}, request.Params.Storages)
+}
+
+func TestApplySessionProfileAddsClaudeSessionState(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{AgentType: "claude-acp"})
+	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"agent_state"}, Agents: []string{"claude"}})
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, []entities.StorageAttachment{
+		{StorageID: "state", StoragePath: "session-state/claude", MountPath: "/home/agentapi/.claude", Managed: true},
 	}, request.Params.Storages)
 }
 
@@ -154,10 +167,13 @@ func TestValidateSessionStateConfig(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetParams(&entities.SessionParams{AgentType: "codex-acp"})
 	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"agent_state"}, Agents: []string{"codex"}})
-	require.NoError(t, validateSessionProfileConfig(cfg))
+	require.ErrorContains(t, validateSessionProfileConfig(cfg), "not supported for codex")
 
 	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"agent_state"}, Agents: []string{"claude"}})
 	require.ErrorContains(t, validateSessionProfileConfig(cfg), "codex must be selected")
+
+	cfg.SetParams(&entities.SessionParams{AgentType: "claude-acp"})
+	require.NoError(t, validateSessionProfileConfig(cfg))
 
 	cfg.SetSessionState(&entities.SessionStateConfig{Enabled: true, StorageID: "state", Components: []string{"workspace"}})
 	require.NoError(t, validateSessionProfileConfig(cfg))

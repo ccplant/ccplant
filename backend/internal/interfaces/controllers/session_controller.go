@@ -2979,11 +2979,9 @@ func applyProfileSessionState(startReq *entities.StartRequest, state *entities.S
 	}
 	if componentEnabled("agent_state") {
 		agent := sessionStateAgent(startReq.Params.AgentType)
-		if agent == "" || agent == "codex" {
-			if agentEnabled("codex") {
-				appendManaged("session-state/codex", "/home/agentapi/.codex")
-			}
-		}
+		// Codex keeps its resume index in SQLite. File-by-file object storage
+		// synchronization cannot preserve a consistent database/WAL generation,
+		// so persisted legacy profiles must not create a managed Codex mount.
 		if agent == "" || agent == "claude" {
 			if agentEnabled("claude") {
 				appendManaged("session-state/claude", "/home/agentapi/.claude")

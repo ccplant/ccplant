@@ -106,7 +106,7 @@ export default function SessionProfileEditor({
   const [modelOptions, setModelOptions] = useState('')
   const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
   const [storages, setStorages] = useState<StorageAttachment[]>([])
-  const [sessionState, setSessionState] = useState<SessionStateConfig>({ enabled: false, components: ['agent_state'], agents: ['codex', 'claude'] })
+  const [sessionState, setSessionState] = useState<SessionStateConfig>({ enabled: false, components: ['agent_state'], agents: ['claude'] })
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
   const [sourceProfileId, setSourceProfileId] = useState('')
   const [availableProfiles, setAvailableProfiles] = useState<SessionProfile[]>([])
@@ -271,7 +271,7 @@ export default function SessionProfileEditor({
       setUnsyncedFilePaths(paths.join('\n'))
       setProfileFiles(cfg?.files ?? [])
       setStorages(cfg?.params?.storages ?? [])
-      setSessionState(cfg?.session_state ?? { enabled: false, components: ['agent_state'], agents: ['codex', 'claude'] })
+      setSessionState(cfg?.session_state ?? { enabled: false, components: ['agent_state'], agents: ['claude'] })
 
       setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
@@ -308,7 +308,7 @@ export default function SessionProfileEditor({
       setUnsyncedFilePaths('')
       setProfileFiles([])
       setStorages([])
-      setSessionState({ enabled: false, components: ['agent_state'], agents: ['codex', 'claude'] })
+      setSessionState({ enabled: false, components: ['agent_state'], agents: ['claude'] })
       setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
       setCodexConnection(null)
       setClaudeConnection(null)
@@ -455,7 +455,8 @@ export default function SessionProfileEditor({
         if (!sessionState.components?.length) throw new Error('保持するセッション情報を選択してください')
         if (sessionState.components.includes('agent_state') && !sessionState.agents?.length) throw new Error('対象エージェントを選択してください')
         const fixedAgent = agentType.includes('codex') ? 'codex' : agentType.includes('claude') ? 'claude' : ''
-        if (fixedAgent && sessionState.components.includes('agent_state') && !sessionState.agents?.includes(fixedAgent as 'codex' | 'claude')) throw new Error('Profileのエージェントを保持対象に選択してください')
+        if (sessionState.components.includes('agent_state') && sessionState.agents?.includes('codex')) throw new Error('Codexのセッション情報はStorageへ保存できません')
+        if (fixedAgent === 'claude' && sessionState.components.includes('agent_state') && !sessionState.agents?.includes('claude')) throw new Error('Profileのエージェントを保持対象に選択してください')
       }
       for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'codex_default_models', 'claude_default_models', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const parsedModelOptions = modelOptions.split('\n').map(line => line.trim()).filter(Boolean)

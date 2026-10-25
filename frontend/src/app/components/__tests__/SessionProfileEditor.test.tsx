@@ -26,16 +26,16 @@ describe('SessionProfileEditor storage', () => {
     render(<SessionProfileEditor section="storages" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{ id: 'profile', name: 'State', scope: 'user', created_at: '', updated_at: '', config: {} }} />)
     await screen.findByRole('option', { name: 'Shared files' })
     fireEvent.click(screen.getByLabelText('有効'))
+    expect((screen.getByLabelText('Codex（非対応）') as HTMLInputElement).disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('保存先Storage'), { target: { value: 'shared' } })
     fireEvent.click(screen.getByLabelText(/作業ディレクトリ/))
-    fireEvent.click(screen.getByLabelText('Claude'))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
     expect(mocks.update.mock.calls[0][1].config.session_state).toEqual({
       enabled: true,
       storage_id: 'shared',
       components: ['agent_state', 'workspace'],
-      agents: ['codex'],
+      agents: ['claude'],
     })
   })
 
