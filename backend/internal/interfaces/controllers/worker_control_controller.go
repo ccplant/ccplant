@@ -19,13 +19,14 @@ import (
 // background workers. Its credential is not accepted by provisioner or
 // session-manager endpoints.
 type WorkerControlController struct {
-	manager         repositories.SessionManager
-	token           string
-	teams           workerTeamEnsurer
-	routes          repositories.SessionRouteRepository
-	leases          schedule.LeaseClient
-	scheduleManager schedule.Manager
-	sessionDeleter  func(echo.Context) error
+	manager           repositories.SessionManager
+	token             string
+	teams             workerTeamEnsurer
+	routes            repositories.SessionRouteRepository
+	leases            schedule.LeaseClient
+	scheduleManager   schedule.Manager
+	sessionDeleter    func(echo.Context) error
+	allocationCleaner func(context.Context, string) error
 }
 
 func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
@@ -35,6 +36,11 @@ func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager)
 
 func (wc *WorkerControlController) WithSessionDeleter(deleter func(echo.Context) error) *WorkerControlController {
 	wc.sessionDeleter = deleter
+	return wc
+}
+
+func (wc *WorkerControlController) WithSessionPoolAllocationCleaner(cleaner func(context.Context, string) error) *WorkerControlController {
+	wc.allocationCleaner = cleaner
 	return wc
 }
 
@@ -378,6 +384,14 @@ func (wc *WorkerControlController) DeleteSession(c echo.Context) error {
 	}
 	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), publicID)); err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	// A pool route can still have no manager assigned when TTL cleanup observes
+	// it. This fallback path does not pass through SessionController's durable
+	// remote deletion, so explicitly remove its allocation after the workload.
+	if wc.allocationCleaner != nil {
+		if err := wc.allocationCleaner(c.Request().Context(), publicID); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 	}
 	// Pool-backed sessions use a public route alias for the adopted runtime ID.
 	// TTL cleanup must remove that alias after the runtime deletion succeeds or
