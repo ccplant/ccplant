@@ -753,6 +753,64 @@ func TestSessionManagerHeartbeatReportsAllocatedRunnerIDs(t *testing.T) {
 	}
 }
 
+func TestSessionManagerHeartbeatReportsPoliciesOnlyForActiveAllocations(t *testing.T) {
+	ctx := context.Background()
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	if err := store.CreateManager(ctx, manager); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateLogicalPool(ctx, &core.LogicalPool{Name: "linux", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"active-runner", "inactive-runner"} {
+		if err := store.CreateRunner(ctx, &core.Runner{ID: id, ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings, err := json.Marshal(sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{AgentType: "codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "active-session", Pool: "linux", ProvisionSettings: settings}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ClaimNext(ctx, "linux", "active-runner", time.Minute); err != nil || !found {
+		t.Fatalf("claim active allocation: found=%v err=%v", found, err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{
+		SessionID: "inactive-session", Pool: "linux", ManagerID: manager.ID,
+		RunnerID: "inactive-runner", ProvisionSettings: settings,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := NewSessionPoolController(store, nil)
+	result := callSessionPoolHandler(t, controller.HeartbeatManager, http.MethodPost, "/internal/session-managers/manager-a/heartbeat",
+		map[string]any{"local_runner_ids": []string{"active-runner", "inactive-runner"}}, map[string]string{"id": manager.ID},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+	var heartbeat struct {
+		AllocatedRunnerPolicies map[string]sessionsettings.SessionMeta `json:"allocated_runner_policies"`
+	}
+	decodeRecorder(t, result, &heartbeat)
+	if _, ok := heartbeat.AllocatedRunnerPolicies["active-runner"]; !ok {
+		t.Fatalf("active runner policy missing: %v", heartbeat.AllocatedRunnerPolicies)
+	}
+	if _, ok := heartbeat.AllocatedRunnerPolicies["inactive-runner"]; ok {
+		t.Fatalf("inactive runner policy was reported: %v", heartbeat.AllocatedRunnerPolicies)
+	}
+}
+
 func TestSessionManagerHeartbeatReconcilesSuspendedSessionStatus(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
