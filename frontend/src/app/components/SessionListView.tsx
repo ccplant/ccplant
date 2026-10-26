@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause, X } from 'lucide-react'
+import { CircleAlert, CircleDot, GitPullRequest, LoaderCircle, MoreHorizontal, Pause, Terminal, X } from 'lucide-react'
 import { Session, AgentStatus, SessionListParams } from '../../types/agentapi'
 import { createAgentAPIProxyClientFromStorage, AgentAPIProxyError, ProxySessionStatusEvent } from '../../lib/agentapi-proxy-client'
 import { createACPServerClientFromStorage, ACPServerSession } from '../../lib/acp-server-client'
@@ -12,6 +12,7 @@ import { useSessionsStatusStream } from '../hooks/useSessionsStatusStream'
 import { formatDate, formatRelativeTime } from '../../utils/timeUtils'
 import { truncateText } from '../../utils/textUtils'
 import { useTeamScope } from '../../contexts/TeamScopeContext'
+import SessionLogsDialog from './SessionLogsDialog'
 
 function createAgentStatusFromSession(session: Pick<Session, 'status' | 'updated_at'>): AgentStatus {
   switch (session.status) {
@@ -129,6 +130,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
   const [templateTarget, setTemplateTarget] = useState<Session | null>(null)
   const [templateName, setTemplateName] = useState('')
   const [templateDescription, setTemplateDescription] = useState('')
+  const [logSessionId, setLogSessionId] = useState<string | null>(null)
 
   const [sortBy, setSortBy] = useState<'started_at' | 'updated_at'>(() => {
     if (typeof window !== 'undefined') {
@@ -1189,6 +1191,7 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
                                 )}
                                 {!acpMode && (
                                   <>
+                                    <button type="button" onClick={() => { setOpenAnnotationMenuId(null); setLogSessionId(session.session_id) }} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"><Terminal className="h-3.5 w-3.5" aria-hidden="true" />Pod ログ</button>
                                     <button type="button" disabled={suspendingSession === session.session_id} onClick={() => { setOpenAnnotationMenuId(null); void restartSessionWithSettings(session.session_id) }} className="block w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">設定を再読み込みして再起動</button>
                                   </>
                                 )}
@@ -1315,6 +1318,8 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
           </form>
         </div>
       )}
+
+      {logSessionId && <SessionLogsDialog sessionId={logSessionId} onClose={() => setLogSessionId(null)} />}
 
     </div>
   )

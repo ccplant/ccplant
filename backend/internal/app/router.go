@@ -484,6 +484,8 @@ func (r *Router) registerCoreRoutes() error {
 	r.echo.PATCH("/session-context-templates/:templateId", r.handlers.sessionController.UpdateSessionContextTemplate)
 	r.echo.DELETE("/session-context-templates/:templateId", r.handlers.sessionController.DeleteSessionContextTemplate)
 	r.echo.DELETE("/sessions/:sessionId", r.handlers.sessionController.DeleteSession)
+	r.echo.GET("/sessions/:sessionId/logs", r.handlers.sessionController.GetSessionLogs,
+		auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
 	if r.handlers.sessionSecretController != nil {
 		r.echo.GET("/sessions/:sessionId/secrets", r.handlers.sessionSecretController.List,
 			auth.RequirePermission(entities.PermissionSessionRead, r.server.container.AuthService))
