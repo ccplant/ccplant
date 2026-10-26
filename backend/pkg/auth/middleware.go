@@ -113,8 +113,8 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 			if isInternalTokenEndpoint(path) {
 				return next(c)
 			}
-			if path == "/start" && cfg.Worker.ControlAPIToken != "" {
-				if authenticateTriggerExecution(c, cfg.Worker.ControlAPIToken, time.Now()) {
+			if path == "/start" && cfg.Worker.ExecutionTokenSigningKey != "" {
+				if authenticateTriggerExecution(c, cfg.Worker.ExecutionTokenSigningKey, time.Now()) {
 					return next(c)
 				}
 			}

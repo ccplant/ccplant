@@ -171,6 +171,9 @@ api:
     tokenSecretRef:
       name: ""
       key: token
+    executionTokenSigningKeySecretRef:
+      name: ""
+      key: execution-token-signing-key
   # Authenticated API client used when session-manager is enabled.
   sessionManager:
     url: ""
@@ -255,6 +258,9 @@ worker:
     tokenSecretRef:
       name: ""
       key: token
+    executionTokenSigningKeySecretRef:
+      name: ""
+      key: execution-token-signing-key
   # Normal session creation API used by scheduled jobs. Defaults to controlApi.url.
   sessionApi:
     url: ""

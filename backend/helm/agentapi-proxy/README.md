@@ -96,6 +96,8 @@ api:
   workerControl:
     tokenSecretRef:
       name: worker-control
+    executionTokenSigningKeySecretRef:
+      name: worker-execution-signing
   sessionManager:
     url: http://agentapi-proxy-session-manager:8080
     tokenSecretRef:

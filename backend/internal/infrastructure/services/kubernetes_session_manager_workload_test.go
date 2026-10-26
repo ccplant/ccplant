@@ -59,6 +59,28 @@ func newWorkloadTestSession() *KubernetesSession {
 	)
 }
 
+func TestSessionEnvironmentReceivesOnlyScopedControlCredential(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.ProvisionerToken = "control-plane-secret"
+	session := newWorkloadTestSession()
+
+	env := manager.buildEnvVars(session, session.Request())
+	values := make(map[string]string, len(env))
+	for _, item := range env {
+		values[item.Name] = item.Value
+	}
+	want := deriveSessionControlToken("control-plane-secret", session.ID())
+	if values["PROVISIONER_TOKEN"] != want {
+		t.Fatal("session-scoped provisioner credential was not injected")
+	}
+	if controlToken := values["SESSION_CONTROL_TOKEN"]; controlToken != "" && controlToken != want {
+		t.Fatal("session control credentials were not scoped consistently")
+	}
+	if values["PROVISIONER_TOKEN"] == manager.k8sConfig.ProvisionerToken {
+		t.Fatal("control-plane credential was exposed to the session environment")
+	}
+}
+
 func assertOwnedByService(t *testing.T, obj metav1.Object, serviceName string) {
 	t.Helper()
 	owners := obj.GetOwnerReferences()

@@ -104,6 +104,12 @@ spec:
                 secretKeyRef:
                   name: {{ required "worker.controlApi.tokenSecretRef.name is required when worker is enabled" $controlToken.name | quote }}
                   key: {{ $controlToken.key | default "token" | quote }}
+            {{- $executionTokenKey := $control.executionTokenSigningKeySecretRef | default dict }}
+            - name: AGENTAPI_EXECUTION_TOKEN_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "worker.controlApi.executionTokenSigningKeySecretRef.name is required when worker is enabled" $executionTokenKey.name | quote }}
+                  key: {{ $executionTokenKey.key | default "execution-token-signing-key" | quote }}
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ required "worker.kvStore.backend is required when worker is enabled" $kv.backend | quote }}
             - name: AGENTAPI_KV_STORE_NAMESPACE

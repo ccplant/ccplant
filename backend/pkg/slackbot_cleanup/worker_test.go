@@ -164,7 +164,7 @@ func TestClaimedPoolRouteFlowsFromControlListToTTLCleanup(t *testing.T) {
 		Tags:   map[string]string{"session_ttl": "1m"},
 		Status: "active", StatusUpdatedAt: completedAt,
 	}}
-	controller := controllers.NewWorkerControlController(runtimeManager, "secret", nil, routes)
+	controller := controllers.NewWorkerControlController(runtimeManager, "secret", "execution-secret", nil, routes)
 	e := echo.New()
 	e.GET("/internal/worker/sessions", controller.ListSessions)
 	e.DELETE("/internal/worker/sessions/:sessionId", controller.DeleteSession)

@@ -84,7 +84,9 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if err := configureWorkerSlackCredential(context.Background(), cfg, persistence, persistenceNamespace); err != nil {
 		return err
 	}
-	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken).WithSessionAPIURL(cfg.Worker.SessionAPIURL)
+	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken).
+		WithExecutionTokenSigningKey(cfg.Worker.ExecutionTokenSigningKey).
+		WithSessionAPIURL(cfg.Worker.SessionAPIURL)
 	encryption, err := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION").Create()
 	if err != nil {
 		return err

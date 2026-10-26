@@ -21,6 +21,7 @@ import (
 type WorkerControlController struct {
 	manager           repositories.SessionManager
 	token             string
+	executionTokenKey string
 	teams             workerTeamEnsurer
 	routes            repositories.SessionRouteRepository
 	leases            schedule.LeaseClient
@@ -56,6 +57,9 @@ func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
 	if !wc.authorized(c) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
+	if wc.executionTokenKey == "" {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
 	if wc.scheduleManager == nil {
 		return c.NoContent(http.StatusServiceUnavailable)
 	}
@@ -66,7 +70,7 @@ func (wc *WorkerControlController) ClaimDueSchedules(c echo.Context) error {
 	jobs := make([]scheduleJob, 0, len(items))
 	for _, item := range items {
 		claims := executiontoken.ExecutionClaims{ScheduleID: item.ID, ExecutionID: item.PendingExecution.ExecutionID, SessionID: item.PendingExecution.SessionID, UserID: item.UserID, Scope: item.GetScope(), TeamID: item.TeamID, Teams: sessionuc.ResolveTeams(item.GetScope(), item.TeamID, item.UserTeams), ExpiresAt: item.PendingExecution.ExpiresAt.Unix()}
-		token, err := executiontoken.SignExecutionToken([]byte(wc.token), claims)
+		token, err := executiontoken.SignExecutionToken([]byte(wc.executionTokenKey), claims)
 		if err != nil {
 			return err
 		}
@@ -164,8 +168,8 @@ func workerSessionInfoFrom(session entities.Session) workerSessionInfo {
 	return workerSessionInfo{ID: session.ID(), UserID: session.UserID(), Scope: session.Scope(), TeamID: session.TeamID(), Tags: tags, Status: session.Status(), StartedAt: session.StartedAt(), UpdatedAt: session.UpdatedAt(), LastMessageAt: session.LastMessageAt()}
 }
 
-func NewWorkerControlController(manager repositories.SessionManager, token string, teams workerTeamEnsurer, routes repositories.SessionRouteRepository) *WorkerControlController {
-	controller := &WorkerControlController{manager: manager, token: token}
+func NewWorkerControlController(manager repositories.SessionManager, token string, executionTokenKey string, teams workerTeamEnsurer, routes repositories.SessionRouteRepository) *WorkerControlController {
+	controller := &WorkerControlController{manager: manager, token: token, executionTokenKey: executionTokenKey}
 	controller.teams = teams
 	controller.routes = routes
 	return controller

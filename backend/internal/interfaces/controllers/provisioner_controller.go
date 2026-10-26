@@ -104,7 +104,7 @@ type multipartStartResponse struct {
 }
 
 func (pc *ProvisionerController) multipartStore(c echo.Context) (services.MultipartSessionStateStore, error) {
-	if !pc.authorized(c) {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized)
 	}
 	store, ok := pc.stateStore.(services.MultipartSessionStateStore)
@@ -183,7 +183,7 @@ func (pc *ProvisionerController) PresignSessionStateDownload(c echo.Context) err
 }
 
 func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
-	if !pc.authorized(c) {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	if pc.stateStore == nil {
@@ -202,7 +202,7 @@ func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
-	if !pc.authorized(c) {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	scheduler, ok := pc.manager.(sessionSuspendScheduler)
@@ -216,7 +216,7 @@ func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
-	if !pc.authorized(c) {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	if pc.stateStore == nil {
@@ -235,15 +235,15 @@ func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) Connect(c echo.Context) error {
-	if !pc.authorized(c) {
-		return c.NoContent(http.StatusUnauthorized)
-	}
 	var req services.ProvisionerConnectRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if req.SessionID == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "session_id is required"})
+	}
+	if !pc.authorizedSession(c, req.SessionID) {
+		return c.NoContent(http.StatusUnauthorized)
 	}
 	if err := pc.manager.ConnectProvisioner(c.Request().Context(), req); err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -252,7 +252,7 @@ func (pc *ProvisionerController) Connect(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) GetProvisionRequest(c echo.Context) error {
-	if !pc.authorized(c) {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	sessionID := c.Param("sessionId")
@@ -280,7 +280,7 @@ func (pc *ProvisionerController) GetProvisionRequest(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) UpdateProvisionRequestStatus(c echo.Context) error {
-	if !pc.authorized(c) {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	var req services.ProvisionRequestStatusUpdate
@@ -467,6 +467,15 @@ func (pc *ProvisionerController) authorized(c echo.Context) bool {
 	h := c.Request().Header.Get("Authorization")
 	token := strings.TrimPrefix(h, "Bearer ")
 	return pc.manager.ValidateProvisionerToken(token)
+}
+
+func (pc *ProvisionerController) authorizedSession(c echo.Context, sessionID string) bool {
+	if pc.manager == nil || sessionID == "" {
+		return false
+	}
+	header := c.Request().Header.Get("Authorization")
+	token, ok := strings.CutPrefix(header, "Bearer ")
+	return ok && token != "" && pc.manager.ValidateSessionControlToken(sessionID, token)
 }
 
 func (pc *ProvisionerController) authorizedExternalManager(c echo.Context) (string, string, bool) {

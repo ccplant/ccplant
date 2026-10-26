@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,7 +191,7 @@ func (m *NativeSessionManager) CreateSessionDirect(_ context.Context, id string,
 		"AGENTAPI_SESSION_ID="+id,
 		"AGENTAPI_PORT="+strconv.Itoa(agentPort),
 		"PROVISIONER_PROXY_URL="+m.proxyURL,
-		"PROVISIONER_TOKEN="+m.provisionerToken,
+		"PROVISIONER_TOKEN="+deriveSessionControlToken(m.provisionerToken, id),
 		"SESSION_CONTROL_TOKEN="+deriveSessionControlToken(m.provisionerToken, id),
 		"PROVISIONER_UPSTREAM_AUTH_TOKEN="+m.upstreamAuthToken,
 		"POD_NAME=native-"+id,
@@ -270,7 +271,7 @@ func reserveTCPPort() (int, error) {
 }
 
 func (m *NativeSessionManager) ValidateProvisionerToken(token string) bool {
-	return token != "" && token == m.provisionerToken
+	return token != "" && len(token) == len(m.provisionerToken) && subtle.ConstantTimeCompare([]byte(token), []byte(m.provisionerToken)) == 1
 }
 
 func (m *NativeSessionManager) ValidateSessionControlToken(sessionID, token string) bool {

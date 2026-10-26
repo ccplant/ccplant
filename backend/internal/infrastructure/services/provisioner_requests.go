@@ -54,7 +54,7 @@ type ProvisionRequest struct {
 }
 
 func (m *KubernetesSessionManager) ValidateProvisionerToken(token string) bool {
-	return m.k8sConfig != nil && m.k8sConfig.ProvisionerToken != "" && token == m.k8sConfig.ProvisionerToken
+	return m.k8sConfig != nil && m.k8sConfig.ProvisionerToken != "" && hmac.Equal([]byte(token), []byte(m.k8sConfig.ProvisionerToken))
 }
 
 const sessionControlTokenContext = "session-control-auth:v1\x00"

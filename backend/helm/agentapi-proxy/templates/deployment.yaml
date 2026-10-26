@@ -888,6 +888,14 @@ spec:
                   name: {{ . | quote }}
                   key: {{ dig "key" "token" $workerTokenRef | quote }}
             {{- end }}
+            {{- $executionTokenKeyRef := dig "workerControl" "executionTokenSigningKeySecretRef" (dict) $api }}
+            {{- with (dig "name" "" $executionTokenKeyRef) }}
+            - name: AGENTAPI_EXECUTION_TOKEN_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: {{ dig "key" "execution-token-signing-key" $executionTokenKeyRef | quote }}
+            {{- end }}
             {{- if (dig "enabled" false (.Values.sessionManager | default dict)) }}
             - name: AGENTAPI_SESSION_MANAGER_API_URL
               value: {{ required "api.sessionManager.url is required when sessionManager is enabled" (dig "sessionManager" "url" "" $api) | quote }}

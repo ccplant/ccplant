@@ -57,6 +57,7 @@ func TestAPITriggersUseStartEndpoint(t *testing.T) {
 	t.Cleanup(func() { port = previousPort })
 	cfg := config.DefaultConfig()
 	cfg.Worker.ControlAPIToken = "secret"
+	cfg.Worker.ExecutionTokenSigningKey = "secret"
 	manager := newTriggerSessionManager(cfg)
 
 	schedules := schedule.NewKubernetesManager(fake.NewSimpleClientset(), "test")

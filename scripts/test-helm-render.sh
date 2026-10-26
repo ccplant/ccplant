@@ -234,8 +234,10 @@ assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant
 "$HELM_BIN" template backend-worker-default "$REPO_ROOT/backend/helm/agentapi-proxy" \
   --set worker.enabled=true \
   --set api.workerControl.tokenSecretRef.name=worker-control \
+  --set api.workerControl.executionTokenSigningKeySecretRef.name=worker-execution-signing \
   --set api.redis.addr=redis:6379 \
   --set worker.controlApi.tokenSecretRef.name=worker-control \
+  --set worker.controlApi.executionTokenSigningKeySecretRef.name=worker-execution-signing \
   --set worker.kvStore.databaseUrl=file:///tmp/worker.db \
   >"$TMP_DIR/backend-worker-default.yaml"
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/backend-worker-default.yaml"
@@ -305,11 +307,13 @@ all_role_args=(
   --set api.redis.tlsEnabled=true
   --set api.encryption.keySecretRef.name=shared-encryption
   --set api.workerControl.tokenSecretRef.name=worker-control
+  --set api.workerControl.executionTokenSigningKeySecretRef.name=worker-execution-signing
   --set api.sessionManager.url=http://backend-session-manager.separation-test.svc.cluster.local:8080
   --set api.sessionManager.tokenSecretRef.name=manager-internal
   --set worker.enabled=true
   --set worker.image.repository=example/worker
   --set worker.controlApi.tokenSecretRef.name=worker-control
+  --set worker.controlApi.executionTokenSigningKeySecretRef.name=worker-execution-signing
   --set worker.kvStore.databaseUrlSecretRef.name=worker-libsql
   --set config.notification.baseUrl=https://notifications.example
   --set sessionManager.enabled=true
@@ -370,6 +374,7 @@ assert_contains 'serviceAccountName: backend-agentapi-proxy' "$TMP_DIR/backend-d
 assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'args: \["server"\]' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-deployment.yaml"
+assert_contains 'name: AGENTAPI_EXECUTION_TOKEN_SIGNING_KEY' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_URL' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'name: AGENTAPI_SESSION_MANAGER_API_TOKEN' "$TMP_DIR/backend-deployment.yaml"
 assert_contains 'replicas: 2' "$TMP_DIR/backend-remote-manager-no-redis.yaml"
@@ -395,6 +400,7 @@ assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-worker-d
 assert_contains 'args: \["worker"\]' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_API_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_WORKER_CONTROL_TOKEN' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_EXECUTION_TOKEN_SIGNING_KEY' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: NOTIFICATION_BASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'value: "https://notifications.example"' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: "worker-control"' "$TMP_DIR/backend-worker-deployment.yaml"
