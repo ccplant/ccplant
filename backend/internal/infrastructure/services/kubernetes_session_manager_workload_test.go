@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -264,6 +265,41 @@ func TestBuildDeploymentMountsGitHubConfigSecretWithoutAuthentication(t *testing
 	if envFrom[0].SecretRef.Optional == nil || !*envFrom[0].SecretRef.Optional {
 		t.Fatalf("github-config SecretRef Optional = %v, want true", envFrom[0].SecretRef.Optional)
 	}
+}
+
+func TestBuildDeploymentPreparesPersistentWorkdirPermissions(t *testing.T) {
+	t.Run("PVC", func(t *testing.T) {
+		manager := newWorkloadTestManager(t, true)
+		deployment, err := manager.buildDeployment(context.Background(), newWorkloadTestSession(), newWorkloadTestSession().Request())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		init := findContainerByName(deployment.Spec.Template.Spec.InitContainers, "prepare-workdir-permissions")
+		if init == nil {
+			t.Fatalf("initContainers = %#v, want workdir permission preparation", deployment.Spec.Template.Spec.InitContainers)
+		}
+		if got, want := init.Command, []string{"chown", "-R", "999:999", "/home/agentapi/workdir"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("command = %#v, want %#v", got, want)
+		}
+		if init.SecurityContext == nil || init.SecurityContext.RunAsUser == nil || *init.SecurityContext.RunAsUser != 0 {
+			t.Fatalf("securityContext = %#v, want root user", init.SecurityContext)
+		}
+		if !hasMount(init.VolumeMounts, "workdir", "/home/agentapi/workdir", "") {
+			t.Fatalf("mounts = %#v, want workdir mount", init.VolumeMounts)
+		}
+	})
+
+	t.Run("ephemeral", func(t *testing.T) {
+		manager := newWorkloadTestManager(t, false)
+		deployment, err := manager.buildDeployment(context.Background(), newWorkloadTestSession(), newWorkloadTestSession().Request())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if init := findContainerByName(deployment.Spec.Template.Spec.InitContainers, "prepare-workdir-permissions"); init != nil {
+			t.Fatalf("unexpected workdir permission init container: %#v", init)
+		}
+	})
 }
 
 func TestBuildDeploymentAddsMemoryIsolatedExecutor(t *testing.T) {

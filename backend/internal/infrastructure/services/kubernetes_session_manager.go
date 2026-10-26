@@ -3658,6 +3658,29 @@ func (m *KubernetesSessionManager) buildDeployment(ctx context.Context, session 
 	var sandboxEnvVars []corev1.EnvVar
 	effectiveSandbox := m.resolveSandboxParams(ctx, req)
 	initContainers, sandboxSidecar, sandboxEnvVars = m.buildSandboxContainers(effectiveSandbox)
+	if m.isPVCEnabled() {
+		// Persistent workspaces can outlive the runtime image and its user setup.
+		// Older sessions may therefore contain files owned by root (notably Git
+		// pack indexes created with mode 0400).  fsGroup is not sufficient for
+		// those files on every CSI driver, so normalize the workspace before the
+		// non-root provisioner tries to clone or restore repository state.
+		rootUID := int64(0)
+		falseVal := false
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "prepare-workdir-permissions",
+			Image:           m.k8sConfig.Image,
+			ImagePullPolicy: corev1.PullPolicy(m.k8sConfig.ImagePullPolicy),
+			Command:         []string{"chown", "-R", "999:999", "/home/agentapi/workdir"},
+			SecurityContext: &corev1.SecurityContext{
+				RunAsUser:    &rootUID,
+				RunAsNonRoot: &falseVal,
+			},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name:      "workdir",
+				MountPath: "/home/agentapi/workdir",
+			}},
+		})
+	}
 
 	var sciaInitContainer *corev1.Container
 	var sciaSidecar *corev1.Container
