@@ -857,8 +857,12 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}
+	autoSuspendEnabled := true
 	oldProvisionSettings, err := json.Marshal(&sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{UserID: "user-1", Scope: string(entities.ScopeUser)},
+		Session: sessionsettings.SessionMeta{
+			UserID: "user-1", Scope: string(entities.ScopeUser),
+			AutoSuspendEnabled: &autoSuspendEnabled, AutoSuspendMinutes: 5,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -895,6 +899,9 @@ func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
 	}
 	if got.Env["GITHUB_TOKEN"] != "fresh-token" {
 		t.Fatalf("GITHUB_TOKEN = %q, want refreshed credential", got.Env["GITHUB_TOKEN"])
+	}
+	if got.Session.AutoSuspendEnabled == nil || !*got.Session.AutoSuspendEnabled || got.Session.AutoSuspendMinutes != 5 {
+		t.Fatalf("resume auto-suspend policy = enabled %v minutes %d, want preserved true/5", got.Session.AutoSuspendEnabled, got.Session.AutoSuspendMinutes)
 	}
 }
 

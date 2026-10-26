@@ -390,8 +390,11 @@ func (m *KubernetesSessionManager) ScheduleSessionSuspend(ctx context.Context, s
 	}
 	if !enabled {
 		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":"false","%s":null}}}`, sessionSuspendAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation))
-		_, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{})
-		return err
+		if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, ks.ServiceName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			return err
+		}
+		log.Printf("[K8S_SESSION] Auto suspend is disabled for session %s; no suspend deadline scheduled", sessionID)
+		return nil
 	}
 	deadline := time.Now().Add(after).UTC().Format(time.RFC3339Nano)
 	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":%q,"%s":null,"%s":"true","%s":%q}}}`, sessionSuspendAtAnnotation, deadline, sessionSuspendedAtAnnotation, sessionAutoSuspendEnabledAnnotation, sessionAutoSuspendIdleSecondsAnnotation, strconv.FormatInt(int64(after/time.Second), 10)))
