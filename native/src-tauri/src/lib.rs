@@ -11,12 +11,22 @@ use tauri::{
 const WINDOW_LABEL: &str = "dashboard";
 const REFRESH_EVENT: &str = "dashboard://refresh";
 
+#[cfg(target_os = "macos")]
+fn set_dock_visibility(app: &AppHandle, visible: bool) {
+    let _ = app.set_dock_visibility(visible);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_dock_visibility(_app: &AppHandle, _visible: bool) {}
+
 /// Show and focus the dashboard window, creating the menu-bar experience:
 /// the window stays alive but is simply revealed.
 fn show_dashboard_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.show();
-        let _ = window.set_focus();
+        if window.show().is_ok() {
+            set_dock_visibility(app, true);
+            let _ = window.set_focus();
+        }
     }
 }
 
@@ -42,8 +52,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
     let tray = tray.icon_as_template(true);
 
-    tray
-        .menu(&menu)
+    tray.menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("ccplant")
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -100,6 +109,7 @@ pub fn run() {
         .setup(|app| {
             build_tray(app.handle())?;
             // Start hidden; the user reveals the dashboard from the menu bar.
+            set_dock_visibility(app.handle(), false);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -109,7 +119,9 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == WINDOW_LABEL {
                     api.prevent_close();
-                    let _ = window.hide();
+                    if window.hide().is_ok() {
+                        set_dock_visibility(window.app_handle(), false);
+                    }
                 }
             }
         })
