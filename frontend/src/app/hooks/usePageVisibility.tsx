@@ -40,7 +40,7 @@ export function usePageVisibility(): boolean {
  * @returns インターバルの状態とコントロール機能
  */
 export function useBackgroundAwareInterval(
-  callback: () => void,
+  callback: () => void | Promise<void>,
   delay: number,
   immediate: boolean = true
 ): {
@@ -50,6 +50,7 @@ export function useBackgroundAwareInterval(
   restart: () => void;
 } {
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
+  const callbackRunningRef = useRef(false);
   const [isRunning, setIsRunning] = useState(false);
   const isVisible = usePageVisibility();
   
@@ -60,24 +61,37 @@ export function useBackgroundAwareInterval(
   // 現在のdelayを保持するref
   const delayRef = useRef(delay);
 
+  // Slow proxy requests must not pile up behind a fixed interval. Keep at
+  // most one callback in flight and let the next interval tick try again.
+  const invokeCallback = useCallback(() => {
+    if (callbackRunningRef.current) return;
+
+    callbackRunningRef.current = true;
+    void Promise.resolve()
+      .then(() => callbackRef.current())
+      .finally(() => {
+        callbackRunningRef.current = false;
+      });
+  }, []);
+
   const start = useCallback(() => {
     if (intervalIdRef.current) return; // 既に動作中の場合は何もしない
 
     if (immediate) {
-      callbackRef.current();
+      invokeCallback();
     }
 
-    const id = setInterval(() => callbackRef.current(), delayRef.current);
+    const id = setInterval(invokeCallback, delayRef.current);
     intervalIdRef.current = id;
     setIsRunning(true);
-  }, [immediate]);
+  }, [immediate, invokeCallback]);
 
   const stop = useCallback(() => {
     if (intervalIdRef.current) {
       clearInterval(intervalIdRef.current);
       intervalIdRef.current = null;
-      setIsRunning(false);
     }
+    setIsRunning(false);
   }, []);
 
   const restart = useCallback(() => {
@@ -105,13 +119,13 @@ export function useBackgroundAwareInterval(
       if (isRunning) {
         clearInterval(intervalIdRef.current);
         intervalIdRef.current = null;
-        const id = setInterval(() => callbackRef.current(), delay);
+        const id = setInterval(invokeCallback, delay);
         intervalIdRef.current = id;
       }
     } else {
       delayRef.current = delay;
     }
-  }, [delay, isRunning]);
+  }, [delay, isRunning, invokeCallback]);
 
   // コンポーネントのアンマウント時にクリーンアップ
   useEffect(() => {
