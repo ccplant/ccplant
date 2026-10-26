@@ -279,14 +279,18 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 	}
 	if s.router != nil && s.router.handlers.githubConnectionsController != nil &&
 		userContext.GitHubUser != nil && userContext.GitHubUser.ID != 0 {
-		principalID, err := s.router.handlers.githubConnectionsController.ResolvePrincipalIDForGitHubUser(
-			c.Request().Context(), userContext.GitHubUser.ID,
+		applicationUserID, err := s.router.handlers.githubConnectionsController.ResolveApplicationUserIDForGitHubUser(
+			c.Request().Context(), userContext.GitHubUser.ID, userContext.GitHubUser.Login,
 		)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to resolve principal").SetInternal(err)
 		}
-		userContext.UserID = principalID
+		userContext.UserID = applicationUserID
 		if s.router.handlers.teamMembershipController != nil {
+			principalID, resolveErr := s.router.handlers.githubConnectionsController.ResolvePrincipalIDForGitHubUser(c.Request().Context(), userContext.GitHubUser.ID)
+			if resolveErr != nil {
+				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to resolve principal").SetInternal(resolveErr)
+			}
 			if syncErr := s.router.handlers.teamMembershipController.AutoSyncForPrincipalWithToken(c.Request().Context(), principalID, "identity_created", userContext.AccessToken); syncErr != nil {
 				log.Printf("[GITHUB_MEMBERSHIP] Initial built-in OAuth sync failed for principal %q: %v", principalID, syncErr)
 			}

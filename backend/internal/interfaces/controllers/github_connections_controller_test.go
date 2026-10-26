@@ -251,6 +251,35 @@ func TestLegacyGitHubLoginResolvesStablePrincipalID(t *testing.T) {
 	require.NotEqual(t, "alice", first)
 }
 
+func TestLegacyGitHubLoginUsesLoginAsApplicationUserID(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+
+	first, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice")
+	require.NoError(t, err)
+	second, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice-renamed")
+	require.NoError(t, err)
+	require.Equal(t, "alice", first)
+	require.Equal(t, first, second, "the personal resource owner must remain stable after a GitHub login rename")
+}
+
+func TestConnectedGitHubLoginUsesLinkedApplicationUserID(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com")
+	connection := githubConnection{ID: "public", Name: "GitHub", BaseURL: "https://github.com", APIURL: "https://api.github.com"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "client-secret", ""))
+	principal, err := controller.getOrCreatePrincipal(context.Background(), "github-connection:public:42")
+	require.NoError(t, err)
+	_, err = controller.linkIdentity(context.Background(), githubIdentity{
+		ID: "identity-1", PrincipalID: principal.ID, ConnectionID: connection.ID, GitHubUserID: 42, Login: "alice",
+	}, "token", nil)
+	require.NoError(t, err)
+
+	got, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice")
+	require.NoError(t, err)
+	require.Equal(t, principal.ID, got)
+}
+
 func TestBuiltInTeamRequestsUseConfiguredEnterpriseAPIURL(t *testing.T) {
 	t.Parallel()
 	var requested []string
