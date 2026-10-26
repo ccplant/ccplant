@@ -150,7 +150,7 @@ func TestSlackStartFailureDoesNotFallBackToControlAPI(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	_, err := NewSessionManager(server.URL, "secret").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"}}, nil)
+	_, err := NewSessionManager(server.URL, "control-secret").WithExecutionTokenSigningKey("secret").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"}}, nil)
 	if err == nil {
 		t.Fatal("start failure ignored")
 	}
@@ -169,7 +169,7 @@ func TestSlackStartPreservesSessionReused(t *testing.T) {
 	}))
 	defer server.Close()
 
-	session, err := NewSessionManager(server.URL, "secret").CreateSession(context.Background(), "attempt", &entities.RunServerRequest{
+	session, err := NewSessionManager(server.URL, "control-secret").WithExecutionTokenSigningKey("secret").CreateSession(context.Background(), "attempt", &entities.RunServerRequest{
 		UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"},
 	}, nil)
 	if err != nil {

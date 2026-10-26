@@ -52,7 +52,7 @@ func (m *SessionManager) DryRunTriggerSession(ctx context.Context, id string, re
 }
 
 func (m *SessionManager) triggerStartRequest(id string, req *entities.RunServerRequest, webhookPayload []byte) (entities.StartRequest, string, error) {
-	if m.token == "" {
+	if m.executionTokenKey == "" {
 		return entities.StartRequest{}, "", fmt.Errorf("worker execution signing key is required")
 	}
 	claims := executiontoken.ExecutionClaims{
@@ -62,7 +62,7 @@ func (m *SessionManager) triggerStartRequest(id string, req *entities.RunServerR
 		Scope: req.Scope, TeamID: req.TeamID, Teams: req.Teams,
 		ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
 	}
-	token, err := executiontoken.SignExecutionToken([]byte(m.token), claims)
+	token, err := executiontoken.SignExecutionToken([]byte(m.executionTokenKey), claims)
 	if err != nil {
 		return entities.StartRequest{}, "", err
 	}

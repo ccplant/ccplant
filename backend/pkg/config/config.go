@@ -513,9 +513,10 @@ type SessionManagerBuiltinRegistrationConfig struct {
 // WorkerConfig contains the only control-plane dependency of the worker.
 // Worker persistence and leader election use KVStore and Redis respectively.
 type WorkerConfig struct {
-	ControlAPIURL   string `json:"control_api_url" mapstructure:"control_api_url"`
-	ControlAPIToken string `json:"control_api_token" mapstructure:"control_api_token"`
-	SessionAPIURL   string `json:"session_api_url" mapstructure:"session_api_url"`
+	ControlAPIURL            string `json:"control_api_url" mapstructure:"control_api_url"`
+	ControlAPIToken          string `json:"control_api_token" mapstructure:"control_api_token"`
+	ExecutionTokenSigningKey string `json:"execution_token_signing_key" mapstructure:"execution_token_signing_key"`
+	SessionAPIURL            string `json:"session_api_url" mapstructure:"session_api_url"`
 }
 
 // RedisConfig holds configuration for the optional Redis backend used for
@@ -1338,6 +1339,7 @@ func bindEnvVars(v *viper.Viper) {
 	// of kubernetes_session: the worker must never receive a provisioner token.
 	_ = v.BindEnv("worker.control_api_url", "AGENTAPI_WORKER_CONTROL_API_URL", "AGENTAPI_K8S_SESSION_PROVISIONER_PROXY_URL")
 	_ = v.BindEnv("worker.control_api_token", "AGENTAPI_WORKER_CONTROL_TOKEN")
+	_ = v.BindEnv("worker.execution_token_signing_key", "AGENTAPI_EXECUTION_TOKEN_SIGNING_KEY")
 	_ = v.BindEnv("worker.session_api_url", "AGENTAPI_WORKER_SESSION_API_URL")
 
 	_ = v.BindEnv("session_persistence.backend", "AGENTAPI_SESSION_PERSISTENCE_BACKEND")

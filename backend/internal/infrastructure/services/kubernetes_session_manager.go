@@ -5469,7 +5469,7 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		corev1.EnvVar{Name: "PROVISIONER_PROXY_URL", Value: proxyURL},
 		corev1.EnvVar{Name: "PROVISIONER_LOCAL_PROXY_URL", Value: localProxyURL},
 		corev1.EnvVar{Name: "SESSION_STATE_PROXY_URL", Value: proxyURL},
-		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: m.k8sConfig.ProvisionerToken},
+		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
 		corev1.EnvVar{
 			Name: "POD_NAME",
 			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{

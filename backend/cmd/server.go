@@ -239,7 +239,9 @@ func newTriggerSessionManager(cfg *config.Config) *controlapi.SessionManager {
 	if apiURL == "" {
 		apiURL = localURL
 	}
-	return controlapi.NewSessionManager(localURL, cfg.Worker.ControlAPIToken).WithSessionAPIURL(apiURL)
+	return controlapi.NewSessionManager(localURL, cfg.Worker.ControlAPIToken).
+		WithExecutionTokenSigningKey(cfg.Worker.ExecutionTokenSigningKey).
+		WithSessionAPIURL(apiURL)
 }
 
 // registerScheduleHandlers registers schedule REST API handlers

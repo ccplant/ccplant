@@ -39,6 +39,7 @@ func TestSlackWorkerUsesNormalStartAPI(t *testing.T) {
 	controller := NewSessionController(&slackStartManager{}, creator)
 	cfg := &config.Config{}
 	cfg.Worker.ControlAPIToken = "worker-secret"
+	cfg.Worker.ExecutionTokenSigningKey = "worker-secret"
 	e := echo.New()
 	e.Use(auth.AuthMiddleware(cfg, nil))
 	e.POST("/start", controller.StartSession)
@@ -49,7 +50,7 @@ func TestSlackWorkerUsesNormalStartAPI(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer control.Close()
-	client := controlapi.NewSessionManager(control.URL, "worker-secret").WithSessionAPIURL(api.URL)
+	client := controlapi.NewSessionManager(control.URL, "worker-secret").WithExecutionTokenSigningKey("worker-secret").WithSessionAPIURL(api.URL)
 	request := &entities.RunServerRequest{
 		UserID: "owner", TriggeredUserID: "actor", Scope: entities.ScopeTeam, TeamID: "org/team", Teams: []string{"org/team"},
 		Tags: map[string]string{"slackbot_id": "bot", "slack_channel": "channel", "slack_thread_ts": "123.45"},

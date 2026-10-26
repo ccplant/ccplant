@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
 )
@@ -26,6 +27,33 @@ func TestSessionControlTokenIsBoundToSession(t *testing.T) {
 	}
 	if validateSessionControlToken("different-master", "session-a", token) {
 		t.Fatal("token must not validate with a different master key")
+	}
+}
+
+func TestSessionControlTokenAcceptsOnlyMatchingLegacyStockPodToken(t *testing.T) {
+	manager := newWorkloadTestManager(t, false)
+	manager.k8sConfig.ProvisionerToken = "new-master"
+	session := NewKubernetesSession("stock-a", &entities.RunServerRequest{UserID: "test-user"}, "stock-a", "stock-a-svc", "", "test-ns", 9000, nil, nil)
+	manager.mutex.Lock()
+	manager.sessions[session.ID()] = session
+	manager.mutex.Unlock()
+	_, err := manager.client.CoreV1().Pods("test-ns").Create(context.Background(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-stock-a", Namespace: "test-ns", Labels: map[string]string{"agentapi.proxy/session-id": "stock-a"}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "agent", Env: []corev1.EnvVar{{Name: "PROVISIONER_TOKEN", Value: "legacy-stock-a"}},
+		}}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manager.ValidateSessionControlToken("stock-a", "legacy-stock-a") {
+		t.Fatal("matching legacy stock Pod token should validate")
+	}
+	if manager.ValidateSessionControlToken("stock-a", "legacy-stock-b") {
+		t.Fatal("another stock Pod token must not validate")
+	}
+	if manager.ValidateSessionControlToken("stock-b", "legacy-stock-a") {
+		t.Fatal("legacy token must remain bound to its runtime ID")
 	}
 }
 

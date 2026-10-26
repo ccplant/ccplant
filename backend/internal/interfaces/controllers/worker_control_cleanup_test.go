@@ -52,7 +52,7 @@ func TestWorkerSessionListCopiesRequestTTLForCleanup(t *testing.T) {
 			request:   &entities.RunServerRequest{SessionTTL: "1m"},
 		},
 	}}
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, nil)
+	controller := controllers.NewWorkerControlController(manager, "secret", "execution-secret", nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
 		RemoteSessionID: "runtime-session",
 	}}
 	var cleanedAllocations []string
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes).
+	controller := controllers.NewWorkerControlController(manager, "secret", "execution-secret", nil, routes).
 		WithSessionPoolAllocationCleaner(func(_ context.Context, sessionID string) error {
 			cleanedAllocations = append(cleanedAllocations, sessionID)
 			return nil
@@ -99,7 +99,7 @@ func TestWorkerDeleteSessionKeepsPoolRouteWhenAllocationCleanupFails(t *testing.
 		SessionID:       "public-session",
 		RemoteSessionID: "runtime-session",
 	}}
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes).
+	controller := controllers.NewWorkerControlController(manager, "secret", "execution-secret", nil, routes).
 		WithSessionPoolAllocationCleaner(func(context.Context, string) error {
 			return errors.New("allocation cleanup failed")
 		})
@@ -120,7 +120,7 @@ func TestWorkerSessionListPreservesPoolTTLRequest(t *testing.T) {
 		"runtime": {id: "runtime", status: "stopped", request: &entities.RunServerRequest{SessionTTL: "2m"}},
 	}}
 	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{SessionID: "public", RemoteSessionID: "runtime"}}
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
+	controller := controllers.NewWorkerControlController(manager, "secret", "execution-secret", nil, routes)
 	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -155,7 +155,7 @@ func TestWorkerSessionListUsesRouteLifecycleForClaimedPoolRuntime(t *testing.T) 
 		Status:    "active", StatusUpdatedAt: completedAt,
 		Tags: map[string]string{"session_ttl": "1m", "shared": "route"},
 	}}
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
+	controller := controllers.NewWorkerControlController(manager, "secret", "execution-secret", nil, routes)
 	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -190,7 +190,7 @@ func TestWorkerSessionListIncludesDirectRuntimeTTLRoute(t *testing.T) {
 		Scope: string(entities.ScopeUser), StartedAt: startedAt, Status: "stopped", StatusUpdatedAt: startedAt.Add(time.Minute),
 		Tags: map[string]string{"session_ttl": "1m"},
 	}}
-	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes)
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", "execution-secret", nil, routes)
 	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -224,7 +224,7 @@ func TestWorkerSessionListIncludesPendingDirectRuntimeRouteWithoutRemoteID(t *te
 			"triggered_user_id": "alice",
 		},
 	}}
-	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes)
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", "execution-secret", nil, routes)
 	req := httptest.NewRequest(http.MethodGet, "/internal/worker/sessions", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -274,7 +274,7 @@ func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {
 	}}
 	called := false
 	var cleanedAllocations []string
-	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes).
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", "execution-secret", nil, routes).
 		WithSessionDeleter(func(c echo.Context) error {
 			called = true
 			return c.NoContent(http.StatusAccepted)

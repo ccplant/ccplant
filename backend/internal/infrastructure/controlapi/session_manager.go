@@ -23,9 +23,10 @@ import (
 // to HTTP APIs. Trigger-backed creation uses the normal /start API; lifecycle
 // operations use the control API. It has no Kubernetes dependency.
 type SessionManager struct {
-	baseURL, token string
-	sessionAPIURL  string
-	client         *http.Client
+	baseURL, token    string
+	sessionAPIURL     string
+	executionTokenKey string
+	client            *http.Client
 }
 
 type sessionInfo struct {
@@ -127,6 +128,11 @@ func NewSessionManager(baseURL, token string) *SessionManager {
 	// transport timeout above the session manager's 120-second pod start timeout
 	// so the caller does not cancel an otherwise healthy startup prematurely.
 	return &SessionManager{baseURL: strings.TrimRight(baseURL, "/"), token: token, client: utils.NewHTTPClient(utils.HTTPClientConfig{Timeout: 150 * time.Second})}
+}
+
+func (m *SessionManager) WithExecutionTokenSigningKey(key string) *SessionManager {
+	m.executionTokenKey = key
+	return m
 }
 
 func (m *SessionManager) CreateSession(ctx context.Context, id string, request *entities.RunServerRequest, webhookPayload []byte) (entities.Session, error) {

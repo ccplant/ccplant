@@ -692,6 +692,37 @@ func TestDeleteManagedSessionRecordsTerminatedStatus(t *testing.T) {
 	}
 }
 
+func TestDeleteLocalSessionAliasRemovesPoolAllocation(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{
+		"runtime-id": {id: "runtime-id", userID: "user-1", scope: entities.ScopeUser, status: "active"},
+	}}
+	creator := &fakeSessionCreator{}
+	routes := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "runtime-id", UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, creator,
+		controllers.WithSessionRouteRepository(routes),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
+
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !reflect.DeepEqual(creator.deleted, []string{"runtime-id"}) {
+		t.Fatalf("deleted sessions = %v, want [runtime-id]", creator.deleted)
+	}
+	if !reflect.DeepEqual(creator.deletedAllocations, []string{"public-id"}) {
+		t.Fatalf("deleted allocations = %v, want [public-id]", creator.deletedAllocations)
+	}
+	if !routes.deleted {
+		t.Fatal("session route was not deleted")
+	}
+}
+
 func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}

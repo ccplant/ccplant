@@ -111,8 +111,9 @@ func (p *testSessionManagerProvider) GetSessionManager() repositories.SessionMan
 
 // fakeSessionCreator tracks CreateSession and DeleteSessionByID calls.
 type fakeSessionCreator struct {
-	created []string
-	deleted []string
+	created            []string
+	deleted            []string
+	deletedAllocations []string
 }
 
 type fakeACPRouteRepo struct {
@@ -138,6 +139,11 @@ func (c *fakeSessionCreator) CreateSession(_ context.Context, sessionID string, 
 
 func (c *fakeSessionCreator) DeleteSessionByID(sessionID string) error {
 	c.deleted = append(c.deleted, sessionID)
+	return nil
+}
+
+func (c *fakeSessionCreator) DeleteSessionPoolAllocation(_ context.Context, sessionID string) error {
+	c.deletedAllocations = append(c.deletedAllocations, sessionID)
 	return nil
 }
 

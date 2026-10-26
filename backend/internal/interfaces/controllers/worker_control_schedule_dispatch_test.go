@@ -30,7 +30,7 @@ func TestWorkerClaimsAndFinalizesScheduleJob(t *testing.T) {
 			ReuseSession: true,
 		},
 	}))
-	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, nil).WithScheduleManager(manager)
+	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", "execution-secret", nil, nil).WithScheduleManager(manager)
 	req := httptest.NewRequest(http.MethodPost, "/internal/worker/schedules/claim-due", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -51,8 +51,10 @@ func TestWorkerClaimsAndFinalizesScheduleJob(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 	require.Len(t, response.Jobs, 1)
-	claims, err := executiontoken.VerifyExecutionToken([]byte("secret"), response.Jobs[0].ExecutionToken, time.Now())
+	claims, err := executiontoken.VerifyExecutionToken([]byte("execution-secret"), response.Jobs[0].ExecutionToken, time.Now())
 	require.NoError(t, err)
+	_, err = executiontoken.VerifyExecutionToken([]byte("secret"), response.Jobs[0].ExecutionToken, time.Now())
+	require.Error(t, err, "worker bearer credential must not verify execution tokens")
 	require.Equal(t, "alice", claims.UserID)
 	require.Equal(t, map[string]string{"schedule_id": "schedule-1", "schedule_name": "test"}, response.Jobs[0].StartRequest.Tags)
 	require.Equal(t, response.Jobs[0].StartRequest.Tags, response.Jobs[0].StartRequest.ReuseMatchTags)

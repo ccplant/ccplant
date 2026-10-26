@@ -60,7 +60,7 @@ func TestTriggerStartPreservesConfigurationAndIdentity(t *testing.T) {
 				CredentialSource: "triggered_user", CodexAuthMode: "oauth", ClaudeAuthMode: "api_key", UnsyncedFilePaths: []string{"/tmp/private"},
 			}
 			payload := []byte(`{"event":"test"}`)
-			session, err := NewSessionManager(control.URL, "secret").WithSessionAPIURL(api.URL).CreateSession(context.Background(), "execution", req, payload)
+			session, err := NewSessionManager(control.URL, "control-secret").WithExecutionTokenSigningKey("secret").WithSessionAPIURL(api.URL).CreateSession(context.Background(), "execution", req, payload)
 			require.NoError(t, err)
 			require.Equal(t, "execution", session.ID())
 			require.Equal(t, "owner", claims.UserID)
@@ -94,7 +94,7 @@ func TestTriggerStartFailureDoesNotFallBack(t *testing.T) {
 				w.WriteHeader(http.StatusServiceUnavailable)
 			}))
 			defer api.Close()
-			_, err := NewSessionManager(api.URL, "secret").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{origin: "trigger"}}, nil)
+			_, err := NewSessionManager(api.URL, "control-secret").WithExecutionTokenSigningKey("secret").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{origin: "trigger"}}, nil)
 			require.ErrorContains(t, err, "503")
 			require.Equal(t, 1, calls)
 			_, err = NewSessionManager(api.URL, "").CreateSession(context.Background(), "session", &entities.RunServerRequest{UserID: "owner", Tags: map[string]string{origin: "trigger"}}, nil)
@@ -120,7 +120,7 @@ func TestDryRunTriggerSessionUsesStartDryRunAPI(t *testing.T) {
 	}))
 	defer api.Close()
 
-	manager := NewSessionManager(api.URL, "secret")
+	manager := NewSessionManager(api.URL, "control-secret").WithExecutionTokenSigningKey("secret")
 	response, err := manager.DryRunTriggerSession(context.Background(), "execution", &entities.RunServerRequest{
 		UserID: "owner", Tags: map[string]string{"slackbot_id": "bot"}, InitialMessage: "debug this",
 	}, nil)

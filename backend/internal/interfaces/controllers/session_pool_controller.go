@@ -1222,8 +1222,12 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 				}
 				// ClaimNext persists the lease before updating the runner status.
 				// Include that window in stock-purge protection as well.
-				if allocation.Status == core.AllocationLeased || allocation.Status == core.AllocationClaimed || allocation.Status == core.AllocationRunning {
-					protectedRunners[allocation.RunnerID] = true
+				if allocation.Status != core.AllocationLeased && allocation.Status != core.AllocationClaimed && allocation.Status != core.AllocationRunning {
+					continue
+				}
+				protectedRunners[allocation.RunnerID] = true
+				if heartbeat.LocalRunnerIDs != nil && !localRunners[allocation.RunnerID] {
+					continue
 				}
 				var settings sessionsettings.SessionSettings
 				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {

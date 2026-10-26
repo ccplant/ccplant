@@ -19,7 +19,7 @@ func TestWorkerLeaseAcquireRenewRelease(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, nil).WithLeases(schedule.NewRedisLeaseClient(redisClient))
+	controller := controllers.NewWorkerControlController(manager, "secret", "execution-secret", nil, nil).WithLeases(schedule.NewRedisLeaseClient(redisClient))
 	call := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/internal/worker/leases/test", strings.NewReader(body))
 		req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
