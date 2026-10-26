@@ -1948,6 +1948,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session alias")
 		}
 		c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "stale_local_alias", time.Now())
+		c.cleanupRemoteProvisionRequest(ctx.Request().Context(), route.SessionID)
 		c.cleanupSessionConfiguration(ctx.Request().Context(), route.SessionID)
 		return ctx.JSON(http.StatusOK, map[string]interface{}{
 			"message": "Stale session alias removed", "session_id": route.SessionID, "status": "terminated",
@@ -1964,6 +1965,7 @@ func (c *SessionController) deleteLocalSessionAlias(ctx echo.Context, route *rep
 		log.Printf("Failed to delete session alias %s: %v", route.SessionID, err)
 	}
 	c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "local_alias", time.Now())
+	c.cleanupRemoteProvisionRequest(ctx.Request().Context(), route.SessionID)
 	c.cleanupSessionConfiguration(ctx.Request().Context(), route.SessionID)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message": "Session terminated successfully", "session_id": route.SessionID, "status": "terminated",
