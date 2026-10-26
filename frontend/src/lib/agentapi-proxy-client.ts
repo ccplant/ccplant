@@ -3595,6 +3595,10 @@ export class AgentAPIProxyClient {
     return this.makeRequest<SessionPoolLogs>(`/session-runners/${encodeURIComponent(runnerID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
   }
 
+  async getSessionLogs(sessionID: string, tail = 200): Promise<SessionPoolLogs> {
+    return this.makeRequest<SessionPoolLogs>(`/sessions/${encodeURIComponent(sessionID)}/logs?tail=${Math.min(5000, Math.max(1, tail))}`);
+  }
+
   async listAdminSessionRunners(): Promise<AdminSessionRunner[]> {
     const result = await this.makeRequest<{ session_runners: AdminSessionRunner[] }>('/admin/session-runners');
     return result.session_runners ?? [];
