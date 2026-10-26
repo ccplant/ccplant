@@ -2173,6 +2173,8 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
 		return nil, nil
 	}
+	persistedAutoSuspendEnabled := settings.Session.AutoSuspendEnabled
+	persistedAutoSuspendMinutes := settings.Session.AutoSuspendMinutes
 	// Re-resolve the original startup input on every resume so credentials stay
 	// out of durable allocation data while short-lived tokens and profile secrets
 	// are refreshed before the replacement workload starts.
@@ -2204,6 +2206,12 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 				return nil, resolveErr
 			}
 			settings = *resolved
+			// Auto-suspend is resolved separately from the startup settings. Keep
+			// the allocation policy unless the scoped settings repository below
+			// provides a newer explicit value. Otherwise a credential refresh can
+			// silently replace an enabled policy with the resolver's zero value.
+			settings.Session.AutoSuspendEnabled = persistedAutoSuspendEnabled
+			settings.Session.AutoSuspendMinutes = persistedAutoSuspendMinutes
 		}
 	}
 	if c.settingsRepo != nil {
