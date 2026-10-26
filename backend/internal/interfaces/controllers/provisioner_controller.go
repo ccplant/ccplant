@@ -108,6 +108,16 @@ type multipartStartResponse struct {
 }
 
 func (pc *ProvisionerController) sessionStateID(ctx context.Context, runtimeID string) string {
+	if pc.sessionRouteRepo != nil {
+		routes, err := pc.sessionRouteRepo.List(ctx, "")
+		if err == nil {
+			for _, route := range routes {
+				if route != nil && route.RemoteSessionID == runtimeID && route.SessionID != "" {
+					return route.SessionID
+				}
+			}
+		}
+	}
 	reader, ok := pc.manager.(sessionSettingsReader)
 	if !ok {
 		return runtimeID

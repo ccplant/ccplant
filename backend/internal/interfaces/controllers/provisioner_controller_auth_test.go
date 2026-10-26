@@ -10,6 +10,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -53,6 +54,19 @@ func (s *recordingSessionStateStore) Save(_ context.Context, id string, _ io.Rea
 func (*recordingSessionStateStore) Load(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
+
+type routedSessionRepositoryStub struct{}
+
+func (routedSessionRepositoryStub) Save(context.Context, *repositories.SessionRoute) error {
+	return nil
+}
+func (routedSessionRepositoryStub) Get(context.Context, string) (*repositories.SessionRoute, error) {
+	return nil, nil
+}
+func (routedSessionRepositoryStub) List(context.Context, string) ([]*repositories.SessionRoute, error) {
+	return []*repositories.SessionRoute{{SessionID: "public-session", RemoteSessionID: "session-a"}}, nil
+}
+func (routedSessionRepositoryStub) Delete(context.Context, string) error { return nil }
 
 func TestProvisionerSessionAuthorizationIsBoundToSession(t *testing.T) {
 	controller := NewProvisionerController(scopedProvisionerManagerStub{}, nil, nil, nil)
@@ -104,15 +118,17 @@ func TestSaveSessionStateAllowsProvisionerCredentialOnlyForMappedRuntime(t *test
 	for _, tc := range []struct {
 		name       string
 		manager    ProvisionerManager
+		routes     repositories.SessionRouteRepository
 		wantStatus int
 		wantID     string
 	}{
-		{name: "mapped private runtime", manager: routedProvisionerManagerStub{}, wantStatus: http.StatusNoContent, wantID: "public-session"},
+		{name: "mapped private runtime settings", manager: routedProvisionerManagerStub{}, wantStatus: http.StatusNoContent, wantID: "public-session"},
+		{name: "mapped private runtime route", manager: scopedProvisionerManagerStub{}, routes: routedSessionRepositoryStub{}, wantStatus: http.StatusNoContent, wantID: "public-session"},
 		{name: "unmapped public ID", manager: scopedProvisionerManagerStub{}, wantStatus: http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &recordingSessionStateStore{}
-			controller := NewProvisionerController(tc.manager, nil, nil, nil, store)
+			controller := NewProvisionerController(tc.manager, nil, nil, tc.routes, store)
 			e := echo.New()
 			req := httptest.NewRequest(http.MethodPut, "/internal/session-state/session-a", strings.NewReader("state"))
 			req.Header.Set(echo.HeaderAuthorization, "Bearer global-token")
