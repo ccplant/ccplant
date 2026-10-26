@@ -379,7 +379,18 @@ func (wc *WorkerControlController) DeleteSession(c echo.Context) error {
 			// Direct runtimes are owned by an external session manager. Reuse the
 			// durable public deletion path so the workload is removed before its
 			// route alias is reconciled away.
-			return wc.sessionDeleter(c)
+			if err := wc.sessionDeleter(c); err != nil {
+				return err
+			}
+			// Direct-runtime deletion may be accepted asynchronously. TTL cleanup
+			// will not issue another DELETE after a 2xx response, so remove the pool
+			// allocation here instead of relying on later route reconciliation.
+			if wc.allocationCleaner != nil {
+				if err := wc.allocationCleaner(c.Request().Context(), publicID); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 	}
 	if err := wc.manager.DeleteSession(wc.runtimeID(c.Request().Context(), publicID)); err != nil {

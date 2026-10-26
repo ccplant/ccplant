@@ -273,10 +273,15 @@ func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {
 		Transport: portrepos.SessionRouteTransportDirectRuntime,
 	}}
 	called := false
+	var cleanedAllocations []string
 	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes).
 		WithSessionDeleter(func(c echo.Context) error {
 			called = true
 			return c.NoContent(http.StatusAccepted)
+		}).
+		WithSessionPoolAllocationCleaner(func(_ context.Context, sessionID string) error {
+			cleanedAllocations = append(cleanedAllocations, sessionID)
+			return nil
 		})
 	req := httptest.NewRequest(http.MethodDelete, "/internal/worker/sessions/public-session", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
@@ -287,5 +292,6 @@ func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {
 
 	require.NoError(t, controller.DeleteSession(ctx))
 	require.True(t, called)
+	require.Equal(t, []string{"public-session"}, cleanedAllocations)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 }
