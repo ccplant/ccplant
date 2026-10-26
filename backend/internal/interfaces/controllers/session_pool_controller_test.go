@@ -770,7 +770,7 @@ func TestSessionManagerHeartbeatReportsPoliciesOnlyForActiveAllocations(t *testi
 	if err := store.CreatePoolSupplier(ctx, &core.PoolSupplier{Pool: "linux", ManagerID: manager.ID, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"active-runner", "inactive-runner"} {
+	for _, id := range []string{"active-runner", "missing-active-runner", "inactive-runner"} {
 		if err := store.CreateRunner(ctx, &core.Runner{ID: id, ManagerID: manager.ID, Pool: "linux", Status: core.RunnerIdle}); err != nil {
 			t.Fatal(err)
 		}
@@ -784,6 +784,12 @@ func TestSessionManagerHeartbeatReportsPoliciesOnlyForActiveAllocations(t *testi
 	}
 	if _, found, err := store.ClaimNext(ctx, "linux", "active-runner", time.Minute); err != nil || !found {
 		t.Fatalf("claim active allocation: found=%v err=%v", found, err)
+	}
+	if err := store.Enqueue(ctx, &core.Allocation{SessionID: "missing-active-session", Pool: "linux", ProvisionSettings: settings}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ClaimNext(ctx, "linux", "missing-active-runner", time.Minute); err != nil || !found {
+		t.Fatalf("claim missing active allocation: found=%v err=%v", found, err)
 	}
 	if err := store.Enqueue(ctx, &core.Allocation{
 		SessionID: "inactive-session", Pool: "linux", ManagerID: manager.ID,
@@ -808,6 +814,9 @@ func TestSessionManagerHeartbeatReportsPoliciesOnlyForActiveAllocations(t *testi
 	}
 	if _, ok := heartbeat.AllocatedRunnerPolicies["inactive-runner"]; ok {
 		t.Fatalf("inactive runner policy was reported: %v", heartbeat.AllocatedRunnerPolicies)
+	}
+	if _, ok := heartbeat.AllocatedRunnerPolicies["missing-active-runner"]; ok {
+		t.Fatalf("missing active runner policy was reported: %v", heartbeat.AllocatedRunnerPolicies)
 	}
 }
 

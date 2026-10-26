@@ -1226,6 +1226,9 @@ func (c *SessionPoolController) HeartbeatManager(ctx echo.Context) error {
 					continue
 				}
 				protectedRunners[allocation.RunnerID] = true
+				if heartbeat.LocalRunnerIDs != nil && !localRunners[allocation.RunnerID] {
+					continue
+				}
 				var settings sessionsettings.SessionSettings
 				if json.Unmarshal(allocation.ProvisionSettings, &settings) == nil {
 					allocatedRunnerPolicies[allocation.RunnerID] = settings.Session
