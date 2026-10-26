@@ -119,16 +119,35 @@ func (pc *ProvisionerController) sessionStateID(ctx context.Context, runtimeID s
 	return settings.ParentRuntime.SessionID
 }
 
+func (pc *ProvisionerController) authorizedSessionState(c echo.Context, runtimeID string) (string, bool) {
+	stateID := pc.sessionStateID(c.Request().Context(), runtimeID)
+	if pc.authorizedSession(c, runtimeID) {
+		return stateID, true
+	}
+	// Stock runners created before session-scoped control tokens were introduced
+	// still carry the provisioner credential. Accept it only when the request is
+	// addressed to the runner's private ID and its active settings map that ID to
+	// a distinct public session. Public session IDs never enter this compatibility
+	// path, so the credential cannot select another session's state directly.
+	if stateID == runtimeID || pc.manager == nil {
+		return "", false
+	}
+	header := c.Request().Header.Get("Authorization")
+	token, ok := strings.CutPrefix(header, "Bearer ")
+	return stateID, ok && token != "" && pc.manager.ValidateProvisionerToken(token)
+}
+
 func (pc *ProvisionerController) multipartStore(c echo.Context) (services.MultipartSessionStateStore, string, error) {
 	runtimeID := c.Param("sessionId")
-	if !pc.authorizedSession(c, runtimeID) {
+	sessionID, ok := pc.authorizedSessionState(c, runtimeID)
+	if !ok {
 		return nil, "", echo.NewHTTPError(http.StatusUnauthorized)
 	}
 	store, ok := pc.stateStore.(services.MultipartSessionStateStore)
 	if !ok {
 		return nil, "", echo.NewHTTPError(http.StatusNotImplemented, "direct transfer is unavailable")
 	}
-	return store, pc.sessionStateID(c.Request().Context(), runtimeID), nil
+	return store, sessionID, nil
 }
 
 func (pc *ProvisionerController) BeginSessionStateUpload(c echo.Context) error {
@@ -201,14 +220,15 @@ func (pc *ProvisionerController) PresignSessionStateDownload(c echo.Context) err
 
 func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
 	runtimeID := c.Param("sessionId")
-	if !pc.authorizedSession(c, runtimeID) {
+	sessionID, ok := pc.authorizedSessionState(c, runtimeID)
+	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	if pc.stateStore == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
 	}
 	body := http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes)
-	if err := pc.stateStore.Save(c.Request().Context(), pc.sessionStateID(c.Request().Context(), runtimeID), body); err != nil {
+	if err := pc.stateStore.Save(c.Request().Context(), sessionID, body); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
@@ -235,13 +255,14 @@ func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
 
 func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
 	runtimeID := c.Param("sessionId")
-	if !pc.authorizedSession(c, runtimeID) {
+	sessionID, ok := pc.authorizedSessionState(c, runtimeID)
+	if !ok {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	if pc.stateStore == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
 	}
-	body, err := pc.stateStore.Load(c.Request().Context(), pc.sessionStateID(c.Request().Context(), runtimeID))
+	body, err := pc.stateStore.Load(c.Request().Context(), sessionID)
 	if os.IsNotExist(err) {
 		return c.NoContent(http.StatusNotFound)
 	}

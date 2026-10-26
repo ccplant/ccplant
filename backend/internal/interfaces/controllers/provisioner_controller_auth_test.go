@@ -99,3 +99,38 @@ func TestSaveSessionStateAuthenticatesRuntimeIDAndStoresByPublicID(t *testing.T)
 		t.Fatalf("saved session ID = %q, want public-session", store.savedID)
 	}
 }
+
+func TestSaveSessionStateAllowsProvisionerCredentialOnlyForMappedRuntime(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		manager    ProvisionerManager
+		wantStatus int
+		wantID     string
+	}{
+		{name: "mapped private runtime", manager: routedProvisionerManagerStub{}, wantStatus: http.StatusNoContent, wantID: "public-session"},
+		{name: "unmapped public ID", manager: scopedProvisionerManagerStub{}, wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &recordingSessionStateStore{}
+			controller := NewProvisionerController(tc.manager, nil, nil, nil, store)
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodPut, "/internal/session-state/session-a", strings.NewReader("state"))
+			req.Header.Set(echo.HeaderAuthorization, "Bearer global-token")
+			rec := httptest.NewRecorder()
+			ctx := e.NewContext(req, rec)
+			ctx.SetPath("/internal/session-state/:sessionId")
+			ctx.SetParamNames("sessionId")
+			ctx.SetParamValues("session-a")
+
+			if err := controller.SaveSessionState(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if store.savedID != tc.wantID {
+				t.Fatalf("saved session ID = %q, want %q", store.savedID, tc.wantID)
+			}
+		})
+	}
+}
