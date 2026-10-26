@@ -33,12 +33,12 @@ func TestSessionControlTokenIsBoundToSession(t *testing.T) {
 func TestSessionControlTokenAcceptsOnlyMatchingLegacyStockPodToken(t *testing.T) {
 	manager := newWorkloadTestManager(t, false)
 	manager.k8sConfig.ProvisionerToken = "new-master"
-	session := NewKubernetesSession("stock-a", &entities.RunServerRequest{UserID: "test-user"}, "stock-pod-a", "stock-a-svc", "", "test-ns", 9000, nil, nil)
+	session := NewKubernetesSession("stock-a", &entities.RunServerRequest{UserID: "test-user"}, "stock-a", "stock-a-svc", "", "test-ns", 9000, nil, nil)
 	manager.mutex.Lock()
 	manager.sessions[session.ID()] = session
 	manager.mutex.Unlock()
 	_, err := manager.client.CoreV1().Pods("test-ns").Create(context.Background(), &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "stock-pod-a", Namespace: "test-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "stock-a", Namespace: "test-ns"},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name: "agent", Env: []corev1.EnvVar{{Name: "PROVISIONER_TOKEN", Value: "legacy-stock-a"}},
 		}}},

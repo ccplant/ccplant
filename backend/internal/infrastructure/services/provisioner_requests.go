@@ -85,13 +85,9 @@ func (m *KubernetesSessionManager) ValidateSessionControlToken(sessionID, token 
 	// original token is still private to that Pod, so validate it directly
 	// against the workload addressed by this session ID. This preserves stock
 	// without turning the old credential back into a shared/global credential.
-	session, ok := m.GetSession(sessionID).(*KubernetesSession)
-	if !ok || session == nil {
-		return false
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {
 		return false
 	}
