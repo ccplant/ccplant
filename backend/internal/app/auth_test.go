@@ -155,7 +155,7 @@ func TestHandleOAuthCallback(t *testing.T) {
 	assert.Equal(t, "Bearer", resp.TokenType)
 	assert.NotNil(t, resp.User)
 	assert.NotEmpty(t, resp.User.UserID)
-	assert.NotEqual(t, "testuser", resp.User.UserID)
+	assert.Equal(t, "testuser", resp.User.UserID)
 	assert.Equal(t, "testuser", resp.User.GitHubUser.Login)
 	assert.NotContains(t, rec.Body.String(), "gho_test_token")
 }

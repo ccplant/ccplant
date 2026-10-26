@@ -642,6 +642,49 @@ func (c *GitHubConnectionsController) ResolvePrincipalIDForGitHubUser(ctx contex
 	return principal.ID, nil
 }
 
+// ResolveApplicationUserIDForGitHubUser returns the user ID used to own
+// personal-scoped resources for a GitHub identity. Connection-backed
+// identities keep their stable principal (or an explicitly linked local user),
+// while the legacy built-in GitHub flow is bound to the GitHub login so
+// resources created before stable principals were introduced remain visible.
+func (c *GitHubConnectionsController) ResolveApplicationUserIDForGitHubUser(ctx context.Context, githubUserID int64, login string) (string, error) {
+	identities, err := c.listIdentities(ctx)
+	if err != nil {
+		return "", err
+	}
+	principals, err := c.listPrincipals(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, identity := range identities {
+		if identity.GitHubUserID != githubUserID {
+			continue
+		}
+		connection, _, _, loadErr := c.loadConnection(ctx, identity.ConnectionID)
+		if loadErr != nil || connection.BaseURL != "https://github.com" {
+			continue
+		}
+		for _, principal := range principals {
+			if principal.ID == identity.PrincipalID {
+				return applicationUserID(principal), nil
+			}
+		}
+		return "", errors.New("principal for GitHub identity not found")
+	}
+
+	principal, err := c.getOrCreatePrincipal(ctx, fmt.Sprintf("github:%d", githubUserID))
+	if err != nil {
+		return "", err
+	}
+	if principal.ApplicationUserID == "" && login != "" {
+		principal, err = c.bindPrincipalToApplicationUser(ctx, principal.InternalUserID, principal, login)
+		if err != nil {
+			return "", err
+		}
+	}
+	return applicationUserID(principal), nil
+}
+
 func (c *GitHubConnectionsController) OAuthStateMode(ctx context.Context, stateID string) (string, error) {
 	var state githubOAuthState
 	_, err := c.loadObject(ctx, stateSecretName(stateID), &state)

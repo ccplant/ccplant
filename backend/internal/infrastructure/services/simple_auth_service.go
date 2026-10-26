@@ -538,6 +538,15 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 			s.mu.RLock()
 			membershipResolver := s.githubMembershipResolver
 			s.mu.RUnlock()
+			if identityResolver, ok := membershipResolver.(interface {
+				ResolveApplicationUserIDForGitHubUser(context.Context, int64, string) (string, error)
+			}); ok && userContext.GitHubUser != nil {
+				applicationUserID, resolveErr := identityResolver.ResolveApplicationUserIDForGitHubUser(context.Background(), userContext.GitHubUser.ID, userContext.GitHubUser.Login)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve GitHub application user: %w", resolveErr)
+				}
+				userContext.UserID = applicationUserID
+			}
 			if membershipResolver != nil && userContext.GitHubUser != nil {
 				var linkedTeams []auth.GitHubTeamMembership
 				var linked bool

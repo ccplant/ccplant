@@ -552,7 +552,7 @@ func TestOAuthProviderIntegration(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, userContext)
 		require.NotEmpty(t, userContext.UserID)
-		require.NotEqual(t, "testuser", userContext.UserID)
+		require.Equal(t, "testuser", userContext.UserID)
 		require.Equal(t, callbackResp.User.UserID, userContext.UserID)
 
 		// Step 4: Refresh session
