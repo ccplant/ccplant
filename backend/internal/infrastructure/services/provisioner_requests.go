@@ -75,7 +75,34 @@ func validateSessionControlToken(masterKey, sessionID, token string) bool {
 }
 
 func (m *KubernetesSessionManager) ValidateSessionControlToken(sessionID, token string) bool {
-	return m.k8sConfig != nil && validateSessionControlToken(m.k8sConfig.ProvisionerToken, sessionID, token)
+	if m.k8sConfig == nil || sessionID == "" || token == "" {
+		return false
+	}
+	if validateSessionControlToken(m.k8sConfig.ProvisionerToken, sessionID, token) {
+		return true
+	}
+	// Pre-warmed Pods can survive a provisioner master-key rotation. Their
+	// original token is still private to that Pod, so validate it directly
+	// against the workload addressed by this session ID. This preserves stock
+	// without turning the old credential back into a shared/global credential.
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, session.DeploymentName(), metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	for _, container := range pod.Spec.Containers {
+		for _, env := range container.Env {
+			if env.Name == "PROVISIONER_TOKEN" && env.Value != "" && hmac.Equal([]byte(env.Value), []byte(token)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *KubernetesSessionManager) ensureProvisionerToken(ctx context.Context) error {
