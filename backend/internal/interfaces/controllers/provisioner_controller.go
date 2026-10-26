@@ -42,6 +42,10 @@ type sessionSuspendScheduler interface {
 	ScheduleSessionSuspend(ctx context.Context, sessionID string) error
 }
 
+type sessionSettingsReader interface {
+	CurrentSessionSettings(context.Context, string) (*sessionsettings.SessionSettings, error)
+}
+
 type externalRuntimeProfileProvider interface {
 	ExternalRuntimeProfile() *sessionsettings.RuntimeProfile
 }
@@ -103,23 +107,36 @@ type multipartStartResponse struct {
 	PartSize int64  `json:"part_size"`
 }
 
-func (pc *ProvisionerController) multipartStore(c echo.Context) (services.MultipartSessionStateStore, error) {
-	if !pc.authorizedSession(c, c.Param("sessionId")) {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized)
+func (pc *ProvisionerController) sessionStateID(ctx context.Context, runtimeID string) string {
+	reader, ok := pc.manager.(sessionSettingsReader)
+	if !ok {
+		return runtimeID
+	}
+	settings, err := reader.CurrentSessionSettings(ctx, runtimeID)
+	if err != nil || settings == nil || settings.ParentRuntime == nil || !settings.ParentRuntime.Enabled || settings.ParentRuntime.SessionID == "" {
+		return runtimeID
+	}
+	return settings.ParentRuntime.SessionID
+}
+
+func (pc *ProvisionerController) multipartStore(c echo.Context) (services.MultipartSessionStateStore, string, error) {
+	runtimeID := c.Param("sessionId")
+	if !pc.authorizedSession(c, runtimeID) {
+		return nil, "", echo.NewHTTPError(http.StatusUnauthorized)
 	}
 	store, ok := pc.stateStore.(services.MultipartSessionStateStore)
 	if !ok {
-		return nil, echo.NewHTTPError(http.StatusNotImplemented, "direct transfer is unavailable")
+		return nil, "", echo.NewHTTPError(http.StatusNotImplemented, "direct transfer is unavailable")
 	}
-	return store, nil
+	return store, pc.sessionStateID(c.Request().Context(), runtimeID), nil
 }
 
 func (pc *ProvisionerController) BeginSessionStateUpload(c echo.Context) error {
-	store, err := pc.multipartStore(c)
+	store, sessionID, err := pc.multipartStore(c)
 	if err != nil {
 		return err
 	}
-	uploadID, partSize, err := store.BeginMultipart(c.Request().Context(), c.Param("sessionId"))
+	uploadID, partSize, err := store.BeginMultipart(c.Request().Context(), sessionID)
 	if err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
@@ -127,7 +144,7 @@ func (pc *ProvisionerController) BeginSessionStateUpload(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) PresignSessionStatePart(c echo.Context) error {
-	store, err := pc.multipartStore(c)
+	store, sessionID, err := pc.multipartStore(c)
 	if err != nil {
 		return err
 	}
@@ -135,7 +152,7 @@ func (pc *ProvisionerController) PresignSessionStatePart(c echo.Context) error {
 	if err != nil || number < 1 || number > maxSessionStateBytes/(8<<20) {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid part number"})
 	}
-	url, err := store.PresignPart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId"), int32(number))
+	url, err := store.PresignPart(c.Request().Context(), sessionID, c.Param("uploadId"), int32(number))
 	if err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
@@ -143,7 +160,7 @@ func (pc *ProvisionerController) PresignSessionStatePart(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) CompleteSessionStateUpload(c echo.Context) error {
-	store, err := pc.multipartStore(c)
+	store, sessionID, err := pc.multipartStore(c)
 	if err != nil {
 		return err
 	}
@@ -153,29 +170,29 @@ func (pc *ProvisionerController) CompleteSessionStateUpload(c echo.Context) erro
 	if err := c.Bind(&req); err != nil || len(req.Parts) == 0 || len(req.Parts) > maxSessionStateBytes/(8<<20) {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "parts are required"})
 	}
-	if err := store.CompleteMultipart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId"), req.Parts); err != nil {
+	if err := store.CompleteMultipart(c.Request().Context(), sessionID, c.Param("uploadId"), req.Parts); err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
 	return c.NoContent(http.StatusNoContent)
 }
 
 func (pc *ProvisionerController) AbortSessionStateUpload(c echo.Context) error {
-	store, err := pc.multipartStore(c)
+	store, sessionID, err := pc.multipartStore(c)
 	if err != nil {
 		return err
 	}
-	if err := store.AbortMultipart(c.Request().Context(), c.Param("sessionId"), c.Param("uploadId")); err != nil {
+	if err := store.AbortMultipart(c.Request().Context(), sessionID, c.Param("uploadId")); err != nil {
 		return c.NoContent(http.StatusServiceUnavailable)
 	}
 	return c.NoContent(http.StatusNoContent)
 }
 
 func (pc *ProvisionerController) PresignSessionStateDownload(c echo.Context) error {
-	store, err := pc.multipartStore(c)
+	store, sessionID, err := pc.multipartStore(c)
 	if err != nil {
 		return err
 	}
-	url, err := store.PresignDownload(c.Request().Context(), c.Param("sessionId"))
+	url, err := store.PresignDownload(c.Request().Context(), sessionID)
 	if err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence backend is unavailable"})
 	}
@@ -183,14 +200,15 @@ func (pc *ProvisionerController) PresignSessionStateDownload(c echo.Context) err
 }
 
 func (pc *ProvisionerController) SaveSessionState(c echo.Context) error {
-	if !pc.authorizedSession(c, c.Param("sessionId")) {
+	runtimeID := c.Param("sessionId")
+	if !pc.authorizedSession(c, runtimeID) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	if pc.stateStore == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
 	}
 	body := http.MaxBytesReader(c.Response(), c.Request().Body, maxSessionStateBytes)
-	if err := pc.stateStore.Save(c.Request().Context(), c.Param("sessionId"), body); err != nil {
+	if err := pc.stateStore.Save(c.Request().Context(), pc.sessionStateID(c.Request().Context(), runtimeID), body); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			return c.JSON(http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
@@ -216,13 +234,14 @@ func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
 }
 
 func (pc *ProvisionerController) LoadSessionState(c echo.Context) error {
-	if !pc.authorizedSession(c, c.Param("sessionId")) {
+	runtimeID := c.Param("sessionId")
+	if !pc.authorizedSession(c, runtimeID) {
 		return c.NoContent(http.StatusUnauthorized)
 	}
 	if pc.stateStore == nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence is disabled"})
 	}
-	body, err := pc.stateStore.Load(c.Request().Context(), c.Param("sessionId"))
+	body, err := pc.stateStore.Load(c.Request().Context(), pc.sessionStateID(c.Request().Context(), runtimeID))
 	if os.IsNotExist(err) {
 		return c.NoContent(http.StatusNotFound)
 	}

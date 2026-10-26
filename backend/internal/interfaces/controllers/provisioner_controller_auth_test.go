@@ -2,12 +2,15 @@ package controllers
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
+	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
 type scopedProvisionerManagerStub struct{}
@@ -32,6 +35,25 @@ func (scopedProvisionerManagerStub) UpdateProvisionRequestStatus(context.Context
 	return nil
 }
 
+type routedProvisionerManagerStub struct{ scopedProvisionerManagerStub }
+
+func (routedProvisionerManagerStub) CurrentSessionSettings(context.Context, string) (*sessionsettings.SessionSettings, error) {
+	return &sessionsettings.SessionSettings{ParentRuntime: &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, SessionID: "public-session",
+	}}, nil
+}
+
+type recordingSessionStateStore struct{ savedID string }
+
+func (s *recordingSessionStateStore) Save(_ context.Context, id string, _ io.Reader) error {
+	s.savedID = id
+	return nil
+}
+
+func (*recordingSessionStateStore) Load(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
 func TestProvisionerSessionAuthorizationIsBoundToSession(t *testing.T) {
 	controller := NewProvisionerController(scopedProvisionerManagerStub{}, nil, nil, nil)
 	e := echo.New()
@@ -52,5 +74,28 @@ func TestProvisionerSessionAuthorizationIsBoundToSession(t *testing.T) {
 				t.Fatalf("authorizedSession() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSaveSessionStateAuthenticatesRuntimeIDAndStoresByPublicID(t *testing.T) {
+	store := &recordingSessionStateStore{}
+	controller := NewProvisionerController(routedProvisionerManagerStub{}, nil, nil, nil, store)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/internal/session-state/session-a", strings.NewReader("state"))
+	req.Header.Set(echo.HeaderAuthorization, "Bearer session-a-token")
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetPath("/internal/session-state/:sessionId")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-a")
+
+	if err := controller.SaveSessionState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if store.savedID != "public-session" {
+		t.Fatalf("saved session ID = %q, want public-session", store.savedID)
 	}
 }
