@@ -87,11 +87,13 @@ func (m *KubernetesSessionManager) ValidateSessionControlToken(sessionID, token 
 	// without turning the old credential back into a shared/global credential.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, sessionID, metav1.GetOptions{})
-	if err != nil {
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "agentapi.proxy/session-id=" + sessionID,
+	})
+	if err != nil || len(pods.Items) != 1 || pods.Items[0].DeletionTimestamp != nil {
 		return false
 	}
-	for _, container := range pod.Spec.Containers {
+	for _, container := range pods.Items[0].Spec.Containers {
 		for _, env := range container.Env {
 			if env.Name == "PROVISIONER_TOKEN" && env.Value != "" && hmac.Equal([]byte(env.Value), []byte(token)) {
 				return true

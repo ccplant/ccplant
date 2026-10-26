@@ -38,7 +38,7 @@ func TestSessionControlTokenAcceptsOnlyMatchingLegacyStockPodToken(t *testing.T)
 	manager.sessions[session.ID()] = session
 	manager.mutex.Unlock()
 	_, err := manager.client.CoreV1().Pods("test-ns").Create(context.Background(), &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "stock-a", Namespace: "test-ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-stock-a", Namespace: "test-ns", Labels: map[string]string{"agentapi.proxy/session-id": "stock-a"}},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name: "agent", Env: []corev1.EnvVar{{Name: "PROVISIONER_TOKEN", Value: "legacy-stock-a"}},
 		}}},
