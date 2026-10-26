@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -72,7 +73,12 @@ func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
 		SessionID:       "public-session",
 		RemoteSessionID: "runtime-session",
 	}}
-	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes)
+	var cleanedAllocations []string
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes).
+		WithSessionPoolAllocationCleaner(func(_ context.Context, sessionID string) error {
+			cleanedAllocations = append(cleanedAllocations, sessionID)
+			return nil
+		})
 	req := httptest.NewRequest(http.MethodDelete, "/internal/worker/sessions/public-session", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
 	rec := httptest.NewRecorder()
@@ -83,7 +89,30 @@ func TestWorkerDeleteSessionRemovesPoolRouteAfterRuntime(t *testing.T) {
 	require.NoError(t, controller.DeleteSession(ctx))
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.Equal(t, []string{"runtime-session"}, manager.deletedIDs)
+	require.Equal(t, []string{"public-session"}, cleanedAllocations)
 	require.Equal(t, []string{"public-session"}, routes.deletedIDs)
+}
+
+func TestWorkerDeleteSessionKeepsPoolRouteWhenAllocationCleanupFails(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	routes := &cleanupRouteRepository{route: &portrepos.SessionRoute{
+		SessionID:       "public-session",
+		RemoteSessionID: "runtime-session",
+	}}
+	controller := controllers.NewWorkerControlController(manager, "secret", nil, routes).
+		WithSessionPoolAllocationCleaner(func(context.Context, string) error {
+			return errors.New("allocation cleanup failed")
+		})
+	req := httptest.NewRequest(http.MethodDelete, "/internal/worker/sessions/public-session", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
+	rec := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, rec)
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("public-session")
+
+	require.NoError(t, controller.DeleteSession(ctx))
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Empty(t, routes.deletedIDs)
 }
 
 func TestWorkerSessionListPreservesPoolTTLRequest(t *testing.T) {
@@ -244,10 +273,15 @@ func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {
 		Transport: portrepos.SessionRouteTransportDirectRuntime,
 	}}
 	called := false
+	var cleanedAllocations []string
 	controller := controllers.NewWorkerControlController(&fakeSessionManager{sessions: map[string]*fakeSession{}}, "secret", nil, routes).
 		WithSessionDeleter(func(c echo.Context) error {
 			called = true
 			return c.NoContent(http.StatusAccepted)
+		}).
+		WithSessionPoolAllocationCleaner(func(_ context.Context, sessionID string) error {
+			cleanedAllocations = append(cleanedAllocations, sessionID)
+			return nil
 		})
 	req := httptest.NewRequest(http.MethodDelete, "/internal/worker/sessions/public-session", nil)
 	req.Header.Set(echo.HeaderAuthorization, "Bearer secret")
@@ -258,5 +292,6 @@ func TestWorkerDeleteSessionUsesDurableRemoteDeletion(t *testing.T) {
 
 	require.NoError(t, controller.DeleteSession(ctx))
 	require.True(t, called)
+	require.Equal(t, []string{"public-session"}, cleanedAllocations)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 }
