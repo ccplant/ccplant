@@ -1,8 +1,10 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"testing"
 
@@ -14,6 +16,31 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestLoggedOperationOnlyLogsFailures(t *testing.T) {
+	var output bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
+
+	_, err := LoggedOperation(context.Background(), "successful.operation", func(context.Context) (string, error) {
+		return "ok", nil
+	})
+	require.NoError(t, err)
+	require.Empty(t, output.String())
+
+	wantErr := errors.New("failed")
+	_, err = LoggedOperation(context.Background(), "failed.operation", func(context.Context) (string, error) {
+		return "", wantErr
+	})
+	require.ErrorIs(t, err, wantErr)
+	require.Contains(t, output.String(), "[OTEL_TIMING] completed operation=failed.operation status=error")
+}
 
 func TestOperationRecordsResultAttributesAndError(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
