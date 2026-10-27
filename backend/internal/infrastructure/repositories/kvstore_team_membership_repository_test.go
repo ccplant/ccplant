@@ -11,8 +11,20 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 	ports "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestKVStoreTeamMembershipRepositoryRecordNameIsDNS1123Safe(t *testing.T) {
+	t.Parallel()
+	repo := NewKVStoreTeamMembershipRepository(nil, "test")
+	teamPrincipalID := "team-01M481XBB903JZEVSR3MGBKCCQ"
+
+	name := repo.recordName(teamPrincipalID)
+
+	require.Equal(t, "agentapi-team-membership-team-01m481xbb903jzevsr3mgbkccq", name)
+	require.Empty(t, validation.IsDNS1123Subdomain(name))
+}
 
 func TestKVStoreTeamMembershipRepositoryPersistsAndRateLimitsSync(t *testing.T) {
 	t.Parallel()
