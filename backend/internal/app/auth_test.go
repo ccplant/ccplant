@@ -11,6 +11,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/auth"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 )
@@ -326,4 +328,26 @@ func TestMergeGitHubMembershipsDeduplicatesAcrossLoginSources(t *testing.T) {
 	assert.Len(t, merged, 2)
 	assert.Equal(t, "developers", merged[0].TeamSlug)
 	assert.Equal(t, "operators", merged[1].TeamSlug)
+}
+
+func TestIssueOAuthAPIKeyPreservesRegularUserBaselinePermissions(t *testing.T) {
+	proxy, mockServer := setupTestServerWithOAuth(t)
+	defer mockServer.Close()
+
+	apiKey, err := proxy.issueOAuthAPIKey(t.Context(), &auth.UserContext{
+		UserID:      "testuser",
+		Permissions: []string{"custom:permission", "session:create"},
+	})
+	require.NoError(t, err)
+
+	user, err := proxy.container.AuthService.ValidateAPIKey(t.Context(), apiKey)
+	require.NoError(t, err)
+	assert.True(t, user.HasPermission(entities.PermissionSessionCreate))
+	assert.True(t, user.HasPermission(entities.PermissionSessionRead))
+	assert.True(t, user.HasPermission(entities.Permission("custom:permission")))
+	assert.Equal(t, []entities.Permission{
+		entities.PermissionSessionCreate,
+		entities.PermissionSessionRead,
+		entities.Permission("custom:permission"),
+	}, user.Permissions())
 }

@@ -329,11 +329,26 @@ func (s *Server) issueOAuthAPIKey(ctx context.Context, userContext *auth.UserCon
 	if !ok {
 		return "", fmt.Errorf("application API key authentication is unavailable")
 	}
-	permissions := make([]entities.Permission, 0, len(userContext.Permissions))
-	for _, permission := range userContext.Permissions {
-		permissions = append(permissions, entities.Permission(permission))
-	}
+	// A regular user always has the baseline permissions established by
+	// entities.NewUser. OAuth mapping can add permissions, but must not remove
+	// session:read (or session:create) merely because default_permissions is
+	// empty or only contains additional permissions. Without this, login
+	// succeeds but every authenticated read endpoint immediately returns 403.
 	user := entities.NewUser(entities.UserID(userContext.UserID), entities.UserTypeRegular, userContext.UserID)
+	permissions := user.Permissions()
+	for _, permission := range userContext.Permissions {
+		candidate := entities.Permission(permission)
+		found := false
+		for _, existing := range permissions {
+			if existing == candidate {
+				found = true
+				break
+			}
+		}
+		if !found {
+			permissions = append(permissions, candidate)
+		}
+	}
 	user.SetPermissions(permissions)
 	if userContext.Role != "" {
 		if err := user.SetRoles([]entities.Role{entities.Role(userContext.Role)}); err != nil {
