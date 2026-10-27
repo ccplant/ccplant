@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -308,72 +307,14 @@ func (s *Server) handleOAuthCallback(c echo.Context) error {
 		CreatedAt:   time.Now(),
 		ExpiresAt:   expiresAt,
 	})
-	accessToken, err := s.issueOAuthAPIKey(c.Request().Context(), userContext)
-	if err != nil {
-		s.oauthSessions.Delete(sessionID)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create application session").SetInternal(err)
-	}
-
 	// Return session information
 	return c.JSON(http.StatusOK, OAuthSessionResponse{
 		SessionID:   sessionID,
-		AccessToken: accessToken,
+		AccessToken: userContext.AccessToken,
 		TokenType:   "Bearer",
 		ExpiresAt:   expiresAt,
 		User:        publicOAuthUser(userContext),
 	})
-}
-
-func (s *Server) issueOAuthAPIKey(ctx context.Context, userContext *auth.UserContext) (string, error) {
-	simpleAuth, ok := s.container.AuthService.(*services.SimpleAuthService)
-	if !ok {
-		return "", fmt.Errorf("application API key authentication is unavailable")
-	}
-	// A regular user always has the baseline permissions established by
-	// entities.NewUser. OAuth mapping can add permissions, but must not remove
-	// session:read (or session:create) merely because default_permissions is
-	// empty or only contains additional permissions. Without this, login
-	// succeeds but every authenticated read endpoint immediately returns 403.
-	user := entities.NewUser(entities.UserID(userContext.UserID), entities.UserTypeRegular, userContext.UserID)
-	permissions := user.Permissions()
-	for _, permission := range userContext.Permissions {
-		candidate := entities.Permission(permission)
-		found := false
-		for _, existing := range permissions {
-			if existing == candidate {
-				found = true
-				break
-			}
-		}
-		if !found {
-			permissions = append(permissions, candidate)
-		}
-	}
-	user.SetPermissions(permissions)
-	if userContext.Role != "" {
-		if err := user.SetRoles([]entities.Role{entities.Role(userContext.Role)}); err != nil {
-			return "", err
-		}
-	}
-	if githubUser := userContext.GitHubUser; githubUser != nil {
-		teams := make([]entities.GitHubTeamMembership, 0, len(githubUser.Teams))
-		for _, team := range githubUser.Teams {
-			teams = append(teams, entities.GitHubTeamMembership{
-				ConnectionID: team.ConnectionID,
-				Organization: team.Organization,
-				TeamSlug:     team.TeamSlug,
-				TeamName:     team.TeamName,
-				Role:         team.Role,
-			})
-		}
-		user.SetGitHubInfo(entities.NewGitHubUserInfo(githubUser.ID, githubUser.Login, githubUser.Name, githubUser.Email, "", "", ""), teams)
-	}
-	simpleAuth.AddUser(user)
-	apiKey, err := simpleAuth.GenerateAPIKey(ctx, user.ID(), permissions)
-	if err != nil {
-		return "", err
-	}
-	return apiKey.Key, nil
 }
 
 // handleOAuthLogout handles OAuth logout
