@@ -182,7 +182,10 @@ func (r *KVStoreTeamMembershipRepository) Delete(ctx context.Context, teamPrinci
 }
 
 func (r *KVStoreTeamMembershipRepository) recordName(teamPrincipalID string) string {
-	return TeamMembershipRecordPrefix + teamPrincipalID
+	// Team principal IDs contain an uppercase ULID, while Kubernetes Secret
+	// names must be lowercase DNS-1123 subdomains. Keep the canonical ID in
+	// the stored snapshot and normalize only the backend record key.
+	return TeamMembershipRecordPrefix + strings.ToLower(teamPrincipalID)
 }
 
 func (r *KVStoreTeamMembershipRepository) newRecord(snapshot *entities.TeamMembershipSnapshot) kvstore.Record {
