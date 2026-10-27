@@ -106,6 +106,23 @@ func TestTeamConfigControllerCreateAndListAsRegularUser(t *testing.T) {
 	require.Len(t, repo.teams, 1)
 }
 
+func TestTeamConfigControllerListIncludesTeamBoundToGitHubTeam(t *testing.T) {
+	team := entities.NewTeamConfig("team-01ARZ3NDEKTSV4RRFFQ69G5FAV", nil, nil)
+	team.SetPrincipalID(team.TeamID())
+	team.SetName("Platform")
+	team.SetExternalTeams([]entities.ExternalTeamBinding{{Organization: "Example", TeamSlug: "Platform"}})
+	repo := &teamConfigControllerRepo{teams: map[string]*entities.TeamConfig{team.TeamID(): team}}
+	controller := NewTeamConfigController(repo)
+	e := echo.New()
+	authz := &auth.AuthorizationContext{TeamScope: auth.TeamScopeAuth{Teams: []string{"example/platform"}}}
+
+	recorder := httptest.NewRecorder()
+	ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/teams", nil), recorder)
+	ctx.Set("authz_context", authz)
+	require.NoError(t, controller.List(ctx))
+	require.Contains(t, recorder.Body.String(), `"name":"Platform"`)
+}
+
 func TestTeamConfigControllerRenameAndDelete(t *testing.T) {
 	team := entities.NewTeamConfig("team-01ARZ3NDEKTSV4RRFFQ69G5FAV", nil, nil)
 	team.SetPrincipalID(team.TeamID())

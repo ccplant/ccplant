@@ -258,8 +258,22 @@ func canBindExternalGitHubTeam(authz *auth.AuthorizationContext, binding entitie
 }
 
 func canManageTeam(authz *auth.AuthorizationContext, team *entities.TeamConfig) bool {
-	return authz != nil && (authz.TeamScope.IsAdmin || authz.CanAccessTeam(team.TeamID()) ||
-		(authz.User != nil && team.IsOwner(string(authz.User.ID()))))
+	if authz == nil {
+		return false
+	}
+	principalID := strings.TrimSpace(team.PrincipalID())
+	if authz.TeamScope.IsAdmin || authz.CanAccessTeam(team.TeamID()) || (principalID != "" && authz.CanAccessTeam(principalID)) ||
+		(authz.User != nil && team.IsOwner(string(authz.User.ID()))) {
+		return true
+	}
+	for _, binding := range team.ExternalTeams() {
+		for _, memberTeam := range authz.TeamScope.Teams {
+			if strings.EqualFold(strings.TrimSpace(memberTeam), binding.GitHubTeam()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func bindingKey(binding entities.ExternalTeamBinding) string {
