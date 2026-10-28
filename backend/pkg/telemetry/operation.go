@@ -74,21 +74,18 @@ func OperationErr(ctx context.Context, name string, fn func(context.Context) err
 	return err
 }
 
-// LoggedOperation runs fn in a span and emits one completion log with the same
-// operation name, trace identifiers, and elapsed time. It is intended for
-// latency-sensitive asynchronous paths where a trace alone is not enough to
-// diagnose production delays from pod logs.
+// LoggedOperation runs fn in a span and emits a completion log on failure with
+// the same operation name, trace identifiers, and elapsed time. Successful
+// operations remain available through traces without adding noise to pod logs.
 func LoggedOperation[T any](ctx context.Context, name string, fn func(context.Context) (T, error), attrs ...attribute.KeyValue) (T, error) {
 	startedAt := time.Now()
 	return Operation(ctx, name, func(operationCtx context.Context) (T, error) {
 		result, err := fn(operationCtx)
-		spanContext := trace.SpanContextFromContext(operationCtx)
-		status := "success"
 		if err != nil {
-			status = "error"
+			spanContext := trace.SpanContextFromContext(operationCtx)
+			log.Printf("[OTEL_TIMING] completed operation=%s status=error duration_ms=%d trace_id=%s span_id=%s",
+				name, time.Since(startedAt).Milliseconds(), spanContext.TraceID(), spanContext.SpanID())
 		}
-		log.Printf("[OTEL_TIMING] completed operation=%s status=%s duration_ms=%d trace_id=%s span_id=%s",
-			name, status, time.Since(startedAt).Milliseconds(), spanContext.TraceID(), spanContext.SpanID())
 		return result, err
 	}, attrs...)
 }
