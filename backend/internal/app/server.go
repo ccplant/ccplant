@@ -946,6 +946,7 @@ func buildKVBackend(cfg config.KVStoreBackendConfig, kubeClient kubernetes.Inter
 		if cfg.Backend == "libsql" {
 			return store, nil
 		}
+		cfg.Encryption.Keys = cfg.Encryption.EffectiveKeys()
 		if cfg.Encryption.ActiveKeyID == "" || len(cfg.Encryption.Keys) == 0 {
 			_ = store.Close()
 			return nil, errors.New("KV encryption keys are required for libsql-encrypted")

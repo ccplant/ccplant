@@ -555,10 +555,23 @@ type KVStoreReplicationConfig struct {
 type KVStoreEncryptionConfig struct {
 	Provider              string            `json:"provider" mapstructure:"provider"`
 	ActiveKeyID           string            `json:"active_key_id" mapstructure:"active_key_id"`
+	KMSKeyID              string            `json:"kms_key_id" mapstructure:"kms_key_id"`
 	KMSRegion             string            `json:"kms_region" mapstructure:"kms_region"`
 	Keys                  map[string]string `json:"keys" mapstructure:"keys"`
 	BranchCacheTTLSeconds int               `json:"branch_cache_ttl_seconds" mapstructure:"branch_cache_ttl_seconds"`
 	BranchCacheMaxEntries int               `json:"branch_cache_max_entries" mapstructure:"branch_cache_max_entries"`
+}
+
+// EffectiveKeys returns the configured keyring, expanding the single-key KMS
+// form used by Kubernetes Secret references when a full key map is absent.
+func (c KVStoreEncryptionConfig) EffectiveKeys() map[string]string {
+	if len(c.Keys) > 0 {
+		return c.Keys
+	}
+	if c.ActiveKeyID == "" || strings.TrimSpace(c.KMSKeyID) == "" {
+		return nil
+	}
+	return map[string]string{c.ActiveKeyID: c.KMSKeyID}
 }
 
 type KVStoreConfig struct {
@@ -1377,6 +1390,7 @@ func bindEnvVars(v *viper.Viper) {
 func bindKVEncryptionEnv(v *viper.Viper, path, envPrefix string) {
 	_ = v.BindEnv(path+".active_key_id", envPrefix+"_ACTIVE_KEY_ID")
 	_ = v.BindEnv(path+".provider", envPrefix+"_PROVIDER")
+	_ = v.BindEnv(path+".kms_key_id", envPrefix+"_KMS_KEY_ID")
 	_ = v.BindEnv(path+".kms_region", envPrefix+"_KMS_REGION")
 	_ = v.BindEnv(path+".keys", envPrefix+"_KEYS")
 	_ = v.BindEnv(path+".branch_cache_ttl_seconds", envPrefix+"_BRANCH_CACHE_TTL_SECONDS")
