@@ -15,6 +15,30 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestKVStoreMigrateEncryptionFlagDefaultsFromSecondaryEnvironment(t *testing.T) {
+	t.Setenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_ACTIVE_KEY_ID", "primary")
+	t.Setenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_KEYS", `{"primary":"alias/ccplant-encryption-dev"}`)
+	t.Setenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_PROVIDER", "aws-kms-branch-scoped")
+	t.Setenv("AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_KMS_REGION", "ap-northeast-1")
+
+	command := newKVStoreMigrateCommand()
+	tests := map[string]string{
+		"encryption-active-key-id": "primary",
+		"encryption-keys-json":     `{"primary":"alias/ccplant-encryption-dev"}`,
+		"encryption-provider":      "aws-kms-branch-scoped",
+		"encryption-kms-region":    "ap-northeast-1",
+	}
+	for name, want := range tests {
+		got, err := command.Flags().GetString(name)
+		if err != nil {
+			t.Fatalf("get %s flag: %v", name, err)
+		}
+		if got != want {
+			t.Errorf("%s default = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing.T) {
 	client := fake.NewSimpleClientset(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "test", Labels: map[string]string{"agentapi.proxy/settings": "true"}}},
