@@ -202,6 +202,9 @@ spec:
             - name: AGENTAPI_KV_STORE_SECONDARY_AUTH_TOKEN
               value: {{ dig "secondary" "authToken" "" $apiKV | quote }}
             {{- end }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "primary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION") | nindent 12 }}
+            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "secondary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION") | nindent 12 }}
+            {{- include "agentapi-proxy.awsCredentialsEnv" $apiAWSCredentials | nindent 12 }}
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
