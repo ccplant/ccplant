@@ -97,3 +97,22 @@ func TestLoadConfigWithKVEncryptionEnvironment(t *testing.T) {
 		t.Fatalf("branch cache config = ttl:%d max:%d", cfg.KVStore.Encryption.BranchCacheTTLSeconds, cfg.KVStore.Encryption.BranchCacheMaxEntries)
 	}
 }
+
+func TestLoadConfigWithSingleKMSKeyEnvironment(t *testing.T) {
+	t.Setenv("AGENTAPI_KV_STORE_PRIMARY_BACKEND", "libsql-encrypted")
+	t.Setenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_PROVIDER", "aws-kms-branch-scoped")
+	t.Setenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_ACTIVE_KEY_ID", "primary")
+	t.Setenv("AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KMS_KEY_ID", "arn:aws:kms:ap-northeast-1:123456789012:key/example")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := cfg.KVStore.Primary.Encryption.EffectiveKeys()
+	if keys["primary"] != "arn:aws:kms:ap-northeast-1:123456789012:key/example" {
+		t.Fatalf("effective keys = %#v", keys)
+	}
+}

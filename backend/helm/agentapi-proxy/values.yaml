@@ -84,6 +84,18 @@ api:
   # the API must use credentials supplied through its own envFrom secret.
   envExclude: []
   envFrom: []
+  # Optional static AWS credentials for API features such as KMS-backed KV
+  # encryption. Prefer workload identity where the platform supports it.
+  awsCredentials:
+    accessKeyIdSecretRef:
+      name: ""
+      key: AWS_ACCESS_KEY_ID
+    secretAccessKeySecretRef:
+      name: ""
+      key: AWS_SECRET_ACCESS_KEY
+    sessionTokenSecretRef:
+      name: ""
+      key: AWS_SESSION_TOKEN
   # API application persistence. This is independent from the worker and
   # session-manager stores even when all three roles use the same libSQL
   # service and credentials.
@@ -116,7 +128,13 @@ api:
         branchCacheTTLSeconds: 900
         branchCacheMaxEntries: 128
         kmsRegion: ""
+        kmsRegionSecretRef:
+          name: ""
+          key: AGENTAPI_ENCRYPTION_KMS_REGION
         kmsKeys: {}
+        kmsKeyIdSecretRef:
+          name: ""
+          key: AGENTAPI_ENCRYPTION_KMS_KEY_ID
         keysSecretRef:
           name: ""
           key: keys.json
@@ -136,7 +154,13 @@ api:
         branchCacheTTLSeconds: 900
         branchCacheMaxEntries: 128
         kmsRegion: ""
+        kmsRegionSecretRef:
+          name: ""
+          key: AGENTAPI_ENCRYPTION_KMS_REGION
         kmsKeys: {}
+        kmsKeyIdSecretRef:
+          name: ""
+          key: AGENTAPI_ENCRYPTION_KMS_KEY_ID
         keysSecretRef:
           name: ""
           key: keys.json

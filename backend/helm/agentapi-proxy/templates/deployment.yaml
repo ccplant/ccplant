@@ -19,6 +19,7 @@
 {{- $openTelemetry := dig "observability" "openTelemetry" (dict) $valuesMap }}
 {{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 {{- $api := .Values.api | default dict }}
+{{- $apiAWSCredentials := $api.awsCredentials | default dict }}
 {{- $codexDeviceAuth := $api.codexDeviceAuth | default dict }}
 {{- $githubBroker := $api.githubBroker | default dict }}
 {{- $apiImage := $api.image | default .Values.image }}
@@ -57,6 +58,9 @@
 {{- with .Values.config.auth.github.oauth.allowedRedirectUris }}{{- $_ := set $canonicalApiEnv "OAUTH_ALLOWED_REDIRECT_URIS" true }}{{- end }}
 {{- with .Values.config.vapid.publicKey }}{{- $_ := set $canonicalApiEnv "VAPID_PUBLIC_KEY" true }}{{- end }}
 {{- with .Values.config.vapid.contactEmail }}{{- $_ := set $canonicalApiEnv "VAPID_CONTACT_EMAIL" true }}{{- end }}
+{{- if (dig "accessKeyIdSecretRef" "name" "" $apiAWSCredentials) }}{{- $_ := set $canonicalApiEnv "AWS_ACCESS_KEY_ID" true }}{{- end }}
+{{- if (dig "secretAccessKeySecretRef" "name" "" $apiAWSCredentials) }}{{- $_ := set $canonicalApiEnv "AWS_SECRET_ACCESS_KEY" true }}{{- end }}
+{{- if (dig "sessionTokenSecretRef" "name" "" $apiAWSCredentials) }}{{- $_ := set $canonicalApiEnv "AWS_SESSION_TOKEN" true }}{{- end }}
 {{- $filteredApiEnv := list }}
 {{- range $apiEnv }}
 {{- if not (hasKey $canonicalApiEnv .name) }}
@@ -352,6 +356,7 @@ spec:
             {{- end }}
             {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "primary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION") | nindent 12 }}
             {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "secondary" "encryption" (dict) $apiKV) "prefix" "AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION") | nindent 12 }}
+            {{- include "agentapi-proxy.awsCredentialsEnv" $apiAWSCredentials | nindent 12 }}
             - name: AGENTAPI_USAGE_ENABLED
               value: {{ dig "usage" "enabled" false .Values.config | quote }}
             {{- if (dig "usage" "enabled" false .Values.config) }}

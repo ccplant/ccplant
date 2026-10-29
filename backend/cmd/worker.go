@@ -228,6 +228,7 @@ func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
 	if backend == "libsql" {
 		return store, nil
 	}
+	encryption.Keys = encryption.EffectiveKeys()
 	if encryption.ActiveKeyID == "" || len(encryption.Keys) == 0 {
 		_ = store.Close()
 		return nil, errors.New("KV encryption keys are required for libsql-encrypted")

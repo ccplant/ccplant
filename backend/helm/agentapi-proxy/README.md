@@ -42,6 +42,48 @@ The change applies to newly created broker sessions after the API rollout.
 
 For the ccplant umbrella chart, use `backend.api.githubBroker.inCluster`.
 
+## AWS KMS-backed libSQL encryption
+
+Static AWS credentials and a single KMS key can be read from an existing
+Kubernetes Secret without placing them in Helm values. For example, a Secret
+named `aws-kms-secret` containing `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AGENTAPI_ENCRYPTION_KMS_REGION`, and
+`AGENTAPI_ENCRYPTION_KMS_KEY_ID` can be used as follows:
+
+```yaml
+api:
+  awsCredentials:
+    accessKeyIdSecretRef:
+      name: aws-kms-secret
+      key: AWS_ACCESS_KEY_ID
+    secretAccessKeySecretRef:
+      name: aws-kms-secret
+      key: AWS_SECRET_ACCESS_KEY
+
+  kvStore:
+    backend: ""
+    primary:
+      backend: libsql-encrypted
+      databaseUrlSecretRef:
+        name: agentapi-kv
+      authTokenSecretRef:
+        name: agentapi-kv
+      encryption:
+        provider: aws-kms-branch-scoped
+        activeKeyId: primary
+        kmsRegionSecretRef:
+          name: aws-kms-secret
+          key: AGENTAPI_ENCRYPTION_KMS_REGION
+        kmsKeyIdSecretRef:
+          name: aws-kms-secret
+          key: AGENTAPI_ENCRYPTION_KMS_KEY_ID
+```
+
+Set `api.awsCredentials.sessionTokenSecretRef` as well when using temporary
+AWS credentials. Prefer workload identity over static credentials when the
+Kubernetes platform supports it. The KMS key needs `kms:Encrypt` and
+`kms:Decrypt` permissions.
+
 ## Cloud Run manifest
 
 The same application values can render the API as a Google Cloud Run Knative

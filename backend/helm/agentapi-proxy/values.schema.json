@@ -63,6 +63,7 @@
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
+        "awsCredentials": { "$ref": "#/definitions/awsCredentials" },
         "serviceAccount": {
           "allOf": [
             { "$ref": "#/definitions/serviceAccount" },
@@ -370,6 +371,15 @@
         "keySecretRef": { "$ref": "#/definitions/secretRef" }
       }
     },
+    "awsCredentials": {
+      "type": "object",
+      "required": ["accessKeyIdSecretRef", "secretAccessKeySecretRef", "sessionTokenSecretRef"],
+      "properties": {
+        "accessKeyIdSecretRef": { "$ref": "#/definitions/secretRef" },
+        "secretAccessKeySecretRef": { "$ref": "#/definitions/secretRef" },
+        "sessionTokenSecretRef": { "$ref": "#/definitions/secretRef" }
+      }
+    },
     "externalRegistration": {
       "type": "object",
       "required": ["enabled", "upstreamUrl", "connectionTokenSecretRef", "hmacSecretRef"],
@@ -575,12 +585,14 @@
       "type": "object",
       "required": ["provider", "activeKeyId", "kmsRegion", "kmsKeys", "keysSecretRef"],
       "properties": {
-        "provider": { "enum": ["local", "aws-kms", "aws-kms-branch", "aws-kms-branch-scoped", "cloud-kms-branch"] },
+        "provider": { "enum": ["local", "aws-kms", "aws-kms-branch", "aws-kms-branch-scoped", "cloud-kms-branch", "cloud-kms-branch-scoped"] },
         "activeKeyId": { "type": "string" },
         "branchCacheTTLSeconds": { "type": "integer", "minimum": 1 },
         "branchCacheMaxEntries": { "type": "integer", "minimum": 1 },
         "kmsRegion": { "type": "string" },
+        "kmsRegionSecretRef": { "$ref": "#/definitions/secretRef" },
         "kmsKeys": { "type": "object", "additionalProperties": { "type": "string" } },
+        "kmsKeyIdSecretRef": { "$ref": "#/definitions/secretRef" },
         "keysSecretRef": { "$ref": "#/definitions/secretRef" }
       }
     },

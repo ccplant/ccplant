@@ -13,18 +13,35 @@ Expand the name of the chart.
 {{- $activeKeyID := dig "activeKeyId" "" $encryption -}}
 {{- $secretName := dig "keysSecretRef" "name" "" $encryption -}}
 {{- $kmsKeys := dig "kmsKeys" (dict) $encryption -}}
-{{- if or $activeKeyID $secretName $kmsKeys -}}
+{{- $kmsKeyIDSecretName := dig "kmsKeyIdSecretRef" "name" "" $encryption -}}
+{{- $kmsRegionSecretName := dig "kmsRegionSecretRef" "name" "" $encryption -}}
+{{- if or $activeKeyID $secretName $kmsKeys $kmsKeyIDSecretName -}}
 - name: {{ printf "%s_PROVIDER" $prefix }}
   value: {{ $provider | quote }}
 - name: {{ printf "%s_ACTIVE_KEY_ID" $prefix }}
   value: {{ required "kvStore.encryption.activeKeyId is required when KV encryption is configured" $activeKeyID | quote }}
 {{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") (eq $provider "aws-kms-branch-scoped") }}
 - name: {{ printf "%s_KMS_REGION" $prefix }}
+{{- if $kmsRegionSecretName }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $kmsRegionSecretName | quote }}
+      key: {{ dig "kmsRegionSecretRef" "key" "kms-region" $encryption | quote }}
+{{- else }}
   value: {{ required "kvStore.encryption.kmsRegion is required for an AWS KMS provider" (dig "kmsRegion" "" $encryption) | quote }}
 {{- end }}
+{{- end }}
 {{- if or (eq $provider "aws-kms") (eq $provider "aws-kms-branch") (eq $provider "aws-kms-branch-scoped") (eq $provider "cloud-kms-branch") (eq $provider "cloud-kms-branch-scoped") }}
+{{- if $kmsKeyIDSecretName }}
+- name: {{ printf "%s_KMS_KEY_ID" $prefix }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $kmsKeyIDSecretName | quote }}
+      key: {{ dig "kmsKeyIdSecretRef" "key" "kms-key-id" $encryption | quote }}
+{{- else }}
 - name: {{ printf "%s_KEYS" $prefix }}
   value: {{ toJson $kmsKeys | quote }}
+{{- end }}
 {{- if or (eq $provider "aws-kms-branch") (eq $provider "aws-kms-branch-scoped") (eq $provider "cloud-kms-branch") (eq $provider "cloud-kms-branch-scoped") }}
 - name: {{ printf "%s_BRANCH_CACHE_TTL_SECONDS" $prefix }}
   value: {{ dig "branchCacheTTLSeconds" 900 $encryption | quote }}
@@ -39,6 +56,35 @@ Expand the name of the chart.
       key: {{ dig "keysSecretRef" "key" "keys.json" $encryption | quote }}
 {{- end }}
 {{- end -}}
+{{- end }}
+
+{{/* Static AWS credentials sourced from Kubernetes Secrets. */}}
+{{- define "agentapi-proxy.awsCredentialsEnv" -}}
+{{- $credentials := . | default dict -}}
+{{- $accessKeyRef := dig "accessKeyIdSecretRef" (dict) $credentials -}}
+{{- if (dig "name" "" $accessKeyRef) }}
+- name: AWS_ACCESS_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ dig "name" "" $accessKeyRef | quote }}
+      key: {{ dig "key" "AWS_ACCESS_KEY_ID" $accessKeyRef | quote }}
+{{- end }}
+{{- $secretKeyRef := dig "secretAccessKeySecretRef" (dict) $credentials -}}
+{{- if (dig "name" "" $secretKeyRef) }}
+- name: AWS_SECRET_ACCESS_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ dig "name" "" $secretKeyRef | quote }}
+      key: {{ dig "key" "AWS_SECRET_ACCESS_KEY" $secretKeyRef | quote }}
+{{- end }}
+{{- $sessionTokenRef := dig "sessionTokenSecretRef" (dict) $credentials -}}
+{{- if (dig "name" "" $sessionTokenRef) }}
+- name: AWS_SESSION_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ dig "name" "" $sessionTokenRef | quote }}
+      key: {{ dig "key" "AWS_SESSION_TOKEN" $sessionTokenRef | quote }}
+{{- end }}
 {{- end }}
 
 {{/* Role-specific image helpers. Empty role values preserve the legacy root image. */}}
