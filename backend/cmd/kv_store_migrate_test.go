@@ -26,6 +26,9 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-principal", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-principal": "true"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-oauth-state", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-oauth-state": "true"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-broker-lease", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/github-broker-lease": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "google-connection", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/google-connection": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "google-identity", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/google-identity": "true"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "google-oauth-state", Namespace: "test", Labels: map[string]string{"agentapi.ccplant.io/google-oauth-state": "true"}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "helm-release", Namespace: "test", Labels: map[string]string{"owner": "helm"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-shares", Namespace: "test"}},
@@ -37,8 +40,8 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 10 {
-		t.Fatalf("got %d records, want 10: %#v", len(records), records)
+	if len(records) != 12 {
+		t.Fatalf("got %d records, want 12: %#v", len(records), records)
 	}
 	got := make(map[string]bool, len(records))
 	for _, record := range records {
@@ -47,6 +50,7 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 	for _, identity := range []string{
 		"configmap/agentapi-session-shares", "configmap/future-config", "configmap/memory",
 		"secret/future-secret", "secret/github-connection", "secret/github-identity", "secret/github-principal",
+		"secret/google-connection", "secret/google-identity",
 		"secret/logical-pool", "secret/settings", "secret/subscriptions",
 	} {
 		if !got[identity] {
@@ -54,7 +58,7 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 		}
 	}
 	for _, identity := range []string{
-		"secret/github-broker-lease", "secret/github-oauth-state", "secret/helm-release", "configmap/server-config",
+		"secret/github-broker-lease", "secret/github-oauth-state", "secret/google-oauth-state", "secret/helm-release", "configmap/server-config",
 	} {
 		if got[identity] {
 			t.Errorf("included non-application record %s", identity)
