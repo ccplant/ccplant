@@ -170,6 +170,39 @@ assert_contains 'value: "current"' "$TMP_DIR/backend-kv-encryption.yaml"
 assert_contains 'name: AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KEYS' "$TMP_DIR/backend-kv-encryption.yaml"
 assert_contains 'name: "agentapi-kv-keys"' "$TMP_DIR/backend-kv-encryption.yaml"
 
+# KV migration runs before the API container, so it needs its own encryption
+# configuration and AWS credentials for encrypted primary or secondary stores.
+"$HELM_BIN" template backend-kv-migration-encryption "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/deployment.yaml \
+  --set api.kvStore.migration.enabled=true \
+  --set api.kvStore.backend= \
+  --set api.kvStore.primary.backend=libsql-encrypted \
+  --set api.kvStore.primary.databaseUrl=file:///tmp/primary.db \
+  --set api.kvStore.primary.encryption.provider=local \
+  --set api.kvStore.primary.encryption.activeKeyId=primary \
+  --set api.kvStore.primary.encryption.keysSecretRef.name=primary-kv-keys \
+  --set api.kvStore.secondary.backend=libsql-encrypted \
+  --set api.kvStore.secondary.databaseUrl=file:///tmp/secondary.db \
+  --set api.kvStore.secondary.encryption.provider=aws-kms-branch-scoped \
+  --set api.kvStore.secondary.encryption.activeKeyId=primary \
+  --set api.kvStore.secondary.encryption.kmsKeys.primary=alias/agentapi-kv \
+  --set api.kvStore.secondary.encryption.kmsRegion=ap-northeast-1 \
+  --set api.awsCredentials.accessKeyIdSecretRef.name=aws-credentials \
+  --set api.awsCredentials.secretAccessKeySecretRef.name=aws-credentials \
+  >"$TMP_DIR/backend-kv-migration-encryption.yaml"
+awk '/^      initContainers:/{copy=1} /^      containers:/{copy=0} copy' \
+  "$TMP_DIR/backend-kv-migration-encryption.yaml" >"$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_ACTIVE_KEY_ID' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_PRIMARY_ENCRYPTION_KEYS' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_PROVIDER' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'value: "aws-kms-branch-scoped"' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_ACTIVE_KEY_ID' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_KEYS' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_SECONDARY_ENCRYPTION_KMS_REGION' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'value: "ap-northeast-1"' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/backend-kv-migration-init-container.yaml"
+
 # A default install is API-only. It must not receive workload RBAC or any
 # worker/session-manager configuration.
 assert_contains '^  replicas: 1$' "$TMP_DIR/backend-default.yaml"
