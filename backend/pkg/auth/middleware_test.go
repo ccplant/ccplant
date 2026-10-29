@@ -18,6 +18,12 @@ func TestWorkerControlAPIUsesInternalTokenAuthentication(t *testing.T) {
 	}
 }
 
+func TestApplicationKVAPIUsesInternalTokenAuthentication(t *testing.T) {
+	if !isInternalTokenEndpoint("/internal/application-kv") {
+		t.Fatal("application KV API must bypass user authentication middleware")
+	}
+}
+
 func TestCodexDeviceAuthCallbackUsesAttemptTokenAuthentication(t *testing.T) {
 	if !isInternalTokenEndpoint("/internal/codex-device-auth/cda-123/challenge") {
 		t.Fatal("Codex device auth callback must bypass user authentication middleware")

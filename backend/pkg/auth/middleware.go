@@ -239,6 +239,7 @@ func isInternalTokenEndpoint(path string) bool {
 		strings.HasPrefix(path, "/internal/session-runners") ||
 		strings.HasPrefix(path, "/internal/session-managers/") ||
 		strings.HasPrefix(path, "/internal/worker/") ||
+		strings.HasPrefix(path, "/internal/application-kv") ||
 		strings.HasPrefix(path, "/internal/external-session-manager")
 }
 

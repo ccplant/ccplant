@@ -25,6 +25,7 @@ import (
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/remotekv"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	infraallocation "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionallocation"
@@ -95,13 +96,20 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	purgeCancel()
 
 	persistence := manager.GetClient()
-	applicationStore, wrapped, err := buildApplicationKVStore(cfg.KVStore, persistence)
-	if err != nil {
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, fmt.Errorf("initialize session-manager KV store: %w", err)
-	}
-	if wrapped {
+	var applicationStore kvstore.Store
+	if cfg.SessionManager.APIURL != "" && cfg.SessionManager.InternalAPIToken != "" {
+		applicationStore = remotekv.New(cfg.SessionManager.APIURL, cfg.SessionManager.InternalAPIToken)
 		persistence = kvstore.NewKubernetesAdapter(persistence, applicationStore)
+	} else {
+		var wrapped bool
+		applicationStore, wrapped, err = buildApplicationKVStore(cfg.KVStore, persistence)
+		if err != nil {
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("initialize session-manager KV store: %w", err)
+		}
+		if wrapped {
+			persistence = kvstore.NewKubernetesAdapter(persistence, applicationStore)
+		}
 	}
 
 	applicationNamespace := cfg.KVStore.Namespace

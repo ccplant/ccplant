@@ -84,6 +84,18 @@ AWS credentials. Prefer workload identity over static credentials when the
 Kubernetes platform supports it. The KMS key needs `kms:Encrypt` and
 `kms:Decrypt` permissions.
 
+## Migrating application KV stores
+
+The API is the single owner of application KV data. Workers and session
+managers access settings, credentials, session profiles, Slackbot data, and
+other application resources through the authenticated internal API; their
+local Kubernetes clients are reserved for workload operations.
+
+Only `api.kvStore` participates in migration and encryption configuration.
+After backfill and verification, switching the API primary changes the store
+used by every process. For a rollback window, the chart also accepts a libSQL
+or encrypted-libSQL primary with a Kubernetes secondary.
+
 ## Cloud Run manifest
 
 The same application values can render the API as a Google Cloud Run Knative

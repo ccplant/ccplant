@@ -56,6 +56,7 @@ type HandlerRegistry struct {
 	provisionerController          *controllers.ProvisionerController
 	externalAllocationController   *controllers.ProvisionerController
 	workerControlController        *controllers.WorkerControlController
+	applicationKVController        *controllers.ApplicationKVController
 	sessionControlController       *controllers.SessionControlController
 	sessionControlReaderController *controllers.SessionControlReaderController
 	esmControlController           *controllers.ESMControlController
@@ -285,6 +286,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var provisionerController *controllers.ProvisionerController
 	var externalAllocationController *controllers.ProvisionerController
 	var workerControlController *controllers.WorkerControlController
+	var applicationKVController *controllers.ApplicationKVController
 	var sessionControlController *controllers.SessionControlController
 	var sessionControlReaderController *controllers.SessionControlReaderController
 	var esmControlController *controllers.ESMControlController
@@ -337,6 +339,10 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		}
 		log.Printf("[ROUTER] Worker control controller initialized")
 	}
+	if cfg := server.GetConfig(); cfg != nil && (cfg.Worker.ControlAPIToken != "" || cfg.SessionManager.APIToken != "") {
+		applicationKVController = controllers.NewApplicationKVController(server.GetApplicationKVStore(), cfg.Worker.ControlAPIToken, cfg.SessionManager.APIToken)
+		log.Printf("[ROUTER] Application KV control controller initialized")
+	}
 	if server.sessionControlStore != nil {
 		sessionControlReaderController = controllers.NewSessionControlReaderController(server.sessionControlStore, server.sessionManager)
 	}
@@ -383,6 +389,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			provisionerController:          provisionerController,
 			externalAllocationController:   externalAllocationController,
 			workerControlController:        workerControlController,
+			applicationKVController:        applicationKVController,
 			sessionControlController:       sessionControlController,
 			sessionControlReaderController: sessionControlReaderController,
 			esmControlController:           esmControlController,
@@ -561,6 +568,10 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/worker/schedules/claim-due", r.handlers.workerControlController.ClaimDueSchedules)
 		r.echo.POST("/internal/worker/schedules/:id/finalize", r.handlers.workerControlController.FinalizeSchedule)
 		log.Printf("[ROUTES] Isolated worker-control endpoints registered")
+	}
+	if r.handlers.applicationKVController != nil {
+		r.echo.Any("/internal/application-kv", r.handlers.applicationKVController.Handle)
+		log.Printf("[ROUTES] Application KV control endpoint registered")
 	}
 	if r.handlers.sessionControlController != nil {
 		r.echo.GET("/internal/session-control/:sessionId/commands", r.handlers.sessionControlController.WaitCommands)

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
+	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/remotekv"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
@@ -26,7 +27,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 var workerConfigPath string
@@ -70,10 +70,7 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if cfg.Worker.SessionAPIURL == "" {
 		cfg.Worker.SessionAPIURL = controlURL
 	}
-	store, err := newWorkerKVStore(cfg.KVStore)
-	if err != nil {
-		return err
-	}
+	store := remotekv.New(controlURL, cfg.Worker.ControlAPIToken)
 	defer func() { _ = store.Close() }()
 	persistence := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
 	runtimeNamespace := resolveKubernetesNamespace(cfg.ScheduleWorker.Namespace, cfg.KubernetesSession.Namespace)
@@ -192,78 +189,6 @@ func newRemoteSlackSocketManager(cfg *config.Config, persistence kubernetes.Inte
 	}
 	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, "", runtimeNamespace)
 	return slackbot.NewSlackSocketManager(persistence, persistenceNamespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, LeaderElectionClient: leaseClient})
-}
-
-func newWorkerKVStore(cfg config.KVStoreConfig) (kvstore.Store, error) {
-	backend := cfg.Backend
-	databaseURL := cfg.DatabaseURL
-	authToken := cfg.AuthToken
-	encryption := cfg.Encryption
-	if cfg.Primary != nil {
-		backend = cfg.Primary.Backend
-		databaseURL = cfg.Primary.DatabaseURL
-		authToken = cfg.Primary.AuthToken
-		encryption = cfg.Primary.Encryption
-	}
-	if backend == "" || backend == "kubernetes" {
-		restConfig, err := ctrlconfig.GetConfig()
-		if err != nil {
-			return nil, fmt.Errorf("get Kubernetes config for worker KV store: %w", err)
-		}
-		client, err := kubernetes.NewForConfig(restConfig)
-		if err != nil {
-			return nil, fmt.Errorf("create Kubernetes client for worker KV store: %w", err)
-		}
-		return kvstore.NewKubernetesStore(client), nil
-	}
-	if backend != "libsql" && backend != "libsql-encrypted" {
-		return nil, fmt.Errorf("unsupported worker kv_store backend %q", backend)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	store, err := kvstore.NewLibSQLStore(ctx, databaseURL, authToken)
-	if err != nil {
-		return nil, err
-	}
-	if backend == "libsql" {
-		return store, nil
-	}
-	encryption.Keys = encryption.EffectiveKeys()
-	if encryption.ActiveKeyID == "" || len(encryption.Keys) == 0 {
-		_ = store.Close()
-		return nil, errors.New("KV encryption keys are required for libsql-encrypted")
-	}
-	var keyring kvstore.EnvelopeKeyring
-	switch encryption.Provider {
-	case "", "local":
-		keyring, err = kvstore.NewLocalKeyring(encryption.ActiveKeyID, encryption.Keys)
-	case "aws-kms":
-		keyring, err = kvstore.NewKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys)
-	case "aws-kms-branch":
-		keyring, err = kvstore.NewBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, store,
-			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
-	case "aws-kms-branch-scoped":
-		keyring, err = kvstore.NewScopedBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.KMSRegion, encryption.Keys, store,
-			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
-	case "cloud-kms-branch":
-		keyring, err = kvstore.NewCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
-			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
-	case "cloud-kms-branch-scoped":
-		keyring, err = kvstore.NewScopedCloudBranchKMSKeyring(ctx, encryption.ActiveKeyID, encryption.Keys, store,
-			time.Duration(encryption.BranchCacheTTLSeconds)*time.Second, encryption.BranchCacheMaxEntries)
-	default:
-		err = fmt.Errorf("unsupported KV encryption provider %q", encryption.Provider)
-	}
-	if err != nil {
-		_ = store.Close()
-		return nil, fmt.Errorf("configure worker KV encryption: %w", err)
-	}
-	encrypted, err := kvstore.NewEncryptedStore(store, keyring)
-	if err != nil {
-		_ = store.Close()
-		return nil, err
-	}
-	return encrypted, nil
 }
 
 type remoteScheduleWorker struct {

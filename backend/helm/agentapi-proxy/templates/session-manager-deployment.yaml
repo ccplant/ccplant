@@ -9,7 +9,6 @@
 {{- $runner := $manager.runner | default dict }}
 {{- $builtin := $manager.builtin | default dict }}
 {{- $remoteMode := or (dig "enabled" false $registration) (dig "enabled" false $runner) (dig "enabled" false $builtin) }}
-{{- $kv := $manager.kvStore | default dict }}
 {{- $redisClient := $manager.redis | default dict }}
 {{- $sessionPersistence := $manager.sessionPersistence | default dict }}
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" }}
@@ -195,32 +194,8 @@ spec:
                   name: {{ dig "name" "" $encryptionToken | quote }}
                   key: {{ dig "key" "encryption-key" $encryptionToken | quote }}
             {{- end }}
-            - name: AGENTAPI_KV_STORE_BACKEND
-              value: {{ required "sessionManager.kvStore.backend is required" $kv.backend | quote }}
             - name: AGENTAPI_KV_STORE_NAMESPACE
-              value: {{ $kv.namespace | default "default" | quote }}
-            {{- if ne ($kv.backend | default "") "kubernetes" }}
-            {{- if $kv.databaseUrlSecretRef.name }}
-            - name: AGENTAPI_KV_STORE_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $kv.databaseUrlSecretRef.name | quote }}
-                  key: {{ $kv.databaseUrlSecretRef.key | default "database-url" | quote }}
-            {{- else }}
-            - name: AGENTAPI_KV_STORE_DATABASE_URL
-              value: {{ required "sessionManager.kvStore.databaseUrl or databaseUrlSecretRef.name is required" $kv.databaseUrl | quote }}
-            {{- end }}
-            {{- if $kv.authTokenSecretRef.name }}
-            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $kv.authTokenSecretRef.name | quote }}
-                  key: {{ $kv.authTokenSecretRef.key | default "auth-token" | quote }}
-            {{- else if $kv.authToken }}
-            - {name: AGENTAPI_KV_STORE_AUTH_TOKEN, value: {{ $kv.authToken | quote }}}
-            {{- end }}
-            {{- end }}
-            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "encryption" (dict) $kv) "prefix" "AGENTAPI_KV_ENCRYPTION") | nindent 12 }}
+              value: {{ dig "namespace" "default" (.Values.api.kvStore | default dict) | quote }}
             {{- if not $remoteMode }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}

@@ -3,7 +3,6 @@
 {{- $control := $worker.controlApi | default dict }}
 {{- $controlToken := $control.tokenSecretRef | default dict }}
 {{- $sessionApi := $worker.sessionApi | default dict }}
-{{- $kv := $worker.kvStore | default dict }}
 {{- $workerImage := $worker.image | default dict }}
 {{- $slack := $worker.slack | default dict }}
 {{- $slackToken := $slack.tokenSecretRef | default dict }}
@@ -42,7 +41,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "agentapi-proxy.workerServiceAccountName" . }}
-      automountServiceAccountToken: {{ eq (dig "backend" "" ($worker.kvStore | default dict)) "kubernetes" }}
+      automountServiceAccountToken: false
       {{- with $worker.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -110,33 +109,8 @@ spec:
                 secretKeyRef:
                   name: {{ required "worker.controlApi.executionTokenSigningKeySecretRef.name is required when worker is enabled" $executionTokenKey.name | quote }}
                   key: {{ $executionTokenKey.key | default "execution-token-signing-key" | quote }}
-            - name: AGENTAPI_KV_STORE_BACKEND
-              value: {{ required "worker.kvStore.backend is required when worker is enabled" $kv.backend | quote }}
             - name: AGENTAPI_KV_STORE_NAMESPACE
-              value: {{ $kv.namespace | default "default" | quote }}
-            {{- if ne ($kv.backend | default "") "kubernetes" }}
-            {{- if $kv.databaseUrlSecretRef.name }}
-            - name: AGENTAPI_KV_STORE_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $kv.databaseUrlSecretRef.name | quote }}
-                  key: {{ $kv.databaseUrlSecretRef.key | default "database-url" | quote }}
-            {{- else }}
-            - name: AGENTAPI_KV_STORE_DATABASE_URL
-              value: {{ required "worker.kvStore.databaseUrl or databaseUrlSecretRef.name is required" $kv.databaseUrl | quote }}
-            {{- end }}
-            {{- if $kv.authTokenSecretRef.name }}
-            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $kv.authTokenSecretRef.name | quote }}
-                  key: {{ $kv.authTokenSecretRef.key | default "auth-token" | quote }}
-            {{- else if $kv.authToken }}
-            - name: AGENTAPI_KV_STORE_AUTH_TOKEN
-              value: {{ $kv.authToken | quote }}
-            {{- end }}
-            {{- end }}
-            {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "encryption" (dict) $kv) "prefix" "AGENTAPI_KV_ENCRYPTION") | nindent 12 }}
+              value: {{ dig "namespace" "default" (.Values.api.kvStore | default dict) | quote }}
             {{- with $slackToken.name }}
             - name: AGENTAPI_SLACK_APP_TOKEN
               valueFrom:
