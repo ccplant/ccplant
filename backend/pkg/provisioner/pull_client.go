@@ -100,9 +100,9 @@ func RunPullClient(ctx context.Context, srv *Server, cfg PullClientConfig) error
 			go runDirectRuntimeClient(ctx, client.Transport, runtime, cfg.PodName)
 		}
 
-		srv.SetStatusReporter(func(st Status, msg string) {
+		srv.SetStatusReporter(func(st Status, msg, errorCode string) {
 			go func() {
-				if err := reportProvisionRequestStatusWithRetry(ctx, client, cfg, provisionReq.RequestID, st, msg); err != nil {
+				if err := reportProvisionRequestStatusWithRetry(ctx, client, cfg, provisionReq.RequestID, st, msg, errorCode); err != nil {
 					log.Printf("[PROVISIONER] Failed to report status %s for provision request %s: %v", st, provisionReq.RequestID, err)
 				}
 			}()
@@ -292,10 +292,10 @@ func authorizeRunnerRequest(req *http.Request, cfg PullClientConfig) {
 
 const echoHeaderAuthorization = "Authorization"
 
-func reportProvisionRequestStatusWithRetry(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
+func reportProvisionRequestStatusWithRetry(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg, errorCode string) error {
 	var lastErr error
 	for attempt := 1; attempt <= 10; attempt++ {
-		if err := reportProvisionRequestStatus(ctx, client, cfg, requestID, st, msg); err == nil {
+		if err := reportProvisionRequestStatusWithCode(ctx, client, cfg, requestID, st, msg, errorCode); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -372,11 +372,16 @@ func pollProvisionRequest(ctx context.Context, client *http.Client, cfg PullClie
 }
 
 func reportProvisionRequestStatus(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg string) error {
+	return reportProvisionRequestStatusWithCode(ctx, client, cfg, requestID, st, msg, "")
+}
+
+func reportProvisionRequestStatusWithCode(ctx context.Context, client *http.Client, cfg PullClientConfig, requestID string, st Status, msg, errorCode string) error {
 	path := "/internal/session-provisioners/" + url.PathEscape(cfg.SessionID) + "/provision-requests/" + url.PathEscape(requestID) + "/status"
 	return postJSON(ctx, client, cfg, path, map[string]interface{}{
-		"status":   string(st),
-		"message":  msg,
-		"pod_name": cfg.PodName,
+		"status":     string(st),
+		"message":    msg,
+		"error_code": errorCode,
+		"pod_name":   cfg.PodName,
 	})
 }
 

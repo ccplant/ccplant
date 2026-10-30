@@ -170,6 +170,7 @@ interface AgentStatus {
   model?: string;
   /** Provisioner error message when status is 'error' */
   message?: string;
+  error_code?: string;
 }
 
 /**

@@ -7,6 +7,7 @@ export interface AgentStatus {
   current_task?: string;
   /** Provisioner error message when status is 'error' */
   message?: string;
+  error_code?: string;
 }
 
 export interface Agent {
@@ -174,6 +175,7 @@ export interface Session {
   session_id: string;
   user_id: string;
   status: SessionStatus;
+  error_code?: string;
   started_at: string;
   updated_at?: string;
   addr?: string;

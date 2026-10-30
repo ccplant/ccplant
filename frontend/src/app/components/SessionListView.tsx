@@ -1047,7 +1047,9 @@ export default function SessionListView({ tagFilters, onSessionsUpdate, creating
 
                         {(session.status === 'error' || session.status === 'timeout') && expandedErrorSessionId === session.session_id && (
                           <div id={`session-error-${session.session_id}`} className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" role="alert">
-                            {session.error_message || 'セッションの起動に失敗しました。もう一度実行してください。繰り返し失敗する場合は、セッション ID を添えて管理者にお問い合わせください。'}
+                            {session.error_code === 'codex_auth_required' ? (
+                              <><span>Codex の認証期限が切れています。再認証してください。</span>{' '}<a href="/settings#codex-device-auth" className="font-medium underline">Codex を再認証</a></>
+                            ) : session.error_message || 'セッションの起動に失敗しました。もう一度実行してください。繰り返し失敗する場合は、セッション ID を添えて管理者にお問い合わせください。'}
                           </div>
                         )}
 

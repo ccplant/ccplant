@@ -42,6 +42,7 @@ type StatusResponse struct {
 	RestartID string `json:"restart_id,omitempty"`
 	Status    Status `json:"status"`
 	Message   string `json:"message,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // Server is the agent-provisioner HTTP server.
@@ -62,10 +63,11 @@ type Server struct {
 	mu                     sync.RWMutex
 	status                 Status
 	message                string
+	errorCode              string
 	phase                  string
 	phaseTime              time.Time
 	serverCtx              context.Context // long-lived context for provisioning goroutines
-	reporter               func(Status, string)
+	reporter               func(Status, string, string)
 	restartSettingsHandler func(*sessionsettings.SessionSettings)
 	startupDone            chan struct{}
 }
@@ -258,7 +260,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 // clients can distinguish a permanent failure from a transient startup delay.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
-	resp := StatusResponse{Status: s.status, Message: s.message, RestartID: s.restartID}
+	resp := StatusResponse{Status: s.status, Message: s.message, ErrorCode: s.errorCode, RestartID: s.restartID}
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -275,7 +277,9 @@ func (s *Server) setStatus(st Status, msg string) {
 	s.mu.Lock()
 	s.status = st
 	s.message = msg
+	s.errorCode = classifyProvisionError(msg)
 	reporter := s.reporter
+	errorCode := s.errorCode
 	s.mu.Unlock()
 	log.Printf("[PROVISIONER] Status changed to %s%s", st, func() string {
 		if msg != "" {
@@ -284,7 +288,7 @@ func (s *Server) setStatus(st Status, msg string) {
 		return ""
 	}())
 	if reporter != nil {
-		reporter(st, msg)
+		reporter(st, msg, errorCode)
 	}
 }
 
@@ -318,14 +322,24 @@ func (s *Server) claimProvisioning() bool {
 	}
 	s.status = StatusProvisioning
 	s.message = ""
+	s.errorCode = ""
 	return true
 }
 
 // SetStatusReporter installs a callback invoked on every status transition.
-func (s *Server) SetStatusReporter(fn func(Status, string)) {
+func (s *Server) SetStatusReporter(fn func(Status, string, string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reporter = fn
+}
+
+const codexAuthRequiredErrorCode = "codex_auth_required"
+
+func classifyProvisionError(message string) string {
+	if strings.Contains(strings.ToLower(message), "authentication required") {
+		return codexAuthRequiredErrorCode
+	}
+	return ""
 }
 
 // handleSandboxDomains proxies GET /sandbox-domains to the network filter control

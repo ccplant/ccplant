@@ -37,6 +37,7 @@ type ProvisionerConnectRequest struct {
 type ProvisionRequestStatusUpdate struct {
 	Status    string `json:"status"`
 	Message   string `json:"message,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
 	Retryable bool   `json:"retryable,omitempty"`
 	PodName   string `json:"pod_name,omitempty"`
 }
@@ -49,6 +50,7 @@ type ProvisionRequest struct {
 	Settings  *sessionsettings.SessionSettings `json:"settings,omitempty"`
 	Status    string                           `json:"status"`
 	Message   string                           `json:"message,omitempty"`
+	ErrorCode string                           `json:"error_code,omitempty"`
 	ClaimedBy string                           `json:"claimed_by,omitempty"`
 	UpdatedAt time.Time                        `json:"updated_at"`
 }
@@ -244,6 +246,7 @@ func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Cont
 	}
 	provisionReq.Status = req.Status
 	provisionReq.Message = req.Message
+	provisionReq.ErrorCode = req.ErrorCode
 	if req.PodName != "" {
 		provisionReq.ClaimedBy = req.PodName
 	}
@@ -260,12 +263,17 @@ func (m *KubernetesSessionManager) UpdateProvisionRequestStatus(ctx context.Cont
 				ks.SetStatus("starting")
 			case "ready":
 				ks.SetStatusMessage("")
+				ks.SetErrorCode("")
 				if ks.Status() != "running" {
 					ks.SetStatus("active")
 				}
 			case "error":
 				ks.SetStatusMessage(req.Message)
+				ks.SetErrorCode(req.ErrorCode)
 				ks.SetStatus("error")
+				if req.ErrorCode == "codex_auth_required" {
+					go m.notifyCodexAuthRequired(ks)
+				}
 			}
 		}
 	}

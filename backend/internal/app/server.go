@@ -693,6 +693,9 @@ func NewServer(cfg *config.Config, verbose bool) *Server {
 		notificationSvc.SetSubscriptionReader(syncer)
 		notificationSvc.SetSubscriptionWriter(syncer)
 		log.Printf("Notification subscription persistence configured (read+write)")
+		if k8sMgr, ok := s.sessionManager.(*services.KubernetesSessionManager); ok {
+			k8sMgr.SetCodexAuthNotifier(notificationSvc.SendNotificationToUser)
+		}
 	}
 
 	// Start cleanup goroutine for defunct processes

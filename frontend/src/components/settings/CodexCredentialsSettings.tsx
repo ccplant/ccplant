@@ -125,19 +125,21 @@ export function CodexCredentialsSettings({
         )}
       </div>
 
-      <SettingsSubsection
-        title="デバイス認証"
-        description="ブラウザで Codex にログインして認証情報を登録します（推奨）"
-      >
-        <CodexDeviceAuthSettings
-          scope={scope}
-          teamId={teamId}
-          hasCredentials={hasCredentials}
-          onAuthComplete={() => {
-            void onChanged()
-          }}
-        />
-      </SettingsSubsection>
+      <div id="codex-device-auth" className="scroll-mt-6">
+        <SettingsSubsection
+          title="デバイス認証"
+          description="ブラウザで Codex にログインして認証情報を登録します（推奨）"
+        >
+          <CodexDeviceAuthSettings
+            scope={scope}
+            teamId={teamId}
+            hasCredentials={hasCredentials}
+            onAuthComplete={() => {
+              void onChanged()
+            }}
+          />
+        </SettingsSubsection>
+      </div>
 
       <SettingsSubsection
         title="手動でアップロード"

@@ -25,6 +25,7 @@ type KubernetesSession struct {
 	lastMessageAt     time.Time
 	status            string
 	statusMessage     string
+	errorCode         string
 	cancelFunc        context.CancelFunc
 	mutex             sync.RWMutex
 	description       string // Preserved description from Secret (not truncated by label limits)
@@ -197,6 +198,18 @@ func (s *KubernetesSession) StatusMessage() string {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return s.statusMessage
+}
+
+func (s *KubernetesSession) SetErrorCode(code string) {
+	s.mutex.Lock()
+	s.errorCode = code
+	s.mutex.Unlock()
+}
+
+func (s *KubernetesSession) ErrorCode() string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.errorCode
 }
 
 // SetStatusSilent updates the in-memory status without invoking the
