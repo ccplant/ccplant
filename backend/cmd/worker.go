@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -69,10 +70,18 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken).
 		WithExecutionTokenSigningKey(cfg.Worker.ExecutionTokenSigningKey).
 		WithSessionAPIURL(cfg.Worker.SessionAPIURL)
+	slackRepo := controlapi.NewSlackBotRepository(remote)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	_, err = slackRepo.ListAll(startupCtx)
+	startupCancel()
+	if err != nil {
+		return fmt.Errorf("worker control API startup check failed: %w", err)
+	}
 	leaseClient := remote
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	controlFailure := monitorWorkerControlAPI(ctx, slackRepo, 30*time.Second, 4)
 	var mu sync.Mutex
 	var workers sync.WaitGroup
 	var scheduleWorker *remoteScheduleWorker
@@ -93,13 +102,18 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 			cleanupWorker.Run(ctx)
 		}()
 	}
-	socketManager := newRemoteSlackSocketManager(cfg, runtimeNamespace, remote, leaseClient)
+	socketManager := newRemoteSlackSocketManager(cfg, runtimeNamespace, remote, slackRepo, leaseClient)
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
 		socketManager.Run(ctx)
 	}()
-	<-ctx.Done()
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case runErr = <-controlFailure:
+		cancel()
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if scheduleWorker != nil {
@@ -109,7 +123,43 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 		cleanupWorker.Stop()
 	}
 	workers.Wait()
-	return nil
+	return runErr
+}
+
+func monitorWorkerControlAPI(ctx context.Context, repo *controlapi.SlackBotRepository, interval time.Duration, maxTransientFailures int) <-chan error {
+	failed := make(chan error, 1)
+	go func() {
+		defer close(failed)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		consecutiveFailures := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				_, err := repo.ListAll(checkCtx)
+				cancel()
+				if err == nil {
+					consecutiveFailures = 0
+					continue
+				}
+				var statusErr *controlapi.HTTPStatusError
+				if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusUnauthorized || statusErr.StatusCode == http.StatusForbidden || statusErr.StatusCode == http.StatusNotFound) {
+					failed <- fmt.Errorf("worker control API permanent failure: %w", err)
+					return
+				}
+				consecutiveFailures++
+				log.Printf("[WORKER_CONTROL] API check failed (%d/%d): %v", consecutiveFailures, maxTransientFailures, err)
+				if consecutiveFailures >= maxTransientFailures {
+					failed <- fmt.Errorf("worker control API unavailable after %d consecutive checks: %w", consecutiveFailures, err)
+					return
+				}
+			}
+		}
+	}()
+	return failed
 }
 
 const workerDefaultSlackSecretName = "agentapi-worker-slack-default"
@@ -129,8 +179,7 @@ func configureWorkerSlackCredential(cfg *config.Config) error {
 	return nil
 }
 
-func newRemoteSlackSocketManager(cfg *config.Config, runtimeNamespace string, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient) *slackbot.SlackSocketManager {
-	repo := controlapi.NewSlackBotRepository(remote)
+func newRemoteSlackSocketManager(cfg *config.Config, runtimeNamespace string, remote *controlapi.SessionManager, repo *controlapi.SlackBotRepository, leaseClient schedule.LeaseClient) *slackbot.SlackSocketManager {
 	resolver := slackbot.NewSlackChannelResolver(fake.NewSimpleClientset(), "worker").WithoutPersistentCache()
 	eventClient := &workerSlackEventClient{SlackChannelResolver: resolver, repo: repo, defaultAppToken: cfg.Slack.AppToken, defaultBotToken: cfg.Slack.BotToken}
 	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, eventClient, cfg.Webhook.BaseURL, cfg.Slack.DryRun, nil)
