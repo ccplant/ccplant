@@ -266,8 +266,7 @@
           "api": { "properties": { "workerControl": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } } } },
           "worker": {
             "properties": {
-              "controlApi": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } },
-              "kvStore": { "$ref": "#/definitions/enabledKVStore" }
+              "controlApi": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
             }
           }
         },
@@ -563,6 +562,19 @@
                     { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
                   ]
                 }
+              }
+            },
+            {
+              "properties": {
+                "backend": { "maxLength": 0 },
+                "primary": {
+                  "properties": { "backend": { "enum": ["libsql", "libsql-encrypted"] } },
+                  "anyOf": [
+                    { "properties": { "databaseUrl": { "minLength": 1 } }, "required": ["databaseUrl"] },
+                    { "properties": { "databaseUrlSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } }
+                  ]
+                },
+                "secondary": { "properties": { "backend": { "const": "kubernetes" } } }
               }
             }
           ]

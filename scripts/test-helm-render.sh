@@ -203,6 +203,19 @@ assert_contains 'value: "ap-northeast-1"' "$TMP_DIR/backend-kv-migration-init-co
 assert_contains 'name: AWS_ACCESS_KEY_ID' "$TMP_DIR/backend-kv-migration-init-container.yaml"
 assert_contains 'name: AWS_SECRET_ACCESS_KEY' "$TMP_DIR/backend-kv-migration-init-container.yaml"
 
+# Keep Kubernetes as a rollback replica after contracting to libSQL. Only the
+# API receives the Kubernetes token and KV Role because it owns application KV.
+"$HELM_BIN" template backend-kv-rollback "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --set api.kvStore.backend= \
+  --set api.kvStore.primary.backend=libsql \
+  --set api.kvStore.primary.databaseUrl=file:///tmp/primary.db \
+  --set api.kvStore.secondary.backend=kubernetes \
+  >"$TMP_DIR/backend-kv-rollback.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_PRIMARY_BACKEND' "$TMP_DIR/backend-kv-rollback.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_SECONDARY_BACKEND' "$TMP_DIR/backend-kv-rollback.yaml"
+assert_contains 'value: "kubernetes"' "$TMP_DIR/backend-kv-rollback.yaml"
+assert_contains 'name: backend-kv-rollback-agentapi-proxy-kvstore' "$TMP_DIR/backend-kv-rollback.yaml"
+
 # A default install is API-only. It must not receive workload RBAC or any
 # worker/session-manager configuration.
 assert_contains '^  replicas: 1$' "$TMP_DIR/backend-default.yaml"
@@ -265,6 +278,7 @@ assert_not_contains 'app.kubernetes.io/component: session-manager' "$TMP_DIR/bac
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant-default.yaml"
 
 "$HELM_BIN" template backend-worker-default "$REPO_ROOT/backend/helm/agentapi-proxy" \
+  --show-only templates/worker-deployment.yaml \
   --set worker.enabled=true \
   --set api.workerControl.tokenSecretRef.name=worker-control \
   --set api.workerControl.executionTokenSigningKeySecretRef.name=worker-execution-signing \
@@ -274,6 +288,9 @@ assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/ccplant
   --set worker.kvStore.databaseUrl=file:///tmp/worker.db \
   >"$TMP_DIR/backend-worker-default.yaml"
 assert_contains 'image: "ghcr.io/ccplant/ccplant-api:1.173.0"' "$TMP_DIR/backend-worker-default.yaml"
+assert_contains 'automountServiceAccountToken: false' "$TMP_DIR/backend-worker-default.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-worker-default.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-default.yaml"
 
 # Role image tags are release-controlled by Chart.appVersion and are not valid
 # Helm values.
@@ -437,7 +454,8 @@ assert_contains 'name: AGENTAPI_EXECUTION_TOKEN_SIGNING_KEY' "$TMP_DIR/backend-w
 assert_contains 'name: NOTIFICATION_BASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'value: "https://notifications.example"' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: "worker-control"' "$TMP_DIR/backend-worker-deployment.yaml"
-assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_NAMESPACE' "$TMP_DIR/backend-worker-deployment.yaml"
+assert_not_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'name: AGENTAPI_REDIS_' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_contains 'name: AGENTAPI_SLACKBOT_CLEANUP_WORKER_LEASE_DURATION' "$TMP_DIR/backend-worker-deployment.yaml"
 assert_not_contains 'AGENTAPI_STOCK_INVENTORY_WORKER_' "$TMP_DIR/backend-worker-deployment.yaml"
@@ -479,10 +497,11 @@ assert_not_contains 'AGENTAPI_SESSION_MANAGER_UPSTREAM_URL' "$TMP_DIR/backend-se
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'AGENTAPI_SCHEDULE_WORKER_' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'name: "worker-control"' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-session-manager-deployment.yaml"
 
-# Kubernetes-only application persistence is a supported customer mode. API
-# and worker receive only the shared KV Role; workload mutation remains bound
-# exclusively to the session-manager Role.
+# Kubernetes-only application persistence is owned by the API. Worker and
+# session-manager values are ignored for application KV access.
 "$HELM_BIN" template backend-kubernetes-kv "$REPO_ROOT/backend/helm/agentapi-proxy" \
   "${all_role_args[@]}" \
   --set api.kvStore.backend=kubernetes \
@@ -495,7 +514,6 @@ assert_not_contains 'name: "worker-control"' "$TMP_DIR/backend-session-manager-d
 assert_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_contains 'value: "kubernetes"' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-kvstore' "$TMP_DIR/backend-kubernetes-kv.yaml"
-assert_contains 'name: backend-kubernetes-kv-agentapi-proxy-worker' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_contains 'automountServiceAccountToken: true' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_not_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-kubernetes-kv.yaml"
 assert_not_contains 'name: AGENTAPI_KV_STORE_AUTH_TOKEN' "$TMP_DIR/backend-kubernetes-kv.yaml"

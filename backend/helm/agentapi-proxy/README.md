@@ -84,6 +84,17 @@ AWS credentials. Prefer workload identity over static credentials when the
 Kubernetes platform supports it. The KMS key needs `kms:Encrypt` and
 `kms:Decrypt` permissions.
 
+## Migrating application KV stores
+
+The API is the single owner of SlackBot application data. Workers obtain
+SlackBot configuration and credentials through the authenticated worker API;
+their local Kubernetes clients are reserved for runtime coordination.
+
+After backfill and verification, switching the API primary also changes the
+SlackBot store observed by workers. For a rollback window, the chart accepts a
+libSQL or encrypted-libSQL primary with a Kubernetes secondary. Session-manager
+application data still uses its separately configured KV backend.
+
 ## Cloud Run manifest
 
 The same application values can render the API as a Google Cloud Run Knative

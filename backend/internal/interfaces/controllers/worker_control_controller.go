@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	sessionuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/session"
 	"github.com/takutakahashi/agentapi-proxy/pkg/executiontoken"
@@ -28,6 +29,66 @@ type WorkerControlController struct {
 	scheduleManager   schedule.Manager
 	sessionDeleter    func(echo.Context) error
 	allocationCleaner func(context.Context, string) error
+	slackBots         repositories.SlackBotRepository
+	slackTokens       workerSlackTokenResolver
+}
+
+type workerSlackTokenResolver interface {
+	GetSettingsSecretValue(context.Context, string, string, string) (string, error)
+	GetBotToken(context.Context, string, string) (string, error)
+}
+
+func (wc *WorkerControlController) WithSlackBots(repo repositories.SlackBotRepository, tokens workerSlackTokenResolver) *WorkerControlController {
+	wc.slackBots, wc.slackTokens = repo, tokens
+	return wc
+}
+
+func (wc *WorkerControlController) ListSlackBots(c echo.Context) error {
+	repo, ok := wc.slackBots.(repositories.SlackBotInternalRepository)
+	if !ok {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	bots, err := repo.ListAll(c.Request().Context())
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to list slackbots"})
+	}
+	result := make([]*slackbot.SlackBotResponse, 0, len(bots))
+	for _, bot := range bots {
+		result = append(result, slackbot.ToResponse(bot))
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+func (wc *WorkerControlController) GetSlackBotCredentials(c echo.Context) error {
+	if wc.slackBots == nil || wc.slackTokens == nil {
+		return c.NoContent(http.StatusServiceUnavailable)
+	}
+	bot, err := wc.slackBots.Get(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	var appToken, botToken string
+	if bot.SettingsSecretID() != "" {
+		owner := bot.UserID()
+		if bot.Scope() == entities.ScopeTeam {
+			owner = bot.TeamID()
+		}
+		appToken, err = wc.slackTokens.GetSettingsSecretValue(c.Request().Context(), owner, bot.SettingsSecretID(), bot.SettingsAppTokenKey())
+		if err == nil {
+			botToken, err = wc.slackTokens.GetSettingsSecretValue(c.Request().Context(), owner, bot.SettingsSecretID(), bot.SettingsBotTokenKey())
+		}
+	} else if bot.BotTokenSecretName() != "" {
+		appToken, err = wc.slackTokens.GetBotToken(c.Request().Context(), bot.BotTokenSecretName(), bot.AppTokenSecretKey())
+		if err == nil {
+			botToken, err = wc.slackTokens.GetBotToken(c.Request().Context(), bot.BotTokenSecretName(), bot.BotTokenSecretKey())
+		}
+	} else {
+		return c.NoContent(http.StatusNoContent)
+	}
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to resolve slackbot credentials"})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"app_token": appToken, "bot_token": botToken})
 }
 
 func (wc *WorkerControlController) WithScheduleManager(manager schedule.Manager) *WorkerControlController {
@@ -43,6 +104,18 @@ func (wc *WorkerControlController) WithSessionDeleter(deleter func(echo.Context)
 func (wc *WorkerControlController) WithSessionPoolAllocationCleaner(cleaner func(context.Context, string) error) *WorkerControlController {
 	wc.allocationCleaner = cleaner
 	return wc
+}
+
+// Authenticate rejects requests before they reach any worker-control handler.
+// Handler-level checks are intentionally retained as defense in depth.
+func (wc *WorkerControlController) Authenticate(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if !wc.authorized(c) {
+			return c.NoContent(http.StatusUnauthorized)
+		}
+		c.Response().Header().Set("Cache-Control", "no-store")
+		return next(c)
+	}
 }
 
 type scheduleJob struct {

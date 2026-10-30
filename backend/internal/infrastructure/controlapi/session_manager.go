@@ -29,6 +29,19 @@ type SessionManager struct {
 	client            *http.Client
 }
 
+// HTTPStatusError preserves the response status so callers can distinguish a
+// permanent authentication/contract failure from a transient API outage.
+type HTTPStatusError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("control API %s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
+
 type sessionInfo struct {
 	ID            string                 `json:"id"`
 	UserID        string                 `json:"user_id"`
@@ -281,7 +294,7 @@ func (m *SessionManager) do(ctx context.Context, method, path string, input, out
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("control API %s %s returned %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+		return &HTTPStatusError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
 	}
 	if output != nil && resp.StatusCode != http.StatusNoContent {
 		return json.NewDecoder(resp.Body).Decode(output)
