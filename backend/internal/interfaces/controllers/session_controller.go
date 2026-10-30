@@ -52,6 +52,10 @@ type sessionStatusMessageProvider interface {
 	StatusMessage() string
 }
 
+type sessionErrorCodeProvider interface {
+	ErrorCode() string
+}
+
 type sessionStatusCacheUpdater interface {
 	SetStatusSilent(string)
 }
@@ -1121,6 +1125,9 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		}
 		if provider, ok := session.(sessionStatusMessageProvider); ok && provider.StatusMessage() != "" {
 			sessionData["error_message"] = provider.StatusMessage()
+		}
+		if provider, ok := session.(sessionErrorCodeProvider); ok && provider.ErrorCode() != "" {
+			sessionData["error_code"] = provider.ErrorCode()
 		}
 		if provider, ok := session.(sessionSandboxPolicyProvider); ok {
 			if policyID := provider.SandboxPolicyID(); policyID != "" {

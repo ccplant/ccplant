@@ -128,6 +128,9 @@ type KubernetesSessionManager struct {
 	logger             *logger.Logger
 	sessions           map[string]*KubernetesSession
 	mutex              sync.RWMutex
+	authNotificationMu sync.Mutex
+	authNotifiedAt     map[string]time.Time
+	authNotifier       func(userID, title, body, notificationType string, data map[string]interface{}) error
 	namespace          string
 	settingsRepo       portrepos.SettingsRepository
 	teamConfigRepo     portrepos.TeamConfigRepository
@@ -204,6 +207,40 @@ type KubernetesSessionManager struct {
 	runnerDefaultPool         string
 	inheritedRuntimeProfile   *sessionsettings.RuntimeProfile
 	appliedSessionImage       string
+}
+
+// SetCodexAuthNotifier configures user notification delivery for expired Codex
+// credentials. Delivery is deduplicated per user for one hour.
+func (m *KubernetesSessionManager) SetCodexAuthNotifier(notifier func(string, string, string, string, map[string]interface{}) error) {
+	m.authNotificationMu.Lock()
+	m.authNotifier = notifier
+	m.authNotificationMu.Unlock()
+}
+
+func (m *KubernetesSessionManager) notifyCodexAuthRequired(session *KubernetesSession) {
+	if session == nil || session.Scope() != entities.ScopeUser || session.UserID() == "" {
+		return
+	}
+	m.authNotificationMu.Lock()
+	last := m.authNotifiedAt[session.UserID()]
+	if !last.IsZero() && time.Since(last) < time.Hour {
+		m.authNotificationMu.Unlock()
+		return
+	}
+	notifier := m.authNotifier
+	if notifier == nil {
+		m.authNotificationMu.Unlock()
+		return
+	}
+	if m.authNotifiedAt == nil {
+		m.authNotifiedAt = make(map[string]time.Time)
+	}
+	m.authNotifiedAt[session.UserID()] = time.Now()
+	m.authNotificationMu.Unlock()
+	data := map[string]interface{}{"session_id": session.ID(), "url": "/settings#codex-device-auth", "error_code": "codex_auth_required"}
+	if err := notifier(session.UserID(), "Codex の再認証が必要です", "Codex の認証期限が切れています。再認証してください。", "error", data); err != nil {
+		log.Printf("[K8S_SESSION] Failed to notify user about Codex authentication: %v", err)
+	}
 }
 
 func (m *KubernetesSessionManager) ConfigureSessionRunnerPool(parentURL, managerID, managerToken, defaultPool string) {
@@ -2478,6 +2515,7 @@ func (m *KubernetesSessionManager) hydrateSessionStatusMessages(ctx context.Cont
 			continue
 		}
 		ks.SetStatusMessage(request.Message)
+		ks.SetErrorCode(request.ErrorCode)
 	}
 }
 

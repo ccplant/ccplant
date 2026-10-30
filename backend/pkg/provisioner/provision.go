@@ -438,7 +438,8 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	cmd.WaitDelay = 10 * time.Second
 	cmd.Env = mergeEnv(withoutEnvironment(os.Environ(), settings.UnsetEnv), envMap)
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var agentStderr bytes.Buffer
+	cmd.Stderr = io.MultiWriter(os.Stderr, &agentStderr)
 
 	if err := cmd.Start(); err != nil {
 		s.setStatus(StatusError, fmt.Sprintf("failed to start agent: %v", err))
@@ -462,10 +463,30 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	agentapiURL := fmt.Sprintf("http://localhost:%s", agentapiPort)
 
 	log.Printf("[PROVISIONER] Waiting for agentapi to be ready at %s", agentapiURL)
-	if err := waitForAgentAPI(ctx, agentapiURL, 120); err != nil {
-		s.setStatus(StatusError, fmt.Sprintf("agentapi not ready: %v", err))
+	readinessCtx, cancelReadiness := context.WithCancel(ctx)
+	readyResult := make(chan error, 1)
+	go func() { readyResult <- waitForAgentAPI(readinessCtx, agentapiURL, 120) }()
+	var readinessErr error
+	select {
+	case readinessErr = <-readyResult:
+		cancelReadiness()
+	case processErr := <-agentDone:
+		cancelReadiness()
+		if classifyProvisionError(agentStderr.String()) == codexAuthRequiredErrorCode {
+			s.setStatus(StatusError, "Codex authentication required")
+		} else {
+			s.setStatus(StatusError, fmt.Sprintf("agent process exited before becoming ready: %v", processErr))
+		}
+		return
+	}
+	if readinessErr != nil {
 		_ = cmd.Process.Kill()
 		<-agentDone
+		if classifyProvisionError(agentStderr.String()) == codexAuthRequiredErrorCode {
+			s.setStatus(StatusError, "Codex authentication required")
+		} else {
+			s.setStatus(StatusError, fmt.Sprintf("agentapi not ready: %v", readinessErr))
+		}
 		return
 	}
 	log.Printf("[PROVISIONER] agentapi is ready")

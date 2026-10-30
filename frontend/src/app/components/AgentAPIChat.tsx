@@ -30,6 +30,7 @@ interface AgentStatus {
   current_task?: string;
   /** Provisioner error message when status is 'error' */
   message?: string;
+  error_code?: string;
 }
 
 type MessageSSEConnectionStatus = 'connecting' | 'connected';
@@ -1509,8 +1510,12 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         sessionStatus.status === 'error' &&
         prevAgentStatusRef.current?.status !== 'error'
       ) {
-        const detail = sessionStatus.message || '不明なエラー';
-        setError(`セッションの起動に失敗しました: ${detail}`);
+        if (sessionStatus.error_code === 'codex_auth_required') {
+          setError('Codex の認証期限が切れています。再認証してください。');
+        } else {
+          const detail = sessionStatus.message || '不明なエラー';
+          setError(`セッションの起動に失敗しました: ${detail}`);
+        }
       }
       prevAgentStatusRef.current = normalizedSessionStatus;
     } catch (err) {
@@ -2174,6 +2179,9 @@ export default function AgentAPIChat({ sessionId: propSessionId }: AgentAPIChatP
         {error && (
           <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-sm">
             {error}
+            {error === 'Codex の認証期限が切れています。再認証してください。' && (
+              <> <a href="/settings#codex-device-auth" className="font-medium underline">Codex を再認証</a></>
+            )}
           </div>
         )}
         
