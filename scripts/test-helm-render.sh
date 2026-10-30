@@ -497,8 +497,8 @@ assert_not_contains 'AGENTAPI_SESSION_MANAGER_UPSTREAM_URL' "$TMP_DIR/backend-se
 assert_not_contains 'AGENTAPI_WORKER_CONTROL_' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'AGENTAPI_SCHEDULE_WORKER_' "$TMP_DIR/backend-session-manager-deployment.yaml"
 assert_not_contains 'name: "worker-control"' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_not_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-session-manager-deployment.yaml"
-assert_not_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_BACKEND' "$TMP_DIR/backend-session-manager-deployment.yaml"
+assert_contains 'name: AGENTAPI_KV_STORE_DATABASE_URL' "$TMP_DIR/backend-session-manager-deployment.yaml"
 
 # Kubernetes-only application persistence is owned by the API. Worker and
 # session-manager values are ignored for application KV access.

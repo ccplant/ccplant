@@ -10,6 +10,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
+	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	apitokenuc "github.com/takutakahashi/agentapi-proxy/internal/usecases/api_token"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/personal_api_key"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
@@ -56,7 +57,6 @@ type HandlerRegistry struct {
 	provisionerController          *controllers.ProvisionerController
 	externalAllocationController   *controllers.ProvisionerController
 	workerControlController        *controllers.WorkerControlController
-	applicationKVController        *controllers.ApplicationKVController
 	sessionControlController       *controllers.SessionControlController
 	sessionControlReaderController *controllers.SessionControlReaderController
 	esmControlController           *controllers.ESMControlController
@@ -286,7 +286,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	var provisionerController *controllers.ProvisionerController
 	var externalAllocationController *controllers.ProvisionerController
 	var workerControlController *controllers.WorkerControlController
-	var applicationKVController *controllers.ApplicationKVController
 	var sessionControlController *controllers.SessionControlController
 	var sessionControlReaderController *controllers.SessionControlReaderController
 	var esmControlController *controllers.ESMControlController
@@ -330,7 +329,14 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		sessionRuntimeController = controllers.NewSessionRuntimeController(server.esmControlStore, server.sessionRouteRepo, sessionController).WithRunnerStore(server.sessionRunnerStore)
 	}
 	if cfg := server.GetConfig(); cfg != nil && cfg.Worker.ControlAPIToken != "" {
+		namespace := cfg.KVStore.Namespace
+		if namespace == "" {
+			namespace = "default"
+		}
+		slackRepo := repositories.NewKubernetesSlackBotRepository(server.GetPersistenceClient(), namespace)
+		slackResolver := slackbot.NewSlackChannelResolver(server.GetPersistenceClient(), namespace).WithSettingsRepository(server.GetSettingsRepository())
 		workerControlController = controllers.NewWorkerControlController(server.sessionManager, cfg.Worker.ControlAPIToken, cfg.Worker.ExecutionTokenSigningKey, server, server.sessionRouteRepo).
+			WithSlackBots(slackRepo, slackResolver).
 			WithLeases(buildWorkerLeaseClient(cfg)).
 			WithSessionDeleter(sessionController.DeleteSessionFromWorker).
 			WithSessionPoolAllocationCleaner(server.DeleteSessionPoolAllocation)
@@ -338,10 +344,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			workerControlController.WithScheduleManager(server.scheduleManager)
 		}
 		log.Printf("[ROUTER] Worker control controller initialized")
-	}
-	if cfg := server.GetConfig(); cfg != nil && (cfg.Worker.ControlAPIToken != "" || cfg.SessionManager.APIToken != "") {
-		applicationKVController = controllers.NewApplicationKVController(server.GetApplicationKVStore(), cfg.Worker.ControlAPIToken, cfg.SessionManager.APIToken)
-		log.Printf("[ROUTER] Application KV control controller initialized")
 	}
 	if server.sessionControlStore != nil {
 		sessionControlReaderController = controllers.NewSessionControlReaderController(server.sessionControlStore, server.sessionManager)
@@ -389,7 +391,6 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 			provisionerController:          provisionerController,
 			externalAllocationController:   externalAllocationController,
 			workerControlController:        workerControlController,
-			applicationKVController:        applicationKVController,
 			sessionControlController:       sessionControlController,
 			sessionControlReaderController: sessionControlReaderController,
 			esmControlController:           esmControlController,
@@ -556,22 +557,21 @@ func (r *Router) registerCoreRoutes() error {
 		log.Printf("[ROUTES] Internal provisioner endpoints registered")
 	}
 	if r.handlers.workerControlController != nil {
-		r.echo.POST("/internal/worker/sessions/:sessionId", r.handlers.workerControlController.CreateSession)
-		r.echo.GET("/internal/worker/sessions", r.handlers.workerControlController.ListSessions)
-		r.echo.DELETE("/internal/worker/sessions/:sessionId", r.handlers.workerControlController.DeleteSession)
-		r.echo.POST("/internal/worker/sessions/:sessionId/messages", r.handlers.workerControlController.SendMessage)
-		r.echo.POST("/internal/worker/sessions/:sessionId/stop", r.handlers.workerControlController.StopAgent)
-		r.echo.GET("/internal/worker/stock", r.handlers.workerControlController.Stock)
-		r.echo.POST("/internal/worker/stock", r.handlers.workerControlController.Stock)
-		r.echo.DELETE("/internal/worker/stock", r.handlers.workerControlController.Stock)
-		r.echo.POST("/internal/worker/leases/:leaseName", r.handlers.workerControlController.Lease)
-		r.echo.POST("/internal/worker/schedules/claim-due", r.handlers.workerControlController.ClaimDueSchedules)
-		r.echo.POST("/internal/worker/schedules/:id/finalize", r.handlers.workerControlController.FinalizeSchedule)
+		worker := r.echo.Group("/internal/worker", r.handlers.workerControlController.Authenticate)
+		worker.POST("/sessions/:sessionId", r.handlers.workerControlController.CreateSession)
+		worker.GET("/sessions", r.handlers.workerControlController.ListSessions)
+		worker.DELETE("/sessions/:sessionId", r.handlers.workerControlController.DeleteSession)
+		worker.POST("/sessions/:sessionId/messages", r.handlers.workerControlController.SendMessage)
+		worker.POST("/sessions/:sessionId/stop", r.handlers.workerControlController.StopAgent)
+		worker.GET("/stock", r.handlers.workerControlController.Stock)
+		worker.POST("/stock", r.handlers.workerControlController.Stock)
+		worker.DELETE("/stock", r.handlers.workerControlController.Stock)
+		worker.POST("/leases/:leaseName", r.handlers.workerControlController.Lease)
+		worker.POST("/schedules/claim-due", r.handlers.workerControlController.ClaimDueSchedules)
+		worker.POST("/schedules/:id/finalize", r.handlers.workerControlController.FinalizeSchedule)
+		worker.GET("/slackbots", r.handlers.workerControlController.ListSlackBots)
+		worker.GET("/slackbots/:id/credentials", r.handlers.workerControlController.GetSlackBotCredentials)
 		log.Printf("[ROUTES] Isolated worker-control endpoints registered")
-	}
-	if r.handlers.applicationKVController != nil {
-		r.echo.Any("/internal/application-kv", r.handlers.applicationKVController.Handle)
-		log.Printf("[ROUTES] Application KV control endpoint registered")
 	}
 	if r.handlers.sessionControlController != nil {
 		r.echo.GET("/internal/session-control/:sessionId/commands", r.handlers.sessionControlController.WaitCommands)

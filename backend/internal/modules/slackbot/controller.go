@@ -480,6 +480,11 @@ func (c *SlackBotController) DeleteSlackBot(ctx echo.Context) error {
 // --- Helpers ---
 
 func (c *SlackBotController) toResponse(bot *entities.SlackBot) *SlackBotResponse {
+	return ToResponse(bot)
+}
+
+// ToResponse converts a SlackBot entity to its non-secret transport form.
+func ToResponse(bot *entities.SlackBot) *SlackBotResponse {
 	resp := &SlackBotResponse{
 		ID:                     bot.ID(),
 		Name:                   bot.Name(),

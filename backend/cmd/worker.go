@@ -13,19 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/remotekv"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
-	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/services"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/schedule"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -70,29 +62,13 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 	if cfg.Worker.SessionAPIURL == "" {
 		cfg.Worker.SessionAPIURL = controlURL
 	}
-	store := remotekv.New(controlURL, cfg.Worker.ControlAPIToken)
-	defer func() { _ = store.Close() }()
-	persistence := kvstore.NewKubernetesAdapter(fake.NewSimpleClientset(), store)
 	runtimeNamespace := resolveKubernetesNamespace(cfg.ScheduleWorker.Namespace, cfg.KubernetesSession.Namespace)
-	persistenceNamespace := cfg.KVStore.Namespace
-	if persistenceNamespace == "" {
-		persistenceNamespace = "default"
-	}
-	if err := configureWorkerSlackCredential(context.Background(), cfg, persistence, persistenceNamespace); err != nil {
+	if err := configureWorkerSlackCredential(cfg); err != nil {
 		return err
 	}
 	remote := controlapi.NewSessionManager(controlURL, cfg.Worker.ControlAPIToken).
 		WithExecutionTokenSigningKey(cfg.Worker.ExecutionTokenSigningKey).
 		WithSessionAPIURL(cfg.Worker.SessionAPIURL)
-	encryption, err := services.NewEncryptionServiceFactory("AGENTAPI_ENCRYPTION").Create()
-	if err != nil {
-		return err
-	}
-	encryptionRegistry := services.NewEncryptionServiceRegistry(encryption)
-	if decryption, err := services.NewEncryptionServiceFactory("AGENTAPI_DECRYPTION").Create(); err == nil {
-		encryptionRegistry.Register(decryption)
-	}
-	profileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, persistenceNamespace, encryptionRegistry)
 	leaseClient := remote
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -117,7 +93,7 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 			cleanupWorker.Run(ctx)
 		}()
 	}
-	socketManager := newRemoteSlackSocketManager(cfg, persistence, persistenceNamespace, runtimeNamespace, remote, profileRepo, leaseClient)
+	socketManager := newRemoteSlackSocketManager(cfg, runtimeNamespace, remote, leaseClient)
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -138,34 +114,12 @@ func runWorkers(_ *cobra.Command, _ []string) error {
 
 const workerDefaultSlackSecretName = "agentapi-worker-slack-default"
 
-func configureWorkerSlackCredential(ctx context.Context, cfg *config.Config, persistence kubernetes.Interface, namespace string) error {
+func configureWorkerSlackCredential(cfg *config.Config) error {
 	if cfg.Slack.AppToken == "" && cfg.Slack.BotToken == "" {
 		return nil
 	}
 	if cfg.Slack.AppToken == "" || cfg.Slack.BotToken == "" {
 		return errors.New("worker Slack Socket Mode requires both app and bot tokens")
-	}
-
-	secrets := persistence.CoreV1().Secrets(namespace)
-	secret, err := secrets.Get(ctx, workerDefaultSlackSecretName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: workerDefaultSlackSecretName}, Data: map[string][]byte{}}
-		secret.Data["app-token"] = []byte(cfg.Slack.AppToken)
-		secret.Data["bot-token"] = []byte(cfg.Slack.BotToken)
-		if _, err = secrets.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
-			return fmt.Errorf("create worker Slack credential: %w", err)
-		}
-	} else if err != nil {
-		return fmt.Errorf("get worker Slack credential: %w", err)
-	} else {
-		if secret.Data == nil {
-			secret.Data = map[string][]byte{}
-		}
-		secret.Data["app-token"] = []byte(cfg.Slack.AppToken)
-		secret.Data["bot-token"] = []byte(cfg.Slack.BotToken)
-		if _, err = secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("update worker Slack credential: %w", err)
-		}
 	}
 
 	cfg.Slack.AppTokenSecretName = workerDefaultSlackSecretName
@@ -175,10 +129,11 @@ func configureWorkerSlackCredential(ctx context.Context, cfg *config.Config, per
 	return nil
 }
 
-func newRemoteSlackSocketManager(cfg *config.Config, persistence kubernetes.Interface, persistenceNamespace, runtimeNamespace string, remote *controlapi.SessionManager, profiles *repositories.KubernetesSessionProfileRepository, leaseClient schedule.LeaseClient) *slackbot.SlackSocketManager {
-	repo := repositories.NewKubernetesSlackBotRepository(persistence, persistenceNamespace)
-	resolver := slackbot.NewSlackChannelResolver(persistence, persistenceNamespace).WithSecretClient(persistence)
-	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, resolver, cfg.Webhook.BaseURL, cfg.Slack.DryRun, profiles)
+func newRemoteSlackSocketManager(cfg *config.Config, runtimeNamespace string, remote *controlapi.SessionManager, leaseClient schedule.LeaseClient) *slackbot.SlackSocketManager {
+	repo := controlapi.NewSlackBotRepository(remote)
+	resolver := slackbot.NewSlackChannelResolver(fake.NewSimpleClientset(), "worker").WithoutPersistentCache()
+	eventClient := &workerSlackEventClient{SlackChannelResolver: resolver, repo: repo, defaultAppToken: cfg.Slack.AppToken, defaultBotToken: cfg.Slack.BotToken}
+	handler := slackbot.NewSlackBotEventHandler(repo, remote, cfg.KubernetesSession.SlackBotTokenSecretName, cfg.KubernetesSession.SlackBotTokenSecretKey, eventClient, cfg.Webhook.BaseURL, cfg.Slack.DryRun, nil)
 	appSecret := cfg.Slack.AppTokenSecretName
 	if appSecret == "" {
 		appSecret = cfg.KubernetesSession.SlackBotTokenSecretName
@@ -188,7 +143,53 @@ func newRemoteSlackSocketManager(cfg *config.Config, persistence kubernetes.Inte
 		appKey = "app-token"
 	}
 	election := workerElection(cfg.ScheduleWorker.LeaseDuration, cfg.ScheduleWorker.RenewDeadline, cfg.ScheduleWorker.RetryPeriod, "", runtimeNamespace)
-	return slackbot.NewSlackSocketManager(persistence, persistenceNamespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, LeaderElectionClient: leaseClient})
+	return slackbot.NewSlackSocketManager(fake.NewSimpleClientset(), runtimeNamespace, repo, handler, resolver, slackbot.SlackSocketManagerConfig{DefaultAppToken: cfg.Slack.AppToken, DefaultBotToken: cfg.Slack.BotToken, DefaultAppTokenSecretName: appSecret, DefaultAppTokenSecretKey: appKey, DefaultBotTokenSecretName: cfg.KubernetesSession.SlackBotTokenSecretName, DefaultBotTokenSecretKey: cfg.KubernetesSession.SlackBotTokenSecretKey, LeaderElectionConfig: election, LeaderElectionClient: leaseClient})
+}
+
+type workerSlackEventClient struct {
+	*slackbot.SlackChannelResolver
+	repo                             *controlapi.SlackBotRepository
+	defaultAppToken, defaultBotToken string
+}
+
+func (c *workerSlackEventClient) GetBotToken(ctx context.Context, secretName, secretKey string) (string, error) {
+	if secretName == workerDefaultSlackSecretName {
+		if secretKey == "app-token" {
+			return c.defaultAppToken, nil
+		}
+		return c.defaultBotToken, nil
+	}
+	bots, err := c.repo.ListAll(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, bot := range bots {
+		if bot.BotTokenSecretName() == secretName {
+			app, token, err := c.repo.Credentials(ctx, bot.ID())
+			if secretKey == bot.AppTokenSecretKey() {
+				return app, err
+			}
+			return token, err
+		}
+	}
+	return "", fmt.Errorf("Slack credential not found")
+}
+
+func (c *workerSlackEventClient) GetSettingsSecretValue(ctx context.Context, _ string, secretID, key string) (string, error) {
+	bots, err := c.repo.ListAll(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, bot := range bots {
+		if bot.SettingsSecretID() == secretID {
+			app, token, err := c.repo.Credentials(ctx, bot.ID())
+			if key == bot.SettingsAppTokenKey() {
+				return app, err
+			}
+			return token, err
+		}
+	}
+	return "", fmt.Errorf("Slack credential not found")
 }
 
 type remoteScheduleWorker struct {

@@ -41,6 +41,8 @@ type SlackSocketManager struct {
 	defaultAppTokenSecretKey  string
 	defaultBotTokenSecretName string
 	defaultBotTokenSecretKey  string
+	defaultAppToken           string
+	defaultBotToken           string
 
 	reconcileInterval    time.Duration
 	leaderElectionConfig schedule.LeaderElectionConfig
@@ -48,6 +50,10 @@ type SlackSocketManager struct {
 
 	mu      sync.Mutex
 	running map[string]runningEntry // botKey → entry
+}
+
+type slackBotCredentialRepository interface {
+	Credentials(context.Context, string) (appToken, botToken string, err error)
 }
 
 // runningEntry holds the cancel function and updatedAt snapshot for a running worker
@@ -60,6 +66,8 @@ type runningEntry struct {
 
 // SlackSocketManagerConfig holds configuration for SlackSocketManager
 type SlackSocketManagerConfig struct {
+	DefaultAppToken           string
+	DefaultBotToken           string
 	DefaultAppTokenSecretName string
 	DefaultAppTokenSecretKey  string
 	DefaultBotTokenSecretName string
@@ -109,6 +117,8 @@ func NewSlackSocketManager(
 		defaultAppTokenSecretKey:  cfg.DefaultAppTokenSecretKey,
 		defaultBotTokenSecretName: cfg.DefaultBotTokenSecretName,
 		defaultBotTokenSecretKey:  cfg.DefaultBotTokenSecretKey,
+		defaultAppToken:           cfg.DefaultAppToken,
+		defaultBotToken:           cfg.DefaultBotToken,
 		reconcileInterval:         cfg.ReconcileInterval,
 		leaderElectionConfig:      cfg.LeaderElectionConfig,
 		leaderElectionClient:      firstLeaderElectionClient(cfg.LeaderElectionClient, cfg.RedisClient),
@@ -278,6 +288,9 @@ func (m *SlackSocketManager) startLeaderElection(ctx context.Context, botKey str
 // newWorker creates a SlackSocketWorker for the given bot key
 func (m *SlackSocketManager) newWorker(botKey string) *SlackSocketWorker {
 	if botKey == defaultBotKey {
+		if m.defaultAppToken != "" && m.defaultBotToken != "" {
+			return NewSlackSocketWorkerWithTokens(defaultBotKey, m.defaultAppToken, m.defaultBotToken, m.channelResolver, m.eventHandler)
+		}
 		// Default worker: uses server-configured App token and bot token
 		if m.defaultAppTokenSecretName == "" {
 			log.Printf("[SOCKET_MANAGER] Default App token secret not configured; cannot start default worker")
@@ -309,6 +322,14 @@ func (m *SlackSocketManager) newWorker(botKey string) *SlackSocketWorker {
 			if candidate.SettingsSecretID() != secretID {
 				continue
 			}
+			if credentials, ok := m.repo.(slackBotCredentialRepository); ok {
+				appToken, botToken, err := credentials.Credentials(context.Background(), candidate.ID())
+				if err != nil {
+					log.Printf("[SOCKET_MANAGER] Failed to load credentials for %s: %v", candidate.ID(), err)
+					return nil
+				}
+				return NewSlackSocketWorkerWithTokens(botKey, appToken, botToken, m.channelResolver, m.eventHandler)
+			}
 			settingsName := candidate.UserID()
 			if candidate.Scope() == "team" {
 				settingsName = candidate.TeamID()
@@ -333,6 +354,14 @@ func (m *SlackSocketManager) newWorker(botKey string) *SlackSocketWorker {
 	if err != nil {
 		log.Printf("[SOCKET_MANAGER] Failed to get SlackBot %s: %v", botKey, err)
 		return nil
+	}
+	if credentials, ok := m.repo.(slackBotCredentialRepository); ok {
+		appToken, botToken, credentialErr := credentials.Credentials(context.Background(), bot.ID())
+		if credentialErr != nil {
+			log.Printf("[SOCKET_MANAGER] Failed to load credentials for SlackBot %s: %v", botKey, credentialErr)
+			return nil
+		}
+		return NewSlackSocketWorkerWithTokens(botKey, appToken, botToken, m.channelResolver, m.eventHandler)
 	}
 	if bot.SettingsSecretID() != "" {
 		settingsName := bot.UserID()

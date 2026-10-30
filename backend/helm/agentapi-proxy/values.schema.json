@@ -293,6 +293,7 @@
           "sessionManager": {
             "properties": {
               "internalApi": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } },
+              "kvStore": { "$ref": "#/definitions/enabledKVStore" },
               "kubernetesSession": {
                 "properties": {
                   "enabled": { "const": true },

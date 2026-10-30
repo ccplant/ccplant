@@ -443,8 +443,6 @@ sessionManager:
     leaseDuration: "15s"
     renewDeadline: "10s"
     retryPeriod: "2s"
-  # Deprecated compatibility fields. Application persistence is owned by the
-  # API and the session manager accesses it through the internal API.
   kvStore:
     namespace: default
     backend: libsql

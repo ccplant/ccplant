@@ -77,6 +77,12 @@ func NewSlackChannelResolver(kubeClient kubernetes.Interface, namespace string) 
 	}
 }
 
+// WithoutPersistentCache keeps channel names only in process memory.
+func (r *SlackChannelResolver) WithoutPersistentCache() *SlackChannelResolver {
+	r.cacheClient = nil
+	return r
+}
+
 // WithSecretClient uses a separate raw Kubernetes client for externally
 // managed token Secrets while retaining the persistence client for the channel
 // cache. This keeps operational Secrets outside the application KV backend.
@@ -104,7 +110,10 @@ func (r *SlackChannelResolver) ResolveChannelName(ctx context.Context, channelID
 	}
 
 	// 2. ConfigMap cache
-	name, found, err := r.loadFromConfigMap(ctx, channelID)
+	name, found, err := "", false, error(nil)
+	if r.cacheClient != nil {
+		name, found, err = r.loadFromConfigMap(ctx, channelID)
+	}
 	if err != nil {
 		log.Printf("[CHANNEL_RESOLVER] ConfigMap read error: %v", err)
 		// non-fatal: proceed to API call
@@ -122,9 +131,11 @@ func (r *SlackChannelResolver) ResolveChannelName(ctx context.Context, channelID
 
 	// Update both caches
 	r.cache.Store(channelID, name)
-	if upsertErr := r.upsertConfigMap(ctx, channelID, name); upsertErr != nil {
-		log.Printf("[CHANNEL_RESOLVER] Failed to update ConfigMap cache: %v", upsertErr)
-		// non-fatal: return the resolved name anyway
+	if r.cacheClient != nil {
+		if upsertErr := r.upsertConfigMap(ctx, channelID, name); upsertErr != nil {
+			log.Printf("[CHANNEL_RESOLVER] Failed to update ConfigMap cache: %v", upsertErr)
+			// non-fatal: return the resolved name anyway
+		}
 	}
 
 	return name, nil
