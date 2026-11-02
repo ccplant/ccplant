@@ -621,6 +621,35 @@ func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID
 	return m.suspendSessionWorkload(ctx, sessionID, svc)
 }
 
+// SuspendSessionOnTermination is called by a PVC-backed session Pod after it
+// receives SIGTERM and flushes its local agent state to the volume. It bypasses
+// the ordinary busy/checkpoint checks because the terminating Pod has already
+// stopped its agent process and cannot continue serving work. Deleting the
+// Deployment prevents its controller from replacing an evicted Pod before the
+// user explicitly resumes the session.
+func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Context, sessionID string) error {
+	if !m.isPVCEnabled() {
+		return fmt.Errorf("termination suspend requires a PVC-backed session")
+	}
+	session, ok := m.GetSession(sessionID).(*KubernetesSession)
+	if !ok || session == nil {
+		return nil
+	}
+	if session.Status() == "suspended" {
+		return nil
+	}
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, session.ServiceName(), metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		// Explicit session deletion removes the Service before the Pod finishes
+		// its SIGTERM handler. There is nothing left to suspend in that case.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return m.suspendSessionWorkload(ctx, sessionID, svc)
+}
+
 func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *KubernetesSession) bool {
 	if m.config.SessionPersistence.Backend == "" || session == nil || session.Request() == nil {
 		return false
@@ -5156,7 +5185,6 @@ func (m *KubernetesSessionManager) watchSession(ctx context.Context, session *Ku
 	defer func() {
 		log.Printf("[K8S_SESSION] Session %s watch ended", session.id)
 	}()
-
 	// Wait for deployment to be ready
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

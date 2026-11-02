@@ -55,6 +55,16 @@ func (*recordingSessionStateStore) Load(context.Context, string) (io.ReadCloser,
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
+type terminatingProvisionerManagerStub struct {
+	scopedProvisionerManagerStub
+	suspendedID string
+}
+
+func (m *terminatingProvisionerManagerStub) SuspendSessionOnTermination(_ context.Context, id string) error {
+	m.suspendedID = id
+	return nil
+}
+
 type routedSessionRepositoryStub struct{}
 
 func (routedSessionRepositoryStub) Save(context.Context, *repositories.SessionRoute) error {
@@ -111,6 +121,26 @@ func TestSaveSessionStateAuthenticatesRuntimeIDAndStoresByPublicID(t *testing.T)
 	}
 	if store.savedID != "public-session" {
 		t.Fatalf("saved session ID = %q, want public-session", store.savedID)
+	}
+}
+
+func TestTerminationSuspendUsesSessionScopedCredential(t *testing.T) {
+	manager := &terminatingProvisionerManagerStub{}
+	controller := NewProvisionerController(manager, nil, nil, nil, &recordingSessionStateStore{})
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/internal/session-state/session-a/terminate", nil)
+	req.Header.Set(echo.HeaderAuthorization, "Bearer session-a-token")
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.SetPath("/internal/session-state/:sessionId/terminate")
+	ctx.SetParamNames("sessionId")
+	ctx.SetParamValues("session-a")
+
+	if err := controller.SuspendSessionOnTermination(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNoContent || manager.suspendedID != "session-a" {
+		t.Fatalf("status=%d suspendedID=%q", rec.Code, manager.suspendedID)
 	}
 }
 

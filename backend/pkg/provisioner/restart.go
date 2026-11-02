@@ -112,6 +112,14 @@ func (s *Server) pauseAgent(ctx context.Context) error {
 	s.setStatus(Status("paused"), "")
 	return nil
 }
+
+// PrepareForTermination stops the agent and waits for its companion workers to
+// flush before the provisioner snapshots PVC-backed state on SIGTERM.
+func (s *Server) PrepareForTermination(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.pauseAgent(ctx)
+}
 func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeLifecycle(w, r) {
 		return
