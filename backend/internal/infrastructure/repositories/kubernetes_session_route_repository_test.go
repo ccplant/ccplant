@@ -4,10 +4,40 @@ import (
 	"context"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 )
+
+func TestKubernetesSessionRouteRepositoryLabelsRoutesWithOwningSessionID(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+
+	if err := repo.Save(ctx, &portrepos.SessionRoute{SessionID: "public-local", RemoteSessionID: "runtime-local"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, &portrepos.SessionRoute{SessionID: "public-external", RemoteSessionID: "runtime-external", ManagerID: "manager-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	local, err := client.CoreV1().Secrets("test").Get(ctx, SessionRouteSecretPrefix+"public-local", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := local.Labels["agentapi.proxy/session-id"]; got != "runtime-local" {
+		t.Fatalf("local route session-id label = %q, want runtime-local", got)
+	}
+
+	external, err := client.CoreV1().Secrets("test").Get(ctx, SessionRouteSecretPrefix+"public-external", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := external.Labels["agentapi.proxy/session-id"]; got != "public-external" {
+		t.Fatalf("external route session-id label = %q, want public-external", got)
+	}
+}
 
 func TestKubernetesSessionRouteRepositorySaveUpdatesExistingSecret(t *testing.T) {
 	repo := NewKubernetesSessionRouteRepository(fake.NewSimpleClientset(), "test")
