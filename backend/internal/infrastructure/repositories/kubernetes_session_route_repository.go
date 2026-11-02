@@ -121,6 +121,16 @@ func (r *KubernetesSessionRouteRepository) Save(ctx context.Context, route *port
 	}
 	secret.Labels["agentapi.proxy/session-route-user-id"] = services.SanitizeLabelValue(route.UserID)
 	secret.Labels["agentapi.proxy/session-route-scope"] = services.SanitizeLabelValue(route.Scope)
+	// A local route aliases the public session ID to the Kubernetes workload's
+	// session ID. Label it with that runtime ID so the session manager's normal
+	// label-based Secret sweep removes the route even if the route-specific
+	// deletion callback fails. External-manager routes use the public session ID
+	// because their runtime belongs to another manager and cluster.
+	if route.ManagerID == "" && route.RemoteSessionID != "" {
+		secret.Labels["agentapi.proxy/session-id"] = services.SanitizeLabelValue(route.RemoteSessionID)
+	} else if route.ManagerID != "" {
+		secret.Labels["agentapi.proxy/session-id"] = services.SanitizeLabelValue(route.SessionID)
+	}
 	if route.TeamID != "" {
 		secret.Labels["agentapi.proxy/session-route-team-id-hash"] = services.HashTeamID(route.TeamID)
 	}
