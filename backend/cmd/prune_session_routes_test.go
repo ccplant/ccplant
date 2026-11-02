@@ -38,11 +38,11 @@ func TestFindOrphanedSessionRoutesOnlyReturnsOldMissingLocalRoutes(t *testing.T)
 		routeSecret(t, "pending", now.Add(-time.Hour), sessionRouteSecretData{SessionID: "public-pending"}),
 		routeSecret(t, "young", now.Add(-time.Minute), sessionRouteSecretData{SessionID: "public-young", RemoteSessionID: "missing-young"}),
 		routeSecret(t, "suspended", now.Add(-time.Hour), sessionRouteSecretData{SessionID: "public-suspended", RemoteSessionID: "suspended"}),
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-active", Namespace: "test-ns"}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-suspended-svc", Namespace: "test-ns"}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-active", Namespace: "workload-ns"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-suspended-svc", Namespace: "workload-ns"}},
 	)
 
-	orphans, err := findOrphanedSessionRoutes(context.Background(), client, "test-ns", 10*time.Minute, now)
+	orphans, err := findOrphanedSessionRoutes(context.Background(), client, "test-ns", "workload-ns", 10*time.Minute, now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,13 +10,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 )
 
 var (
 	orphanedRouteNamespace string
+	orphanedWorkloadNS     string
+	orphanedKubeconfig     string
+	orphanedKubeContext    string
 	orphanedRouteDryRun    bool
 	orphanedRouteMinAge    time.Duration
 	orphanedRouteVerbose   bool
@@ -47,11 +50,17 @@ valid suspended PVC sessions, which intentionally have no workload. External-
 manager routes and pending routes are skipped because their liveness cannot be
 determined from local Kubernetes resources.
 
+To inspect an external session-manager cluster, select it with --kubeconfig
+and/or --context. The command then checks that cluster's local alias routes.
+Use --workload-namespace when its route Secrets and workloads are stored in
+different namespaces.
+
 The command is a dry-run by default. Pass --dry-run=false to delete the
 orphaned route Secrets.
 
 Examples:
   agentapi-proxy helpers prune-orphaned-session-routes --namespace agentapi-ui
+  agentapi-proxy helpers prune-orphaned-session-routes --kubeconfig ~/.kube/external-manager --context manager-a --namespace agentapi-ui --workload-namespace agentapi-runtimes
   agentapi-proxy helpers prune-orphaned-session-routes --namespace agentapi-ui --dry-run=false`,
 	Args: cobra.NoArgs,
 	RunE: runPruneOrphanedSessionRoutes,
@@ -59,15 +68,18 @@ Examples:
 
 func init() {
 	flags := pruneOrphanedSessionRoutesCmd.Flags()
-	flags.StringVar(&orphanedRouteNamespace, "namespace", "agentapi-ui", "Kubernetes namespace to operate in")
+	flags.StringVar(&orphanedRouteNamespace, "namespace", "agentapi-ui", "Namespace containing session route Secrets")
+	flags.StringVar(&orphanedWorkloadNS, "workload-namespace", "", "Namespace containing session workloads (defaults to --namespace)")
+	flags.StringVar(&orphanedKubeconfig, "kubeconfig", "", "Path to the kubeconfig for the target cluster")
+	flags.StringVar(&orphanedKubeContext, "context", "", "Kubeconfig context for the target cluster")
 	flags.BoolVar(&orphanedRouteDryRun, "dry-run", true, "Show what would be deleted without deleting it")
 	flags.DurationVar(&orphanedRouteMinAge, "min-age", 10*time.Minute, "Minimum route Secret age before it can be pruned")
 	flags.BoolVarP(&orphanedRouteVerbose, "verbose", "v", false, "Show skipped routes")
 	HelpersCmd.AddCommand(pruneOrphanedSessionRoutesCmd)
 }
 
-func findOrphanedSessionRoutes(ctx context.Context, client kubernetes.Interface, namespace string, minAge time.Duration, now time.Time) ([]orphanedSessionRoute, error) {
-	secrets, err := client.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+func findOrphanedSessionRoutes(ctx context.Context, client kubernetes.Interface, routeNamespace, workloadNamespace string, minAge time.Duration, now time.Time) ([]orphanedSessionRoute, error) {
+	secrets, err := client.CoreV1().Secrets(routeNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: repositories.LabelSessionRoute + "=true",
 	})
 	if err != nil {
@@ -102,7 +114,7 @@ func findOrphanedSessionRoutes(ctx context.Context, client kubernetes.Interface,
 			continue
 		}
 
-		serviceExists, err := serviceExistsForSession(ctx, client, namespace, route.RemoteSessionID)
+		serviceExists, err := serviceExistsForSession(ctx, client, workloadNamespace, route.RemoteSessionID)
 		if err != nil {
 			return nil, fmt.Errorf("check Service for route %s: %w", route.SessionID, err)
 		}
@@ -114,7 +126,7 @@ func findOrphanedSessionRoutes(ctx context.Context, client kubernetes.Interface,
 		}
 
 		workloadName := "agentapi-session-" + route.RemoteSessionID
-		exists, err := sessionWorkloadExists(ctx, client, namespace, workloadName)
+		exists, err := sessionWorkloadExists(ctx, client, workloadNamespace, workloadName)
 		if err != nil {
 			return nil, fmt.Errorf("check workload for route %s: %w", route.SessionID, err)
 		}
@@ -154,7 +166,12 @@ func pruneSessionRoutes(ctx context.Context, client kubernetes.Interface, namesp
 }
 
 func runPruneOrphanedSessionRoutes(cmd *cobra.Command, _ []string) error {
-	restConfig, err := ctrl.GetConfig()
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if orphanedKubeconfig != "" {
+		loadingRules.ExplicitPath = orphanedKubeconfig
+	}
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: orphanedKubeContext}
+	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
 		return fmt.Errorf("get Kubernetes config: %w", err)
 	}
@@ -167,7 +184,11 @@ func runPruneOrphanedSessionRoutes(cmd *cobra.Command, _ []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	orphans, err := findOrphanedSessionRoutes(ctx, client, orphanedRouteNamespace, orphanedRouteMinAge, time.Now())
+	workloadNamespace := orphanedWorkloadNS
+	if workloadNamespace == "" {
+		workloadNamespace = orphanedRouteNamespace
+	}
+	orphans, err := findOrphanedSessionRoutes(ctx, client, orphanedRouteNamespace, workloadNamespace, orphanedRouteMinAge, time.Now())
 	if err != nil {
 		return err
 	}
