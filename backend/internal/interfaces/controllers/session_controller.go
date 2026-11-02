@@ -956,6 +956,18 @@ func (c *SessionController) sessionModelOptionsFromTags(ctx context.Context, tag
 
 // SearchSessions handles GET /search requests to list and filter active sessions
 func (c *SessionController) SearchSessions(ctx echo.Context) error {
+	request := ctx.Request()
+	return telemetry.OperationErr(request.Context(), "controllers.SessionController.SearchSessions", func(requestCtx context.Context) error {
+		ctx.SetRequest(request.WithContext(requestCtx))
+		return c.searchSessions(ctx)
+	},
+		telemetry.String("search.scope", ctx.QueryParam("scope")),
+		telemetry.String("search.status", ctx.QueryParam("status")),
+		telemetry.Bool("search.team_filter", ctx.QueryParam("team_id") != ""),
+	)
+}
+
+func (c *SessionController) searchSessions(ctx echo.Context) error {
 	c.setCORSHeaders(ctx)
 
 	// Get authorization context from middleware (guaranteed to be non-nil by AuthMiddleware)
@@ -985,6 +997,7 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 			tagFilters[tagKey] = paramValues[0]
 		}
 	}
+	telemetry.SetAttributes(ctx.Request().Context(), telemetry.Int64("search.tag_filter_count", int64(len(tagFilters))))
 
 	// Build filter
 	filter := entities.SessionFilter{
@@ -1001,39 +1014,46 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		filter.UserID = userID
 	}
 
-	// Get sessions from session manager
-	sessions := c.getSessionManager().ListSessions(filter)
+	// Get sessions from session manager. Some implementations perform informer
+	// initialization or Kubernetes fallback reads here, so keep this separate
+	// from the in-memory authorization and response-building work below.
+	sessions, _ := telemetry.Operation(ctx.Request().Context(), "controllers.SessionController.SearchSessions.ListLocalSessions", func(context.Context) ([]entities.Session, error) {
+		return c.getSessionManager().ListSessions(filter), nil
+	})
+	telemetry.SetAttributes(ctx.Request().Context(), telemetry.Int64("search.local_session_count", int64(len(sessions))))
 
 	// Filter by user authorization using authorization context
-	matchingSessions := make([]entities.Session, 0)
-	for _, session := range sessions {
-		// Scope isolation
-		sessionScope := session.Scope()
-		if scopeFilter == string(entities.ScopeTeam) {
-			if sessionScope != entities.ScopeTeam {
+	matchingSessions, _ := telemetry.Operation(ctx.Request().Context(), "controllers.SessionController.SearchSessions.FilterLocalSessions", func(context.Context) ([]entities.Session, error) {
+		matching := make([]entities.Session, 0)
+		for _, session := range sessions {
+			// Scope isolation
+			sessionScope := session.Scope()
+			if scopeFilter == string(entities.ScopeTeam) {
+				if sessionScope != entities.ScopeTeam {
+					continue
+				}
+				if teamIDFilter != "" && session.TeamID() != teamIDFilter {
+					continue
+				}
+			} else if sessionScope == entities.ScopeTeam {
 				continue
 			}
-			if teamIDFilter != "" && session.TeamID() != teamIDFilter {
-				continue
-			}
-		} else {
-			if sessionScope == entities.ScopeTeam {
-				continue
-			}
-		}
 
-		// Check authorization using pre-resolved context
-		// Admin bypasses are handled within CanAccessResource for team-scoped resources only
-		if authzCtx.CanAccessResource(session.UserID(), string(sessionScope), session.TeamID()) {
-			matchingSessions = append(matchingSessions, session)
+			// Check authorization using pre-resolved context. Admin bypasses are
+			// handled within CanAccessResource for team-scoped resources only.
+			if authzCtx.CanAccessResource(session.UserID(), string(sessionScope), session.TeamID()) {
+				matching = append(matching, session)
+			}
 		}
-	}
+		return matching, nil
+	})
 
 	// Exclude hidden sessions by default (unless caller explicitly requests them via tag.hidden=true)
 	_, hiddenExplicitlyRequested := tagFilters["hidden"]
 	if !hiddenExplicitlyRequested {
 		matchingSessions = filterHiddenSessions(matchingSessions)
 	}
+	telemetry.SetAttributes(ctx.Request().Context(), telemetry.Int64("search.matching_local_session_count", int64(len(matchingSessions))))
 
 	// Load ESM routes before building the response so the allocated session IDs
 	// can be removed from the local list. Only the parent proxy's SessionID is
@@ -1046,45 +1066,43 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 		// sessions launched by a team webhook). Do not owner-filter those routes;
 		// the authorization checks below decide visibility. Personal routes remain
 		// owner-filtered at the repository boundary.
-		if scopeFilter == string(entities.ScopeTeam) {
-			if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
-				routes, err = filtered.ListFiltered(ctx.Request().Context(), repositories.SessionRouteFilter{
-					Scope: string(entities.ScopeTeam), TeamID: teamIDFilter,
-				})
-			} else {
-				routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), "")
+		routes, err = telemetry.Operation(ctx.Request().Context(), "controllers.SessionController.SearchSessions.ListRoutes", func(routeCtx context.Context) ([]*repositories.SessionRoute, error) {
+			if scopeFilter == string(entities.ScopeTeam) {
+				if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+					return filtered.ListFiltered(routeCtx, repositories.SessionRouteFilter{
+						Scope: string(entities.ScopeTeam), TeamID: teamIDFilter,
+					})
+				}
+				return c.sessionRouteRepo.List(routeCtx, "")
 			}
-		} else {
-			routes, err = c.sessionRouteRepo.List(ctx.Request().Context(), userID)
-		}
+			return c.sessionRouteRepo.List(routeCtx, userID)
+		})
 		if err != nil {
 			log.Printf("[SEARCH] Failed to list session routes: %v", err)
 			routes = nil
 		} else {
-			matchingSessions = excludeTemplatedSessions(matchingSessions, routes)
-			activeRoutes := routes[:0]
-			for _, route := range routes {
-				// A templated session is retained as a tombstone so direct access can
-				// explain where it went, but it is no longer a usable session and must
-				// not appear in session listings.
-				if route.Status == "templated" {
-					continue
+			telemetry.SetAttributes(ctx.Request().Context(), telemetry.Int64("search.route_count", int64(len(routes))))
+			telemetry.OperationVoid(ctx.Request().Context(), "controllers.SessionController.SearchSessions.ReconcileRoutes", func(reconcileCtx context.Context) {
+				matchingSessions = excludeTemplatedSessions(matchingSessions, routes)
+				activeRoutes := routes[:0]
+				for _, route := range routes {
+					// A templated session is retained as a tombstone so direct access can
+					// explain where it went, but it is no longer a usable session and must
+					// not appear in session listings.
+					if route.Status == "templated" {
+						continue
+					}
+					if c.reconcileQueuedDeletion(reconcileCtx, route) {
+						continue
+					}
+					activeRoutes = append(activeRoutes, route)
 				}
-				if c.reconcileQueuedDeletion(ctx.Request().Context(), route) {
-					continue
-				}
-				activeRoutes = append(activeRoutes, route)
-			}
-			routes = activeRoutes
-			allocatedSessions = indexAllocatedSessions(matchingSessions, routes)
-			matchingSessions = excludeAllocatedSessions(matchingSessions, routes)
+				routes = activeRoutes
+				allocatedSessions = indexAllocatedSessions(matchingSessions, routes)
+				matchingSessions = excludeAllocatedSessions(matchingSessions, routes)
+			})
 		}
 	}
-
-	// Sort by start time (newest first)
-	sort.Slice(matchingSessions, func(i, j int) bool {
-		return matchingSessions[i].StartedAt().After(matchingSessions[j].StartedAt())
-	})
 
 	filteredSessions := make([]map[string]interface{}, 0, len(matchingSessions))
 	// Profiles are shared by many sessions, so resolve each one at most once per
@@ -1092,120 +1110,131 @@ func (c *SessionController) SearchSessions(ctx echo.Context) error {
 	modelOptionsCache := make(map[string][]string)
 	// Track session IDs already present to avoid duplicates from route-based sessions
 	localSessionIDs := make(map[string]struct{}, len(matchingSessions))
-	for _, session := range matchingSessions {
-		localSessionIDs[session.ID()] = struct{}{}
+	telemetry.OperationVoid(ctx.Request().Context(), "controllers.SessionController.SearchSessions.BuildLocalResponse", func(buildCtx context.Context) {
+		// Sort by start time (newest first)
+		sort.Slice(matchingSessions, func(i, j int) bool {
+			return matchingSessions[i].StartedAt().After(matchingSessions[j].StartedAt())
+		})
+		for _, session := range matchingSessions {
+			localSessionIDs[session.ID()] = struct{}{}
 
-		// Use session.Description() which returns the in-memory cached initial message.
-		// This avoids reading from Kubernetes Secret (which is created asynchronously
-		// after provisioning completes and would return empty for newly created sessions).
-		// After a proxy restart, Description() is populated from the Secret during session
-		// restoration in restoreSessionFromService.
-		initialMessage := session.Description()
+			// Use session.Description() which returns the in-memory cached initial message.
+			// This avoids reading from Kubernetes Secret (which is created asynchronously
+			// after provisioning completes and would return empty for newly created sessions).
+			// After a proxy restart, Description() is populated from the Secret during session
+			// restoration in restoreSessionFromService.
+			initialMessage := session.Description()
 
-		annotations := getSessionAnnotations(session)
-		description := initialMessage
-		if annotations.Description != "" {
-			description = annotations.Description
-		}
-		sessionData := map[string]interface{}{
-			"session_id":      session.ID(),
-			"user_id":         session.UserID(),
-			"scope":           session.Scope(),
-			"team_id":         session.TeamID(),
-			"status":          session.Status(),
-			"started_at":      session.StartedAt(),
-			"updated_at":      session.UpdatedAt(),
-			"last_message_at": session.LastMessageAt(),
-			"addr":            session.Addr(),
-			"tags":            session.Tags(),
-			"annotations":     annotations,
-			"metadata": map[string]interface{}{
-				"description": description,
-			},
-		}
-		if provider, ok := session.(sessionStatusMessageProvider); ok && provider.StatusMessage() != "" {
-			sessionData["error_message"] = provider.StatusMessage()
-		}
-		if provider, ok := session.(sessionErrorCodeProvider); ok && provider.ErrorCode() != "" {
-			sessionData["error_code"] = provider.ErrorCode()
-		}
-		if provider, ok := session.(sessionSandboxPolicyProvider); ok {
-			if policyID := provider.SandboxPolicyID(); policyID != "" {
-				sessionData["sandbox_policy_id"] = policyID
+			annotations := getSessionAnnotations(session)
+			description := initialMessage
+			if annotations.Description != "" {
+				description = annotations.Description
 			}
-		} else if ks, ok := session.(*services.KubernetesSession); ok {
-			if req := ks.Request(); req != nil && req.Sandbox != nil {
-				sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
+			sessionData := map[string]interface{}{
+				"session_id":      session.ID(),
+				"user_id":         session.UserID(),
+				"scope":           session.Scope(),
+				"team_id":         session.TeamID(),
+				"status":          session.Status(),
+				"started_at":      session.StartedAt(),
+				"updated_at":      session.UpdatedAt(),
+				"last_message_at": session.LastMessageAt(),
+				"addr":            session.Addr(),
+				"tags":            session.Tags(),
+				"annotations":     annotations,
+				"metadata": map[string]interface{}{
+					"description": description,
+				},
 			}
+			if provider, ok := session.(sessionStatusMessageProvider); ok && provider.StatusMessage() != "" {
+				sessionData["error_message"] = provider.StatusMessage()
+			}
+			if provider, ok := session.(sessionErrorCodeProvider); ok && provider.ErrorCode() != "" {
+				sessionData["error_code"] = provider.ErrorCode()
+			}
+			if provider, ok := session.(sessionSandboxPolicyProvider); ok {
+				if policyID := provider.SandboxPolicyID(); policyID != "" {
+					sessionData["sandbox_policy_id"] = policyID
+				}
+			} else if ks, ok := session.(*services.KubernetesSession); ok {
+				if req := ks.Request(); req != nil && req.Sandbox != nil {
+					sessionData["sandbox_policy_id"] = req.Sandbox.PolicyID
+				}
+			}
+			if modelOptions := c.resolveSessionModelOptions(buildCtx, session, modelOptionsCache); len(modelOptions) > 0 {
+				sessionData["model_options"] = modelOptions
+			}
+			filteredSessions = append(filteredSessions, sessionData)
 		}
-		if modelOptions := c.resolveSessionModelOptions(ctx.Request().Context(), session, modelOptionsCache); len(modelOptions) > 0 {
-			sessionData["model_options"] = modelOptions
-		}
-		filteredSessions = append(filteredSessions, sessionData)
-	}
+	})
 
 	// Include ESM-created sessions from session routes
-	for _, route := range routes {
-		// Skip sessions already present in the local session manager
-		if _, exists := localSessionIDs[route.SessionID]; exists {
-			continue
-		}
-		// Apply scope filter
-		if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
-			continue
-		}
-		if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
-			continue
-		}
-		if teamIDFilter != "" && route.TeamID != teamIDFilter {
-			continue
-		}
-		if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
-			continue
-		}
-		tags := route.Tags
-		if tags == nil {
-			tags = map[string]string{}
-		}
-		// Apply tag filters
-		match := true
-		for k, v := range tagFilters {
-			if tags[k] != v {
-				match = false
-				break
+	telemetry.OperationVoid(ctx.Request().Context(), "controllers.SessionController.SearchSessions.BuildRouteResponse", func(buildCtx context.Context) {
+		for _, route := range routes {
+			// Skip sessions already present in the local session manager
+			if _, exists := localSessionIDs[route.SessionID]; exists {
+				continue
 			}
+			// Apply scope filter
+			if scopeFilter == string(entities.ScopeTeam) && route.Scope != string(entities.ScopeTeam) {
+				continue
+			}
+			if scopeFilter != string(entities.ScopeTeam) && route.Scope == string(entities.ScopeTeam) {
+				continue
+			}
+			if teamIDFilter != "" && route.TeamID != teamIDFilter {
+				continue
+			}
+			if !authzCtx.CanAccessResource(route.UserID, route.Scope, route.TeamID) {
+				continue
+			}
+			tags := route.Tags
+			if tags == nil {
+				tags = map[string]string{}
+			}
+			// Apply tag filters
+			match := true
+			for k, v := range tagFilters {
+				if tags[k] != v {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+			status := routedSessionStatus(route, allocatedSessions)
+			sessionData := map[string]interface{}{
+				"session_id":           route.SessionID,
+				"allocated_session_id": route.RemoteSessionID,
+				"user_id":              route.UserID,
+				"scope":                route.Scope,
+				"team_id":              route.TeamID,
+				"status":               status,
+				"started_at":           route.StartedAt,
+				"updated_at":           route.StartedAt,
+				"last_message_at":      route.StartedAt,
+				"addr":                 "",
+				"tags":                 tags,
+				"annotations":          entities.SessionAnnotations{},
+				"metadata": map[string]interface{}{
+					"description": route.InitialMessage,
+				},
+			}
+			// External session managers keep the run request on their side, so the
+			// candidates are recovered from the session profile referenced by the route.
+			if modelOptions := c.sessionModelOptionsFromTags(buildCtx, tags, modelOptionsCache); len(modelOptions) > 0 {
+				sessionData["model_options"] = modelOptions
+			}
+			filteredSessions = append(filteredSessions, sessionData)
 		}
-		if !match {
-			continue
-		}
-		status := routedSessionStatus(route, allocatedSessions)
-		sessionData := map[string]interface{}{
-			"session_id":           route.SessionID,
-			"allocated_session_id": route.RemoteSessionID,
-			"user_id":              route.UserID,
-			"scope":                route.Scope,
-			"team_id":              route.TeamID,
-			"status":               status,
-			"started_at":           route.StartedAt,
-			"updated_at":           route.StartedAt,
-			"last_message_at":      route.StartedAt,
-			"addr":                 "",
-			"tags":                 tags,
-			"annotations":          entities.SessionAnnotations{},
-			"metadata": map[string]interface{}{
-				"description": route.InitialMessage,
-			},
-		}
-		// External session managers keep the run request on their side, so the
-		// candidates are recovered from the session profile referenced by the route.
-		if modelOptions := c.sessionModelOptionsFromTags(ctx.Request().Context(), tags, modelOptionsCache); len(modelOptions) > 0 {
-			sessionData["model_options"] = modelOptions
-		}
-		filteredSessions = append(filteredSessions, sessionData)
-	}
+	})
+	telemetry.SetAttributes(ctx.Request().Context(), telemetry.Int64("search.result_count", int64(len(filteredSessions))))
 
-	return ctx.JSON(http.StatusOK, map[string]interface{}{
-		"sessions": filteredSessions,
+	return telemetry.OperationErr(ctx.Request().Context(), "controllers.SessionController.SearchSessions.WriteResponse", func(context.Context) error {
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"sessions": filteredSessions,
+		})
 	})
 }
 
