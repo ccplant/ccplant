@@ -2575,7 +2575,7 @@ func (m *KubernetesSessionManager) invalidateSessionListCache(reason string) {
 }
 
 func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Context, filter entities.SessionFilter) []entities.Session {
-	secrets, err := m.listSessionAllocations(ctx)
+	secrets, err := m.listSessionAllocations(ctx, filter)
 	if err != nil {
 		log.Printf("[K8S_SESSION] Failed to list session allocations: %v", err)
 		return nil
@@ -2623,9 +2623,9 @@ func (m *KubernetesSessionManager) fetchSessionAllocationsFromK8s(ctx context.Co
 
 const sessionAllocationListCacheTTL = 2 * time.Second
 
-func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (*corev1.SecretList, error) {
+func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context, filter entities.SessionFilter) (*corev1.SecretList, error) {
 	if err := m.ensureSessionInformers(ctx); err == nil {
-		items := m.allocationInformer.GetStore().List()
+		items := m.filteredAllocationInformerItems(filter)
 		secrets := &corev1.SecretList{Items: make([]corev1.Secret, 0, len(items))}
 		for _, item := range items {
 			secret, ok := item.(*corev1.Secret)
@@ -2645,8 +2645,21 @@ func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (
 		if secrets, ok := m.cachedSessionAllocations(); ok {
 			return secrets, nil
 		}
+		selector := "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)"
+		if filter.UserID != "" {
+			selector += ",agentapi.proxy/user-id=" + sanitizeLabelValue(filter.UserID)
+		}
+		if filter.Scope == entities.ScopeTeam {
+			selector += ",agentapi.proxy/scope=team"
+		}
+		if filter.TeamID != "" {
+			selector += ",agentapi.proxy/team-id-hash=" + hashTeamID(filter.TeamID)
+		}
+		for key, value := range filter.Tags {
+			selector += ",agentapi.proxy/tag-" + sanitizeLabelKey(key) + "=" + sanitizeLabelValue(value)
+		}
 		secrets, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: "agentapi.proxy/session-allocation=true,agentapi.proxy/session-allocation-status in (pending,allocating,error)",
+			LabelSelector: selector,
 		})
 		if err != nil {
 			return nil, err
@@ -2663,11 +2676,61 @@ func (m *KubernetesSessionManager) listSessionAllocations(ctx context.Context) (
 	return value.(*corev1.SecretList).DeepCopy(), nil
 }
 
+func (m *KubernetesSessionManager) filteredAllocationInformerItems(filter entities.SessionFilter) []interface{} {
+	indexer := m.allocationInformer.GetIndexer()
+	if filter.UserID != "" {
+		if items, err := indexer.ByIndex(sessionUserInformerIndex, sanitizeLabelValue(filter.UserID)); err == nil {
+			return items
+		}
+	}
+	if filter.TeamID != "" {
+		if items, err := indexer.ByIndex(sessionTeamInformerIndex, hashTeamID(filter.TeamID)); err == nil {
+			return items
+		}
+	}
+	if len(filter.TeamIDs) > 0 {
+		items := make([]interface{}, 0)
+		seen := make(map[string]struct{})
+		for _, teamID := range filter.TeamIDs {
+			matched, err := indexer.ByIndex(sessionTeamInformerIndex, hashTeamID(teamID))
+			if err != nil {
+				return m.allocationInformer.GetStore().List()
+			}
+			for _, item := range matched {
+				accessor, err := meta.Accessor(item)
+				if err != nil {
+					continue
+				}
+				if _, ok := seen[accessor.GetName()]; ok {
+					continue
+				}
+				seen[accessor.GetName()] = struct{}{}
+				items = append(items, item)
+			}
+		}
+		return items
+	}
+	if len(filter.Tags) > 0 {
+		keys := make([]string, 0, len(filter.Tags))
+		for key := range filter.Tags {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		indexKey := "agentapi.proxy/tag-" + sanitizeLabelKey(keys[0]) + "=" + sanitizeLabelValue(filter.Tags[keys[0]])
+		if items, err := indexer.ByIndex(sessionTagInformerIndex, indexKey); err == nil {
+			return items
+		}
+	}
+	return m.allocationInformer.GetStore().List()
+}
+
 const sessionInformerSyncTimeout = 15 * time.Second
 
 const (
-	sessionIDInformerIndex  = "agentapi.session-id"
-	sessionTagInformerIndex = "agentapi.session-tag"
+	sessionIDInformerIndex   = "agentapi.session-id"
+	sessionTagInformerIndex  = "agentapi.session-tag"
+	sessionUserInformerIndex = "agentapi.user-id"
+	sessionTeamInformerIndex = "agentapi.team-id-hash"
 )
 
 func sessionIDIndexFunc(obj interface{}) ([]string, error) {
@@ -2693,6 +2756,19 @@ func sessionTagIndexFunc(obj interface{}) ([]string, error) {
 		}
 	}
 	return values, nil
+}
+
+func sessionLabelIndexFunc(label string) cache.IndexFunc {
+	return func(obj interface{}) ([]string, error) {
+		accessor, err := meta.Accessor(obj)
+		if err != nil {
+			return nil, err
+		}
+		if value := accessor.GetLabels()[label]; value != "" {
+			return []string{value}, nil
+		}
+		return nil, nil
+	}
 }
 
 func (m *KubernetesSessionManager) ensureSessionInformers(ctx context.Context) error {
@@ -2727,6 +2803,13 @@ func (m *KubernetesSessionManager) ensureSessionInformers(ctx context.Context) e
 			}); err != nil {
 				log.Printf("[K8S_SESSION] Failed to add session informer indexes: %v", err)
 			}
+		}
+		if err := m.allocationInformer.AddIndexers(cache.Indexers{
+			sessionUserInformerIndex: sessionLabelIndexFunc("agentapi.proxy/user-id"),
+			sessionTeamInformerIndex: sessionLabelIndexFunc("agentapi.proxy/team-id-hash"),
+			sessionTagInformerIndex:  sessionTagIndexFunc,
+		}); err != nil {
+			log.Printf("[K8S_SESSION] Failed to add session allocation informer indexes: %v", err)
 		}
 		resourceFactory.Start(m.sessionInformerCtx.Done())
 		allocationFactory.Start(m.sessionInformerCtx.Done())

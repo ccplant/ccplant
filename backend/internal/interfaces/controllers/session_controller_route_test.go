@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
 	sessionrunnercore "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/interfaces/controllers"
@@ -310,9 +311,66 @@ func (r *filteringListRouteRepo) ListFiltered(_ context.Context, filter reposito
 		if filter.TeamID != "" && route.TeamID != filter.TeamID {
 			continue
 		}
+		if len(filter.TeamIDs) > 0 {
+			matched := false
+			for _, teamID := range filter.TeamIDs {
+				if route.TeamID == teamID {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if filter.UserID != "" && route.UserID != filter.UserID {
+			continue
+		}
 		filtered = append(filtered, route)
 	}
 	return filtered, nil
+}
+
+func TestSearchSessionsPushesPersonalOwnerIntoRouteQuery(t *testing.T) {
+	routeRepo := &filteringListRouteRepo{routes: []*repositories.SessionRoute{
+		{SessionID: "mine", UserID: "user-1", Scope: string(entities.ScopeUser)},
+		{SessionID: "not-mine", UserID: "user-2", Scope: string(entities.ScopeUser)},
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+	)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/search", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true}})
+
+	require.NoError(t, controller.SearchSessions(ctx))
+	require.Equal(t, "user-1", routeRepo.lastFilter.UserID)
+	require.Equal(t, string(entities.ScopeUser), routeRepo.lastFilter.Scope)
+}
+
+func TestSearchSessionsPushesAuthorizedTeamsIntoRouteQuery(t *testing.T) {
+	routeRepo := &filteringListRouteRepo{routes: []*repositories.SessionRoute{
+		{SessionID: "mine", UserID: "user-1", Scope: string(entities.ScopeTeam), TeamID: "acme/a"},
+		{SessionID: "outside", UserID: "user-2", Scope: string(entities.ScopeTeam), TeamID: "other/team"},
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+	)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/search?scope=team", nil)
+	rec := httptest.NewRecorder()
+	ctx := e.NewContext(req, rec)
+	ctx.Set("authz_context", &auth.AuthorizationContext{
+		PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true},
+		TeamScope:     auth.TeamScopeAuth{Teams: []string{"acme/a", "acme/b"}},
+	})
+
+	require.NoError(t, controller.SearchSessions(ctx))
+	require.ElementsMatch(t, []string{"acme/a", "acme/b"}, routeRepo.lastFilter.TeamIDs)
 }
 func (r *filteringListRouteRepo) Delete(context.Context, string) error { return nil }
 

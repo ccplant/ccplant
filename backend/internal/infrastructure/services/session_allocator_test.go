@@ -118,6 +118,41 @@ func TestCreateSessionWithAllocatorReturnsAfterSubmittingAllocation(t *testing.T
 	if got := sec.Labels["agentapi.proxy/session-allocation-status"]; got != "pending" {
 		t.Fatalf("allocation status label = %q, want pending", got)
 	}
+	if got := sec.Labels["agentapi.proxy/user-id"]; got != "test-user" {
+		t.Fatalf("allocation user-id label = %q, want test-user", got)
+	}
+	if got := sec.Labels["agentapi.proxy/scope"]; got != "user" {
+		t.Fatalf("allocation scope label = %q, want user", got)
+	}
+	if got := sec.Labels["agentapi.proxy/tag-purpose"]; got != "test" {
+		t.Fatalf("allocation purpose tag label = %q, want test", got)
+	}
+}
+
+func TestFetchSessionAllocationsUsesUserIndex(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.KubernetesSession.Namespace = "test-ns"
+	manager, err := NewKubernetesSessionManagerWithClient(cfg, false, logger.NewLogger(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, userID := range []string{"alice", "bob"} {
+		req := &sessionallocation.AllocationRequest{
+			SessionID: "session-" + userID,
+			Request:   &entities.RunServerRequest{UserID: userID, Scope: entities.ScopeUser},
+			Status:    sessionallocation.StatusPending,
+		}
+		if err := manager.saveSessionAllocation(context.Background(), req); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sessions := manager.fetchSessionAllocationsFromK8s(context.Background(), entities.SessionFilter{UserID: "alice", Scope: entities.ScopeUser})
+	if len(sessions) != 1 || sessions[0].ID() != "session-alice" {
+		t.Fatalf("filtered allocations = %#v, want session-alice", sessions)
+	}
 }
 
 func TestExternalSessionAllocationIsClaimedOnlyByManager(t *testing.T) {

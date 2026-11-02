@@ -285,12 +285,38 @@ func (r *KubernetesSessionRouteRepository) ListFiltered(ctx context.Context, fil
 	for _, key := range keys {
 		selectors = append(selectors, "agentapi.proxy/session-route-tag-"+services.SanitizeLabelKey(key)+"="+services.SanitizeLabelValue(filter.Tags[key]))
 	}
+	if filter.TeamID != "" || len(filter.TeamIDs) == 0 {
+		return r.listFilteredWithSelectors(ctx, selectors)
+	}
+
+	// Kubernetes label selectors do not support OR. Issue one indexed query per
+	// authorized team so cost is independent of routes belonging to other teams.
+	routes := make([]*portrepos.SessionRoute, 0)
+	seen := make(map[string]struct{})
+	for _, teamID := range filter.TeamIDs {
+		teamSelectors := append(append([]string(nil), selectors...),
+			"agentapi.proxy/session-route-team-id-hash="+services.HashTeamID(teamID))
+		matched, err := r.listFilteredWithSelectors(ctx, teamSelectors)
+		if err != nil {
+			return nil, err
+		}
+		for _, route := range matched {
+			if _, ok := seen[route.SessionID]; ok {
+				continue
+			}
+			seen[route.SessionID] = struct{}{}
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
+}
+
+func (r *KubernetesSessionRouteRepository) listFilteredWithSelectors(ctx context.Context, selectors []string) ([]*portrepos.SessionRoute, error) {
 	secrets, err := r.client.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: strings.Join(selectors, ",")})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list filtered session route secrets: %w", err)
 	}
-	routes := decodeSessionRoutes(secrets.Items)
-	return routes, nil
+	return decodeSessionRoutes(secrets.Items), nil
 }
 
 func (r *KubernetesSessionRouteRepository) list(ctx context.Context) ([]*portrepos.SessionRoute, error) {
