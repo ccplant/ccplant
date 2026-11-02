@@ -231,6 +231,7 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	if stateStore != nil {
 		e.PUT("/internal/session-state/:sessionId", provisioner.SaveSessionState)
 		e.POST("/internal/session-state/:sessionId/suspend", provisioner.ScheduleSessionSuspend)
+		e.POST("/internal/session-state/:sessionId/terminate", provisioner.SuspendSessionOnTermination)
 		e.GET("/internal/session-state/:sessionId", provisioner.LoadSessionState)
 		e.POST("/internal/session-state/:sessionId/uploads", provisioner.BeginSessionStateUpload)
 		e.GET("/internal/session-state/:sessionId/uploads/:uploadId/parts/:partNumber", provisioner.PresignSessionStatePart)

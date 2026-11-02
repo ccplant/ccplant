@@ -5,13 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/pkg/provisioner"
+	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 )
 
 // AgentProvisionerCmd is the "agent-provisioner" sub-command.
@@ -62,16 +67,29 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	srv := provisioner.New(port, settingsFile)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 	go func() {
 		sig := <-sigCh
-		log.Printf("[PROVISIONER] Received signal %s; cancelling provisioner context", sig)
+		log.Printf("[PROVISIONER] Received signal %s; preparing persistent session for termination", sig)
+		if strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH")) != "" {
+			terminationCtx, terminationCancel := context.WithTimeout(context.Background(), 25*time.Second)
+			err := preparePersistentSessionForTermination(
+				terminationCtx,
+				srv,
+				runTerminationStateBackup,
+				notifyTerminationSuspend,
+			)
+			terminationCancel()
+			if err != nil {
+				log.Printf("[PROVISIONER] Persistent session termination preparation failed: %v", err)
+			}
+		}
 		cancel()
 	}()
 
-	srv := provisioner.New(port, settingsFile)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.Start(ctx)
@@ -103,6 +121,60 @@ func runAgentProvisioner(cmd *cobra.Command, args []string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+type terminationPreparer interface {
+	PrepareForTermination(context.Context) error
+}
+
+func preparePersistentSessionForTermination(
+	ctx context.Context,
+	preparer terminationPreparer,
+	backup func(context.Context) error,
+	suspend func(context.Context) error,
+) error {
+	var errs []error
+	if err := preparer.PrepareForTermination(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("stop agent: %w", err))
+	}
+	if err := backup(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("backup session state: %w", err))
+	}
+	if err := suspend(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("suspend terminating session: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+func runTerminationStateBackup(ctx context.Context) error {
+	binary := proxybinary.Resolve(os.Getenv(proxybinary.EnvName))
+	output, err := exec.CommandContext(ctx, binary, "client", "backup-session-state").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func notifyTerminationSuspend(ctx context.Context) error {
+	proxy := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	token := os.Getenv("PROVISIONER_TOKEN")
+	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	if proxy == "" || token == "" || sessionID == "" {
+		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
+	}
+	req, err := internalRequest(http.MethodPost, proxy+"/internal/session-state/"+sessionID+"/terminate", token, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{}).Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("termination suspend failed: HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func installAgentInstructions() error {

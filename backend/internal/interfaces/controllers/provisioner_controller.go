@@ -42,6 +42,10 @@ type sessionSuspendScheduler interface {
 	ScheduleSessionSuspend(ctx context.Context, sessionID string) error
 }
 
+type terminatingSessionSuspender interface {
+	SuspendSessionOnTermination(ctx context.Context, sessionID string) error
+}
+
 type sessionSettingsReader interface {
 	CurrentSessionSettings(context.Context, string) (*sessionsettings.SessionSettings, error)
 }
@@ -258,6 +262,20 @@ func (pc *ProvisionerController) ScheduleSessionSuspend(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence suspend is unavailable"})
 	}
 	if err := scheduler.ScheduleSessionSuspend(c.Request().Context(), c.Param("sessionId")); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (pc *ProvisionerController) SuspendSessionOnTermination(c echo.Context) error {
+	if !pc.authorizedSession(c, c.Param("sessionId")) {
+		return c.NoContent(http.StatusUnauthorized)
+	}
+	suspender, ok := pc.manager.(terminatingSessionSuspender)
+	if !ok || pc.stateStore == nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "session persistence suspend is unavailable"})
+	}
+	if err := suspender.SuspendSessionOnTermination(c.Request().Context(), c.Param("sessionId")); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	return c.NoContent(http.StatusNoContent)
