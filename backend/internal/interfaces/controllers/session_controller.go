@@ -1069,11 +1069,18 @@ func (c *SessionController) searchSessions(ctx echo.Context) error {
 		routes, err = telemetry.Operation(ctx.Request().Context(), "controllers.SessionController.SearchSessions.ListRoutes", func(routeCtx context.Context) ([]*repositories.SessionRoute, error) {
 			if scopeFilter == string(entities.ScopeTeam) {
 				if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
-					return filtered.ListFiltered(routeCtx, repositories.SessionRouteFilter{
-						Scope: string(entities.ScopeTeam), TeamID: teamIDFilter,
-					})
+					routeFilter := repositories.SessionRouteFilter{Scope: string(entities.ScopeTeam), TeamID: teamIDFilter}
+					if teamIDFilter == "" && !authzCtx.TeamScope.IsAdmin {
+						routeFilter.TeamIDs = userTeamIDs
+					}
+					return filtered.ListFiltered(routeCtx, routeFilter)
 				}
 				return c.sessionRouteRepo.List(routeCtx, "")
+			}
+			if filtered, ok := c.sessionRouteRepo.(repositories.FilteredSessionRouteRepository); ok {
+				return filtered.ListFiltered(routeCtx, repositories.SessionRouteFilter{
+					UserID: userID, Scope: string(entities.ScopeUser),
+				})
 			}
 			return c.sessionRouteRepo.List(routeCtx, userID)
 		})

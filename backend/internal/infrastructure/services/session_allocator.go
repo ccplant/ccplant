@@ -143,6 +143,20 @@ func (m *KubernetesSessionManager) saveSessionAllocation(ctx context.Context, re
 		"agentapi.proxy/requirement-dind":          fmt.Sprintf("%t", req.Requirements.DinD),
 		"agentapi.proxy/session-allocation-status": string(req.Status),
 	}
+	if req.Request != nil {
+		labels["agentapi.proxy/user-id"] = sanitizeLabelValue(req.Request.UserID)
+		scope := req.Request.Scope
+		if scope == "" {
+			scope = entities.ScopeUser
+		}
+		labels["agentapi.proxy/scope"] = string(scope)
+		if req.Request.TeamID != "" {
+			labels["agentapi.proxy/team-id-hash"] = hashTeamID(req.Request.TeamID)
+		}
+		for key, value := range req.Request.Tags {
+			labels["agentapi.proxy/tag-"+sanitizeLabelKey(key)] = sanitizeLabelValue(value)
+		}
+	}
 	if req.ManagerID != "" {
 		labels["agentapi.proxy/external-session-manager-id"] = "true"
 	}

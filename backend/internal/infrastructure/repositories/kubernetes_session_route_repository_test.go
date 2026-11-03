@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -166,4 +167,25 @@ func TestKubernetesSessionRouteRepositoryListFilteredUsesIndexedLabels(t *testin
 	if len(routes) != 1 || routes[0].SessionID != "wanted" {
 		t.Fatalf("ListFiltered() = %#v", routes)
 	}
+}
+
+func TestKubernetesSessionRouteRepositoryListFilteredQueriesOnlyAuthorizedTeams(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	repo := NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	for _, route := range []*portrepos.SessionRoute{
+		{SessionID: "team-a", Scope: "team", TeamID: "acme/a"},
+		{SessionID: "team-b", Scope: "team", TeamID: "acme/b"},
+		{SessionID: "outside", Scope: "team", TeamID: "other/team"},
+	} {
+		require.NoError(t, repo.Save(ctx, route))
+	}
+
+	routes, err := repo.ListFiltered(ctx, portrepos.SessionRouteFilter{
+		Scope: "team", TeamIDs: []string{"acme/a", "acme/b"},
+	})
+	require.NoError(t, err)
+	require.Len(t, routes, 2)
+	ids := []string{routes[0].SessionID, routes[1].SessionID}
+	require.ElementsMatch(t, []string{"team-a", "team-b"}, ids)
 }

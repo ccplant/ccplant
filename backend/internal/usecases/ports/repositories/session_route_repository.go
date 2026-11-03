@@ -65,10 +65,11 @@ type SessionRouteRepository interface {
 // SessionRouteFilter identifies the small route subset needed by trigger
 // reuse. Implementations should push these fields into their storage query.
 type SessionRouteFilter struct {
-	UserID string
-	Scope  string
-	TeamID string
-	Tags   map[string]string
+	UserID  string
+	Scope   string
+	TeamID  string
+	TeamIDs []string
+	Tags    map[string]string
 }
 
 // FilteredSessionRouteRepository is implemented by repositories that can
