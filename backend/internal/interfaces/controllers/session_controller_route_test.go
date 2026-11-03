@@ -852,7 +852,7 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 		controllers.WithESMControlTunnel(tunnel),
 		controllers.WithSessionRunnerStore(&allocationReader{allocation: &sessionrunnercore.Allocation{
 			SessionID: "public-id", RuntimeToken: "runtime-token", Generation: 2,
-			ProvisionSettings: []byte(`{"session":{"user_id":"user-1","scope":"user"}}`),
+			ProvisionSettings: []byte(`{"session":{"user_id":"user-1","scope":"user"},"parent_runtime":{"endpoint":"http://parent.internal:8080"}}`),
 		}}),
 	)
 	ctx, rec := routeContext(echo.New(), http.MethodPost, "/sessions/public-id/suspend", "public-id")
@@ -866,8 +866,12 @@ func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 	if tunnel.path != "/api/v1/sessions/remote-id/suspend" {
 		t.Fatalf("suspend path = %q, want allocated session path", tunnel.path)
 	}
-	if !strings.Contains(string(tunnel.body), `"token":"runtime-token"`) || !strings.Contains(string(tunnel.body), `"generation":2`) {
-		t.Fatalf("suspend body does not contain resume data: %s", tunnel.body)
+	var suspendSettings sessionsettings.SessionSettings
+	if err := json.Unmarshal(tunnel.body, &suspendSettings); err != nil {
+		t.Fatalf("suspend body is invalid: %v; body=%s", err, tunnel.body)
+	}
+	if suspendSettings.ParentRuntime == nil || suspendSettings.ParentRuntime.Endpoint != "http://parent.internal:8080" || suspendSettings.ParentRuntime.Token != "runtime-token" || suspendSettings.ParentRuntime.Generation != 2 {
+		t.Fatalf("suspend parent runtime = %#v, want persisted endpoint with refreshed allocation credentials", suspendSettings.ParentRuntime)
 	}
 	if !routeRepo.saved || routeRepo.route.Status != "suspended" || routeRepo.route.StatusUpdatedAt.IsZero() {
 		t.Fatalf("route status was not persisted: %#v", routeRepo.route)
@@ -911,9 +915,12 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 	settings := entities.NewSettings("user-1")
 	settings.SetAutoSuspend(&entities.AutoSuspendSettings{Enabled: true, IdleTimeoutMinutes: 1})
 	oldEnabled := true
-	oldProvisionSettings, err := json.Marshal(&sessionsettings.SessionSettings{Session: sessionsettings.SessionMeta{
-		UserID: "user-1", Scope: string(entities.ScopeUser), AutoSuspendEnabled: &oldEnabled, AutoSuspendMinutes: 60,
-	}})
+	oldProvisionSettings, err := json.Marshal(&sessionsettings.SessionSettings{
+		Session: sessionsettings.SessionMeta{
+			UserID: "user-1", Scope: string(entities.ScopeUser), AutoSuspendEnabled: &oldEnabled, AutoSuspendMinutes: 60,
+		},
+		ParentRuntime: &sessionsettings.ParentRuntimeConfig{Endpoint: "http://parent.internal:8080"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -938,7 +945,7 @@ func TestResumeRemoteSessionRefreshesAutoSuspendPolicy(t *testing.T) {
 	if got.Session.AutoSuspendEnabled == nil || !*got.Session.AutoSuspendEnabled || got.Session.AutoSuspendMinutes != 1 {
 		t.Fatalf("resume auto-suspend policy = enabled %v minutes %d, want true/1", got.Session.AutoSuspendEnabled, got.Session.AutoSuspendMinutes)
 	}
-	if got.ParentRuntime == nil || !got.ParentRuntime.Enabled || got.ParentRuntime.SessionID != "public-id" || got.ParentRuntime.ManagerID != "manager-a" || got.ParentRuntime.Token != "runtime-token" || got.ParentRuntime.Generation != 2 {
+	if got.ParentRuntime == nil || !got.ParentRuntime.Enabled || got.ParentRuntime.Endpoint != "http://parent.internal:8080" || got.ParentRuntime.SessionID != "public-id" || got.ParentRuntime.ManagerID != "manager-a" || got.ParentRuntime.Token != "runtime-token" || got.ParentRuntime.Generation != 2 {
 		t.Fatalf("resume parent runtime = %#v, want restored allocation credentials", got.ParentRuntime)
 	}
 }
@@ -952,6 +959,7 @@ func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
 			UserID: "user-1", Scope: string(entities.ScopeUser),
 			AutoSuspendEnabled: &autoSuspendEnabled, AutoSuspendMinutes: 5,
 		},
+		ParentRuntime: &sessionsettings.ParentRuntimeConfig{Endpoint: "http://parent.internal:8080"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -991,6 +999,9 @@ func TestResumeRemoteSessionRefreshesCredentialsFromSavedInput(t *testing.T) {
 	}
 	if got.Session.AutoSuspendEnabled == nil || !*got.Session.AutoSuspendEnabled || got.Session.AutoSuspendMinutes != 5 {
 		t.Fatalf("resume auto-suspend policy = enabled %v minutes %d, want preserved true/5", got.Session.AutoSuspendEnabled, got.Session.AutoSuspendMinutes)
+	}
+	if got.ParentRuntime == nil || got.ParentRuntime.Endpoint != "http://parent.internal:8080" {
+		t.Fatalf("resume parent runtime = %#v, want endpoint preserved across settings reload", got.ParentRuntime)
 	}
 }
 
