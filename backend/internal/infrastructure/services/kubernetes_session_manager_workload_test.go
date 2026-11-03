@@ -1009,9 +1009,19 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = manager.client.CoreV1().Pods("test-ns").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-" + sessionID, Namespace: "test-ns", Labels: map[string]string{
+			"agentapi.proxy/session-id": sessionID,
+			"agentapi.proxy/stock":      "true",
+			"agentapi.proxy/user-id":    "",
+		}},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	claimedSettings := &sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{ID: "public-session", AgentType: "codex-acp"},
+		Session: sessionsettings.SessionMeta{ID: "public-session", UserID: "alice", Scope: "user", AgentType: "codex-acp"},
 		ParentRuntime: &sessionsettings.ParentRuntimeConfig{
 			Enabled: true, Endpoint: "https://parent.example.com", SessionID: "public-session",
 			ManagerID: "manager-a", Token: "runtime-token", Generation: 1,
@@ -1032,6 +1042,23 @@ func TestClaimPoolStockSessionRemovesServiceStockLabel(t *testing.T) {
 	}
 	if svc.Labels["agentapi.proxy/session-pool"] != "test-pool" {
 		t.Fatalf("pool label changed after claim: %v", svc.Labels)
+	}
+	if svc.Labels["agentapi.proxy/user-id"] != "alice" || svc.Labels["agentapi.proxy/scope"] != "user" {
+		t.Fatalf("service identity labels = %v, want alice/user", svc.Labels)
+	}
+	pod, err := manager.client.CoreV1().Pods("test-ns").Get(ctx, "agentapi-session-"+sessionID, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Labels["agentapi.proxy/user-id"] != "alice" || pod.Labels["agentapi.proxy/scope"] != "user" {
+		t.Fatalf("pod identity labels = %v, want alice/user", pod.Labels)
+	}
+	credential, err := manager.client.CoreV1().Secrets("test-ns").Get(ctx, "agentapi-session-"+sessionID+"-runner", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.Labels["agentapi.proxy/user-id"] != "alice" || credential.Labels["agentapi.proxy/scope"] != "user" {
+		t.Fatalf("runner credential identity labels = %v, want alice/user", credential.Labels)
 	}
 	persisted, err := manager.CurrentSessionSettings(ctx, sessionID)
 	if err != nil {

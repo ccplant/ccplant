@@ -1471,14 +1471,76 @@ func (m *KubernetesSessionManager) ClaimPoolStockSession(ctx context.Context, se
 		if svc.Labels["agentapi.proxy/session-pool"] == "" {
 			return fmt.Errorf("session %s is not a pool runner", sessionID)
 		}
-		if _, ok := svc.Labels["agentapi.proxy/stock"]; !ok {
-			return nil
-		}
 		delete(svc.Labels, "agentapi.proxy/stock")
+		svc.Labels = claimedRunnerIdentityLabels(svc.Labels, settings)
 		_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, svc, metav1.UpdateOptions{})
 		return err
 	}); err != nil {
 		return err
+	}
+	if err := m.updateClaimedRunnerIdentityLabels(ctx, sessionID, settings); err != nil {
+		return err
+	}
+	return nil
+}
+
+func claimedRunnerIdentityLabels(labels map[string]string, settings *sessionsettings.SessionSettings) map[string]string {
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	if settings == nil {
+		return labels
+	}
+	labels["agentapi.proxy/user-id"] = sanitizeLabelValue(settings.Session.UserID)
+	scope := settings.Session.Scope
+	if scope == "" {
+		scope = string(entities.ScopeUser)
+	}
+	labels["agentapi.proxy/scope"] = scope
+	if settings.Session.TeamID == "" {
+		delete(labels, "agentapi.proxy/team-id-hash")
+	} else {
+		labels["agentapi.proxy/team-id-hash"] = hashTeamID(settings.Session.TeamID)
+	}
+	return labels
+}
+
+func (m *KubernetesSessionManager) updateClaimedRunnerIdentityLabels(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) error {
+	name := fmt.Sprintf("agentapi-session-%s", sessionID)
+	if m.isPVCEnabled() {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			deployment, err := m.client.AppsV1().Deployments(m.namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			deployment.Labels = claimedRunnerIdentityLabels(deployment.Labels, settings)
+			_, err = m.client.AppsV1().Deployments(m.namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+			return err
+		}); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("update claimed runner deployment identity labels: %w", err)
+		}
+	} else if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		pod, err := m.client.CoreV1().Pods(m.namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		pod.Labels = claimedRunnerIdentityLabels(pod.Labels, settings)
+		_, err = m.client.CoreV1().Pods(m.namespace).Update(ctx, pod, metav1.UpdateOptions{})
+		return err
+	}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("update claimed runner pod identity labels: %w", err)
+	}
+
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		secret, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, runnerCredentialSecretName(sessionID), metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		secret.Labels = claimedRunnerIdentityLabels(secret.Labels, settings)
+		_, err = m.client.CoreV1().Secrets(m.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+		return err
+	}); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("update claimed runner credential identity labels: %w", err)
 	}
 	return nil
 }
