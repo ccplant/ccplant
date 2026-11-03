@@ -71,10 +71,14 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, err.Error())
 		return
 	}
-	run := domain.Run{ID: newID(), ScenarioID: sc.ID, ScenarioDescription: sc.Description, CategoryID: cat.ID, CategoryDescription: cat.Description, Kind: sc.Kind, Environment: in.Environment, TargetAPIURL: in.Target.APIURL, TargetFrontendURL: in.Target.FrontendURL, AuthType: in.Target.AuthType, Parameters: in.Parameters, Status: "queued", CreatedAt: time.Now().UTC()}
-	if run.Parameters == nil {
-		run.Parameters = map[string]any{}
+	parameters := make(map[string]any, len(sc.Parameters)+len(in.Parameters))
+	for key, value := range sc.Parameters {
+		parameters[key] = value
 	}
+	for key, value := range in.Parameters {
+		parameters[key] = value
+	}
+	run := domain.Run{ID: newID(), ScenarioID: sc.ID, ScenarioDescription: sc.Description, CategoryID: cat.ID, CategoryDescription: cat.Description, Kind: sc.Kind, Environment: in.Environment, TargetAPIURL: in.Target.APIURL, TargetFrontendURL: in.Target.FrontendURL, AuthType: in.Target.AuthType, Parameters: parameters, Status: "queued", CreatedAt: time.Now().UTC()}
 	if err := s.store.CreateRun(r.Context(), run); err != nil {
 		problem(w, 500, err.Error())
 		return
