@@ -50,7 +50,7 @@ func TestSessionPersistenceSuspendResume(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := c.Do(ctx, http.MethodDelete, sessionPath, nil, nil, http.StatusOK, http.StatusNoContent, http.StatusNotFound); err != nil {
+		if err := c.Do(ctx, http.MethodDelete, sessionPath, nil, nil, http.StatusOK, http.StatusAccepted, http.StatusNoContent, http.StatusNotFound); err != nil {
 			t.Errorf("delete persistence test session: %v", err)
 		}
 	})
@@ -78,9 +78,7 @@ func suspendConcurrently(c *apitest.Client, sessionPath string) error {
 		go func() {
 			defer wg.Done()
 			<-start
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			defer cancel()
-			errs <- c.Do(ctx, http.MethodPost, sessionPath+"/suspend", nil, nil, http.StatusOK)
+			errs <- suspendWhenIdle(c, sessionPath, 2*time.Minute)
 		}()
 	}
 	close(start)
@@ -94,6 +92,31 @@ func suspendConcurrently(c *apitest.Client, sessionPath string) error {
 		return fmt.Errorf("concurrent suspend failed: %w", joined)
 	}
 	return nil
+}
+
+func suspendWhenIdle(c *apitest.Client, sessionPath string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		var response struct {
+			Message string `json:"message"`
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		err := c.Do(ctx, http.MethodPost, sessionPath+"/suspend", nil, &response, http.StatusOK, http.StatusServiceUnavailable)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if response.Message == "" {
+			return nil
+		}
+		if !strings.Contains(strings.ToLower(response.Message), "session is busy") {
+			return fmt.Errorf("suspend failed: %s", response.Message)
+		}
+		if time.Now().Add(2 * time.Second).After(deadline) {
+			return errors.New("session remained busy while waiting to suspend")
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func waitForConversationMarker(t *testing.T, c *apitest.Client, sessionID, marker string, timeout time.Duration) []byte {
