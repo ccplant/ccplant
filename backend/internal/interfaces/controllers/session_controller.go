@@ -1736,16 +1736,7 @@ func (c *SessionController) suspendRemoteSession(ctx echo.Context, route *reposi
 	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to decode session resume data; the session was not suspended")
 	}
-	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
-	if scheme == "" {
-		scheme = "https"
-	}
-	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = ctx.Request().Host
-	}
-	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
-	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID, ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation}
+	settings.ParentRuntime = refreshedParentRuntime(ctx, settings.ParentRuntime, route, allocation)
 	settingsBody, err := json.Marshal(&settings)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create session resume data; the session was not suspended")
@@ -2218,6 +2209,7 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 	if err := json.Unmarshal(allocation.ProvisionSettings, &settings); err != nil {
 		return nil, nil
 	}
+	persistedParentRuntime := settings.ParentRuntime
 	persistedAutoSuspendEnabled := settings.Session.AutoSuspendEnabled
 	persistedAutoSuspendMinutes := settings.Session.AutoSuspendMinutes
 	// Re-resolve the original startup input on every resume so credentials stay
@@ -2270,24 +2262,41 @@ func (c *SessionController) remoteResumeSettings(ctx echo.Context, route *reposi
 			settings.Session.AutoSuspendMinutes = policy.IdleTimeoutMinutes
 		}
 	}
-	scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
-	if scheme == "" {
-		scheme = "https"
-	}
-	host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = ctx.Request().Host
-	}
-	prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
-	settings.ParentRuntime = &sessionsettings.ParentRuntimeConfig{
-		Enabled: true, Endpoint: scheme + "://" + host + prefix, SessionID: route.SessionID,
-		ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation,
-	}
+	settings.ParentRuntime = refreshedParentRuntime(ctx, persistedParentRuntime, route, allocation)
 	body, err := json.Marshal(&settings)
 	if err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode refreshed resume settings")
 	}
 	return body, nil
+}
+
+// refreshedParentRuntime keeps the endpoint recorded by the runner when it
+// claimed the allocation. Internal triggers reach /start through loopback or a
+// cluster Service, so their request headers do not describe an endpoint that
+// the resumed workload can necessarily reach.
+func refreshedParentRuntime(ctx echo.Context, persisted *sessionsettings.ParentRuntimeConfig, route *repositories.SessionRoute, allocation *sessionrunnercore.Allocation) *sessionsettings.ParentRuntimeConfig {
+	endpoint := ""
+	if persisted != nil {
+		endpoint = strings.TrimSpace(persisted.Endpoint)
+	}
+	// Retain the request-derived endpoint for allocations created before the
+	// runner started persisting its parent runtime settings.
+	if endpoint == "" {
+		scheme := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Proto"))
+		if scheme == "" {
+			scheme = "https"
+		}
+		host := strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Host"))
+		if host == "" {
+			host = ctx.Request().Host
+		}
+		prefix := strings.TrimSuffix(strings.TrimSpace(ctx.Request().Header.Get("X-Forwarded-Prefix")), "/")
+		endpoint = scheme + "://" + host + prefix
+	}
+	return &sessionsettings.ParentRuntimeConfig{
+		Enabled: true, Endpoint: endpoint, SessionID: route.SessionID,
+		ManagerID: route.ManagerID, Token: allocation.RuntimeToken, Generation: allocation.Generation,
+	}
 }
 
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
