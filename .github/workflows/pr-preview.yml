@@ -5,9 +5,10 @@ on:
     workflows: [CI]
     types: [completed]
   pull_request_target:
-    types: [closed]
+    types: [labeled, unlabeled, closed]
 
 permissions:
+  actions: read
   contents: read
   packages: write
   pull-requests: read
@@ -39,7 +40,9 @@ jobs:
           WORKFLOW_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
           WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           PR_ACTION: ${{ github.event.action }}
+          PR_LABEL: ${{ github.event.label.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
@@ -57,15 +60,30 @@ jobs:
               current_sha=$(jq -r .head.sha <<<"$pr")
               if [[ "$(jq -r .state <<<"$pr")" != open || "$current_sha" != "$source_sha" ]]; then
                 echo 'CI result is stale or the pull request is closed; skipping preview deployment.'
+              elif ! jq -e 'any(.labels[]; .name == "preview")' >/dev/null <<<"$pr"; then
+                echo 'The pull request does not request a preview environment.'
               elif [[ "$(jq -r .head.repo.full_name <<<"$pr")" == "$GITHUB_REPOSITORY" ]]; then
                 action=deploy
               else
                 echo 'Fork pull requests do not receive preview environments.'
               fi
             fi
-          elif [[ "$PR_ACTION" == closed && "$PR_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+          elif [[ "$PR_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo 'Fork pull requests do not receive preview environments.'
+          elif [[ "$PR_ACTION" == closed || ( "$PR_ACTION" == unlabeled && "$PR_LABEL" == preview ) ]]; then
             action=destroy
             pr_number=$PR_NUMBER
+          elif [[ "$PR_ACTION" == labeled && "$PR_LABEL" == preview ]]; then
+            pr_number=$PR_NUMBER
+            source_sha=$PR_HEAD_SHA
+            successful_ci_runs=$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&head_sha=$source_sha&per_page=1" \
+              --jq '.total_count')
+            if [[ "$successful_ci_runs" -gt 0 ]]; then
+              action=deploy
+            else
+              echo 'The preview was requested before CI succeeded; the successful CI run will deploy it.'
+            fi
           fi
 
           echo "action=$action" >> "$GITHUB_OUTPUT"
