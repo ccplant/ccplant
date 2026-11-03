@@ -18,10 +18,10 @@ func TestCreateAndListRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	c := &domain.Catalog{Categories: []domain.Category{{ID: "smoke", Description: "スモークテスト"}}, Scenarios: []domain.Scenario{{ID: "api.smoke.health", Category: "smoke", Description: "APIが正常に応答する", Kind: "go-test", Package: "./scenarios/api", Test: "TestHealth", Timeout: "30s"}}}
+	c := &domain.Catalog{Categories: []domain.Category{{ID: "smoke", Description: "スモークテスト"}}, Scenarios: []domain.Scenario{{ID: "api.smoke.health", Category: "smoke", Description: "APIが正常に応答する", Kind: "go-test", Package: "./scenarios/api", Test: "TestHealth", Timeout: "30s", Parameters: map[string]any{"live_session": true, "profile": "default"}}}}
 	server := httptest.NewServer(New(db, c).Handler())
 	t.Cleanup(server.Close)
-	body := bytes.NewBufferString(`{"scenario_id":"api.smoke.health","environment":"local","parameters":{},"target":{"api_url":"https://ccplant.example.com","auth_type":"bearer","auth_value":"secret-token"}}`)
+	body := bytes.NewBufferString(`{"scenario_id":"api.smoke.health","environment":"local","parameters":{"profile":"custom"},"target":{"api_url":"https://ccplant.example.com","auth_type":"bearer","auth_value":"secret-token"}}`)
 	res, err := http.Post(server.URL+"/api/v1/runs", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +36,9 @@ func TestCreateAndListRun(t *testing.T) {
 	}
 	if created.ScenarioDescription != "APIが正常に応答する" || created.CategoryDescription != "スモークテスト" {
 		t.Fatalf("metadata not snapshotted: %#v", created)
+	}
+	if created.Parameters["live_session"] != true || created.Parameters["profile"] != "custom" {
+		t.Fatalf("scenario parameter defaults were not merged: %#v", created.Parameters)
 	}
 	encoded, _ := json.Marshal(created)
 	if bytes.Contains(encoded, []byte("secret-token")) {
