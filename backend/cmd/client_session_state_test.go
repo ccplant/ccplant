@@ -3,8 +3,26 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestBackupSessionStateRejectsCheckpointBeforeRestoreCompletes(t *testing.T) {
+	id := "restore-pending-" + t.Name()
+	t.Setenv("PROVISIONER_PROXY_URL", "http://127.0.0.1:1")
+	t.Setenv("SESSION_STATE_PROXY_URL", "")
+	t.Setenv("PROVISIONER_TOKEN", "token")
+	t.Setenv("AGENTAPI_SESSION_ID", id)
+	t.Setenv("AGENTAPI_SESSION_STATE_VOLUME_PATH", filepath.Join(t.TempDir(), "state.tar.zst"))
+	marker := filepath.Join(os.TempDir(), "agentapi-session-restore-complete-"+id)
+	_ = os.Remove(marker)
+	t.Cleanup(func() { _ = os.Remove(marker) })
+
+	err := runBackupSessionState(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "restore has not completed") {
+		t.Fatalf("error = %v, want restore-not-completed rejection", err)
+	}
+}
 
 func TestSessionStateCWDPrefersCloneDirectory(t *testing.T) {
 	hookCWD := t.TempDir()

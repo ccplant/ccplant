@@ -48,6 +48,17 @@ scenarios:
     timeout: 10m
     parameters:
       live_session: true
+  - id: api.session.persistence-suspend-resume
+    category: session
+    description: 複数Session Manager replicaで同時suspendしてもresume後に会話を復元できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestSessionPersistenceSuspendResume
+    timeout: 8m
+    capabilities: [session-manager-multi-replica, volume-session-persistence, billable-agent]
+    parameters:
+      live_session: true
+      agent_type: claude-acp
   - id: api.settings.managers
     category: settings
     description: 利用可能な設定マネージャーを取得できる

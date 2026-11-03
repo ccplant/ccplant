@@ -132,6 +132,60 @@ func TestSuspendSessionOnTerminationRemovesDeploymentWithoutCheckpoint(t *testin
 	}
 }
 
+func TestAcquireSessionSuspendOwnershipIsExclusiveAndCanBeTakenOverAfterExpiry(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Labels: map[string]string{"agentapi.proxy/session-id": "session-1"},
+	}}
+	managerA := newSuspendTestManager(t, service)
+	managerA.podID = "manager-a"
+	managerB := newSuspendTestManager(t)
+	managerB.client = managerA.client
+	managerB.podID = "manager-b"
+
+	_, claimA, acquired, err := managerA.acquireSessionSuspendOwnership(context.Background(), service.Name)
+	if err != nil || !acquired || claimA == "" {
+		t.Fatalf("manager A failed to acquire ownership: acquired=%v claim=%q err=%v", acquired, claimA, err)
+	}
+	if _, _, acquired, err = managerB.acquireSessionSuspendOwnership(context.Background(), service.Name); err != nil || acquired {
+		t.Fatalf("manager B acquired live ownership: acquired=%v err=%v", acquired, err)
+	}
+
+	stored, err := managerA.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Annotations[sessionSuspendOwnerExpiresAtAnnotation] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+	if _, err := managerA.client.CoreV1().Services("test-ns").Update(context.Background(), stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_, claimB, acquired, err := managerB.acquireSessionSuspendOwnership(context.Background(), service.Name)
+	if err != nil || !acquired || claimB == "" || claimB == claimA {
+		t.Fatalf("manager B failed to take over expired ownership: acquired=%v claim=%q err=%v", acquired, claimB, err)
+	}
+}
+
+func TestReleaseSessionSuspendOwnershipDoesNotReleaseAnotherClaim(t *testing.T) {
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",
+		Annotations: map[string]string{
+			sessionSuspendOwnerAnnotation:          "manager-b/claim",
+			sessionSuspendOwnerExpiresAtAnnotation: time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano),
+		},
+	}}
+	manager := newSuspendTestManager(t, service)
+	if err := manager.releaseSessionSuspendOwnership(context.Background(), service.Name, "manager-a/claim"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := manager.client.CoreV1().Services("test-ns").Get(context.Background(), service.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations[sessionSuspendOwnerAnnotation] != "manager-b/claim" {
+		t.Fatalf("another owner's claim was removed: %#v", stored.Annotations)
+	}
+}
+
 func TestScheduleSessionSuspendUsesScopedSettings(t *testing.T) {
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
 		Name: "agentapi-session-session-1-svc", Namespace: "test-ns",

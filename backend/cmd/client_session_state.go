@@ -56,6 +56,13 @@ func runBackupSessionState(_ *cobra.Command, _ []string) error {
 	if proxy == "" || token == "" || id == "" {
 		return fmt.Errorf("PROVISIONER_PROXY_URL, PROVISIONER_TOKEN and AGENTAPI_SESSION_ID are required")
 	}
+	markerPath := filepath.Join(os.TempDir(), "agentapi-session-restore-complete-"+id)
+	if _, err := os.Stat(markerPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("session state backup rejected: restore has not completed")
+		}
+		return fmt.Errorf("check session restore completion: %w", err)
+	}
 	cwd, err := sessionStateCWD()
 	if err != nil {
 		return err
@@ -129,7 +136,7 @@ func uploadVolumeTemplateSnapshot(proxy, token, snapshotID, path string) error {
 	if err != nil {
 		return err
 	}
-	defer archive.Close()
+	defer func() { _ = archive.Close() }()
 	req, err := internalRequest(http.MethodPut, proxy+"/internal/session-state/"+url.PathEscape(snapshotID), token, archive)
 	if err != nil {
 		return err

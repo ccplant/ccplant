@@ -47,6 +47,12 @@ var piOllamaCommandPath = filepath.Join(runtimeHome, ".session", "pi-ollama-pi")
 var piAgentInstructionsPath = filepath.Join(runtimeHome, ".pi", "agent", "AGENTS.md")
 var piSettingsPath = filepath.Join(runtimeHome, ".pi", "agent", "settings.json")
 
+const sessionRestoreMarkerPrefix = "agentapi-session-restore-complete-"
+
+func sessionRestoreMarkerPath(sessionID string) string {
+	return filepath.Join(os.TempDir(), sessionRestoreMarkerPrefix+sessionID)
+}
+
 const (
 	containerJavaScriptRuntime  = "/opt/claude/bin/claude"
 	containerCodexACPEntrypoint = "/home/agentapi/.bun/bin/codex-acp"
@@ -152,6 +158,11 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 //  8. Send the initial message if specified in settings
 //  9. Set status to "ready"; supervise the subprocess
 func (s *Server) runProvision(parent context.Context, settings *sessionsettings.SessionSettings) {
+	markerPath := sessionRestoreMarkerPath(settings.Session.ID)
+	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+		s.setStatus(StatusError, fmt.Sprintf("failed to reset session restore marker: %v", err))
+		return
+	}
 	ctx, cancel := context.WithCancel(parent)
 	s.mu.Lock()
 	s.agentCancel = cancel
@@ -227,6 +238,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 	restoreSource := settings.Session.ResumeFrom
 	restoreRequired := restoreSource != "" || settings.Restart
 	restoredConnectionState := false
+	restoreCompleted := true
 	if restoreSource == "" && shouldImplicitlyRestoreSessionState(settings) {
 		// Pod replacement keeps the proxy session ID. Use that stable ID as the
 		// implicit snapshot key so restart recovery needs no API parameter.
@@ -245,6 +257,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		}
 		found, err := s.restoreSessionState(ctx, restoreSource, restoreCWD)
 		if errors.Is(err, errSessionStateBackendUnavailable) && !settings.Restart {
+			restoreCompleted = false
 			log.Printf("[PROVISIONER] Session state restore skipped; continuing without persisted state: %v", err)
 		} else if err != nil {
 			s.setStatus(StatusError, fmt.Sprintf("session state restore failed: %v", err))
@@ -255,6 +268,12 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 		} else if found {
 			restoredConnectionState = true
 			log.Printf("[PROVISIONER] Restored persisted ACP state for proxy session %s from %s", settings.Session.ID, restoreSource)
+		}
+	}
+	if restoreCompleted {
+		if err := os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600); err != nil {
+			s.setStatus(StatusError, fmt.Sprintf("failed to record session restore completion: %v", err))
+			return
 		}
 	}
 

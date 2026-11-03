@@ -72,7 +72,13 @@ const (
 	sessionAutoSuspendEnabledAnnotation      = "agentapi.proxy/auto-suspend-enabled"
 	sessionAutoSuspendIdleSecondsAnnotation  = "agentapi.proxy/auto-suspend-idle-seconds"
 	sessionAutoSuspendPolicySourceAnnotation = "agentapi.proxy/auto-suspend-policy-source"
+	sessionSuspendOwnerAnnotation            = "agentapi.proxy/suspend-owner"
+	sessionSuspendOwnerExpiresAtAnnotation   = "agentapi.proxy/suspend-owner-expires-at"
 )
+
+// Ownership must outlive the longest queued checkpoint command (30 minutes)
+// so another replica cannot start a duplicate while the first is still waiting.
+const sessionSuspendOwnershipTTL = 35 * time.Minute
 
 var ErrInvalidRunnerToken = stderrors.New("invalid runner token")
 
@@ -609,16 +615,20 @@ func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID
 	if session.Status() == "suspended" {
 		return nil
 	}
+	svc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, ks.ServiceName())
+	if err != nil {
+		return fmt.Errorf("acquire session suspend ownership: %w", err)
+	}
+	if !acquired {
+		return nil
+	}
 	if m.requiresSessionCheckpoint(ks) {
 		if err := m.checkpointSessionState(ctx, sessionID); err != nil {
+			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
 			return fmt.Errorf("checkpoint session state: %w", err)
 		}
 	}
-	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, ks.ServiceName(), metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("get canonical session service: %w", err)
-	}
-	return m.suspendSessionWorkload(ctx, sessionID, svc)
+	return m.suspendSessionWorkloadOwned(ctx, sessionID, svc, claim)
 }
 
 // SuspendSessionOnTermination is called by a PVC-backed session Pod after it
@@ -647,7 +657,59 @@ func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	return m.suspendSessionWorkload(ctx, sessionID, svc)
+	ownedSvc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, svc.Name)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return nil
+	}
+	return m.suspendSessionWorkloadOwned(ctx, sessionID, ownedSvc, claim)
+}
+
+func (m *KubernetesSessionManager) acquireSessionSuspendOwnership(ctx context.Context, serviceName string) (*corev1.Service, string, bool, error) {
+	svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return nil, "", false, err
+	}
+	now := time.Now()
+	owner := svc.Annotations[sessionSuspendOwnerAnnotation]
+	expiresAt, parseErr := time.Parse(time.RFC3339Nano, svc.Annotations[sessionSuspendOwnerExpiresAtAnnotation])
+	if owner != "" && parseErr == nil && expiresAt.After(now) {
+		return svc, "", false, nil
+	}
+	claim := m.podID + "/" + uuid.NewString()
+	updated := svc.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	updated.Annotations[sessionSuspendOwnerAnnotation] = claim
+	updated.Annotations[sessionSuspendOwnerExpiresAtAnnotation] = now.Add(sessionSuspendOwnershipTTL).UTC().Format(time.RFC3339Nano)
+	updated, err = m.client.CoreV1().Services(m.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+	if errors.IsConflict(err) {
+		return svc, "", false, nil
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	return updated, claim, true, nil
+}
+
+func (m *KubernetesSessionManager) releaseSessionSuspendOwnership(ctx context.Context, serviceName, claim string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		svc, err := m.client.CoreV1().Services(m.namespace).Get(ctx, serviceName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if svc.Annotations[sessionSuspendOwnerAnnotation] != claim {
+			return nil
+		}
+		updated := svc.DeepCopy()
+		delete(updated.Annotations, sessionSuspendOwnerAnnotation)
+		delete(updated.Annotations, sessionSuspendOwnerExpiresAtAnnotation)
+		_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 func (m *KubernetesSessionManager) requiresSessionCheckpoint(session *KubernetesSession) bool {
@@ -829,6 +891,17 @@ func (m *KubernetesSessionManager) reconcileSessionSuspends(ctx context.Context)
 }
 
 func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, sessionID string, svc *corev1.Service) error {
+	ownedSvc, claim, acquired, err := m.acquireSessionSuspendOwnership(ctx, svc.Name)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return nil
+	}
+	return m.suspendSessionWorkloadOwned(ctx, sessionID, ownedSvc, claim)
+}
+
+func (m *KubernetesSessionManager) suspendSessionWorkloadOwned(ctx context.Context, sessionID string, svc *corev1.Service, claim string) error {
 	// Mark the session before deleting its workload so the deployment watcher
 	// cannot race with suspension and replace the canonical state with stopped.
 	if session := m.GetSession(sessionID); session != nil {
@@ -849,8 +922,25 @@ func (m *KubernetesSessionManager) suspendSessionWorkload(ctx context.Context, s
 		}
 	}
 	suspendedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":null,"%s":%q}}}`, sessionSuspendAtAnnotation, sessionSuspendedAtAnnotation, suspendedAt))
-	if _, err := m.client.CoreV1().Services(m.namespace).Patch(ctx, svc.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := m.client.CoreV1().Services(m.namespace).Get(ctx, svc.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if claim != "" && current.Annotations[sessionSuspendOwnerAnnotation] != claim {
+			return fmt.Errorf("session suspend ownership was lost")
+		}
+		updated := current.DeepCopy()
+		if updated.Annotations == nil {
+			updated.Annotations = map[string]string{}
+		}
+		delete(updated.Annotations, sessionSuspendAtAnnotation)
+		delete(updated.Annotations, sessionSuspendOwnerAnnotation)
+		delete(updated.Annotations, sessionSuspendOwnerExpiresAtAnnotation)
+		updated.Annotations[sessionSuspendedAtAnnotation] = suspendedAt
+		_, err = m.client.CoreV1().Services(m.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+		return err
+	}); err != nil {
 		return err
 	}
 	log.Printf("[K8S_SESSION] Suspended session %s; canonical state retained for lazy resume", sessionID)

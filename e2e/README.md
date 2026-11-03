@@ -28,7 +28,7 @@ APIシナリオは`scenarios/api/*_test.go`、画面シナリオは`scenarios/fr
 
 ### API機能シナリオ
 
-APIは計16件です。認証済みユーザー・未認証拒否、セッション検索と作成dry-run、設定マネージャー一覧、プロファイル／スケジュール／Webhook／SlackBot一覧、プロファイル／スケジュール／WebhookのCRUD、不正プロファイル／cron式の拒否、healthを検証します。
+APIシナリオは、認証済みユーザー・未認証拒否、セッション検索と作成dry-run、設定マネージャー一覧、プロファイル／スケジュール／Webhook／SlackBot一覧、プロファイル／スケジュール／WebhookのCRUD、不正プロファイル／cron式の拒否、healthを検証します。
 
 ```bash
 cd e2e
@@ -41,6 +41,16 @@ go test -tags=e2e -v ./scenarios/api -count=1 -timeout 12m
 CRUDはランダムな`e2e-`接頭辞を持つ専用リソースだけを作成・操作し、失敗時も`Cleanup`で削除を試みます。
 スケジュールとWebhookは`paused`、Webhook triggerも無効、プロファイルは非defaultで作成します。
 `api.session.schedule-suspend-resume`だけは実セッションを起動し、再利用スケジュールの発火、suspend、同一セッションのresumeを検証します。E2Eコンソールから単独実行すると自動的に有効になります。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定してください。必要なら`E2E_PARAM_SESSION_PROFILE_ID`で利用するプロファイルを指定できます。指定しない場合は対象環境のdefaultプロファイルを使います。
+
+`api.session.persistence-suspend-resume`も実セッションを起動する永続化E2Eです。Session Managerが2 replica以上、`sessionPersistence.backend: volume`、指定したACP agentが利用可能な環境を対象にします。実セッションを起動して課金されるチャットを1回行い、同時suspend、resume、会話履歴の復元を検証します。E2Eコンソールから単独実行すると自動的に有効になります。コマンドから実行する場合は`E2E_PARAM_LIVE_SESSION=true`を指定してください。`agent_type`の既定値は`claude-acp`です。
+
+workerを介さず直接実行する場合は、実セッションの起動を明示的に許可します。
+
+```bash
+E2E_PARAM_LIVE_SESSION=true \
+E2E_PARAM_AGENT_TYPE=claude-acp \
+go test -tags=e2e -v ./scenarios/api -run '^TestSessionPersistenceSuspendResume$' -count=1 -timeout 8m
+```
 その他のシナリオは実セッション起動、課金されるチャット、スケジュール発火、Webhook配送、Slack送信を実行しません。
 必要な機能が無効化されている環境や権限不足はskipせず失敗として報告します。
 通常の`go test ./...`はネットワークシナリオを実行せず、helperとcatalogの整合性を検証します。
