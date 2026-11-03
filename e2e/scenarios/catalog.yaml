@@ -39,6 +39,15 @@ scenarios:
     package: ./scenarios/api
     test: TestSessionSearch
     timeout: 1m
+  - id: api.session.schedule-suspend-resume
+    category: session
+    description: 再利用スケジュールのセッションを停止し同じセッションとして再開できる
+    kind: go-test
+    package: ./scenarios/api
+    test: TestScheduleSuspendResume
+    timeout: 10m
+    parameters:
+      live_session: true
   - id: api.settings.managers
     category: settings
     description: 利用可能な設定マネージャーを取得できる
