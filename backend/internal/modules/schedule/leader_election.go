@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	ScheduleWorkerLeaseName        = "agentapi-schedule-worker"
-	SlackbotCleanupWorkerLeaseName = "agentapi-slackbot-cleanup-worker"
-	StockInventoryWorkerLeaseName  = "agentapi-stock-inventory-worker"
-	SessionAllocatorLeaseName      = "agentapi-session-allocator"
-	leaseReleaseTimeout            = 5 * time.Second
+	ScheduleWorkerLeaseName         = "agentapi-schedule-worker"
+	SlackbotCleanupWorkerLeaseName  = "agentapi-slackbot-cleanup-worker"
+	StockInventoryWorkerLeaseName   = "agentapi-stock-inventory-worker"
+	SessionAllocatorLeaseName       = "agentapi-session-allocator"
+	SessionRouteReconcilerLeaseName = "agentapi-session-route-reconciler"
+	leaseReleaseTimeout             = 5 * time.Second
 )
 
 type LeaderElectionConfig struct {

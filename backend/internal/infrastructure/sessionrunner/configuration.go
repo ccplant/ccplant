@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
+
 	core "github.com/takutakahashi/agentapi-proxy/internal/core/sessionrunner"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/kvstore"
 )
 
-func configurationName(id string) string { return "agentapi-session-configuration-" + hashName(id) }
+const configurationPrefix = "agentapi-session-configuration-"
+
+func configurationName(id string) string { return configurationPrefix + hashName(id) }
 func (s *Store) CreateConfiguration(ctx context.Context, c *core.Configuration) error {
 	c.Revision = 1
 	c.UpdatedAt = s.now()
@@ -52,6 +56,44 @@ func (s *Store) SetConfigurationOwnerReference(ctx context.Context, id string, o
 		return err
 	}
 	return core.ErrConflict
+}
+
+// ListConfigurationRefs returns lifecycle metadata for every saved session
+// configuration. Only the session ID and update time are decoded from the
+// payload; the startup input and settings are never returned to the caller.
+func (s *Store) ListConfigurationRefs(ctx context.Context) ([]core.ConfigurationRef, error) {
+	items, err := s.kv.List(ctx, kvstore.Query{
+		Kind:          kvstore.KindSecret,
+		Namespace:     s.namespace,
+		KeyPrefix:     configurationPrefix,
+		LabelSelector: labelResource + "=configuration",
+	})
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]core.ConfigurationRef, 0, len(items))
+	for i := range items {
+		var doc secretDocument
+		if err := json.Unmarshal(items[i].Value, &doc); err != nil {
+			continue
+		}
+		if doc.Metadata.Labels[labelResource] != "configuration" {
+			continue
+		}
+		var meta struct {
+			SessionID string    `json:"session_id"`
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		if err := json.Unmarshal(doc.Data[dataKey], &meta); err != nil || meta.SessionID == "" {
+			continue
+		}
+		refs = append(refs, core.ConfigurationRef{
+			SessionID: meta.SessionID,
+			UpdatedAt: meta.UpdatedAt,
+			HasOwner:  len(doc.Metadata.OwnerReferences) > 0,
+		})
+	}
+	return refs, nil
 }
 
 // DeleteConfiguration removes saved startup input after the session lifecycle

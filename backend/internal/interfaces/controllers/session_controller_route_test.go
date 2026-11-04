@@ -787,6 +787,7 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
 		SessionID: "public-id", RemoteSessionID: "allocated-runner-id", ManagerID: "manager-a",
 		Transport: repositories.SessionRouteTransportDirectRuntime,
+		UserID:    "user-1", Scope: string(entities.ScopeUser),
 	}}
 	store := &allocationReader{}
 	usageRecorder := &statusUsageRecorder{dimensions: repositories.SessionUsageDimensions{
@@ -834,35 +835,8 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	}
 }
 
-// Without force, deleting a remote session whose owning manager is unreachable must
-// keep returning 503 and must not drop the local route (the manager may still own a
-// live runner workload).
-func TestDeleteRemoteSessionWithoutManagerConnectionIsRejected(t *testing.T) {
-	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
-	tunnel := &lifecycleTunnel{} // IsConnected is true only for "manager-a"
-	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
-		SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-gone",
-		UserID: "user-1", Scope: string(entities.ScopeUser),
-	}}
-	controller := controllers.NewSessionController(
-		&routeSessionManagerProvider{manager: manager}, nil,
-		controllers.WithSessionRouteRepository(routeRepo),
-		controllers.WithESMControlTunnel(tunnel),
-	)
-	ctx, _ := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
-
-	err := controller.DeleteSession(ctx)
-	he, ok := err.(*echo.HTTPError)
-	if !ok || he.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 HTTPError, got %#v", err)
-	}
-	if routeRepo.deleted {
-		t.Fatal("route must not be deleted when the manager is unreachable and force is not set")
-	}
-}
-
-// With force=true, an orphaned remote route whose manager is permanently gone can be
-// reclaimed: the local route and configuration are removed without any outbound call.
+// Callers of the former force=true escape hatch keep working: an unreachable
+// manager's route is now finalized locally regardless of the parameter.
 func TestForceDeleteOrphanedRemoteSessionRemovesLocalRoute(t *testing.T) {
 	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
 	tunnel := &lifecycleTunnel{}

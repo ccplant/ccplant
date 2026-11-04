@@ -404,6 +404,40 @@ func TestDeleteAdminRunnerForceCleansOfflineManagerRecords(t *testing.T) {
 	}
 }
 
+// A retry after a partial delete finds no runner record. The allocation must
+// still identify the session so its route and configuration are removed instead
+// of surviving as an undeletable stale session.
+func TestDeleteAdminRunnerCleansSessionWhenRunnerRecordIsAlreadyGone(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	ctx := context.Background()
+	requireNoError(t, store.CreateManager(ctx, &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-a", Pool: "linux", ManagerID: "manager-a", RunnerID: "runner-a"}))
+	requireNoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "other-manager", Pool: "linux", ManagerID: "manager-b", RunnerID: "runner-a"}))
+	requireNoError(t, store.CreateConfiguration(ctx, &core.Configuration{SessionID: "session-a", Input: []byte(`{}`)}))
+	requireNoError(t, routes.Save(ctx, &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "remote-session", ManagerID: "manager-a"}))
+	tunnel := &runnerInventoryTunnel{statusTestTunnel: statusTestTunnel{connected: map[string]bool{"manager-a": false}}}
+	controller := NewSessionPoolController(store, routes).WithManagerTunnel(tunnel)
+
+	rec := callSessionPoolHandler(t, controller.DeleteAdminRunner, http.MethodDelete, "/admin/session-runners/runner-a?manager_id=manager-a&force=true", nil, map[string]string{"id": "runner-a"}, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetAllocation(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("allocation still exists: %v", err)
+	}
+	if _, err := store.GetAllocation(ctx, "other-manager"); err != nil {
+		t.Fatalf("allocation owned by another manager was removed: %v", err)
+	}
+	if route, err := routes.Get(ctx, "session-a"); err != nil || route != nil {
+		t.Fatalf("route still exists: route=%+v err=%v", route, err)
+	}
+	if _, err := store.GetConfiguration(ctx, "session-a"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("configuration still exists: %v", err)
+	}
+}
+
 type testManagerLiveness struct {
 	connected map[string]bool
 }

@@ -173,6 +173,26 @@ type SlackbotCleanupWorkerConfig struct {
 	RetryPeriod string `json:"retry_period" mapstructure:"retry_period"`
 }
 
+// SessionRouteReconcilerConfig configures the API-side reconciler that
+// finalizes session routes whose owning manager or runner is gone and garbage
+// collects session configurations that no longer belong to any session.
+type SessionRouteReconcilerConfig struct {
+	// Enabled starts the reconciler on the elected API replica.
+	Enabled bool `json:"enabled" mapstructure:"enabled"`
+	// DryRun only logs what would be finalized.
+	DryRun bool `json:"dry_run" mapstructure:"dry_run"`
+	// Interval between reconciliation passes (e.g. "5m").
+	Interval string `json:"interval" mapstructure:"interval"`
+	// OrphanGrace protects routes whose status changed recently (e.g. "15m").
+	OrphanGrace string `json:"orphan_grace" mapstructure:"orphan_grace"`
+	// StuckDeletionGrace finalizes routes stuck terminating/delete_failed (e.g. "1h").
+	StuckDeletionGrace string `json:"stuck_deletion_grace" mapstructure:"stuck_deletion_grace"`
+	// TTLStuckCeiling finalizes session_ttl routes frozen for ttl + this long (e.g. "24h").
+	TTLStuckCeiling string `json:"ttl_stuck_ceiling" mapstructure:"ttl_stuck_ceiling"`
+	// ConfigurationOrphanGrace deletes unowned configurations idle for this long (e.g. "24h").
+	ConfigurationOrphanGrace string `json:"configuration_orphan_grace" mapstructure:"configuration_orphan_grace"`
+}
+
 // StockInventoryWorkerConfig represents stock inventory worker configuration.
 // The worker ensures a target number of pre-warmed stock sessions are always available.
 // Note: Sandbox (network filter) and scia sidecar are now always enabled.
@@ -620,6 +640,8 @@ type Config struct {
 	ScheduleWorker ScheduleWorkerConfig `json:"schedule_worker" mapstructure:"schedule_worker"`
 	// SlackbotCleanupWorker is the configuration for the Slackbot session cleanup worker
 	SlackbotCleanupWorker SlackbotCleanupWorkerConfig `json:"slackbot_cleanup_worker" mapstructure:"slackbot_cleanup_worker"`
+	// SessionRouteReconciler finalizes abandoned session routes and orphaned configurations.
+	SessionRouteReconciler SessionRouteReconcilerConfig `json:"session_route_reconciler" mapstructure:"session_route_reconciler"`
 	// StockInventoryWorker is the configuration for the stock session inventory worker.
 	StockInventoryWorker StockInventoryWorkerConfig `json:"stock_inventory_worker" mapstructure:"stock_inventory_worker"`
 	// Webhook is the configuration for webhook functionality
@@ -1295,6 +1317,15 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("slackbot_cleanup_worker.renew_deadline", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RENEW_DEADLINE")
 	_ = v.BindEnv("slackbot_cleanup_worker.retry_period", "AGENTAPI_SLACKBOT_CLEANUP_WORKER_RETRY_PERIOD")
 
+	// Session route reconciler configuration
+	_ = v.BindEnv("session_route_reconciler.enabled", "AGENTAPI_SESSION_ROUTE_RECONCILER_ENABLED")
+	_ = v.BindEnv("session_route_reconciler.dry_run", "AGENTAPI_SESSION_ROUTE_RECONCILER_DRY_RUN")
+	_ = v.BindEnv("session_route_reconciler.interval", "AGENTAPI_SESSION_ROUTE_RECONCILER_INTERVAL")
+	_ = v.BindEnv("session_route_reconciler.orphan_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_ORPHAN_GRACE")
+	_ = v.BindEnv("session_route_reconciler.stuck_deletion_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_STUCK_DELETION_GRACE")
+	_ = v.BindEnv("session_route_reconciler.ttl_stuck_ceiling", "AGENTAPI_SESSION_ROUTE_RECONCILER_TTL_STUCK_CEILING")
+	_ = v.BindEnv("session_route_reconciler.configuration_orphan_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_CONFIGURATION_ORPHAN_GRACE")
+
 	// Stock inventory worker configuration
 	_ = v.BindEnv("stock_inventory_worker.enabled", "AGENTAPI_STOCK_INVENTORY_WORKER_ENABLED")
 	_ = v.BindEnv("stock_inventory_worker.check_interval", "AGENTAPI_STOCK_INVENTORY_WORKER_CHECK_INTERVAL")
@@ -1504,6 +1535,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.lease_duration", "9m")
 	v.SetDefault("slackbot_cleanup_worker.renew_deadline", "6m")
 	v.SetDefault("slackbot_cleanup_worker.retry_period", "1m")
+
+	// Session route reconciler defaults. Every rule acts only on definitive
+	// signals (deleted manager/runner records, an unacknowledged deletion, a
+	// TTL session frozen for a day), so it is enabled by default.
+	v.SetDefault("session_route_reconciler.enabled", true)
+	v.SetDefault("session_route_reconciler.dry_run", false)
+	v.SetDefault("session_route_reconciler.interval", "5m")
+	v.SetDefault("session_route_reconciler.orphan_grace", "15m")
+	v.SetDefault("session_route_reconciler.stuck_deletion_grace", "1h")
+	v.SetDefault("session_route_reconciler.ttl_stuck_ceiling", "24h")
+	v.SetDefault("session_route_reconciler.configuration_orphan_grace", "24h")
 
 	// Stock inventory worker defaults
 	v.SetDefault("stock_inventory_worker.enabled", false)

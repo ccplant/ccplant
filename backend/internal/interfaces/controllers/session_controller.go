@@ -2302,6 +2302,17 @@ func refreshedParentRuntime(ctx echo.Context, persisted *sessionsettings.ParentR
 // deleteRemoteSession deletes a session on External Session Manager via the session manager API.
 func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *repositories.SessionRoute) error {
 	sessionID := ctx.Param("sessionId")
+	// Routed sessions never reach the managed-session ownership check in
+	// DeleteSession, and the manager does not re-authorize the forwarded user.
+	// Enforce ownership here so every remote deletion path, including the local
+	// finalization below, is authorized. Worker-authorized deletes (TTL and route
+	// reconciliation) may delete regardless of owner, like managed sessions.
+	if workerAuthorized, _ := ctx.Get(workerAuthorizedDeleteContextKey).(bool); !workerAuthorized {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if authzCtx == nil || !authzCtx.CanModifyResource(route.UserID, route.Scope, route.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
+		}
+	}
 	usageDimensions := c.resolveSessionUsageDimensions(ctx.Request().Context(), route.SessionID, "remote_session")
 	if route.ManagerID == "" || route.RemoteSessionID == "" {
 		c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: "terminating", Timestamp: time.Now()})
@@ -2327,16 +2338,25 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 
 	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
 	if !useTunnel {
-		// Normally we refuse to delete while the owning manager's outbound control
-		// connection is down: the manager still owns a possibly-live runner workload
-		// and dropping the local route would orphan it. But when the manager is
-		// permanently gone (for example its runner pool was deleted), the local route
-		// and configuration can never be removed through the API and leak forever.
-		// An explicit force=true lets an operator reclaim such an orphaned local record.
-		if parseBoolQueryParam(ctx, "force") {
-			return c.forceDeleteOrphanedRoute(ctx, route, usageDimensions)
+		// The parent's routes are authoritative. On every heartbeat a manager
+		// receives orphaned_session_ids for workloads that no longer have a route
+		// and removes them through its own idempotent delete path. Finalizing the
+		// route locally is therefore safe even while the manager is unreachable:
+		// a manager that comes back reaps the workload, and one that is gone for
+		// good (for example a deleted runner pool) can no longer leave the route
+		// stranded as an undeletable stale session. This is also what the former
+		// force=true escape hatch did, so requests that still pass it behave the same.
+		log.Printf("[REMOTE_DELETE] Manager %s is unreachable; finalizing session %s locally (remote ID: %s)",
+			route.ManagerID, sessionID, route.RemoteSessionID)
+		if err := c.finalizeRouteLocally(ctx.Request().Context(), route, usageDimensions, "manager_unreachable"); err != nil {
+			log.Printf("[REMOTE_DELETE] Failed to finalize session %s locally: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete session")
 		}
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
+		return ctx.JSON(http.StatusOK, map[string]interface{}{
+			"message":    "Session terminated successfully",
+			"session_id": sessionID,
+			"status":     "terminated",
+		})
 	}
 	// The manager owns the allocated runner workload. The public session ID is
 	// an API alias; deleting that alias on the manager would leave the Pod alive.
@@ -2429,55 +2449,6 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	log.Printf("[REMOTE_DELETE] Deleted remote session %s (remote ID: %s) over outbound control", sessionID, route.RemoteSessionID)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
-		"session_id": sessionID,
-		"status":     "terminated",
-	})
-}
-
-// parseBoolQueryParam reports whether a truthy boolean query parameter was supplied.
-func parseBoolQueryParam(ctx echo.Context, name string) bool {
-	raw := strings.TrimSpace(ctx.QueryParam(name))
-	if raw == "" {
-		return false
-	}
-	v, err := strconv.ParseBool(raw)
-	return err == nil && v
-}
-
-// forceDeleteOrphanedRoute removes the local session-route and configuration for a
-// remote session whose owning manager is permanently unreachable. It performs no
-// outbound call to the manager, so it must only be reached when the caller has
-// explicitly opted in via force=true and accepts that any still-live remote workload
-// is not torn down here. Authorization is enforced locally because, unlike the tunnel
-// path, no manager re-checks the forwarded identity. Worker-authorized deletes (the
-// durable expiry path) bypass the ownership check, matching the managed-session path.
-func (c *SessionController) forceDeleteOrphanedRoute(ctx echo.Context, route *repositories.SessionRoute, usageDimensions *repositories.SessionUsageDimensions) error {
-	sessionID := ctx.Param("sessionId")
-
-	workerAuthorized, _ := ctx.Get(workerAuthorizedDeleteContextKey).(bool)
-	if !workerAuthorized {
-		authzCtx := auth.GetAuthorizationContext(ctx)
-		if authzCtx == nil || !authzCtx.CanModifyResource(route.UserID, route.Scope, route.TeamID) {
-			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
-		}
-	}
-
-	log.Printf("[REMOTE_DELETE] Force-removing orphaned local route for session %s (remote ID: %s, manager %s unreachable)",
-		sessionID, route.RemoteSessionID, route.ManagerID)
-	c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: "terminating", Timestamp: time.Now()})
-	if c.sessionRouteRepo != nil {
-		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
-			log.Printf("[REMOTE_DELETE] Failed to force-delete orphaned route for session %s: %v", sessionID, err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete orphaned session route")
-		}
-	}
-	c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "orphaned_route_force", time.Now())
-	c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
-	c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
-
-	log.Printf("[REMOTE_DELETE] Force-removed orphaned local route for session %s", sessionID)
-	return ctx.JSON(http.StatusOK, map[string]interface{}{
-		"message":    "Orphaned session route removed",
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
