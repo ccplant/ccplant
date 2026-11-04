@@ -185,11 +185,11 @@ type SessionRouteReconcilerConfig struct {
 	Interval string `json:"interval" mapstructure:"interval"`
 	// OrphanGrace protects routes whose status changed recently (e.g. "15m").
 	OrphanGrace string `json:"orphan_grace" mapstructure:"orphan_grace"`
-	// StuckDeletionGrace finalizes routes stuck terminating/delete_failed (e.g. "1h").
+	// StuckDeletionGrace finalizes routes stuck terminating/delete_failed (e.g. "45m").
 	StuckDeletionGrace string `json:"stuck_deletion_grace" mapstructure:"stuck_deletion_grace"`
-	// TTLStuckCeiling finalizes session_ttl routes frozen for ttl + this long (e.g. "24h").
+	// TTLStuckCeiling finalizes session_ttl routes frozen for ttl + this long (e.g. "45m").
 	TTLStuckCeiling string `json:"ttl_stuck_ceiling" mapstructure:"ttl_stuck_ceiling"`
-	// ConfigurationOrphanGrace deletes unowned configurations idle for this long (e.g. "24h").
+	// ConfigurationOrphanGrace deletes unowned configurations idle for this long (e.g. "45m").
 	ConfigurationOrphanGrace string `json:"configuration_orphan_grace" mapstructure:"configuration_orphan_grace"`
 }
 
@@ -1538,14 +1538,15 @@ func setDefaults(v *viper.Viper) {
 
 	// Session route reconciler defaults. Every rule acts only on definitive
 	// signals (deleted manager/runner records, an unacknowledged deletion, a
-	// TTL session frozen for a day), so it is enabled by default.
+	// TTL session frozen past its ceiling), so it is enabled by default. The
+	// thresholds reclaim a stale session within about an hour.
 	v.SetDefault("session_route_reconciler.enabled", true)
 	v.SetDefault("session_route_reconciler.dry_run", false)
 	v.SetDefault("session_route_reconciler.interval", "5m")
 	v.SetDefault("session_route_reconciler.orphan_grace", "15m")
-	v.SetDefault("session_route_reconciler.stuck_deletion_grace", "1h")
-	v.SetDefault("session_route_reconciler.ttl_stuck_ceiling", "24h")
-	v.SetDefault("session_route_reconciler.configuration_orphan_grace", "24h")
+	v.SetDefault("session_route_reconciler.stuck_deletion_grace", "45m")
+	v.SetDefault("session_route_reconciler.ttl_stuck_ceiling", "45m")
+	v.SetDefault("session_route_reconciler.configuration_orphan_grace", "45m")
 
 	// Stock inventory worker defaults
 	v.SetDefault("stock_inventory_worker.enabled", false)

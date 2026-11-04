@@ -62,13 +62,13 @@ func (o SessionRouteReconcileOptions) withDefaults() SessionRouteReconcileOption
 		o.OrphanGrace = 15 * time.Minute
 	}
 	if o.StuckDeletionGrace <= 0 {
-		o.StuckDeletionGrace = time.Hour
+		o.StuckDeletionGrace = 45 * time.Minute
 	}
 	if o.TTLStuckCeiling <= 0 {
-		o.TTLStuckCeiling = 24 * time.Hour
+		o.TTLStuckCeiling = 45 * time.Minute
 	}
 	if o.ConfigurationOrphanGrace <= 0 {
-		o.ConfigurationOrphanGrace = 24 * time.Hour
+		o.ConfigurationOrphanGrace = 45 * time.Minute
 	}
 	if o.Now == nil {
 		o.Now = time.Now

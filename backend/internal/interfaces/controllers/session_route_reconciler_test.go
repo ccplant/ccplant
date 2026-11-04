@@ -133,7 +133,7 @@ func newReconcileFixture(now time.Time) (*reconcileRouteRepo, *reconcileRunnerSt
 		},
 		configurations: []sessionrunnercore.ConfigurationRef{
 			{SessionID: "orphan", UpdatedAt: now.Add(-48 * time.Hour)},
-			{SessionID: "orphan-but-recent", UpdatedAt: now.Add(-time.Hour)},
+			{SessionID: "orphan-but-recent", UpdatedAt: now.Add(-30 * time.Minute)},
 			{SessionID: "owned-by-kubernetes", UpdatedAt: now.Add(-48 * time.Hour), HasOwner: true},
 			{SessionID: "healthy", UpdatedAt: now.Add(-48 * time.Hour)},
 			{SessionID: "local-session", UpdatedAt: now.Add(-48 * time.Hour)},
