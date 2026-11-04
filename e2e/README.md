@@ -20,6 +20,36 @@ go run ./cmd/api
 go run ./cmd/worker
 ```
 
+## MCPから実行する
+
+e2e APIサービスにはstdio MCPモードがあり、`start_e2e`と`reload_e2e_scenarios`を公開します。MCPモードでも同じプロセス内でworker向けAPIを起動するため、認証情報は既存の一時メモリ経由でworkerへ渡されます。対象URLと認証情報はtool引数ではなくMCPプロセスの環境変数へ渡します。
+
+```json
+{
+  "mcpServers": {
+    "ccplant-e2e": {
+      "type": "stdio",
+      "command": "go",
+      "args": ["run", "./cmd/api", "mcp"],
+      "cwd": "/path/to/ccplant/e2e",
+      "env": {
+        "E2E_TARGET_API_URL": "https://dev.ccplant.com/api/v1",
+        "E2E_TARGET_FRONTEND_URL": "https://dev.ccplant.com",
+        "E2E_AUTH_TYPE": "bearer",
+        "E2E_AUTH_VALUE": "..."
+      }
+    }
+  }
+}
+```
+
+- `E2E_TARGET_API_URL`: シナリオの検証対象API。`start_e2e`には必須
+- `E2E_TARGET_FRONTEND_URL`: Playwrightシナリオの検証対象frontend
+- `E2E_AUTH_TYPE`: `none`、`bearer`、`api-key`。省略時はtokenがあれば`bearer`、なければ`none`
+- `E2E_AUTH_VALUE`: 対象環境のtoken。MCP設定のsecret環境変数として渡す
+
+`reload_e2e_scenarios`は`E2E_CATALOG`（既定値`scenarios/catalog.yaml`）を再読込し、検証に成功した場合だけ稼働中のカタログを差し替えます。すでに作成済みのrunは作成時のscenario定義を使用します。
+
 ## シナリオ追加
 
 APIシナリオは`scenarios/api/*_test.go`、画面シナリオは`scenarios/frontend/*.spec.ts`へ追加し、`scenarios/catalog.yaml`へ安定ID、category、日本語description、実行対象を登録します。
