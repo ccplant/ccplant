@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/ccplant/ccplant/e2e/internal/catalog"
 	"github.com/ccplant/ccplant/e2e/internal/domain"
 	"github.com/ccplant/ccplant/e2e/internal/store"
 )
@@ -81,5 +84,74 @@ func TestCreateAndListRun(t *testing.T) {
 	persisted, _ := json.Marshal(after)
 	if bytes.Contains(persisted, []byte("secret-token")) {
 		t.Fatal("credential persisted in store")
+	}
+}
+
+func TestReloadCatalog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.yaml")
+	writeCatalog := func(id string) {
+		t.Helper()
+		body := "categories:\n  - id: smoke\n    description: smoke\nscenarios:\n  - id: " + id + "\n    category: smoke\n    description: health\n    kind: go-test\n    package: ./scenarios/api\n    test: TestHealth\n    timeout: 30s\n"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCatalog("api.smoke.old")
+	initial, err := catalog.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	server := httptest.NewServer(NewReloadable(db, initial, path).Handler())
+	t.Cleanup(server.Close)
+
+	writeCatalog("api.smoke.new")
+	res, err := http.Post(server.URL+"/api/v1/scenarios/reload", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("reload status=%d", res.StatusCode)
+	}
+	got, err := http.Get(server.URL + "/api/v1/scenarios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	var reloaded domain.Catalog
+	if err := json.NewDecoder(got.Body).Decode(&reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Scenarios) != 1 || reloaded.Scenarios[0].ID != "api.smoke.new" {
+		t.Fatalf("catalog=%#v", reloaded)
+	}
+
+	if err := os.WriteFile(path, []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := http.Post(server.URL+"/api/v1/scenarios/reload", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed.Body.Close()
+	if failed.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid reload status=%d", failed.StatusCode)
+	}
+	retained, err := http.Get(server.URL + "/api/v1/scenarios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retained.Body.Close()
+	if err := json.NewDecoder(retained.Body).Decode(&reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Scenarios[0].ID != "api.smoke.new" {
+		t.Fatalf("failed reload replaced catalog: %#v", reloaded)
 	}
 }

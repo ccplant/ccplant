@@ -21,21 +21,45 @@ import (
 )
 
 type Server struct {
-	store   *store.Store
-	catalog *domain.Catalog
-	mux     *http.ServeMux
-	secrets sync.Map
+	store       *store.Store
+	catalog     *domain.Catalog
+	catalogPath string
+	catalogMu   sync.RWMutex
+	mux         *http.ServeMux
+	secrets     sync.Map
+	manifests   sync.Map
 }
 
+type RunRequest struct {
+	ScenarioID  string
+	Environment string
+	Parameters  map[string]any
+	Target      domain.Target
+}
+
+type ReloadResult struct {
+	Categories int `json:"categories"`
+	Scenarios  int `json:"scenarios"`
+}
+
+type RequestError struct{ message string }
+
+func (e *RequestError) Error() string { return e.message }
+
 func New(s *store.Store, c *domain.Catalog) *Server {
-	x := &Server{store: s, catalog: c, mux: http.NewServeMux()}
+	return NewReloadable(s, c, "")
+}
+
+func NewReloadable(s *store.Store, c *domain.Catalog, catalogPath string) *Server {
+	x := &Server{store: s, catalog: c, catalogPath: catalogPath, mux: http.NewServeMux()}
 	x.routes()
 	return x
 }
 func (s *Server) Handler() http.Handler { return cors(s.mux) }
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
-	s.mux.HandleFunc("GET /api/v1/scenarios", func(w http.ResponseWriter, r *http.Request) { write(w, 200, s.catalog) })
+	s.mux.HandleFunc("GET /api/v1/scenarios", func(w http.ResponseWriter, r *http.Request) { write(w, 200, s.currentCatalog()) })
+	s.mux.HandleFunc("POST /api/v1/scenarios/reload", s.reloadCatalog)
 	s.mux.HandleFunc("POST /api/v1/runs", s.createRun)
 	s.mux.HandleFunc("GET /api/v1/runs", s.listRuns)
 	s.mux.HandleFunc("GET /api/v1/runs/{id}", s.getRun)
@@ -56,10 +80,26 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	sc, cat, ok := catalog.Find(s.catalog, in.ScenarioID)
-	if !ok {
-		problem(w, 400, "unknown scenario")
+	run, err := s.CreateRun(r.Context(), RunRequest{
+		ScenarioID: in.ScenarioID, Environment: in.Environment,
+		Parameters: in.Parameters, Target: in.Target,
+	})
+	if err != nil {
+		var requestError *RequestError
+		if errors.As(err, &requestError) {
+			problem(w, http.StatusBadRequest, err.Error())
+		} else {
+			problem(w, http.StatusInternalServerError, err.Error())
+		}
 		return
+	}
+	write(w, http.StatusCreated, run)
+}
+
+func (s *Server) CreateRun(ctx context.Context, in RunRequest) (domain.Run, error) {
+	sc, cat, ok := catalog.Find(s.currentCatalog(), in.ScenarioID)
+	if !ok {
+		return domain.Run{}, &RequestError{message: "unknown scenario"}
 	}
 	if in.Environment == "" {
 		in.Environment = "local"
@@ -68,8 +108,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		in.Target.AuthType = "none"
 	}
 	if err := validateTarget(in.Target); err != nil {
-		problem(w, 400, err.Error())
-		return
+		return domain.Run{}, &RequestError{message: err.Error()}
 	}
 	parameters := make(map[string]any, len(sc.Parameters)+len(in.Parameters))
 	for key, value := range sc.Parameters {
@@ -79,19 +118,20 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		parameters[key] = value
 	}
 	run := domain.Run{ID: newID(), ScenarioID: sc.ID, ScenarioDescription: sc.Description, CategoryID: cat.ID, CategoryDescription: cat.Description, Kind: sc.Kind, Environment: in.Environment, TargetAPIURL: in.Target.APIURL, TargetFrontendURL: in.Target.FrontendURL, AuthType: in.Target.AuthType, Parameters: parameters, Status: "queued", CreatedAt: time.Now().UTC()}
-	if err := s.store.CreateRun(r.Context(), run); err != nil {
-		problem(w, 500, err.Error())
-		return
+	if err := s.store.CreateRun(ctx, run); err != nil {
+		return domain.Run{}, err
 	}
+	s.manifests.Store(run.ID, sc)
 	if in.Target.AuthValue != "" {
 		s.secrets.Store(run.ID, in.Target.AuthValue)
 		time.AfterFunc(5*time.Minute, func() {
 			if _, ok := s.secrets.LoadAndDelete(run.ID); ok {
+				s.manifests.Delete(run.ID)
 				_ = s.store.Cancel(context.Background(), run.ID)
 			}
 		})
 	}
-	write(w, 201, run)
+	return run, nil
 }
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -124,6 +164,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.secrets.Delete(r.PathValue("id"))
+	s.manifests.Delete(r.PathValue("id"))
 	write(w, 202, map[string]bool{"cancel_requested": true})
 }
 func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
@@ -143,12 +184,44 @@ func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err.Error())
 		return
 	}
-	sc, _, _ := catalog.Find(s.catalog, run.ScenarioID)
+	sc, _, _ := catalog.Find(s.currentCatalog(), run.ScenarioID)
+	if manifest, ok := s.manifests.LoadAndDelete(run.ID); ok {
+		sc, _ = manifest.(domain.Scenario)
+	}
 	target := domain.Target{APIURL: run.TargetAPIURL, FrontendURL: run.TargetFrontendURL, AuthType: run.AuthType}
 	if value, ok := s.secrets.LoadAndDelete(run.ID); ok {
 		target.AuthValue, _ = value.(string)
 	}
 	write(w, 200, map[string]any{"run": run, "scenario": sc, "target": target})
+}
+
+func (s *Server) currentCatalog() *domain.Catalog {
+	s.catalogMu.RLock()
+	defer s.catalogMu.RUnlock()
+	return s.catalog
+}
+
+func (s *Server) reloadCatalog(w http.ResponseWriter, _ *http.Request) {
+	result, err := s.ReloadCatalog()
+	if err != nil {
+		problem(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
+func (s *Server) ReloadCatalog() (ReloadResult, error) {
+	if s.catalogPath == "" {
+		return ReloadResult{}, fmt.Errorf("catalog reload is not configured")
+	}
+	next, err := catalog.Load(s.catalogPath)
+	if err != nil {
+		return ReloadResult{}, fmt.Errorf("reload catalog: %w", err)
+	}
+	s.catalogMu.Lock()
+	s.catalog = next
+	s.catalogMu.Unlock()
+	return ReloadResult{Categories: len(next.Categories), Scenarios: len(next.Scenarios)}, nil
 }
 func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	var in struct {

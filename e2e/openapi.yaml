@@ -8,6 +8,12 @@ paths:
       operationId: listScenarios
       responses:
         "200": {description: Scenario catalog}
+  /api/v1/scenarios/reload:
+    post:
+      operationId: reloadScenarios
+      responses:
+        "200": {description: Reloaded and validated scenario catalog}
+        "422": {description: Catalog could not be loaded or validated}
   /api/v1/runs:
     get:
       operationId: listRuns
