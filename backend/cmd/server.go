@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/controlapi"
 	"github.com/takutakahashi/agentapi-proxy/internal/infrastructure/repositories"
 	mcpiface "github.com/takutakahashi/agentapi-proxy/internal/interfaces/mcp"
@@ -23,6 +24,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/slackbot"
 	"github.com/takutakahashi/agentapi-proxy/internal/modules/webhook"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
+	prommetrics "github.com/takutakahashi/agentapi-proxy/pkg/metrics"
 	slackbotcleanup "github.com/takutakahashi/agentapi-proxy/pkg/slackbot_cleanup"
 	stock_inventory "github.com/takutakahashi/agentapi-proxy/pkg/stock_inventory"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
@@ -31,9 +33,10 @@ import (
 )
 
 var (
-	port    string
-	cfg     string
-	verbose bool
+	port        string
+	cfg         string
+	verbose     bool
+	metricsPort int
 )
 
 var ServerCmd = &cobra.Command{
@@ -77,6 +80,7 @@ func init() {
 	ServerCmd.Flags().StringVarP(&port, "port", "p", "8080", "Port to listen on")
 	ServerCmd.Flags().StringVarP(&cfg, "config", "c", "config.json", "Configuration file path")
 	ServerCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose logging")
+	ServerCmd.Flags().IntVar(&metricsPort, "metrics-port", 0, "Prometheus metrics port (disabled when 0)")
 
 	// Bind flags to viper
 	if err := viper.BindPFlag("port", ServerCmd.Flags().Lookup("port")); err != nil {
@@ -138,6 +142,18 @@ func runProxy(cmd *cobra.Command, args []string) {
 	configData = proxyServer.GetConfig()
 	serverCtx, cancelServer := context.WithCancel(context.Background())
 	defer cancelServer()
+	startMetricsServer(serverCtx, metricsPort, prommetrics.NewStatusCollector(
+		"agentapi_sessions",
+		"Current number of AgentAPI sessions by status.",
+		[]string{"creating", "starting", "running", "active", "stable", "suspending", "suspended", "resuming", "restoring", "unhealthy", "stopped", "error", "timeout", "unknown"},
+		func(context.Context) (map[string]int, error) {
+			counts := make(map[string]int)
+			for _, session := range proxyServer.GetSessionManager().ListSessions(entities.SessionFilter{}) {
+				counts[session.Status()]++
+			}
+			return counts, nil
+		},
+	))
 
 	// Run the idempotent legacy→multi API token migration and load all named
 	// tokens into the auth service. Any migration conflict or bootstrap load

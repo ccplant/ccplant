@@ -1,5 +1,11 @@
 {{- $manager := .Values.sessionManager | default dict }}
 {{- if (dig "enabled" false $manager) }}
+{{- $managerPodAnnotations := deepCopy ($manager.podAnnotations | default dict) }}
+{{- if (dig "enabled" false ($manager.metrics | default dict)) }}
+{{- $_ := set $managerPodAnnotations "prometheus.io/scrape" "true" }}
+{{- $_ := set $managerPodAnnotations "prometheus.io/port" (dig "port" 9090 ($manager.metrics | default dict) | toString) }}
+{{- $_ := set $managerPodAnnotations "prometheus.io/path" "/metrics" }}
+{{- end }}
 {{- $openTelemetry := .Values.observability.openTelemetry | default dict }}
 {{- $openTelemetrySecret := dig "secretRef" (dict) $openTelemetry }}
 {{- $image := $manager.image | default dict }}
@@ -50,7 +56,7 @@ spec:
       app.kubernetes.io/component: session-manager
   template:
     metadata:
-      {{- with $manager.podAnnotations }}
+      {{- with $managerPodAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -76,7 +82,14 @@ spec:
           image: {{ include "agentapi-proxy.sessionManagerImage" . | quote }}
           imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
           command: ["/usr/local/bin/ccplant"]
-          args: ["session-manager", "--port", {{ $manager.port | quote }}]
+          args:
+            - session-manager
+            - --port
+            - {{ $manager.port | quote }}
+            {{- if (dig "enabled" false ($manager.metrics | default dict)) }}
+            - --metrics-port
+            - {{ dig "port" 9090 ($manager.metrics | default dict) | quote }}
+            {{- end }}
           {{- with $manager.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -85,6 +98,11 @@ spec:
             - name: http
               containerPort: {{ $manager.port }}
               protocol: TCP
+            {{- if (dig "enabled" false ($manager.metrics | default dict)) }}
+            - name: metrics
+              containerPort: {{ dig "port" 9090 ($manager.metrics | default dict) }}
+              protocol: TCP
+            {{- end }}
           env:
             {{- if (dig "enabled" false $openTelemetry) }}
             - name: POD_NAME
@@ -405,4 +423,9 @@ spec:
     - name: http
       port: {{ $manager.port }}
       targetPort: http
+    {{- if (dig "enabled" false ($manager.metrics | default dict)) }}
+    - name: metrics
+      port: {{ dig "port" 9090 ($manager.metrics | default dict) }}
+      targetPort: metrics
+    {{- end }}
 {{- end }}

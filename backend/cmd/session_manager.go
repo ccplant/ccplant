@@ -11,13 +11,15 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/takutakahashi/agentapi-proxy/internal/app"
+	prommetrics "github.com/takutakahashi/agentapi-proxy/pkg/metrics"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 )
 
 var (
-	sessionManagerPort       string
-	sessionManagerConfigPath string
-	sessionManagerVerbose    bool
+	sessionManagerPort        string
+	sessionManagerConfigPath  string
+	sessionManagerVerbose     bool
+	sessionManagerMetricsPort int
 )
 
 // SessionManagerCmd runs only the session-manager API and its upstream control loops.
@@ -34,6 +36,7 @@ func init() {
 	SessionManagerCmd.Flags().StringVarP(&sessionManagerPort, "port", "p", "8080", "Port to listen on")
 	SessionManagerCmd.Flags().StringVarP(&sessionManagerConfigPath, "config", "c", "config.json", "Configuration file path")
 	SessionManagerCmd.Flags().BoolVarP(&sessionManagerVerbose, "verbose", "v", false, "Enable verbose logging")
+	SessionManagerCmd.Flags().IntVar(&sessionManagerMetricsPort, "metrics-port", 0, "Prometheus metrics port (disabled when 0)")
 }
 
 func runSessionManager(_ *cobra.Command, _ []string) error {
@@ -57,6 +60,12 @@ func runSessionManager(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	startMetricsServer(ctx, sessionManagerMetricsPort, prommetrics.NewStatusCollector(
+		"agentapi_session_manager_runners",
+		"Current number of session-manager runners by status.",
+		[]string{"idle", "running", "offline"},
+		runtime.Manager().RunnerStatusCounts,
+	))
 	go func() {
 		if err := runtime.Echo().Start(":" + sessionManagerPort); err != nil && err != http.ErrServerClosed {
 			log.Printf("Session manager failed: %v", err)

@@ -1,9 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["replicaCount", "image", "parent", "runner", "internalApi", "sessionPersistence", "session"],
+  "required": ["replicaCount", "image", "parent", "runner", "internalApi", "sessionPersistence", "session", "metrics"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 1},
+    "metrics": {
+      "type": "object",
+      "required": ["enabled", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
     "image": {
       "type": "object",
       "required": ["repository", "tag", "pullPolicy"],

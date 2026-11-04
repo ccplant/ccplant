@@ -49,3 +49,32 @@ func TestOperationalStatusUsesLiveInventoryAndFiltersPools(t *testing.T) {
 		t.Fatalf("unfiltered inventory must include direct sessions: %v", allRunning)
 	}
 }
+
+func TestRunnerStatusCountsClassifiesLocalInventory(t *testing.T) {
+	service := func(id, stock string) *corev1.Service {
+		return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: "test", Labels: map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy", "app.kubernetes.io/name": "agentapi-session",
+			"agentapi.proxy/session-id": id, "agentapi.proxy/session-pool": "default", "agentapi.proxy/stock": stock,
+		}}}
+	}
+	pod := func(id string, phase corev1.PodPhase) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: "test", Labels: map[string]string{
+			"app.kubernetes.io/managed-by": "agentapi-proxy", "app.kubernetes.io/name": "agentapi-session",
+			"agentapi.proxy/session-id": id, "agentapi.proxy/session-pool": "default",
+		}}, Status: corev1.PodStatus{Phase: phase}}
+	}
+	manager := &KubernetesSessionManager{
+		client: fake.NewSimpleClientset(
+			service("idle", "true"), service("running", "false"), service("offline", "true"),
+			pod("idle", corev1.PodRunning), pod("running", corev1.PodRunning), pod("offline", corev1.PodPending),
+		),
+		namespace: "test",
+	}
+	counts, err := manager.RunnerStatusCounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["idle"] != 1 || counts["running"] != 1 || counts["offline"] != 1 {
+		t.Fatalf("counts=%v", counts)
+	}
+}

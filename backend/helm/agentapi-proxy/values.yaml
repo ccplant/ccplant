@@ -33,6 +33,9 @@
 # data only; it never receives Kubernetes workload credentials.
 api:
   replicaCount: 1
+  metrics:
+    enabled: true
+    port: 9090
   codexDeviceAuth:
     # Base URL used by remote Codex authentication workloads to report their
     # device challenge and result. Leave empty to derive it from the incoming
@@ -357,6 +360,9 @@ worker:
 # The forwarding session manager is an independent HTTP workload.
 sessionManager:
   enabled: false
+  metrics:
+    enabled: true
+    port: 9090
   # Roll the manager Deployment and future session Pods forward when its parent
   # proxy advertises a newer semantic version. Runner mode reads the version
   # from its authenticated heartbeat; standalone mode can poll versionUrl.
