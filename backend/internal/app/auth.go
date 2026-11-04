@@ -204,8 +204,12 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "GitHub authentication failed").SetInternal(err)
 	}
 	userContext.UserID = result.UserID
-	userContext.AuthType = "github_oauth"
-	userContext.AccessToken = result.AccessToken
+	userContext.AuthType = "github_connection"
+	connectionCredential, err := controller.IssueGitHubConnectionCredential(c.Request().Context(), result.ConnectionID, result.AccessToken)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create GitHub connection credential").SetInternal(err)
+	}
+	userContext.AccessToken = connectionCredential
 	if userContext.GitHubUser != nil {
 		memberships, resolved, resolveErr := controller.ResolveTeamMemberships(c.Request().Context(), result.UserID)
 		if resolveErr != nil {
@@ -218,7 +222,7 @@ func (s *Server) handleGitHubConnectionOAuthCallback(c echo.Context) error {
 	sessionID := uuid.NewString()
 	expiresAt := time.Now().Add(24 * time.Hour)
 	s.oauthSessions.Store(sessionID, &OAuthSession{ID: sessionID, UserContext: userContext, CreatedAt: time.Now(), ExpiresAt: expiresAt})
-	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: result.AccessToken, TokenType: "Bearer", ExpiresAt: expiresAt, User: publicOAuthUser(userContext)})
+	return c.JSON(http.StatusOK, OAuthSessionResponse{SessionID: sessionID, AccessToken: connectionCredential, TokenType: "Bearer", ExpiresAt: expiresAt, User: publicOAuthUser(userContext)})
 }
 
 // handleOAuthLogin initiates the OAuth flow
@@ -339,7 +343,7 @@ func (s *Server) handleOAuthLogout(c echo.Context) error {
 		if err := s.container.AuthService.RevokeAPIKey(c.Request().Context(), session.UserContext.AccessToken); err != nil {
 			log.Printf("Failed to revoke Google application session: %v", err)
 		}
-	} else if s.oauthProvider != nil {
+	} else if session.UserContext.AuthType == "github_oauth" && s.oauthProvider != nil {
 		// Revoke the GitHub token.
 		if err := s.oauthProvider.RevokeToken(c.Request().Context(), session.UserContext.AccessToken); err != nil {
 			log.Printf("Failed to revoke GitHub token: %v", err)

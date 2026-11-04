@@ -127,6 +127,7 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 		googleConnectionsController = controllers.NewGoogleConnectionsController(server.GetPersistenceClient(), server.namespace, "", encryptedStorage, githubConnectionsController)
 		if simpleAuth, ok := server.container.AuthService.(*services.SimpleAuthService); ok {
 			simpleAuth.SetGitHubMembershipResolver(githubConnectionsController)
+			simpleAuth.SetGitHubConnectionCredentialResolver(githubConnectionsController)
 		}
 	}
 	teamConfigController := controllers.NewTeamConfigController(server.teamConfigRepo)

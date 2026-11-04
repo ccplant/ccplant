@@ -916,6 +916,66 @@ func (c *GitHubConnectionsController) ResolveAccessToken(ctx context.Context, us
 	return "", errors.New("GitHub connection is not linked to this user")
 }
 
+// IssueGitHubConnectionCredential returns a signed credential which binds the
+// OAuth token to its connection. Callers can safely carry this credential as a
+// bearer token without allowing its routing identifier to be changed.
+func (c *GitHubConnectionsController) IssueGitHubConnectionCredential(ctx context.Context, connectionID, accessToken string) (string, error) {
+	connection, _, _, err := c.loadConnection(ctx, connectionID)
+	if err != nil || !connection.Enabled {
+		return "", errors.New("GitHub connection is unavailable")
+	}
+	clientSecret, err := c.resolveClientSecret(ctx, connection)
+	if err != nil {
+		return "", errors.New("GitHub connection secret is unavailable")
+	}
+	return auth.SealGitHubConnectionCredential(connection.ID, accessToken, clientSecret)
+}
+
+// ResolveGitHubConnectionCredential verifies a signed connection credential
+// before returning the endpoint and raw token. No GitHub request is made until
+// this method succeeds.
+func (c *GitHubConnectionsController) ResolveGitHubConnectionCredential(ctx context.Context, credential string) (*auth.GitHubConnectionCredential, error) {
+	connectionID, err := auth.GitHubConnectionIDFromCredential(credential)
+	if err != nil {
+		return nil, err
+	}
+	connection, _, _, err := c.loadConnection(ctx, connectionID)
+	if err != nil || !connection.Enabled {
+		return nil, errors.New("GitHub connection is unavailable")
+	}
+	clientSecret, err := c.resolveClientSecret(ctx, connection)
+	if err != nil {
+		return nil, errors.New("GitHub connection secret is unavailable")
+	}
+	verifiedConnectionID, accessToken, err := auth.OpenGitHubConnectionCredential(credential, clientSecret)
+	if err != nil || verifiedConnectionID != connection.ID {
+		return nil, errors.New("invalid GitHub connection credential")
+	}
+	return &auth.GitHubConnectionCredential{ConnectionID: connection.ID, APIURL: connection.APIURL, AccessToken: accessToken}, nil
+}
+
+// ResolveApplicationUserForExternalIdentity maps a connection-scoped GitHub
+// user to the stable application user and principal used for authorization.
+func (c *GitHubConnectionsController) ResolveApplicationUserForExternalIdentity(ctx context.Context, connectionID string, githubUserID int64) (string, string, error) {
+	principalID, found, err := c.PrincipalForExternalIdentity(ctx, connectionID, githubUserID)
+	if err != nil {
+		return "", "", err
+	}
+	if !found {
+		return "", "", errors.New("GitHub connection identity is not linked")
+	}
+	principals, err := c.listPrincipals(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	for _, principal := range principals {
+		if principal.ID == principalID {
+			return applicationUserID(principal), principal.ID, nil
+		}
+	}
+	return "", "", errors.New("principal for GitHub connection identity not found")
+}
+
 // PrincipalIDForUser resolves the stable principal used by linked identities.
 func (c *GitHubConnectionsController) PrincipalIDForUser(ctx context.Context, user *entities.User) (string, error) {
 	principal, err := c.loadPrincipalForUser(ctx, user)

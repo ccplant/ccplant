@@ -182,13 +182,15 @@ func TestStartSessionReturnsQuotaExceeded(t *testing.T) {
 
 func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 	tests := []struct {
-		name          string
-		scope         entities.ResourceScope
-		existingToken string
-		credential    *auth.CredentialContext
-		wantToken     string
+		name           string
+		scope          entities.ResourceScope
+		existingToken  string
+		credential     *auth.CredentialContext
+		wantToken      string
+		wantConnection string
 	}{
 		{name: "user scope receives authenticated GitHub token", scope: entities.ScopeUser, credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "oauth-token"}, wantToken: "oauth-token"},
+		{name: "connection credential carries verified routing", scope: entities.ScopeUser, credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "ghec-token", ConnectionID: "ghec"}, wantToken: "ghec-token", wantConnection: "ghec"},
 		{name: "API key is never treated as GitHub token", scope: entities.ScopeUser, credential: &auth.CredentialContext{Kind: auth.CredentialKindAPIKey, Token: "api-key"}, wantToken: ""},
 		{name: "explicit token is preserved", scope: entities.ScopeUser, existingToken: "explicit-token", credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "oauth-token"}, wantToken: "explicit-token"},
 		{name: "team scope excludes user token", scope: entities.ScopeTeam, credential: &auth.CredentialContext{Kind: auth.CredentialKindGitHub, Token: "oauth-token"}, wantToken: ""},
@@ -207,6 +209,9 @@ func TestPopulateGitHubTokenFromAuthHeader(t *testing.T) {
 
 			if startReq.Params.GithubToken != tt.wantToken {
 				t.Fatalf("GithubToken = %q, want %q", startReq.Params.GithubToken, tt.wantToken)
+			}
+			if startReq.Params.ConnectionID != tt.wantConnection {
+				t.Fatalf("ConnectionID = %q, want %q", startReq.Params.ConnectionID, tt.wantConnection)
 			}
 		})
 	}
