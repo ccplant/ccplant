@@ -49,6 +49,7 @@
       "required": ["replicaCount", "image", "serviceAccount", "kvStore", "redis", "encryption", "workerControl", "sessionManager"],
       "properties": {
         "replicaCount": { "type": "integer", "minimum": 1 },
+        "metrics": { "$ref": "#/definitions/metrics" },
         "codexDeviceAuth": {
           "type": "object",
           "required": ["callbackBaseUrl"],
@@ -197,6 +198,7 @@
         "autoUpgrade": { "type": "boolean" },
         "replicaCount": { "type": "integer", "minimum": 0 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "metrics": { "$ref": "#/definitions/metrics" },
         "apiUrl": { "type": "string" },
         "image": { "$ref": "#/definitions/image" },
         "imagePullSecrets": { "type": "array" },
@@ -336,6 +338,15 @@
     }
   ],
   "definitions": {
+    "metrics": {
+      "type": "object",
+      "required": ["enabled", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,

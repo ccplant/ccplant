@@ -23,7 +23,12 @@
 {{- $codexDeviceAuth := $api.codexDeviceAuth | default dict }}
 {{- $githubBroker := $api.githubBroker | default dict }}
 {{- $apiImage := $api.image | default .Values.image }}
-{{- $apiPodAnnotations := $api.podAnnotations | default .Values.podAnnotations }}
+{{- $apiPodAnnotations := deepCopy ($api.podAnnotations | default .Values.podAnnotations | default dict) }}
+{{- if (dig "enabled" false ($api.metrics | default dict)) }}
+{{- $_ := set $apiPodAnnotations "prometheus.io/scrape" "true" }}
+{{- $_ := set $apiPodAnnotations "prometheus.io/port" (dig "port" 9090 ($api.metrics | default dict) | toString) }}
+{{- $_ := set $apiPodAnnotations "prometheus.io/path" "/metrics" }}
+{{- end }}
 {{- $apiPodLabels := $api.podLabels | default .Values.podLabels }}
 {{- $apiPodSecurityContext := $api.podSecurityContext | default .Values.podSecurityContext }}
 {{- $apiSecurityContext := $api.securityContext | default .Values.securityContext }}
@@ -213,11 +218,23 @@ spec:
           image: {{ include "agentapi-proxy.apiImage" . | quote }}
           imagePullPolicy: {{ $apiImage.pullPolicy | default .Values.image.pullPolicy }}
           command: ["/usr/local/bin/ccplant"]
+          {{- if (dig "enabled" false ($api.metrics | default dict)) }}
+          args:
+            - server
+            - --metrics-port
+            - {{ dig "port" 9090 ($api.metrics | default dict) | quote }}
+          {{- else }}
           args: ["server"]
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if (dig "enabled" false ($api.metrics | default dict)) }}
+            - name: metrics
+              containerPort: {{ dig "port" 9090 ($api.metrics | default dict) }}
+              protocol: TCP
+            {{- end }}
           env:
             - {name: AGENTAPI_VERSION, value: {{ .Chart.AppVersion | quote }}}
             - name: HOME

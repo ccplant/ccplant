@@ -11,6 +11,12 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    {{- if (dig "enabled" false (.Values.api.metrics | default dict)) }}
+    - port: {{ dig "port" 9090 (.Values.api.metrics | default dict) }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+    {{- end }}
   selector:
     {{- include "agentapi-proxy.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: proxy

@@ -1,6 +1,12 @@
 {{- $sessionPersistence := .Values.sessionPersistence | default dict -}}
 {{- $sessionPersistenceBackend := $sessionPersistence.backend | default "" -}}
 {{- $sessionPersistenceS3 := $sessionPersistence.s3 | default dict -}}
+{{- $podAnnotations := deepCopy (.Values.podAnnotations | default dict) -}}
+{{- if .Values.metrics.enabled -}}
+{{- $_ := set $podAnnotations "prometheus.io/scrape" "true" -}}
+{{- $_ := set $podAnnotations "prometheus.io/port" (.Values.metrics.port | toString) -}}
+{{- $_ := set $podAnnotations "prometheus.io/path" "/metrics" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,7 +29,7 @@ spec:
       labels:
         {{- include "session-manager.selectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
-      {{- with .Values.podAnnotations }}
+      {{- with $podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -41,12 +47,22 @@ spec:
           image: {{ include "session-manager.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/usr/local/bin/ccplant"]
-          args: ["session-manager", "--port", {{ .Values.service.port | quote }}]
+          args:
+            - session-manager
+            - --port
+            - {{ .Values.service.port | quote }}
+            {{- if .Values.metrics.enabled }}
+            - --metrics-port
+            - {{ .Values.metrics.port | quote }}
+            {{- end }}
           {{- with .Values.securityContext }}
           securityContext: {{ toYaml . | nindent 12 }}
           {{- end }}
           ports:
             - {name: http, containerPort: {{ .Values.service.port }}, protocol: TCP}
+            {{- if .Values.metrics.enabled }}
+            - {name: metrics, containerPort: {{ .Values.metrics.port }}, protocol: TCP}
+            {{- end }}
           env:
             - {name: AGENTAPI_SESSION_MANAGER_AUTO_UPGRADE, value: {{ .Values.autoUpgrade | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_DEPLOYMENT_NAME, value: {{ include "session-manager.fullname" . | quote }}}

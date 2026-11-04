@@ -21,6 +21,10 @@ service:
   type: ClusterIP
   port: 8080
 
+metrics:
+  enabled: true
+  port: 9090
+
 ingress:
   enabled: false
   className: ""

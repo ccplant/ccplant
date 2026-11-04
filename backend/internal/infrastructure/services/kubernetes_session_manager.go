@@ -1724,6 +1724,44 @@ func (m *KubernetesSessionManager) ListRunnerSessionIDs(ctx context.Context) ([]
 	return ids, nil
 }
 
+// RunnerStatusCounts returns the local runner inventory grouped into the
+// operator-facing idle, running and offline states.
+func (m *KubernetesSessionManager) RunnerStatusCounts(ctx context.Context) (map[string]int, error) {
+	selector := m.managerScopedSelector("app.kubernetes.io/managed-by=agentapi-proxy,app.kubernetes.io/name=agentapi-session,agentapi.proxy/session-pool")
+	services, err := m.client.CoreV1().Services(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("list runner services for metrics: %w", err)
+	}
+	pods, err := m.client.CoreV1().Pods(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("list runner pods for metrics: %w", err)
+	}
+	live := make(map[string]bool, len(pods.Items))
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning {
+			live[pod.Labels["agentapi.proxy/session-id"]] = true
+		}
+	}
+	counts := map[string]int{"idle": 0, "running": 0, "offline": 0}
+	for i := range services.Items {
+		service := &services.Items[i]
+		if service.DeletionTimestamp != nil {
+			continue
+		}
+		id := service.Labels["agentapi.proxy/session-id"]
+		switch {
+		case !live[id]:
+			counts["offline"]++
+		case service.Labels["agentapi.proxy/stock"] == "true":
+			counts["idle"]++
+		default:
+			counts["running"]++
+		}
+	}
+	return counts, nil
+}
+
 // DeleteRunnerSessionsNotRegistered removes local runner workloads whose
 // durable registration no longer exists on the parent. A runner is registered
 // before its Service is created, so a newly-created workload cannot be removed
