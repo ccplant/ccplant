@@ -23,7 +23,7 @@ func TestRestartAllowsFullConfigurationAndCredentialReplacement(t *testing.T) {
 	}
 }
 func TestRestartRejectsUnsupportedAgentsAndRepositoryChanges(t *testing.T) {
-	for _, agent := range []string{"cursor", "pi-ollama", ""} {
+	for _, agent := range []string{"cursor", "pi", ""} {
 		s := &SessionSettings{Session: SessionMeta{AgentType: agent}}
 		if ValidateRestart(s, s) == nil {
 			t.Fatalf("accepted %q", agent)

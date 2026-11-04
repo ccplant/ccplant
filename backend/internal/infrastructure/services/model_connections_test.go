@@ -71,8 +71,8 @@ func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 	require.Equal(t, "claude-model", claude.Env["ANTHROPIC_MODEL"])
 
 	pi := &sessionsettings.SessionSettings{}
-	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi-ollama", Model: "ollama/model"})
-	require.Equal(t, "ollama/model", pi.Env["PI_OLLAMA_MODEL"])
+	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi", Model: "ollama/model"})
+	require.Equal(t, "ollama/model", pi.Env["PI_MODEL"])
 }
 
 func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {
@@ -262,6 +262,6 @@ func TestCodexModelOptionsEnv(t *testing.T) {
 	require.NotContains(t, claude.Env, sessionsettings.CodexModelOptionsEnv)
 
 	pi := &sessionsettings.SessionSettings{}
-	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi-ollama", ModelOptions: []string{"ollama/model"}})
+	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi", ModelOptions: []string{"ollama/model"}})
 	require.NotContains(t, pi.Env, sessionsettings.CodexModelOptionsEnv)
 }

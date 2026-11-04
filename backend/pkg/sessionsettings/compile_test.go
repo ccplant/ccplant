@@ -1054,7 +1054,7 @@ func TestCompile_CodexMCPServers(t *testing.T) {
 }
 
 func TestCompile_PiMCPConfig(t *testing.T) {
-	t.Run("writes shared mcp config for pi-ollama", func(t *testing.T) {
+	t.Run("writes shared mcp config for pi", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "compile-pi-mcp-*")
 		require.NoError(t, err)
 		defer func() { _ = os.RemoveAll(tmpDir) }()
@@ -1064,7 +1064,7 @@ func TestCompile_PiMCPConfig(t *testing.T) {
 				ID:        "test-pi-mcp",
 				UserID:    "user-pi-mcp",
 				Scope:     "user",
-				AgentType: "pi-ollama",
+				AgentType: "pi",
 			},
 			Claude: ClaudeConfig{
 				MCPServers: map[string]interface{}{

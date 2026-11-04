@@ -8,7 +8,7 @@ const agentOptions = [
   { value: 'auto', label: '自動選択' },
   { value: 'claude-acp', label: 'Claude ACP' },
   { value: 'codex-acp', label: 'Codex ACP' },
-  { value: 'pi-ollama', label: 'Pi Ollama' },
+  { value: 'pi', label: 'Pi' },
   { value: 'cursor', label: 'Cursor ACP' },
 ]
 

@@ -94,10 +94,10 @@ func TestNormalizeNativeSettingsUsesManagedBinary(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CCPLANT_BINARY_PATH", "/usr/local/libexec/agentapi-proxy/agentapi-proxy")
 	settings := &sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
+		Session: sessionsettings.SessionMeta{AgentType: "pi"},
 		Env: map[string]string{
 			"CCPLANT_BINARY_PATH": "ccplant",
-			"PI_ACP_PI_COMMAND":   "/home/agentapi/.session/pi-ollama-pi",
+			"PI_ACP_PI_COMMAND":   "/home/agentapi/.session/pi-pi",
 		},
 	}
 
@@ -106,20 +106,17 @@ func TestNormalizeNativeSettingsUsesManagedBinary(t *testing.T) {
 	if got := settings.Env["CCPLANT_BINARY_PATH"]; got != "/usr/local/libexec/agentapi-proxy/agentapi-proxy" {
 		t.Fatalf("CCPLANT_BINARY_PATH = %q", got)
 	}
-	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != filepath.Join(home, ".session", "pi-ollama-pi") {
+	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != "pi" {
 		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
 	}
 }
 
-func TestBuildAgentCommandPiOllama(t *testing.T) {
+func TestBuildAgentCommandPi(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
-	origCommandPath := piOllamaCommandPath
-	piOllamaCommandPath = filepath.Join(t.TempDir(), "pi-ollama-pi")
-	t.Cleanup(func() { piOllamaCommandPath = origCommandPath })
 	env := map[string]string{"OPENAI_API_KEY": "openai-key"}
 
 	cmd, args := (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
+		Session: sessionsettings.SessionMeta{AgentType: "pi"},
 	}, env)
 
 	if cmd != "ccplant" {
@@ -132,27 +129,20 @@ func TestBuildAgentCommandPiOllama(t *testing.T) {
 	if _, ok := env["OLLAMA_API_KEY"]; ok {
 		t.Fatalf("OLLAMA_API_KEY should not be synthesized")
 	}
-	if got := env["PI_ACP_PI_COMMAND"]; got != piOllamaCommandPath {
+	if got := env["PI_ACP_PI_COMMAND"]; got != "pi" {
 		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
-	}
-	content, err := os.ReadFile(piOllamaCommandPath)
-	if err != nil {
-		t.Fatalf("failed to read pi-ollama wrapper: %v", err)
-	}
-	if !strings.Contains(string(content), `exec pi --model "$model" "$@"`) {
-		t.Fatalf("wrapper does not pass model args to pi: %s", string(content))
 	}
 }
 
-func TestBuildAgentCommandPiOllamaPreservesExplicitModel(t *testing.T) {
+func TestBuildAgentCommandPiPreservesExplicitModel(t *testing.T) {
 	t.Setenv("AGENTAPI_PORT", "9000")
 	env := map[string]string{
 		"PI_ACP_PI_COMMAND": "/custom/pi-wrapper",
-		"PI_OLLAMA_MODEL":   "ollama-cloud/gpt-oss:120b",
+		"PI_MODEL":          "ollama-cloud/gpt-oss:120b",
 	}
 
 	_, _ = (&Server{}).buildAgentCommand(&sessionsettings.SessionSettings{
-		Session: sessionsettings.SessionMeta{AgentType: "pi-ollama"},
+		Session: sessionsettings.SessionMeta{AgentType: "pi"},
 	}, env)
 
 	if got := env["PI_ACP_PI_COMMAND"]; got != "/custom/pi-wrapper" {

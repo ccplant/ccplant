@@ -18,8 +18,13 @@ func applyProfileConnections(cfg *entities.SessionProfileConfig, previous entiti
 	if err != nil {
 		return err
 	}
+	pi, err := mergeProfileConnection(previous.PiConnection(), request.PiConnection, "pi")
+	if err != nil {
+		return err
+	}
 	cfg.SetCodexConnection(codex)
 	cfg.SetClaudeConnection(claude)
+	cfg.SetPiConnection(pi)
 	return nil
 }
 

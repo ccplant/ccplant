@@ -29,11 +29,11 @@ type ollamaCloudModelCache struct {
 	Models    map[string]json.RawMessage `json:"models"`
 }
 
-func shouldRefreshPiOllamaCloud(settings *SessionSettings) bool {
+func shouldRefreshPiCloud(settings *SessionSettings) bool {
 	if settings == nil {
 		return false
 	}
-	if settings.Session.AgentType == "pi-ollama" {
+	if settings.Session.AgentType == "pi" {
 		return true
 	}
 	for key, value := range settings.Env {
@@ -44,7 +44,7 @@ func shouldRefreshPiOllamaCloud(settings *SessionSettings) bool {
 	return false
 }
 
-func refreshPiOllamaCloudCache(env map[string]string, outputDir string) error {
+func refreshPiCloudCache(env map[string]string, outputDir string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(env["OLLAMA_API_BASE"]), "/")
 	if baseURL == "" {
 		baseURL = defaultOllamaCloudBaseURL

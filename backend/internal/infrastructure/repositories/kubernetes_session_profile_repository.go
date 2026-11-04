@@ -55,6 +55,7 @@ type sessionProfileConfigJSON struct {
 	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
 	CodexConnection        *connectionJSON              `json:"codex_connection,omitempty"`
 	ClaudeConnection       *connectionJSON              `json:"claude_connection,omitempty"`
+	PiConnection           *connectionJSON              `json:"pi_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -70,6 +71,7 @@ type sessionProfileConfigJSON struct {
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
 	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
 	Skills                 []string                     `json:"skills,omitempty"`
+	PiPackages             []string                     `json:"pi_packages,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*mcpServerJSON    `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
@@ -281,7 +283,7 @@ func (r *KubernetesSessionProfileRepository) loadProfiles(ctx context.Context, f
 func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, profile *entities.SessionProfile) error {
 	pj := r.entityToJSON(profile)
 	cfg := profile.Config()
-	for _, c := range []*modelprovider.Connection{cfg.CodexConnection(), cfg.ClaudeConnection()} {
+	for _, c := range []*modelprovider.Connection{cfg.CodexConnection(), cfg.ClaudeConnection(), cfg.PiConnection()} {
 		if c != nil && c.APIKey != "" {
 			svc := r.connections.encryptionSvc()
 			if svc == nil || svc.Algorithm() == "noop" {
@@ -295,6 +297,10 @@ func (r *KubernetesSessionProfileRepository) saveProfile(ctx context.Context, pr
 		return err
 	}
 	pj.Config.ClaudeConnection, err = r.connections.encodeConnection(ctx, cfg.ClaudeConnection())
+	if err != nil {
+		return err
+	}
+	pj.Config.PiConnection, err = r.connections.encodeConnection(ctx, cfg.PiConnection())
 	if err != nil {
 		return err
 	}
@@ -381,6 +387,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetSecretIDs(pj.Config.SecretIDs)
 	cfg.SetGitHubRepositories(pj.Config.GitHubRepositories)
 	cfg.SetSkills(pj.Config.Skills)
+	cfg.SetPiPackages(pj.Config.PiPackages)
 	cfg.SetSessionState(pj.Config.SessionState)
 	cfg.SetProfileFiles(pj.Config.Files)
 	if pj.Config.MCPServers != nil {
@@ -439,6 +446,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			SecretIDs:              cfg.SecretIDs(),
 			GitHubRepositories:     cfg.GitHubRepositories(),
 			Skills:                 cfg.Skills(),
+			PiPackages:             cfg.PiPackages(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
@@ -457,10 +465,15 @@ func (r *KubernetesSessionProfileRepository) decodeProfile(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	pi, err := r.connections.decodeConnection(ctx, pj.Config.PiConnection)
+	if err != nil {
+		return nil, err
+	}
 	p := r.jsonToEntity(pj)
 	cfg := p.Config()
 	cfg.SetCodexConnection(codex)
 	cfg.SetClaudeConnection(claude)
+	cfg.SetPiConnection(pi)
 	p.SetConfig(cfg)
 	p.SetUpdatedAt(pj.UpdatedAt)
 	return p, nil

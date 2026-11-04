@@ -218,8 +218,8 @@ func applyModelConnections(settings *sessionsettings.SessionSettings, req *entit
 		}
 	case "", "claude-acp", "claude-legacy", "claude":
 		settings.Env["ANTHROPIC_MODEL"] = req.Model
-	case "pi-ollama":
-		settings.Env["PI_OLLAMA_MODEL"] = req.Model
+	case "pi":
+		settings.Env["PI_MODEL"] = req.Model
 	}
 }
 

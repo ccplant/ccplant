@@ -239,7 +239,7 @@ func ResolveSkillInstallPlan(agentType string, skills []ResolvedSkill) (SkillIns
 | --- | --- | --- | --- |
 | `claude-acp`, `claude-legacy` | `claude-code` | `~/.claude/skills/<name>` | Claude plugin install のみ。Codex への copy はしない |
 | `codex-acp` | `codex` | `~/.codex/skills/<name>` | plugin bundle の portable skill だけ Codex 用に materialize |
-| `pi`, `pi-ollama` | 対応外 | なし | 暗黙に Codex skill を symlink しない。別 capability として設計する |
+| `pi`, `pi` | 対応外 | なし | 暗黙に Codex skill を symlink しない。別 capability として設計する |
 | `cursor`、未知の type | 対応外 | なし | skill 指定があれば起動前に unsupported error |
 
 skills.sh CLI を importer または materializer の実装に利用する場合も、`--agent '*'` は使わない。

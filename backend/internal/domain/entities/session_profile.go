@@ -27,6 +27,7 @@ type SessionProfileConfig struct {
 	settingsTeamID         string
 	codexConnection        *modelprovider.Connection
 	claudeConnection       *modelprovider.Connection
+	piConnection           *modelprovider.Connection
 	environment            map[string]string
 	tags                   map[string]string
 	pool                   string
@@ -52,6 +53,7 @@ type SessionProfileConfig struct {
 	secretIDs          []string
 	githubRepositories []string
 	skills             []string
+	piPackages         []string
 	files              []ProfileFile
 	mcpServers         *MCPServersSettings
 	sessionState       *SessionStateConfig
@@ -376,6 +378,14 @@ func (c *SessionProfileConfig) Skills() []string { return copyStringSlice(c.skil
 // SetSkills sets skills.sh package sources contributed by this profile.
 func (c *SessionProfileConfig) SetSkills(skills []string) { c.skills = copyStringSlice(skills) }
 
+// PiPackages returns Pi packages installed before a Pi session starts.
+func (c *SessionProfileConfig) PiPackages() []string { return copyStringSlice(c.piPackages) }
+
+// SetPiPackages sets Pi package sources (for example git:github.com/org/pi-harness@v1).
+func (c *SessionProfileConfig) SetPiPackages(packages []string) {
+	c.piPackages = copyStringSlice(packages)
+}
+
 // ProfileFiles returns files managed by this profile.
 func (c *SessionProfileConfig) ProfileFiles() []ProfileFile {
 	files := make([]ProfileFile, len(c.files))
@@ -460,6 +470,12 @@ func (c *SessionProfileConfig) SetCodexConnection(v *modelprovider.Connection) {
 }
 func (c *SessionProfileConfig) SetClaudeConnection(v *modelprovider.Connection) {
 	c.claudeConnection = v.Clone()
+}
+func (c *SessionProfileConfig) PiConnection() *modelprovider.Connection {
+	return c.piConnection.Clone()
+}
+func (c *SessionProfileConfig) SetPiConnection(v *modelprovider.Connection) {
+	c.piConnection = v.Clone()
 }
 
 func (c *SessionProfileConfig) SettingsTeamID() string      { return c.settingsTeamID }

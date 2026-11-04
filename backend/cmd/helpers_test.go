@@ -38,13 +38,13 @@ func TestBuildStartupConfigCursor(t *testing.T) {
 	assert.Equal(t, []string{"acp-server", "--auto-approve", "--raw-json-log", "--", "agent", "acp"}, config.Args)
 }
 
-func TestBuildStartupConfigPiOllama(t *testing.T) {
-	config := buildStartupConfig("pi-ollama", nil)
+func TestBuildStartupConfigPi(t *testing.T) {
+	config := buildStartupConfig("pi", nil)
 
 	assert.Equal(t, []string{"ccplant"}, config.Command)
 	assert.Equal(t, []string{"acp-server", "--", "pi-acp"}, config.Args)
 	assert.NotEmpty(t, config.PreScript)
-	assert.Contains(t, config.PreScript, "node_modules/pi-ollama-cloud")
+	assert.NotContains(t, config.PreScript, "pi-cloud")
 	assert.Contains(t, config.PreScript, "node_modules/pi-mcp-adapter")
 	assert.Contains(t, config.PreScript, "skipping install")
 }

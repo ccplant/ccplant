@@ -9955,7 +9955,7 @@
               "auto",
               "claude-acp",
               "codex-acp",
-              "pi-ollama",
+              "pi",
               "cursor"
             ],
             "description": "Default agent type for sessions in this settings scope. Team sessions use this value when agent_type is omitted; empty string uses auto."
@@ -10168,7 +10168,7 @@
               "auto",
               "claude-acp",
               "codex-acp",
-              "pi-ollama",
+              "pi",
               "cursor"
             ],
             "description": "Default agent type for sessions in this settings scope."
@@ -11542,6 +11542,20 @@
             }
           }
         },
+        "pi_connection": {
+          "type": "object",
+          "nullable": true,
+          "description": "Profile-owned OpenAI-compatible API connection materialized as Pi settings.json and models.json.",
+          "required": ["mode"],
+          "properties": {
+            "mode": { "type": "string", "enum": ["openai_compatible"] },
+            "base_url": { "type": "string", "format": "uri" },
+            "authentication": { "type": "string", "enum": ["api_key", "none"] },
+            "api_key": { "type": "string", "writeOnly": true, "description": "Encrypted at rest. Omitted preserves this profile’s stored key." },
+            "has_api_key": { "type": "boolean", "readOnly": true },
+            "model": { "type": "string" }
+          }
+        },
         "environment": {
           "type": "object",
           "additionalProperties": {
@@ -11623,6 +11637,12 @@
           "items": {
             "type": "string"
           },
+          "uniqueItems": true
+        },
+        "pi_packages": {
+          "type": "array",
+          "description": "Pi package sources installed before Pi starts, including Git packages such as git:github.com/org/pi-harness@v1.",
+          "items": { "type": "string" },
           "uniqueItems": true
         },
         "files": {

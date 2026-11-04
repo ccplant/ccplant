@@ -9,14 +9,14 @@ import (
 	"testing"
 )
 
-func TestShouldRefreshPiOllamaCloud(t *testing.T) {
+func TestShouldRefreshPiCloud(t *testing.T) {
 	tests := []struct {
 		name     string
 		settings *SessionSettings
 		want     bool
 	}{
 		{name: "nil", settings: nil, want: false},
-		{name: "pi ollama agent", settings: &SessionSettings{Session: SessionMeta{AgentType: "pi-ollama"}}, want: true},
+		{name: "pi ollama agent", settings: &SessionSettings{Session: SessionMeta{AgentType: "pi"}}, want: true},
 		{name: "default provider", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_PROVIDER": "ollama-cloud"}}, want: true},
 		{name: "model only", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_MODEL": "glm-5.2:cloud"}}, want: true},
 		{name: "other provider", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_PROVIDER": "openai"}}, want: true},
@@ -26,14 +26,14 @@ func TestShouldRefreshPiOllamaCloud(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldRefreshPiOllamaCloud(tt.settings); got != tt.want {
-				t.Fatalf("shouldRefreshPiOllamaCloud() = %v, want %v", got, tt.want)
+			if got := shouldRefreshPiCloud(tt.settings); got != tt.want {
+				t.Fatalf("shouldRefreshPiCloud() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestRefreshPiOllamaCloudCache(t *testing.T) {
+func TestRefreshPiCloudCache(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("unexpected authorization header: %q", r.Header.Get("Authorization"))
@@ -54,9 +54,9 @@ func TestRefreshPiOllamaCloudCache(t *testing.T) {
 	defer server.Close()
 
 	outputDir := t.TempDir()
-	err := refreshPiOllamaCloudCache(map[string]string{"OLLAMA_API_BASE": server.URL, "OLLAMA_API_KEY": "test-key"}, outputDir)
+	err := refreshPiCloudCache(map[string]string{"OLLAMA_API_BASE": server.URL, "OLLAMA_API_KEY": "test-key"}, outputDir)
 	if err != nil {
-		t.Fatalf("refreshPiOllamaCloudCache() error = %v", err)
+		t.Fatalf("refreshPiCloudCache() error = %v", err)
 	}
 	cachePath := filepath.Join(outputDir, ".pi", "agent", "cache", "ollama-cloud-models.json")
 	data, err := os.ReadFile(cachePath)
@@ -79,7 +79,7 @@ func TestRefreshPiOllamaCloudCache(t *testing.T) {
 	}
 }
 
-func TestRefreshPiOllamaCloudCachePreservesExistingCacheOnFailure(t *testing.T) {
+func TestRefreshPiCloudCachePreservesExistingCacheOnFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))
@@ -93,8 +93,8 @@ func TestRefreshPiOllamaCloudCachePreservesExistingCacheOnFailure(t *testing.T) 
 	if err := os.WriteFile(cachePath, []byte("existing"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := refreshPiOllamaCloudCache(map[string]string{"OLLAMA_API_BASE": server.URL}, outputDir); err == nil {
-		t.Fatal("refreshPiOllamaCloudCache() error = nil, want error")
+	if err := refreshPiCloudCache(map[string]string{"OLLAMA_API_BASE": server.URL}, outputDir); err == nil {
+		t.Fatal("refreshPiCloudCache() error = nil, want error")
 	}
 	data, err := os.ReadFile(cachePath)
 	if err != nil {

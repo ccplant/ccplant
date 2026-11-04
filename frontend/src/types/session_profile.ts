@@ -39,6 +39,7 @@ export interface SessionProfileConfig {
   settings_team_id?: string;
   codex_connection?: ModelConnection | null;
   claude_connection?: ModelConnection | null;
+  pi_connection?: ModelConnection | null;
   environment?: Record<string, string>;
   tags?: Record<string, string>;
   pool?: string;
@@ -54,6 +55,7 @@ export interface SessionProfileConfig {
   secret_ids?: string[];
   github_repositories?: string[]; // clone を許可する owner/repository 全体に適用する RE2 正規表現
   skills?: string[];
+  pi_packages?: string[];
   files?: ProfileFile[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
   session_state?: SessionStateConfig;

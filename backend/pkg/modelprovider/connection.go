@@ -124,6 +124,13 @@ func (c *Connection) Validate(agent string) error {
 		if c.ContextWindow != nil || c.AutoCompactTokenLimit != nil || c.SupportsReasoningSummaries != nil {
 			return fmt.Errorf("Codex model metadata is not supported for Claude Code")
 		}
+	case "pi":
+		if c.Mode != "openai_compatible" {
+			return fmt.Errorf("invalid Pi connection mode")
+		}
+		if c.WebSearchEnabled != nil || len(c.ModelAliases) > 0 {
+			return fmt.Errorf("unsupported Pi connection option")
+		}
 	default:
 		return fmt.Errorf("invalid agent")
 	}
@@ -157,7 +164,7 @@ func (c *Connection) Validate(agent string) error {
 	if err := ValidateModel(c.Model); err != nil {
 		return err
 	}
-	validAuthentication := c.Authentication == "api_key" || (agent == "codex" && c.Authentication == "none")
+	validAuthentication := c.Authentication == "api_key" || ((agent == "codex" || agent == "pi") && c.Authentication == "none")
 	if !validAuthentication {
 		return fmt.Errorf("invalid connection authentication")
 	}
@@ -188,7 +195,8 @@ func (c *Connection) Validate(agent string) error {
 func ValidateDefaultModels(agent string, models map[string]string) error {
 	for mode, model := range models {
 		validMode := (agent == "codex" && (mode == "auth_json" || mode == "openai_compatible")) ||
-			(agent == "claude" && (mode == "oauth" || mode == "bedrock" || mode == "anthropic_compatible"))
+			(agent == "claude" && (mode == "oauth" || mode == "bedrock" || mode == "anthropic_compatible")) ||
+			(agent == "pi" && mode == "openai_compatible")
 		if !validMode {
 			return fmt.Errorf("invalid default model authentication mode")
 		}
