@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -375,21 +377,32 @@ func (c *SessionPoolController) DeleteAdminRunner(ctx echo.Context) error {
 		}
 	}
 
-	var sessionID string
 	runner, runnerErr := c.store.GetRunner(requestCtx, runnerID)
-	if runnerErr == nil && runner.ManagerID == managerID {
-		allocations, listErr := c.store.ListAllocations(requestCtx, runner.Pool)
+	// Resolve the sessions from the allocations even when the runner record is
+	// already gone (e.g. a retry after a partial delete): otherwise their routes
+	// cannot be matched and survive as undeletable stale sessions.
+	sessionIDs := make(map[string]bool)
+	runnerOwned := runnerErr == nil && runner.ManagerID == managerID
+	if runnerOwned || errors.Is(runnerErr, core.ErrNotFound) {
+		pool := ""
+		if runnerOwned {
+			pool = runner.Pool
+		}
+		allocations, listErr := c.store.ListAllocations(requestCtx, pool)
 		if listErr != nil {
 			return sessionRunnerStoreError(listErr)
 		}
 		for _, allocation := range allocations {
-			if allocation.RunnerID == runnerID {
-				sessionID = allocation.SessionID
-				if err := c.store.DeleteAllocation(requestCtx, allocation.SessionID); err != nil && err != core.ErrNotFound {
-					return sessionRunnerStoreError(err)
-				}
+			if allocation.RunnerID != runnerID || (!runnerOwned && allocation.ManagerID != managerID) {
+				continue
+			}
+			sessionIDs[allocation.SessionID] = true
+			if err := c.store.DeleteAllocation(requestCtx, allocation.SessionID); err != nil && err != core.ErrNotFound {
+				return sessionRunnerStoreError(err)
 			}
 		}
+	}
+	if runnerOwned {
 		if err := c.store.DeleteRunner(requestCtx, runnerID); err != nil && err != core.ErrNotFound {
 			return sessionRunnerStoreError(err)
 		}
@@ -400,10 +413,17 @@ func (c *SessionPoolController) DeleteAdminRunner(ctx echo.Context) error {
 		if listErr != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to list session routes").SetInternal(listErr)
 		}
+		configurations, _ := c.store.(sessionConfigurationDeleter)
 		for _, route := range routes {
-			if route.ManagerID == managerID && (route.RemoteSessionID == runnerID || route.SessionID == sessionID) {
+			if route.ManagerID == managerID && (route.RemoteSessionID == runnerID || sessionIDs[route.SessionID]) {
 				if err := c.routes.Delete(requestCtx, route.SessionID); err != nil {
 					return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete session route").SetInternal(err)
+				}
+				// The saved startup input has no other owner once the route is gone.
+				if configurations != nil {
+					if err := configurations.DeleteConfiguration(requestCtx, route.SessionID); err != nil {
+						log.Printf("[SESSION_RUNNER] Failed to delete configuration for session %s: %v", route.SessionID, err)
+					}
 				}
 			}
 		}

@@ -257,6 +257,17 @@ type Configuration struct {
 	Version         int64     `json:"-"`
 }
 
+// ConfigurationRef is the lifecycle metadata of a saved session configuration.
+// It deliberately omits the startup input and settings so garbage collection
+// can reason about configurations without handling their sensitive payload.
+type ConfigurationRef struct {
+	SessionID string
+	UpdatedAt time.Time
+	// HasOwner reports whether the configuration is bound to a canonical
+	// per-session resource whose deletion removes it (Kubernetes owner GC).
+	HasOwner bool
+}
+
 // OwnerReference is the storage-neutral subset of a Kubernetes owner reference
 // needed to tie per-session configuration to its canonical session resource.
 type OwnerReference struct {
