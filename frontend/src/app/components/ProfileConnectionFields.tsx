@@ -17,7 +17,7 @@ export default function ProfileConnectionFields({ agent, value, onChange }: {
         mode: agent === 'claude' ? 'anthropic_compatible' : 'openai_compatible',
         base_url: '', authentication: 'api_key', model: '',
       } : null)} />
-      このプロファイル専用の接続先・API キーを使う
+      {agent === 'pi' ? 'Pi 専用の接続先・API キーを使う' : 'このプロファイル専用の接続先・API キーを使う'}
     </label>
     {!value && <p className="text-xs text-gray-500">接続先・API キーはベースの設定を使用します。</p>}
     {value && <>
