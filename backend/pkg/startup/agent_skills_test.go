@@ -23,6 +23,21 @@ func TestResolveSkillsAgent(t *testing.T) {
 	}
 }
 
+func TestSyncSkipsSkillsPackagesForPi(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"skills":["owner/repository"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Sync(SyncOptions{OutputDir: dir, AgentType: "pi"}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+}
+
 func TestInstallSkillsPackagesSelectsOneAgent(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")
