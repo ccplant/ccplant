@@ -44,7 +44,7 @@ function normalizeAgentStatus(raw: string): 'stable' | 'running' | 'error' {
 }
 
 function isACPAgentType(agentType?: string | null): boolean {
-  return !!agentType && (agentType.includes('acp') || agentType === 'pi-ollama' || agentType === 'cursor');
+  return !!agentType && (agentType.includes('acp') || agentType === 'pi' || agentType === 'cursor');
 }
 
 // Type guard function to validate session message response

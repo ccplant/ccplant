@@ -210,7 +210,7 @@ func patchClaudeJSON(outputDir string, extra map[string]interface{}) error {
 // generatePiMCPConfig creates ~/.config/mcp/mcp.json for pi-mcp-adapter.
 // pi-mcp-adapter reads this shared MCP config automatically on first use.
 func generatePiMCPConfig(outputDir string, agentType string, mcpServers map[string]interface{}) error {
-	if agentType != "pi-ollama" || len(mcpServers) == 0 {
+	if agentType != "pi" || len(mcpServers) == 0 {
 		return nil
 	}
 

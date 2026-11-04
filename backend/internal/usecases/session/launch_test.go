@@ -9,6 +9,7 @@ import (
 
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
 
@@ -256,6 +257,25 @@ func TestLaunchPropagatesProfileSkills(t *testing.T) {
 	}
 	if got := sessionManager.req.ProfileSkills; len(got) != 1 || got[0] != "org/profile-skills" {
 		t.Fatalf("ProfileSkills = %#v", got)
+	}
+}
+
+func TestLaunchMaterializesPiProfilePackagesAndConnection(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "pi", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPiPackages([]string{"git:github.com/org/pi-harness@v1"})
+	cfg.SetPiConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://gateway.example/v1", Model: "custom-model", Authentication: "api_key", APIKey: "secret"})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}})
+	if _, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser, AgentType: "pi"}); err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	env := sessionManager.req.ProfileEnvironment
+	if env["CCPLANT_PI_PACKAGES"] != "git:github.com/org/pi-harness@v1" || env["PI_CUSTOM_MODEL_BASE_URL"] != "https://gateway.example/v1" || env["PI_API_KEY"] != "secret" {
+		t.Fatalf("unexpected Pi profile environment: %#v", env)
 	}
 }
 

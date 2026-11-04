@@ -26,13 +26,12 @@ import (
 )
 
 const (
-	piOllamaDefaultModel = "glm-5"
-	// webhookPayloadPath is the well-known path where the webhook payload JSON
-	// is exposed inside the session container.
-	// For non-stock sessions this file is provided by a read-only Kubernetes
-	// Secret volume mount.  For stock sessions (pre-warmed pods) the volume is
-	// absent; the provisioner writes the file itself from SessionSettings so
-	// that both paths behave identically.
+// webhookPayloadPath is the well-known path where the webhook payload JSON
+// is exposed inside the session container.
+// For non-stock sessions this file is provided by a read-only Kubernetes
+// Secret volume mount.  For stock sessions (pre-warmed pods) the volume is
+// absent; the provisioner writes the file itself from SessionSettings so
+// that both paths behave identically.
 )
 
 var errSessionStateBackendUnavailable = errors.New("session persistence backend is unavailable")
@@ -43,7 +42,6 @@ var workdirRepoPath = envPath("AGENTAPI_REPO_DIR", filepath.Join(runtimeHome, "w
 var webhookPayloadPath = nativeRuntimePath("webhook", "payload.json", "/opt/webhook/payload.json")
 var codexRequirementsPath = nativeRuntimePath("codex", "requirements.toml", "/etc/codex/requirements.toml")
 var acpHistoryPath = nativeRuntimePath("acp-posts", "history.jsonl", "/opt/acp-posts/history.jsonl")
-var piOllamaCommandPath = filepath.Join(runtimeHome, ".session", "pi-ollama-pi")
 var piAgentInstructionsPath = filepath.Join(runtimeHome, ".pi", "agent", "AGENTS.md")
 var piSettingsPath = filepath.Join(runtimeHome, ".pi", "agent", "settings.json")
 
@@ -118,8 +116,8 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 	settings.Env["AGENTAPI_WORKDIR"] = envPath("AGENTAPI_WORKDIR", filepath.Dir(workdirRepoPath))
 	settings.Env["AGENTAPI_CLONE_DIR"] = workdirRepoPath
 	settings.Env["AGENTAPI_PORT"] = envPath("AGENTAPI_PORT", "8080")
-	if settings.Session.AgentType == "pi-ollama" {
-		settings.Env["PI_ACP_PI_COMMAND"] = currentPiOllamaCommandPath()
+	if settings.Session.AgentType == "pi" {
+		settings.Env["PI_ACP_PI_COMMAND"] = "pi"
 	}
 	if binaryPath := strings.TrimSpace(os.Getenv("CCPLANT_BINARY_PATH")); binaryPath != "" {
 		settings.Env["CCPLANT_BINARY_PATH"] = binaryPath
@@ -1431,12 +1429,12 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 		}
 		return agentapiProxyBinary, append(args, adapterCommand...)
 
-	case "pi-ollama":
+	case "pi":
 		// Start the acp-server bridge that wraps pi-acp via stdio. pi-acp starts
-		// `pi --mode rpc`; the image/pre-script install pi-ollama-cloud so Pi can
-		// talk directly to Ollama Cloud without a local Ollama daemon.
+		// `pi --mode rpc`; provider configuration is generated from the
+		// selected compatible API connection.
 		// https://github.com/svkozak/pi-acp
-		ensurePiOllamaEnv(envMap)
+		ensurePiEnv(envMap)
 		return agentapiProxyBinary, []string{
 			"acp-server",
 			"--port", agentapiPort,
@@ -1475,44 +1473,13 @@ func (s *Server) buildAgentCommand(settings *sessionsettings.SessionSettings, en
 	}
 }
 
-func ensurePiOllamaEnv(envMap map[string]string) {
+func ensurePiEnv(envMap map[string]string) {
 	if envMap == nil {
 		return
 	}
-	commandPath := currentPiOllamaCommandPath()
 	if strings.TrimSpace(envMap["PI_ACP_PI_COMMAND"]) == "" {
-		envMap["PI_ACP_PI_COMMAND"] = commandPath
+		envMap["PI_ACP_PI_COMMAND"] = "pi"
 	}
-	if envMap["PI_ACP_PI_COMMAND"] == commandPath {
-		if err := writePiOllamaCommandWrapper(commandPath); err != nil {
-			log.Printf("[PROVISIONER] Warning: failed to write pi-ollama command wrapper: %v", err)
-		}
-	}
-}
-
-func currentPiOllamaCommandPath() string {
-	if strings.TrimSpace(os.Getenv("AGENTAPI_NATIVE_SESSION_ROOT")) != "" {
-		return filepath.Join(envPath("HOME", runtimeHome), ".session", "pi-ollama-pi")
-	}
-	return piOllamaCommandPath
-}
-
-func writePiOllamaCommandWrapper(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	const script = `#!/bin/sh
-set -e
-model="${PI_OLLAMA_MODEL:-${OLLAMA_MODEL:-` + piOllamaDefaultModel + `}}"
-case "$model" in
-  */*) exec pi --model "$model" "$@" ;;
-  *) exec pi --provider ollama-cloud --model "$model" "$@" ;;
-esac
-`
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o755)
 }
 
 func writePiAgentInstructions(sourcePath, destPath string) error {
@@ -1724,7 +1691,7 @@ type acpMessagesResponse struct {
 // started, replicating the logic of initialMessageSenderScript.
 func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int, restored bool) {
 	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
-	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi-ollama" || agentType == "cursor" {
+	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor" {
 		sendACPInitialMessage(ctx, agentapiURL, message, waitSec, restored)
 		return
 	}

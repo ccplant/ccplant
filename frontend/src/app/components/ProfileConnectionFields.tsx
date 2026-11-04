@@ -4,32 +4,32 @@ import type { ModelConnection } from '../../types/settings'
 import { CodexModelMetadataFields } from '../../components/settings/CodexModelMetadataFields'
 
 export default function ProfileConnectionFields({ agent, value, onChange }: {
-  agent: 'codex' | 'claude'
+  agent: 'codex' | 'claude' | 'pi'
   value: ModelConnection | null
   onChange: (value: ModelConnection | null) => void
 }) {
-  const label = agent === 'codex' ? 'Codex' : 'Claude Code'
+  const label = agent === 'codex' ? 'Codex' : agent === 'claude' ? 'Claude Code' : 'Pi'
   const fieldClass = 'w-full px-3 py-2 text-sm border rounded-lg dark:bg-gray-700 dark:text-white'
   return <fieldset className="mt-3 space-y-3 rounded-lg border border-gray-200 dark:border-gray-600 p-3">
     <legend className="text-sm">{label} の接続設定</legend>
     <label className="flex items-center gap-2 text-sm">
       <input type="checkbox" checked={value !== null} onChange={e => onChange(e.target.checked ? {
-        mode: agent === 'codex' ? 'openai_compatible' : 'anthropic_compatible',
+        mode: agent === 'claude' ? 'anthropic_compatible' : 'openai_compatible',
         base_url: '', authentication: 'api_key', model: '',
       } : null)} />
-      このプロファイル専用の接続先・API キーを使う
+      {agent === 'pi' ? 'Pi 専用の接続先・API キーを使う' : 'このプロファイル専用の接続先・API キーを使う'}
     </label>
     {!value && <p className="text-xs text-gray-500">接続先・API キーはベースの設定を使用します。</p>}
     {value && <>
       <label className="block text-sm">{label} Base URL
         <input type="url" required value={value.base_url ?? ''} onChange={e => onChange({ ...value, base_url: e.target.value })} placeholder={agent === 'codex' ? 'https://ollama.com/v1' : 'https://ollama.com'} className={fieldClass} />
       </label>
-      <label className="block text-sm">{label} API パス
+      {agent !== 'pi' && <><label className="block text-sm">{label} API パス
         <input value={value.endpoint_path ?? ''} onChange={e => onChange({ ...value, endpoint_path: e.target.value })} placeholder={agent === 'codex' ? '/responses' : '/v1/messages'} className={fieldClass} />
       </label>
       <p className="text-xs text-gray-500">Base URL に続くパスを / から指定します。空欄なら {agent === 'codex' ? '/responses' : '/v1/messages'} を使用します。API の形式は {agent === 'codex' ? 'Responses API' : 'Messages API'} のままです。</p>
-      {value.base_url && <p className="break-all text-xs text-gray-500">送信先: {value.base_url.replace(/\/+$/, '')}{value.endpoint_path || (agent === 'codex' ? '/responses' : '/v1/messages')}</p>}
-      {agent === 'codex' && <label className="block text-sm">{label} API 認証方式
+      {value.base_url && <p className="break-all text-xs text-gray-500">送信先: {value.base_url.replace(/\/+$/, '')}{value.endpoint_path || (agent === 'codex' ? '/responses' : '/v1/messages')}</p>}</>}
+      {(agent === 'codex' || agent === 'pi') && <label className="block text-sm">{label} API 認証方式
         <select value={value.authentication ?? 'api_key'} onChange={e => onChange({ ...value, authentication: e.target.value as ModelConnection['authentication'] })} className={fieldClass}>
           <option value="api_key">API キー</option>
           <option value="none">認証なし</option>

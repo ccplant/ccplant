@@ -738,7 +738,7 @@ func TestBuildSessionSettings_CodexACPDisablesNestedSandbox(t *testing.T) {
 	}
 }
 
-func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
+func TestBuildSessionSettings_PiConfiguresCloudProvider(t *testing.T) {
 	k8sClient := fake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
 	})
@@ -773,7 +773,7 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	)
 	req := &entities.RunServerRequest{
 		UserID:    "test-user",
-		AgentType: "pi-ollama",
+		AgentType: "pi",
 		Environment: map[string]string{
 			"OPENAI_API_KEY":            "openai-key",
 			"PI_DEFAULT_PROVIDER":       "ollama-cloud",
@@ -786,7 +786,7 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 	if _, ok := settings.Env["OLLAMA_API_KEY"]; ok {
 		t.Fatalf("OLLAMA_API_KEY should not be synthesized")
 	}
-	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != piOllamaCommandPath {
+	if got := settings.Env["PI_ACP_PI_COMMAND"]; got != "pi" {
 		t.Fatalf("PI_ACP_PI_COMMAND = %q", got)
 	}
 	if got := settings.Pi.SettingsJSON["defaultProvider"]; got != "ollama-cloud" {
@@ -799,13 +799,13 @@ func TestBuildSessionSettings_PiOllamaConfiguresCloudProvider(t *testing.T) {
 		t.Fatalf("defaultThinkingLevel = %v", got)
 	}
 	if settings.Startup.PreScript == "" {
-		t.Fatalf("expected pi-ollama startup pre-script")
+		t.Fatalf("expected pi startup pre-script")
 	}
-	if !strings.Contains(settings.Startup.PreScript, "node_modules/pi-ollama-cloud") {
-		t.Fatalf("expected pi-ollama pre-script to skip install when package is baked into the image")
+	if strings.Contains(settings.Startup.PreScript, "pi-cloud") {
+		t.Fatalf("pi cloud extension must not be installed")
 	}
 	if !strings.Contains(settings.Startup.PreScript, "node_modules/pi-mcp-adapter") {
-		t.Fatalf("expected pi-ollama pre-script to skip pi-mcp-adapter install when package is baked into the image")
+		t.Fatalf("expected pi pre-script to skip pi-mcp-adapter install when package is baked into the image")
 	}
 }
 

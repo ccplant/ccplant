@@ -3409,7 +3409,7 @@ func (m *KubernetesSessionManager) Shutdown(timeout time.Duration) error {
 }
 
 // SendMessage sends a message to an existing session.
-// For ACP sessions (claude-acp, codex-acp, pi-ollama, cursor) it uses the ACP JSON-RPC 2.0
+// For ACP sessions (claude-acp, codex-acp, pi, cursor) it uses the ACP JSON-RPC 2.0
 // POST /rpc endpoint with session/prompt; for standard agentapi sessions it
 // uses the agentapi-compatible POST /message endpoint.
 func (m *KubernetesSessionManager) SendMessage(ctx context.Context, id string, message string) error {
@@ -3711,12 +3711,12 @@ func (m *KubernetesSessionManager) connectedSessionControlStore(ctx context.Cont
 }
 
 func isACPAgentType(agentType string) bool {
-	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi-ollama" || agentType == "cursor"
+	return agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor"
 }
 
 func supportedAgentTypeOrDefault(agentType string) string {
 	switch agentType {
-	case "claude-acp", "codex-acp", "pi-ollama", "cursor":
+	case "claude-acp", "codex-acp", "pi", "cursor":
 		return agentType
 	default:
 		return ""
@@ -5872,8 +5872,8 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		}
 	}
 
-	if req.AgentType == "pi-ollama" {
-		envVars = ensurePiOllamaPodEnv(envVars)
+	if req.AgentType == "pi" {
+		envVars = ensurePiPodEnv(envVars)
 	}
 
 	// Add VAPID environment variables for push notifications
@@ -5923,10 +5923,9 @@ func deduplicateEnvVars(envVars []corev1.EnvVar) []corev1.EnvVar {
 }
 
 const (
-	piOllamaCommandPath      = "/home/agentapi/.session/pi-ollama-pi"
-	piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
+	piInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ] && [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+if [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
   echo "Pi extensions already installed, skipping install"
 else
   NPM_SHIM_DIR="$(mktemp -d)"
@@ -5950,9 +5949,6 @@ test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":
 exec bun add --cwd "$prefix" $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
-  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
-    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
-  fi
   if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
     PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-mcp-adapter
   fi
@@ -5961,7 +5957,7 @@ EOF
 fi`
 )
 
-func ensurePiOllamaPodEnv(envVars []corev1.EnvVar) []corev1.EnvVar {
+func ensurePiPodEnv(envVars []corev1.EnvVar) []corev1.EnvVar {
 	values := make(map[string]string, len(envVars))
 	for _, envVar := range envVars {
 		if envVar.ValueFrom == nil {
@@ -5970,18 +5966,18 @@ func ensurePiOllamaPodEnv(envVars []corev1.EnvVar) []corev1.EnvVar {
 	}
 
 	if strings.TrimSpace(values["PI_ACP_PI_COMMAND"]) == "" {
-		envVars = append(envVars, corev1.EnvVar{Name: "PI_ACP_PI_COMMAND", Value: piOllamaCommandPath})
+		envVars = append(envVars, corev1.EnvVar{Name: "PI_ACP_PI_COMMAND", Value: "pi"})
 	}
 
 	return envVars
 }
 
-func ensurePiOllamaSettingsEnv(env map[string]string) {
+func ensurePiSettingsEnv(env map[string]string) {
 	if env == nil {
 		return
 	}
 	if strings.TrimSpace(env["PI_ACP_PI_COMMAND"]) == "" {
-		env["PI_ACP_PI_COMMAND"] = piOllamaCommandPath
+		env["PI_ACP_PI_COMMAND"] = "pi"
 	}
 }
 
@@ -7524,8 +7520,8 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[k] = v
 	}
 
-	if req.AgentType == "pi-ollama" {
-		ensurePiOllamaSettingsEnv(env)
+	if req.AgentType == "pi" {
+		ensurePiSettingsEnv(env)
 	}
 
 	m.injectSciaProxyEnv(env, req)
@@ -7686,8 +7682,9 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"codex-acp",
 			},
 		}
-	case "pi-ollama":
-		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
+	case "pi":
+		// acp-server bridges pi-acp to Pi. Providers are generated from the
+		// selected compatible API connection.
 		// https://github.com/svkozak/pi-acp
 		settings.Startup = sessionsettings.StartupConfig{
 			Command: []string{proxybinary.FromMap(env)},
@@ -7698,7 +7695,12 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 				"--",
 				"pi-acp",
 			},
-			PreScript: piOllamaInstallPreScript,
+			PreScript: piInstallPreScript + `
+if [ -n "${CCPLANT_PI_PACKAGES:-}" ]; then
+  printf '%s\n' "$CCPLANT_PI_PACKAGES" | while IFS= read -r package; do
+    [ -n "$package" ] && pi install "$package"
+  done
+fi`,
 		}
 	case "cursor":
 		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.

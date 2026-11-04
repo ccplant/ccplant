@@ -838,7 +838,7 @@ func (c *SettingsController) toResponse(settings *entities.Settings) *SettingsRe
 
 func isValidDefaultAgentType(agentType string) bool {
 	switch agentType {
-	case "", "auto", "claude-acp", "codex-acp", "pi-ollama", "cursor":
+	case "", "auto", "claude-acp", "codex-acp", "pi", "cursor":
 		return true
 	default:
 		return false

@@ -152,7 +152,7 @@ if len(req.ModelOptions) > 0 {
 - 既存の `CODEX_MODEL_*` 系と同じ env チャネルに乗せる（新しい YAML フィールドを増やさない）
 - 再起動時は settings を再解決するため、`model_options` の変更は再起動/新規セッションで反映される
   （`ValidateRestart` は `model_options` を制約しない）
-- `pi-ollama` / `claude-acp` は対象外（Claude は SDK 側のモデル解決、pi は別途）
+- `pi` / `claude-acp` は対象外（Claude は SDK 側のモデル解決、pi は別途）
 
 ### フロントエンド
 

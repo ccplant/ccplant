@@ -105,13 +105,6 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 	if outputDir == "" {
 		outputDir = DefaultCompileOptions().OutputDir
 	}
-	if shouldRefreshPiOllamaCloud(settings) {
-		if err := refreshPiOllamaCloudCache(settings.Env, outputDir); err != nil {
-			// Non-fatal: pi-ollama-cloud can continue with its bundled or existing cache.
-			log.Printf("[SETUP] Warning: failed to refresh Ollama Cloud models: %v", err)
-		}
-	}
-
 	// 4. Copy credentials, CLAUDE.md, notification subscriptions
 	if err := syncExtra(settings, opts); err != nil {
 		return fmt.Errorf("sync-extra failed: %w", err)

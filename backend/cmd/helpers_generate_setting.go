@@ -15,9 +15,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const piOllamaInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
+const piInstallPreScript = `mkdir -p "$HOME/.pi/agent/npm"
 test -f "$HOME/.pi/agent/npm/package.json" || printf '{"private":true,"dependencies":{}}\n' > "$HOME/.pi/agent/npm/package.json"
-if [ -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ] && [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
+if [ -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
   echo "Pi extensions already installed, skipping install"
 else
   NPM_SHIM_DIR="$(mktemp -d)"
@@ -41,9 +41,6 @@ test -f "$prefix/package.json" || printf '%s\n' '{"private":true,"dependencies":
 exec bun add --cwd "$prefix" $packages
 EOF
   chmod +x "$NPM_SHIM_DIR/npm"
-  if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-ollama-cloud" ]; then
-    PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-ollama-cloud
-  fi
   if [ ! -d "$HOME/.pi/agent/npm/node_modules/pi-mcp-adapter" ]; then
     PATH="$NPM_SHIM_DIR:$PATH" pi install npm:pi-mcp-adapter
   fi
@@ -589,14 +586,15 @@ func buildStartupConfig(agentType string, env map[string]string) sessionsettings
 			Command: []string{proxyBinary},
 			Args:    []string{"acp-server", "--", "codex-acp"},
 		}
-	case "pi-ollama":
-		// acp-server bridges pi-acp to Pi, which is configured with the pi-ollama-cloud provider.
+	case "pi":
+		// acp-server bridges pi-acp to Pi. Provider configuration is generated
+		// from the selected compatible API connection.
 		// https://github.com/svkozak/pi-acp
 		log.Printf("[GENERATE-SETTING]   startup.command: [agentapi-proxy acp-server -- pi-acp]")
 		return sessionsettings.StartupConfig{
 			Command:   []string{proxyBinary},
 			Args:      []string{"acp-server", "--", "pi-acp"},
-			PreScript: piOllamaInstallPreScript,
+			PreScript: piInstallPreScript,
 		}
 	case "cursor":
 		// acp-server bridges Cursor Agent CLI's native ACP server to the agentapi HTTP interface.

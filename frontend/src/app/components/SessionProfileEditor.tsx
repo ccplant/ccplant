@@ -68,7 +68,7 @@ const DEFAULT_MODEL_TARGETS = [
   { value: 'claude:anthropic_compatible', label: 'Claude / Anthropic 互換 API' },
 ] as const satisfies ReadonlyArray<{ value: DefaultModelTarget; label: string }>
 
-const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi-ollama', 'cursor'])
+const SUPPORTED_AGENT_TYPES = new Set(['auto', 'claude-legacy', 'claude-acp', 'codex-acp', 'pi', 'cursor'])
 
 const normalizeAgentType = (value?: string): string => {
   return value && SUPPORTED_AGENT_TYPES.has(value) ? value : ''
@@ -113,6 +113,7 @@ export default function SessionProfileEditor({
   const [availableSecrets, setAvailableSecrets] = useState<SettingsSecret[]>([])
   const [selectedSecretIds, setSelectedSecretIds] = useState<string[]>([])
   const [skills, setSkills] = useState<string[]>([])
+  const [piPackages, setPiPackages] = useState('')
   const [commandWrapperTemplate, setCommandWrapperTemplate] = useState('')
   const [githubRepositories, setGitHubRepositories] = useState('')
 
@@ -131,6 +132,7 @@ export default function SessionProfileEditor({
   const [settingsTeamId, setSettingsTeamId] = useState('')
   const [codexConnection, setCodexConnection] = useState<ModelConnection | null>(null)
   const [claudeConnection, setClaudeConnection] = useState<ModelConnection | null>(null)
+  const [piConnection, setPiConnection] = useState<ModelConnection | null>(null)
   const [codexAuthMode, setCodexAuthMode] = useState<SessionProfileParams['codex_auth_mode'] | ''>('')
   const [claudeAuthMode, setClaudeAuthMode] = useState<SessionProfileParams['claude_auth_mode'] | ''>('')
 
@@ -222,6 +224,7 @@ export default function SessionProfileEditor({
       setSourceProfileId(cfg?.source_session_profile_id ?? '')
       setSelectedSecretIds(cfg?.secret_ids ?? [])
       setSkills(cfg?.skills ?? [])
+      setPiPackages((cfg?.pi_packages ?? []).join('\n'))
       setCommandWrapperTemplate(cfg?.command_wrapper_template ?? '')
       setGitHubRepositories((cfg?.github_repositories ?? []).join('\n'))
 
@@ -276,6 +279,7 @@ export default function SessionProfileEditor({
       setSettingsTeamId(cfg?.settings_team_id ?? '')
       setCodexConnection(cfg?.codex_connection ?? null)
       setClaudeConnection(cfg?.claude_connection ?? null)
+      setPiConnection(cfg?.pi_connection ?? null)
       setCodexAuthMode(cfg?.params?.codex_auth_mode ?? '')
       setClaudeAuthMode(cfg?.params?.claude_auth_mode ?? '')
     } else {
@@ -299,6 +303,7 @@ export default function SessionProfileEditor({
       setSourceProfileId('')
       setSelectedSecretIds([])
       setSkills([])
+      setPiPackages('')
       setCommandWrapperTemplate('')
       setAvailableProfiles([])
       setDockerEnabled(false)
@@ -312,6 +317,7 @@ export default function SessionProfileEditor({
       setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
       setCodexConnection(null)
       setClaudeConnection(null)
+      setPiConnection(null)
       setCodexAuthMode('')
       setClaudeAuthMode('')
     }
@@ -486,13 +492,15 @@ export default function SessionProfileEditor({
         return payload
       }
       const extraConfig = { ...editingProfile?.config }
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'files', 'command_wrapper_template', 'session_state'] as const) delete extraConfig[key]
-	  const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
+      const parsedPiPackages = piPackages.split('\n').map(value => value.trim()).filter(Boolean)
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'command_wrapper_template', 'session_state'] as const) delete extraConfig[key]
+      const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
       const config = {
         ...extraConfig,
         ...(settingsTeamId ? { settings_team_id: settingsTeamId } : {}),
         codex_connection: connectionPayload(codexConnection),
         claude_connection: connectionPayload(claudeConnection),
+        pi_connection: connectionPayload(piConnection),
         ...(Object.keys(environment).length > 0 ? { environment } : {}),
         ...(Object.keys(tags).length > 0 ? { tags } : {}),
         ...(pool.trim() ? { pool: pool.trim() } : {}),
@@ -505,6 +513,7 @@ export default function SessionProfileEditor({
         ...(selectedSecretIds.length > 0 ? { secret_ids: selectedSecretIds } : {}),
         ...(parsedGitHubRepositories.length > 0 ? { github_repositories: parsedGitHubRepositories } : {}),
         ...(skills.length > 0 ? { skills } : {}),
+        ...(parsedPiPackages.length > 0 ? { pi_packages: parsedPiPackages } : {}),
         ...(wrapper ? { command_wrapper_template: wrapper } : {}),
         files: parsedProfileFiles,
         session_state: sessionState,
@@ -716,6 +725,8 @@ export default function SessionProfileEditor({
 
             {claudeAuthMode === 'anthropic_compatible' && <ProfileConnectionFields agent="claude" value={claudeConnection} onChange={value => { setClaudeConnection(value); setDirty(true) }} />}
 
+            <ProfileConnectionFields agent="pi" value={piConnection} onChange={value => { setPiConnection(value); setDirty(true) }} />
+
             <div>
               <label htmlFor="profile-github-repositories" className="block text-sm font-medium mb-1">クローン可能な追加リポジトリ</label>
               <textarea id="profile-github-repositories" value={githubRepositories}
@@ -739,7 +750,7 @@ export default function SessionProfileEditor({
                         { value: 'claude-legacy', label: 'Claude Legacy', description: 'Claude の従来の実行方式' },
                         { value: 'claude-acp', label: 'Claude ACP', description: 'Claude Code を使用します' },
                         { value: 'codex-acp', label: 'Codex ACP', description: 'Codex を使用します' },
-                        { value: 'pi-ollama', label: 'Pi Ollama', description: 'Ollama に接続する Pi を使用します' },
+                        { value: 'pi', label: 'Pi', description: '登録した互換 API に接続する Pi を使用します' },
                         { value: 'cursor', label: 'Cursor ACP', description: 'Cursor を使用します' },
                       ]).map(({ value: v, label, description }) => (
                         <label key={v} className="flex items-start cursor-pointer group">
@@ -836,6 +847,11 @@ export default function SessionProfileEditor({
                   個人・チーム設定の Skills に、このプロファイルの package source を追加します。実際の導入先はセッションの agent type から Claude Code または Codex の一方だけが選ばれます。
                 </p>
                 <SkillSettings skills={skills} onChange={value => { setSkills(value); setDirty(true) }} />
+                <div className="mt-6">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Pi packages</label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Pi 起動前に導入する package source を1行ずつ指定します。Git管理のハーネスは <code>git:github.com/org/pi-harness@v1</code> のように指定できます。</p>
+                  <textarea value={piPackages} onChange={event => { setPiPackages(event.target.value); setDirty(true) }} rows={4} placeholder={'git:github.com/org/pi-harness@v1'} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
+                </div>
               </div>
             </div>}
             {active.slug === 'environment' && <div className="space-y-5">

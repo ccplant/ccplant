@@ -10,7 +10,7 @@ import (
 func TestResolveSkillsAgent(t *testing.T) {
 	tests := map[string]string{
 		"claude-acp": "claude-code", "claude-legacy": "claude-code",
-		"codex-acp": "codex", "pi-ollama": "", "cursor": "",
+		"codex-acp": "codex", "pi": "", "cursor": "",
 	}
 	for agentType, want := range tests {
 		got, err := resolveSkillsAgent(agentType)
@@ -20,6 +20,21 @@ func TestResolveSkillsAgent(t *testing.T) {
 	}
 	if _, err := resolveSkillsAgent("unknown-agent"); err == nil {
 		t.Fatal("expected unsupported agent type error")
+	}
+}
+
+func TestSyncSkipsSkillsPackagesForPi(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"skills":["owner/repository"]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Sync(SyncOptions{OutputDir: dir, AgentType: "pi"}); err != nil {
+		t.Fatalf("Sync() error = %v", err)
 	}
 }
 

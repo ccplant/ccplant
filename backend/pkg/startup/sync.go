@@ -94,9 +94,8 @@ func Sync(opts SyncOptions) error {
 			return err
 		}
 		if agent == "" {
-			return fmt.Errorf("skills are not supported for agent type %s", opts.AgentType)
-		}
-		if err := installSkillsPackages(opts.OutputDir, agent, claudeSettings.Skills); err != nil {
+			log.Printf("[SYNC] Skills packages are not supported for agent type %s; skipping", opts.AgentType)
+		} else if err := installSkillsPackages(opts.OutputDir, agent, claudeSettings.Skills); err != nil {
 			return err
 		}
 	}
@@ -306,7 +305,7 @@ func resolveSkillsAgent(agentType string) (string, error) {
 		return "claude-code", nil
 	case "codex", "codex-acp":
 		return "codex", nil
-	case "pi", "pi-ollama", "cursor":
+	case "pi", "cursor":
 		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported agent type for skills: %s", agentType)

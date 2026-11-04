@@ -41,6 +41,7 @@ type SessionProfileConfigRequest struct {
 	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
 	CodexConnection        json.RawMessage              `json:"codex_connection,omitempty"`
 	ClaudeConnection       json.RawMessage              `json:"claude_connection,omitempty"`
+	PiConnection           json.RawMessage              `json:"pi_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -56,6 +57,7 @@ type SessionProfileConfigRequest struct {
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
 	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
 	Skills                 []string                     `json:"skills,omitempty"`
+	PiPackages             []string                     `json:"pi_packages,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
@@ -104,6 +106,7 @@ type SessionProfileConfigResponse struct {
 	SettingsTeamID         string                       `json:"settings_team_id,omitempty"`
 	CodexConnection        *modelprovider.Connection    `json:"codex_connection,omitempty"`
 	ClaudeConnection       *modelprovider.Connection    `json:"claude_connection,omitempty"`
+	PiConnection           *modelprovider.Connection    `json:"pi_connection,omitempty"`
 	Environment            map[string]string            `json:"environment,omitempty"`
 	Tags                   map[string]string            `json:"tags,omitempty"`
 	Pool                   string                       `json:"pool,omitempty"`
@@ -119,6 +122,7 @@ type SessionProfileConfigResponse struct {
 	SecretIDs              []string                     `json:"secret_ids,omitempty"`
 	GitHubRepositories     []string                     `json:"github_repositories,omitempty"`
 	Skills                 []string                     `json:"skills,omitempty"`
+	PiPackages             []string                     `json:"pi_packages,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
@@ -612,6 +616,7 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 		cfg.SetGitHubRepositories(req.GitHubRepositories)
 	}
 	cfg.SetSkills(req.Skills)
+	cfg.SetPiPackages(req.PiPackages)
 	cfg.SetSessionState(req.SessionState)
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
@@ -656,6 +661,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 		Config: SessionProfileConfigResponse{
 			CodexConnection:        cfg.CodexConnection(),
 			ClaudeConnection:       cfg.ClaudeConnection(),
+			PiConnection:           cfg.PiConnection(),
 			Environment:            cfg.Environment(),
 			Tags:                   cfg.Tags(),
 			Pool:                   cfg.Pool(),
@@ -672,6 +678,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			SecretIDs:              cfg.SecretIDs(),
 			GitHubRepositories:     cfg.GitHubRepositories(),
 			Skills:                 cfg.Skills(),
+			PiPackages:             cfg.PiPackages(),
 			Files:                  cfg.ProfileFiles(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
