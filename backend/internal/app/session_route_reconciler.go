@@ -28,7 +28,7 @@ func (s *Server) StartSessionRouteReconciler(ctx context.Context) {
 		DryRun:                   cfg.DryRun,
 		OrphanGrace:              durationOr(cfg.OrphanGrace, 0),
 		StuckDeletionGrace:       durationOr(cfg.StuckDeletionGrace, 0),
-		TTLStuckCeiling:          durationOr(cfg.TTLStuckCeiling, 0),
+		RuntimeDisconnectGrace:   durationOr(cfg.RuntimeDisconnectGrace, 0),
 		ConfigurationOrphanGrace: durationOr(cfg.ConfigurationOrphanGrace, 0),
 	}
 

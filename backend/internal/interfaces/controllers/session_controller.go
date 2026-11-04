@@ -121,7 +121,10 @@ type SessionController struct {
 	statusSubscribersMu    sync.RWMutex
 	statusSubscribers      map[uint64]chan repositories.SessionStatusEvent
 	nextStatusSubscriberID uint64
-	githubTokenResolver    interface {
+	// routeReconcile remembers, across reconciliation passes, since when a
+	// routed runtime has been observed disconnected.
+	routeReconcile      routeReconcileState
+	githubTokenResolver interface {
 		ResolveAccessToken(context.Context, *entities.User, string) (string, error)
 		ResolveAccessTokenForOrganization(context.Context, *entities.User, string) (string, string, bool, error)
 		IssueBrokerLeaseForOrganization(context.Context, string, string, string) (string, string, bool, error)

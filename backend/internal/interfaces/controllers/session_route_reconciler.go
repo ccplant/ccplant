@@ -2,11 +2,14 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -27,8 +30,17 @@ const (
 	RouteReconcileManagerDeleted = "manager_deleted"
 	RouteReconcileRunnerDeleted  = "runner_deleted"
 	RouteReconcileStuckDeletion  = "stuck_deletion"
-	RouteReconcileTTLExceeded    = "ttl_exceeded"
+	// RouteReconcileRuntimeLost: a TTL session's runtime stayed disconnected from
+	// its control channel for RuntimeDisconnectGrace.
+	RouteReconcileRuntimeLost = "runtime_lost"
+	// RouteReconcileWorkloadGone: the owning manager answered that the workload
+	// does not exist.
+	RouteReconcileWorkloadGone = "workload_gone"
 )
+
+// routeStatusProbeTimeout bounds one status request so a slow runtime cannot
+// stall a reconciliation pass.
+const routeStatusProbeTimeout = 15 * time.Second
 
 // SessionRouteReconcileOptions controls which routes are considered abandoned.
 // Every rule relies on durable records the parent owns. Two plausible signals
@@ -46,10 +58,10 @@ type SessionRouteReconcileOptions struct {
 	// StuckDeletionGrace finalizes routes left terminating/delete_failed after a
 	// deletion was requested but never acknowledged by the manager.
 	StuckDeletionGrace time.Duration
-	// TTLStuckCeiling finalizes routes carrying session_ttl whose status has not
-	// changed for session_ttl + TTLStuckCeiling, i.e. whose runtime never
-	// reported completion.
-	TTLStuckCeiling time.Duration
+	// RuntimeDisconnectGrace is how long a TTL session's runtime must stay
+	// continuously disconnected before the session is treated as lost. The
+	// connection lease expires after 75s, so this tolerates reconnects.
+	RuntimeDisconnectGrace time.Duration
 	// ConfigurationOrphanGrace deletes saved configurations that belong to no
 	// route, allocation or local session and were not updated for this long.
 	ConfigurationOrphanGrace time.Duration
@@ -64,8 +76,8 @@ func (o SessionRouteReconcileOptions) withDefaults() SessionRouteReconcileOption
 	if o.StuckDeletionGrace <= 0 {
 		o.StuckDeletionGrace = 45 * time.Minute
 	}
-	if o.TTLStuckCeiling <= 0 {
-		o.TTLStuckCeiling = 45 * time.Minute
+	if o.RuntimeDisconnectGrace <= 0 {
+		o.RuntimeDisconnectGrace = 10 * time.Minute
 	}
 	if o.ConfigurationOrphanGrace <= 0 {
 		o.ConfigurationOrphanGrace = 45 * time.Minute
@@ -83,6 +95,42 @@ type SessionRouteReconcileResult struct {
 	Finalized             map[string]int
 	Failed                int
 	ConfigurationsDeleted int
+	// StatusesRefreshed counts routes whose frozen status was corrected from the
+	// runtime's live status (e.g. a lost completion: running -> active).
+	StatusesRefreshed int
+}
+
+// routeReconcileState survives between passes on the elected replica.
+type routeReconcileState struct {
+	mu                sync.Mutex
+	disconnectedSince map[string]time.Time
+}
+
+// observeDisconnected records a disconnected observation and returns since when
+// the runtime has been continuously disconnected.
+func (s *routeReconcileState) observeDisconnected(sessionID string, now time.Time) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.disconnectedSince == nil {
+		s.disconnectedSince = map[string]time.Time{}
+	}
+	since, ok := s.disconnectedSince[sessionID]
+	if !ok {
+		s.disconnectedSince[sessionID] = now
+		return now
+	}
+	return since
+}
+
+// retain forgets every session that is not continuously disconnected anymore.
+func (s *routeReconcileState) retain(disconnected map[string]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for sessionID := range s.disconnectedSince {
+		if !disconnected[sessionID] {
+			delete(s.disconnectedSince, sessionID)
+		}
+	}
 }
 
 type routeOwnerLookup interface {
@@ -114,40 +162,120 @@ func routeLastChange(route *repositories.SessionRoute) time.Time {
 	return route.StartedAt
 }
 
-// classifyRouteForReconcile returns the reason the route must be finalized, or
-// "" when it must be kept. It is pure so the policy can be tested exhaustively.
-func classifyRouteForReconcile(route *repositories.SessionRoute, facts routeReconcileFacts, now time.Time, opts SessionRouteReconcileOptions) string {
+// routeStatusAwaitsRuntime reports whether a route's status is one that only the
+// runtime moves forward (it is processing or starting). Such a route freezes if
+// the runtime's completion report is lost, and is the only kind worth probing:
+// idle, terminal and parent-controlled states are already handled by TTL cleanup
+// or by the rules above.
+func routeStatusAwaitsRuntime(status string) bool {
+	switch status {
+	case "active", "stopped", "error", "timeout", "suspended", "resuming",
+		"terminating", "delete_failed", "terminated", "templated":
+		return false
+	}
+	return true
+}
+
+// classifyRouteForReconcile returns the reason a route must be finalized from
+// durable records alone, or whether its live runtime status must be probed.
+// It is pure so the policy can be tested exhaustively.
+func classifyRouteForReconcile(route *repositories.SessionRoute, facts routeReconcileFacts, now time.Time, opts SessionRouteReconcileOptions) (reason string, probe bool) {
 	// Local aliases and pending routes are owned by this process, and templated
 	// routes are intentionally retained records.
 	if route == nil || route.ManagerID == "" || route.Status == "templated" {
-		return ""
+		return "", false
 	}
 	last := routeLastChange(route)
 	if !last.IsZero() && now.Sub(last) < opts.OrphanGrace {
-		return ""
+		return "", false
 	}
 	if (route.Status == "terminating" || route.Status == "delete_failed") &&
 		!last.IsZero() && now.Sub(last) >= opts.StuckDeletionGrace {
-		return RouteReconcileStuckDeletion
+		return RouteReconcileStuckDeletion, false
 	}
 	if facts.managerMissing {
-		return RouteReconcileManagerDeleted
+		return RouteReconcileManagerDeleted, false
 	}
 	// Suspension releases the runner on purpose; a resumable session must not be
 	// judged by the runner it no longer uses.
-	resumable := route.Status == "suspended" || route.Status == "resuming"
-	if resumable {
-		return ""
+	if route.Status == "suspended" || route.Status == "resuming" {
+		return "", false
 	}
 	if facts.runnerMissing {
-		return RouteReconcileRunnerDeleted
+		return RouteReconcileRunnerDeleted, false
 	}
-	if ttl := route.Tags["session_ttl"]; ttl != "" && !last.IsZero() {
-		if d, err := time.ParseDuration(ttl); err == nil && d > 0 && now.Sub(last) >= d+opts.TTLStuckCeiling {
-			return RouteReconcileTTLExceeded
+	// Time alone cannot tell a lost completion from a long turn, so ask the
+	// runtime instead of guessing.
+	return "", routeStatusAwaitsRuntime(route.Status)
+}
+
+type routeProbeOutcome int
+
+const (
+	// probeUnknown: the probe could not decide; keep the route as is.
+	probeUnknown routeProbeOutcome = iota
+	// probeAnswered: the runtime reported its live status, which was recorded.
+	probeAnswered
+	// probeDisconnected: the runtime/manager holds no control connection.
+	probeDisconnected
+	// probeWorkloadGone: the manager answered that the workload does not exist.
+	probeWorkloadGone
+)
+
+// probeRouteRuntime asks the runtime behind a route for its live status over the
+// same control channel user requests use. A reported status is persisted with
+// the normal /status bookkeeping, so "stable" heals a frozen "running" route to
+// "active" (with a fresh completion timestamp for TTL cleanup) while a real
+// "running" leaves it untouched.
+func (c *SessionController) probeRouteRuntime(ctx context.Context, route *repositories.SessionRoute, dryRun bool) routeProbeOutcome {
+	if c.esmControlTunnel == nil {
+		return probeUnknown
+	}
+	direct := route.Transport == repositories.SessionRouteTransportDirectRuntime
+	connectionID, target := route.ManagerID, (&url.URL{Scheme: "http", Host: "esm.local", Path: "/" + route.RemoteSessionID + "/status"})
+	if direct {
+		// A direct runtime holds its own control connection keyed by the public ID.
+		connectionID, target = route.SessionID, (&url.URL{Scheme: "http", Host: "session.local", Path: "/status"})
+	} else if route.RemoteSessionID == "" {
+		return probeUnknown
+	}
+	if !c.esmControlTunnel.IsConnected(ctx, connectionID) {
+		return probeDisconnected
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, routeStatusProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return probeUnknown
+	}
+	if route.UserID != "" {
+		req.Header.Set("X-Forwarded-User", route.UserID)
+	}
+	if route.TeamID != "" {
+		req.Header.Set("X-Forwarded-Team", route.TeamID)
+	}
+	resp, err := c.esmControlTunnel.Do(probeCtx, connectionID, route.SessionID, route.RemoteSessionID, req)
+	if err != nil {
+		log.Printf("[ROUTE_RECONCILE] Status probe for session %s failed: %v", route.SessionID, err)
+		return probeUnknown
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound && !direct {
+		return probeWorkloadGone
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return probeUnknown
+	}
+	if dryRun {
+		var payload struct {
+			Status string `json:"status"`
 		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&payload)
+		log.Printf("[ROUTE_RECONCILE] [DRY-RUN] Session %s runtime reports %q (route status %q)", route.SessionID, payload.Status, route.Status)
+		return probeAnswered
 	}
-	return ""
+	c.rememberRemoteSessionStatus(probeCtx, route, resp)
+	return probeAnswered
 }
 
 // ReconcileSessionRoutes finalizes routes whose owner is gone and garbage
@@ -175,12 +303,16 @@ func (c *SessionController) ReconcileSessionRoutes(ctx context.Context, opts Ses
 	if opts.DryRun {
 		prefix = "[DRY-RUN] "
 	}
+	disconnected := map[string]bool{}
 	for _, route := range routes {
 		if route == nil {
 			continue
 		}
 		result.Scanned++
-		reason := classifyRouteForReconcile(route, lookup.facts(ctx, route), now, opts)
+		reason, probe := classifyRouteForReconcile(route, lookup.facts(ctx, route), now, opts)
+		if reason == "" && probe {
+			reason = c.reconcileByLiveStatus(ctx, route, now, opts, disconnected, &result)
+		}
 		if reason == "" {
 			continue
 		}
@@ -197,8 +329,35 @@ func (c *SessionController) ReconcileSessionRoutes(ctx context.Context, opts Ses
 		}
 		result.Finalized[reason]++
 	}
+	c.routeReconcile.retain(disconnected)
 	result.ConfigurationsDeleted = c.reconcileOrphanedConfigurations(ctx, routes, allocations, now, opts)
 	return result
+}
+
+// reconcileByLiveStatus decides a frozen route from its runtime's live state.
+// It returns a finalization reason only when the workload is definitively gone:
+// the manager says so, or a TTL session's runtime has stayed disconnected for
+// RuntimeDisconnectGrace. A runtime that answers is never ended here.
+func (c *SessionController) reconcileByLiveStatus(ctx context.Context, route *repositories.SessionRoute, now time.Time, opts SessionRouteReconcileOptions, disconnected map[string]bool, result *SessionRouteReconcileResult) string {
+	previous := route.Status
+	switch c.probeRouteRuntime(ctx, route, opts.DryRun) {
+	case probeAnswered:
+		if route.Status != previous {
+			log.Printf("[ROUTE_RECONCILE] Refreshed session %s status from runtime: %q -> %q", route.SessionID, previous, route.Status)
+			result.StatusesRefreshed++
+		}
+	case probeWorkloadGone:
+		return RouteReconcileWorkloadGone
+	case probeDisconnected:
+		disconnected[route.SessionID] = true
+		since := c.routeReconcile.observeDisconnected(route.SessionID, now)
+		// Only sessions that are meant to end on their own are reclaimed for a
+		// lost runtime; an interactive session stays deletable by its owner.
+		if route.Tags["session_ttl"] != "" && now.Sub(since) >= opts.RuntimeDisconnectGrace {
+			return RouteReconcileRuntimeLost
+		}
+	}
+	return ""
 }
 
 func (c *SessionController) finalizeReconciledRoute(ctx context.Context, route *repositories.SessionRoute, reason string) error {

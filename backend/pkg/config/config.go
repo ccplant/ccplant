@@ -187,8 +187,8 @@ type SessionRouteReconcilerConfig struct {
 	OrphanGrace string `json:"orphan_grace" mapstructure:"orphan_grace"`
 	// StuckDeletionGrace finalizes routes stuck terminating/delete_failed (e.g. "45m").
 	StuckDeletionGrace string `json:"stuck_deletion_grace" mapstructure:"stuck_deletion_grace"`
-	// TTLStuckCeiling finalizes session_ttl routes frozen for ttl + this long (e.g. "45m").
-	TTLStuckCeiling string `json:"ttl_stuck_ceiling" mapstructure:"ttl_stuck_ceiling"`
+	// RuntimeDisconnectGrace reclaims a TTL session whose runtime stayed disconnected this long (e.g. "10m").
+	RuntimeDisconnectGrace string `json:"runtime_disconnect_grace" mapstructure:"runtime_disconnect_grace"`
 	// ConfigurationOrphanGrace deletes unowned configurations idle for this long (e.g. "45m").
 	ConfigurationOrphanGrace string `json:"configuration_orphan_grace" mapstructure:"configuration_orphan_grace"`
 }
@@ -1323,7 +1323,7 @@ func bindEnvVars(v *viper.Viper) {
 	_ = v.BindEnv("session_route_reconciler.interval", "AGENTAPI_SESSION_ROUTE_RECONCILER_INTERVAL")
 	_ = v.BindEnv("session_route_reconciler.orphan_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_ORPHAN_GRACE")
 	_ = v.BindEnv("session_route_reconciler.stuck_deletion_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_STUCK_DELETION_GRACE")
-	_ = v.BindEnv("session_route_reconciler.ttl_stuck_ceiling", "AGENTAPI_SESSION_ROUTE_RECONCILER_TTL_STUCK_CEILING")
+	_ = v.BindEnv("session_route_reconciler.runtime_disconnect_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_RUNTIME_DISCONNECT_GRACE")
 	_ = v.BindEnv("session_route_reconciler.configuration_orphan_grace", "AGENTAPI_SESSION_ROUTE_RECONCILER_CONFIGURATION_ORPHAN_GRACE")
 
 	// Stock inventory worker configuration
@@ -1537,15 +1537,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("slackbot_cleanup_worker.retry_period", "1m")
 
 	// Session route reconciler defaults. Every rule acts only on definitive
-	// signals (deleted manager/runner records, an unacknowledged deletion, a
-	// TTL session frozen past its ceiling), so it is enabled by default. The
+	// signals (deleted manager/runner records, an unacknowledged deletion, the
+	// runtime's own live status), so it is enabled by default. The
 	// thresholds reclaim a stale session within about an hour.
 	v.SetDefault("session_route_reconciler.enabled", true)
 	v.SetDefault("session_route_reconciler.dry_run", false)
 	v.SetDefault("session_route_reconciler.interval", "5m")
 	v.SetDefault("session_route_reconciler.orphan_grace", "15m")
 	v.SetDefault("session_route_reconciler.stuck_deletion_grace", "45m")
-	v.SetDefault("session_route_reconciler.ttl_stuck_ceiling", "45m")
+	v.SetDefault("session_route_reconciler.runtime_disconnect_grace", "10m")
 	v.SetDefault("session_route_reconciler.configuration_orphan_grace", "45m")
 
 	// Stock inventory worker defaults

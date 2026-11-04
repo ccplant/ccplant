@@ -2,9 +2,11 @@ package controllers_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -220,6 +222,114 @@ func TestReconcileSessionRoutesSkipsConfigurationGCWithoutAllocationView(t *test
 
 	if result.ConfigurationsDeleted != 0 || len(store.deletedConfigs) != 0 {
 		t.Fatalf("configuration GC ran without allocation listing: %v", store.deletedConfigs)
+	}
+}
+
+type probeResponse struct {
+	code int
+	body string
+}
+
+// probeTunnel models control connections per connection ID (a direct runtime's
+// public session ID, or a manager ID) and the runtime's answer per session.
+type probeTunnel struct {
+	connected map[string]bool
+	responses map[string]probeResponse
+	requests  []string
+}
+
+func (t *probeTunnel) IsConnected(_ context.Context, id string) bool { return t.connected[id] }
+
+func (t *probeTunnel) Do(_ context.Context, _, sessionID, _ string, req *http.Request) (*http.Response, error) {
+	t.requests = append(t.requests, req.Method+" "+sessionID+" "+req.URL.Host+req.URL.Path)
+	r, ok := t.responses[sessionID]
+	if !ok {
+		r = probeResponse{code: http.StatusOK, body: `{}`}
+	}
+	return &http.Response{StatusCode: r.code, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(r.body))}, nil
+}
+
+// A route that looks frozen is decided by its runtime, never by its age: a
+// lost completion is healed, a long turn is kept, and only a runtime that stays
+// gone (or a workload the manager disowns) is reclaimed.
+func TestReconcileSessionRoutesDecidesFrozenRoutesByLiveStatus(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-2 * time.Hour)
+	ttl := map[string]string{"session_ttl": "1m"}
+	direct := func(id string, tags map[string]string) *repositories.SessionRoute {
+		return &repositories.SessionRoute{
+			SessionID: id, RemoteSessionID: "runner-" + id, ManagerID: "manager-direct", Status: "running", StatusUpdatedAt: old,
+			Transport: repositories.SessionRouteTransportDirectRuntime, UserID: "user-9", Scope: string(entities.ScopeUser), Tags: tags,
+		}
+	}
+	routes := &reconcileRouteRepo{routes: map[string]*repositories.SessionRoute{
+		"completion-lost":     direct("completion-lost", ttl),
+		"long-turn":           direct("long-turn", ttl),
+		"runtime-gone":        direct("runtime-gone", ttl),
+		"runtime-gone-no-ttl": direct("runtime-gone-no-ttl", nil),
+		"flapping":            direct("flapping", ttl),
+		"workload-gone": {
+			SessionID: "workload-gone", RemoteSessionID: "remote-workload-gone", ManagerID: "manager-esm", Status: "running", StatusUpdatedAt: old,
+			Transport: repositories.SessionRouteTransportESMTunnel, UserID: "user-9", Scope: string(entities.ScopeUser), Tags: ttl,
+		},
+	}}
+	store := &reconcileRunnerStore{
+		managers:    map[string]*sessionrunnercore.Manager{"manager-direct": {ID: "manager-direct"}, "manager-esm": {ID: "manager-esm"}},
+		runners:     map[string]*sessionrunnercore.Runner{},
+		allocations: map[string]*sessionrunnercore.Allocation{},
+	}
+	for id := range routes.routes {
+		// Runner records still exist: only the live runtime can tell these apart.
+		store.runners["runner-"+id] = &sessionrunnercore.Runner{ID: "runner-" + id}
+		store.allocations[id] = &sessionrunnercore.Allocation{SessionID: id, RunnerID: "runner-" + id}
+	}
+	tunnel := &probeTunnel{
+		connected: map[string]bool{"completion-lost": true, "long-turn": true, "manager-esm": true},
+		responses: map[string]probeResponse{
+			"completion-lost": {code: http.StatusOK, body: `{"status":"stable"}`},
+			"long-turn":       {code: http.StatusOK, body: `{"status":"running"}`},
+			"workload-gone":   {code: http.StatusNotFound, body: `{"error":"not found"}`},
+		},
+	}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: &fakeSessionManager{sessions: map[string]*fakeSession{}}}, nil,
+		controllers.WithSessionRouteRepository(routes),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(store),
+	)
+	pass := func(at time.Time) controllers.SessionRouteReconcileResult {
+		return controller.ReconcileSessionRoutes(context.Background(), controllers.SessionRouteReconcileOptions{Now: func() time.Time { return at }})
+	}
+
+	first := pass(now)
+	if !reflect.DeepEqual(routes.deleted, []string{"workload-gone"}) {
+		t.Fatalf("first pass deleted %v, want only the workload the manager disowned", routes.deleted)
+	}
+	if got := routes.routes["completion-lost"].Status; got != "active" || first.StatusesRefreshed != 1 {
+		t.Fatalf("lost completion not healed: status=%q refreshed=%d", got, first.StatusesRefreshed)
+	}
+	if r := routes.routes["long-turn"]; r.Status != "running" || !r.StatusUpdatedAt.Equal(old) {
+		t.Fatalf("long turn must be left running with its timestamp: %#v", r)
+	}
+
+	// The runtime reconnects briefly; its disconnect clock must restart.
+	tunnel.connected["flapping"] = true
+	tunnel.responses["flapping"] = probeResponse{code: http.StatusOK, body: `{"status":"running"}`}
+	pass(now.Add(5 * time.Minute))
+	tunnel.connected["flapping"] = false
+
+	third := pass(now.Add(11 * time.Minute))
+	sort.Strings(routes.deleted)
+	if want := []string{"runtime-gone", "workload-gone"}; !reflect.DeepEqual(routes.deleted, want) {
+		t.Fatalf("after the disconnect grace deleted %v, want %v", routes.deleted, want)
+	}
+	if third.Finalized[controllers.RouteReconcileRuntimeLost] != 1 {
+		t.Fatalf("third pass = %#v, want one runtime_lost", third)
+	}
+	for _, kept := range []string{"completion-lost", "long-turn", "runtime-gone-no-ttl", "flapping"} {
+		if routes.routes[kept] == nil {
+			t.Fatalf("route %q must be kept", kept)
+		}
 	}
 }
 
