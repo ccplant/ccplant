@@ -834,6 +834,91 @@ func TestDeleteDirectRuntimeUsesAllocatedRunnerID(t *testing.T) {
 	}
 }
 
+// Without force, deleting a remote session whose owning manager is unreachable must
+// keep returning 503 and must not drop the local route (the manager may still own a
+// live runner workload).
+func TestDeleteRemoteSessionWithoutManagerConnectionIsRejected(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{} // IsConnected is true only for "manager-a"
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-gone",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, _ := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id", "public-id")
+
+	err := controller.DeleteSession(ctx)
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 HTTPError, got %#v", err)
+	}
+	if routeRepo.deleted {
+		t.Fatal("route must not be deleted when the manager is unreachable and force is not set")
+	}
+}
+
+// With force=true, an orphaned remote route whose manager is permanently gone can be
+// reclaimed: the local route and configuration are removed without any outbound call.
+func TestForceDeleteOrphanedRemoteSessionRemovesLocalRoute(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-gone",
+		UserID: "user-1", Scope: string(entities.ScopeUser),
+	}}
+	store := &allocationReader{}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+		controllers.WithSessionRunnerStore(store),
+	)
+	ctx, rec := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id?force=true", "public-id")
+
+	if err := controller.DeleteSession(ctx); err != nil {
+		t.Fatalf("force delete returned error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !routeRepo.deleted {
+		t.Fatal("orphaned session route was not deleted")
+	}
+	if store.deletedConfiguration != "public-id" {
+		t.Fatalf("deleted configuration = %q, want public-id", store.deletedConfiguration)
+	}
+}
+
+// force=true must still enforce ownership: a user cannot force-delete another user's
+// orphaned route.
+func TestForceDeleteOrphanedRemoteSessionRequiresAuthorization(t *testing.T) {
+	manager := &fakeSessionManager{sessions: map[string]*fakeSession{}}
+	tunnel := &lifecycleTunnel{}
+	routeRepo := &deletionRouteRepo{route: &repositories.SessionRoute{
+		SessionID: "public-id", RemoteSessionID: "runner-id", ManagerID: "manager-gone",
+		UserID: "user-2", Scope: string(entities.ScopeUser),
+	}}
+	controller := controllers.NewSessionController(
+		&routeSessionManagerProvider{manager: manager}, nil,
+		controllers.WithSessionRouteRepository(routeRepo),
+		controllers.WithESMControlTunnel(tunnel),
+	)
+	ctx, _ := routeContext(echo.New(), http.MethodDelete, "/sessions/public-id?force=true", "public-id")
+
+	err := controller.DeleteSession(ctx)
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 HTTPError, got %#v", err)
+	}
+	if routeRepo.deleted {
+		t.Fatal("route must not be deleted when the caller is not authorized")
+	}
+}
+
 func TestSuspendRemoteSessionUpdatesOnlyAllocatedSessionCache(t *testing.T) {
 	allocated := &fakeSession{id: "remote-id", status: "active", userID: "user-1", scope: entities.ScopeUser}
 	unrelated := &fakeSession{id: "other-id", status: "active", userID: "user-1", scope: entities.ScopeUser}

@@ -2327,6 +2327,15 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 
 	useTunnel := c.esmControlTunnel != nil && c.esmControlTunnel.IsConnected(ctx.Request().Context(), route.ManagerID)
 	if !useTunnel {
+		// Normally we refuse to delete while the owning manager's outbound control
+		// connection is down: the manager still owns a possibly-live runner workload
+		// and dropping the local route would orphan it. But when the manager is
+		// permanently gone (for example its runner pool was deleted), the local route
+		// and configuration can never be removed through the API and leak forever.
+		// An explicit force=true lets an operator reclaim such an orphaned local record.
+		if parseBoolQueryParam(ctx, "force") {
+			return c.forceDeleteOrphanedRoute(ctx, route, usageDimensions)
+		}
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "External session manager outbound control connection is unavailable")
 	}
 	// The manager owns the allocated runner workload. The public session ID is
@@ -2420,6 +2429,55 @@ func (c *SessionController) deleteRemoteSession(ctx echo.Context, route *reposit
 	log.Printf("[REMOTE_DELETE] Deleted remote session %s (remote ID: %s) over outbound control", sessionID, route.RemoteSessionID)
 	return ctx.JSON(http.StatusOK, map[string]interface{}{
 		"message":    "Session terminated successfully",
+		"session_id": sessionID,
+		"status":     "terminated",
+	})
+}
+
+// parseBoolQueryParam reports whether a truthy boolean query parameter was supplied.
+func parseBoolQueryParam(ctx echo.Context, name string) bool {
+	raw := strings.TrimSpace(ctx.QueryParam(name))
+	if raw == "" {
+		return false
+	}
+	v, err := strconv.ParseBool(raw)
+	return err == nil && v
+}
+
+// forceDeleteOrphanedRoute removes the local session-route and configuration for a
+// remote session whose owning manager is permanently unreachable. It performs no
+// outbound call to the manager, so it must only be reached when the caller has
+// explicitly opted in via force=true and accepts that any still-live remote workload
+// is not torn down here. Authorization is enforced locally because, unlike the tunnel
+// path, no manager re-checks the forwarded identity. Worker-authorized deletes (the
+// durable expiry path) bypass the ownership check, matching the managed-session path.
+func (c *SessionController) forceDeleteOrphanedRoute(ctx echo.Context, route *repositories.SessionRoute, usageDimensions *repositories.SessionUsageDimensions) error {
+	sessionID := ctx.Param("sessionId")
+
+	workerAuthorized, _ := ctx.Get(workerAuthorizedDeleteContextKey).(bool)
+	if !workerAuthorized {
+		authzCtx := auth.GetAuthorizationContext(ctx)
+		if authzCtx == nil || !authzCtx.CanModifyResource(route.UserID, route.Scope, route.TeamID) {
+			return echo.NewHTTPError(http.StatusForbidden, "You don't have permission to delete this session")
+		}
+	}
+
+	log.Printf("[REMOTE_DELETE] Force-removing orphaned local route for session %s (remote ID: %s, manager %s unreachable)",
+		sessionID, route.RemoteSessionID, route.ManagerID)
+	c.recordSessionStatusUsage(ctx.Request().Context(), repositories.SessionStatusEvent{SessionID: route.SessionID, Status: "terminating", Timestamp: time.Now()})
+	if c.sessionRouteRepo != nil {
+		if err := c.sessionRouteRepo.Delete(ctx.Request().Context(), sessionID); err != nil {
+			log.Printf("[REMOTE_DELETE] Failed to force-delete orphaned route for session %s: %v", sessionID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to delete orphaned session route")
+		}
+	}
+	c.recordSessionTerminated(ctx.Request().Context(), usageDimensions, "orphaned_route_force", time.Now())
+	c.cleanupRemoteProvisionRequest(ctx.Request().Context(), sessionID)
+	c.cleanupSessionConfiguration(ctx.Request().Context(), sessionID)
+
+	log.Printf("[REMOTE_DELETE] Force-removed orphaned local route for session %s", sessionID)
+	return ctx.JSON(http.StatusOK, map[string]interface{}{
+		"message":    "Orphaned session route removed",
 		"session_id": sessionID,
 		"status":     "terminated",
 	})
