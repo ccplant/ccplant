@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log"
 	"net/http"
@@ -59,8 +60,9 @@ const (
 )
 
 type CredentialContext struct {
-	Kind  CredentialKind
-	Token string
+	Kind         CredentialKind
+	Token        string
+	ConnectionID string
 }
 
 const credentialContextKey = "authenticated_credential"
@@ -179,7 +181,22 @@ func AuthMiddleware(provider config.Provider, authService services.AuthService) 
 				if user, err = tryInternalGitHubAuth(c, cfg, authService); err == nil {
 					c.Set("internal_user", user)
 					token := ExtractTokenFromHeader(c.Request().Header.Get(cfg.Auth.GitHub.TokenHeader))
-					SetCredentialContext(c, &CredentialContext{Kind: CredentialKindGitHub, Token: token})
+					credential := &CredentialContext{Kind: CredentialKindGitHub, Token: token}
+					if IsGitHubConnectionCredential(token) {
+						resolver, ok := authService.(interface {
+							ResolveGitHubConnectionCredential(context.Context, string) (*GitHubConnectionCredential, error)
+						})
+						if !ok {
+							return echo.NewHTTPError(http.StatusUnauthorized, "GitHub connection authentication is unavailable")
+						}
+						resolved, resolveErr := resolver.ResolveGitHubConnectionCredential(c.Request().Context(), token)
+						if resolveErr != nil {
+							return echo.NewHTTPError(http.StatusUnauthorized, "Invalid GitHub connection credential")
+						}
+						credential.Token = resolved.AccessToken
+						credential.ConnectionID = resolved.ConnectionID
+					}
+					SetCredentialContext(c, credential)
 					// Build and store authorization context
 					authzCtx := buildAuthorizationContext(user)
 					c.Set("authz_context", authzCtx)
@@ -292,11 +309,21 @@ func GetAuthorizationContext(c echo.Context) *AuthorizationContext {
 // GetGitHubTokenFromContext returns a token only when GitHub authentication,
 // rather than API-key authentication, succeeded for this request.
 func GetGitHubTokenFromContext(c echo.Context) (string, bool) {
-	credential, ok := c.Get(credentialContextKey).(*CredentialContext)
-	if !ok || credential == nil || credential.Kind != CredentialKindGitHub || credential.Token == "" {
+	credential, ok := GetGitHubCredentialFromContext(c)
+	if !ok {
 		return "", false
 	}
 	return credential.Token, true
+}
+
+// GetGitHubCredentialFromContext returns the verified GitHub token and its
+// connection routing metadata. ConnectionID is empty for built-in GitHub auth.
+func GetGitHubCredentialFromContext(c echo.Context) (*CredentialContext, bool) {
+	credential, ok := c.Get(credentialContextKey).(*CredentialContext)
+	if !ok || credential == nil || credential.Kind != CredentialKindGitHub || credential.Token == "" {
+		return nil, false
+	}
+	return credential, true
 }
 
 // SetCredentialContext records the credential accepted by an authentication

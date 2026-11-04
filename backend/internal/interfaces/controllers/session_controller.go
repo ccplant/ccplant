@@ -441,12 +441,22 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			c.logSessionTokenRouting(sessionID, "organization", connectionID, token)
 		} else {
 			populateGitHubTokenFromAuthHeader(ctx, &startReq)
+			if startReq.Params != nil && startReq.Params.ConnectionID != "" {
+				if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, startReq.Params.ConnectionID); err != nil {
+					return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+				}
+			}
 			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
 		}
 	} else if !brokerConfigured {
 		populateGitHubTokenFromAuthHeader(ctx, &startReq)
 		if startReq.Params != nil {
-			c.logSessionTokenRouting(sessionID, "authentication", "", startReq.Params.GithubToken)
+			if startReq.Params.ConnectionID != "" {
+				if err := c.applyGitHubConnectionURLs(ctx.Request().Context(), &startReq, startReq.Params.ConnectionID); err != nil {
+					return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+				}
+			}
+			c.logSessionTokenRouting(sessionID, "authentication", startReq.Params.ConnectionID, startReq.Params.GithubToken)
 		}
 	}
 
@@ -835,8 +845,9 @@ func populateGitHubTokenFromAuthHeader(ctx echo.Context, startReq *entities.Star
 	if startReq.Params.GithubToken != "" {
 		return
 	}
-	if token, ok := auth.GetGitHubTokenFromContext(ctx); ok {
-		startReq.Params.GithubToken = token
+	if credential, ok := auth.GetGitHubCredentialFromContext(ctx); ok {
+		startReq.Params.GithubToken = credential.Token
+		startReq.Params.ConnectionID = credential.ConnectionID
 	}
 }
 

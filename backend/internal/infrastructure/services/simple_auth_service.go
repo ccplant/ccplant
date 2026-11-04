@@ -29,6 +29,10 @@ type apiTokenRecord struct {
 	expiresAt   *time.Time
 }
 
+type GitHubConnectionCredentialResolver interface {
+	ResolveGitHubConnectionCredential(context.Context, string) (*auth.GitHubConnectionCredential, error)
+}
+
 // SimpleAuthService implements AuthService with simple in-memory authentication
 type SimpleAuthService struct {
 	mu                       sync.RWMutex
@@ -40,6 +44,7 @@ type SimpleAuthService struct {
 	localUserRepo            repositories.LocalUserRepository
 	githubProvider           *auth.GitHubAuthProvider
 	githubAuthConfig         *config.GitHubAuthConfig
+	githubCredentialResolver GitHubConnectionCredentialResolver
 	teamConfigRepo           repositories.TeamConfigRepository
 	teamDiscovery            []config.TeamDiscoveryRule
 	githubMembershipResolver interface {
@@ -59,6 +64,25 @@ type SimpleAuthService struct {
 	// sticky (revoking or reconciling away a token never unshadows its
 	// secret), re-loading the legacy credential later cannot revive it either.
 	shadowedSecrets map[string]struct{}
+}
+
+func (s *SimpleAuthService) SetGitHubConnectionCredentialResolver(resolver GitHubConnectionCredentialResolver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.githubCredentialResolver = resolver
+}
+
+// ResolveGitHubConnectionCredential exposes the already-wired verifier to the
+// HTTP authentication adapter so downstream session creation receives the raw
+// GitHub token and its verified connection ID, never the signed envelope.
+func (s *SimpleAuthService) ResolveGitHubConnectionCredential(ctx context.Context, credential string) (*auth.GitHubConnectionCredential, error) {
+	s.mu.RLock()
+	resolver := s.githubCredentialResolver
+	s.mu.RUnlock()
+	if resolver == nil {
+		return nil, errors.New("GitHub connection authentication is unavailable")
+	}
+	return resolver.ResolveGitHubConnectionCredential(ctx, credential)
 }
 
 func (s *SimpleAuthService) SetGitHubMembershipResolver(resolver interface {
@@ -529,16 +553,55 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 	// First try GitHub authentication if configured
 	s.mu.RLock()
 	githubProvider := s.githubProvider
+	githubConfig := s.githubAuthConfig
+	credentialResolver := s.githubCredentialResolver
 	s.mu.RUnlock()
 
 	if githubProvider != nil {
+		connectionID := ""
+		if auth.IsGitHubConnectionCredential(token) {
+			if credentialResolver == nil || githubConfig == nil {
+				return nil, errors.New("GitHub connection authentication is unavailable")
+			}
+			resolved, err := credentialResolver.ResolveGitHubConnectionCredential(context.Background(), token)
+			if err != nil {
+				// A malformed or tampered connection credential must never fall
+				// back to the deployment-wide GitHub endpoint.
+				return nil, fmt.Errorf("resolve GitHub connection credential: %w", err)
+			}
+			connectionConfig := *githubConfig
+			connectionConfig.BaseURL = resolved.APIURL
+			connectionConfig.ConnectionID = resolved.ConnectionID
+			githubProvider = auth.NewGitHubAuthProvider(&connectionConfig)
+			connectionID = resolved.ConnectionID
+			token = resolved.AccessToken
+		}
 		// Try to authenticate with GitHub
 		userContext, err := githubProvider.Authenticate(context.Background(), token)
 		if err == nil && userContext != nil {
 			s.mu.RLock()
 			membershipResolver := s.githubMembershipResolver
 			s.mu.RUnlock()
-			if identityResolver, ok := membershipResolver.(interface {
+			if connectionID != "" {
+				identityResolver, ok := membershipResolver.(interface {
+					ResolveApplicationUserForExternalIdentity(context.Context, string, int64) (string, string, error)
+				})
+				if !ok || userContext.GitHubUser == nil {
+					return nil, errors.New("GitHub connection identity resolver is unavailable")
+				}
+				applicationUserID, principalID, resolveErr := identityResolver.ResolveApplicationUserForExternalIdentity(context.Background(), connectionID, userContext.GitHubUser.ID)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve GitHub connection application user: %w", resolveErr)
+				}
+				userContext.UserID = applicationUserID
+				linkedTeams, linked, resolveErr := membershipResolver.ResolveTeamMemberships(context.Background(), principalID)
+				if resolveErr != nil {
+					return nil, fmt.Errorf("resolve linked GitHub memberships: %w", resolveErr)
+				}
+				if linked {
+					userContext.GitHubUser.Teams = linkedTeams
+				}
+			} else if identityResolver, ok := membershipResolver.(interface {
 				ResolveApplicationUserIDForGitHubUser(context.Context, int64, string) (string, error)
 			}); ok && userContext.GitHubUser != nil {
 				applicationUserID, resolveErr := identityResolver.ResolveApplicationUserIDForGitHubUser(context.Background(), userContext.GitHubUser.ID, userContext.GitHubUser.Login)
@@ -547,7 +610,7 @@ func (s *SimpleAuthService) authenticateWithToken(token string) (*entities.User,
 				}
 				userContext.UserID = applicationUserID
 			}
-			if membershipResolver != nil && userContext.GitHubUser != nil {
+			if connectionID == "" && membershipResolver != nil && userContext.GitHubUser != nil {
 				var linkedTeams []auth.GitHubTeamMembership
 				var linked bool
 				var resolveErr error

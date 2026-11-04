@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,6 +279,29 @@ func TestConnectedGitHubLoginUsesLinkedApplicationUserID(t *testing.T) {
 	got, err := controller.ResolveApplicationUserIDForGitHubUser(context.Background(), 42, "alice")
 	require.NoError(t, err)
 	require.Equal(t, principal.ID, got)
+}
+
+func TestGitHubConnectionCredentialIsBoundToConnection(t *testing.T) {
+	t.Parallel()
+	controller := NewGitHubConnectionsController(fake.NewSimpleClientset(), "test", "https://service.example.com", true)
+	connection := githubConnection{ID: "ghec", Name: "GHEC", BaseURL: "https://github.com", APIURL: "https://api.github.com", Enabled: true, SecretSource: "encrypted"}
+	require.NoError(t, controller.saveConnection(context.Background(), connection, "ghec-client-secret", ""))
+
+	credential, err := controller.IssueGitHubConnectionCredential(context.Background(), connection.ID, "ghec-access-token")
+	require.NoError(t, err)
+	require.NotContains(t, credential, "ghec-access-token")
+
+	resolved, err := controller.ResolveGitHubConnectionCredential(context.Background(), credential)
+	require.NoError(t, err)
+	require.Equal(t, connection.ID, resolved.ConnectionID)
+	require.Equal(t, connection.APIURL, resolved.APIURL)
+	require.Equal(t, "ghec-access-token", resolved.AccessToken)
+
+	tamperedConnection := githubConnection{ID: "ghes", Name: "GHES", BaseURL: "https://ghes.example.com", APIURL: "https://ghes.example.com/api/v3", Enabled: true, SecretSource: "encrypted"}
+	require.NoError(t, controller.saveConnection(context.Background(), tamperedConnection, "ghes-client-secret", ""))
+	tampered := strings.Replace(credential, "Z2hlYw", "Z2hlcw", 1)
+	_, err = controller.ResolveGitHubConnectionCredential(context.Background(), tampered)
+	require.Error(t, err)
 }
 
 func TestBuiltInTeamRequestsUseConfiguredEnterpriseAPIURL(t *testing.T) {
