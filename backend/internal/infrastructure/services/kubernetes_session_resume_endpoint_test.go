@@ -88,6 +88,33 @@ func TestPrepareSessionResumeWithoutParentRuntime(t *testing.T) {
 	}
 }
 
+func TestPreparePersistentWorkloadResumeUsesPublicSessionID(t *testing.T) {
+	m := newResumeEndpointTestManager(t,
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-allocation-svc", Namespace: "test"}},
+	)
+	ks := NewKubernetesSession("allocation", &entities.RunServerRequest{UserID: "alice", AgentType: "claude-acp"}, "agentapi-session-allocation", "agentapi-session-allocation-svc", "", "test", 9000, nil, nil)
+	m.sessions["allocation"] = ks
+
+	settings := resumeEndpointSettings("https://cc-api.example.com")
+	if err := m.PrepareSessionResume(context.Background(), "allocation", settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.preparePersistentWorkloadResume(context.Background(), ks); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ks.ProvisionSettings().Session.ResumeFrom; got != "public" {
+		t.Fatalf("in-memory resume_from = %q, want public session ID", got)
+	}
+	persisted, err := m.CurrentSessionSettings(context.Background(), "allocation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := persisted.Session.ResumeFrom; got != "public" {
+		t.Fatalf("persisted resume_from = %q, want public session ID", got)
+	}
+}
+
 func newResumeEndpointTestManager(t *testing.T, objects ...runtime.Object) *KubernetesSessionManager {
 	t.Helper()
 	client := fake.NewSimpleClientset(objects...)

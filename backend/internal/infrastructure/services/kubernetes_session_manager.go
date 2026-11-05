@@ -2525,7 +2525,10 @@ func (m *KubernetesSessionManager) preparePersistentWorkloadResume(ctx context.C
 	if strings.TrimSpace(settings.Session.ResumeFrom) != "" {
 		return nil
 	}
-	settings.Session.ResumeFrom = session.ID()
+	// The manager-local session ID is the allocation ID. Persisted ACP state is
+	// keyed by the stable public session ID carried in the provision settings so
+	// it remains available when a replacement allocation is created.
+	settings.Session.ResumeFrom = settings.Session.ID
 	if err := m.PrepareSessionResume(ctx, session.ID(), settings); err != nil {
 		return fmt.Errorf("persist required session resume: %w", err)
 	}
