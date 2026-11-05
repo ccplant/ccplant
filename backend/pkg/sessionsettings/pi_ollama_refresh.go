@@ -30,18 +30,7 @@ type ollamaCloudModelCache struct {
 }
 
 func shouldRefreshPiCloud(settings *SessionSettings) bool {
-	if settings == nil {
-		return false
-	}
-	if settings.Session.AgentType == "pi" {
-		return true
-	}
-	for key, value := range settings.Env {
-		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(key)), "PI_") && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
+	return settings != nil && settings.Session.AgentType == "pi"
 }
 
 func refreshPiCloudCache(env map[string]string, outputDir string) error {

@@ -17,11 +17,7 @@ func TestShouldRefreshPiCloud(t *testing.T) {
 	}{
 		{name: "nil", settings: nil, want: false},
 		{name: "pi ollama agent", settings: &SessionSettings{Session: SessionMeta{AgentType: "pi"}}, want: true},
-		{name: "default provider", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_PROVIDER": "ollama-cloud"}}, want: true},
-		{name: "model only", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_MODEL": "glm-5.2:cloud"}}, want: true},
-		{name: "other provider", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_PROVIDER": "openai"}}, want: true},
-		{name: "case insensitive prefix", settings: &SessionSettings{Env: map[string]string{"pi_custom_model": "glm-5.2:cloud"}}, want: true},
-		{name: "empty pi value", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_MODEL": ""}}, want: false},
+		{name: "pi environment does not select agent", settings: &SessionSettings{Env: map[string]string{"PI_DEFAULT_PROVIDER": "ollama-cloud"}}, want: false},
 		{name: "unrelated variable", settings: &SessionSettings{Env: map[string]string{"OLLAMA_API_KEY": "secret"}}, want: false},
 	}
 	for _, tt := range tests {

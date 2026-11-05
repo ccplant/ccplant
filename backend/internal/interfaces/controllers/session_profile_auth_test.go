@@ -2,10 +2,25 @@ package controllers
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"testing"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
+
+func TestApplySessionProfileDoesNotMaterializePiConnectionAsEnvironment(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Pi", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPiConnection(&modelprovider.Connection{
+		Mode: "openai_compatible", BaseURL: "https://mock.example/v1", Model: "ani-1", Authentication: "none",
+	})
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Empty(t, request.ProfileEnvironment)
+}
 
 func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()

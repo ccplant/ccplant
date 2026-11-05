@@ -2987,7 +2987,6 @@ func applySessionProfile(
 				startReq.ProfileEnvironment[k] = v
 			}
 		}
-
 		// Tags: profile is base, request keys override
 		if len(cfg.Tags()) > 0 {
 			merged := make(map[string]string, len(cfg.Tags()))
