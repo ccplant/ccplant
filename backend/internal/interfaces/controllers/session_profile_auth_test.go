@@ -9,7 +9,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
 
-func TestApplySessionProfileMaterializesPiConnection(t *testing.T) {
+func TestApplySessionProfileDoesNotMaterializePiConnectionAsEnvironment(t *testing.T) {
 	profile := entities.NewSessionProfile("profile", "Pi", "user")
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetPiConnection(&modelprovider.Connection{
@@ -19,13 +19,7 @@ func TestApplySessionProfileMaterializesPiConnection(t *testing.T) {
 
 	applySessionProfile(request, profile, cfg, false, false)
 
-	require.Equal(t, "ccplant", request.ProfileEnvironment["PI_CUSTOM_MODEL_PROVIDER"])
-	require.Equal(t, "ani-1", request.ProfileEnvironment["PI_CUSTOM_MODEL_ID"])
-	require.Equal(t, "https://mock.example/v1", request.ProfileEnvironment["PI_CUSTOM_MODEL_BASE_URL"])
-	require.Equal(t, "none", request.ProfileEnvironment["PI_CUSTOM_MODEL_AUTHENTICATION"])
-	require.Equal(t, "ccplant", request.ProfileEnvironment["PI_DEFAULT_PROVIDER"])
-	require.Equal(t, "ani-1", request.ProfileEnvironment["PI_DEFAULT_MODEL"])
-	require.NotContains(t, request.ProfileEnvironment, "PI_API_KEY")
+	require.Empty(t, request.ProfileEnvironment)
 }
 
 func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {

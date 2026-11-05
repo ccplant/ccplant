@@ -274,7 +274,7 @@ func TestLaunchMaterializesPiProfilePackagesAndConnection(t *testing.T) {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	env := sessionManager.req.ProfileEnvironment
-	if env["CCPLANT_PI_PACKAGES"] != "git:github.com/org/pi-harness@v1" || env["PI_CUSTOM_MODEL_BASE_URL"] != "https://gateway.example/v1" || env["PI_API_KEY"] != "secret" {
+	if env["CCPLANT_PI_PACKAGES"] != "git:github.com/org/pi-harness@v1" || len(env) != 1 {
 		t.Fatalf("unexpected Pi profile environment: %#v", env)
 	}
 }

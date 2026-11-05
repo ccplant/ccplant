@@ -2987,22 +2987,6 @@ func applySessionProfile(
 				startReq.ProfileEnvironment[k] = v
 			}
 		}
-		if connection := cfg.PiConnection(); connection != nil && connection.Compatible() {
-			if startReq.ProfileEnvironment == nil {
-				startReq.ProfileEnvironment = make(map[string]string)
-			}
-			startReq.ProfileEnvironment["PI_CUSTOM_MODEL_PROVIDER"] = "ccplant"
-			startReq.ProfileEnvironment["PI_CUSTOM_MODEL_ID"] = connection.Model
-			startReq.ProfileEnvironment["PI_CUSTOM_MODEL_BASE_URL"] = connection.BaseURL
-			startReq.ProfileEnvironment["PI_CUSTOM_MODEL_AUTHENTICATION"] = connection.Authentication
-			startReq.ProfileEnvironment["PI_DEFAULT_PROVIDER"] = "ccplant"
-			startReq.ProfileEnvironment["PI_DEFAULT_MODEL"] = connection.Model
-			if connection.APIKey != "" {
-				startReq.ProfileEnvironment["PI_API_KEY"] = connection.APIKey
-				startReq.ProfileEnvironment["PI_CUSTOM_MODEL_API_KEY_ENV"] = "PI_API_KEY"
-			}
-		}
-
 		// Tags: profile is base, request keys override
 		if len(cfg.Tags()) > 0 {
 			merged := make(map[string]string, len(cfg.Tags()))

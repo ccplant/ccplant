@@ -32,6 +32,7 @@ import (
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/config"
 	"github.com/takutakahashi/agentapi-proxy/pkg/logger"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 	"github.com/takutakahashi/agentapi-proxy/pkg/proxybinary"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/settingspatch"
@@ -7540,10 +7541,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 	settings.Env = env
 	settings.UsageReportingEnabled = m.config.Usage.Enabled
 
-	settings.Pi = sessionsettings.PiConfig{
-		SettingsJSON: buildPiSettingsJSON(env),
-		ModelsJSON:   buildPiModelsJSON(env),
-	}
+	settings.Pi = buildPiConfig(req.PiConnection)
 
 	// Claude config
 	settingsJSON := materialized.SettingsJSON
@@ -8006,88 +8004,44 @@ func (m *KubernetesSessionManager) setTeamGitHubInstallationToken(
 	log.Printf("[K8S_SESSION] Added GitHub App installation token to session settings for team %s", req.TeamID)
 }
 
-func buildPiSettingsJSON(env map[string]string) map[string]interface{} {
-	settings := make(map[string]interface{})
-	for envName, settingName := range map[string]string{
-		"PI_DEFAULT_PROVIDER":       "defaultProvider",
-		"PI_DEFAULT_MODEL":          "defaultModel",
-		"PI_DEFAULT_THINKING_LEVEL": "defaultThinkingLevel",
-	} {
-		if value := strings.TrimSpace(env[envName]); value != "" {
-			settings[settingName] = value
-		}
+func buildPiConfig(connection *modelprovider.Connection) sessionsettings.PiConfig {
+	if connection == nil || !connection.Compatible() {
+		return sessionsettings.PiConfig{}
 	}
-	return settings
-}
-
-func buildPiModelsJSON(env map[string]string) map[string]interface{} {
-	provider := strings.TrimSpace(env["PI_CUSTOM_MODEL_PROVIDER"])
-	if provider == "" {
-		provider = strings.TrimSpace(env["PI_CUSTOM_PROVIDER"])
+	contextWindow := int64(128000)
+	if connection.ContextWindow != nil {
+		contextWindow = *connection.ContextWindow
 	}
-	modelID := strings.TrimSpace(env["PI_CUSTOM_MODEL_ID"])
-	baseURL := strings.TrimSpace(env["PI_CUSTOM_MODEL_BASE_URL"])
-	if provider == "" || modelID == "" || baseURL == "" {
-		return nil
-	}
-
-	api := strings.TrimSpace(env["PI_CUSTOM_MODEL_API"])
-	if api == "" {
-		api = "openai-completions"
-	}
-	name := strings.TrimSpace(env["PI_CUSTOM_MODEL_NAME"])
-	if name == "" {
-		name = modelID
-	}
-
 	model := map[string]interface{}{
-		"id":            modelID,
-		"name":          name,
-		"reasoning":     parsePiCustomModelBool(env["PI_CUSTOM_MODEL_REASONING"], false),
+		"id":            connection.Model,
+		"name":          connection.Model,
+		"reasoning":     false,
 		"input":         []interface{}{"text"},
-		"contextWindow": parsePiCustomModelInt(env["PI_CUSTOM_MODEL_CONTEXT_WINDOW"], 128000),
-		"maxTokens":     parsePiCustomModelInt(env["PI_CUSTOM_MODEL_MAX_TOKENS"], 16384),
+		"contextWindow": contextWindow,
+		"maxTokens":     16384,
 	}
 	providerConfig := map[string]interface{}{
-		"baseUrl": baseURL,
-		"api":     api,
+		"baseUrl": connection.BaseURL,
+		"api":     "openai-completions",
 		"models":  []interface{}{model},
 	}
-
-	apiKeyEnv := strings.TrimSpace(env["PI_CUSTOM_MODEL_API_KEY_ENV"])
-	if regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(apiKeyEnv) {
-		providerConfig["apiKey"] = "$" + apiKeyEnv
-	} else if strings.TrimSpace(env["PI_CUSTOM_MODEL_AUTHENTICATION"]) == "none" {
-		// Pi requires every custom provider to have a credential source even
-		// when the compatible endpoint does not authenticate requests. The
-		// literal is only a placeholder and is not sent as a managed secret.
+	if connection.Authentication == "api_key" {
+		providerConfig["apiKey"] = connection.APIKey
+	} else {
+		// Pi requires a credential value even for endpoints without auth.
 		providerConfig["apiKey"] = "none"
 	}
-
-	return map[string]interface{}{
-		"providers": map[string]interface{}{
-			provider: providerConfig,
+	return sessionsettings.PiConfig{
+		SettingsJSON: map[string]interface{}{
+			"defaultProvider": "ccplant",
+			"defaultModel":    connection.Model,
+		},
+		ModelsJSON: map[string]interface{}{
+			"providers": map[string]interface{}{
+				"ccplant": providerConfig,
+			},
 		},
 	}
-}
-
-func parsePiCustomModelInt(value string, fallback int) int {
-	parsed, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-	return parsed
-}
-
-func parsePiCustomModelBool(value string, fallback bool) bool {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
 func (m *KubernetesSessionManager) injectSciaProxyEnv(env map[string]string, req *entities.RunServerRequest) {

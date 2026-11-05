@@ -506,21 +506,6 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		}
 		req.ProfileEnvironment["CCPLANT_PI_PACKAGES"] = strings.Join(packages, "\n")
 	}
-	if connection := cfg.PiConnection(); connection != nil && connection.Compatible() {
-		if req.ProfileEnvironment == nil {
-			req.ProfileEnvironment = make(map[string]string)
-		}
-		req.ProfileEnvironment["PI_CUSTOM_MODEL_PROVIDER"] = "ccplant"
-		req.ProfileEnvironment["PI_CUSTOM_MODEL_ID"] = connection.Model
-		req.ProfileEnvironment["PI_CUSTOM_MODEL_BASE_URL"] = connection.BaseURL
-		req.ProfileEnvironment["PI_CUSTOM_MODEL_AUTHENTICATION"] = connection.Authentication
-		req.ProfileEnvironment["PI_DEFAULT_PROVIDER"] = "ccplant"
-		req.ProfileEnvironment["PI_DEFAULT_MODEL"] = connection.Model
-		if connection.APIKey != "" {
-			req.ProfileEnvironment["PI_API_KEY"] = connection.APIKey
-			req.ProfileEnvironment["PI_CUSTOM_MODEL_API_KEY_ENV"] = "PI_API_KEY"
-		}
-	}
 	// Tags: profile is base, request overrides key-by-key
 	if len(cfg.Tags()) > 0 {
 		merged := make(map[string]string, len(cfg.Tags()))

@@ -243,6 +243,7 @@ type RunServerRequest struct {
 	ModelConnectionsResolved bool                      `json:"-"`
 	CodexConnection          *modelprovider.Connection `json:"-"`
 	ClaudeConnection         *modelprovider.Connection `json:"-"`
+	PiConnection             *modelprovider.Connection `json:"-"`
 	ResumeFrom               string
 	UserID                   string
 	// TriggeredUserID identifies the external actor that caused a trigger-backed session.

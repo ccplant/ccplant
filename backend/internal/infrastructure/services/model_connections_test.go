@@ -72,7 +72,22 @@ func TestGenericModelOverrideUsesSelectedAgent(t *testing.T) {
 
 	pi := &sessionsettings.SessionSettings{}
 	applyModelConnections(pi, &entities.RunServerRequest{AgentType: "pi", Model: "ollama/model"})
-	require.Equal(t, "ollama/model", pi.Env["PI_MODEL"])
+	require.NotContains(t, pi.Env, "PI_MODEL")
+}
+
+func TestPiProfileConnectionIsResolvedWithoutEnvironment(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPiConnection(&modelprovider.Connection{Mode: "openai_compatible", BaseURL: "https://mock.example/v1", Model: "ani-1", Authentication: "none"})
+	profile := entities.NewSessionProfile("profile", "Pi", "user")
+	profile.SetConfig(cfg)
+	manager := &KubernetesSessionManager{client: fake.NewSimpleClientset(), sessionProfileRepo: profileConnectionRepository{profile: profile}}
+	req := &entities.RunServerRequest{UserID: "user", AgentType: "pi", ResolvedSessionProfileID: "profile"}
+
+	require.NoError(t, manager.prepareModelConnections(context.Background(), req))
+	require.Equal(t, "https://mock.example/v1", req.PiConnection.BaseURL)
+	require.Equal(t, "ani-1", req.PiConnection.Model)
+	require.Empty(t, req.ProfileEnvironment)
+	require.Empty(t, req.Environment)
 }
 
 func TestSelectedAgentUsesItsDefaultModel(t *testing.T) {

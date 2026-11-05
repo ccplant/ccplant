@@ -64,6 +64,7 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 		}
 	}
 	var codexConnection, claudeConnection *modelprovider.Connection
+	piConnection := profileConfig.PiConnection()
 	owners := credentialOwnersForRequest(req)
 	// Team-scoped API connections default to the team's settings. Legacy auth
 	// file mounting keeps its existing credential_source behavior.
@@ -142,7 +143,15 @@ func (m *KubernetesSessionManager) prepareModelConnections(ctx context.Context, 
 			}
 		}
 	}
-	req.CodexConnection, req.ClaudeConnection = codexConnection, claudeConnection
+	if piConnection != nil {
+		if req.AgentType == "pi" && req.Model != "" {
+			piConnection.Model = req.Model
+		}
+		if err := piConnection.Validate("pi"); err != nil {
+			return fmt.Errorf("invalid pi connection: %w", err)
+		}
+	}
+	req.CodexConnection, req.ClaudeConnection, req.PiConnection = codexConnection, claudeConnection, piConnection
 	req.ModelConnectionsResolved = true
 	return nil
 }
@@ -218,8 +227,6 @@ func applyModelConnections(settings *sessionsettings.SessionSettings, req *entit
 		}
 	case "", "claude-acp", "claude-legacy", "claude":
 		settings.Env["ANTHROPIC_MODEL"] = req.Model
-	case "pi":
-		settings.Env["PI_MODEL"] = req.Model
 	}
 }
 
