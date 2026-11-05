@@ -2526,7 +2526,10 @@ func (m *KubernetesSessionManager) preparePersistentWorkloadResume(ctx context.C
 	if strings.TrimSpace(settings.Session.ResumeFrom) != "" {
 		return nil
 	}
-	settings.Session.ResumeFrom = session.ID()
+	// The manager-local session ID is the allocation ID. Persisted ACP state is
+	// keyed by the stable public session ID carried in the provision settings so
+	// it remains available when a replacement allocation is created.
+	settings.Session.ResumeFrom = settings.Session.ID
 	if err := m.PrepareSessionResume(ctx, session.ID(), settings); err != nil {
 		return fmt.Errorf("persist required session resume: %w", err)
 	}
@@ -2608,7 +2611,20 @@ func (m *KubernetesSessionManager) normalizeProvisionSettings(settings *sessions
 	normalized.Env[proxybinary.EnvName] = m.sessionBinaryPath()
 	normalized.Session = settings.Session
 	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
+	normalized.ParentRuntime = m.executionPlaneParentRuntime(settings.ParentRuntime)
 	return &normalized
+}
+
+func (m *KubernetesSessionManager) executionPlaneParentRuntime(runtime *sessionsettings.ParentRuntimeConfig) *sessionsettings.ParentRuntimeConfig {
+	m.mutex.RLock()
+	parentURL := m.runnerParentURL
+	m.mutex.RUnlock()
+	if runtime == nil || parentURL == "" {
+		return runtime
+	}
+	next := *runtime
+	next.Endpoint = parentURL
+	return &next
 }
 
 func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
