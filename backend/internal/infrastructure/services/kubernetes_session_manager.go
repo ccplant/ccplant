@@ -2607,7 +2607,20 @@ func (m *KubernetesSessionManager) normalizeProvisionSettings(settings *sessions
 	normalized.Env[proxybinary.EnvName] = m.sessionBinaryPath()
 	normalized.Session = settings.Session
 	normalized.Session.PersistenceEnabled = m.config.SessionPersistence.Backend != ""
+	normalized.ParentRuntime = m.executionPlaneParentRuntime(settings.ParentRuntime)
 	return &normalized
+}
+
+func (m *KubernetesSessionManager) executionPlaneParentRuntime(runtime *sessionsettings.ParentRuntimeConfig) *sessionsettings.ParentRuntimeConfig {
+	m.mutex.RLock()
+	parentURL := m.runnerParentURL
+	m.mutex.RUnlock()
+	if runtime == nil || parentURL == "" {
+		return runtime
+	}
+	next := *runtime
+	next.Endpoint = parentURL
+	return &next
 }
 
 func (m *KubernetesSessionManager) scheduleSuspendWhenRestoredWorkloadReady(session *KubernetesSession) {
