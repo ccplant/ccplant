@@ -513,6 +513,7 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 		req.ProfileEnvironment["PI_CUSTOM_MODEL_PROVIDER"] = "ccplant"
 		req.ProfileEnvironment["PI_CUSTOM_MODEL_ID"] = connection.Model
 		req.ProfileEnvironment["PI_CUSTOM_MODEL_BASE_URL"] = connection.BaseURL
+		req.ProfileEnvironment["PI_CUSTOM_MODEL_AUTHENTICATION"] = connection.Authentication
 		req.ProfileEnvironment["PI_DEFAULT_PROVIDER"] = "ccplant"
 		req.ProfileEnvironment["PI_DEFAULT_MODEL"] = connection.Model
 		if connection.APIKey != "" {

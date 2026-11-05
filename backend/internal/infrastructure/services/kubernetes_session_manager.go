@@ -8057,6 +8057,11 @@ func buildPiModelsJSON(env map[string]string) map[string]interface{} {
 	apiKeyEnv := strings.TrimSpace(env["PI_CUSTOM_MODEL_API_KEY_ENV"])
 	if regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(apiKeyEnv) {
 		providerConfig["apiKey"] = "$" + apiKeyEnv
+	} else if strings.TrimSpace(env["PI_CUSTOM_MODEL_AUTHENTICATION"]) == "none" {
+		// Pi requires every custom provider to have a credential source even
+		// when the compatible endpoint does not authenticate requests. The
+		// literal is only a placeholder and is not sent as a managed secret.
+		providerConfig["apiKey"] = "none"
 	}
 
 	return map[string]interface{}{

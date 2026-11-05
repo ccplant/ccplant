@@ -2,10 +2,31 @@ package controllers
 
 import (
 	"encoding/json"
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
-	"testing"
+	"github.com/takutakahashi/agentapi-proxy/pkg/modelprovider"
 )
+
+func TestApplySessionProfileMaterializesPiConnection(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Pi", "user")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetPiConnection(&modelprovider.Connection{
+		Mode: "openai_compatible", BaseURL: "https://mock.example/v1", Model: "ani-1", Authentication: "none",
+	})
+	request := &entities.StartRequest{}
+
+	applySessionProfile(request, profile, cfg, false, false)
+
+	require.Equal(t, "ccplant", request.ProfileEnvironment["PI_CUSTOM_MODEL_PROVIDER"])
+	require.Equal(t, "ani-1", request.ProfileEnvironment["PI_CUSTOM_MODEL_ID"])
+	require.Equal(t, "https://mock.example/v1", request.ProfileEnvironment["PI_CUSTOM_MODEL_BASE_URL"])
+	require.Equal(t, "none", request.ProfileEnvironment["PI_CUSTOM_MODEL_AUTHENTICATION"])
+	require.Equal(t, "ccplant", request.ProfileEnvironment["PI_DEFAULT_PROVIDER"])
+	require.Equal(t, "ani-1", request.ProfileEnvironment["PI_DEFAULT_MODEL"])
+	require.NotContains(t, request.ProfileEnvironment, "PI_API_KEY")
+}
 
 func TestProfileAuthMethodsValidationAndMerge(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()

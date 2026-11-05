@@ -889,6 +889,20 @@ func TestBuildPiModelsJSONDefaults(t *testing.T) {
 	}
 }
 
+func TestBuildPiModelsJSONUsesPlaceholderForUnauthenticatedEndpoint(t *testing.T) {
+	got := buildPiModelsJSON(map[string]string{
+		"PI_CUSTOM_MODEL_PROVIDER":       "ccplant",
+		"PI_CUSTOM_MODEL_ID":             "ani-1",
+		"PI_CUSTOM_MODEL_BASE_URL":       "https://mock.example/v1",
+		"PI_CUSTOM_MODEL_AUTHENTICATION": "none",
+	})
+
+	provider := got["providers"].(map[string]interface{})["ccplant"].(map[string]interface{})
+	if provider["apiKey"] != "none" {
+		t.Fatalf("apiKey = %v, want placeholder", provider["apiKey"])
+	}
+}
+
 func TestBuildPiModelsJSONPrefersCanonicalProviderVariable(t *testing.T) {
 	got := buildPiModelsJSON(map[string]string{
 		"PI_CUSTOM_MODEL_PROVIDER": "canonical",
