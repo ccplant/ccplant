@@ -360,10 +360,14 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 	if err := s.validateValueMode(record.Value); err != nil {
 		return Record{}, err
 	}
-	if _, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key); err == nil {
-		return Record{}, ErrConflict
-	} else if !errors.Is(err, ErrNotFound) {
-		return Record{}, err
+	table := libSQLTableForRecord(record)
+	routedTable, routed := libSQLSessionRunnerTableForKey(record.Kind, record.Key)
+	if !routed || routedTable != table {
+		if _, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key); err == nil {
+			return Record{}, ErrConflict
+		} else if !errors.Is(err, ErrNotFound) {
+			return Record{}, err
+		}
 	}
 	record.Version = 1
 	metadata, err := marshalRecordMetadata(record.Labels)
@@ -371,7 +375,6 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 		return Record{}, err
 	}
 	record.OwnerScope = ownerScopeForRecord(record)
-	table := libSQLTableForRecord(record)
 	queryValues, err := libSQLQueryColumnValues(metadata)
 	if err != nil {
 		return Record{}, err

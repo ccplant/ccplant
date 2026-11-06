@@ -91,3 +91,16 @@ excluded from the iteration count because they contained no new improvement.
   second query to fetch the record.
 - Next improvement: fetch table name and record together from the exact runner
   table plus legacy fallback using one `UNION ALL ... LIMIT 1` round trip.
+
+## Iteration 6
+
+- Deployed commit: `3ce5d770f9434820c849651c5ce58e2b32702756`.
+- Image workflow: `42159421777` (success); deployment workflow: `42159917467`.
+- Fly health reported the matching version; load session
+  `d7097e7c-dcf0-4bd8-b1b2-85979f308ce2` reached `stable`.
+- Turso's cumulative top-query shapes remained unchanged after the load.
+- Observation: session-runner Create performs a preflight existence query even
+  though its key prefix identifies exactly one table and INSERT's primary-key
+  constraint already provides atomic conflict detection.
+- Next improvement: skip that redundant preflight for correctly routed
+  session-runner records while preserving duplicate conflict behavior.

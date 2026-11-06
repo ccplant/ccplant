@@ -321,6 +321,24 @@ func TestLibSQLColdGetLocatesSessionRunnerAndCachesTable(t *testing.T) {
 	}
 }
 
+func TestLibSQLSessionRunnerCreateReliesOnInsertConflict(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "create-conflict.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record := Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-duplicate", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("value")}
+	if _, err := store.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(ctx, record); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate Create() error = %v, want ErrConflict", err)
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{
