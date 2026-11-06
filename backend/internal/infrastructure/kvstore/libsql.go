@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
@@ -21,6 +22,7 @@ type LibSQLStore struct {
 	db              *sql.DB
 	encryptedValues bool
 	listGroup       singleflight.Group
+	tableLocations  sync.Map
 }
 
 func (s *LibSQLStore) expectEncryptedValues() { s.encryptedValues = true }
@@ -398,6 +400,7 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 		}
 		return Record{}, fmt.Errorf("create libSQL record: %w", err)
 	}
+	s.tableLocations.Store(libSQLLocationKey(record.Kind, record.Namespace, record.Key), table)
 	return record, nil
 }
 
@@ -507,6 +510,7 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 		}
 		return ErrConflict
 	}
+	s.tableLocations.Delete(libSQLLocationKey(kind, namespace, key))
 	return nil
 }
 

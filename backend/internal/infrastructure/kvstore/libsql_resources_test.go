@@ -249,6 +249,31 @@ func TestLibSQLSessionRunnerTableForKey(t *testing.T) {
 	}
 }
 
+func TestLibSQLTableLocationIsCached(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "location.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-id", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	if table, ok := store.tableLocations.Load(locationKey); !ok || table != "agentapi_session_runners" {
+		t.Fatalf("cached table = %v, %v", table, ok)
+	}
+	if err := store.Delete(ctx, record.Kind, record.Namespace, record.Key, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.tableLocations.Load(locationKey); ok {
+		t.Fatal("deleted record retained its table location")
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{

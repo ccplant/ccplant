@@ -481,6 +481,10 @@ AND target.key = agentapi_kv.key)`, predicate, resource.name)
 }
 
 func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace, key string) (string, error) {
+	locationKey := libSQLLocationKey(kind, namespace, key)
+	if cached, ok := s.tableLocations.Load(locationKey); ok {
+		return cached.(string), nil
+	}
 	var statement strings.Builder
 	var args []any
 	wroteTable := false
@@ -516,5 +520,10 @@ func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace,
 		}
 		return "", fmt.Errorf("locate libSQL resource: %w", err)
 	}
+	s.tableLocations.Store(locationKey, table)
 	return table, nil
+}
+
+func libSQLLocationKey(kind Kind, namespace, key string) string {
+	return string(kind) + "\x00" + namespace + "\x00" + key
 }

@@ -51,3 +51,18 @@ required complete iterations.
   dedicated table.
 - Next improvement: route the seven session-runner key prefixes to their exact
   dedicated table plus only the legacy fallback table.
+
+## Iteration 3
+
+- Deployed commit: `b9d5e0781c5d59a5f5b726401f067295bcc204b6`.
+- Image workflow: `42156774966` (success); deployment workflow: `42157260289`.
+- Fly health reported the matching version; load session
+  `84e79bfd-a31e-46b3-8ad7-5be72eaacd23` reached `stable`.
+- Observation: a runner's table is immutable after resource migration, but
+  repeated point updates still execute the same table-location union.
+- Next improvement: cache only the physical table location (never record
+  contents), populate it on create/lookup, and evict it on delete. This removes
+  repeated location SQL without introducing stale record data.
+
+The later same-image restarts used while clarifying the requested process are
+excluded from the iteration count because they contained no new improvement.
