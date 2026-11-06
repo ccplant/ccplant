@@ -66,3 +66,16 @@ required complete iterations.
 
 The later same-image restarts used while clarifying the requested process are
 excluded from the iteration count because they contained no new improvement.
+
+## Iteration 4
+
+- Deployed commit: `e86c0a7c8042ead7c6a86ba11c9a9f81ff77e14d`.
+- Image workflow: `42157818955` (success); deployment workflow: `42158303894`.
+- Fly health reported the matching version; load session
+  `a3650700-c7c9-451d-acd4-7379d8cfc016` reached `stable`.
+- Turso's cumulative top-query window was unchanged; no new legacy query shape
+  displaced the existing historical entries.
+- Observation: a dedicated-table List knows the physical table for every
+  returned record, but did not warm the location cache. Claiming a listed
+  allocation therefore still needed a subsequent location lookup before update.
+- Next improvement: warm table-location entries from single-table List results.

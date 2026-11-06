@@ -544,7 +544,8 @@ func (s *LibSQLStore) listOnce(ctx context.Context, query Query) ([]Record, erro
 	var records []Record
 	statements := make([]string, 0, len(libSQLResourceTables)+1)
 	var args []any
-	for _, table := range libSQLTablesForSelector(selector) {
+	tables := libSQLTablesForSelector(selector)
+	for _, table := range tables {
 		if resource, dedicated := libSQLResourceTableNamed(table); dedicated && resource.kind != query.Kind {
 			continue
 		}
@@ -577,6 +578,9 @@ func (s *LibSQLStore) listOnce(ctx context.Context, query Query) ([]Record, erro
 		}
 		if selector.Matches(labels.Set(record.Labels)) {
 			records = append(records, record)
+			if len(tables) == 1 {
+				s.tableLocations.Store(libSQLLocationKey(record.Kind, record.Namespace, record.Key), tables[0])
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {

@@ -274,6 +274,29 @@ func TestLibSQLTableLocationIsCached(t *testing.T) {
 	}
 }
 
+func TestLibSQLDedicatedListWarmsTableLocationCache(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "list-location.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-allocation-pool-id", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "allocation",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	store.tableLocations.Delete(locationKey)
+	if _, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns", KeyPrefix: "agentapi-session-allocation-pool-", LabelSelector: "agentapi.proxy/session-runner-resource=allocation"}); err != nil {
+		t.Fatal(err)
+	}
+	if table, ok := store.tableLocations.Load(locationKey); !ok || table != "agentapi_session_allocations" {
+		t.Fatalf("cached table = %v, %v", table, ok)
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{
