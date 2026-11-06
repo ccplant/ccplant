@@ -41,6 +41,14 @@ type Handlers struct {
 	hmacSecret     []byte
 }
 
+type parentResumePreparer interface {
+	PrepareParentSessionResume(context.Context, string, *sessionsettings.SessionSettings) error
+}
+
+type workloadSuspensionReporter interface {
+	SessionWorkloadSuspended(context.Context, string) (bool, error)
+}
+
 type operationalProvider interface {
 	OperationalStatus(context.Context, []string) (map[string]interface{}, error)
 	OperationalLogs(context.Context, string, string, int) ([]string, string, error)
@@ -217,10 +225,8 @@ func (h *Handlers) ResumeSession(c echo.Context) error {
 		if err := c.Bind(&settings); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid resume settings")
 		}
-		if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
-			if err := preparer.PrepareSessionResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
-				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
-			}
+		if err := h.prepareParentResume(c.Request().Context(), c.Param("sessionId"), &settings); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		}
 	}
 	ensurer, ok := h.sessionManager.(repositories.SessionWorkloadEnsurer)
@@ -241,6 +247,16 @@ func (h *Handlers) ResumeSession(c echo.Context) error {
 		status = session.Status()
 	}
 	return c.JSON(code, map[string]string{"session_id": c.Param("sessionId"), "status": status})
+}
+
+func (h *Handlers) prepareParentResume(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) error {
+	if preparer, ok := h.sessionManager.(parentResumePreparer); ok {
+		return preparer.PrepareParentSessionResume(ctx, sessionID, settings)
+	}
+	if preparer, ok := h.sessionManager.(repositories.SessionResumePreparer); ok {
+		return preparer.PrepareSessionResume(ctx, sessionID, settings)
+	}
+	return nil
 }
 
 func (h *Handlers) SuspendSession(c echo.Context) error {
@@ -276,6 +292,9 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 	if session == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
+	if session.Status() == "suspended" && h.workloadSuspended(c.Request().Context(), sessionID) {
+		return suspendedSessionResponse(c, sessionID)
+	}
 	addr := strings.TrimSpace(session.Addr())
 	if addr == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session runtime is not ready")
@@ -301,12 +320,35 @@ func (h *Handlers) ProxySession(c echo.Context) error {
 		req.URL.RawPath = ""
 		req.Host = target.Host
 	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, proxyErr error) {
+		if h.workloadSuspended(req.Context(), sessionID) {
+			_ = suspendedSessionResponse(c, sessionID)
+			return
+		}
 		log.Printf("[SESSION_MANAGER] Proxy session %s failed: %v", sessionID, proxyErr)
 		http.Error(w, "session runtime unavailable", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(c.Response(), c.Request())
 	return nil
+}
+
+func (h *Handlers) workloadSuspended(ctx context.Context, sessionID string) bool {
+	reporter, ok := h.sessionManager.(workloadSuspensionReporter)
+	if !ok {
+		return false
+	}
+	suspended, err := reporter.SessionWorkloadSuspended(ctx, sessionID)
+	if err != nil {
+		log.Printf("[SESSION_MANAGER] Inspect workload of session %s failed: %v", sessionID, err)
+		return false
+	}
+	return suspended
+}
+
+func suspendedSessionResponse(c echo.Context, sessionID string) error {
+	return c.JSON(http.StatusConflict, map[string]interface{}{
+		"error": map[string]string{"code": "session_suspended", "message": "Session workload is suspended", "session_id": sessionID, "status": "suspended"},
+	})
 }
 
 // ---------------------------------------------------------------------------
