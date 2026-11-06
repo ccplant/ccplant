@@ -36,3 +36,18 @@ required complete iterations.
 - Next improvement: replace runner pool indexes with
   `(runner_pool,namespace,key)`, preserving the index count while enabling pool
   narrowing and key-prefix range/order in one lookup.
+
+## Iteration 2
+
+- Deployed commit: `b12bf4b1a4fab7227871344b793b0e302a8bdee3`
+- Image workflow: `42155832545` (success); deployment workflow: `42156346239`.
+- Fly health: `ok`; reported version matches `b12bf4b`.
+- Load session: `f670ad18-34e7-4aad-8136-98ea4780dbf8`; reached `stable`.
+- Verification: Turso `EXPLAIN QUERY PLAN` now selects
+  `agentapi_session_allocations_runner_pool_lookup` with
+  `(runner_pool,namespace,key range)`; `PRAGMA index_info` confirms all columns.
+- Observation: point reads and writes still locate a runner key by unioning all
+  physical resource tables, although runner key prefixes uniquely identify a
+  dedicated table.
+- Next improvement: route the seven session-runner key prefixes to their exact
+  dedicated table plus only the legacy fallback table.

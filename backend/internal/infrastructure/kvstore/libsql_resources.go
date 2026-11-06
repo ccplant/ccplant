@@ -98,6 +98,30 @@ func libSQLResourceTableNamed(name string) (libSQLResourceTable, bool) {
 	return libSQLResourceTable{}, false
 }
 
+func libSQLSessionRunnerTableForKey(kind Kind, key string) (string, bool) {
+	if kind != KindSecret {
+		return "", false
+	}
+	prefixes := []struct {
+		prefix string
+		table  string
+	}{
+		{"agentapi-session-manager-", "agentapi_session_managers"},
+		{"agentapi-session-logical-pool-", "agentapi_session_logical_pools"},
+		{"agentapi-session-pool-supplier-", "agentapi_session_pool_suppliers"},
+		{"agentapi-session-pool-binding-", "agentapi_session_pool_bindings"},
+		{"agentapi-session-runner-", "agentapi_session_runners"},
+		{"agentapi-session-allocation-pool-", "agentapi_session_allocations"},
+		{"agentapi-session-configuration-", "agentapi_session_configurations"},
+	}
+	for _, candidate := range prefixes {
+		if strings.HasPrefix(key, candidate.prefix) {
+			return candidate.table, true
+		}
+	}
+	return "", false
+}
+
 func allLibSQLDataTables() []string {
 	tables := make([]string, 0, len(libSQLResourceTables)+1)
 	for _, resource := range libSQLResourceTables {
@@ -461,7 +485,13 @@ func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace,
 	var args []any
 	wroteTable := false
 	statement.WriteString("SELECT table_name FROM (")
-	for _, table := range allLibSQLDataTables() {
+	tables := allLibSQLDataTables()
+	if table, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
+		// Keep fallback compatibility for rolling upgrades without probing every
+		// unrelated resource table on each runner point read or write.
+		tables = []string{table, libSQLFallbackTable}
+	}
+	for _, table := range tables {
 		resource, dedicated := libSQLResourceTableNamed(table)
 		if dedicated && resource.kind != kind {
 			continue

@@ -231,6 +231,24 @@ func TestLibSQLTablesForSessionRunnerSelectorUsesDedicatedTable(t *testing.T) {
 	}
 }
 
+func TestLibSQLSessionRunnerTableForKey(t *testing.T) {
+	tests := map[string]string{
+		"agentapi-session-manager-abcd":          "agentapi_session_managers",
+		"agentapi-session-runner-abcd":           "agentapi_session_runners",
+		"agentapi-session-allocation-pool-abcd":  "agentapi_session_allocations",
+		"agentapi-session-configuration-default": "agentapi_session_configurations",
+	}
+	for key, want := range tests {
+		got, ok := libSQLSessionRunnerTableForKey(KindSecret, key)
+		if !ok || got != want {
+			t.Errorf("table for %q = %q, %v; want %q, true", key, got, ok, want)
+		}
+	}
+	if _, ok := libSQLSessionRunnerTableForKey(KindConfigMap, "agentapi-session-runner-abcd"); ok {
+		t.Fatal("config map key unexpectedly routed to runner table")
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{
