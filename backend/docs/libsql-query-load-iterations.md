@@ -140,3 +140,23 @@ excluded from the iteration count because they contained no new improvement.
   although a runner key uniquely identifies its dedicated table.
 - Next improvement: attempt the versioned DELETE directly on that table and
   fall back to location discovery only for legacy, missing, or conflict cases.
+
+## Iteration 10
+
+- Deployed commit: `94d06ecccf61615c72f9872bfa483ffad880dd8f`.
+- Image workflow: `42163024577` (success); deployment workflow: `42163579629`.
+- Fly health reported the matching version; load session
+  `9e78d59e-76a3-4200-ad6f-ff959fc5131e` reached `stable`.
+- Final Turso inspection still shows the historical cumulative legacy shapes;
+  none of the ten post-change sessions introduced a new legacy top-query entry.
+- Final `EXPLAIN QUERY PLAN` selects the covering
+  `agentapi_session_allocations_runner_pool_lookup` using pool, namespace, and
+  the full key range.
+- Improvement verified in this iteration: cold runner/allocation deletes now
+  complete with one direct versioned DELETE in the normal case; exact legacy,
+  missing, and conflict semantics retain the discovery fallback.
+
+All ten counted iterations include a distinct implementation improvement,
+local verification, a Fly development deployment, a real session reaching
+`stable`, and a subsequent Turso inspection. Same-image verification-only
+restarts are explicitly excluded.
