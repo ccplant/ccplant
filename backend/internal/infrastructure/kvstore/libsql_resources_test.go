@@ -387,6 +387,28 @@ func TestLibSQLColdSessionRunnerUpdateRoutesFromKeyAndLabels(t *testing.T) {
 	}
 }
 
+func TestLibSQLColdSessionRunnerDeleteRoutesFromKey(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "cold-delete.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-allocation-pool-delete", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "allocation",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.tableLocations.Delete(libSQLLocationKey(record.Kind, record.Namespace, record.Key))
+	if err := store.Delete(ctx, record.Kind, record.Namespace, record.Key, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, record.Kind, record.Namespace, record.Key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get() after Delete error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{

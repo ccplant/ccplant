@@ -527,6 +527,24 @@ func (s *LibSQLStore) decodeLibSQLRecord(record Record, metadata []byte) (Record
 }
 
 func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
+	locationKey := libSQLLocationKey(kind, namespace, key)
+	if _, cached := s.tableLocations.Load(locationKey); !cached {
+		if routed, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
+			result, err := s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE namespace = ? AND key = ? AND version = ?`, routed), namespace, key, version)
+			if err != nil {
+				return fmt.Errorf("delete routed libSQL record: %w", err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("read routed libSQL delete result: %w", err)
+			}
+			if affected > 0 {
+				return nil
+			}
+			// Version mismatch, missing row, and legacy fallback are uncommon.
+			// Preserve their exact error semantics through the existing path.
+		}
+	}
 	table, err := s.tableContaining(ctx, kind, namespace, key)
 	if err != nil {
 		return err
@@ -552,7 +570,7 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 		}
 		return ErrConflict
 	}
-	s.tableLocations.Delete(libSQLLocationKey(kind, namespace, key))
+	s.tableLocations.Delete(locationKey)
 	return nil
 }
 

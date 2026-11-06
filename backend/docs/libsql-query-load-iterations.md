@@ -129,3 +129,14 @@ excluded from the iteration count because they contained no new improvement.
   key but still performs a table-location query first.
 - Next improvement: route an Update directly when key and labels independently
   identify the same dedicated table, while honoring cached legacy locations.
+
+## Iteration 9
+
+- Deployed commit: `1da1e029c9e18a4a8622e19e188fc5b1153d55cc`.
+- Fly health reported the matching version; load session
+  `5051826f-5622-47d4-8bdc-aee013c35f53` reached `stable`.
+- Turso's cumulative top-query shapes remained unchanged after the load.
+- Observation: a cold Delete still locates the physical table before deleting,
+  although a runner key uniquely identifies its dedicated table.
+- Next improvement: attempt the versioned DELETE directly on that table and
+  fall back to location discovery only for legacy, missing, or conflict cases.
