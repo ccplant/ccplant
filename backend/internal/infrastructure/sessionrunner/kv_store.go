@@ -20,6 +20,8 @@ import (
 const (
 	labelResource    = "agentapi.proxy/session-runner-resource"
 	labelPoolHash    = "agentapi.proxy/session-runner-pool-hash"
+	labelStatus      = "agentapi.proxy/session-runner-status"
+	labelDind        = "agentapi.proxy/session-runner-dind"
 	dataKey          = "resource.json"
 	managerPrefix    = "agentapi-session-manager-"
 	logicalPrefix    = "agentapi-session-logical-pool-"
@@ -103,6 +105,7 @@ func (s *Store) createWithLabels(ctx context.Context, name, resource, pool strin
 	for key, value := range additionalLabels {
 		labels[key] = value
 	}
+	addSessionRunnerQueryLabels(labels, value)
 	document, err := json.Marshal(secretDocument{APIVersion: "v1", Kind: "Secret",
 		Metadata: documentMetadata{Name: name, Namespace: s.namespace, Labels: labels},
 		Type:     "Opaque", Data: map[string][]byte{dataKey: raw}})
@@ -152,6 +155,8 @@ func (s *Store) update(ctx context.Context, name string, value any) error {
 			return err
 		}
 		document.Data[dataKey] = raw
+		addSessionRunnerQueryLabels(document.Metadata.Labels, value)
+		record.Labels = document.Metadata.Labels
 		record.Value, err = json.Marshal(document)
 		if err != nil {
 			return err
@@ -182,12 +187,16 @@ func (s *Store) delete(ctx context.Context, name string) error {
 	return err
 }
 
-func (s *Store) list(ctx context.Context, resource string, decode func([]byte) error) error {
+func (s *Store) list(ctx context.Context, resource string, decode func([]byte) error, pools ...string) error {
+	selector := labelResource + "=" + resource
+	if len(pools) > 0 && pools[0] != "" {
+		selector += "," + labelPoolHash + "=" + hashName(pools[0])
+	}
 	items, err := s.kv.List(ctx, kvstore.Query{
 		Kind:          kvstore.KindSecret,
 		Namespace:     s.namespace,
 		KeyPrefix:     resourcePrefix(resource),
-		LabelSelector: labelResource + "=" + resource,
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return err
@@ -205,6 +214,20 @@ func (s *Store) list(ctx context.Context, resource string, decode func([]byte) e
 		}
 	}
 	return nil
+}
+
+func addSessionRunnerQueryLabels(labels map[string]string, value any) {
+	if labels == nil {
+		return
+	}
+	switch resource := value.(type) {
+	case *core.Runner:
+		labels[labelStatus] = string(resource.Status)
+		labels[labelDind] = fmt.Sprintf("%t", capabilityEnabled(resource.Capabilities, "dind"))
+	case *core.Allocation:
+		labels[labelStatus] = string(resource.Status)
+		labels[labelDind] = fmt.Sprintf("%t", capabilityEnabled(resource.Requirements, "dind"))
+	}
 }
 
 func (s *Store) CreateManager(ctx context.Context, manager *core.Manager) error {
@@ -368,7 +391,7 @@ func (s *Store) ListBindings(ctx context.Context, pool string) ([]*core.Binding,
 			result = append(result, &value)
 		}
 		return nil
-	})
+	}, pool)
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Priority == result[j].Priority {
 			return result[i].ID < result[j].ID
@@ -436,7 +459,7 @@ func (s *Store) ListRunners(ctx context.Context, pool string) ([]*core.Runner, e
 			result = append(result, &value)
 		}
 		return nil
-	})
+	}, pool)
 	return result, err
 }
 
@@ -471,7 +494,7 @@ func (s *Store) ListAllocations(ctx context.Context, pool string) ([]*core.Alloc
 			result = append(result, &value)
 		}
 		return nil
-	})
+	}, pool)
 	return result, err
 }
 
@@ -487,11 +510,16 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 	if runner.Pool != pool {
 		return nil, false, core.ErrUnauthorized
 	}
+	// NotIn intentionally includes legacy rows without a materialized status.
+	// Capability authorization remains a post-decryption check so older DinD
+	// allocations without query labels cannot be starved during migration.
+	selector := labelResource + "=allocation," + labelPoolHash + "=" + hashName(pool) +
+		"," + labelStatus + " notin (claimed,running,completed,failed)"
 	records, err := s.kv.List(ctx, kvstore.Query{
 		Kind:          kvstore.KindSecret,
 		Namespace:     s.namespace,
 		KeyPrefix:     allocationPrefix,
-		LabelSelector: labelResource + "=allocation," + labelPoolHash + "=" + hashName(pool),
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return nil, false, err
@@ -563,6 +591,8 @@ func (s *Store) ClaimNext(ctx context.Context, pool, runnerID string, lease time
 		allocation.UpdatedAt = now
 		raw, _ := json.Marshal(&allocation)
 		item.document.Data[dataKey] = raw
+		addSessionRunnerQueryLabels(item.document.Metadata.Labels, &allocation)
+		item.record.Labels = item.document.Metadata.Labels
 		item.record.Value, _ = json.Marshal(item.document)
 		if _, err := s.kv.Update(ctx, item.record); errors.Is(err, kvstore.ErrConflict) {
 			return nil, false, nil
@@ -642,6 +672,8 @@ func (s *Store) transitionLease(ctx context.Context, sessionID, runnerID, leaseI
 			return nil, err
 		}
 		document.Data[dataKey] = raw
+		addSessionRunnerQueryLabels(document.Metadata.Labels, &allocation)
+		record.Labels = document.Metadata.Labels
 		record.Value, _ = json.Marshal(document)
 		if _, err := s.kv.Update(ctx, record); errors.Is(err, kvstore.ErrConflict) {
 			continue

@@ -22,7 +22,7 @@ type libSQLResourceTable struct {
 
 var libSQLQueryColumns = []string{
 	"principal_id", "creator_id", "resource_scope",
-	"slack_channel", "slack_thread_ts",
+	"slack_channel", "slack_thread_ts", "runner_pool", "runner_status", "runner_dind",
 }
 
 var libSQLLabelColumns = map[string]string{
@@ -51,6 +51,9 @@ var libSQLLabelColumns = map[string]string{
 	"agentapi.proxy/schedule-scope":                    "resource_scope",
 	"agentapi.proxy/session-route-tag-slack_channel":   "slack_channel",
 	"agentapi.proxy/session-route-tag-slack_thread_ts": "slack_thread_ts",
+	"agentapi.proxy/session-runner-pool-hash":          "runner_pool",
+	"agentapi.proxy/session-runner-status":             "runner_status",
+	"agentapi.proxy/session-runner-dind":               "runner_dind",
 }
 
 var libSQLResourceTables = []libSQLResourceTable{
@@ -75,6 +78,13 @@ var libSQLResourceTables = []libSQLResourceTable{
 	{name: "agentapi_codex_auth_locks", kind: KindSecret, labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "lock"},
 	{name: "agentapi_schedules", kind: KindSecret, labelKey: "agentapi.proxy/schedule", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
 	{name: "agentapi_system_settings", kind: KindSecret, keyPrefix: "agentapi-admin-system-settings-"},
+	{name: "agentapi_session_managers", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "manager"},
+	{name: "agentapi_session_logical_pools", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "logical-pool", indexColumns: []string{"runner_pool"}},
+	{name: "agentapi_session_pool_suppliers", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "pool-supplier", indexColumns: []string{"runner_pool"}},
+	{name: "agentapi_session_pool_bindings", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "binding", indexColumns: []string{"runner_pool"}},
+	{name: "agentapi_session_runners", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "runner", indexColumns: []string{"runner_pool", "runner_status", "runner_dind"}},
+	{name: "agentapi_session_allocations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "allocation", indexColumns: []string{"runner_pool", "runner_status", "runner_dind"}},
+	{name: "agentapi_session_configurations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "configuration"},
 }
 
 const libSQLFallbackTable = "agentapi_kv"
@@ -86,6 +96,30 @@ func libSQLResourceTableNamed(name string) (libSQLResourceTable, bool) {
 		}
 	}
 	return libSQLResourceTable{}, false
+}
+
+func libSQLSessionRunnerTableForKey(kind Kind, key string) (string, bool) {
+	if kind != KindSecret {
+		return "", false
+	}
+	prefixes := []struct {
+		prefix string
+		table  string
+	}{
+		{"agentapi-session-manager-", "agentapi_session_managers"},
+		{"agentapi-session-logical-pool-", "agentapi_session_logical_pools"},
+		{"agentapi-session-pool-supplier-", "agentapi_session_pool_suppliers"},
+		{"agentapi-session-pool-binding-", "agentapi_session_pool_bindings"},
+		{"agentapi-session-runner-", "agentapi_session_runners"},
+		{"agentapi-session-allocation-pool-", "agentapi_session_allocations"},
+		{"agentapi-session-configuration-", "agentapi_session_configurations"},
+	}
+	for _, candidate := range prefixes {
+		if strings.HasPrefix(key, candidate.prefix) {
+			return candidate.table, true
+		}
+	}
+	return "", false
 }
 
 func allLibSQLDataTables() []string {
@@ -156,6 +190,16 @@ func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 			trailingColumns := "namespace"
 			if table == libSQLFallbackTable {
 				trailingColumns = "kind, namespace"
+			} else if column == "runner_pool" {
+				// Runner lookups combine pool with a resource key prefix. Keep
+				// both constraints and ordering in one index lookup.
+				trailingColumns = "namespace, key"
+			}
+			// IF NOT EXISTS cannot evolve the older two-column pool index.
+			if column == "runner_pool" {
+				if _, err := db.ExecContext(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS %s`, index)); err != nil {
+					return fmt.Errorf("replace libSQL resource index %s: %w", index, err)
+				}
 			}
 			if _, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (%s, %s)`, index, table, column, trailingColumns)); err != nil {
 				return fmt.Errorf("initialize libSQL resource index %s: %w", index, err)
@@ -165,7 +209,10 @@ func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 	if err := migrateLibSQLResourceTables(ctx, db); err != nil {
 		return err
 	}
-	return backfillLibSQLQueryColumns(ctx, db)
+	if err := backfillLibSQLQueryColumns(ctx, db); err != nil {
+		return err
+	}
+	return backfillLibSQLSessionRunnerQueryColumns(ctx, db)
 }
 
 func libSQLDataTableDDL(table string, ifNotExists bool) string {
@@ -186,6 +233,8 @@ owner_scope TEXT NOT NULL DEFAULT '',
 principal_id TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL DEFAULT '',
 resource_scope TEXT NOT NULL DEFAULT '',
 slack_channel TEXT NOT NULL DEFAULT '', slack_thread_ts TEXT NOT NULL DEFAULT '',
+runner_pool TEXT NOT NULL DEFAULT '', runner_status TEXT NOT NULL DEFAULT '',
+runner_dind TEXT NOT NULL DEFAULT '',
 metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
 PRIMARY KEY (%s))`, prefix, table, kindColumn, primaryKey)
 }
@@ -364,6 +413,33 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 	return nil
 }
 
+func backfillLibSQLSessionRunnerQueryColumns(ctx context.Context, db *sql.DB) error {
+	const migration = "materialized-session-runner-columns-v1"
+	var applied int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
+		return fmt.Errorf("inspect libSQL session runner column migration: %w", err)
+	}
+	if applied != 0 {
+		return nil
+	}
+	for _, resource := range libSQLResourceTables {
+		if resource.labelKey != "agentapi.proxy/session-runner-resource" {
+			continue
+		}
+		statement := fmt.Sprintf(`UPDATE %s SET
+runner_pool = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-pool-hash"'), ''),
+runner_status = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-status"'), ''),
+runner_dind = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-dind"'), '')`, resource.name)
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("backfill libSQL session runner query columns in %s: %w", resource.name, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
+		return fmt.Errorf("record libSQL session runner column migration: %w", err)
+	}
+	return nil
+}
+
 // migrateLibSQLResourceTables moves records created by older releases out of
 // the catch-all table. INSERT OR IGNORE plus the correlated DELETE makes the
 // migration restart-safe if a process is interrupted between resource groups.
@@ -405,11 +481,21 @@ AND target.key = agentapi_kv.key)`, predicate, resource.name)
 }
 
 func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace, key string) (string, error) {
+	locationKey := libSQLLocationKey(kind, namespace, key)
+	if cached, ok := s.tableLocations.Load(locationKey); ok {
+		return cached.(string), nil
+	}
 	var statement strings.Builder
 	var args []any
 	wroteTable := false
 	statement.WriteString("SELECT table_name FROM (")
-	for _, table := range allLibSQLDataTables() {
+	tables := allLibSQLDataTables()
+	if table, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
+		// Keep fallback compatibility for rolling upgrades without probing every
+		// unrelated resource table on each runner point read or write.
+		tables = []string{table, libSQLFallbackTable}
+	}
+	for _, table := range tables {
 		resource, dedicated := libSQLResourceTableNamed(table)
 		if dedicated && resource.kind != kind {
 			continue
@@ -434,5 +520,10 @@ func (s *LibSQLStore) tableContaining(ctx context.Context, kind Kind, namespace,
 		}
 		return "", fmt.Errorf("locate libSQL resource: %w", err)
 	}
+	s.tableLocations.Store(locationKey, table)
 	return table, nil
+}
+
+func libSQLLocationKey(kind Kind, namespace, key string) string {
+	return string(kind) + "\x00" + namespace + "\x00" + key
 }

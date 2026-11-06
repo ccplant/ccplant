@@ -29,6 +29,8 @@ func (s *Store) mutate(ctx context.Context, name string, value any, change func(
 		if err != nil {
 			return err
 		}
+		addSessionRunnerQueryLabels(doc.Metadata.Labels, value)
+		record.Labels = doc.Metadata.Labels
 		record.Value, err = json.Marshal(doc)
 		if err != nil {
 			return err

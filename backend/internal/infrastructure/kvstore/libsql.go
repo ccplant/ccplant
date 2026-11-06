@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
+	"golang.org/x/sync/singleflight"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	_ "modernc.org/sqlite" // register the sqlite driver for local file:// databases
@@ -19,6 +21,8 @@ import (
 type LibSQLStore struct {
 	db              *sql.DB
 	encryptedValues bool
+	listGroup       singleflight.Group
+	tableLocations  sync.Map
 }
 
 func (s *LibSQLStore) expectEncryptedValues() { s.encryptedValues = true }
@@ -356,10 +360,14 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 	if err := s.validateValueMode(record.Value); err != nil {
 		return Record{}, err
 	}
-	if _, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key); err == nil {
-		return Record{}, ErrConflict
-	} else if !errors.Is(err, ErrNotFound) {
-		return Record{}, err
+	table := libSQLTableForRecord(record)
+	routedTable, routed := libSQLSessionRunnerTableForKey(record.Kind, record.Key)
+	if !routed || routedTable != table {
+		if _, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key); err == nil {
+			return Record{}, ErrConflict
+		} else if !errors.Is(err, ErrNotFound) {
+			return Record{}, err
+		}
 	}
 	record.Version = 1
 	metadata, err := marshalRecordMetadata(record.Labels)
@@ -367,7 +375,6 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 		return Record{}, err
 	}
 	record.OwnerScope = ownerScopeForRecord(record)
-	table := libSQLTableForRecord(record)
 	queryValues, err := libSQLQueryColumnValues(metadata)
 	if err != nil {
 		return Record{}, err
@@ -396,6 +403,7 @@ func (s *LibSQLStore) Create(ctx context.Context, record Record) (Record, error)
 		}
 		return Record{}, fmt.Errorf("create libSQL record: %w", err)
 	}
+	s.tableLocations.Store(libSQLLocationKey(record.Kind, record.Namespace, record.Key), table)
 	return record, nil
 }
 
@@ -412,9 +420,21 @@ func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
-	table, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key)
-	if err != nil {
-		return Record{}, ErrConflict
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	var table string
+	if cached, ok := s.tableLocations.Load(locationKey); ok {
+		table = cached.(string)
+	} else if routed, ok := libSQLSessionRunnerTableForKey(record.Kind, record.Key); ok && routed == libSQLTableForRecord(record) {
+		// The key and labels independently agree on the dedicated table. Avoid
+		// a cold location query; records read from legacy fallback are already
+		// represented in the cache and take the branch above.
+		table = routed
+	} else {
+		var err error
+		table, err = s.tableContaining(ctx, record.Kind, record.Namespace, record.Key)
+		if err != nil {
+			return Record{}, ErrConflict
+		}
 	}
 	assignments := strings.Join(libSQLQueryColumns, " = ?, ") + " = ?"
 	where := "namespace = ? AND key = ? AND version = ?"
@@ -444,6 +464,7 @@ WHERE %s`, table, assignments, where)
 	if affected == 0 {
 		return Record{}, ErrConflict
 	}
+	s.tableLocations.Store(locationKey, table)
 	record.Version++
 	return record, nil
 }
@@ -451,6 +472,27 @@ WHERE %s`, table, assignments, where)
 func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string) (Record, error) {
 	record := Record{Kind: kind, Namespace: namespace, Key: key}
 	var metadata []byte
+	locationKey := libSQLLocationKey(kind, namespace, key)
+	if _, cached := s.tableLocations.Load(locationKey); !cached {
+		if dedicated, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
+			statement := fmt.Sprintf(`SELECT table_name, version, metadata, owner_scope, value FROM (
+SELECT '%s' AS table_name, version, metadata, owner_scope, value FROM %s WHERE namespace = ? AND key = ?
+UNION ALL
+SELECT '%s' AS table_name, version, metadata, owner_scope, value FROM %s WHERE kind = ? AND namespace = ? AND key = ?
+) LIMIT 1`, dedicated, dedicated, libSQLFallbackTable, libSQLFallbackTable)
+			var table string
+			err := s.db.QueryRowContext(ctx, statement, namespace, key, kind, namespace, key).
+				Scan(&table, &record.Version, &metadata, &record.OwnerScope, &record.Value)
+			if errors.Is(err, sql.ErrNoRows) {
+				return Record{}, ErrNotFound
+			}
+			if err != nil {
+				return Record{}, fmt.Errorf("get libSQL session-runner record: %w", err)
+			}
+			s.tableLocations.Store(locationKey, table)
+			return s.decodeLibSQLRecord(record, metadata)
+		}
+	}
 	table, err := s.tableContaining(ctx, kind, namespace, key)
 	if err != nil {
 		return Record{}, err
@@ -469,6 +511,11 @@ func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string)
 	if err != nil {
 		return Record{}, fmt.Errorf("get libSQL record: %w", err)
 	}
+	return s.decodeLibSQLRecord(record, metadata)
+}
+
+func (s *LibSQLStore) decodeLibSQLRecord(record Record, metadata []byte) (Record, error) {
+	var err error
 	record.Labels, err = unmarshalRecordMetadata(metadata)
 	if err != nil {
 		return Record{}, fmt.Errorf("decode libSQL metadata: %w", err)
@@ -480,6 +527,24 @@ func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string)
 }
 
 func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
+	locationKey := libSQLLocationKey(kind, namespace, key)
+	if _, cached := s.tableLocations.Load(locationKey); !cached {
+		if routed, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
+			result, err := s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE namespace = ? AND key = ? AND version = ?`, routed), namespace, key, version)
+			if err != nil {
+				return fmt.Errorf("delete routed libSQL record: %w", err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("read routed libSQL delete result: %w", err)
+			}
+			if affected > 0 {
+				return nil
+			}
+			// Version mismatch, missing row, and legacy fallback are uncommon.
+			// Preserve their exact error semantics through the existing path.
+		}
+	}
 	table, err := s.tableContaining(ctx, kind, namespace, key)
 	if err != nil {
 		return err
@@ -505,6 +570,7 @@ func (s *LibSQLStore) Delete(ctx context.Context, kind Kind, namespace, key stri
 		}
 		return ErrConflict
 	}
+	s.tableLocations.Delete(locationKey)
 	return nil
 }
 
@@ -520,50 +586,86 @@ func (s *LibSQLStore) Scan(ctx context.Context, query ScanQuery) ([]Record, erro
 }
 
 func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
+	key := string(query.Kind) + "\x00" + query.Namespace + "\x00" + query.KeyPrefix + "\x00" + query.LabelSelector
+	value, err, _ := s.listGroup.Do(key, func() (any, error) {
+		return s.listOnce(ctx, query)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneRecords(value.([]Record)), nil
+}
+
+func (s *LibSQLStore) listOnce(ctx context.Context, query Query) ([]Record, error) {
 	selector, err := labels.Parse(query.LabelSelector)
 	if err != nil {
 		return nil, fmt.Errorf("parse label selector: %w", err)
 	}
 	var records []Record
-	for _, table := range libSQLTablesForSelector(selector) {
+	statements := make([]string, 0, len(libSQLResourceTables)+1)
+	var args []any
+	tables := libSQLTablesForSelector(selector)
+	for _, table := range tables {
 		if resource, dedicated := libSQLResourceTableNamed(table); dedicated && resource.kind != query.Kind {
 			continue
 		}
-		statement, args := libSQLListQuery(table, query, selector)
-		rows, err := s.db.QueryContext(ctx, statement, args...)
+		statement, tableArgs := libSQLListQuery(table, query, selector)
+		statements = append(statements, statement)
+		args = append(args, tableArgs...)
+	}
+	if len(statements) == 0 {
+		return records, nil
+	}
+	// A selector that cannot identify a dedicated resource may span every
+	// physical table. UNION ALL keeps that operation to one remote round trip.
+	// The compatibility contract is enforced by the Go sort below. Avoid a
+	// second remote sort, especially the temporary merge sort required for a
+	// UNION spanning several physical tables.
+	rows, err := s.db.QueryContext(ctx, strings.Join(statements, " UNION ALL "), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list libSQL records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := Record{Kind: query.Kind, Namespace: query.Namespace}
+		var metadata []byte
+		if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
+			return nil, fmt.Errorf("scan libSQL record: %w", err)
+		}
+		record.Labels, err = unmarshalRecordMetadata(metadata)
 		if err != nil {
-			return nil, fmt.Errorf("list libSQL records from %s: %w", table, err)
+			return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
 		}
-		for rows.Next() {
-			record := Record{Kind: query.Kind, Namespace: query.Namespace}
-			var metadata []byte
-			if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan libSQL record: %w", err)
-			}
-			record.Labels, err = unmarshalRecordMetadata(metadata)
-			if err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
-			}
-			if err := s.validateValueMode(record.Value); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
-			}
-			if selector.Matches(labels.Set(record.Labels)) {
-				records = append(records, record)
+		if err := s.validateValueMode(record.Value); err != nil {
+			return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
+		}
+		if selector.Matches(labels.Set(record.Labels)) {
+			records = append(records, record)
+			if len(tables) == 1 {
+				s.tableLocations.Store(libSQLLocationKey(record.Kind, record.Namespace, record.Key), tables[0])
 			}
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
 	return records, nil
+}
+
+func cloneRecords(records []Record) []Record {
+	cloned := make([]Record, len(records))
+	for i := range records {
+		cloned[i] = records[i]
+		cloned[i].Value = append([]byte(nil), records[i].Value...)
+		if records[i].Labels != nil {
+			cloned[i].Labels = make(map[string]string, len(records[i].Labels))
+			for key, value := range records[i].Labels {
+				cloned[i].Labels[key] = value
+			}
+		}
+	}
+	return cloned
 }
 
 // libSQLListQuery pushes label requirements into SQLite so remote libSQL does
@@ -581,8 +683,13 @@ func libSQLListQuery(table string, query Query, selector labels.Selector) (strin
 	statement.WriteString("namespace = ?")
 	args = append(args, query.Namespace)
 	if query.KeyPrefix != "" {
-		statement.WriteString(" AND substr(key, 1, length(?)) = ?")
-		args = append(args, query.KeyPrefix, query.KeyPrefix)
+		if upper, ok := stringPrefixUpperBound(query.KeyPrefix); ok {
+			statement.WriteString(" AND key >= ? AND key < ?")
+			args = append(args, query.KeyPrefix, upper)
+		} else {
+			statement.WriteString(" AND substr(key, 1, length(?)) = ?")
+			args = append(args, query.KeyPrefix, query.KeyPrefix)
+		}
 	}
 	requirements, selectable := selector.Requirements()
 	if !selectable {
@@ -614,8 +721,20 @@ func libSQLListQuery(table string, query Query, selector labels.Selector) (strin
 			args = append(args, key, values[0])
 		}
 	}
-	statement.WriteString(" ORDER BY key")
 	return statement.String(), args
+}
+
+// stringPrefixUpperBound returns the smallest string greater than every
+// string with prefix. SQLite can use it as the upper edge of a B-tree range.
+func stringPrefixUpperBound(prefix string) (string, bool) {
+	runes := []rune(prefix)
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] < '\U0010FFFF' {
+			runes[i]++
+			return string(runes[:i+1]), true
+		}
+	}
+	return "", false
 }
 
 func writeLibSQLColumnMatch(statement *strings.Builder, args *[]any, column string, values []string, operator selection.Operator) {

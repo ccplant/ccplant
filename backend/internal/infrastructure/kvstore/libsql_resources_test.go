@@ -220,6 +220,237 @@ FROM agentapi_api_tokens WHERE key = 'token'`).Scan(&owner, &scope); err != nil 
 	}
 }
 
+func TestLibSQLTablesForSessionRunnerSelectorUsesDedicatedTable(t *testing.T) {
+	selector, err := labels.Parse("agentapi.proxy/session-runner-resource=allocation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := libSQLTablesForSelector(selector)
+	if len(tables) != 1 || tables[0] != "agentapi_session_allocations" {
+		t.Fatalf("tables = %v, want [agentapi_session_allocations]", tables)
+	}
+}
+
+func TestLibSQLSessionRunnerTableForKey(t *testing.T) {
+	tests := map[string]string{
+		"agentapi-session-manager-abcd":          "agentapi_session_managers",
+		"agentapi-session-runner-abcd":           "agentapi_session_runners",
+		"agentapi-session-allocation-pool-abcd":  "agentapi_session_allocations",
+		"agentapi-session-configuration-default": "agentapi_session_configurations",
+	}
+	for key, want := range tests {
+		got, ok := libSQLSessionRunnerTableForKey(KindSecret, key)
+		if !ok || got != want {
+			t.Errorf("table for %q = %q, %v; want %q, true", key, got, ok, want)
+		}
+	}
+	if _, ok := libSQLSessionRunnerTableForKey(KindConfigMap, "agentapi-session-runner-abcd"); ok {
+		t.Fatal("config map key unexpectedly routed to runner table")
+	}
+}
+
+func TestLibSQLTableLocationIsCached(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "location.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-id", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	if table, ok := store.tableLocations.Load(locationKey); !ok || table != "agentapi_session_runners" {
+		t.Fatalf("cached table = %v, %v", table, ok)
+	}
+	if err := store.Delete(ctx, record.Kind, record.Namespace, record.Key, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.tableLocations.Load(locationKey); ok {
+		t.Fatal("deleted record retained its table location")
+	}
+}
+
+func TestLibSQLDedicatedListWarmsTableLocationCache(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "list-location.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-allocation-pool-id", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "allocation",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	store.tableLocations.Delete(locationKey)
+	if _, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns", KeyPrefix: "agentapi-session-allocation-pool-", LabelSelector: "agentapi.proxy/session-runner-resource=allocation"}); err != nil {
+		t.Fatal(err)
+	}
+	if table, ok := store.tableLocations.Load(locationKey); !ok || table != "agentapi_session_allocations" {
+		t.Fatalf("cached table = %v, %v", table, ok)
+	}
+}
+
+func TestLibSQLColdGetLocatesSessionRunnerAndCachesTable(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "cold-get.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-cold", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	store.tableLocations.Delete(locationKey)
+	got, err := store.Get(ctx, record.Kind, record.Namespace, record.Key)
+	if err != nil || string(got.Value) != "value" {
+		t.Fatalf("Get() = %#v, %v", got, err)
+	}
+	if table, ok := store.tableLocations.Load(locationKey); !ok || table != "agentapi_session_runners" {
+		t.Fatalf("cached table = %v, %v", table, ok)
+	}
+}
+
+func TestLibSQLSessionRunnerCreateReliesOnInsertConflict(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "create-conflict.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record := Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-duplicate", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("value")}
+	if _, err := store.Create(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(ctx, record); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate Create() error = %v, want ErrConflict", err)
+	}
+}
+
+func TestLibSQLListKeepsSortedContractWithoutSQLOrderBy(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "list-sort.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	for _, key := range []string{"runner-c", "runner-a", "runner-b"} {
+		if _, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: key, Labels: map[string]string{"test": "sort"}, Value: []byte(key)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns", LabelSelector: "test=sort"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"runner-a", "runner-b", "runner-c"} {
+		if items[i].Key != want {
+			t.Fatalf("items[%d].Key = %q, want %q", i, items[i].Key, want)
+		}
+	}
+}
+
+func TestLibSQLColdSessionRunnerUpdateRoutesFromKeyAndLabels(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "cold-update.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-update", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("before")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.tableLocations.Delete(libSQLLocationKey(record.Kind, record.Namespace, record.Key))
+	record.Value = []byte("after")
+	updated, err := store.Update(ctx, record)
+	if err != nil || updated.Version != 2 {
+		t.Fatalf("Update() = %#v, %v", updated, err)
+	}
+	got, err := store.Get(ctx, record.Kind, record.Namespace, record.Key)
+	if err != nil || string(got.Value) != "after" {
+		t.Fatalf("Get() = %#v, %v", got, err)
+	}
+}
+
+func TestLibSQLColdSessionRunnerDeleteRoutesFromKey(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "cold-delete.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-allocation-pool-delete", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "allocation",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.tableLocations.Delete(libSQLLocationKey(record.Kind, record.Namespace, record.Key))
+	if err := store.Delete(ctx, record.Kind, record.Namespace, record.Key, record.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, record.Kind, record.Namespace, record.Key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get() after Delete error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
+	selector := labels.Everything()
+	statement, args := libSQLListQuery(libSQLFallbackTable, Query{
+		Kind: KindSecret, Namespace: "ns", KeyPrefix: "agentapi-session-runner-allocation-",
+	}, selector)
+	if strings.Contains(statement, "substr(key") || !strings.Contains(statement, "key >= ? AND key < ?") {
+		t.Fatalf("query does not use key range: %s", statement)
+	}
+	if got, want := args[len(args)-2], "agentapi-session-runner-allocation-"; got != want {
+		t.Fatalf("lower bound = %v, want %v", got, want)
+	}
+	if got, want := args[len(args)-1], "agentapi-session-runner-allocation."; got != want {
+		t.Fatalf("upper bound = %v, want %v", got, want)
+	}
+}
+
+func TestLibSQLSessionRunnerResourcesUseDedicatedIndexedTable(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "runner.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	labels := map[string]string{
+		"agentapi.proxy/session-runner-resource":  "allocation",
+		"agentapi.proxy/session-runner-pool-hash": "pool-hash",
+		"agentapi.proxy/session-runner-status":    "pending",
+		"agentapi.proxy/session-runner-dind":      "false",
+	}
+	if _, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "allocation", Labels: labels, Value: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var pool, status, dind string
+	if err := store.db.QueryRowContext(ctx, `SELECT runner_pool, runner_status, runner_dind
+FROM agentapi_session_allocations WHERE key = 'allocation'`).Scan(&pool, &status, &dind); err != nil {
+		t.Fatal(err)
+	}
+	if pool != "pool-hash" || status != "pending" || dind != "false" {
+		t.Fatalf("query columns = %q/%q/%q", pool, status, dind)
+	}
+}
+
 func TestLibSQLStoreMigratesClassifiedFallbackRows(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "migration.db")
