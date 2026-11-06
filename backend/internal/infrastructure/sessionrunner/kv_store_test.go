@@ -2,6 +2,7 @@ package sessionrunner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -77,6 +78,42 @@ func TestKVStoreAllocationRetainsBindingID(t *testing.T) {
 	allocation, err := store.GetAllocation(ctx, "session-a")
 	require.NoError(t, err)
 	require.Equal(t, "binding-alice", allocation.BindingID)
+}
+
+func TestKVStoreManagerScopedInventoryAndLegacyBackfill(t *testing.T) {
+	ctx := context.Background()
+	backend := &versionedMemoryStore{records: make(map[string]kvstore.Record)}
+	store := NewStore(backend, "test")
+	for _, managerID := range []string{"manager-a", "manager-b"} {
+		require.NoError(t, store.CreateRunner(ctx, &core.Runner{ID: "runner-" + managerID, ManagerID: managerID, Pool: "linux"}))
+		require.NoError(t, store.Enqueue(ctx, &core.Allocation{SessionID: "session-" + managerID, ManagerID: managerID, Pool: "linux"}))
+	}
+
+	// Simulate records written before the manager ownership label existed.
+	for _, name := range []string{runnerName("runner-manager-a"), allocationName("session-manager-a")} {
+		key := recordKey(kvstore.KindSecret, "test", name)
+		record := backend.records[key]
+		var document secretDocument
+		require.NoError(t, json.Unmarshal(record.Value, &document))
+		delete(document.Metadata.Labels, labelManagerHash)
+		delete(record.Labels, labelManagerHash)
+		record.Value, _ = json.Marshal(document)
+		backend.records[key] = record
+	}
+
+	runners, err := store.ListManagerRunners(ctx, "manager-a")
+	require.NoError(t, err)
+	require.Len(t, runners, 1)
+	require.Equal(t, "runner-manager-a", runners[0].ID)
+	allocations, err := store.ListManagerAllocations(ctx, "manager-a")
+	require.NoError(t, err)
+	require.Len(t, allocations, 1)
+	require.Equal(t, "session-manager-a", allocations[0].SessionID)
+
+	for _, name := range []string{runnerName("runner-manager-a"), allocationName("session-manager-a")} {
+		record := backend.records[recordKey(kvstore.KindSecret, "test", name)]
+		require.Equal(t, hashName("manager-a"), record.Labels[labelManagerHash])
+	}
 }
 
 func TestKVStorePoolBindingIsUniqueByPoolAndSubject(t *testing.T) {
@@ -269,9 +306,13 @@ func (s *versionedMemoryStore) Delete(_ context.Context, kind kvstore.Kind, name
 func (s *versionedMemoryStore) List(_ context.Context, query kvstore.Query) ([]kvstore.Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	selector, err := labels.Parse(query.LabelSelector)
+	if err != nil {
+		return nil, err
+	}
 	result := make([]kvstore.Record, 0)
 	for _, record := range s.records {
-		if record.Kind == query.Kind && record.Namespace == query.Namespace && strings.HasPrefix(record.Key, query.KeyPrefix) {
+		if record.Kind == query.Kind && record.Namespace == query.Namespace && strings.HasPrefix(record.Key, query.KeyPrefix) && selector.Matches(labels.Set(record.Labels)) {
 			result = append(result, cloneRecord(record))
 		}
 	}

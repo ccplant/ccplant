@@ -22,7 +22,7 @@ type libSQLResourceTable struct {
 
 var libSQLQueryColumns = []string{
 	"principal_id", "creator_id", "resource_scope",
-	"slack_channel", "slack_thread_ts", "runner_pool", "runner_status", "runner_dind",
+	"slack_channel", "slack_thread_ts", "runner_pool", "runner_manager", "runner_status", "runner_dind",
 }
 
 var libSQLLabelColumns = map[string]string{
@@ -52,6 +52,7 @@ var libSQLLabelColumns = map[string]string{
 	"agentapi.proxy/session-route-tag-slack_channel":   "slack_channel",
 	"agentapi.proxy/session-route-tag-slack_thread_ts": "slack_thread_ts",
 	"agentapi.proxy/session-runner-pool-hash":          "runner_pool",
+	"agentapi.proxy/session-runner-manager-hash":       "runner_manager",
 	"agentapi.proxy/session-runner-status":             "runner_status",
 	"agentapi.proxy/session-runner-dind":               "runner_dind",
 }
@@ -82,8 +83,8 @@ var libSQLResourceTables = []libSQLResourceTable{
 	{name: "agentapi_session_logical_pools", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "logical-pool", indexColumns: []string{"runner_pool"}},
 	{name: "agentapi_session_pool_suppliers", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "pool-supplier", indexColumns: []string{"runner_pool"}},
 	{name: "agentapi_session_pool_bindings", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "binding", indexColumns: []string{"runner_pool"}},
-	{name: "agentapi_session_runners", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "runner", indexColumns: []string{"runner_pool", "runner_status", "runner_dind"}},
-	{name: "agentapi_session_allocations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "allocation", indexColumns: []string{"runner_pool", "runner_status", "runner_dind"}},
+	{name: "agentapi_session_runners", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "runner", indexColumns: []string{"runner_pool", "runner_manager", "runner_status", "runner_dind"}},
+	{name: "agentapi_session_allocations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "allocation", indexColumns: []string{"runner_pool", "runner_manager", "runner_status", "runner_dind"}},
 	{name: "agentapi_session_configurations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "configuration"},
 }
 
@@ -233,7 +234,7 @@ owner_scope TEXT NOT NULL DEFAULT '',
 principal_id TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL DEFAULT '',
 resource_scope TEXT NOT NULL DEFAULT '',
 slack_channel TEXT NOT NULL DEFAULT '', slack_thread_ts TEXT NOT NULL DEFAULT '',
-runner_pool TEXT NOT NULL DEFAULT '', runner_status TEXT NOT NULL DEFAULT '',
+runner_pool TEXT NOT NULL DEFAULT '', runner_manager TEXT NOT NULL DEFAULT '', runner_status TEXT NOT NULL DEFAULT '',
 runner_dind TEXT NOT NULL DEFAULT '',
 metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
 PRIMARY KEY (%s))`, prefix, table, kindColumn, primaryKey)
@@ -419,23 +420,38 @@ func backfillLibSQLSessionRunnerQueryColumns(ctx context.Context, db *sql.DB) er
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
 		return fmt.Errorf("inspect libSQL session runner column migration: %w", err)
 	}
-	if applied != 0 {
-		return nil
-	}
-	for _, resource := range libSQLResourceTables {
-		if resource.labelKey != "agentapi.proxy/session-runner-resource" {
-			continue
-		}
-		statement := fmt.Sprintf(`UPDATE %s SET
+	if applied == 0 {
+		for _, resource := range libSQLResourceTables {
+			if resource.labelKey != "agentapi.proxy/session-runner-resource" {
+				continue
+			}
+			statement := fmt.Sprintf(`UPDATE %s SET
 runner_pool = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-pool-hash"'), ''),
 runner_status = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-status"'), ''),
 runner_dind = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-dind"'), '')`, resource.name)
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("backfill libSQL session runner query columns in %s: %w", resource.name, err)
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("backfill libSQL session runner query columns in %s: %w", resource.name, err)
+			}
+		}
+		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
+			return fmt.Errorf("record libSQL session runner column migration: %w", err)
 		}
 	}
-	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
-		return fmt.Errorf("record libSQL session runner column migration: %w", err)
+	const managerMigration = "materialized-session-runner-manager-column-v1"
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, managerMigration).Scan(&applied); err != nil {
+		return fmt.Errorf("inspect libSQL session runner manager column migration: %w", err)
+	}
+	if applied != 0 {
+		return nil
+	}
+	for _, resource := range []string{"agentapi_session_runners", "agentapi_session_allocations"} {
+		statement := fmt.Sprintf(`UPDATE %s SET runner_manager = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-manager-hash"'), '')`, resource)
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("backfill libSQL session runner manager column in %s: %w", resource, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, managerMigration); err != nil {
+		return fmt.Errorf("record libSQL session runner manager column migration: %w", err)
 	}
 	return nil
 }

@@ -25,6 +25,9 @@ import (
 	infra "github.com/takutakahashi/agentapi-proxy/internal/infrastructure/sessionrunner"
 	portrepos "github.com/takutakahashi/agentapi-proxy/internal/usecases/ports/repositories"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -671,6 +674,50 @@ func TestSessionManagerHeartbeatResolvesCurrentManagerIDFromToken(t *testing.T) 
 	decodeRecorder(t, result, &heartbeat)
 	if heartbeat.ManagerID != manager.ID {
 		t.Fatalf("manager_id = %q, want %q", heartbeat.ManagerID, manager.ID)
+	}
+}
+
+func TestSessionManagerHeartbeatCreatesDiagnosticSpans(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		requireNoError(t, provider.Shutdown(context.Background()))
+	})
+
+	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	requireNoError(t, err)
+	manager := &core.Manager{ID: "manager-a", Name: "Manager A", Enabled: true, ConnectionTokenHash: tokenHash}
+	requireNoError(t, store.CreateManager(context.Background(), manager))
+
+	result := callSessionPoolHandler(t, NewSessionPoolController(store, nil).HeartbeatManager, http.MethodPost,
+		"/internal/session-managers/manager-a/heartbeat", map[string]any{"local_runner_ids": []string{}},
+		map[string]string{"id": manager.ID}, map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", result.Code, result.Body.String())
+	}
+
+	spanNames := make(map[string]bool)
+	for _, span := range recorder.Ended() {
+		spanNames[span.Name()] = true
+	}
+	for _, want := range []string{
+		"controllers.SessionPoolController.HeartbeatManager",
+		"session_pool.heartbeat.update_manager_liveness",
+		"session_pool.heartbeat.reconcile_missing_runners",
+		"session_pool.heartbeat.find_orphaned_sessions",
+		"session_pool.heartbeat.list_pool_suppliers",
+		"session_pool.heartbeat.list_logical_pools",
+		"session_pool.heartbeat.list_runners",
+		"session_pool.heartbeat.list_manager_allocations",
+		"session_pool.heartbeat.repair_manager_routes",
+	} {
+		if !spanNames[want] {
+			t.Errorf("diagnostic span %q was not emitted; got %v", want, spanNames)
+		}
 	}
 }
 
