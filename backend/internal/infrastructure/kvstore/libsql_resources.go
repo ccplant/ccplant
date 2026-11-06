@@ -166,6 +166,16 @@ func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 			trailingColumns := "namespace"
 			if table == libSQLFallbackTable {
 				trailingColumns = "kind, namespace"
+			} else if column == "runner_pool" {
+				// Runner lookups combine pool with a resource key prefix. Keep
+				// both constraints and ordering in one index lookup.
+				trailingColumns = "namespace, key"
+			}
+			// IF NOT EXISTS cannot evolve the older two-column pool index.
+			if column == "runner_pool" {
+				if _, err := db.ExecContext(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS %s`, index)); err != nil {
+					return fmt.Errorf("replace libSQL resource index %s: %w", index, err)
+				}
 			}
 			if _, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (%s, %s)`, index, table, column, trailingColumns)); err != nil {
 				return fmt.Errorf("initialize libSQL resource index %s: %w", index, err)

@@ -20,3 +20,19 @@
 This attempt did not reach session traffic generation or post-deployment query
 statistics because rollout health failed, so it does not count toward the ten
 required complete iterations.
+
+## Iteration 1
+
+- Deployed commit: `c7cf7868839cbcfc55ee110a517798c28e3459b6`
+- Fly health: `ok`; machine version 747, 1/1 checks passing.
+- Load session: `95593983-43e5-4d3a-9146-dd58fa7d4c34`; proxy status reached `stable`.
+- Traffic: session start plus 12 authenticated `/search` polls and a direct status read.
+- Turso observation: the top-query window remains dominated by cumulative,
+  pre-deployment `substr(key, ...)` shapes. The new dedicated
+  `agentapi_session_runners` table contains 11 rows and is serving traffic.
+- Query-plan finding: allocation lookup with namespace, key prefix, pool, and
+  status selected the `(namespace,key)` primary key instead of the existing
+  `(runner_pool,namespace)` index.
+- Next improvement: replace runner pool indexes with
+  `(runner_pool,namespace,key)`, preserving the index count while enabling pool
+  narrowing and key-prefix range/order in one lookup.
