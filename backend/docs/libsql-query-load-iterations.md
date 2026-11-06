@@ -79,3 +79,15 @@ excluded from the iteration count because they contained no new improvement.
   returned record, but did not warm the location cache. Claiming a listed
   allocation therefore still needed a subsequent location lookup before update.
 - Next improvement: warm table-location entries from single-table List results.
+
+## Iteration 5
+
+- Deployed commit: `d8ed240828158fcd961d29117fa9f35bee6b5ff9`.
+- Image workflow: `42158661999` (success); deployment workflow: `42159120832`.
+- Fly health reported the matching version; load session
+  `5c869225-ccba-47db-8b2d-f8b4f4612227` reached `stable`.
+- Turso's cumulative top-query shapes remained unchanged after the load.
+- Observation: a cold runner Get still uses one query to locate its table and a
+  second query to fetch the record.
+- Next improvement: fetch table name and record together from the exact runner
+  table plus legacy fallback using one `UNION ALL ... LIMIT 1` round trip.

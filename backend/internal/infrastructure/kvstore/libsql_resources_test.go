@@ -297,6 +297,30 @@ func TestLibSQLDedicatedListWarmsTableLocationCache(t *testing.T) {
 	}
 }
 
+func TestLibSQLColdGetLocatesSessionRunnerAndCachesTable(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "cold-get.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-cold", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("value")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	store.tableLocations.Delete(locationKey)
+	got, err := store.Get(ctx, record.Kind, record.Namespace, record.Key)
+	if err != nil || string(got.Value) != "value" {
+		t.Fatalf("Get() = %#v, %v", got, err)
+	}
+	if table, ok := store.tableLocations.Load(locationKey); !ok || table != "agentapi_session_runners" {
+		t.Fatalf("cached table = %v, %v", table, ok)
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{

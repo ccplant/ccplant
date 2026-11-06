@@ -456,6 +456,27 @@ WHERE %s`, table, assignments, where)
 func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string) (Record, error) {
 	record := Record{Kind: kind, Namespace: namespace, Key: key}
 	var metadata []byte
+	locationKey := libSQLLocationKey(kind, namespace, key)
+	if _, cached := s.tableLocations.Load(locationKey); !cached {
+		if dedicated, ok := libSQLSessionRunnerTableForKey(kind, key); ok {
+			statement := fmt.Sprintf(`SELECT table_name, version, metadata, owner_scope, value FROM (
+SELECT '%s' AS table_name, version, metadata, owner_scope, value FROM %s WHERE namespace = ? AND key = ?
+UNION ALL
+SELECT '%s' AS table_name, version, metadata, owner_scope, value FROM %s WHERE kind = ? AND namespace = ? AND key = ?
+) LIMIT 1`, dedicated, dedicated, libSQLFallbackTable, libSQLFallbackTable)
+			var table string
+			err := s.db.QueryRowContext(ctx, statement, namespace, key, kind, namespace, key).
+				Scan(&table, &record.Version, &metadata, &record.OwnerScope, &record.Value)
+			if errors.Is(err, sql.ErrNoRows) {
+				return Record{}, ErrNotFound
+			}
+			if err != nil {
+				return Record{}, fmt.Errorf("get libSQL session-runner record: %w", err)
+			}
+			s.tableLocations.Store(locationKey, table)
+			return s.decodeLibSQLRecord(record, metadata)
+		}
+	}
 	table, err := s.tableContaining(ctx, kind, namespace, key)
 	if err != nil {
 		return Record{}, err
@@ -474,6 +495,11 @@ func (s *LibSQLStore) Get(ctx context.Context, kind Kind, namespace, key string)
 	if err != nil {
 		return Record{}, fmt.Errorf("get libSQL record: %w", err)
 	}
+	return s.decodeLibSQLRecord(record, metadata)
+}
+
+func (s *LibSQLStore) decodeLibSQLRecord(record Record, metadata []byte) (Record, error) {
+	var err error
 	record.Labels, err = unmarshalRecordMetadata(metadata)
 	if err != nil {
 		return Record{}, fmt.Errorf("decode libSQL metadata: %w", err)
