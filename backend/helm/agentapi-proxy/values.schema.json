@@ -485,7 +485,7 @@
       "allOf": [
         { "$ref": "#/definitions/kvStore" },
         {
-          "required": ["primary", "secondary", "replication", "migration"],
+          "required": ["primary", "secondary", "replication"],
           "properties": {
             "primary": { "$ref": "#/definitions/kvStoreBackend" },
             "secondary": { "$ref": "#/definitions/kvStoreBackend" },
@@ -493,16 +493,6 @@
               "type": "object",
               "required": ["mode"],
               "properties": { "mode": { "type": "string" } }
-            },
-            "migration": {
-              "type": "object",
-              "required": ["enabled", "dryRun", "overwrite", "output"],
-              "properties": {
-                "enabled": { "type": "boolean" },
-                "dryRun": { "type": "boolean" },
-                "overwrite": { "type": "boolean" },
-                "output": { "enum": ["text", "json"] }
-              }
             }
           }
         }

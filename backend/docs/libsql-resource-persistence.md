@@ -80,11 +80,26 @@ agentapi-proxy kv-store migrate \
   --encryption-keys-json "$DESTINATION_KMS_KEYS"
 ```
 
-Run with `--dry-run` first and stop writers for the actual copy. Afterward,
-run `kv-store verify` with the corresponding primary and secondary encryption
-configuration. The migration is restart-safe: identical destination values
-are skipped, while different existing values fail as conflicts unless an
-operator explicitly selects `--overwrite`.
+Run with `--dry-run` first. Before the actual copy, deploy this release to every
+API replica with the source configured as `primary`, the destination configured
+as `secondary`, and replication mode `rollback`. Reads continue to use the
+primary while new creates, updates, and deletes are written to both stores.
+Then run `kv-store migrate` as a separate Job or operator CLI; the Helm chart no
+longer runs migration in an API init container.
+
+The runtime replication path and migration CLI share short-lived per-record
+locks in the secondary store. Once a lock is acquired, migration re-reads the
+primary record before copying it. Consequently, a concurrent update is copied
+at its latest value and a concurrent delete cannot be undone by stale backfill.
+Do not begin the CLI while older API replicas that do not participate in this
+locking protocol are still serving writes.
+
+Afterward, run `kv-store verify` with the corresponding primary and secondary
+encryption configuration. A write between the verifier's two scans can produce
+a transient mismatch, so retry verification while traffic is active. The
+migration is restart-safe: identical destination values are skipped, while
+different existing values fail as conflicts unless an operator explicitly
+selects `--overwrite`. `--overwrite` is also protected by the per-record lock.
 
 The integration test covers every dedicated resource mapping from a
 Kubernetes source through an encrypted libSQL destination. It asserts that

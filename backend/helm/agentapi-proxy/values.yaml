@@ -169,11 +169,6 @@ api:
           key: keys.json
     replication:
       mode: ""
-    migration:
-      enabled: false
-      dryRun: false
-      overwrite: false
-      output: text
   # Redis client settings used by the API for cross-pod state. The root redis
   # key only controls the optional bundled Redis workload.
   redis:

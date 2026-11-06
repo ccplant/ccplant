@@ -90,6 +90,15 @@ The API is the single owner of SlackBot application data. Workers obtain
 SlackBot configuration and credentials through the authenticated worker API;
 their local Kubernetes clients are reserved for runtime coordination.
 
+Configure the source as `api.kvStore.primary`, the destination as
+`api.kvStore.secondary`, and use `api.kvStore.replication.mode=rollback`.
+After every API replica is running the new configuration, invoke `ccplant
+kv-store migrate` from a separate Kubernetes Job or operator shell. The chart
+does not run data migration in an init container, so API rollout and restart do
+not wait for the backfill. Reads remain on the primary and request mutations are
+dual-written while the CLI copies existing records. See
+`docs/libsql-resource-persistence.md` for CLI flags and verification steps.
+
 After backfill and verification, switching the API primary also changes the
 SlackBot store observed by workers. For a rollback window, the chart accepts a
 libSQL or encrypted-libSQL primary with a Kubernetes secondary. Session-manager
