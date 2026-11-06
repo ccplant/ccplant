@@ -175,7 +175,10 @@ func ensureLibSQLResourceTables(ctx context.Context, db *sql.DB) error {
 	if err := migrateLibSQLResourceTables(ctx, db); err != nil {
 		return err
 	}
-	return backfillLibSQLQueryColumns(ctx, db)
+	if err := backfillLibSQLQueryColumns(ctx, db); err != nil {
+		return err
+	}
+	return backfillLibSQLSessionRunnerQueryColumns(ctx, db)
 }
 
 func libSQLDataTableDDL(table string, ifNotExists bool) string {
@@ -309,7 +312,7 @@ func backfillLibSQLQueryColumns(ctx context.Context, db *sql.DB) error {
 name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
 		return fmt.Errorf("initialize libSQL schema migration table: %w", err)
 	}
-	const migration = "materialized-query-columns-v3"
+	const migration = "materialized-principal-columns-v2"
 	var applied int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
 		return fmt.Errorf("inspect libSQL query column migration: %w", err)
@@ -372,6 +375,33 @@ name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); er
 	}
 	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
 		return fmt.Errorf("record libSQL query column migration: %w", err)
+	}
+	return nil
+}
+
+func backfillLibSQLSessionRunnerQueryColumns(ctx context.Context, db *sql.DB) error {
+	const migration = "materialized-session-runner-columns-v1"
+	var applied int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
+		return fmt.Errorf("inspect libSQL session runner column migration: %w", err)
+	}
+	if applied != 0 {
+		return nil
+	}
+	for _, resource := range libSQLResourceTables {
+		if resource.labelKey != "agentapi.proxy/session-runner-resource" {
+			continue
+		}
+		statement := fmt.Sprintf(`UPDATE %s SET
+runner_pool = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-pool-hash"'), ''),
+runner_status = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-status"'), ''),
+runner_dind = COALESCE(json_extract(metadata, '$.labels."agentapi.proxy/session-runner-dind"'), '')`, resource.name)
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("backfill libSQL session runner query columns in %s: %w", resource.name, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO agentapi_kv_schema_migrations(name) VALUES (?)`, migration); err != nil {
+		return fmt.Errorf("record libSQL session runner column migration: %w", err)
 	}
 	return nil
 }
