@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
+	"golang.org/x/sync/singleflight"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	_ "modernc.org/sqlite" // register the sqlite driver for local file:// databases
@@ -19,6 +20,7 @@ import (
 type LibSQLStore struct {
 	db              *sql.DB
 	encryptedValues bool
+	listGroup       singleflight.Group
 }
 
 func (s *LibSQLStore) expectEncryptedValues() { s.encryptedValues = true }
@@ -520,50 +522,79 @@ func (s *LibSQLStore) Scan(ctx context.Context, query ScanQuery) ([]Record, erro
 }
 
 func (s *LibSQLStore) list(ctx context.Context, query Query) ([]Record, error) {
+	key := string(query.Kind) + "\x00" + query.Namespace + "\x00" + query.KeyPrefix + "\x00" + query.LabelSelector
+	value, err, _ := s.listGroup.Do(key, func() (any, error) {
+		return s.listOnce(ctx, query)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cloneRecords(value.([]Record)), nil
+}
+
+func (s *LibSQLStore) listOnce(ctx context.Context, query Query) ([]Record, error) {
 	selector, err := labels.Parse(query.LabelSelector)
 	if err != nil {
 		return nil, fmt.Errorf("parse label selector: %w", err)
 	}
 	var records []Record
+	statements := make([]string, 0, len(libSQLResourceTables)+1)
+	var args []any
 	for _, table := range libSQLTablesForSelector(selector) {
 		if resource, dedicated := libSQLResourceTableNamed(table); dedicated && resource.kind != query.Kind {
 			continue
 		}
-		statement, args := libSQLListQuery(table, query, selector)
-		rows, err := s.db.QueryContext(ctx, statement, args...)
+		statement, tableArgs := libSQLListQuery(table, query, selector)
+		statements = append(statements, statement)
+		args = append(args, tableArgs...)
+	}
+	if len(statements) == 0 {
+		return records, nil
+	}
+	// A selector that cannot identify a dedicated resource may span every
+	// physical table. UNION ALL keeps that operation to one remote round trip.
+	rows, err := s.db.QueryContext(ctx, strings.Join(statements, " UNION ALL ")+" ORDER BY key", args...)
+	if err != nil {
+		return nil, fmt.Errorf("list libSQL records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		record := Record{Kind: query.Kind, Namespace: query.Namespace}
+		var metadata []byte
+		if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
+			return nil, fmt.Errorf("scan libSQL record: %w", err)
+		}
+		record.Labels, err = unmarshalRecordMetadata(metadata)
 		if err != nil {
-			return nil, fmt.Errorf("list libSQL records from %s: %w", table, err)
+			return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
 		}
-		for rows.Next() {
-			record := Record{Kind: query.Kind, Namespace: query.Namespace}
-			var metadata []byte
-			if err := rows.Scan(&record.Key, &record.Version, &metadata, &record.OwnerScope, &record.Value); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan libSQL record: %w", err)
-			}
-			record.Labels, err = unmarshalRecordMetadata(metadata)
-			if err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("decode libSQL metadata for %s: %w", record.Key, err)
-			}
-			if err := s.validateValueMode(record.Value); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
-			}
-			if selector.Matches(labels.Set(record.Labels)) {
-				records = append(records, record)
-			}
+		if err := s.validateValueMode(record.Value); err != nil {
+			return nil, fmt.Errorf("read libSQL record %s: %w", record.Key, err)
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
+		if selector.Matches(labels.Set(record.Labels)) {
+			records = append(records, record)
 		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Key < records[j].Key })
 	return records, nil
+}
+
+func cloneRecords(records []Record) []Record {
+	cloned := make([]Record, len(records))
+	for i := range records {
+		cloned[i] = records[i]
+		cloned[i].Value = append([]byte(nil), records[i].Value...)
+		if records[i].Labels != nil {
+			cloned[i].Labels = make(map[string]string, len(records[i].Labels))
+			for key, value := range records[i].Labels {
+				cloned[i].Labels[key] = value
+			}
+		}
+	}
+	return cloned
 }
 
 // libSQLListQuery pushes label requirements into SQLite so remote libSQL does
@@ -581,8 +612,13 @@ func libSQLListQuery(table string, query Query, selector labels.Selector) (strin
 	statement.WriteString("namespace = ?")
 	args = append(args, query.Namespace)
 	if query.KeyPrefix != "" {
-		statement.WriteString(" AND substr(key, 1, length(?)) = ?")
-		args = append(args, query.KeyPrefix, query.KeyPrefix)
+		if upper, ok := stringPrefixUpperBound(query.KeyPrefix); ok {
+			statement.WriteString(" AND key >= ? AND key < ?")
+			args = append(args, query.KeyPrefix, upper)
+		} else {
+			statement.WriteString(" AND substr(key, 1, length(?)) = ?")
+			args = append(args, query.KeyPrefix, query.KeyPrefix)
+		}
 	}
 	requirements, selectable := selector.Requirements()
 	if !selectable {
@@ -614,8 +650,20 @@ func libSQLListQuery(table string, query Query, selector labels.Selector) (strin
 			args = append(args, key, values[0])
 		}
 	}
-	statement.WriteString(" ORDER BY key")
 	return statement.String(), args
+}
+
+// stringPrefixUpperBound returns the smallest string greater than every
+// string with prefix. SQLite can use it as the upper edge of a B-tree range.
+func stringPrefixUpperBound(prefix string) (string, bool) {
+	runes := []rune(prefix)
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] < '\U0010FFFF' {
+			runes[i]++
+			return string(runes[:i+1]), true
+		}
+	}
+	return "", false
 }
 
 func writeLibSQLColumnMatch(statement *strings.Builder, args *[]any, column string, values []string, operator selection.Operator) {

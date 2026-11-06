@@ -22,7 +22,7 @@ type libSQLResourceTable struct {
 
 var libSQLQueryColumns = []string{
 	"principal_id", "creator_id", "resource_scope",
-	"slack_channel", "slack_thread_ts",
+	"slack_channel", "slack_thread_ts", "runner_pool", "runner_status", "runner_dind",
 }
 
 var libSQLLabelColumns = map[string]string{
@@ -51,6 +51,9 @@ var libSQLLabelColumns = map[string]string{
 	"agentapi.proxy/schedule-scope":                    "resource_scope",
 	"agentapi.proxy/session-route-tag-slack_channel":   "slack_channel",
 	"agentapi.proxy/session-route-tag-slack_thread_ts": "slack_thread_ts",
+	"agentapi.proxy/session-runner-pool-hash":          "runner_pool",
+	"agentapi.proxy/session-runner-status":             "runner_status",
+	"agentapi.proxy/session-runner-dind":               "runner_dind",
 }
 
 var libSQLResourceTables = []libSQLResourceTable{
@@ -75,6 +78,13 @@ var libSQLResourceTables = []libSQLResourceTable{
 	{name: "agentapi_codex_auth_locks", kind: KindSecret, labelKey: "agentapi.proxy/codex-device-auth-attempt", labelValue: "lock"},
 	{name: "agentapi_schedules", kind: KindSecret, labelKey: "agentapi.proxy/schedule", labelValue: "true", indexColumns: []string{"principal_id", "creator_id", "resource_scope"}},
 	{name: "agentapi_system_settings", kind: KindSecret, keyPrefix: "agentapi-admin-system-settings-"},
+	{name: "agentapi_session_managers", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "manager"},
+	{name: "agentapi_session_logical_pools", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "logical-pool", indexColumns: []string{"runner_pool"}},
+	{name: "agentapi_session_pool_suppliers", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "pool-supplier", indexColumns: []string{"runner_pool"}},
+	{name: "agentapi_session_pool_bindings", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "binding", indexColumns: []string{"runner_pool"}},
+	{name: "agentapi_session_runners", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "runner", indexColumns: []string{"runner_pool", "runner_status", "runner_dind"}},
+	{name: "agentapi_session_allocations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "allocation", indexColumns: []string{"runner_pool", "runner_status", "runner_dind"}},
+	{name: "agentapi_session_configurations", kind: KindSecret, labelKey: "agentapi.proxy/session-runner-resource", labelValue: "configuration"},
 }
 
 const libSQLFallbackTable = "agentapi_kv"
@@ -186,6 +196,8 @@ owner_scope TEXT NOT NULL DEFAULT '',
 principal_id TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL DEFAULT '',
 resource_scope TEXT NOT NULL DEFAULT '',
 slack_channel TEXT NOT NULL DEFAULT '', slack_thread_ts TEXT NOT NULL DEFAULT '',
+runner_pool TEXT NOT NULL DEFAULT '', runner_status TEXT NOT NULL DEFAULT '',
+runner_dind TEXT NOT NULL DEFAULT '',
 metadata TEXT NOT NULL DEFAULT '{"format":"agentapi-kv-metadata/v1","labels":{}}' CHECK (json_valid(metadata)),
 PRIMARY KEY (%s))`, prefix, table, kindColumn, primaryKey)
 }
@@ -297,7 +309,7 @@ func backfillLibSQLQueryColumns(ctx context.Context, db *sql.DB) error {
 name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
 		return fmt.Errorf("initialize libSQL schema migration table: %w", err)
 	}
-	const migration = "materialized-principal-columns-v2"
+	const migration = "materialized-query-columns-v3"
 	var applied int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agentapi_kv_schema_migrations WHERE name = ?`, migration).Scan(&applied); err != nil {
 		return fmt.Errorf("inspect libSQL query column migration: %w", err)

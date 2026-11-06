@@ -220,6 +220,59 @@ FROM agentapi_api_tokens WHERE key = 'token'`).Scan(&owner, &scope); err != nil 
 	}
 }
 
+func TestLibSQLTablesForSessionRunnerSelectorUsesDedicatedTable(t *testing.T) {
+	selector, err := labels.Parse("agentapi.proxy/session-runner-resource=allocation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := libSQLTablesForSelector(selector)
+	if len(tables) != 1 || tables[0] != "agentapi_session_allocations" {
+		t.Fatalf("tables = %v, want [agentapi_session_allocations]", tables)
+	}
+}
+
+func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
+	selector := labels.Everything()
+	statement, args := libSQLListQuery(libSQLFallbackTable, Query{
+		Kind: KindSecret, Namespace: "ns", KeyPrefix: "agentapi-session-runner-allocation-",
+	}, selector)
+	if strings.Contains(statement, "substr(key") || !strings.Contains(statement, "key >= ? AND key < ?") {
+		t.Fatalf("query does not use key range: %s", statement)
+	}
+	if got, want := args[len(args)-2], "agentapi-session-runner-allocation-"; got != want {
+		t.Fatalf("lower bound = %v, want %v", got, want)
+	}
+	if got, want := args[len(args)-1], "agentapi-session-runner-allocation."; got != want {
+		t.Fatalf("upper bound = %v, want %v", got, want)
+	}
+}
+
+func TestLibSQLSessionRunnerResourcesUseDedicatedIndexedTable(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "runner.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	labels := map[string]string{
+		"agentapi.proxy/session-runner-resource":  "allocation",
+		"agentapi.proxy/session-runner-pool-hash": "pool-hash",
+		"agentapi.proxy/session-runner-status":    "pending",
+		"agentapi.proxy/session-runner-dind":      "false",
+	}
+	if _, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "allocation", Labels: labels, Value: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	var pool, status, dind string
+	if err := store.db.QueryRowContext(ctx, `SELECT runner_pool, runner_status, runner_dind
+FROM agentapi_session_allocations WHERE key = 'allocation'`).Scan(&pool, &status, &dind); err != nil {
+		t.Fatal(err)
+	}
+	if pool != "pool-hash" || status != "pending" || dind != "false" {
+		t.Fatalf("query columns = %q/%q/%q", pool, status, dind)
+	}
+}
+
 func TestLibSQLStoreMigratesClassifiedFallbackRows(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "migration.db")
