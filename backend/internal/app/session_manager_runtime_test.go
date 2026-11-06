@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -45,6 +47,29 @@ func TestRemoteSessionManagerStoresDoNotUseRedis(t *testing.T) {
 	}
 	if controlStore := buildSessionManagerControlStore(cfg, true); controlStore != nil {
 		t.Fatalf("control store = %T, want nil", controlStore)
+	}
+}
+
+func TestUpstreamManagedFilesProxyUsesManagerAuthentication(t *testing.T) {
+	var gotPath, gotAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	proxy := newUpstreamManagedFilesProxy(server.URL, "manager-a", "connection-token")
+	err := proxy.SaveManagedFiles(context.Background(), "session-a", "alice", "sync-a",
+		[]sessionsettings.ManagedFile{{Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: "updated"}}, map[string]string{"auth": "old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/internal/session-managers/manager-a/sessions/session-a/managed-files" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotAuthorization != "Bearer connection-token" {
+		t.Fatalf("authorization = %q", gotAuthorization)
 	}
 }
 

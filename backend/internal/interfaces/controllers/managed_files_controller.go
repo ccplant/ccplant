@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/internal/domain/entities"
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 )
+
+var ErrManagedFileConflict = errors.New("managed-file snapshot conflict")
 
 const maxManagedFileSnapshotBytes = 4 << 20
 
@@ -21,13 +24,25 @@ type managedFileSnapshotStore interface {
 	SaveFiles(context.Context, string, []sessionsettings.ManagedFile) error
 }
 
+// ManagedFileSnapshotProxy persists an ESM-managed session's file snapshot in
+// the parent control plane after the ESM validates the local session.
+type ManagedFileSnapshotProxy interface {
+	SaveManagedFiles(context.Context, string, string, string, []sessionsettings.ManagedFile, map[string]string) error
+}
+
 type ManagedFilesController struct {
 	manager managedFileSessionManager
 	store   managedFileSnapshotStore
+	proxy   ManagedFileSnapshotProxy
 }
 
 func NewManagedFilesController(manager managedFileSessionManager, store managedFileSnapshotStore) *ManagedFilesController {
 	return &ManagedFilesController{manager: manager, store: store}
+}
+
+func (c *ManagedFilesController) WithProxy(proxy ManagedFileSnapshotProxy) *ManagedFilesController {
+	c.proxy = proxy
+	return c
 }
 
 func (c *ManagedFilesController) Save(cctx echo.Context) error {
@@ -69,6 +84,17 @@ func (c *ManagedFilesController) Save(cctx echo.Context) error {
 		owner = resolved
 	}
 	if cctx.Request().Header.Get("X-Credential-Sync-ID") != "" {
+		if c.proxy != nil {
+			if req.Expected == nil {
+				return cctx.NoContent(http.StatusConflict)
+			}
+			if err := c.proxy.SaveManagedFiles(cctx.Request().Context(), sessionID, owner, cctx.Request().Header.Get("X-Credential-Sync-ID"), req.Files, req.Expected); errors.Is(err, ErrManagedFileConflict) {
+				return cctx.NoContent(http.StatusConflict)
+			} else if err != nil {
+				return cctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": "managed-file persistence unavailable"})
+			}
+			return cctx.NoContent(http.StatusNoContent)
+		}
 		conditional, ok := c.store.(interface {
 			SaveFilesIfUnchanged(context.Context, string, []sessionsettings.ManagedFile, map[string]string) error
 		})
@@ -77,6 +103,12 @@ func (c *ManagedFilesController) Save(cctx echo.Context) error {
 		}
 		if err := conditional.SaveFilesIfUnchanged(cctx.Request().Context(), owner, req.Files, req.Expected); err != nil {
 			return cctx.NoContent(http.StatusConflict)
+		}
+		return cctx.NoContent(http.StatusNoContent)
+	}
+	if c.proxy != nil {
+		if err := c.proxy.SaveManagedFiles(cctx.Request().Context(), sessionID, owner, "", req.Files, nil); err != nil {
+			return cctx.JSON(http.StatusServiceUnavailable, map[string]string{"error": "managed-file persistence unavailable"})
 		}
 		return cctx.NoContent(http.StatusNoContent)
 	}

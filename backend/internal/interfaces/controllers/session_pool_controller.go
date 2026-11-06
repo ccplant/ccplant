@@ -39,6 +39,67 @@ type SessionPoolController struct {
 	}
 	now           func() time.Time
 	managerTunnel ESMControlTunnel
+	managedFiles  managedFileSnapshotStore
+}
+
+func (c *SessionPoolController) WithManagedFileStore(store managedFileSnapshotStore) *SessionPoolController {
+	c.managedFiles = store
+	return c
+}
+
+// SaveManagerManagedFiles persists snapshots relayed by an authenticated ESM
+// in the parent-owned application store.
+func (c *SessionPoolController) SaveManagerManagedFiles(ctx echo.Context) error {
+	manager, err := c.authenticateManager(ctx)
+	if err != nil {
+		return err
+	}
+	if c.managedFiles == nil || c.routes == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "managed-file persistence is unavailable")
+	}
+	route, err := c.routes.Get(ctx.Request().Context(), ctx.Param("sessionId"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "session route is unavailable")
+	}
+	if route == nil || route.ManagerID != manager.ID {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
+	var req struct {
+		Owner    string                        `json:"owner"`
+		SyncID   string                        `json:"sync_id,omitempty"`
+		Files    []sessionsettings.ManagedFile `json:"files"`
+		Expected map[string]string             `json:"expected,omitempty"`
+	}
+	if err := ctx.Bind(&req); err != nil || req.Owner == "" || req.Owner != route.UserID {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid managed-file snapshot")
+	}
+	total := 0
+	allowed := make(map[string]bool, len(sessionsettings.ManagedFileTypes))
+	for _, path := range sessionsettings.ManagedFileTypes {
+		allowed[path] = true
+	}
+	for _, file := range req.Files {
+		total += len(file.Content)
+		if !allowed[file.Path] || total > maxManagedFileSnapshotBytes {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid managed-file snapshot")
+		}
+	}
+	if req.SyncID != "" {
+		conditional, ok := c.managedFiles.(interface {
+			SaveFilesIfUnchanged(context.Context, string, []sessionsettings.ManagedFile, map[string]string) error
+		})
+		if !ok || req.Expected == nil {
+			return ctx.NoContent(http.StatusConflict)
+		}
+		if err := conditional.SaveFilesIfUnchanged(ctx.Request().Context(), req.Owner, req.Files, req.Expected); err != nil {
+			return ctx.NoContent(http.StatusConflict)
+		}
+		return ctx.NoContent(http.StatusNoContent)
+	}
+	if err := c.managedFiles.SaveFiles(ctx.Request().Context(), req.Owner, req.Files); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "managed-file persistence is unavailable")
+	}
+	return ctx.NoContent(http.StatusNoContent)
 }
 
 func (c *SessionPoolController) WithManagerTunnel(tunnel ESMControlTunnel) *SessionPoolController {

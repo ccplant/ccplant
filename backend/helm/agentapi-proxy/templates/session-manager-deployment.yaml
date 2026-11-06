@@ -213,6 +213,7 @@ spec:
                   name: {{ dig "name" "" $encryptionToken | quote }}
                   key: {{ dig "key" "encryption-key" $encryptionToken | quote }}
             {{- end }}
+            {{- if not $remoteMode }}
             - name: AGENTAPI_KV_STORE_BACKEND
               value: {{ required "sessionManager.kvStore.backend is required" $kv.backend | quote }}
             - name: AGENTAPI_KV_STORE_NAMESPACE
@@ -239,6 +240,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- include "agentapi-proxy.kvEncryptionEnv" (dict "encryption" (dig "encryption" (dict) $kv) "prefix" "AGENTAPI_KV_ENCRYPTION") | nindent 12 }}
+            {{- end }}
             {{- if not $remoteMode }}
             - name: AGENTAPI_REDIS_ADDR
               value: {{ required "sessionManager.redis.addr or redis.enabled=true is required" $redisAddr | quote }}

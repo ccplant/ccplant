@@ -295,7 +295,6 @@
           "sessionManager": {
             "properties": {
               "internalApi": { "properties": { "tokenSecretRef": { "properties": { "name": { "minLength": 1 } }, "required": ["name"] } } },
-              "kvStore": { "$ref": "#/definitions/enabledKVStore" },
               "kubernetesSession": {
                 "properties": {
                   "enabled": { "const": true },
@@ -305,21 +304,21 @@
             }
           }
         },
-        "anyOf": [
-          { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
-          { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
-        ],
         "if": {
           "properties": {
             "sessionManager": {
               "properties": {
                 "externalRegistration": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] },
-                "runner": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] }
+                "runner": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] },
+                "builtin": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] }
               }
             }
           }
         },
         "then": {
+          "properties": {
+            "sessionManager": { "properties": { "kvStore": { "$ref": "#/definitions/enabledKVStore" } } }
+          },
           "anyOf": [
             { "properties": { "redis": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] } } },
             { "properties": { "sessionManager": { "properties": { "redis": { "properties": { "addr": { "minLength": 1 } }, "required": ["addr"] } } } } }
