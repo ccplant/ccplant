@@ -139,11 +139,23 @@ func preparePersistentSessionForTermination(
 	}
 	if err := backup(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("backup session state: %w", err))
+		if !sessionStateArchiveExists() {
+			return errors.Join(errs...)
+		}
 	}
 	if err := suspend(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("suspend terminating session: %w", err))
 	}
 	return errors.Join(errs...)
+}
+
+func sessionStateArchiveExists() bool {
+	path := strings.TrimSpace(os.Getenv("AGENTAPI_SESSION_STATE_VOLUME_PATH"))
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func runTerminationStateBackup(ctx context.Context) error {
