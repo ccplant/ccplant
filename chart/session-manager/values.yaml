@@ -54,10 +54,14 @@ internalApi:
     key: token
 
 encryption:
+  # Deprecated for external Session Managers. Application KV encryption is
+  # owned by the parent API and is not configured in this workload.
   keySecretRef:
     name: ""
     key: encryption-key
 
+# Deprecated for external Session Managers. Kept so existing values files
+# remain accepted; this workload does not connect to application KV directly.
 kvStore:
   backend: kubernetes
   namespace: ""
