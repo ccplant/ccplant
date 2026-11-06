@@ -116,3 +116,16 @@ excluded from the iteration count because they contained no new improvement.
   sorts the records by key in Go. For multi-table unions the remote ordering
   requires a merge/temporary sort that does not affect the final contract.
 - Next improvement: remove the SQL ordering and retain the existing Go sort.
+
+## Iteration 8
+
+- Deployed commit: `75c463c5aa065043a81f9f08a8de77592f9b9fb8`.
+- Fly health reported the matching version; load session
+  `3785a1a7-0d6a-4bb7-970c-40b2e13baf38` reached `stable`.
+- Turso's cumulative top-query shapes remained unchanged after the load; the
+  historical legacy query still includes `ORDER BY`, while newly generated
+  queries no longer add it.
+- Observation: a cold Update has both resource labels and an unambiguous runner
+  key but still performs a table-location query first.
+- Next improvement: route an Update directly when key and labels independently
+  identify the same dedicated table, while honoring cached legacy locations.

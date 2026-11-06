@@ -362,6 +362,31 @@ func TestLibSQLListKeepsSortedContractWithoutSQLOrderBy(t *testing.T) {
 	}
 }
 
+func TestLibSQLColdSessionRunnerUpdateRoutesFromKeyAndLabels(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "cold-update.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	record, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: "agentapi-session-runner-update", Labels: map[string]string{
+		"agentapi.proxy/session-runner-resource": "runner",
+	}, Value: []byte("before")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.tableLocations.Delete(libSQLLocationKey(record.Kind, record.Namespace, record.Key))
+	record.Value = []byte("after")
+	updated, err := store.Update(ctx, record)
+	if err != nil || updated.Version != 2 {
+		t.Fatalf("Update() = %#v, %v", updated, err)
+	}
+	got, err := store.Get(ctx, record.Kind, record.Namespace, record.Key)
+	if err != nil || string(got.Value) != "after" {
+		t.Fatalf("Get() = %#v, %v", got, err)
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{

@@ -420,9 +420,21 @@ func (s *LibSQLStore) Update(ctx context.Context, record Record) (Record, error)
 	if err != nil {
 		return Record{}, err
 	}
-	table, err := s.tableContaining(ctx, record.Kind, record.Namespace, record.Key)
-	if err != nil {
-		return Record{}, ErrConflict
+	locationKey := libSQLLocationKey(record.Kind, record.Namespace, record.Key)
+	var table string
+	if cached, ok := s.tableLocations.Load(locationKey); ok {
+		table = cached.(string)
+	} else if routed, ok := libSQLSessionRunnerTableForKey(record.Kind, record.Key); ok && routed == libSQLTableForRecord(record) {
+		// The key and labels independently agree on the dedicated table. Avoid
+		// a cold location query; records read from legacy fallback are already
+		// represented in the cache and take the branch above.
+		table = routed
+	} else {
+		var err error
+		table, err = s.tableContaining(ctx, record.Kind, record.Namespace, record.Key)
+		if err != nil {
+			return Record{}, ErrConflict
+		}
 	}
 	assignments := strings.Join(libSQLQueryColumns, " = ?, ") + " = ?"
 	where := "namespace = ? AND key = ? AND version = ?"
@@ -452,6 +464,7 @@ WHERE %s`, table, assignments, where)
 	if affected == 0 {
 		return Record{}, ErrConflict
 	}
+	s.tableLocations.Store(locationKey, table)
 	record.Version++
 	return record, nil
 }
