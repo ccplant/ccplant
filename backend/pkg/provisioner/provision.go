@@ -1919,16 +1919,49 @@ func countACPUserMessages(client *http.Client, agentapiURL string) int {
 // legitimately has older user messages, so message count alone cannot decide
 // whether the new launch prompt has already been delivered.
 func hasACPUserMessage(client *http.Client, agentapiURL, message string) bool {
-	resp, err := client.Get(agentapiURL + "/messages")
-	if err != nil {
+	latest, ok := fetchACPTurn(client, agentapiURL+"/messages")
+	if !ok {
 		return false
+	}
+	if acpTurnContainsUserMessage(latest.Messages, message) {
+		return true
+	}
+	for i := 0; i < latest.UserPromptCount; i++ {
+		if latest.UserPromptIndex != nil && *latest.UserPromptIndex == i {
+			continue
+		}
+		turn, ok := fetchACPTurn(client, fmt.Sprintf("%s/messages?userPromptIndex=%d", agentapiURL, i))
+		if ok && acpTurnContainsUserMessage(turn.Messages, message) {
+			return true
+		}
+	}
+	return false
+}
+
+type acpTurnResponse struct {
+	Messages        []json.RawMessage `json:"messages"`
+	UserPromptCount int               `json:"userPromptCount"`
+	UserPromptIndex *int              `json:"userPromptIndex"`
+}
+
+func fetchACPTurn(client *http.Client, url string) (acpTurnResponse, bool) {
+	var tr acpTurnResponse
+	resp, err := client.Get(url)
+	if err != nil {
+		return tr, false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	var mr acpMessagesResponse
-	if json.NewDecoder(resp.Body).Decode(&mr) != nil {
-		return false
+	if resp.StatusCode != http.StatusOK {
+		return tr, false
 	}
-	for _, raw := range mr.Messages {
+	if json.NewDecoder(resp.Body).Decode(&tr) != nil {
+		return tr, false
+	}
+	return tr, true
+}
+
+func acpTurnContainsUserMessage(messages []json.RawMessage, message string) bool {
+	for _, raw := range messages {
 		var event struct {
 			Method string `json:"method"`
 			Params struct {
