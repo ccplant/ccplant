@@ -339,6 +339,29 @@ func TestLibSQLSessionRunnerCreateReliesOnInsertConflict(t *testing.T) {
 	}
 }
 
+func TestLibSQLListKeepsSortedContractWithoutSQLOrderBy(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewLibSQLStore(ctx, "file://"+filepath.Join(t.TempDir(), "list-sort.db"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	for _, key := range []string{"runner-c", "runner-a", "runner-b"} {
+		if _, err := store.Create(ctx, Record{Kind: KindSecret, Namespace: "ns", Key: key, Labels: map[string]string{"test": "sort"}, Value: []byte(key)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := store.List(ctx, Query{Kind: KindSecret, Namespace: "ns", LabelSelector: "test=sort"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"runner-a", "runner-b", "runner-c"} {
+		if items[i].Key != want {
+			t.Fatalf("items[%d].Key = %q, want %q", i, items[i].Key, want)
+		}
+	}
+}
+
 func TestLibSQLListQueryUsesKeyPrefixRange(t *testing.T) {
 	selector := labels.Everything()
 	statement, args := libSQLListQuery(libSQLFallbackTable, Query{

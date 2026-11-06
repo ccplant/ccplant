@@ -104,3 +104,15 @@ excluded from the iteration count because they contained no new improvement.
   constraint already provides atomic conflict detection.
 - Next improvement: skip that redundant preflight for correctly routed
   session-runner records while preserving duplicate conflict behavior.
+
+## Iteration 7
+
+- Deployed commit: `500c339aedb141fa6be625d41aa25ce5af55c68b`.
+- Image workflow: `42160281451` (success); deployment workflow: `42160931066`.
+- Fly health reported the matching version; load session
+  `04a78aca-6404-4c98-9a85-ebc30393d2b2` reached `stable`.
+- Turso's cumulative top-query shapes remained unchanged after the load.
+- Observation: List executes `ORDER BY key` remotely and then unconditionally
+  sorts the records by key in Go. For multi-table unions the remote ordering
+  requires a merge/temporary sort that does not affect the final contract.
+- Next improvement: remove the SQL ordering and retain the existing Go sort.

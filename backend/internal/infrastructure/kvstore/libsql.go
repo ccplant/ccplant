@@ -587,7 +587,10 @@ func (s *LibSQLStore) listOnce(ctx context.Context, query Query) ([]Record, erro
 	}
 	// A selector that cannot identify a dedicated resource may span every
 	// physical table. UNION ALL keeps that operation to one remote round trip.
-	rows, err := s.db.QueryContext(ctx, strings.Join(statements, " UNION ALL ")+" ORDER BY key", args...)
+	// The compatibility contract is enforced by the Go sort below. Avoid a
+	// second remote sort, especially the temporary merge sort required for a
+	// UNION spanning several physical tables.
+	rows, err := s.db.QueryContext(ctx, strings.Join(statements, " UNION ALL "), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list libSQL records: %w", err)
 	}
