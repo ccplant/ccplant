@@ -48,6 +48,16 @@ func (s *ReplicatedStore) Scan(ctx context.Context, query ScanQuery) ([]Record, 
 }
 
 func (s *ReplicatedStore) Create(ctx context.Context, record Record) (Record, error) {
+	var result Record
+	err := s.withRecordLock(ctx, record, func(ctx context.Context) error {
+		var err error
+		result, err = s.create(ctx, record)
+		return err
+	})
+	return result, err
+}
+
+func (s *ReplicatedStore) create(ctx context.Context, record Record) (Record, error) {
 	created, err := s.primary.Create(ctx, record)
 	if err != nil {
 		return Record{}, err
@@ -72,6 +82,16 @@ func (s *ReplicatedStore) handleCreateFailure(ctx context.Context, created Recor
 }
 
 func (s *ReplicatedStore) Update(ctx context.Context, record Record) (Record, error) {
+	var result Record
+	err := s.withRecordLock(ctx, record, func(ctx context.Context) error {
+		var err error
+		result, err = s.update(ctx, record)
+		return err
+	})
+	return result, err
+}
+
+func (s *ReplicatedStore) update(ctx context.Context, record Record) (Record, error) {
 	previous, err := s.primary.Get(ctx, record.Kind, record.Namespace, record.Key)
 	if err != nil {
 		return Record{}, err
@@ -106,6 +126,26 @@ func (s *ReplicatedStore) Update(ctx context.Context, record Record) (Record, er
 }
 
 func (s *ReplicatedStore) Delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
+	target := Record{Kind: kind, Namespace: namespace, Key: key}
+	return s.withRecordLock(ctx, target, func(ctx context.Context) error {
+		return s.delete(ctx, kind, namespace, key, version)
+	})
+}
+
+func (s *ReplicatedStore) withRecordLock(ctx context.Context, target Record, callback func(context.Context) error) error {
+	err := WithRecordLock(ctx, s.secondary, target, callback)
+	if err == nil || s.mode != ReplicationModeBestEffort {
+		return err
+	}
+	// best_effort explicitly allows the primary to remain writable while the
+	// secondary is unavailable. In that mode a lock outage has the same
+	// availability semantics as a replication outage; run the mutation and let
+	// the existing best-effort handling report the secondary failure.
+	log.Printf("[KV_REPLICATION] destination lock unavailable; continuing best-effort kind=%s namespace=%s key=%s: %v", target.Kind, target.Namespace, target.Key, err)
+	return callback(ctx)
+}
+
+func (s *ReplicatedStore) delete(ctx context.Context, kind Kind, namespace, key string, version int64) error {
 	previous, err := s.primary.Get(ctx, kind, namespace, key)
 	if err != nil {
 		return err

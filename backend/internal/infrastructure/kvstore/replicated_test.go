@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 type failingStore struct {
@@ -12,6 +14,50 @@ type failingStore struct {
 	createErr error
 	updateErr error
 	deleteErr error
+}
+
+func TestReplicatedStoreMutationWaitsForRecordLock(t *testing.T) {
+	ctx := context.Background()
+	primary, secondary := newMemoryStore(), newMemoryStore()
+	record := Record{Kind: KindConfigMap, Namespace: "ns", Key: "key", Value: []byte("value")}
+	primaryRecord, _ := primary.Create(ctx, record)
+	_, _ = secondary.Create(ctx, record)
+	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
+
+	locked := make(chan struct{})
+	release := make(chan struct{})
+	lockDone := make(chan error, 1)
+	go func() {
+		lockDone <- WithRecordLock(ctx, secondary, record, func(context.Context) error {
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- store.Delete(ctx, record.Kind, record.Namespace, record.Key, primaryRecord.Version)
+	}()
+	select {
+	case err := <-deleteDone:
+		t.Fatalf("Delete() completed while migration lock was held: %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+	close(release)
+	if err := <-lockDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-deleteDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := primary.Get(ctx, record.Kind, record.Namespace, record.Key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("primary record remains: %v", err)
+	}
+	if _, err := secondary.Get(ctx, record.Kind, record.Namespace, record.Key); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("secondary record remains: %v", err)
+	}
 }
 
 type normalizingStore struct{ *memoryStore }
@@ -179,7 +225,10 @@ func TestReplicatedStoreReportsInDoubtWhenRollbackFails(t *testing.T) {
 	secondary := &failingStore{memoryStore: newMemoryStore(), createErr: errors.New("secondary unavailable")}
 	store, _ := NewReplicatedStore(primary, secondary, ReplicationModeRollback)
 	_, err := store.Create(context.Background(), Record{Kind: KindSecret, Namespace: "ns", Key: "key"})
-	if !errors.Is(err, ErrInDoubt) {
-		t.Fatalf("Create() error = %v, want ErrInDoubt", err)
+	if err == nil || !strings.Contains(err.Error(), "acquire replication lock") {
+		t.Fatalf("Create() error = %v, want lock acquisition failure", err)
+	}
+	if len(primaryMemory.records) != 0 {
+		t.Fatalf("primary was mutated before destination lock acquisition: %v", primaryMemory.records)
 	}
 }

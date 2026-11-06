@@ -67,11 +67,13 @@ The command selects only resource families used by the application KV boundary;
 operational resources such as Pod-mounted Secrets and Helm ConfigMaps are not
 copied. Source objects are never modified or deleted.
 
-Stop application writes before running the migration. Re-running is safe when
-the source has not changed: identical destination records are skipped. A
-different existing destination record is reported as a conflict unless
---overwrite is specified. Use --dry-run to inspect destination conflicts
-without writing anything.`,
+Run the application with primary/secondary replication enabled before starting
+an online migration. Runtime mutations and this command coordinate through
+per-record destination locks, and the source is re-read while each lock is held.
+Re-running is safe: identical destination records are skipped. A different
+existing destination record is reported as a conflict unless --overwrite is
+specified. Use --dry-run to inspect destination conflicts without writing
+anything.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if o.output != "text" && o.output != "json" {
@@ -225,46 +227,74 @@ func migrateKVStores(ctx context.Context, source, destination kvstore.Store, opt
 	}
 	result.Selected = len(records)
 
-	for _, source := range records {
+	for _, selected := range records {
+		destinationNamespace := selected.Namespace
 		if options.destinationNamespace != "" {
-			source.Namespace = options.destinationNamespace
+			destinationNamespace = options.destinationNamespace
 		}
-		entry := kvStoreMigrationEntry{Kind: source.Kind, Namespace: source.Namespace, Key: source.Key}
-		existing, getErr := destination.Get(ctx, source.Kind, source.Namespace, source.Key)
-		// Labels are denormalized metadata and older stores can contain stale
-		// values. Destinations derive the canonical labels from the document.
-		source.Labels = nil
-		switch {
-		case errors.Is(getErr, kvstore.ErrNotFound):
-			if options.dryRun {
-				entry.Status = "would-copy"
-				result.Copied++
-			} else if _, createErr := destination.Create(ctx, source); createErr != nil {
-				return result, fmt.Errorf("copy %s/%s: %w", source.Kind, source.Key, createErr)
-			} else {
+		entry := kvStoreMigrationEntry{Kind: selected.Kind, Namespace: destinationNamespace, Key: selected.Key}
+		migrate := func(lockCtx context.Context) error {
+			// The initial scan only selects work. Re-read the source while holding
+			// the same destination lock used by replicated request writes so a
+			// concurrent delete cannot be undone by a stale backfill.
+			source, sourceErr := source.Get(lockCtx, selected.Kind, selected.Namespace, selected.Key)
+			if errors.Is(sourceErr, kvstore.ErrNotFound) {
+				entry.Status = "source-deleted"
+				result.Skipped++
+				return nil
+			}
+			if sourceErr != nil {
+				return fmt.Errorf("re-read source %s/%s: %w", selected.Kind, selected.Key, sourceErr)
+			}
+			source.Namespace = destinationNamespace
+			// Labels are denormalized metadata and older stores can contain stale
+			// values. Destinations derive the canonical labels from the document.
+			source.Labels = nil
+			existing, getErr := destination.Get(lockCtx, source.Kind, source.Namespace, source.Key)
+			switch {
+			case errors.Is(getErr, kvstore.ErrNotFound):
+				if options.dryRun {
+					entry.Status = "would-copy"
+					result.Copied++
+					return nil
+				}
+				if _, createErr := destination.Create(lockCtx, source); createErr != nil {
+					return fmt.Errorf("copy %s/%s: %w", source.Kind, source.Key, createErr)
+				}
 				entry.Status = "copied"
 				result.Copied++
-			}
-		case getErr != nil:
-			return result, fmt.Errorf("read destination %s/%s: %w", source.Kind, source.Key, getErr)
-		case bytes.Equal(existing.Value, source.Value):
-			entry.Status = "skipped"
-			result.Skipped++
-		case options.overwrite:
-			if options.dryRun {
-				entry.Status = "would-update"
-				result.Updated++
-			} else {
+			case getErr != nil:
+				return fmt.Errorf("read destination %s/%s: %w", source.Kind, source.Key, getErr)
+			case bytes.Equal(existing.Value, source.Value):
+				entry.Status = "skipped"
+				result.Skipped++
+			case options.overwrite:
+				if options.dryRun {
+					entry.Status = "would-update"
+					result.Updated++
+					return nil
+				}
 				source.Version = existing.Version
-				if _, updateErr := destination.Update(ctx, source); updateErr != nil {
-					return result, fmt.Errorf("update %s/%s: %w", source.Kind, source.Key, updateErr)
+				if _, updateErr := destination.Update(lockCtx, source); updateErr != nil {
+					return fmt.Errorf("update %s/%s: %w", source.Kind, source.Key, updateErr)
 				}
 				entry.Status = "updated"
 				result.Updated++
+			default:
+				entry.Status = "conflict"
+				result.Conflicts++
 			}
-		default:
-			entry.Status = "conflict"
-			result.Conflicts++
+			return nil
+		}
+		var err error
+		if options.dryRun {
+			err = migrate(ctx)
+		} else {
+			target := kvstore.Record{Kind: selected.Kind, Namespace: destinationNamespace, Key: selected.Key}
+			err = kvstore.WithRecordLock(ctx, destination, target, migrate)
+		}
+		if err != nil {
+			return result, err
 		}
 		result.Entries = append(result.Entries, entry)
 	}

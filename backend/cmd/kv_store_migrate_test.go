@@ -57,6 +57,7 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "memory", Namespace: "test", Labels: map[string]string{"agentapi.proxy/type": "memory"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-session-shares", Namespace: "test"}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "future-config", Namespace: "test", Labels: map[string]string{"agentapi.proxy/future-resource": "v1"}}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "agentapi-kv-replication-lock-test", Namespace: "test", Labels: map[string]string{"internal.ccplant.io/kv-replication-lock": "true"}}},
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "server-config", Namespace: "test", Labels: map[string]string{"app.kubernetes.io/name": "agentapi-proxy"}}},
 	)
 
@@ -82,7 +83,8 @@ func TestCollectApplicationKVRecordsIncludesAllAgentAPIOwnedResources(t *testing
 		}
 	}
 	for _, identity := range []string{
-		"secret/github-broker-lease", "secret/github-oauth-state", "secret/google-oauth-state", "secret/helm-release", "configmap/server-config",
+		"secret/github-broker-lease", "secret/github-oauth-state", "secret/google-oauth-state", "secret/helm-release",
+		"configmap/agentapi-kv-replication-lock-test", "configmap/server-config",
 	} {
 		if got[identity] {
 			t.Errorf("included non-application record %s", identity)
@@ -359,6 +361,29 @@ func TestMigrateConfiguredStorePair(t *testing.T) {
 	}
 }
 
+func TestOnlineMigrationDoesNotRecreateRecordDeletedAfterScan(t *testing.T) {
+	ctx := context.Background()
+	backend := newMemoryKVStore()
+	value := []byte(`{"metadata":{"name":"memory","namespace":"test","labels":{"agentapi.proxy/type":"memory"}},"data":{"memory.json":"source"}}`)
+	created, err := backend.Create(ctx, kvstore.Record{Kind: kvstore.KindConfigMap, Namespace: "test", Key: "memory", Value: value})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &deleteAfterScanStore{memoryKVStore: backend, delete: created}
+	destination := newMemoryKVStore()
+
+	result, err := migrateKVStores(ctx, source, destination, kvStoreMigrateOptions{namespace: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skipped != 1 || len(result.Entries) != 1 || result.Entries[0].Status != "source-deleted" {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := destination.Get(ctx, created.Kind, created.Namespace, created.Key); !errors.Is(err, kvstore.ErrNotFound) {
+		t.Fatalf("deleted source was recreated in destination: %v", err)
+	}
+}
+
 func TestMigrateConfiguredStorePairCanonicalizesStaleLabels(t *testing.T) {
 	ctx := context.Background()
 	source, backend := newMemoryKVStore(), newMemoryKVStore()
@@ -445,6 +470,21 @@ func TestMigrationStoreConfigsPreserveLegacyFlags(t *testing.T) {
 
 type memoryKVStore struct {
 	records map[string]kvstore.Record
+}
+
+type deleteAfterScanStore struct {
+	*memoryKVStore
+	delete kvstore.Record
+	done   bool
+}
+
+func (s *deleteAfterScanStore) Scan(ctx context.Context, query kvstore.ScanQuery) ([]kvstore.Record, error) {
+	records, err := s.memoryKVStore.Scan(ctx, query)
+	if err == nil && !s.done && query.Kind == s.delete.Kind {
+		s.done = true
+		_ = s.memoryKVStore.Delete(ctx, s.delete.Kind, s.delete.Namespace, s.delete.Key, s.delete.Version)
+	}
+	return records, err
 }
 
 func newMemoryKVStore() *memoryKVStore { return &memoryKVStore{records: map[string]kvstore.Record{}} }
