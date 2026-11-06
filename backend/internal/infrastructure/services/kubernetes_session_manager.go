@@ -602,6 +602,14 @@ func (m *KubernetesSessionManager) defaultAutoSuspendPolicy() (time.Duration, bo
 // and only then removes the workload. Callers request suspension; checkpointing
 // remains an execution-plane concern.
 func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID string) error {
+	return m.suspendSession(ctx, sessionID, nil)
+}
+
+func (m *KubernetesSessionManager) SuspendSessionWithSettings(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) error {
+	return m.suspendSession(ctx, sessionID, settings)
+}
+
+func (m *KubernetesSessionManager) suspendSession(ctx context.Context, sessionID string, settings *sessionsettings.SessionSettings) error {
 	session := m.GetSession(sessionID)
 	if session == nil {
 		return fmt.Errorf("session not found: %s", sessionID)
@@ -623,11 +631,17 @@ func (m *KubernetesSessionManager) SuspendSession(ctx context.Context, sessionID
 	if !acquired {
 		return nil
 	}
+	saved := false
 	if m.requiresSessionCheckpoint(ks) {
-		if err := m.checkpointSessionState(ctx, sessionID); err != nil {
+		if err := m.checkpointSessionStateWithSettings(ctx, sessionID, "", settings); err != nil {
 			_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
 			return fmt.Errorf("checkpoint session state: %w", err)
 		}
+		saved = true
+	}
+	if err := m.persistSuspendSettings(ctx, sessionID, settings, saved); err != nil {
+		_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), svc.Name, claim)
+		return fmt.Errorf("persist suspend settings: %w", err)
 	}
 	return m.suspendSessionWorkloadOwned(ctx, sessionID, svc, claim)
 }
@@ -664,6 +678,10 @@ func (m *KubernetesSessionManager) SuspendSessionOnTermination(ctx context.Conte
 	}
 	if !acquired {
 		return nil
+	}
+	if err := m.persistSuspendSettings(ctx, sessionID, nil, m.config.SessionPersistence.Backend != ""); err != nil {
+		_ = m.releaseSessionSuspendOwnership(context.WithoutCancel(ctx), ownedSvc.Name, claim)
+		return fmt.Errorf("persist suspend settings: %w", err)
 	}
 	return m.suspendSessionWorkloadOwned(ctx, sessionID, ownedSvc, claim)
 }
@@ -726,8 +744,15 @@ func (m *KubernetesSessionManager) checkpointSessionState(ctx context.Context, s
 	if len(snapshotID) > 0 {
 		templateID = snapshotID[0]
 	}
+	return m.checkpointSessionStateWithSettings(ctx, sessionID, templateID, nil)
+}
+
+func (m *KubernetesSessionManager) checkpointSessionStateWithSettings(ctx context.Context, sessionID, templateID string, override *sessionsettings.SessionSettings) error {
 	if session, ok := m.GetSession(sessionID).(*KubernetesSession); ok && session != nil {
 		settings := session.ProvisionSettings()
+		if override != nil {
+			settings = m.normalizeProvisionSettings(override)
+		}
 		// Claimed stock sessions and sessions reconstructed by another replica
 		// intentionally have no in-memory request. Their canonical settings
 		// Secret retains the parent runtime credentials needed for checkpointing.
@@ -2516,6 +2541,9 @@ func (m *KubernetesSessionManager) EnsureSessionWorkload(ctx context.Context, id
 // no ResumeFrom value and may create a new conversation; once the workload has
 // been removed, the stable proxy session ID becomes the required snapshot key.
 func (m *KubernetesSessionManager) preparePersistentWorkloadResume(ctx context.Context, session *KubernetesSession) error {
+	if ctx.Value(parentResumeContextKey{}) == true {
+		return nil
+	}
 	settings, err := m.CurrentSessionSettings(ctx, session.ID())
 	if err != nil {
 		return fmt.Errorf("load persistent resume settings: %w", err)
