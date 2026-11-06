@@ -712,6 +712,7 @@ func TestSessionManagerHeartbeatCreatesDiagnosticSpans(t *testing.T) {
 		"session_pool.heartbeat.list_pool_suppliers",
 		"session_pool.heartbeat.list_logical_pools",
 		"session_pool.heartbeat.list_runners",
+		"session_pool.heartbeat.list_manager_allocations",
 		"session_pool.heartbeat.repair_manager_routes",
 	} {
 		if !spanNames[want] {

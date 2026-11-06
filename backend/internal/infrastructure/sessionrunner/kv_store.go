@@ -20,6 +20,7 @@ import (
 const (
 	labelResource    = "agentapi.proxy/session-runner-resource"
 	labelPoolHash    = "agentapi.proxy/session-runner-pool-hash"
+	labelManagerHash = "agentapi.proxy/session-runner-manager-hash"
 	labelStatus      = "agentapi.proxy/session-runner-status"
 	labelDind        = "agentapi.proxy/session-runner-dind"
 	dataKey          = "resource.json"
@@ -188,9 +189,20 @@ func (s *Store) delete(ctx context.Context, name string) error {
 }
 
 func (s *Store) list(ctx context.Context, resource string, decode func([]byte) error, pools ...string) error {
-	selector := labelResource + "=" + resource
+	return s.listWithSelector(ctx, resource, decode, poolSelector(pools...))
+}
+
+func poolSelector(pools ...string) string {
 	if len(pools) > 0 && pools[0] != "" {
-		selector += "," + labelPoolHash + "=" + hashName(pools[0])
+		return labelPoolHash + "=" + hashName(pools[0])
+	}
+	return ""
+}
+
+func (s *Store) listWithSelector(ctx context.Context, resource string, decode func([]byte) error, additionalSelector string) error {
+	selector := labelResource + "=" + resource
+	if additionalSelector != "" {
+		selector += "," + additionalSelector
 	}
 	items, err := s.kv.List(ctx, kvstore.Query{
 		Kind:          kvstore.KindSecret,
@@ -222,12 +234,58 @@ func addSessionRunnerQueryLabels(labels map[string]string, value any) {
 	}
 	switch resource := value.(type) {
 	case *core.Runner:
+		setManagerQueryLabel(labels, resource.ManagerID)
 		labels[labelStatus] = string(resource.Status)
 		labels[labelDind] = fmt.Sprintf("%t", capabilityEnabled(resource.Capabilities, "dind"))
 	case *core.Allocation:
+		setManagerQueryLabel(labels, resource.ManagerID)
 		labels[labelStatus] = string(resource.Status)
 		labels[labelDind] = fmt.Sprintf("%t", capabilityEnabled(resource.Requirements, "dind"))
 	}
+}
+
+func setManagerQueryLabel(labels map[string]string, managerID string) {
+	if managerID == "" {
+		labels[labelManagerHash] = "unassigned"
+		return
+	}
+	labels[labelManagerHash] = hashName(managerID)
+}
+
+func (s *Store) backfillManagerQueryLabel(ctx context.Context, name, managerID string) error {
+	for range 5 {
+		record, err := s.kv.Get(ctx, kvstore.KindSecret, s.namespace, name)
+		if errors.Is(err, kvstore.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var document secretDocument
+		if err := json.Unmarshal(record.Value, &document); err != nil {
+			return err
+		}
+		var owner struct {
+			ManagerID string `json:"manager_id"`
+		}
+		if err := json.Unmarshal(document.Data[dataKey], &owner); err != nil {
+			return err
+		}
+		if owner.ManagerID != managerID || document.Metadata.Labels[labelManagerHash] != "" {
+			return nil
+		}
+		setManagerQueryLabel(document.Metadata.Labels, managerID)
+		record.Labels = document.Metadata.Labels
+		record.Value, err = json.Marshal(document)
+		if err != nil {
+			return err
+		}
+		if _, err = s.kv.Update(ctx, record); errors.Is(err, kvstore.ErrConflict) {
+			continue
+		}
+		return err
+	}
+	return core.ErrConflict
 }
 
 func (s *Store) CreateManager(ctx context.Context, manager *core.Manager) error {
@@ -463,6 +521,42 @@ func (s *Store) ListRunners(ctx context.Context, pool string) ([]*core.Runner, e
 	return result, err
 }
 
+// ListManagerRunners uses the manager ownership label so heartbeat work does
+// not grow with runners belonging to other managers. The legacy query keeps
+// pre-index records visible and lazily backfills their labels.
+func (s *Store) ListManagerRunners(ctx context.Context, managerID string) ([]*core.Runner, error) {
+	var result []*core.Runner
+	decode := func(raw []byte) error {
+		var value core.Runner
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if value.ManagerID == managerID {
+			result = append(result, &value)
+		}
+		return nil
+	}
+	if err := s.listWithSelector(ctx, "runner", decode, labelManagerHash+"="+hashName(managerID)); err != nil {
+		return nil, err
+	}
+	if err := s.listWithSelector(ctx, "runner", func(raw []byte) error {
+		var value core.Runner
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if err := s.backfillManagerQueryLabel(ctx, runnerName(value.ID), value.ManagerID); err != nil {
+			return err
+		}
+		if value.ManagerID == managerID {
+			result = append(result, &value)
+		}
+		return nil
+	}, "!"+labelManagerHash); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Store) DeleteRunner(ctx context.Context, id string) error {
 	return s.delete(ctx, runnerName(id))
 }
@@ -496,6 +590,40 @@ func (s *Store) ListAllocations(ctx context.Context, pool string) ([]*core.Alloc
 		return nil
 	}, pool)
 	return result, err
+}
+
+// ListManagerAllocations is the allocation counterpart to ListManagerRunners.
+func (s *Store) ListManagerAllocations(ctx context.Context, managerID string) ([]*core.Allocation, error) {
+	var result []*core.Allocation
+	decode := func(raw []byte) error {
+		var value core.Allocation
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if value.ManagerID == managerID {
+			result = append(result, &value)
+		}
+		return nil
+	}
+	if err := s.listWithSelector(ctx, "allocation", decode, labelManagerHash+"="+hashName(managerID)); err != nil {
+		return nil, err
+	}
+	if err := s.listWithSelector(ctx, "allocation", func(raw []byte) error {
+		var value core.Allocation
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		if err := s.backfillManagerQueryLabel(ctx, allocationName(value.SessionID), value.ManagerID); err != nil {
+			return err
+		}
+		if value.ManagerID == managerID {
+			result = append(result, &value)
+		}
+		return nil
+	}, "!"+labelManagerHash); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *Store) DeleteAllocation(ctx context.Context, sessionID string) error {
