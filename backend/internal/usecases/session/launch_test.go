@@ -383,6 +383,28 @@ func TestLaunchPropagatesProfileFiles(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesProfileSystemPrompt(t *testing.T) {
+	profile := entities.NewSessionProfile("profile-1", "instructions", "user-1")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetSystemPrompt("# Profile instructions")
+	profile.SetConfig(cfg)
+
+	sessionManager := &recordingSessionManager{}
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{
+		UserID:           "user-1",
+		SessionProfileID: "profile-1",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if got := sessionManager.req.ProfileSystemPrompt; got != "# Profile instructions" {
+		t.Fatalf("ProfileSystemPrompt = %q", got)
+	}
+}
+
 func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	sessionManager := &recordingSessionManager{}
 	source := entities.NewSessionProfile("profile-source", "source", "user-1")
@@ -393,6 +415,7 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	})
 	sourceCfg.SetSkills([]string{"org/source-skills", "org/shared"})
 	sourceCfg.SetCommandWrapperTemplate("exec env SOURCE=1 {{ .Command }}")
+	sourceCfg.SetSystemPrompt("# Base instructions")
 	github := entities.NewMCPServer("github", "http")
 	github.SetURL("https://source.example/github")
 	servers := entities.NewMCPServersSettings()
@@ -408,6 +431,8 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 		"PROFILE_ONLY": "profile-value",
 	})
 	profileCfg.SetSkills([]string{"org/shared", "org/profile-skills"})
+	profileCfg.SetSystemPrompt("# Profile instructions")
+	profileCfg.SetSystemPromptMode("append")
 	githubOverride := entities.NewMCPServer("github", "http")
 	githubOverride.SetURL("https://profile.example/github")
 	githubOverride.SetHeaders(map[string]string{"Authorization": "Bearer profile"})
@@ -446,6 +471,29 @@ func TestLaunchResolvesProfileSourceEnvironmentAndMCPServers(t *testing.T) {
 	}
 	if sessionManager.req.ProfileCommandWrapper != "exec env SOURCE=1 {{ .Command }}" {
 		t.Fatalf("ProfileCommandWrapper = %q", sessionManager.req.ProfileCommandWrapper)
+	}
+	if got := sessionManager.req.ProfileSystemPrompt; got != "# Base instructions\n\n# Profile instructions" {
+		t.Fatalf("ProfileSystemPrompt = %q", got)
+	}
+}
+
+func TestResolveEffectiveSessionProfileConfigOverridesSourceSystemPromptByDefault(t *testing.T) {
+	source := entities.NewSessionProfile("source", "source", "user-1")
+	sourceCfg := entities.NewSessionProfileConfig()
+	sourceCfg.SetSystemPrompt("base")
+	source.SetConfig(sourceCfg)
+	profile := entities.NewSessionProfile("profile", "profile", "user-1")
+	profileCfg := entities.NewSessionProfileConfig()
+	profileCfg.SetSourceSessionProfileID("source")
+	profileCfg.SetSystemPrompt("override")
+	profile.SetConfig(profileCfg)
+
+	got, err := ResolveEffectiveSessionProfileConfig(context.Background(), &fakeSessionProfileRepo{profiles: []*entities.SessionProfile{source, profile}}, profile, entities.ScopeUser, "user-1", "")
+	if err != nil {
+		t.Fatalf("ResolveEffectiveSessionProfileConfig() error = %v", err)
+	}
+	if got.SystemPrompt() != "override" {
+		t.Fatalf("SystemPrompt = %q", got.SystemPrompt())
 	}
 }
 

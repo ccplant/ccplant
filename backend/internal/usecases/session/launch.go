@@ -58,6 +58,7 @@ type LaunchRequest struct {
 	ProfileSkills             []string
 	ProfileGitHubRepositories []string
 	ProfileCommandWrapper     string
+	ProfileSystemPrompt       string
 	ResolvedSessionProfileID  string
 	Storages                  []entities.ResolvedStorageAttachment
 
@@ -262,6 +263,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		ProfileMCPServers:        req.ProfileMCPServers,
 		ProfileSkills:            append([]string(nil), req.ProfileSkills...),
 		ProfileCommandWrapper:    req.ProfileCommandWrapper,
+		ProfileSystemPrompt:      req.ProfileSystemPrompt,
 		ResolvedSessionProfileID: req.ResolvedSessionProfileID,
 		Storages:                 append([]entities.ResolvedStorageAttachment(nil), req.Storages...),
 	}
@@ -407,6 +409,11 @@ func mergeProfileConfigSources(base, override entities.SessionProfileConfig) ent
 	if local.CommandWrapperTemplate() == "" {
 		local.SetCommandWrapperTemplate(base.CommandWrapperTemplate())
 	}
+	if local.SystemPrompt() == "" {
+		local.SetSystemPrompt(base.SystemPrompt())
+	} else if local.SystemPromptMode() == "append" && base.SystemPrompt() != "" {
+		local.SetSystemPrompt(strings.TrimRight(base.SystemPrompt(), "\n") + "\n\n" + strings.TrimLeft(local.SystemPrompt(), "\n"))
+	}
 	if len(local.Environment()) == 0 {
 		local.SetEnvironment(base.Environment())
 	} else if len(base.Environment()) > 0 {
@@ -484,6 +491,7 @@ func selectProfileByTags(profiles []*entities.SessionProfile, tags map[string]st
 // The profile provides the base; explicit request fields override.
 func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchRequest) {
 	req.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
+	req.ProfileSystemPrompt = cfg.SystemPrompt()
 	if cfg.SettingsTeamID() != "" {
 		req.SettingsTeamID = cfg.SettingsTeamID()
 	}

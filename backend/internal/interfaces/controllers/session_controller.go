@@ -2968,6 +2968,7 @@ func applySessionProfile(
 		startReq.ProfileSkills = cfg.Skills()
 		startReq.ProfileGitHubRepositories = cfg.GitHubRepositories()
 		startReq.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
+		startReq.ProfileSystemPrompt = cfg.SystemPrompt()
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
 			startReq.ProfileFiles = make([]sessionsettings.ManagedFile, len(profileFiles))
 			for i, file := range profileFiles {

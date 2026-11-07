@@ -215,6 +215,7 @@ type StartRequest struct {
 	ProfileSkills             []string                      `json:"-"`
 	ProfileGitHubRepositories []string                      `json:"-"`
 	ProfileCommandWrapper     string                        `json:"-"`
+	ProfileSystemPrompt       string                        `json:"-"`
 	ResolvedSessionProfileID  string                        `json:"-"`
 	// ResolvedStorages is populated by the parent API after authorization.
 	ResolvedStorages []ResolvedStorageAttachment `json:"-"`
@@ -302,6 +303,8 @@ type RunServerRequest struct {
 	ProfileSkills []string
 	// ProfileCommandWrapper wraps the final agent command and is resolved from a session profile.
 	ProfileCommandWrapper string
+	// ProfileSystemPrompt is written to the instruction file for the resolved agent type.
+	ProfileSystemPrompt string
 	// ProfileSecretIDs limits settings Secret projection to the references stored
 	// on the resolved session profile. Empty preserves legacy all-secret behavior.
 	ProfileSecretIDs         []string

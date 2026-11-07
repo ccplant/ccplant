@@ -177,6 +177,22 @@ describe('SessionProfileEditor runtime', () => {
   })
 })
 
+describe('SessionProfileEditor system prompt', () => {
+  it('loads and saves agent instructions', async () => {
+    render(<SessionProfileEditor section="system-prompt" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+      id: 'profile', name: 'Instructions', created_at: '', updated_at: '',
+      config: { source_session_profile_id: 'base-profile', system_prompt: '# Old instructions', system_prompt_mode: 'append' },
+    }} />)
+    const prompt = screen.getByLabelText('エージェントへの指示')
+    expect(prompt).toHaveValue('# Old instructions')
+    expect(screen.getByLabelText('ベースプロファイルの指示')).toHaveValue('append')
+    fireEvent.change(prompt, { target: { value: '# New instructions' } })
+    fireEvent.submit(prompt.closest('form')!)
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+    expect(mocks.update.mock.calls[0][1].config).toMatchObject({ system_prompt: '# New instructions', system_prompt_mode: 'append' })
+  })
+})
+
 describe('SessionProfileEditor repository selector', () => {
   it('creates a profile with multiple repository selectors', async () => {
     render(<SessionProfileEditor createScope={{ scope: 'user' }} onClose={vi.fn()} onSuccess={vi.fn()} />)

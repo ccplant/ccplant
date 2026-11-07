@@ -7905,6 +7905,10 @@ fi`,
 		settings.Files = append(settings.Files, profileFiles...)
 		log.Printf("[K8S_SESSION] Embedded %d session profile file(s) for session %s", len(profileFiles), session.id)
 	}
+	if promptFile := profileSystemPromptFile(req.AgentType, req.ProfileSystemPrompt); promptFile != nil {
+		settings.Files = append(settings.Files, *promptFile)
+		log.Printf("[K8S_SESSION] Injected session profile system prompt for agent type %s in session %s", req.AgentType, session.id)
+	}
 
 	// When CycleMessage is set, write the message into /tmp/check/CYCLE_ENABLED so
 	// the provisioner creates it on startup.  The cycle command reads the message
@@ -7955,6 +7959,27 @@ fi`,
 	applyModelConnections(settings, req)
 
 	return settings
+}
+
+func profileSystemPromptFile(agentType, content string) *sessionsettings.ManagedFile {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	var path string
+	switch agentType {
+	case "claude-acp", "claude-legacy":
+		path = "/home/agentapi/.claude/CLAUDE.md"
+	case "codex-acp":
+		path = "/home/agentapi/.codex/AGENTS.md"
+	case "pi":
+		path = "/home/agentapi/.pi/agent/AGENTS.md"
+	case "cursor":
+		path = "/home/agentapi/workdir/repo/AGENTS.md"
+	default:
+		return nil
+	}
+	return &sessionsettings.ManagedFile{Path: path, Content: content, Permissions: "0644"}
 }
 
 func filterManagedStoragesForAgent(storages []entities.ResolvedStorageAttachment, agentType string) []entities.ResolvedStorageAttachment {
