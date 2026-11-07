@@ -525,7 +525,7 @@ func (s *Server) runProvision(parent context.Context, settings *sessionsettings.
 				log.Printf("[PROVISIONER] Warning: invalid INITIAL_MESSAGE_WAIT_SECOND=%q: %v", v, err)
 			}
 		}
-		sendInitialMessage(ctx, agentapiURL, settings.InitialMessage, agentType, waitSec, strings.TrimSpace(settings.Session.ResumeFrom) != "")
+		sendInitialMessage(ctx, agentapiURL, settings.InitialMessage, agentType, waitSec, strings.TrimSpace(settings.Session.ResumeFrom) != "", initialMessageMarkerPath(runtimeHome, settings.Session.ID))
 	}
 
 	// ── Step 10: mark ready and supervise ────────────────────────────────────
@@ -1710,10 +1710,10 @@ type acpMessagesResponse struct {
 
 // sendInitialMessage sends an initial message to agentapi after it has
 // started, replicating the logic of initialMessageSenderScript.
-func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int, restored bool) {
+func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType string, waitSec int, restored bool, markerPath string) {
 	// ACP sessions use a different transport (JSON-RPC 2.0 over POST /rpc).
 	if agentType == "claude-acp" || agentType == "codex-acp" || agentType == "pi" || agentType == "cursor" {
-		sendACPInitialMessage(ctx, agentapiURL, message, waitSec, restored)
+		sendACPInitialMessage(ctx, agentapiURL, message, waitSec, restored, markerPath)
 		return
 	}
 
@@ -1783,16 +1783,11 @@ func sendInitialMessage(ctx context.Context, agentapiURL, message, agentType str
 
 // sendACPInitialMessage sends an initial message to an ACP bridge session
 // via POST /rpc (JSON-RPC 2.0 session/prompt).
-func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, waitSec int, restored bool) {
+func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, waitSec int, restored bool, markerPath string) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Idempotency: check whether user messages already exist in ACP format.
-	if count := countACPUserMessages(client, agentapiURL); !restored && count > 0 {
-		log.Printf("[PROVISIONER] ACP user messages already exist (%d), skipping initial message", count)
-		return
-	}
-	if restored && hasACPUserMessage(client, agentapiURL, message) {
-		log.Printf("[PROVISIONER] Restored ACP history already contains the initial message, skipping")
+	if acpInitialMessageDelivered(client, agentapiURL, message, restored, markerPath) {
 		return
 	}
 
@@ -1808,12 +1803,7 @@ func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, wai
 	}
 
 	// Double-check idempotency after wait.
-	if count := countACPUserMessages(client, agentapiURL); !restored && count > 0 {
-		log.Printf("[PROVISIONER] ACP user messages appeared during wait (%d), skipping", count)
-		return
-	}
-	if restored && hasACPUserMessage(client, agentapiURL, message) {
-		log.Printf("[PROVISIONER] Restored ACP history now contains the initial message, skipping")
+	if acpInitialMessageDelivered(client, agentapiURL, message, restored, markerPath) {
 		return
 	}
 
@@ -1863,6 +1853,7 @@ func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, wai
 			// Bridge returns 202 Accepted for session/prompt (async).
 			if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
 				log.Printf("[PROVISIONER] ACP initial message sent successfully (HTTP %d)", resp.StatusCode)
+				writeInitialMessageMarker(markerPath)
 				return
 			}
 			log.Printf("[PROVISIONER] ACP send failed (HTTP %d), attempt %d/5", resp.StatusCode, attempt)
@@ -1879,6 +1870,67 @@ func sendACPInitialMessage(ctx context.Context, agentapiURL, message string, wai
 		}
 	}
 	log.Printf("[PROVISIONER] ERROR: Failed to send ACP initial message after 5 attempts")
+}
+
+const initialMessageMarkerPrefix = "initial-message-sent-"
+
+func initialMessageMarkerPath(home, sessionID string) string {
+	if sessionID == "" || sessionID == "." || sessionID == ".." || strings.ContainsAny(sessionID, `/\`) {
+		return ""
+	}
+	return filepath.Join(home, ".session", initialMessageMarkerPrefix+sessionID)
+}
+
+func acpInitialMessageDelivered(client *http.Client, agentapiURL, message string, restored bool, markerPath string) bool {
+	if initialMessageMarkerExists(markerPath) {
+		log.Printf("[PROVISIONER] Initial message marker exists (%s), skipping initial message", markerPath)
+		return true
+	}
+	if !restored {
+		if count := countACPUserMessages(client, agentapiURL); count > 0 {
+			log.Printf("[PROVISIONER] ACP user messages already exist (%d), skipping initial message", count)
+			return true
+		}
+		return false
+	}
+	if anyInitialMessageMarkerExists(markerPath) {
+		return false
+	}
+	if hasACPUserMessage(client, agentapiURL, message) {
+		log.Printf("[PROVISIONER] Restored ACP history already contains the initial message, skipping")
+		writeInitialMessageMarker(markerPath)
+		return true
+	}
+	return false
+}
+
+func initialMessageMarkerExists(markerPath string) bool {
+	if markerPath == "" {
+		return false
+	}
+	_, err := os.Stat(markerPath)
+	return err == nil
+}
+
+func anyInitialMessageMarkerExists(markerPath string) bool {
+	if markerPath == "" {
+		return false
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(markerPath), initialMessageMarkerPrefix+"*"))
+	return err == nil && len(matches) > 0
+}
+
+func writeInitialMessageMarker(markerPath string) {
+	if markerPath == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		log.Printf("[PROVISIONER] WARNING: failed to create initial message marker directory: %v", err)
+		return
+	}
+	if err := os.WriteFile(markerPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
+		log.Printf("[PROVISIONER] WARNING: failed to write initial message marker: %v", err)
+	}
 }
 
 // getACPSessionId fetches the ACP session ID from GET /session.
@@ -1940,16 +1992,49 @@ func countACPUserMessages(client *http.Client, agentapiURL string) int {
 // legitimately has older user messages, so message count alone cannot decide
 // whether the new launch prompt has already been delivered.
 func hasACPUserMessage(client *http.Client, agentapiURL, message string) bool {
-	resp, err := client.Get(agentapiURL + "/messages")
-	if err != nil {
+	latest, ok := fetchACPTurn(client, agentapiURL+"/messages")
+	if !ok {
 		return false
+	}
+	if acpTurnContainsUserMessage(latest.Messages, message) {
+		return true
+	}
+	for i := 0; i < latest.UserPromptCount; i++ {
+		if latest.UserPromptIndex != nil && *latest.UserPromptIndex == i {
+			continue
+		}
+		turn, ok := fetchACPTurn(client, fmt.Sprintf("%s/messages?userPromptIndex=%d", agentapiURL, i))
+		if ok && acpTurnContainsUserMessage(turn.Messages, message) {
+			return true
+		}
+	}
+	return false
+}
+
+type acpTurnResponse struct {
+	Messages        []json.RawMessage `json:"messages"`
+	UserPromptCount int               `json:"userPromptCount"`
+	UserPromptIndex *int              `json:"userPromptIndex"`
+}
+
+func fetchACPTurn(client *http.Client, url string) (acpTurnResponse, bool) {
+	var tr acpTurnResponse
+	resp, err := client.Get(url)
+	if err != nil {
+		return tr, false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	var mr acpMessagesResponse
-	if json.NewDecoder(resp.Body).Decode(&mr) != nil {
-		return false
+	if resp.StatusCode != http.StatusOK {
+		return tr, false
 	}
-	for _, raw := range mr.Messages {
+	if json.NewDecoder(resp.Body).Decode(&tr) != nil {
+		return tr, false
+	}
+	return tr, true
+}
+
+func acpTurnContainsUserMessage(messages []json.RawMessage, message string) bool {
+	for _, raw := range messages {
 		var event struct {
 			Method string `json:"method"`
 			Params struct {
