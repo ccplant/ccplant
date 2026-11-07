@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     getSessionProfiles: vi.fn().mockResolvedValue({ session_profiles: [] }),
     getUserInfo: vi.fn().mockResolvedValue({ principal_id: 'user-1' }),
     listSettingsSecrets: vi.fn().mockResolvedValue([{ id: 'secret-1', name: 'Deploy key', keys: ['token'], version: 1 }]),
+    listGitHubIdentities: vi.fn().mockResolvedValue({ identities: [{ id: 'identity-1', connection_id: 'connection-1', connection_name: 'GitHub Enterprise', login: 'octocat' }] }),
   },
 }))
 vi.mock('next/navigation', () => ({ usePathname: () => '/session-profiles/profile', useSearchParams: () => new URLSearchParams() }))
@@ -322,6 +323,26 @@ it('saves profile files registered in the files section', async () => {
     { name: 'Existing', path: '/home/agentapi/keep.txt', content: 'keep', permissions: undefined },
     { name: 'SSH key', path: '/home/agentapi/.ssh/id_ed25519', content: 'private-key', permissions: '0600' },
   ])
+})
+
+it('saves repositories preloaded before agent startup', async () => {
+  render(<SessionProfileEditor section="files" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+    id: 'profile', name: 'Repositories', created_at: '', updated_at: '', config: {},
+  }} />)
+  fireEvent.click(screen.getByRole('button', { name: 'リポジトリを追加' }))
+  fireEvent.change(screen.getByLabelText('リポジトリ'), { target: { value: 'acme/shared' } })
+  fireEvent.change(screen.getByLabelText('配置先'), { target: { value: '/home/agentapi/workdir/shared' } })
+  fireEvent.change(screen.getByLabelText('ブランチ（任意）'), { target: { value: 'develop' } })
+  await screen.findByRole('option', { name: 'GitHub Enterprise (octocat)' })
+  fireEvent.change(screen.getByLabelText('トークンコネクション'), { target: { value: 'connection-1' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+  expect(mocks.update.mock.calls[0][1].config.repositories).toEqual([{
+    repository: 'acme/shared',
+    path: '/home/agentapi/workdir/shared',
+    branch: 'develop',
+  }])
+  expect(mocks.update.mock.calls[0][1].config.params.connection_id).toBe('connection-1')
 })
 
 it('creates in the scope from the URL and retains the draft after a save failure', async () => {

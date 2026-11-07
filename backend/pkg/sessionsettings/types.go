@@ -210,6 +210,7 @@ type SessionSettings struct {
 	Codex                 CodexConfig               `yaml:"codex,omitempty"           json:"codex,omitempty"`
 	Pi                    PiConfig                  `yaml:"pi,omitempty"              json:"pi,omitempty"`
 	Repository            *RepositoryConfig         `yaml:"repository,omitempty"      json:"repository,omitempty"`
+	Repositories          []RepositoryConfig        `yaml:"repositories,omitempty"    json:"repositories,omitempty"`
 	InitialMessage        string                    `yaml:"initial_message,omitempty" json:"initial_message,omitempty"`
 	WebhookPayload        string                    `yaml:"webhook_payload,omitempty" json:"webhook_payload,omitempty"`
 	Startup               StartupConfig             `yaml:"startup,omitempty"         json:"startup,omitempty"`

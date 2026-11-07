@@ -210,13 +210,14 @@ type StartRequest struct {
 	// When set, the profile's config is used as a base; explicit fields override it.
 	SessionProfileID string `json:"session_profile_id,omitempty"`
 	// ProfileMCPServers is resolved from SessionProfileID and is never accepted from the API.
-	ProfileFiles              []sessionsettings.ManagedFile `json:"-"`
-	ProfileMCPServers         *MCPServersSettings           `json:"-"`
-	ProfileSkills             []string                      `json:"-"`
-	ProfileGitHubRepositories []string                      `json:"-"`
-	ProfileCommandWrapper     string                        `json:"-"`
-	ProfileSystemPrompt       string                        `json:"-"`
-	ResolvedSessionProfileID  string                        `json:"-"`
+	ProfileFiles              []sessionsettings.ManagedFile      `json:"-"`
+	ProfileRepositories       []sessionsettings.RepositoryConfig `json:"-"`
+	ProfileMCPServers         *MCPServersSettings                `json:"-"`
+	ProfileSkills             []string                           `json:"-"`
+	ProfileGitHubRepositories []string                           `json:"-"`
+	ProfileCommandWrapper     string                             `json:"-"`
+	ProfileSystemPrompt       string                             `json:"-"`
+	ResolvedSessionProfileID  string                             `json:"-"`
 	// ResolvedStorages is populated by the parent API after authorization.
 	ResolvedStorages []ResolvedStorageAttachment `json:"-"`
 	// ReuseMatchTags asks /start to reuse a live session matching every tag.
@@ -255,6 +256,7 @@ type RunServerRequest struct {
 	ProfileEnvironment map[string]string
 	// ProfileFiles are resolved from SessionProfileID and are never accepted from the API.
 	ProfileFiles             []sessionsettings.ManagedFile
+	ProfileRepositories      []sessionsettings.RepositoryConfig
 	Tags                     map[string]string
 	RepoInfo                 *RepositoryInfo
 	InitialMessage           string

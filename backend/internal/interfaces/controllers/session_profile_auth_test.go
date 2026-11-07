@@ -83,6 +83,27 @@ func TestProfileFilesValidation(t *testing.T) {
 	require.NoError(t, validateSessionProfileConfig(cfg))
 }
 
+func TestProfileRepositoriesValidation(t *testing.T) {
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetProfileRepositories([]entities.ProfileRepository{{Repository: "invalid", Path: "/home/agentapi/workdir/shared"}})
+	require.Error(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetProfileRepositories([]entities.ProfileRepository{{Repository: "acme/shared", Path: "relative"}})
+	require.Error(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetProfileRepositories([]entities.ProfileRepository{{Repository: "acme/shared", Path: "/home/agentapi/workdir/repo"}})
+	require.Error(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetProfileRepositories([]entities.ProfileRepository{
+		{Repository: "acme/shared", Path: "/home/agentapi/workdir/shared"},
+		{Repository: "acme/tools", Path: "/home/agentapi/workdir/shared/../shared"},
+	})
+	require.Error(t, validateSessionProfileConfig(cfg))
+
+	cfg.SetProfileRepositories([]entities.ProfileRepository{{Repository: "acme/shared", Path: "/home/agentapi/workdir/shared", Branch: "develop"}})
+	require.NoError(t, validateSessionProfileConfig(cfg))
+}
+
 func TestProfileRuntimeCustomizationValidation(t *testing.T) {
 	cfg := entities.NewSessionProfileConfig()
 	cfg.SetCommandWrapperTemplate("exec env TEST=1 {{ .Command }}")
@@ -112,6 +133,12 @@ func TestMergeSessionParamsModelOptions(t *testing.T) {
 	override := mergeSessionParams(profile, &entities.SessionParams{ModelOptions: []string{"haiku"}})
 	require.Equal(t, []string{"haiku"}, override.ModelOptions)
 	require.Equal(t, []string{"sonnet", "opus"}, profile.ModelOptions)
+}
+
+func TestMergeSessionParamsConnectionID(t *testing.T) {
+	profile := &entities.SessionParams{ConnectionID: "profile-connection"}
+	require.Equal(t, "profile-connection", mergeSessionParams(profile, &entities.SessionParams{}).ConnectionID)
+	require.Equal(t, "request-connection", mergeSessionParams(profile, &entities.SessionParams{ConnectionID: "request-connection"}).ConnectionID)
 }
 
 func TestMergeSessionParamsStorages(t *testing.T) {

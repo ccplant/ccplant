@@ -9,6 +9,7 @@ export interface SessionProfileParams {
   pool?: string;
   initial_message?: string;
   github_token?: string;
+  connection_id?: string;
   agent_type?: string;
   model?: string;
   /** Model switching candidates offered in the ACP chat info panel. */
@@ -32,6 +33,12 @@ export interface ProfileFile {
   path: string;
   content?: string;
   permissions?: string;
+}
+
+export interface ProfileRepository {
+  repository: string;
+  path: string;
+  branch?: string;
 }
 
 // Session profile config
@@ -59,6 +66,7 @@ export interface SessionProfileConfig {
   skills?: string[];
   pi_packages?: string[];
   files?: ProfileFile[];
+  repositories?: ProfileRepository[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
   session_state?: SessionStateConfig;
 }

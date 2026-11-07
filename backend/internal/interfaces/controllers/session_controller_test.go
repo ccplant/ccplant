@@ -26,6 +26,15 @@ type githubConnectionURLResolverStub struct {
 	apiURL  string
 }
 
+type githubRoutingProfileRepo struct {
+	repositories.SessionProfileRepository
+	profile *entities.SessionProfile
+}
+
+func (r githubRoutingProfileRepo) Get(context.Context, string) (*entities.SessionProfile, error) {
+	return r.profile, nil
+}
+
 func (s githubConnectionURLResolverStub) ResolveAccessToken(context.Context, *entities.User, string) (string, error) {
 	return "", nil
 }
@@ -281,6 +290,21 @@ func TestSessionRepository(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGitHubRoutingDefaultsUsesProfileRepositoryAndConnection(t *testing.T) {
+	profile := entities.NewSessionProfile("profile", "Profile", "user-1")
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetParams(&entities.SessionParams{ConnectionID: "connection-1"})
+	cfg.SetProfileRepositories([]entities.ProfileRepository{{Repository: "acme/shared", Path: "/home/agentapi/workdir/shared"}})
+	profile.SetConfig(cfg)
+	controller := &SessionController{sessionProfileRepo: githubRoutingProfileRepo{profile: profile}}
+	authz := &auth.AuthorizationContext{User: entities.NewUser("user-1", entities.UserTypeRegular, "user-1"), PersonalScope: auth.PersonalScopeAuth{UserID: "user-1", CanRead: true, CanCreate: true}}
+
+	repository, connectionID, err := controller.githubRoutingDefaults(context.Background(), entities.StartRequest{SessionProfileID: "profile", Scope: entities.ScopeUser}, "user-1", authz)
+	require.NoError(t, err)
+	require.Equal(t, "acme/shared", repository)
+	require.Equal(t, "connection-1", connectionID)
 }
 
 func TestShouldUseGitHubBrokerPreservesExplicitCredentials(t *testing.T) {

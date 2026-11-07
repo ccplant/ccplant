@@ -87,12 +87,19 @@ func SetupSettings(settings *SessionSettings, opts SetupOptions) error {
 	}
 
 	// 2. Clone repository if configured
-	if settings.Repository != nil && settings.Repository.FullName != "" {
+	if (settings.Repository != nil && settings.Repository.FullName != "") || len(settings.Repositories) > 0 {
 		if err := configureGitHubTokenBroker(settings); err != nil {
 			return fmt.Errorf("configure GitHub token broker: %w", err)
 		}
-		if err := cloneRepo(settings); err != nil {
-			return fmt.Errorf("clone-repo failed: %w", err)
+		if settings.Repository != nil && settings.Repository.FullName != "" {
+			if err := cloneRepository(settings, settings.Repository); err != nil {
+				return fmt.Errorf("clone-repo failed: %w", err)
+			}
+		}
+		for i := range settings.Repositories {
+			if err := cloneRepository(settings, &settings.Repositories[i]); err != nil {
+				return fmt.Errorf("clone preloaded repository %s: %w", settings.Repositories[i].FullName, err)
+			}
 		}
 	}
 
@@ -216,8 +223,7 @@ func writePEM(settings *SessionSettings, pemOutputPath string) error {
 // cloneRepo sets up GitHub auth and clones the repository using gh repo clone
 // so that GITHUB_TOKEN / GitHub App auth and GitHub Enterprise Server host
 // routing work correctly.
-func cloneRepo(settings *SessionSettings) error {
-	repo := settings.Repository
+func cloneRepository(settings *SessionSettings, repo *RepositoryConfig) error {
 
 	// Set environment variables from session env so git/gh tools pick them up.
 	for k, v := range setupProcessEnv(settings.Env) {
