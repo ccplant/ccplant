@@ -333,6 +333,7 @@ it('saves repositories preloaded before agent startup', async () => {
   fireEvent.change(screen.getByLabelText('リポジトリ'), { target: { value: 'acme/shared' } })
   fireEvent.change(screen.getByLabelText('配置先'), { target: { value: '/home/agentapi/workdir/shared' } })
   fireEvent.change(screen.getByLabelText('ブランチ（任意）'), { target: { value: 'develop' } })
+  await screen.findByRole('option', { name: 'GitHub Enterprise (octocat)' })
   fireEvent.change(screen.getByLabelText('トークンコネクション'), { target: { value: 'connection-1' } })
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
