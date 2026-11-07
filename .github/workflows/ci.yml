@@ -122,7 +122,8 @@ jobs:
   native:
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: macos-14
+    # macOS 14 GitHub-hosted runners were retired on 2026-11-02.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
