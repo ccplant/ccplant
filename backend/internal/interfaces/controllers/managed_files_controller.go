@@ -48,11 +48,17 @@ func (c *ManagedFilesController) WithProxy(proxy ManagedFileSnapshotProxy) *Mana
 func (c *ManagedFilesController) Save(cctx echo.Context) error {
 	sessionID := cctx.Param("sessionId")
 	token := cctx.Request().Header.Get("X-Session-Control-Token")
+	customTokenPresent := token != ""
 	if token == "" {
 		token = strings.TrimPrefix(cctx.Request().Header.Get("Authorization"), "Bearer ")
 	}
 	if c.manager == nil || !c.manager.ValidateSessionControlToken(sessionID, token) {
-		return cctx.NoContent(http.StatusUnauthorized)
+		return cctx.JSON(http.StatusUnauthorized, map[string]any{
+			"error":                 "session control token rejected",
+			"session_id":            sessionID,
+			"custom_token_present":  customTokenPresent,
+			"authorization_present": cctx.Request().Header.Get("Authorization") != "",
+		})
 	}
 	session := c.manager.GetSession(sessionID)
 	if session == nil || session.UserID() == "" {
