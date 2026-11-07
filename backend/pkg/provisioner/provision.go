@@ -1277,6 +1277,7 @@ func saveManagedFilesVersioned(ctx context.Context, client *http.Client, proxyUR
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Session-Control-Token", token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Credential-Sync-ID", syncID)
 	resp, err := client.Do(req)

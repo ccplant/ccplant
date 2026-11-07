@@ -15,6 +15,7 @@ func TestSaveManagedFilesUsesSessionControlToken(t *testing.T) {
 		require.Equal(t, http.MethodPut, r.Method)
 		require.Equal(t, "/internal/session-control/session-1/managed-files", r.URL.Path)
 		require.Equal(t, "Bearer token-1", r.Header.Get("Authorization"))
+		require.Equal(t, "token-1", r.Header.Get("X-Session-Control-Token"))
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()

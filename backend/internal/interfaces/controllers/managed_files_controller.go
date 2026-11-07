@@ -47,7 +47,10 @@ func (c *ManagedFilesController) WithProxy(proxy ManagedFileSnapshotProxy) *Mana
 
 func (c *ManagedFilesController) Save(cctx echo.Context) error {
 	sessionID := cctx.Param("sessionId")
-	token := strings.TrimPrefix(cctx.Request().Header.Get("Authorization"), "Bearer ")
+	token := cctx.Request().Header.Get("X-Session-Control-Token")
+	if token == "" {
+		token = strings.TrimPrefix(cctx.Request().Header.Get("Authorization"), "Bearer ")
+	}
 	if c.manager == nil || !c.manager.ValidateSessionControlToken(sessionID, token) {
 		return cctx.NoContent(http.StatusUnauthorized)
 	}
