@@ -12,6 +12,7 @@ import {
   UpdateSessionProfileRequest,
   SessionProfileParams,
   ProfileFile,
+  ProfileRepository,
   SessionStateConfig,
 } from '../../types/session_profile'
 import { SandboxPolicy } from '../../types/sandbox_policy'
@@ -106,6 +107,7 @@ export default function SessionProfileEditor({
   const [defaultModelTarget, setDefaultModelTarget] = useState<DefaultModelTarget>('codex:all')
   const [modelOptions, setModelOptions] = useState('')
   const [profileFiles, setProfileFiles] = useState<ProfileFile[]>([])
+  const [profileRepositories, setProfileRepositories] = useState<ProfileRepository[]>([])
   const [storages, setStorages] = useState<StorageAttachment[]>([])
   const [sessionState, setSessionState] = useState<SessionStateConfig>({ enabled: false, components: ['agent_state'], agents: ['claude'] })
   const [mcpServers, setMcpServers] = useState<Record<string, APIMCPServerConfig>>({})
@@ -278,6 +280,7 @@ export default function SessionProfileEditor({
       const paths = cfg?.unsynced_file_paths ?? cfg?.params?.unsynced_file_paths ?? []
       setUnsyncedFilePaths(paths.join('\n'))
       setProfileFiles(cfg?.files ?? [])
+      setProfileRepositories(cfg?.repositories ?? [])
       setStorages(cfg?.params?.storages ?? [])
       setSessionState(cfg?.session_state ?? { enabled: false, components: ['agent_state'], agents: ['claude'] })
 
@@ -319,6 +322,7 @@ export default function SessionProfileEditor({
       setSessionTTL('')
       setUnsyncedFilePaths('')
       setProfileFiles([])
+      setProfileRepositories([])
       setStorages([])
       setSessionState({ enabled: false, components: ['agent_state'], agents: ['claude'] })
       setSettingsTeamId(createScope?.scope === 'team' ? createScope.team_id ?? '' : '')
@@ -397,6 +401,21 @@ export default function SessionProfileEditor({
     setProfileFiles(prev => prev.filter((_, i) => i !== index))
   }
 
+  const updateProfileRepository = (index: number, field: keyof ProfileRepository, value: string) => {
+    setDirty(true)
+    setProfileRepositories(current => current.map((repository, i) => i === index ? { ...repository, [field]: value } : repository))
+  }
+
+  const addProfileRepository = () => {
+    setDirty(true)
+    setProfileRepositories(current => [...current, { repository: '', path: '', branch: '' }])
+  }
+
+  const removeProfileRepository = (index: number) => {
+    setDirty(true)
+    setProfileRepositories(current => current.filter((_, i) => i !== index))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
@@ -436,6 +455,11 @@ export default function SessionProfileEditor({
       const parsedProfileFiles = profileFiles
         .map(file => ({ ...file, path: file.path.trim(), permissions: file.permissions?.trim() }))
         .filter(file => file.path)
+	  const parsedProfileRepositories = profileRepositories
+	    .map(repository => ({ repository: repository.repository.trim(), path: repository.path.trim(), branch: repository.branch?.trim() }))
+	    .filter(repository => repository.repository || repository.path)
+	  if (parsedProfileRepositories.some(repository => !/^[^/\s]+\/[^/\s]+$/.test(repository.repository))) throw new Error('事前配置リポジトリは owner/repository 形式で入力してください')
+	  if (parsedProfileRepositories.some(repository => !repository.path.startsWith('/'))) throw new Error('事前配置リポジトリの配置先は絶対パスで入力してください')
 
       // Build docker config if enabled
       let dockerConfig: { enabled: boolean; registries?: { server?: string; username?: string; password?: string; secret_name?: string; insecure?: boolean }[] } | undefined
@@ -500,7 +524,7 @@ export default function SessionProfileEditor({
       }
       const extraConfig = { ...editingProfile?.config }
       const parsedPiPackages = piPackages.split('\n').map(value => value.trim()).filter(Boolean)
-      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state'] as const) delete extraConfig[key]
+      for (const key of ['settings_team_id', 'codex_connection', 'claude_connection', 'pi_connection', 'environment', 'tags', 'pool', 'mcp_servers', 'params', 'sandbox_policy_id', 'session_ttl', 'unsynced_file_paths', 'source_session_profile_id', 'secret_ids', 'github_repositories', 'skills', 'pi_packages', 'files', 'repositories', 'command_wrapper_template', 'system_prompt', 'system_prompt_mode', 'session_state'] as const) delete extraConfig[key]
       const parsedGitHubRepositories = githubRepositories.split('\n').map(value => value.trim()).filter(Boolean)
       const config = {
         ...extraConfig,
@@ -524,6 +548,7 @@ export default function SessionProfileEditor({
         ...(wrapper ? { command_wrapper_template: wrapper } : {}),
         ...(systemPrompt ? { system_prompt: systemPrompt, system_prompt_mode: systemPromptMode } : {}),
         files: parsedProfileFiles,
+        repositories: parsedProfileRepositories,
         session_state: sessionState,
       }
 
@@ -975,6 +1000,33 @@ export default function SessionProfileEditor({
               </div>
             </div>}
             {active.slug === 'files' && <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">事前配置リポジトリ</label>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">エージェントの起動前に clone するリポジトリと配置先を指定します。メインの作業リポジトリは変更しません。</p>
+                    {profileRepositories.length === 0 && <p className="text-xs text-gray-400 dark:text-gray-500">登録済みリポジトリはありません。</p>}
+                    <div className="space-y-3">
+                      {profileRepositories.map((repository, idx) => (
+                        <div key={idx} className="rounded border border-gray-200 dark:border-gray-600 p-3 space-y-2 bg-gray-50 dark:bg-gray-900/40">
+                          <div className="flex items-end gap-2">
+                            <div className="min-w-0 flex-1">
+                              <label htmlFor={`profile-repository-${idx}-name`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">リポジトリ</label>
+                              <input id={`profile-repository-${idx}-name`} value={repository.repository} onChange={e => updateProfileRepository(idx, 'repository', e.target.value)} placeholder="owner/repository" className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 font-mono" />
+                            </div>
+                            <button type="button" aria-label={`リポジトリ ${idx + 1} を削除`} onClick={() => removeProfileRepository(idx)} className="p-1 text-gray-400 hover:text-red-500">×</button>
+                          </div>
+                          <div>
+                            <label htmlFor={`profile-repository-${idx}-path`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">配置先</label>
+                            <input id={`profile-repository-${idx}-path`} value={repository.path} onChange={e => updateProfileRepository(idx, 'path', e.target.value)} placeholder="/home/agentapi/workdir/shared" className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 font-mono" />
+                          </div>
+                          <div>
+                            <label htmlFor={`profile-repository-${idx}-branch`} className="block text-xs text-gray-500 dark:text-gray-400 mb-1">ブランチ（任意）</label>
+                            <input id={`profile-repository-${idx}-branch`} value={repository.branch || ''} onChange={e => updateProfileRepository(idx, 'branch', e.target.value)} placeholder="main" className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-xs bg-white dark:bg-gray-700 font-mono" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button type="button" onClick={addProfileRepository} className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800">リポジトリを追加</button>
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       登録ファイル

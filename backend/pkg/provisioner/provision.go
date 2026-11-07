@@ -100,6 +100,9 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 			settings.Repository.CloneDir = workdirRepoPath
 		}
 	}
+	for i := range settings.Repositories {
+		settings.Repositories[i].CloneDir = rewrite(settings.Repositories[i].CloneDir)
+	}
 	for i := range settings.Files {
 		settings.Files[i].Path = rewrite(settings.Files[i].Path)
 	}

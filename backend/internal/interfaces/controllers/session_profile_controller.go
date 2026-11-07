@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -61,6 +62,7 @@ type SessionProfileConfigRequest struct {
 	Skills                 []string                     `json:"skills,omitempty"`
 	PiPackages             []string                     `json:"pi_packages,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
+	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
 }
@@ -128,6 +130,7 @@ type SessionProfileConfigResponse struct {
 	Skills                 []string                     `json:"skills,omitempty"`
 	PiPackages             []string                     `json:"pi_packages,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
+	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
 	MCPServers             map[string]*MCPServerRequest `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
 }
@@ -484,6 +487,27 @@ func validateSessionProfileConfig(config entities.SessionProfileConfig) error {
 		}
 		seenPaths[file.Path] = true
 	}
+	seenRepositoryPaths := make(map[string]bool)
+	for _, repository := range config.ProfileRepositories() {
+		if repository.Repository == "" {
+			return fmt.Errorf("profile repository is required")
+		}
+		parts := strings.Split(repository.Repository, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return fmt.Errorf("profile repository must use owner/repository format: %s", repository.Repository)
+		}
+		if repository.Path == "" || !filepath.IsAbs(repository.Path) {
+			return fmt.Errorf("profile repository path must be absolute: %s", repository.Path)
+		}
+		cleanPath := filepath.Clean(repository.Path)
+		if cleanPath == "/" || cleanPath == "/home/agentapi/workdir/repo" {
+			return fmt.Errorf("profile repository path is reserved: %s", repository.Path)
+		}
+		if seenRepositoryPaths[cleanPath] {
+			return fmt.Errorf("duplicate profile repository path: %s", repository.Path)
+		}
+		seenRepositoryPaths[cleanPath] = true
+	}
 	return nil
 }
 
@@ -630,6 +654,9 @@ func (c *SessionProfileController) requestToConfig(req SessionProfileConfigReque
 	if req.Files != nil {
 		cfg.SetProfileFiles(req.Files)
 	}
+	if req.Repositories != nil {
+		cfg.SetProfileRepositories(req.Repositories)
+	}
 	if req.MCPServers != nil {
 		servers := entities.NewMCPServersSettings()
 		for name, item := range req.MCPServers {
@@ -691,6 +718,7 @@ func (c *SessionProfileController) toResponse(p *entities.SessionProfile) Sessio
 			Skills:                 cfg.Skills(),
 			PiPackages:             cfg.PiPackages(),
 			Files:                  cfg.ProfileFiles(),
+			Repositories:           cfg.ProfileRepositories(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
 		},

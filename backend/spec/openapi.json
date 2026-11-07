@@ -11655,40 +11655,37 @@
           "uniqueItems": true
         },
         "files": {
-          "files": {
-            "type": "array",
-            "description": "Files owned by this profile and written inside the container when a session starts.",
-            "items": {
-              "type": "object",
-              "required": [
-                "path"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "description": "Human-readable display name"
-                },
-                "path": {
-                  "type": "string",
-                  "description": "Absolute destination path inside the agent container"
-                },
-                "content": {
-                  "type": "string",
-                  "description": "File content (plain text or base64-encoded)"
-                },
-                "permissions": {
-                  "type": "string",
-                  "description": "File permissions hint (e.g. \"0600\")"
-                }
-              }
-            }
-          },
-          "mcp_servers": {
+          "type": "array",
+          "description": "Files owned by this profile and written inside the container when a session starts.",
+          "items": {
             "type": "object",
-            "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/MCPServerRequest"
+            "required": ["path"],
+            "properties": {
+              "name": { "type": "string", "description": "Human-readable display name" },
+              "path": { "type": "string", "description": "Absolute destination path inside the agent container" },
+              "content": { "type": "string", "description": "File content (plain text or base64-encoded)" },
+              "permissions": { "type": "string", "description": "File permissions hint (e.g. \"0600\")" }
             }
+          }
+        },
+        "repositories": {
+          "type": "array",
+          "description": "Repositories cloned to absolute paths before the agent starts. These do not replace the session's primary working repository.",
+          "items": {
+            "type": "object",
+            "required": ["repository", "path"],
+            "properties": {
+              "repository": { "type": "string", "description": "GitHub repository in owner/repository form" },
+              "path": { "type": "string", "description": "Absolute clone destination inside the session" },
+              "branch": { "type": "string", "description": "Optional branch to check out" }
+            }
+          }
+        },
+        "mcp_servers": {
+          "type": "object",
+          "description": "MCP servers enabled for sessions using this profile. Entries override tenant settings by server name; unmentioned tenant servers are inherited.",
+          "additionalProperties": {
+            "$ref": "#/components/schemas/MCPServerRequest"
           }
         }
       },

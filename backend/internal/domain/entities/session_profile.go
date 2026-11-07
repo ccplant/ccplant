@@ -57,6 +57,7 @@ type SessionProfileConfig struct {
 	skills             []string
 	piPackages         []string
 	files              []ProfileFile
+	repositories       []ProfileRepository
 	mcpServers         *MCPServersSettings
 	sessionState       *SessionStateConfig
 }
@@ -86,6 +87,14 @@ type ProfileFile struct {
 	Path        string `json:"path"`
 	Content     string `json:"content,omitempty"`
 	Permissions string `json:"permissions,omitempty"`
+}
+
+// ProfileRepository is cloned before the agent starts. Unlike the session's
+// primary repository, it does not change the agent working directory.
+type ProfileRepository struct {
+	Repository string `json:"repository"`
+	Path       string `json:"path"`
+	Branch     string `json:"branch,omitempty"`
 }
 
 // NewSessionProfile creates a new SessionProfile
@@ -410,6 +419,16 @@ func (c *SessionProfileConfig) ProfileFiles() []ProfileFile {
 // SetProfileFiles sets files managed by this profile.
 func (c *SessionProfileConfig) SetProfileFiles(files []ProfileFile) {
 	c.files = append([]ProfileFile(nil), files...)
+}
+
+// ProfileRepositories returns repositories preloaded by this profile.
+func (c *SessionProfileConfig) ProfileRepositories() []ProfileRepository {
+	return append([]ProfileRepository(nil), c.repositories...)
+}
+
+// SetProfileRepositories sets repositories preloaded by this profile.
+func (c *SessionProfileConfig) SetProfileRepositories(repositories []ProfileRepository) {
+	c.repositories = append([]ProfileRepository(nil), repositories...)
 }
 
 // MCPServers returns the MCP servers contributed by this profile.

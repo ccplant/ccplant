@@ -8,6 +8,7 @@ import (
 	"github.com/takutakahashi/agentapi-proxy/pkg/sessionsettings"
 	"github.com/takutakahashi/agentapi-proxy/pkg/telemetry"
 	"log"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -52,6 +53,7 @@ type LaunchRequest struct {
 	ClaudeAuthMode            string
 	CredentialSource          string
 	ProfileFiles              []sessionsettings.ManagedFile
+	ProfileRepositories       []sessionsettings.RepositoryConfig
 	ProfileSecretIDs          []string
 	SettingsTeamID            string
 	ProfileMCPServers         *entities.MCPServersSettings
@@ -229,6 +231,7 @@ func (uc *LaunchUseCase) launch(ctx context.Context, sessionID string, req Launc
 		Environment:              req.Environment,
 		ProfileEnvironment:       req.ProfileEnvironment,
 		ProfileFiles:             req.ProfileFiles,
+		ProfileRepositories:      req.ProfileRepositories,
 		ProfileSecretIDs:         req.ProfileSecretIDs,
 		SettingsTeamID:           req.SettingsTeamID,
 		Tags:                     req.Tags,
@@ -500,6 +503,12 @@ func applyProfileToLaunchRequest(cfg entities.SessionProfileConfig, req *LaunchR
 	}
 	req.ProfileSkills = cfg.Skills()
 	req.ProfileGitHubRepositories = cfg.GitHubRepositories()
+	for _, repository := range cfg.ProfileRepositories() {
+		req.ProfileRepositories = append(req.ProfileRepositories, sessionsettings.RepositoryConfig{
+			FullName: repository.Repository, CloneDir: repository.Path, Branch: repository.Branch,
+		})
+		req.ProfileGitHubRepositories = append(req.ProfileGitHubRepositories, "^"+regexp.QuoteMeta(repository.Repository)+"$")
+	}
 	// Keep profile environment separate so settings resolution can apply it above
 	// team/user settings while still allowing explicit request values to win.
 	if len(cfg.Environment()) > 0 {

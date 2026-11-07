@@ -7556,6 +7556,7 @@ func (m *KubernetesSessionManager) buildSessionSettings(
 		env[proxybinary.EnvName] = sessionCLIPath
 	}
 	settings.Env = env
+	settings.Repositories = append([]sessionsettings.RepositoryConfig(nil), req.ProfileRepositories...)
 	settings.UsageReportingEnabled = m.config.Usage.Enabled
 
 	settings.Pi = buildPiConfig(req.PiConnection)

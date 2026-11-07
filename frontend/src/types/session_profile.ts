@@ -34,6 +34,12 @@ export interface ProfileFile {
   permissions?: string;
 }
 
+export interface ProfileRepository {
+  repository: string;
+  path: string;
+  branch?: string;
+}
+
 // Session profile config
 export interface SessionProfileConfig {
   settings_team_id?: string;
@@ -59,6 +65,7 @@ export interface SessionProfileConfig {
   skills?: string[];
   pi_packages?: string[];
   files?: ProfileFile[];
+  repositories?: ProfileRepository[];
   mcp_servers?: Record<string, APIMCPServerConfig>;
   session_state?: SessionStateConfig;
 }

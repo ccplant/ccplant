@@ -75,6 +75,7 @@ type sessionProfileConfigJSON struct {
 	Skills                 []string                     `json:"skills,omitempty"`
 	PiPackages             []string                     `json:"pi_packages,omitempty"`
 	Files                  []entities.ProfileFile       `json:"files,omitempty"`
+	Repositories           []entities.ProfileRepository `json:"repositories,omitempty"`
 	MCPServers             map[string]*mcpServerJSON    `json:"mcp_servers,omitempty"`
 	SessionState           *entities.SessionStateConfig `json:"session_state,omitempty"`
 }
@@ -394,6 +395,7 @@ func (r *KubernetesSessionProfileRepository) jsonToEntity(pj *sessionProfileJSON
 	cfg.SetPiPackages(pj.Config.PiPackages)
 	cfg.SetSessionState(pj.Config.SessionState)
 	cfg.SetProfileFiles(pj.Config.Files)
+	cfg.SetProfileRepositories(pj.Config.Repositories)
 	if pj.Config.MCPServers != nil {
 		servers := entities.NewMCPServersSettings()
 		for name, item := range pj.Config.MCPServers {
@@ -454,6 +456,7 @@ func (r *KubernetesSessionProfileRepository) entityToJSON(profile *entities.Sess
 			Skills:                 cfg.Skills(),
 			PiPackages:             cfg.PiPackages(),
 			Files:                  cfg.ProfileFiles(),
+			Repositories:           cfg.ProfileRepositories(),
 			MCPServers:             mcpServers,
 			SessionState:           cfg.SessionState(),
 		},

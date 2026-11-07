@@ -383,6 +383,29 @@ func TestLaunchPropagatesProfileFiles(t *testing.T) {
 	}
 }
 
+func TestLaunchPropagatesProfileRepositories(t *testing.T) {
+	sessionManager := &recordingSessionManager{}
+	profile := entities.NewSessionProfile("profile-1", "repositories", "user-1")
+	profile.SetIsDefault(true)
+	cfg := entities.NewSessionProfileConfig()
+	cfg.SetProfileRepositories([]entities.ProfileRepository{{
+		Repository: "acme/shared", Path: "/home/agentapi/workdir/shared", Branch: "develop",
+	}})
+	profile.SetConfig(cfg)
+
+	launcher := NewLaunchUseCase(sessionManager).WithSessionProfileRepository(
+		&fakeSessionProfileRepo{profiles: []*entities.SessionProfile{profile}},
+	)
+	_, err := launcher.Launch(context.Background(), "session-1", LaunchRequest{UserID: "user-1", Scope: entities.ScopeUser})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	want := []sessionsettings.RepositoryConfig{{FullName: "acme/shared", CloneDir: "/home/agentapi/workdir/shared", Branch: "develop"}}
+	if !reflect.DeepEqual(sessionManager.req.ProfileRepositories, want) {
+		t.Fatalf("ProfileRepositories = %#v, want %#v", sessionManager.req.ProfileRepositories, want)
+	}
+}
+
 func TestLaunchPropagatesProfileSystemPrompt(t *testing.T) {
 	profile := entities.NewSessionProfile("profile-1", "instructions", "user-1")
 	cfg := entities.NewSessionProfileConfig()

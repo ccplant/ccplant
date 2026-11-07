@@ -324,6 +324,23 @@ it('saves profile files registered in the files section', async () => {
   ])
 })
 
+it('saves repositories preloaded before agent startup', async () => {
+  render(<SessionProfileEditor section="files" onClose={vi.fn()} onSuccess={vi.fn()} editingProfile={{
+    id: 'profile', name: 'Repositories', created_at: '', updated_at: '', config: {},
+  }} />)
+  fireEvent.click(screen.getByRole('button', { name: 'リポジトリを追加' }))
+  fireEvent.change(screen.getByLabelText('リポジトリ'), { target: { value: 'acme/shared' } })
+  fireEvent.change(screen.getByLabelText('配置先'), { target: { value: '/home/agentapi/workdir/shared' } })
+  fireEvent.change(screen.getByLabelText('ブランチ（任意）'), { target: { value: 'develop' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存' }))
+  await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
+  expect(mocks.update.mock.calls[0][1].config.repositories).toEqual([{
+    repository: 'acme/shared',
+    path: '/home/agentapi/workdir/shared',
+    branch: 'develop',
+  }])
+})
+
 it('creates in the scope from the URL and retains the draft after a save failure', async () => {
   const success = vi.fn()
   mocks.create.mockRejectedValueOnce(new Error('Save failed'))

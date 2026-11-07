@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -159,6 +160,9 @@ func WithGitHubBrokerBaseURL(baseURL string) SessionControllerOption {
 
 func (c *SessionController) githubRepositoriesForSession(ctx context.Context, req entities.StartRequest, userID string, authzCtx *auth.AuthorizationContext) ([]string, error) {
 	repositories := append([]string(nil), req.ProfileGitHubRepositories...)
+	for _, repository := range req.ProfileRepositories {
+		repositories = append(repositories, "^"+regexp.QuoteMeta(repository.FullName)+"$")
+	}
 	if len(repositories) == 0 && c.sessionProfileRepo != nil {
 		profile, _, err := c.resolveSessionProfile(ctx, req.SessionProfileID, userID, req.Scope, req.TeamID, req.Tags, authzCtx)
 		if err != nil {
@@ -169,6 +173,9 @@ func (c *SessionController) githubRepositoriesForSession(ctx context.Context, re
 			return nil, err
 		}
 		repositories = append(repositories, profileConfig.GitHubRepositories()...)
+		for _, repository := range profileConfig.ProfileRepositories() {
+			repositories = append(repositories, "^"+regexp.QuoteMeta(repository.Repository)+"$")
+		}
 	}
 	if req.Scope == entities.ScopeTeam && req.TeamID != "" && c.settingsRepo != nil {
 		settings, err := c.settingsRepo.FindByName(ctx, req.TeamID)
@@ -2967,6 +2974,11 @@ func applySessionProfile(
 		startReq.ProfileMCPServers = cfg.MCPServers()
 		startReq.ProfileSkills = cfg.Skills()
 		startReq.ProfileGitHubRepositories = cfg.GitHubRepositories()
+		for _, repository := range cfg.ProfileRepositories() {
+			startReq.ProfileRepositories = append(startReq.ProfileRepositories, sessionsettings.RepositoryConfig{
+				FullName: repository.Repository, CloneDir: repository.Path, Branch: repository.Branch,
+			})
+		}
 		startReq.ProfileCommandWrapper = cfg.CommandWrapperTemplate()
 		startReq.ProfileSystemPrompt = cfg.SystemPrompt()
 		if profileFiles := cfg.ProfileFiles(); len(profileFiles) > 0 {
