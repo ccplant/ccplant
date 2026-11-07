@@ -20,3 +20,19 @@ func TestSaveManagedFilesUsesSessionControlToken(t *testing.T) {
 	defer server.Close()
 	require.NoError(t, saveManagedFiles(context.Background(), server.Client(), server.URL, "session-1", "token-1", []sessionsettings.ManagedFile{{Path: sessionsettings.ManagedFileTypes[sessionsettings.FileTypeCodexAuth], Content: "updated"}}))
 }
+
+func TestRunFilesSyncPrefersLocalSessionControlProxy(t *testing.T) {
+	t.Setenv("PROVISIONER_PROXY_URL", "http://parent.invalid")
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/session-control/session-1/managed-files" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer local.Close()
+	t.Setenv("PROVISIONER_LOCAL_PROXY_URL", local.URL)
+	t.Setenv("AGENTAPI_SESSION_ID", "session-1")
+	t.Setenv("SESSION_CONTROL_TOKEN", "token")
+
+	require.Equal(t, local.URL, sessionControlProxyURL())
+}

@@ -1123,7 +1123,9 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 
-	proxyURL := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	// Pool runners use PROVISIONER_PROXY_URL to claim work from the parent API.
+	// Session-scoped controls are always served by the local Session Manager.
+	proxyURL := sessionControlProxyURL()
 	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
 	token := os.Getenv("SESSION_CONTROL_TOKEN")
 	if proxyURL == "" || sessionID == "" || token == "" {
@@ -1214,6 +1216,14 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 			}
 		}
 	}
+}
+
+func sessionControlProxyURL() string {
+	proxyURL := strings.TrimRight(os.Getenv("PROVISIONER_LOCAL_PROXY_URL"), "/")
+	if proxyURL == "" {
+		proxyURL = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
+	return proxyURL
 }
 
 func syncedManagedFilePaths(unsyncedFilePaths []string) []string {
