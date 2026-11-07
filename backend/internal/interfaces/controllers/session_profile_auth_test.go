@@ -135,6 +135,12 @@ func TestMergeSessionParamsModelOptions(t *testing.T) {
 	require.Equal(t, []string{"sonnet", "opus"}, profile.ModelOptions)
 }
 
+func TestMergeSessionParamsConnectionID(t *testing.T) {
+	profile := &entities.SessionParams{ConnectionID: "profile-connection"}
+	require.Equal(t, "profile-connection", mergeSessionParams(profile, &entities.SessionParams{}).ConnectionID)
+	require.Equal(t, "request-connection", mergeSessionParams(profile, &entities.SessionParams{ConnectionID: "request-connection"}).ConnectionID)
+}
+
 func TestMergeSessionParamsStorages(t *testing.T) {
 	profile := &entities.SessionParams{Storages: []entities.StorageAttachment{
 		{StorageID: "shared", MountPath: "/home/agentapi/workdir/shared"},

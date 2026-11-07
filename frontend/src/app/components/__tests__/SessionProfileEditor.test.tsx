@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     getSessionProfiles: vi.fn().mockResolvedValue({ session_profiles: [] }),
     getUserInfo: vi.fn().mockResolvedValue({ principal_id: 'user-1' }),
     listSettingsSecrets: vi.fn().mockResolvedValue([{ id: 'secret-1', name: 'Deploy key', keys: ['token'], version: 1 }]),
+    listGitHubIdentities: vi.fn().mockResolvedValue({ identities: [{ id: 'identity-1', connection_id: 'connection-1', connection_name: 'GitHub Enterprise', login: 'octocat' }] }),
   },
 }))
 vi.mock('next/navigation', () => ({ usePathname: () => '/session-profiles/profile', useSearchParams: () => new URLSearchParams() }))
@@ -332,6 +333,7 @@ it('saves repositories preloaded before agent startup', async () => {
   fireEvent.change(screen.getByLabelText('リポジトリ'), { target: { value: 'acme/shared' } })
   fireEvent.change(screen.getByLabelText('配置先'), { target: { value: '/home/agentapi/workdir/shared' } })
   fireEvent.change(screen.getByLabelText('ブランチ（任意）'), { target: { value: 'develop' } })
+  fireEvent.change(screen.getByLabelText('トークンコネクション'), { target: { value: 'connection-1' } })
   fireEvent.click(screen.getByRole('button', { name: '保存' }))
   await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1))
   expect(mocks.update.mock.calls[0][1].config.repositories).toEqual([{
@@ -339,6 +341,7 @@ it('saves repositories preloaded before agent startup', async () => {
     path: '/home/agentapi/workdir/shared',
     branch: 'develop',
   }])
+  expect(mocks.update.mock.calls[0][1].config.params.connection_id).toBe('connection-1')
 })
 
 it('creates in the scope from the URL and retains the draft after a save failure', async () => {

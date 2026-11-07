@@ -189,6 +189,34 @@ func (c *SessionController) githubRepositoriesForSession(ctx context.Context, re
 	return normalizeRepositoryPatterns(repositories)
 }
 
+func (c *SessionController) githubRoutingDefaults(ctx context.Context, req entities.StartRequest, userID string, authzCtx *auth.AuthorizationContext) (string, string, error) {
+	repository := sessionRepository(req)
+	connectionID := ""
+	if req.Params != nil {
+		connectionID = req.Params.ConnectionID
+	}
+	if c.sessionProfileRepo == nil || (repository != "" && connectionID != "") {
+		return repository, connectionID, nil
+	}
+	profile, _, err := c.resolveSessionProfile(ctx, req.SessionProfileID, userID, req.Scope, req.TeamID, req.Tags, authzCtx)
+	if err != nil {
+		return "", "", err
+	}
+	config, err := sessionuc.ResolveEffectiveSessionProfileConfig(ctx, c.sessionProfileRepo, profile, req.Scope, userID, req.TeamID)
+	if err != nil {
+		return "", "", err
+	}
+	if connectionID == "" && config.Params() != nil {
+		connectionID = config.Params().ConnectionID
+	}
+	if repository == "" {
+		if repositories := config.ProfileRepositories(); len(repositories) > 0 {
+			repository = repositories[0].Repository
+		}
+	}
+	return repository, connectionID, nil
+}
+
 // NewSessionController creates a new SessionController instance
 func NewSessionController(
 	sessionManagerProvider SessionManagerProvider,
@@ -375,7 +403,18 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 		startReq.Scope = entities.ResourceScope(resolvedScope)
 		startReq.TeamID = resolvedTeamID
 	}
-	repository := sessionRepository(startReq)
+	repository, profileConnectionID, err := c.githubRoutingDefaults(ctx.Request().Context(), startReq, userID, authzCtx)
+	if err != nil {
+		return sessionProfileResolutionHTTPError(err)
+	}
+	if profileConnectionID != "" {
+		if startReq.Params == nil {
+			startReq.Params = &entities.SessionParams{}
+		}
+		if startReq.Params.ConnectionID == "" {
+			startReq.Params.ConnectionID = profileConnectionID
+		}
+	}
 	brokerConfigured := false
 	if shouldUseGitHubBroker(startReq, repository) && c.githubTokenResolver != nil {
 		if !authzCtx.CanCreateInTeam(startReq.TeamID) {
@@ -434,8 +473,8 @@ func (c *SessionController) startSession(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		c.logSessionTokenRouting(sessionID, "explicit", startReq.Params.ConnectionID, token)
-	} else if !brokerConfigured && (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(sessionRepository(startReq)) != "" && c.githubTokenResolver != nil {
-		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(sessionRepository(startReq)))
+	} else if !brokerConfigured && (startReq.Params == nil || startReq.Params.GithubToken == "") && repositoryOwner(repository) != "" && c.githubTokenResolver != nil {
+		token, connectionID, matched, err := c.githubTokenResolver.ResolveAccessTokenForOrganization(ctx.Request().Context(), user, repositoryOwner(repository))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
@@ -2652,6 +2691,9 @@ func mergeSessionParams(base, override *entities.SessionParams) *entities.Sessio
 	}
 	if override.GithubToken != "" {
 		merged.GithubToken = override.GithubToken
+	}
+	if override.ConnectionID != "" {
+		merged.ConnectionID = override.ConnectionID
 	}
 	if override.AgentType != "" {
 		merged.AgentType = override.AgentType

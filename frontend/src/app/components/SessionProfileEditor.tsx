@@ -26,6 +26,7 @@ import { MCPServerSettings } from '../../components/settings/MCPServerSettings'
 import { SkillSettings } from '../../components/settings/SkillSettings'
 import StorageAttachmentEditor, { validateStorageAttachments } from './StorageAttachmentEditor'
 import type { StorageAttachment } from '../../types/storage'
+import type { GitHubIdentity } from '../../types/github-connection'
 import SessionStateStorageEditor from './SessionStateStorageEditor'
 
 interface SessionProfileEditorProps {
@@ -121,6 +122,8 @@ export default function SessionProfileEditor({
   const [systemPrompt, setSystemPrompt] = useState('')
   const [systemPromptMode, setSystemPromptMode] = useState<'override' | 'append'>('override')
   const [githubRepositories, setGitHubRepositories] = useState('')
+  const [linkedConnections, setLinkedConnections] = useState<GitHubIdentity[]>([])
+  const [connectionId, setConnectionId] = useState('')
 
   // Docker / DinD fields
   const [dockerEnabled, setDockerEnabled] = useState(false)
@@ -234,6 +237,7 @@ export default function SessionProfileEditor({
       setSystemPrompt(cfg?.system_prompt ?? '')
       setSystemPromptMode(cfg?.system_prompt_mode ?? 'override')
       setGitHubRepositories((cfg?.github_repositories ?? []).join('\n'))
+      setConnectionId(cfg?.params?.connection_id ?? '')
 
       if (cfg?.environment && Object.keys(cfg.environment).length > 0) {
         const generalEnvironment = Object.entries(cfg.environment)
@@ -331,10 +335,17 @@ export default function SessionProfileEditor({
       setPiConnection(null)
       setCodexAuthMode('')
       setClaudeAuthMode('')
+      setConnectionId('')
     }
     setError(null)
     setDirty(false)
   }, [editingProfile, resetKey, createScope?.scope, createScope?.team_id])
+
+  useEffect(() => {
+    createAgentAPIProxyClientFromStorage().listGitHubIdentities()
+      .then(result => setLinkedConnections(result.identities))
+      .catch(() => setLinkedConnections([]))
+  }, [])
 
   useEffect(() => { setDrawerOpen(false) }, [section])
   useEffect(() => {
@@ -495,7 +506,7 @@ export default function SessionProfileEditor({
         if (sessionState.components.includes('agent_state') && sessionState.agents?.includes('codex')) throw new Error('Codexのセッション情報はStorageへ保存できません')
         if (fixedAgent === 'claude' && sessionState.components.includes('agent_state') && !sessionState.agents?.includes('claude')) throw new Error('Profileのエージェントを保持対象に選択してください')
       }
-      for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'codex_auth_mode', 'claude_auth_mode', 'codex_default_models', 'claude_default_models', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
+      for (const key of ['pool', 'agent_type', 'model', 'model_options', 'sandbox', 'docker', 'connection_id', 'codex_auth_mode', 'claude_auth_mode', 'codex_default_models', 'claude_default_models', 'session_ttl', 'unsynced_file_paths'] as const) delete extraParams[key]
       const parsedModelOptions = modelOptions.split('\n').map(line => line.trim()).filter(Boolean)
       const trimmedModels = <T extends Record<string, string | undefined>>(models: T) => Object.fromEntries(
         Object.entries(models).map(([mode, model]) => [mode, model?.trim()]).filter((entry): entry is [string, string] => Boolean(entry[1])),
@@ -506,6 +517,7 @@ export default function SessionProfileEditor({
         ...extraParams,
         storages: storages.map(storage => ({ ...storage, mount_path: storage.mount_path.trim() })),
         ...(agentType.trim() ? { agent_type: agentType.trim() } : {}),
+        ...(connectionId ? { connection_id: connectionId } : {}),
         ...(parsedModelOptions.length > 0 ? { model_options: parsedModelOptions } : {}),
         sandbox: sandboxConfig,
         ...(dockerConfig ? { docker: dockerConfig } : {}),
@@ -1026,6 +1038,14 @@ export default function SessionProfileEditor({
                       ))}
                     </div>
                     <button type="button" onClick={addProfileRepository} className="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800">リポジトリを追加</button>
+                  </div>
+                  <div>
+                    <label htmlFor="profile-repository-connection" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">トークンコネクション</label>
+                    <select id="profile-repository-connection" value={connectionId} onChange={event => { setConnectionId(event.target.value); setDirty(true) }} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700">
+                      <option value="">リポジトリ owner から自動選択</option>
+                      {linkedConnections.map(identity => <option key={identity.id} value={identity.connection_id}>{identity.connection_name} ({identity.login})</option>)}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">この connection の token をメインリポジトリと事前配置リポジトリの clone に使用します。</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">

@@ -9,6 +9,7 @@ export interface SessionProfileParams {
   pool?: string;
   initial_message?: string;
   github_token?: string;
+  connection_id?: string;
   agent_type?: string;
   model?: string;
   /** Model switching candidates offered in the ACP chat info panel. */
