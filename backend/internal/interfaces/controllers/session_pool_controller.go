@@ -61,6 +61,22 @@ func (c *SessionPoolController) SaveManagerManagedFiles(ctx echo.Context) error 
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "session route is unavailable")
 	}
+	// ESMs address their local allocated workload ID, while routes are keyed by
+	// the public parent session ID. Resolve that alias without trusting the
+	// owner supplied in the request body.
+	if route == nil || route.ManagerID != manager.ID {
+		routes, listErr := c.routes.List(ctx.Request().Context(), "")
+		if listErr != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "session route is unavailable")
+		}
+		route = nil
+		for _, candidate := range routes {
+			if candidate != nil && candidate.ManagerID == manager.ID && candidate.RemoteSessionID == ctx.Param("sessionId") {
+				route = candidate
+				break
+			}
+		}
+	}
 	if route == nil || route.ManagerID != manager.ID {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}

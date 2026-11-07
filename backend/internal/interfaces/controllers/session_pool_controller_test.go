@@ -144,14 +144,14 @@ func TestSaveManagerManagedFilesPersistsInParentStore(t *testing.T) {
 	requireNoError(t, err)
 	requireNoError(t, store.CreateManager(context.Background(), &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}))
 	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
-	requireNoError(t, routes.Save(context.Background(), &portrepos.SessionRoute{SessionID: "session-a", ManagerID: "manager-a", UserID: "alice"}))
+	requireNoError(t, routes.Save(context.Background(), &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "runtime-a", ManagerID: "manager-a", UserID: "alice"}))
 	files := &managedFilesStoreStub{}
 	controller := NewSessionPoolController(store, routes).WithManagedFileStore(files)
 
 	result := callSessionPoolHandler(t, controller.SaveManagerManagedFiles, http.MethodPut,
-		"/internal/session-managers/manager-a/sessions/session-a/managed-files",
+		"/internal/session-managers/manager-a/sessions/runtime-a/managed-files",
 		map[string]any{"owner": "alice", "files": []map[string]any{{"path": "/home/agentapi/.codex/auth.json", "content": "updated"}}},
-		map[string]string{"id": "manager-a", "sessionId": "session-a"},
+		map[string]string{"id": "manager-a", "sessionId": "runtime-a"},
 		map[string]string{"Authorization": "Bearer " + token})
 	if result.Code != http.StatusNoContent {
 		t.Fatalf("managed files status=%d body=%s", result.Code, result.Body.String())

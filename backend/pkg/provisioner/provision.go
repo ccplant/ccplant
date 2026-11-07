@@ -1140,7 +1140,10 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	log.Printf("[FILES_SYNC] Starting: watching %v -> session control API (interval: %s)", watchedPaths, syncInterval)
-	client := &http.Client{Timeout: 15 * time.Second}
+	// The local manager is cluster-internal control traffic and must not pass
+	// through the session's sandbox HTTP proxy, which may reject or strip the
+	// session-scoped Authorization header.
+	client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}
 
 	// Track last hash per file path to detect changes.
 	lastHashes := make(map[string]string, len(watchedPaths))
