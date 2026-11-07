@@ -8320,7 +8320,7 @@
       },
       "StorageAttachment": {
         "type": "object", "required": ["storage_id", "mount_path"],
-        "properties": {"storage_id": {"type": "string"}, "storage_path": {"type": "string", "description": "Optional normalized relative path within the Storage"}, "mount_path": {"type": "string", "description": "Absolute non-reserved mount path"}, "read_only": {"type": "boolean", "default": false}}
+        "properties": {"storage_id": {"type": "string"}, "storage_path": {"type": "string", "description": "Optional normalized relative path within the Storage"}, "mount_path": {"type": "string", "description": "Non-reserved mount path. Relative paths are resolved below the session HOME"}, "read_only": {"type": "boolean", "default": false}}
       },
       "StorageFile": {
         "type": "object", "required": ["path", "revision", "updated_at"],

@@ -112,6 +112,9 @@ func normalizeNativeSettings(settings *sessionsettings.SessionSettings) {
 	for i, path := range settings.UnsyncedFilePaths {
 		settings.UnsyncedFilePaths[i] = rewrite(path)
 	}
+	for i := range settings.Storages {
+		settings.Storages[i].MountPath = rewrite(settings.Storages[i].MountPath)
+	}
 	if settings.Env == nil {
 		settings.Env = make(map[string]string)
 	}

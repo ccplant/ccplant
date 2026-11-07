@@ -2126,10 +2126,11 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 	for _, attachment := range startReq.Params.Storages {
 		attachment.StorageID = strings.TrimSpace(attachment.StorageID)
 		attachment.StoragePath = strings.Trim(strings.TrimSpace(attachment.StoragePath), "/")
-		attachment.MountPath = filepath.Clean(strings.TrimSpace(attachment.MountPath))
-		if attachment.StorageID == "" || !filepath.IsAbs(attachment.MountPath) || attachment.MountPath == "/" {
-			return nil, fmt.Errorf("storage_id and an absolute non-root mount_path are required")
+		mountPath, err := normalizeStorageMountPath(attachment.MountPath)
+		if attachment.StorageID == "" || err != nil {
+			return nil, fmt.Errorf("storage_id and a valid non-root mount_path are required")
 		}
+		attachment.MountPath = mountPath
 		if storageMountPathReserved(attachment.MountPath) && !attachment.Managed {
 			return nil, fmt.Errorf("storage mount path %q is reserved", attachment.MountPath)
 		}
@@ -2198,6 +2199,29 @@ func (s *Server) resolveStorageAttachments(ctx context.Context, startReq entitie
 		resolved = append(resolved, entry)
 	}
 	return resolved, nil
+}
+
+func normalizeStorageMountPath(value string) (string, error) {
+	const sessionHome = "/home/agentapi"
+
+	value = strings.TrimSpace(value)
+	segments := strings.Split(filepath.ToSlash(value), "/")
+	for _, segment := range segments {
+		if segment == "." || segment == ".." {
+			return "", fmt.Errorf("mount path must not contain traversal segments")
+		}
+	}
+	if value == "" {
+		return "", fmt.Errorf("mount path is required")
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(sessionHome, value)
+	}
+	value = filepath.Clean(value)
+	if value == "/" {
+		return "", fmt.Errorf("mount path must not be root")
+	}
+	return value, nil
 }
 
 func storageSourcePathsOverlap(left, right string) bool {

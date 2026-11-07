@@ -73,6 +73,41 @@ func TestRegularRootStorageExcludesManagedNamespaces(t *testing.T) {
 	}
 }
 
+func TestNormalizeStorageMountPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{name: "absolute path", value: " /data/shared ", want: "/data/shared"},
+		{name: "relative path", value: "workdir/shared", want: "/home/agentapi/workdir/shared"},
+		{name: "relative dotfile", value: ".cache/models", want: "/home/agentapi/.cache/models"},
+		{name: "empty", value: "", wantErr: true},
+		{name: "root", value: "/", wantErr: true},
+		{name: "relative traversal", value: "../data", wantErr: true},
+		{name: "absolute traversal", value: "/data/../other", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeStorageMountPath(tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeStorageMountPath(%q) unexpectedly succeeded with %q", tt.value, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeStorageMountPath(%q): %v", tt.value, err)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeStorageMountPath(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveApplicationNamespace(t *testing.T) {
 	t.Run("runtime override wins over configured value", func(t *testing.T) {
 		t.Setenv("AGENTAPI_KV_STORE_NAMESPACE", "agentapi-ui")
