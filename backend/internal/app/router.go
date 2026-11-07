@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -96,6 +97,11 @@ func NewRouter(e *echo.Echo, server *Server) *Router {
 	}
 	if server.sessionAllocationNotifier != nil {
 		sessionPoolController.WithAllocationNotifier(server.sessionAllocationNotifier)
+	}
+	if managedFiles, ok := server.credentialsRepo.(interface {
+		SaveFiles(context.Context, string, []sessionsettings.ManagedFile) error
+	}); ok {
+		sessionPoolController.WithManagedFileStore(managedFiles)
 	}
 
 	var apiKeyRepo *repositories.KubernetesPersonalAPIKeyRepository
@@ -516,6 +522,7 @@ func (r *Router) registerCoreRoutes() error {
 		r.echo.POST("/internal/session-managers/:id/runners/:runnerId/retire", r.handlers.sessionPoolController.RetireRunner)
 		r.echo.POST("/internal/session-managers/:id/heartbeat", r.handlers.sessionPoolController.HeartbeatManager)
 		r.echo.GET("/internal/session-managers/:id/runtime-profile", r.handlers.sessionPoolController.GetManagerRuntimeProfile)
+		r.echo.PUT("/internal/session-managers/:id/sessions/:sessionId/managed-files", r.handlers.sessionPoolController.SaveManagerManagedFiles)
 		r.echo.GET("/internal/session-managers/:id/version", r.handlers.sessionPoolController.GetManagerVersion)
 	}
 

@@ -71,11 +71,14 @@ func TestSessionEnvironmentReceivesOnlyScopedControlCredential(t *testing.T) {
 		values[item.Name] = item.Value
 	}
 	want := deriveSessionControlToken("control-plane-secret", session.ID())
+	if values["AGENTAPI_ALLOCATED_SESSION_ID"] != session.ID() {
+		t.Fatalf("allocated session ID = %q, want %q", values["AGENTAPI_ALLOCATED_SESSION_ID"], session.ID())
+	}
 	if values["PROVISIONER_TOKEN"] != want {
 		t.Fatal("session-scoped provisioner credential was not injected")
 	}
-	if controlToken := values["SESSION_CONTROL_TOKEN"]; controlToken != "" && controlToken != want {
-		t.Fatal("session control credentials were not scoped consistently")
+	if controlToken := values["SESSION_CONTROL_TOKEN"]; controlToken != want {
+		t.Fatalf("session control credential = %q, want session-scoped token", controlToken)
 	}
 	if values["PROVISIONER_TOKEN"] == manager.k8sConfig.ProvisionerToken {
 		t.Fatal("control-plane credential was exposed to the session environment")

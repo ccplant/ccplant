@@ -95,13 +95,17 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 	purgeCancel()
 
 	persistence := manager.GetClient()
-	applicationStore, wrapped, err := buildApplicationKVStore(cfg.KVStore, persistence)
-	if err != nil {
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, fmt.Errorf("initialize session-manager KV store: %w", err)
-	}
-	if wrapped {
-		persistence = kvstore.NewKubernetesAdapter(persistence, applicationStore)
+	var applicationStore kvstore.Store
+	if !remoteMode {
+		var wrapped bool
+		applicationStore, wrapped, err = buildApplicationKVStore(cfg.KVStore, persistence)
+		if err != nil {
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, fmt.Errorf("initialize session-manager KV store: %w", err)
+		}
+		if wrapped {
+			persistence = kvstore.NewKubernetesAdapter(persistence, applicationStore)
+		}
 	}
 
 	applicationNamespace := cfg.KVStore.Namespace
@@ -120,33 +124,33 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		log.Printf("[SESSION_MANAGER] Runtime settings reload failed: %v", err)
 	})
 
-	registry, err := newSessionManagerEncryptionRegistry()
-	if err != nil {
-		runtimeCancel()
-		if applicationStore != nil {
-			_ = applicationStore.Close()
+	var credentialsRepo *repositories.KubernetesCredentialsRepository
+	var settingsRepo portrepos.SettingsRepository
+	var sessionRouteRepo portrepos.SessionRouteRepository
+	if !remoteMode {
+		registry, registryErr := newSessionManagerEncryptionRegistry()
+		if registryErr != nil {
+			runtimeCancel()
+			if applicationStore != nil {
+				_ = applicationStore.Close()
+			}
+			_ = manager.Shutdown(5 * time.Second)
+			return nil, registryErr
 		}
-		_ = manager.Shutdown(5 * time.Second)
-		return nil, err
+		settingsRepo = repositories.NewKubernetesSettingsRepository(persistence, applicationNamespace, registry)
+		credentialsRepo = repositories.NewKubernetesCredentialsRepository(persistence, applicationNamespace)
+		manager.SetSettingsRepository(settingsRepo)
+		manager.SetCredentialsRepository(credentialsRepo)
+		manager.SetUserFileRepository(repositories.NewKubernetesUserFileRepository(persistence, applicationNamespace))
+		manager.SetTeamConfigRepository(repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace))
+		manager.SetPersonalAPIKeyRepository(repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace))
+		manager.SetSandboxPolicyRepository(repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace))
+		manager.SetSessionProfileRepository(repositories.NewKubernetesSessionProfileRepository(persistence, applicationNamespace, registry))
+		sessionRouteRepo = repositories.NewKubernetesSessionRouteRepository(persistence, applicationNamespace)
+		manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
+			cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())
+		})
 	}
-	settingsRepo := repositories.NewKubernetesSettingsRepository(persistence, applicationNamespace, registry)
-	credentialsRepo := repositories.NewKubernetesCredentialsRepository(persistence, applicationNamespace)
-	userFileRepo := repositories.NewKubernetesUserFileRepository(persistence, applicationNamespace)
-	teamConfigRepo := repositories.NewKubernetesTeamConfigRepository(persistence, applicationNamespace)
-	personalKeyRepo := repositories.NewKubernetesPersonalAPIKeyRepository(persistence, applicationNamespace)
-	sandboxPolicyRepo := repositories.NewKubernetesSandboxPolicyRepository(persistence, applicationNamespace)
-	sessionProfileRepo := repositories.NewKubernetesSessionProfileRepository(persistence, applicationNamespace, registry)
-	manager.SetSettingsRepository(settingsRepo)
-	manager.SetCredentialsRepository(credentialsRepo)
-	manager.SetUserFileRepository(userFileRepo)
-	manager.SetTeamConfigRepository(teamConfigRepo)
-	manager.SetPersonalAPIKeyRepository(personalKeyRepo)
-	manager.SetSandboxPolicyRepository(sandboxPolicyRepo)
-	manager.SetSessionProfileRepository(sessionProfileRepo)
-	sessionRouteRepo := repositories.NewKubernetesSessionRouteRepository(persistence, applicationNamespace)
-	manager.AddSessionDeletedHandler(func(ctx context.Context, session entities.Session) {
-		cleanupLocalSessionRoutes(ctx, sessionRouteRepo, session.ID())
-	})
 	statusRepo := buildSessionManagerStatusEventRepository(cfg, remoteMode)
 	manager.SetStatusEventRepository(statusRepo)
 	if cache, ok := statusRepo.(portrepos.SessionListCacheRepository); ok {
@@ -245,6 +249,9 @@ func NewSessionManagerRuntime(parent context.Context, cfg *config.Config, verbos
 		e.POST("/internal/session-control/:sessionId/events", control.AppendEvents)
 	}
 	managedFiles := controllers.NewManagedFilesController(manager, credentialsRepo)
+	if remoteMode {
+		managedFiles.WithProxy(newUpstreamManagedFilesProxy(cfg.SessionManager.UpstreamURL, cfg.SessionManager.ID, cfg.SessionManager.ConnectionToken))
+	}
 	e.PUT("/internal/session-control/:sessionId/managed-files", managedFiles.Save)
 	// Register the top-level runtime forwarding routes after private and
 	// provisioner routes. The forwarding pattern is intentionally limited to
@@ -731,6 +738,51 @@ func newSessionManagerEncryptionRegistry() (*services.EncryptionServiceRegistry,
 		registry.Register(decrypt)
 	}
 	return registry, nil
+}
+
+type upstreamManagedFilesProxy struct {
+	baseURL   string
+	managerID string
+	token     string
+	client    *http.Client
+}
+
+func newUpstreamManagedFilesProxy(baseURL, managerID, token string) *upstreamManagedFilesProxy {
+	return &upstreamManagedFilesProxy{
+		baseURL: strings.TrimRight(baseURL, "/"), managerID: managerID, token: token,
+		client: &http.Client{Timeout: 15 * time.Second},
+	}
+}
+
+func (p *upstreamManagedFilesProxy) SaveManagedFiles(ctx context.Context, sessionID, owner, syncID string, files []sessionsettings.ManagedFile, expected map[string]string) error {
+	body, err := json.Marshal(struct {
+		Owner    string                        `json:"owner"`
+		SyncID   string                        `json:"sync_id,omitempty"`
+		Files    []sessionsettings.ManagedFile `json:"files"`
+		Expected map[string]string             `json:"expected,omitempty"`
+	}{Owner: owner, SyncID: syncID, Files: files, Expected: expected})
+	if err != nil {
+		return err
+	}
+	endpoint := p.baseURL + "/internal/session-managers/" + url.PathEscape(p.managerID) + "/sessions/" + url.PathEscape(sessionID) + "/managed-files"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusConflict {
+		return controllers.ErrManagedFileConflict
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("parent managed-file persistence returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func newSessionManagerRedis(cfg *config.Config) (*redis.Client, error) {

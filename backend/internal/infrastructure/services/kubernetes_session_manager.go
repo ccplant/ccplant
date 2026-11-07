@@ -5789,6 +5789,10 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		{Name: proxybinary.EnvName, Value: m.sessionBinaryPath()},
 		{Name: "AGENTAPI_PORT", Value: fmt.Sprintf("%d", m.k8sConfig.BasePort)},
 		{Name: "AGENTAPI_SESSION_ID", Value: session.id},
+		// Provision settings replace AGENTAPI_SESSION_ID with the public parent
+		// ID after a stock runner is claimed. Keep the local workload ID stable
+		// for session-scoped calls back to this manager.
+		{Name: "AGENTAPI_ALLOCATED_SESSION_ID", Value: session.id},
 		{Name: "AGENTAPI_USER_ID", Value: req.UserID},
 		{Name: "HOME", Value: "/home/agentapi"},
 		// GitHub App PEM path (file is written by setup directly to container FS)
@@ -5826,6 +5830,9 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 		corev1.EnvVar{Name: "PROVISIONER_LOCAL_PROXY_URL", Value: localProxyURL},
 		corev1.EnvVar{Name: "SESSION_STATE_PROXY_URL", Value: proxyURL},
 		corev1.EnvVar{Name: "PROVISIONER_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
+		// Managed-file sync always calls the Session Manager's local control API,
+		// including when commands/events are relayed from a remote parent.
+		corev1.EnvVar{Name: "SESSION_CONTROL_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
 		corev1.EnvVar{
 			Name: "POD_NAME",
 			ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{
@@ -5842,12 +5849,6 @@ func (m *KubernetesSessionManager) buildEnvVars(session *KubernetesSession, req 
 	if m.config.SessionPersistence.Backend == "volume" {
 		envVars = append(envVars, corev1.EnvVar{Name: "AGENTAPI_SESSION_STATE_VOLUME_PATH", Value: "/home/agentapi/workdir/.agentapi/session-state.tar.zst"})
 	}
-	if m.getSessionControlStore() != nil {
-		envVars = append(envVars,
-			corev1.EnvVar{Name: "SESSION_CONTROL_TOKEN", Value: deriveSessionControlToken(m.k8sConfig.ProvisionerToken, session.id)},
-		)
-	}
-
 	// Add CLAUDE_ARGS from request environment or proxy's environment
 	claudeArgs := ""
 	if req.Environment != nil {

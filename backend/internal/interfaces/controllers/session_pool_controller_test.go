@@ -137,6 +137,30 @@ func TestOwnedManagerAssetImageRuntimeProfileAndHeartbeat(t *testing.T) {
 	}
 }
 
+func TestSaveManagerManagedFilesPersistsInParentStore(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := infra.NewStore(kvstore.NewKubernetesStore(client), "test")
+	token, tokenHash, err := newSessionRunnerToken()
+	requireNoError(t, err)
+	requireNoError(t, store.CreateManager(context.Background(), &core.Manager{ID: "manager-a", Enabled: true, ConnectionTokenHash: tokenHash}))
+	routes := repositories.NewKubernetesSessionRouteRepository(client, "test")
+	requireNoError(t, routes.Save(context.Background(), &portrepos.SessionRoute{SessionID: "session-a", RemoteSessionID: "runtime-a", ManagerID: "manager-a", UserID: "alice"}))
+	files := &managedFilesStoreStub{}
+	controller := NewSessionPoolController(store, routes).WithManagedFileStore(files)
+
+	result := callSessionPoolHandler(t, controller.SaveManagerManagedFiles, http.MethodPut,
+		"/internal/session-managers/manager-a/sessions/runtime-a/managed-files",
+		map[string]any{"owner": "alice", "files": []map[string]any{{"path": "/home/agentapi/.codex/auth.json", "content": "updated"}}},
+		map[string]string{"id": "manager-a", "sessionId": "runtime-a"},
+		map[string]string{"Authorization": "Bearer " + token})
+	if result.Code != http.StatusNoContent {
+		t.Fatalf("managed files status=%d body=%s", result.Code, result.Body.String())
+	}
+	if files.owner != "alice" || len(files.files) != 1 {
+		t.Fatalf("persisted owner=%q files=%d", files.owner, len(files.files))
+	}
+}
+
 func TestOwnedManagerRejectsInvalidAssetImage(t *testing.T) {
 	store := infra.NewStore(kvstore.NewKubernetesStore(fake.NewSimpleClientset()), "test")
 	requireNoError(t, store.CreateManager(context.Background(), &core.Manager{

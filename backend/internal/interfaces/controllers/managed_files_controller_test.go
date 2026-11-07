@@ -26,6 +26,17 @@ type managedFilesStoreStub struct {
 	files []sessionsettings.ManagedFile
 }
 
+type managedFilesProxyStub struct {
+	sessionID string
+	owner     string
+	files     []sessionsettings.ManagedFile
+}
+
+func (s *managedFilesProxyStub) SaveManagedFiles(_ context.Context, sessionID, owner, _ string, files []sessionsettings.ManagedFile, _ map[string]string) error {
+	s.sessionID, s.owner, s.files = sessionID, owner, files
+	return nil
+}
+
 func (s *managedFilesStoreStub) SaveFiles(_ context.Context, owner string, files []sessionsettings.ManagedFile) error {
 	s.owner, s.files = owner, files
 	return nil
@@ -72,4 +83,24 @@ func TestManagedFilesControllerRejectsInvalidTokenAndPath(t *testing.T) {
 		require.NoError(t, controller.Save(c))
 		require.Equal(t, tc.want, rec.Code)
 	}
+}
+
+func TestManagedFilesControllerProxiesWithoutUsingLocalStore(t *testing.T) {
+	session := entities.NewProxySession("session-1", "user-1", entities.ScopeUser, "", nil, time.Now())
+	proxy := &managedFilesProxyStub{}
+	controller := NewManagedFilesController(managedFilesManagerStub{session: session}, nil).WithProxy(proxy)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"files":[{"path":"/home/agentapi/.codex/auth.json","content":"updated"}]}`))
+	req.Header.Set("Authorization", "Bearer valid")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("sessionId")
+	c.SetParamValues("session-1")
+
+	require.NoError(t, controller.Save(c))
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, "session-1", proxy.sessionID)
+	require.Equal(t, "user-1", proxy.owner)
+	require.Len(t, proxy.files, 1)
 }

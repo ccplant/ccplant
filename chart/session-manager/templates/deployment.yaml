@@ -79,12 +79,6 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ required "parent.hmacSecretRef.name is required" .Values.parent.hmacSecretRef.name | quote }}, key: {{ .Values.parent.hmacSecretRef.key | quote }}}}
             - name: AGENTAPI_SESSION_MANAGER_INTERNAL_API_TOKEN
               valueFrom: {secretKeyRef: {name: {{ required "internalApi.tokenSecretRef.name is required" .Values.internalApi.tokenSecretRef.name | quote }}, key: {{ .Values.internalApi.tokenSecretRef.key | quote }}}}
-            {{- if .Values.encryption.keySecretRef.name }}
-            - name: AGENTAPI_ENCRYPTION_KEY
-              valueFrom: {secretKeyRef: {name: {{ .Values.encryption.keySecretRef.name | quote }}, key: {{ .Values.encryption.keySecretRef.key | quote }}}}
-            {{- end }}
-            - {name: AGENTAPI_KV_STORE_BACKEND, value: {{ .Values.kvStore.backend | quote }}}
-            - {name: AGENTAPI_KV_STORE_NAMESPACE, value: {{ .Values.kvStore.namespace | default .Release.Namespace | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_LEASE_DURATION, value: {{ .Values.leaderElection.leaseDuration | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RENEW_DEADLINE, value: {{ .Values.leaderElection.renewDeadline | quote }}}
             - {name: AGENTAPI_SESSION_MANAGER_ALLOCATION_RETRY_PERIOD, value: {{ .Values.leaderElection.retryPeriod | quote }}}

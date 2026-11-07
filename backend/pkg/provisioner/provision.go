@@ -1123,8 +1123,10 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 		return
 	}
 
-	proxyURL := strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
-	sessionID := os.Getenv("AGENTAPI_SESSION_ID")
+	// Pool runners use PROVISIONER_PROXY_URL to claim work from the parent API.
+	// Session-scoped controls are always served by the local Session Manager.
+	proxyURL := sessionControlProxyURL()
+	sessionID := sessionControlSessionID()
 	token := os.Getenv("SESSION_CONTROL_TOKEN")
 	if proxyURL == "" || sessionID == "" || token == "" {
 		log.Printf("[FILES_SYNC] Session control URL, session ID, or token missing; skipping")
@@ -1138,7 +1140,10 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 	}
 
 	log.Printf("[FILES_SYNC] Starting: watching %v -> session control API (interval: %s)", watchedPaths, syncInterval)
-	client := &http.Client{Timeout: 15 * time.Second}
+	// The local manager is cluster-internal control traffic and must not pass
+	// through the session's sandbox HTTP proxy, which may reject or strip the
+	// session-scoped Authorization header.
+	client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}
 
 	// Track last hash per file path to detect changes.
 	lastHashes := make(map[string]string, len(watchedPaths))
@@ -1216,6 +1221,21 @@ func (s *Server) runFilesSync(ctx context.Context, settings *sessionsettings.Ses
 	}
 }
 
+func sessionControlProxyURL() string {
+	proxyURL := strings.TrimRight(os.Getenv("PROVISIONER_LOCAL_PROXY_URL"), "/")
+	if proxyURL == "" {
+		proxyURL = strings.TrimRight(os.Getenv("PROVISIONER_PROXY_URL"), "/")
+	}
+	return proxyURL
+}
+
+func sessionControlSessionID() string {
+	if allocatedID := os.Getenv("AGENTAPI_ALLOCATED_SESSION_ID"); allocatedID != "" {
+		return allocatedID
+	}
+	return os.Getenv("AGENTAPI_SESSION_ID")
+}
+
 func syncedManagedFilePaths(unsyncedFilePaths []string) []string {
 	excluded := make(map[string]struct{}, len(unsyncedFilePaths))
 	for _, path := range unsyncedFilePaths {
@@ -1264,6 +1284,7 @@ func saveManagedFilesVersioned(ctx context.Context, client *http.Client, proxyUR
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Session-Control-Token", token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Credential-Sync-ID", syncID)
 	resp, err := client.Do(req)

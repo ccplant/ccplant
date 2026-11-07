@@ -434,8 +434,8 @@ sessionManager:
     tokenSecretRef:
       name: ""
       key: token
-  # The manager reads and writes encrypted session settings itself. Reference
-  # the same operator-managed Secret as the API using this independent ref.
+  # Standalone mode can read encrypted session settings itself. Remote modes
+  # receive resolved settings from the parent API and do not use this key.
   encryption:
     keySecretRef:
       name: ""
@@ -445,6 +445,8 @@ sessionManager:
     renewDeadline: "10s"
     retryPeriod: "2s"
   kvStore:
+    # Used only by standalone mode. Remote/runner/builtin managers receive
+    # resolved settings from the parent API and never connect to application KV.
     namespace: default
     backend: libsql
     databaseUrl: ""
