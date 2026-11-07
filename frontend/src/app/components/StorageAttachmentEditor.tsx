@@ -63,7 +63,8 @@ export default function StorageAttachmentEditor({ value, onChange, scope, teamId
         {storages.map(storage => <option key={storage.id} value={storage.id}>{storage.name}</option>)}
       </select></label>
       <label className="block text-sm">Storage内のパス（任意）<input value={attachment.storage_path ?? ''} onChange={event => update(index, { storage_path: event.target.value })} placeholder="datasets/shared" className={`${field} mt-1`} /></label>
-      <label className="block text-sm">マウント先<input value={attachment.mount_path} onChange={event => update(index, { mount_path: event.target.value })} placeholder="workdir/shared" className={`${field} mt-1`} /><span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">相対パスはセッションの HOME 配下にマウントされます。</span></label>
+      <label className="block text-sm">マウント先<input value={attachment.mount_path} onChange={event => update(index, { mount_path: event.target.value })} placeholder="workdir/shared" className={`${field} mt-1`} /></label>
+      <p className="text-xs text-gray-500 dark:text-gray-400">相対パスはセッションの HOME 配下にマウントされます。</p>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={attachment.read_only ?? false} onChange={event => update(index, { read_only: event.target.checked })} />読み取り専用</label>
       <button type="button" onClick={() => onChange(value.filter((_, i) => i !== index))} className="text-sm text-red-600 dark:text-red-400">取り外す</button>
     </fieldset>)}
